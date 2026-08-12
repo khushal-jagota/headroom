@@ -512,14 +512,14 @@ def test_e32_sprint_live_status_and_view_only_other(
         assert "P1" in other_ticket_row.inner_text()
         assert p.locator('[data-sprint-other] [data-item-id]').count() == 0
 
-    # The Ticket header now keeps only priority, project, and worker identity.
+    # The Ticket page exposes the compound placement controls for direct Sprint changes.
     ticket_page = open_page(
         context_factory(),
         server,
         f"#/ticket/{other_ticket_id}",
         "[data-ticket-identity]",
     )
-    assert ticket_page.locator("[data-sprint-item-control]").count() == 0
+    assert ticket_page.locator("[data-sprint-item-control]").count() == 1
     assert ticket_page.locator("[data-deadline-control]").count() == 0
 
     fa = pa.evaluate("window.__plannerDebug.flushes")

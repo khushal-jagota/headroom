@@ -7,7 +7,6 @@ from alembic import command
 
 from planner.core import db as db_module
 from planner.core.db import connect
-from planner.tickets import data as tickets_data
 
 PREVIOUS_REVISION = "weekly_sprint_checkpoint_schedule"
 HEAD_REVISION = "ticket_conversation_history"
@@ -45,6 +44,17 @@ def _opener(ticket_id: str, title: str = "Known") -> str:
     )
 
 
+def _ticket(conn: object, ticket_id: str, title: str = "Known") -> str:
+    conn.execute(  # type: ignore[attr-defined]
+        "INSERT INTO tickets "
+        "(id, title, worker_type, employee_backend, stage, ceiling, fields, "
+        "created_at, updated_at) VALUES "
+        "(?, ?, 'coding', 'hermes', 'needs_kickoff', 'needs_success', '{}', 1, 1)",
+        (ticket_id, title),
+    )
+    return ticket_id
+
+
 def test_migration_backfills_valid_unique_pointers_and_exact_worker_openers(
     tmp_path: Path,
 ) -> None:
@@ -52,17 +62,7 @@ def test_migration_backfills_valid_unique_pointers_and_exact_worker_openers(
     _upgrade(db_path, PREVIOUS_REVISION)
     conn = connect(str(db_path))
     try:
-        tickets = [
-            tickets_data.create_ticket(
-                conn,
-                title="Known",
-                worker_type="coding",
-                actor="human",
-                now=1,
-                title_max_chars=200,
-            )
-            for _ in range(4)
-        ]
+        tickets = [_ticket(conn, f"t_hist000{index}") for index in range(4)]
         active, duplicate_a, duplicate_b, recovered = tickets
         for index, conversation_id in enumerate(
             ("conv_active", "conv_duplicate", "conv_recovered", "conv_malformed", "conv_missing")
@@ -70,20 +70,20 @@ def test_migration_backfills_valid_unique_pointers_and_exact_worker_openers(
             _conversation(conn, conversation_id, index + 10)
         conn.execute(
             "UPDATE tickets SET conversation_id = 'conv_active' WHERE id = ?",
-            (active.id,),
+            (active,),
         )
         conn.execute(
             "UPDATE tickets SET conversation_id = 'conv_duplicate' "
             "WHERE id IN (?, ?)",
-            (duplicate_a.id, duplicate_b.id),
+            (duplicate_a, duplicate_b),
         )
         conn.execute(
             "UPDATE tickets SET conversation_id = 'conv_absent' WHERE id = ?",
-            (recovered.id,),
+            (recovered,),
         )
         for conversation_id, payload in (
-            ("conv_duplicate", _opener(duplicate_a.id)),
-            ("conv_recovered", _opener(recovered.id)),
+            ("conv_duplicate", _opener(duplicate_a)),
+            ("conv_recovered", _opener(recovered)),
             ("conv_malformed", "{"),
             ("conv_missing", _opener("t_missing")),
         ):
@@ -117,8 +117,8 @@ def test_migration_backfills_valid_unique_pointers_and_exact_worker_openers(
                 "ORDER BY conversation_id"
             )
         ] == [
-            ("conv_active", active.id),
-            ("conv_recovered", recovered.id),
+            ("conv_active", active),
+            ("conv_recovered", recovered),
         ]
     finally:
         upgraded.close()
@@ -131,16 +131,9 @@ def test_migration_rejects_prompt_text_that_only_resembles_the_standard_opener(
     _upgrade(db_path, PREVIOUS_REVISION)
     conn = connect(str(db_path))
     try:
-        ticket = tickets_data.create_ticket(
-            conn,
-            title="Known",
-            worker_type="coding",
-            actor="human",
-            now=1,
-            title_max_chars=200,
-        )
+        ticket_id = _ticket(conn, "t_look0000")
         _conversation(conn, "conv_lookalike", 10)
-        payload = json.loads(_opener(ticket.id))
+        payload = json.loads(_opener(ticket_id))
         payload["text"] += " Extra instructions."
         conn.execute(
             "INSERT INTO conversation_events "

@@ -148,7 +148,9 @@ def test_ticket_summary_filters_search_and_bounds_before_selection(
         "VALUES ('si_search', 'Search item', 'project_vylo', 'P1', 1, 1)"
     )
     tmp_db.execute(
-        "UPDATE tickets SET sprint_item_id = 'si_search' WHERE id = ?", (recap_id,)
+        "UPDATE tickets SET project_id = 'project_vylo', sprint_id = NULL, "
+        "sprint_item_id = 'si_search' WHERE id = ?",
+        (recap_id,),
     )
     placed = tickets_views.list_ticket_summaries(
         tmp_db,
@@ -243,12 +245,12 @@ def test_summary_endpoints_are_bounded_and_rich_browser_reads_stay_rich(
     with TestClient(app) as client:
         default_projects = client.get("/api/project-summaries").json()
         assert default_projects["page"] == {
-            "match_count": 35,
+            "match_count": 36,
             "return_count": 30,
             "limit": 30,
             "offset": 0,
             "omitted_before": 0,
-            "omitted_after": 5,
+            "omitted_after": 6,
             "complete": False,
             "next_offset": 30,
         }

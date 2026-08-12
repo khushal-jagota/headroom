@@ -22,6 +22,8 @@ type, priority, optional Kickoff context, launch choice, blockers, and placement
 Placement can resolve the current Sprint, name one coherent Sprint Item classification,
 or keep the Ticket in backlog. The scheduled planning Worker types use the Personal
 Project and that Sprint's Planning Item. Other schedules retain their selected Project.
+A migrated legacy schedule can retain a fixed Sprint through its canonical `sprint_id`.
+New current-Sprint schedules leave that field empty and resolve the Sprint at occurrence time.
 
 The Scheduled tasks screen lists schedules and opens the create or edit form. It can
 change the reusable template and enable or disable future occurrences. The CLI also

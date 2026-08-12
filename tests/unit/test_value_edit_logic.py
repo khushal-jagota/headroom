@@ -52,6 +52,7 @@ def _ticket(stage: str, fields: TicketFields, *, ceiling: str = "done") -> Ticke
         deadline=None,
         project_id=None,
         project_name=None,
+        sprint_id=None,
         sprint_item_id=None,
         effective_sprint_id=None,
         resolved_priority_anchors=ResolvedTicketPriorityAnchors(
