@@ -52,6 +52,34 @@ _ITEM_PLAIN_FIELDS: frozenset[str] = frozenset(
 _SPRINT_TEXT_FIELDS: frozenset[str] = frozenset(
     KICKOFF_FIELDS + REVIEW_FIELDS + MID_SPRINT_FIELDS + ("name",)
 )
+PERSONAL_PROJECT_ID = "project_personal"
+
+
+def planning_item_id(sprint_id: str) -> str:
+    return f"si_planning_{sprint_id.removeprefix('sp_')}"
+
+
+def ensure_planning_item(
+    conn: sqlite3.Connection, *, sprint_id: str, now: int
+) -> SprintItem:
+    item_id = planning_item_id(sprint_id)
+    existing = conn.execute(
+        "SELECT title, project_id, sprint_id FROM sprint_items WHERE id = ?", (item_id,)
+    ).fetchone()
+    if existing is not None and (
+        str(existing["title"]) != "Planning"
+        or str(existing["project_id"]) != PERSONAL_PROJECT_ID
+        or str(existing["sprint_id"]) != sprint_id
+    ):
+        raise RuntimeError("the deterministic Planning Sprint Item id is already in use")
+    conn.execute(
+        "INSERT OR IGNORE INTO sprint_items ("
+        "id, title, body, priority, deadline, project_id, sprint_id, kind, "
+        "created_at, updated_at) VALUES (?, 'Planning', '', 'P2', NULL, ?, ?, "
+        "'normal', ?, ?)",
+        (item_id, PERSONAL_PROJECT_ID, sprint_id, now, now),
+    )
+    return _load_item(conn, item_id)
 
 
 @contextmanager
@@ -208,6 +236,7 @@ def create_sprint(
                 now,
             ),
         )
+        ensure_planning_item(conn, sprint_id=sprint_id, now=now)
     return _load_sprint(conn, sprint_id)
 
 
@@ -531,6 +560,15 @@ def update_item_field(
             (stored, now, item_id),
         )
         if field == "project_id":
+            conn.execute(
+                "UPDATE tickets SET project_id = ?, updated_at = ? WHERE sprint_item_id = ?",
+                (stored, now, item_id),
+            )
+            conn.execute(
+                "UPDATE scheduled_ticket_schedules SET project_id = ?, updated_at = ? "
+                "WHERE placement_mode = 'sprint_item' AND sprint_item_id = ?",
+                (stored, now, item_id),
+            )
             _set_child_ticket_placement_changed(conn, item_id)
     return _load_item(conn, item_id)
 
@@ -545,6 +583,10 @@ def assign_item_sprint(
     with _tx(conn):
         conn.execute(
             "UPDATE sprint_items SET sprint_id = ?, updated_at = ? WHERE id = ?",
+            (sprint_id, now, item_id),
+        )
+        conn.execute(
+            "UPDATE tickets SET sprint_id = ?, updated_at = ? WHERE sprint_item_id = ?",
             (sprint_id, now, item_id),
         )
         _set_child_ticket_placement_changed(conn, item_id)
@@ -613,6 +655,17 @@ def update_item(
                 (*values, now, item_id),
             )
             if set_sprint or "project_id" in stored_edits:
+                item = _load_item(conn, item_id)
+                conn.execute(
+                    "UPDATE tickets SET project_id = ?, sprint_id = ?, updated_at = ? "
+                    "WHERE sprint_item_id = ?",
+                    (item.project_id, item.sprint_id, now, item_id),
+                )
+                conn.execute(
+                    "UPDATE scheduled_ticket_schedules SET project_id = ?, updated_at = ? "
+                    "WHERE placement_mode = 'sprint_item' AND sprint_item_id = ?",
+                    (item.project_id, now, item_id),
+                )
                 _set_child_ticket_placement_changed(conn, item_id)
     return _load_item(conn, item_id)
 

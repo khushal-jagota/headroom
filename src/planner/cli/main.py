@@ -1041,6 +1041,7 @@ def ticket() -> None:
 @click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
 @click.option("--project", default=None, help="Project name.")
 @click.option("--project-id", default=None, help="Project id.")
+@click.option("--sprint", "sprint_id", default=None, help="Sprint id, or current.")
 @click.option(
     "--sprint-item", "sprint_item", default=None, help="Parent sprint item id."
 )
@@ -1071,6 +1072,7 @@ def ticket_create(
     deadline: str | None,
     project: str | None,
     project_id: str | None,
+    sprint_id: str | None,
     sprint_item: str | None,
     backlog: bool,
     blocked_by_ticket_ids: tuple[str, ...],
@@ -1096,6 +1098,8 @@ def ticket_create(
     add_project_selectors(
         body, project=project, project_id=project_id, required=False, as_json=as_json
     )
+    if sprint_id is not None:
+        body["sprint_id"] = sprint_value_for_write(sprint_id, as_json)
     if backlog and sprint_item is not None:
         http.fail_validation(
             "--backlog and --sprint-item are mutually exclusive", as_json
@@ -1269,6 +1273,57 @@ def ticket_set(
             request_actor="ordinary",
         )
     http.emit(data, as_json, f"{data['id']} {field} set")
+
+
+@ticket.command("place")
+@click.argument("ticket_id")
+@click.option("--project", default=None, help="Project name.")
+@click.option("--project-id", default=None, help="Project id.")
+@click.option("--sprint", default=None, help="Sprint id or current.")
+@click.option("--backlog", is_flag=True, default=False, help="Clear Sprint placement.")
+@click.option("--sprint-item", default=None, help="Optional Sprint Item classification.")
+@click.option(
+    "--clear-sprint-item", is_flag=True, default=False, help="Remove classification."
+)
+@json_option
+def ticket_place(
+    ticket_id: str,
+    project: str | None,
+    project_id: str | None,
+    sprint: str | None,
+    backlog: bool,
+    sprint_item: str | None,
+    clear_sprint_item: bool,
+    as_json: bool,
+) -> None:
+    if backlog and sprint is not None:
+        http.fail_validation("--backlog and --sprint are mutually exclusive", as_json)
+    if sprint_item is not None and clear_sprint_item:
+        http.fail_validation(
+            "--sprint-item and --clear-sprint-item are mutually exclusive", as_json
+        )
+    body: dict[str, Any] = {}
+    add_project_selectors(
+        body, project=project, project_id=project_id, required=False, as_json=as_json
+    )
+    if sprint is not None:
+        body["sprint_id"] = sprint_value_for_write(sprint, as_json)
+    elif backlog:
+        body["sprint_id"] = None
+    if sprint_item is not None:
+        body["sprint_item_id"] = sprint_item
+    elif clear_sprint_item:
+        body["sprint_item_id"] = None
+    if not body:
+        http.fail_validation("placement requires at least one selection", as_json)
+    data = http.send(
+        "PATCH",
+        f"/api/tickets/{ticket_id}",
+        as_json=as_json,
+        json_body=body,
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, f"{data['id']} placement set")
 
 
 @ticket.command("employee-configuration")
@@ -2011,6 +2066,7 @@ def chief_reconcile_ticket_from_external_work(
 @click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
 @click.option("--project", default=None, help="Project name.")
 @click.option("--project-id", default=None, help="Project id.")
+@click.option("--sprint", "sprint_id", default=None, help="Sprint id.")
 @click.option(
     "--sprint-item", "sprint_item", default=None, help="Parent sprint item id."
 )
@@ -2042,6 +2098,7 @@ def chief_create_ticket_from_external_work(
     deadline: str | None,
     project: str | None,
     project_id: str | None,
+    sprint_id: str | None,
     sprint_item: str | None,
     backlog: bool,
     blocked_by_ticket_ids: tuple[str, ...],
@@ -2073,6 +2130,8 @@ def chief_create_ticket_from_external_work(
     add_project_selectors(
         body, project=project, project_id=project_id, required=False, as_json=as_json
     )
+    if sprint_id is not None:
+        body["sprint_id"] = sprint_value_for_write(sprint_id, as_json)
     if backlog and sprint_item is not None:
         http.fail_validation(
             "--backlog and --sprint-item are mutually exclusive", as_json

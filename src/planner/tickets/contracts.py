@@ -144,6 +144,7 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     deadline: str | None  # ISO date
     project: str | None  # legacy project name
     project_id: str | None
+    sprint_id: str | None
     sprint_item_id: str | None
     blocked_by_ticket_ids: list[str]
 
@@ -153,6 +154,8 @@ class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     priority: Priority
     deadline: str | None
     project_id: str | None
+    sprint_id: str | None
+    sprint_item_id: str | None
 
 
 class ReconcileTicketFromExternalWorkBody(TypedDict):
@@ -170,6 +173,7 @@ class CreateTicketFromExternalWorkBody(ReconcileTicketFromExternalWorkBody):
     deadline: NotRequired[str | None]
     project: NotRequired[str | None]
     project_id: NotRequired[str | None]
+    sprint_id: NotRequired[str | None]
     sprint_item_id: NotRequired[str | None]
     blocked_by_ticket_ids: NotRequired[list[str]]
 
@@ -253,10 +257,11 @@ class Ticket:  # §3.3 — column names match exactly
     stage: str  # directly stored Stage id
     priority: Priority  # default P3
     deadline: str | None  # ISO date
-    project_id: str | None  # effective Project, derived from the item when parented
+    project_id: str | None  # canonical Ticket Project placement
     project_name: str | None
+    sprint_id: str | None  # canonical Ticket Sprint placement; NULL is backlog
     sprint_item_id: str | None
-    effective_sprint_id: str | None
+    effective_sprint_id: str | None  # compatibility alias for sprint_id
     resolved_priority_anchors: ResolvedTicketPriorityAnchors
     recap: str  # writable only past the type's first worker Stage
     ceiling: str  # ceiling id; a member of the type's ceiling_range

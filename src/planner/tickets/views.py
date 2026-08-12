@@ -63,6 +63,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "deadline": ticket.deadline,
         "project_id": ticket.project_id,
         "project": ticket.project_name,
+        "sprint_id": ticket.sprint_id,
         "sprint_item_id": ticket.sprint_item_id,
         "effective_sprint_id": ticket.effective_sprint_id,
         "resolved_priority_anchors": {
@@ -135,13 +136,13 @@ def list_tickets(
         clauses.append("tickets.stage = ?")
         params.append(str(stage))
     if project_id is not None:
-        clauses.append("COALESCE(sprint_items.project_id, tickets.project_id) = ?")
+        clauses.append("tickets.project_id = ?")
         params.append(project_id)
     if sprint_id is not None:
         if sprint_id == "null":
-            clauses.append("sprint_items.sprint_id IS NULL")
+            clauses.append("tickets.sprint_id IS NULL")
         else:
-            clauses.append("sprint_items.sprint_id = ?")
+            clauses.append("tickets.sprint_id = ?")
             params.append(sprint_id)
     if sprint_item_id is not None:
         clauses.append("tickets.sprint_item_id = ?")
@@ -212,9 +213,8 @@ def _ticket_summary_json(row: sqlite3.Row) -> JsonDict:
             if row["sprint_item_title"] is not None
             else None
         ),
-        "effective_sprint_id": (
-            str(row["sprint_id"]) if row["sprint_id"] is not None else None
-        ),
+        "sprint_id": str(row["sprint_id"]) if row["sprint_id"] is not None else None,
+        "effective_sprint_id": str(row["sprint_id"]) if row["sprint_id"] is not None else None,
         "recap_preview": _recap_preview(str(row["recap"])),
     }
 
@@ -233,13 +233,13 @@ def list_ticket_summaries(
     clauses: list[str] = []
     params: list[str] = []
     if project_id is not None:
-        clauses.append("COALESCE(sprint_items.project_id, tickets.project_id) = ?")
+        clauses.append("tickets.project_id = ?")
         params.append(project_id)
     if sprint_id is not None:
         if sprint_id == "null":
-            clauses.append("sprint_items.sprint_id IS NULL")
+            clauses.append("tickets.sprint_id IS NULL")
         else:
-            clauses.append("sprint_items.sprint_id = ?")
+            clauses.append("tickets.sprint_id = ?")
             params.append(sprint_id)
     if sprint_item_id is not None:
         clauses.append("tickets.sprint_item_id = ?")
@@ -261,12 +261,12 @@ def list_ticket_summaries(
         "tickets.ticket_status, tickets.priority, tickets.recap, "
         + searchable_fields
         + " AS fields, "
-        "COALESCE(sprint_items.project_id, tickets.project_id) AS effective_project_id, "
+        "tickets.project_id AS effective_project_id, "
         "projects.name AS project_name, tickets.sprint_item_id, "
-        "sprint_items.title AS sprint_item_title, sprint_items.sprint_id "
+        "sprint_items.title AS sprint_item_title, tickets.sprint_id "
         "FROM tickets "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
-        "LEFT JOIN projects ON projects.id = COALESCE(sprint_items.project_id, tickets.project_id)"
+        "LEFT JOIN projects ON projects.id = tickets.project_id"
         + join_day
         + where
         + " ORDER BY "

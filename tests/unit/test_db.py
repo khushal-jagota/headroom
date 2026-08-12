@@ -39,7 +39,7 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "ticket_judgment_trouble_notes"
+HEAD_REVISION = "direct_ticket_sprint_placement"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
 CURRENT_SCHEMA_OBJECT_COUNT = 45
@@ -98,8 +98,13 @@ def _table_structure_before_status_changed_at(
 ) -> dict[str, object]:
     """The tickets structure before its status-tracking columns were added."""
     columns = list(structure["columns"])  # type: ignore[call-overload]
+    sprint_column = columns.pop()
+    assert sprint_column[:2] == ("sprint_id", "TEXT")
     assert columns[-2:] == [STATUS_CHANGED_AT_COLUMN, STATUS_REVISION_COLUMN]
-    return {**structure, "columns": columns[:-2]}
+    columns = columns[:-2]
+    item_index = next(i for i, column in enumerate(columns) if column[0] == "sprint_item_id")
+    columns.insert(item_index + 1, sprint_column)
+    return {**structure, "columns": columns}
 
 
 def _with_the_conversation_link_renamed(
@@ -267,9 +272,7 @@ def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(
     assert _revision(conn) == HEAD_REVISION
     assert _table_structure_before_status_changed_at(
         _table_structure(conn, "tickets")
-    ) == _without_direct_sprint_placement(
-        _with_the_conversation_link_renamed(structure_before)
-    )
+    ) == _with_the_conversation_link_renamed(structure_before)
     assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
     assert tuple(
         conn.execute(
@@ -363,9 +366,7 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
     # rebuild recreates only what it was handed, and drops the rest without a trace.
     assert _table_structure_before_status_changed_at(
         _table_structure(conn, "tickets")
-    ) == _without_direct_sprint_placement(
-        _with_the_conversation_link_renamed(structure_before)
-    )
+    ) == _with_the_conversation_link_renamed(structure_before)
 
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
@@ -954,6 +955,7 @@ def test_create_schema_has_projects_project_ids_and_default_rows(
         )
     } == {
         "project_other": ("Other", "", None),
+        "project_personal": ("Personal", "", None),
         "project_tribe": ("Tribe", "", None),
         "project_vylo": ("Vylo", "", None),
     }

@@ -1462,7 +1462,7 @@ def test_x06_title_and_project_edits_land_on_the_ticket_row(
     assert stored.project_id is None
 
 
-def test_x06_project_edit_preserves_parented_error_shape(
+def test_x06_parented_project_edit_requires_a_coherent_tuple(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
@@ -1477,14 +1477,14 @@ def test_x06_project_edit_preserves_parented_error_shape(
         data.edit_ticket(
             tmp_db,
             ticket.id,
-            edit=TicketEdit(project_id="project_vylo"),
+            edit=TicketEdit(project_id="project_other"),
             title_max_chars=TITLE_MAX_CHARS,
             actor="human",
             now=now,
         )
 
     assert exc.value.code is ErrorCode.validation
-    assert exc.value.message == "project is derived when parented"
+    assert exc.value.message == "ticket placement does not match sprint item"
     assert data.read_ticket(tmp_db, ticket.id).project_id == "project_vylo"
 
 

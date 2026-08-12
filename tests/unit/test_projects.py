@@ -41,6 +41,7 @@ def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> No
         assert listed.status_code == 200
         assert {project["id"]: project["name"] for project in listed.json()["projects"]} == {
             "project_other": "Other",
+            "project_personal": "Personal",
             "project_tribe": "Tribe",
             "project_vylo": "Vylo",
         }

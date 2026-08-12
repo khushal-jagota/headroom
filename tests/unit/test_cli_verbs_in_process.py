@@ -895,3 +895,71 @@ def test_sprint_item_ticket_commands_move_atomically_and_to_backlog(
     detail = api.get(server, f"/api/tickets/{tid}")
     assert detail["sprint_item_id"] is None
     assert detail["effective_sprint_id"] is None
+
+
+def test_ticket_place_sends_one_coherent_placement_patch(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
+) -> None:
+    sprint = cli(
+        server,
+        "sprint",
+        "create",
+        "--name",
+        "Placement sprint",
+        "--date-start",
+        "2026-07-01",
+        "--date-end",
+        "2026-07-14",
+    )
+    item = cli(
+        server,
+        "sprint",
+        "item",
+        "create",
+        "--title",
+        "Placement item",
+        "--project-id",
+        "project_vylo",
+        "--sprint",
+        "current",
+    )
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Place me",
+        "--backlog",
+    )["id"]
+
+    placed = cli(
+        server,
+        "ticket",
+        "place",
+        ticket_id,
+        "--project-id",
+        "project_vylo",
+        "--sprint",
+        "current",
+        "--sprint-item",
+        item["id"],
+    )
+    assert placed["project_id"] == "project_vylo"
+    assert placed["sprint_id"] == sprint["id"]
+    assert placed["sprint_item_id"] == item["id"]
+
+    backlog = cli(
+        server,
+        "ticket",
+        "place",
+        ticket_id,
+        "--project-id",
+        "project_vylo",
+        "--backlog",
+        "--clear-sprint-item",
+    )
+    assert backlog["project_id"] == "project_vylo"
+    assert backlog["sprint_id"] is None
+    assert backlog["sprint_item_id"] is None

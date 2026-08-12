@@ -96,6 +96,7 @@ def _validate_ticket_creation_placement(
     conn: sqlite3.Connection,
     *,
     project_id: str | None,
+    sprint_id: str | None,
     sprint_item_id: str | None,
     blocked_by_ticket_ids: list[str] | None,
 ) -> None:
@@ -111,8 +112,17 @@ def _validate_ticket_creation_placement(
                 "sprint item not found",
                 {"sprint_item_id": sprint_item_id},
             )
-        if project_id is not None:
-            raise PlannerError(ErrorCode.validation, "project is derived when parented")
+        item = conn.execute(
+            "SELECT project_id, sprint_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
+        ).fetchone()
+        if item is None:
+            raise PlannerError(
+                ErrorCode.not_found,
+                "sprint item not found",
+                {"sprint_item_id": sprint_item_id},
+            )
+        if project_id != item["project_id"] or sprint_id != item["sprint_id"]:
+            raise PlannerError(ErrorCode.validation, "ticket placement does not match sprint item")
     if project_id is not None:
         if (
             conn.execute(
@@ -123,6 +133,10 @@ def _validate_ticket_creation_placement(
             raise PlannerError(
                 ErrorCode.validation, "invalid project_id", {"project_id": project_id}
             )
+    if sprint_id is not None and conn.execute(
+        "SELECT 1 FROM sprints WHERE id = ?", (sprint_id,)
+    ).fetchone() is None:
+        raise PlannerError(ErrorCode.validation, "invalid sprint_id", {"sprint_id": sprint_id})
     for blocker_ticket_id in blocked_by_ticket_ids or []:
         if (
             conn.execute(
@@ -222,6 +236,7 @@ def validate_ticket_creation_context(
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
     project_id: str | None = None,
+    sprint_id: str | None = None,
     deadline: str | None = None,
     sprint_item_id: str | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
@@ -248,9 +263,18 @@ def validate_ticket_creation_context(
         ),
         employee_launch_model=employee_launch_model,
     )
+    if sprint_item_id is not None:
+        item = conn.execute(
+            "SELECT project_id, sprint_id FROM sprint_items WHERE id = ?",
+            (sprint_item_id,),
+        ).fetchone()
+        if item is not None:
+            project_id = str(item["project_id"])
+            sprint_id = item["sprint_id"]
     _validate_ticket_creation_placement(
         conn,
         project_id=project_id,
+        sprint_id=sprint_id,
         sprint_item_id=sprint_item_id,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
@@ -301,10 +325,11 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         stage=stage,
         priority=Priority(row["priority"]),
         deadline=row["deadline"],
-        project_id=row["effective_project_id"],
+        project_id=row["project_id"],
         project_name=row["project_name"],
+        sprint_id=row["sprint_id"],
         sprint_item_id=row["sprint_item_id"],
-        effective_sprint_id=row["effective_sprint_id"],
+        effective_sprint_id=row["sprint_id"],
         resolved_priority_anchors=ResolvedTicketPriorityAnchors(
             sprint_item=(
                 SprintItemPriorityAnchor(
@@ -317,7 +342,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
             ),
             project=(
                 ProjectPriorityAnchor(
-                    id=str(row["effective_project_id"]),
+                    id=str(row["project_id"]),
                     name=str(row["project_name"]),
                     priority=(
                         Priority(str(row["priority_project_priority"]))
@@ -325,7 +350,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
                         else None
                     ),
                 )
-                if row["effective_project_id"] is not None
+                if row["project_id"] is not None
                 else None
             ),
         ),
@@ -363,15 +388,12 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
 
 def _ticket_row(conn: sqlite3.Connection, ticket_id: str) -> sqlite3.Row:
     row: sqlite3.Row | None = conn.execute(
-        "SELECT tickets.*, COALESCE(sprint_items.project_id, tickets.project_id) "
-        "AS effective_project_id, projects.name AS project_name, "
+        "SELECT tickets.*, projects.name AS project_name, "
         "projects.priority AS priority_project_priority, "
         "sprint_items.title AS priority_sprint_item_title, "
-        "sprint_items.priority AS priority_sprint_item_priority, "
-        "sprint_items.sprint_id AS effective_sprint_id "
+        "sprint_items.priority AS priority_sprint_item_priority "
         "FROM tickets LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
-        "LEFT JOIN projects ON projects.id = "
-        "COALESCE(sprint_items.project_id, tickets.project_id) "
+        "LEFT JOIN projects ON projects.id = tickets.project_id "
         "WHERE tickets.id = ?",
         (ticket_id,),
     ).fetchone()
@@ -924,10 +946,10 @@ def create_ticket(
     title_max_chars: int,
     kickoff_note: str | None = "",
     project_id: str | None = None,
+    sprint_id: str | None = None,
     priority: Priority | None = None,
     deadline: str | None = None,
     sprint_item_id: str | None = None,
-    fallback_sprint_id: str | None = None,
     worker_type: str,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
@@ -976,19 +998,18 @@ def create_ticket(
         )
     fields_json = fields_codec.fields_to_json(initial_fields)
     with _txn(conn):
-        if sprint_item_id is None and fallback_sprint_id is not None:
-            from planner.sprints import data as sprints_data
-
-            sprint_item_id = sprints_data.get_or_create_other_item(
-                conn,
-                sprint_id=fallback_sprint_id,
-                project_id=project_id or "project_other",
-                now=now,
-            ).id
-            project_id = None
+        if sprint_item_id is not None and project_id is None and sprint_id is None:
+            item = conn.execute(
+                "SELECT project_id, sprint_id FROM sprint_items WHERE id = ?",
+                (sprint_item_id,),
+            ).fetchone()
+            if item is not None:
+                project_id = str(item["project_id"])
+                sprint_id = item["sprint_id"]
         _validate_ticket_creation_placement(
             conn,
             project_id=project_id,
+            sprint_id=sprint_id,
             sprint_item_id=sprint_item_id,
             blocked_by_ticket_ids=blocked_by_ticket_ids,
         )
@@ -1000,12 +1021,12 @@ def create_ticket(
             "INSERT INTO tickets ("
             "id, title, worker_type, employee_backend, employee_launch_model, "
             "employee_launch_reasoning_effort, stage, priority, deadline, "
-            "project_id, sprint_item_id, "
+            "project_id, sprint_id, sprint_item_id, "
             "recap, ceiling, at_cap, "
             "ticket_status, stage_ownership_overrides, default_stage_ownership_mode, "
             "conversation_id, alias, fields, created_at, updated_at, "
             "ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, "
             "?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1018,6 +1039,7 @@ def create_ticket(
                 stored_priority.value,
                 deadline,
                 project_id,
+                sprint_id,
                 sprint_item_id,
                 default_ceiling,
                 AtCap.propose.value,
@@ -1059,10 +1081,10 @@ def create_ticket_from_external_work(
     kickoff_note: str | None = None,
     recap: str | None = None,
     project_id: str | None = None,
+    sprint_id: str | None = None,
     priority: Priority | None = None,
     deadline: str | None = None,
     sprint_item_id: str | None = None,
-    fallback_sprint_id: str | None = None,
     worker_type: str,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
@@ -1112,19 +1134,18 @@ def create_ticket_from_external_work(
         FieldSlot(value=kickoff_note),
     )
     with _txn(conn):
-        if sprint_item_id is None and fallback_sprint_id is not None:
-            from planner.sprints import data as sprints_data
-
-            sprint_item_id = sprints_data.get_or_create_other_item(
-                conn,
-                sprint_id=fallback_sprint_id,
-                project_id=project_id or "project_other",
-                now=now,
-            ).id
-            project_id = None
+        if sprint_item_id is not None and project_id is None and sprint_id is None:
+            item = conn.execute(
+                "SELECT project_id, sprint_id FROM sprint_items WHERE id = ?",
+                (sprint_item_id,),
+            ).fetchone()
+            if item is not None:
+                project_id = str(item["project_id"])
+                sprint_id = item["sprint_id"]
         _validate_ticket_creation_placement(
             conn,
             project_id=project_id,
+            sprint_id=sprint_id,
             sprint_item_id=sprint_item_id,
             blocked_by_ticket_ids=blocked_by_ticket_ids,
         )
@@ -1137,11 +1158,11 @@ def create_ticket_from_external_work(
             "INSERT INTO tickets ("
             "id, title, worker_type, employee_backend, employee_launch_model, "
             "employee_launch_reasoning_effort, stage, priority, deadline, "
-            "project_id, sprint_item_id, "
+            "project_id, sprint_id, sprint_item_id, "
             "recap, ceiling, at_cap, ticket_status, stage_ownership_overrides, "
             "default_stage_ownership_mode, conversation_id, alias, fields, "
             "created_at, updated_at, ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, "
             "?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1159,6 +1180,7 @@ def create_ticket_from_external_work(
                 stored_priority.value,
                 deadline,
                 project_id,
+                sprint_id,
                 sprint_item_id,
                 first_worker,
                 AtCap.propose.value,
@@ -1327,15 +1349,12 @@ def read_ticket_by_conversation_id(
 ) -> Ticket:
     """Resolve the Ticket that owns this durable Employee conversation."""
     rows = conn.execute(
-        "SELECT tickets.*, COALESCE(sprint_items.project_id, tickets.project_id) "
-        "AS effective_project_id, projects.name AS project_name, "
+        "SELECT tickets.*, projects.name AS project_name, "
         "projects.priority AS priority_project_priority, "
         "sprint_items.title AS priority_sprint_item_title, "
-        "sprint_items.priority AS priority_sprint_item_priority, "
-        "sprint_items.sprint_id AS effective_sprint_id "
+        "sprint_items.priority AS priority_sprint_item_priority "
         "FROM tickets LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
-        "LEFT JOIN projects ON projects.id = "
-        "COALESCE(sprint_items.project_id, tickets.project_id) "
+        "LEFT JOIN projects ON projects.id = tickets.project_id "
         "JOIN ticket_conversations ON ticket_conversations.ticket_id = tickets.id "
         "WHERE ticket_conversations.conversation_id = ? ORDER BY tickets.id",
         (conversation_id,),
@@ -2172,29 +2191,30 @@ def edit_ticket(
         deadline = edit["deadline"] if "deadline" in edit else ticket.deadline
 
         project_id = edit["project_id"] if "project_id" in edit else ticket.project_id
+        sprint_id = edit["sprint_id"] if "sprint_id" in edit else ticket.sprint_id
+        sprint_item_id = (
+            edit["sprint_item_id"] if "sprint_item_id" in edit else ticket.sprint_item_id
+        )
 
         # Validate the intended final Ticket before its first durable effect. Parent
         # restrictions use request-key presence: explicitly assigning the same/null
         # derived value is still an attempted edit and retains the existing error.
         admission.validate_title(title, title_max_chars)
         admission.validate_deadline(deadline)
-        if "project_id" in edit and ticket.sprint_item_id is not None:
-            raise PlannerError(ErrorCode.validation, "project is derived when parented")
-        if (
-            project_id is not None
-            and conn.execute(
-                "SELECT 1 FROM projects WHERE id = ?", (project_id,)
-            ).fetchone()
-            is None
-        ):
-            raise PlannerError(
-                ErrorCode.validation, "invalid project_id", {"project_id": project_id}
-            )
+        _validate_ticket_creation_placement(
+            conn,
+            project_id=project_id,
+            sprint_id=sprint_id,
+            sprint_item_id=sprint_item_id,
+            blocked_by_ticket_ids=None,
+        )
         candidates: tuple[tuple[str, str, str | None, str | None], ...] = (
             ("title", "title", ticket.title, title),
             ("priority", "priority", ticket.priority.value, priority.value),
             ("deadline", "deadline", ticket.deadline, deadline),
             ("project_id", "project_id", ticket.project_id, project_id),
+            ("sprint_id", "sprint_id", ticket.sprint_id, sprint_id),
+            ("sprint_item_id", "sprint_item_id", ticket.sprint_item_id, sprint_item_id),
         )
         changes = [change for change in candidates if change[2] != change[3]]
         if not changes:
@@ -2238,12 +2258,10 @@ def move_ticket_to_sprint_item(
         if admit is not None:
             admit()
         ticket = _load_ticket_for_write(conn, ticket_id)
-        if (
-            conn.execute(
-                "SELECT 1 FROM sprint_items WHERE id = ?", (sprint_item_id,)
-            ).fetchone()
-            is None
-        ):
+        item = conn.execute(
+            "SELECT project_id, sprint_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
+        ).fetchone()
+        if item is None:
             raise PlannerError(
                 ErrorCode.not_found,
                 "sprint item not found",
@@ -2252,9 +2270,9 @@ def move_ticket_to_sprint_item(
         if ticket.sprint_item_id == sprint_item_id:
             return ticket
         conn.execute(
-            "UPDATE tickets SET sprint_item_id = ?, project_id = NULL, "
+            "UPDATE tickets SET sprint_item_id = ?, project_id = ?, sprint_id = ?, "
             "updated_at = ? WHERE id = ?",
-            (sprint_item_id, now, ticket_id),
+            (sprint_item_id, str(item["project_id"]), item["sprint_id"], now, ticket_id),
         )
         ticket_worker_context.set_ticket_placement_changed(conn, ticket_id)
         return _load_ticket_for_write(conn, ticket_id)
@@ -2288,7 +2306,7 @@ def move_ticket_to_backlog(
         if ticket.sprint_item_id != sprint_item_id:
             return ticket
         conn.execute(
-            "UPDATE tickets SET sprint_item_id = NULL, project_id = ?, "
+            "UPDATE tickets SET sprint_item_id = NULL, sprint_id = NULL, project_id = ?, "
             "updated_at = ? WHERE id = ?",
             (str(item["project_id"]), now, ticket_id),
         )

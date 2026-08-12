@@ -303,8 +303,9 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
         == 200
     )
     assert defaulted.json()["effective_sprint_id"] == "sp_edit"
-    assert defaulted.json()["sprint_item_id"] is not None
-    assert reused.json()["sprint_item_id"] == defaulted.json()["sprint_item_id"]
+    assert defaulted.json()["sprint_id"] == "sp_edit"
+    assert defaulted.json()["sprint_item_id"] is None
+    assert reused.json()["sprint_item_id"] is None
     assert project_fallback.json()["project_id"] == "project_vylo"
     assert project_fallback.json()["effective_sprint_id"] == "sp_edit"
     assert explicit_backlog.json()["effective_sprint_id"] is None
@@ -321,12 +322,9 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
 
     conn = connect(str(db_path))
     try:
-        fallback = conn.execute(
-            "SELECT kind, project_id FROM sprint_items WHERE id = ?",
-            (defaulted.json()["sprint_item_id"],),
-        ).fetchone()
-        assert fallback is not None
-        assert tuple(fallback) == ("other", "project_other")
+        assert conn.execute(
+            "SELECT count(*) FROM sprint_items WHERE kind = 'other'"
+        ).fetchone()[0] == 0
     finally:
         conn.close()
     with TestClient(app) as client:
@@ -338,7 +336,7 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
         ] == ["day_2026-07-10"]
 
 
-def test_failed_creation_does_not_strand_a_fallback_item(tmp_path: Path) -> None:
+def test_failed_creation_does_not_create_an_other_item(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     conn = connect(str(db_path))
     try:
@@ -360,15 +358,47 @@ def test_failed_creation_does_not_strand_a_fallback_item(tmp_path: Path) -> None
     assert response.status_code == 400
     conn = connect(str(db_path))
     try:
-        assert (
-            conn.execute(
-                "SELECT COUNT(*) FROM sprint_items WHERE kind = 'other'"
-            ).fetchone()[0]
-            == 0
-        )
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sprint_items WHERE kind = 'other'"
+        ).fetchone()[0] == 0
     finally:
         conn.close()
 
+
+def test_planning_ticket_creation_uses_the_sprints_planning_item(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    conn = connect(str(db_path))
+    try:
+        _seed_sprint(conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        defaulted = client.post(
+            "/api/tickets", json={"title": "Plan today", "worker_type": "planning-day"}
+        )
+        explicit = client.post(
+            "/api/tickets",
+            json={
+                "title": "Plan explicit Sprint",
+                "worker_type": "planning-sprint",
+                "sprint_id": "sp_edit",
+            },
+        )
+        initiative = client.post(
+            "/api/tickets",
+            json={"title": "Plan initiative", "worker_type": "initiative_planning"},
+        )
+
+    for response in (defaulted, explicit):
+        assert response.status_code == 200
+        assert response.json()["project_id"] == "project_personal"
+        assert response.json()["sprint_id"] == "sp_edit"
+        assert response.json()["sprint_item_id"] == "si_planning_edit"
+    assert initiative.status_code == 200
+    assert initiative.json()["project_id"] == "project_other"
+    assert initiative.json()["sprint_item_id"] is None
 
 def test_employee_configuration_endpoint_allows_pristine_statuses(
     tmp_path: Path,
@@ -781,7 +811,7 @@ def test_execution_route_is_absent_and_patch_rejects_it_as_unknown(
     assert _snapshot(db_path, ticket_id) == before
 
 
-def test_compound_patch_rejects_removed_direct_sprint_field_atomically(
+def test_compound_patch_rejects_invalid_direct_sprint_atomically(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
@@ -797,8 +827,8 @@ def test_compound_patch_rejects_removed_direct_sprint_field_atomically(
     assert response.status_code == 400
     assert response.json()["error"] == {
         "code": "validation",
-        "message": "unknown ticket field",
-        "detail": {"field": "sprint_id"},
+        "message": "invalid sprint_id",
+        "detail": {"sprint_id": "sp_missing"},
     }
     assert _snapshot(db_path, ticket_id) == before
 
@@ -1022,8 +1052,8 @@ def test_rejected_compound_edits_preserve_existing_errors_and_have_no_effect(
             400,
             {
                 "code": "validation",
-                "message": "unknown ticket field",
-                "detail": {"field": "sprint_id"},
+                "message": "invalid sprint_id",
+                "detail": {"sprint_id": "sp_missing"},
             },
             {},
         ),
@@ -1054,11 +1084,11 @@ def test_rejected_compound_edits_preserve_existing_errors_and_have_no_effect(
             {},
         ),
         (
-            {"title": "Must not land", "project": "Vylo"},
+            {"title": "Must not land", "project": "Other"},
             400,
             {
                 "code": "validation",
-                "message": "project is derived when parented",
+                "message": "ticket placement does not match sprint item",
                 "detail": {},
             },
             {"sprint_item_id": "si_edit"},
@@ -1068,18 +1098,8 @@ def test_rejected_compound_edits_preserve_existing_errors_and_have_no_effect(
             400,
             {
                 "code": "validation",
-                "message": "project is derived when parented",
+                "message": "ticket placement does not match sprint item",
                 "detail": {},
-            },
-            {"sprint_item_id": "si_edit"},
-        ),
-        (
-            {"title": "Must not land", "sprint_id": "sp_edit"},
-            400,
-            {
-                "code": "validation",
-                "message": "unknown ticket field",
-                "detail": {"field": "sprint_id"},
             },
             {"sprint_item_id": "si_edit"},
         ),
@@ -1088,8 +1108,8 @@ def test_rejected_compound_edits_preserve_existing_errors_and_have_no_effect(
             400,
             {
                 "code": "validation",
-                "message": "unknown ticket field",
-                "detail": {"field": "sprint_id"},
+                "message": "ticket placement does not match sprint item",
+                "detail": {},
             },
             {"sprint_item_id": "si_edit"},
         ),

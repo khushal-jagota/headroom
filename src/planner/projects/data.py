@@ -16,6 +16,7 @@ DEFAULT_PROJECTS: tuple[tuple[str, str], ...] = (
     ("project_vylo", "Vylo"),
     ("project_tribe", "Tribe"),
     ("project_other", "Other"),
+    ("project_personal", "Personal"),
 )
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")

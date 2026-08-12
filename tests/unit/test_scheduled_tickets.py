@@ -279,16 +279,9 @@ def test_production_planning_schedules_create_place_receipt_and_reach_handoff(
         assert ticket.deadline is None
         assert ticket.ticket_status is TicketStatus.empty
         assert fields_codec.get_slot(ticket.fields, "kickoff").proposal is None
-        assert ticket.project_id == "project_panels"
+        assert ticket.project_id == "project_personal"
         assert ticket.effective_sprint_id == "sp_current"
-        assert ticket.sprint_item_id is not None
-        assert (
-            tmp_db.execute(
-                "SELECT kind FROM sprint_items WHERE id = ?",
-                (ticket.sprint_item_id,),
-            ).fetchone()["kind"]
-            == "other"
-        )
+        assert ticket.sprint_item_id == "si_planning_current"
         assert data.list_occurrences(tmp_db, result.schedule_id) == [result]
 
         assert worker_step_readiness.is_ready_for_worker_step(
@@ -303,7 +296,7 @@ def test_production_planning_schedules_create_place_receipt_and_reach_handoff(
         tmp_db.execute(
             "SELECT count(*) FROM sprint_items "
             "WHERE sprint_id = 'sp_current' "
-            "AND project_id = 'project_panels' AND kind = 'other'"
+            "AND project_id = 'project_personal' AND title = 'Planning'"
         ).fetchone()[0]
         == 1
     )
@@ -829,13 +822,7 @@ def test_final_sprint_day_uses_canonical_sprint_range(tmp_db: Connection) -> Non
     assert result[0].ticket_id is not None
     ticket = tickets_data.read_ticket(tmp_db, result[0].ticket_id)
     assert ticket.effective_sprint_id == "sp_current"
-    assert ticket.sprint_item_id is not None
-    assert (
-        tmp_db.execute(
-            "SELECT kind FROM sprint_items WHERE id = ?", (ticket.sprint_item_id,)
-        ).fetchone()["kind"]
-        == "other"
-    )
+    assert ticket.sprint_item_id is None
     assert data.list_occurrences(tmp_db, schedule_id) == result
 
 

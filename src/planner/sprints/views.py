@@ -144,6 +144,39 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
     return result
 
 
+def unclassified_sprint_tickets(
+    conn: sqlite3.Connection, sprint_id: str
+) -> list[JsonDict]:
+    rows = conn.execute(
+        "SELECT id, title, stage, priority, ticket_status, fields, worker_type, "
+        "employee_backend FROM tickets WHERE sprint_id = ? AND sprint_item_id IS NULL "
+        "ORDER BY created_at, id",
+        (sprint_id,),
+    ).fetchall()
+    result: list[JsonDict] = []
+    registry = configured_worker_type_registry()
+    for row in rows:
+        stage = str(row["stage"])
+        definition = registry.require(str(row["worker_type"]))
+        fields = fields_codec.declared_fields_from_json(
+            str(row["fields"]), definition.field_ids()
+        )
+        result.append(
+            {
+                "id": str(row["id"]),
+                "title": str(row["title"]),
+                "stage": stage,
+                "priority": str(row["priority"]),
+                "has_pending_proposal": machine.has_pending_gating_proposal(
+                    stage, fields, worker_type_definition=definition
+                ),
+                "ticket_status": str(row["ticket_status"]),
+                "employee_backend": str(row["employee_backend"]),
+            }
+        )
+    return result
+
+
 def blocked_by_titles(conn: sqlite3.Connection, blocked_by: list[str]) -> list[str]:
     """Resolve active/read blocker ids to titles, preserving order."""
     titles: list[str] = []
@@ -327,6 +360,7 @@ def sprint_current_view(conn: sqlite3.Connection, planning_date_iso: str) -> Jso
             "planning_date": planning_date_iso,
             "sprint": None,
             "groups": {s.value: [] for s in ItemStatus},
+            "other_tickets": [],
         }
     item_rows = conn.execute(
         "SELECT id, priority, created_at FROM sprint_items WHERE sprint_id = ?", (sid,)
@@ -351,4 +385,5 @@ def sprint_current_view(conn: sqlite3.Connection, planning_date_iso: str) -> Jso
         "planning_date": planning_date_iso,
         "sprint": sprint_json(sprints_data.read_sprint(conn, sid)),
         "groups": groups,
+        "other_tickets": unclassified_sprint_tickets(conn, sid),
     }
