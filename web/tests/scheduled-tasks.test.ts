@@ -18,6 +18,7 @@ const schedule: ScheduledTask = {
   priority: "P2",
   deadline: "2026-08-02",
   project_id: "project_panels",
+  sprint_id: "sp_demo",
   placement_mode: "sprint_item",
   sprint_item_id: "si_demo",
   employee_backend: "codex",

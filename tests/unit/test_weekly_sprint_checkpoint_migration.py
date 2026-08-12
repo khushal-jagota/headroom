@@ -74,6 +74,7 @@ def test_upgrade_preserves_schedules_receipts_and_foreign_keys(tmp_path: Path) -
         "priority": "P1",
         "deadline": "2026-08-31",
         "project_id": "project_existing",
+        "sprint_id": None,
         "sprint_item_id": None,
         "employee_backend": "codex",
         "employee_launch_model": "model-existing",
