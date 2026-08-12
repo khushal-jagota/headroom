@@ -160,7 +160,7 @@ def test_migration_moves_direct_placements_to_shared_other_items_and_preserves_s
     assert "sprint_id" in {
         str(row["name"]) for row in upgraded.execute("PRAGMA table_info(tickets)")
     }
-    assert "sprint_id" not in {
+    assert "sprint_id" in {
         str(row["name"])
         for row in upgraded.execute("PRAGMA table_info(scheduled_ticket_schedules)")
     }
@@ -192,27 +192,30 @@ def test_migration_moves_direct_placements_to_shared_other_items_and_preserves_s
     schedule_rows = {
         str(row["id"]): (
             row["project_id"],
+            row["sprint_id"],
             row["sprint_item_id"],
             row["placement_mode"],
         )
         for row in upgraded.execute(
-            "SELECT id, project_id, sprint_item_id, placement_mode "
+            "SELECT id, project_id, sprint_id, sprint_item_id, placement_mode "
             "FROM scheduled_ticket_schedules ORDER BY id"
         )
     }
     assert schedule_rows["schedule_vylo"] == (
-        "project_vylo", None, "current_sprint",
+        "project_vylo", "sp_one", None, "current_sprint",
     )
     assert schedule_rows["schedule_other"] == (
-        "project_other", None, "current_sprint",
+        "project_other", "sp_one", None, "current_sprint",
     )
     assert schedule_rows["schedule_already_parented"] == (
         "project_vylo",
+        "sp_one",
         "si_normal",
         "sprint_item",
     )
     assert schedule_rows["schedule_project_template"] == (
         "project_tribe",
+        None,
         None,
         "current_sprint",
     )

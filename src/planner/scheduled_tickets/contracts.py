@@ -39,6 +39,9 @@ class ScheduledTicketTemplate:
     employee_backend: str | None
     employee_launch_model: str | None
     blocked_by_ticket_ids: tuple[str, ...]
+    # Null current_sprint resolves at occurrence time. A non-null value preserves the
+    # fixed Sprint of a legacy direct/Other schedule migrated into this contract.
+    sprint_id: str | None = None
 
 
 @dataclass(frozen=True)

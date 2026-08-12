@@ -27,6 +27,7 @@ from planner.scheduled_tickets.contracts import (
 )
 from planner.scheduled_tickets.logic import cadence_qualifies, validate_local_time
 from planner.scheduled_tickets.runtime import ScheduledTicketLoop
+from planner.sprints import data as sprints_data
 from planner.sprints.logic import DateRange
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
@@ -47,6 +48,7 @@ def _template(
     blocked_by: tuple[str, ...] = (),
     project_id: str | None = None,
     placement_mode: ScheduledTicketPlacementMode = ScheduledTicketPlacementMode.current_sprint,
+    sprint_id: str | None = None,
     sprint_item_id: str | None = None,
 ) -> ScheduledTicketTemplate:
     return ScheduledTicketTemplate(
@@ -61,6 +63,7 @@ def _template(
         employee_backend=None,
         employee_launch_model=None,
         blocked_by_ticket_ids=blocked_by,
+        sprint_id=sprint_id,
     )
 
 
@@ -561,8 +564,21 @@ def test_schedule_placement_transitions_preserve_effective_project(
         },
         now=60,
     )
-    assert exact_again.template.project_id is None
+    assert exact_again.template.project_id == "project_vylo"
+    assert exact_again.template.sprint_id == "sp_current"
     assert exact_again.template.sprint_item_id == "si_target"
+
+    tmp_db.execute(
+        "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
+        "VALUES ('sp_next', 'Next', '2026-08-03', '2026-08-16', 0, 0)"
+    )
+    sprints_data.assign_item_sprint(
+        tmp_db,
+        "si_target",
+        "sp_next",
+        clock=MutableClock(_now("2026-07-28T14:30:00")),
+    )
+    assert data.read_schedule(tmp_db, exact).template.sprint_id == "sp_next"
 
     current_sprint = actions.update_schedule(
         tmp_db,
@@ -824,6 +840,31 @@ def test_final_sprint_day_uses_canonical_sprint_range(tmp_db: Connection) -> Non
     assert ticket.effective_sprint_id == "sp_current"
     assert ticket.sprint_item_id is None
     assert data.list_occurrences(tmp_db, schedule_id) == result
+
+
+def test_current_sprint_schedule_with_fixed_sprint_keeps_that_sprint(
+    tmp_db: Connection,
+) -> None:
+    tmp_db.execute(
+        "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
+        "VALUES ('sp_fixed', 'Fixed', '2026-06-01', '2026-06-14', 0, 0)"
+    )
+    schedule_id = _schedule(
+        tmp_db,
+        template=_template(
+            placement_mode=ScheduledTicketPlacementMode.current_sprint,
+            sprint_id="sp_fixed",
+        ),
+    )
+    now = _now("2026-07-28T14:30:00")
+
+    result = actions.run_current_slot(
+        tmp_db, planning_now=now, now=int(now.timestamp()), boundary_hour=5
+    )
+
+    ticket = tickets_data.read_ticket(tmp_db, str(result[0].ticket_id))
+    assert ticket.sprint_id == "sp_fixed"
+    assert data.read_schedule(tmp_db, schedule_id).template.sprint_id == "sp_fixed"
 
 
 def test_failure_is_recorded_once_and_does_not_stop_another_schedule(

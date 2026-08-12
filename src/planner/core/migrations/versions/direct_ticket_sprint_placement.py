@@ -36,6 +36,9 @@ def upgrade() -> None:
     )
     op.execute("ALTER TABLE tickets ADD COLUMN sprint_id TEXT REFERENCES sprints(id)")
     op.execute(
+        "ALTER TABLE scheduled_ticket_schedules ADD COLUMN sprint_id TEXT REFERENCES sprints(id)"
+    )
+    op.execute(
         "UPDATE tickets SET project_id = (SELECT project_id FROM sprint_items "
         "WHERE id = tickets.sprint_item_id), sprint_id = (SELECT sprint_id FROM sprint_items "
         "WHERE id = tickets.sprint_item_id) WHERE sprint_item_id IS NOT NULL"
@@ -43,6 +46,11 @@ def upgrade() -> None:
     op.execute(
         "UPDATE tickets SET sprint_item_id = NULL WHERE sprint_item_id IN "
         "(SELECT id FROM sprint_items WHERE kind = 'other')"
+    )
+    op.execute(
+        "UPDATE scheduled_ticket_schedules SET sprint_id = (SELECT sprint_id FROM "
+        "sprint_items WHERE id = scheduled_ticket_schedules.sprint_item_id) "
+        "WHERE sprint_item_id IS NOT NULL"
     )
     op.execute(
         "UPDATE scheduled_ticket_schedules SET project_id = (SELECT project_id FROM "
@@ -111,7 +119,7 @@ def upgrade() -> None:
         "i.id=s.sprint_item_id WHERE s.id IS NULL OR (b.worker_type NOT IN "
         "('planning-day','planning-midday-check','planning-sprint') AND "
         "COALESCE(i.project_id,s.project_id) IS NOT b.project_id) OR "
-        "(b.item_kind != 'other' AND i.sprint_id IS NOT b.sprint_id)",
+        "s.sprint_id IS NOT b.sprint_id",
         "a scheduled Ticket lost its effective placement",
     )
     _require_no_rows(connection, "SELECT 1 FROM sprint_items WHERE kind='other'", "an Other item remains")

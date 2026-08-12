@@ -22,7 +22,7 @@ from planner.scheduled_tickets.contracts import (
 
 _SCHEDULE_COLUMNS = (
     "id, enabled, cadence, local_time, title, worker_type, kickoff_note, priority, "
-    "deadline, project_id, placement_mode, sprint_item_id, employee_backend, "
+    "deadline, project_id, sprint_id, placement_mode, sprint_item_id, employee_backend, "
     "employee_launch_model, blocked_by_ticket_ids, created_at, updated_at"
 )
 
@@ -75,6 +75,7 @@ def _row_to_schedule(row: sqlite3.Row) -> ScheduledTicketSchedule:
             priority=Priority(str(row["priority"])),
             deadline=None if row["deadline"] is None else str(row["deadline"]),
             project_id=None if row["project_id"] is None else str(row["project_id"]),
+            sprint_id=None if row["sprint_id"] is None else str(row["sprint_id"]),
             placement_mode=ScheduledTicketPlacementMode(str(row["placement_mode"])),
             sprint_item_id=(
                 None if row["sprint_item_id"] is None else str(row["sprint_item_id"])
@@ -122,9 +123,9 @@ def create_schedule(
         conn.execute(
             "INSERT INTO scheduled_ticket_schedules ("
             "id, enabled, cadence, local_time, title, worker_type, kickoff_note, priority, "
-            "deadline, project_id, placement_mode, sprint_item_id, employee_backend, "
+            "deadline, project_id, sprint_id, placement_mode, sprint_item_id, employee_backend, "
             "employee_launch_model, blocked_by_ticket_ids, created_at, updated_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 schedule_id,
                 int(enabled),
@@ -136,6 +137,7 @@ def create_schedule(
                 template.priority.value,
                 template.deadline,
                 template.project_id,
+                template.sprint_id,
                 template.placement_mode.value,
                 template.sprint_item_id,
                 template.employee_backend,
@@ -194,6 +196,7 @@ _UPDATABLE_COLUMNS = frozenset(
         "priority",
         "deadline",
         "project_id",
+        "sprint_id",
         "placement_mode",
         "sprint_item_id",
         "employee_backend",

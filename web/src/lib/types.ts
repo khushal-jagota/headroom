@@ -110,6 +110,7 @@ export type ScheduledTask = {
   priority: Priority;
   deadline: string | null;
   project_id: string | null;
+  sprint_id: string | null;
   placement_mode: SchedulePlacementMode;
   sprint_item_id: string | null;
   employee_backend: string | null;

@@ -560,7 +560,7 @@ def test_schedule_cli_creates_lists_updates_and_shows_run_state(
     )
     assert exact["placement_mode"] == "sprint_item"
     assert exact["sprint_item_id"] == item_id
-    assert exact["project_id"] is None
+    assert exact["project_id"] == "project_vylo"
     updated = cli(
         server,
         "schedule",
@@ -963,3 +963,31 @@ def test_ticket_place_sends_one_coherent_placement_patch(
     assert backlog["project_id"] == "project_vylo"
     assert backlog["sprint_id"] is None
     assert backlog["sprint_item_id"] is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        ("ticket", "create", "--worker-type", "coding", "--title", "Conflict"),
+        (
+            "chief",
+            "create-ticket-from-external-work",
+            "--title",
+            "Conflict",
+            "--worker-type",
+            "coding",
+            "--stage",
+            "needs_success",
+            "--kickoff-note-file",
+            "-",
+        ),
+    ),
+)
+def test_ticket_creation_rejects_backlog_with_sprint(command: tuple[str, ...]) -> None:
+    result = CliRunner().invoke(
+        cli_main,
+        [*command, "--backlog", "--sprint", "sp_conflict", "--json"],
+        input="Kickoff",
+    )
+    assert result.exit_code == 1
+    assert "--backlog cannot be combined with --sprint or --sprint-item" in result.output

@@ -551,6 +551,11 @@ def assign_item_sprint(
             "UPDATE tickets SET sprint_id = ?, updated_at = ? WHERE sprint_item_id = ?",
             (sprint_id, now, item_id),
         )
+        conn.execute(
+            "UPDATE scheduled_ticket_schedules SET sprint_id = ?, updated_at = ? "
+            "WHERE placement_mode = 'sprint_item' AND sprint_item_id = ?",
+            (sprint_id, now, item_id),
+        )
         _set_child_ticket_placement_changed(conn, item_id)
     return _load_item(conn, item_id)
 
@@ -624,9 +629,10 @@ def update_item(
                     (item.project_id, item.sprint_id, now, item_id),
                 )
                 conn.execute(
-                    "UPDATE scheduled_ticket_schedules SET project_id = ?, updated_at = ? "
+                    "UPDATE scheduled_ticket_schedules SET project_id = ?, sprint_id = ?, "
+                    "updated_at = ? "
                     "WHERE placement_mode = 'sprint_item' AND sprint_item_id = ?",
-                    (item.project_id, now, item_id),
+                    (item.project_id, item.sprint_id, now, item_id),
                 )
                 _set_child_ticket_placement_changed(conn, item_id)
     return _load_item(conn, item_id)
