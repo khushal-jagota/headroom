@@ -6,6 +6,7 @@ import asyncio
 import json
 import threading
 from pathlib import Path
+from time import monotonic
 from typing import Any, cast
 
 import pytest
@@ -28,17 +29,21 @@ from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
 from planner.sprints import supervisor_service
 from planner.supervisor_obligations import data as supervisor_obligations_data
+from planner.supervisor_obligations.runtime import SupervisorObligationLoop
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
 
 
-def _app(tmp_path: Path) -> tuple[FastAPI, Path]:
+def _app(tmp_path: Path, *, fake_now: str | None = None) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "data" / "planning.db"
-    db_path.parent.mkdir(parents=True)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(str(db_path))
     create_schema(conn)
     conn.close()
-    config = load_config(path=None, env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)})
+    env = {"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)}
+    if fake_now is not None:
+        env["PLAN_FAKE_NOW"] = fake_now
+    config = load_config(path=None, env=env)
     return (
         create_app(
             config,
@@ -740,32 +745,66 @@ def test_supervisor_rejection_delivers_focused_guidance_then_returns_work(
 def test_supervision_system_scenario_preserves_retry_restart_and_canonical_resolution(
     tmp_path: Path,
 ) -> None:
-    app, db_path = _app(tmp_path)
-    worker_conversation_id = "conv-supervision-system-worker"
-    with TestClient(app) as client:
+    first_app, db_path = _app(tmp_path, fake_now="2026-01-01T00:00:20+00:00")
+    delivery_asyncio_loop = asyncio.new_event_loop()
+    delivery_asyncio_thread = threading.Thread(
+        target=delivery_asyncio_loop.run_forever, daemon=True
+    )
+    delivery_asyncio_thread.start()
+    with TestClient(first_app) as client:
+        first_system = cast(InMemoryConversationSystem, first_app.state.conversation_system)
         item = _create_item(client, "System outcome")
-        ticket = _park_agent_review_ticket(client, str(item["id"]))
-        with connect(str(db_path)) as conn:
-            conn.execute(
-                "UPDATE tickets SET conversation_id=? WHERE id=?",
-                (worker_conversation_id, ticket["id"]),
-            )
-            conn.commit()
-        asyncio.run(
-            app.state.conversation_system.start_conversation(
-                ConversationStartRequest(
-                    conversation_id=worker_conversation_id,
-                    model="test-model",
-                )
-            )
+        created = client.post(
+            "/api/tickets",
+            json={
+                "worker_type": "product_design",
+                "title": "Autonomous design",
+                "kickoff_note": "Start here.",
+                "sprint_item_id": item["id"],
+            },
         )
+        assert created.status_code == 200, created.text
+        ticket_id = str(created.json()["id"])
+        kickoff = client.post(
+            f"/api/tickets/{ticket_id}/accept/kickoff",
+            json={"next_ceiling": "needs_wireframe", "at_cap": "agent_review"},
+        )
+        assert kickoff.status_code == 200, kickoff.text
+        direction = client.post(
+            f"/api/tickets/{ticket_id}/propose/direction",
+            json={"body": "Use a focused split workspace."},
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
+        )
+        assert direction.status_code == 200, direction.text
+        assert direction.json()["stage"] == "needs_wireframe"
+        assert direction.json()["default_stage_ownership_mode"] == "paired"
+        assert direction.json()["effective_stage_ownership_mode"] == "worker"
+        assert direction.json()["ticket_status"] == "empty"
+
+        worker_started = client.post(
+            f"/api/tickets/{ticket_id}/conversation/send",
+            json={
+                "content": [{"piece": "text", "text": "Starting the wireframe."}],
+                "sender_label": "owner",
+            },
+        )
+        assert worker_started.status_code == 200, worker_started.text
+        worker_conversation_id = str(worker_started.json()["conversation_id"])
+        first_system.complete_running_turn(worker_conversation_id)
+        proposed = client.post(
+            f"/api/tickets/{ticket_id}/propose/wireframe",
+            json={"body": "The first wireframe."},
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
+        )
+        assert proposed.status_code == 200, proposed.text
+        assert proposed.json()["ticket_status"] == "awaiting_agent_review"
         rejected = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/reject",
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/reject",
             json={"message": "Add the missing proof."},
             headers=_supervisor_headers(str(item["id"])),
         )
         steered = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/message",
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/message",
             json={
                 "conversation_id": worker_conversation_id,
                 "message": "Check the phone result too.",
@@ -773,56 +812,119 @@ def test_supervision_system_scenario_preserves_retry_restart_and_canonical_resol
             headers=_supervisor_headers(str(item["id"])),
         )
         reproposed = client.post(
-            f"/api/tickets/{ticket['id']}/propose/success",
+            f"/api/tickets/{ticket_id}/propose/wireframe",
             json={"body": "Desktop and phone proof are attached."},
-            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(ticket["id"])},
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
         )
-
         assert rejected.status_code == 200, rejected.text
         assert steered.status_code == 200, steered.text
         assert steered.json()["fate"] == "queued"
         assert reproposed.status_code == 200, reproposed.text
 
+        supervisor_started = client.post(
+            f"/api/items/{item['id']}/supervisor/conversation/send",
+            json={
+                "content": [{"piece": "text", "text": "Review the work."}],
+                "sender_label": "owner",
+            },
+        )
+        assert supervisor_started.status_code == 200, supervisor_started.text
+        supervisor_conversation_id = str(supervisor_started.json()["conversation_id"])
+        first_system.complete_running_turn(supervisor_conversation_id)
+        first_system.arm_backend_write_failure(supervisor_conversation_id)
+        delivery_runtime = SupervisorObligationLoop(
+            str(db_path),
+            first_app.state.clock,
+            conversation_system=first_system,
+            asyncio_loop=delivery_asyncio_loop,
+        )
         with connect(str(db_path)) as conn:
-            supervisor_obligations_data.reconcile(conn, 20)
-            claimed = supervisor_obligations_data.claim_batch(conn, 20)
-            assert claimed is not None
-            first_delivery, first_obligations = claimed
-            supervisor_obligations_data.settle_delivery(
-                conn,
-                first_delivery.id,
-                state="refused",
-                now=21,
-                error="backend unavailable",
-            )
-            assert supervisor_obligations_data.claim_batch(conn, 25) is None
-            retry = supervisor_obligations_data.claim_batch(conn, 26)
-            assert retry is not None
-            retry_delivery, retry_obligations = retry
-            assert [entry.id for entry in retry_obligations] == [
-                entry.id for entry in first_obligations
-            ]
-            supervisor_obligations_data.settle_delivery(
-                conn,
-                retry_delivery.id,
-                state="queued",
-                now=27,
-                conversation_id="conv-supervisor-restart",
-            )
-            supervisor_obligations_data.mark_queued_outcome_uncertain(
-                conn, retry_delivery.id, 28
-            )
-            failed = supervisor_obligations_data.list_for_item(conn, str(item["id"]))
-            assert failed[0].lifecycle.value == "failed"
+            assert delivery_runtime.run_once(conn) is True
+            refused = supervisor_obligations_data.list_for_item(conn, str(item["id"]))
+            assert refused[0].attempt_count == 1
+            assert refused[0].retry_at is not None
+            assert refused[0].last_error == "write_to_backend_failed"
+        advanced_clock = client.post(
+            "/api/test/set-now", json={"now": "2026-01-01T00:00:26+00:00"}
+        )
+        assert advanced_clock.status_code == 200, advanced_clock.text
+        reset_supervisor = client.post(
+            f"/api/items/{item['id']}/supervisor/conversation/reset"
+        )
+        assert reset_supervisor.status_code == 200, reset_supervisor.text
+        supervisor_busy = client.post(
+            f"/api/items/{item['id']}/supervisor/conversation/send",
+            json={
+                "content": [{"piece": "text", "text": "Keep this turn busy."}],
+                "sender_label": "owner",
+            },
+        )
+        assert supervisor_busy.status_code == 200, supervisor_busy.text
+        with connect(str(db_path)) as conn:
+            assert delivery_runtime.run_once(conn) is True
+            retry = supervisor_obligations_data.list_for_item(conn, str(item["id"]))
+            assert retry[0].attempt_count == 2
+            assert retry[0].delivery_id is not None
+            queued_delivery = conn.execute(
+                "SELECT state FROM supervisor_obligation_deliveries WHERE id=?",
+                (retry[0].delivery_id,),
+            ).fetchone()
+            assert queued_delivery["state"] == "queued"
 
-        resolved = client.post(
-            f"/api/tickets/{ticket['id']}/accept/success",
-            json={"next_ceiling": "needs_approach", "at_cap": "agent_review"},
+    delivery_asyncio_loop.call_soon_threadsafe(delivery_asyncio_loop.stop)
+    delivery_asyncio_thread.join()
+    delivery_asyncio_loop.close()
+
+    restarted_app, _ = _app(tmp_path, fake_now="2026-01-01T00:00:40+00:00")
+    restarted_asyncio_loop = asyncio.new_event_loop()
+    restarted_asyncio_thread = threading.Thread(
+        target=restarted_asyncio_loop.run_forever, daemon=True
+    )
+    restarted_asyncio_thread.start()
+    with TestClient(restarted_app) as restarted_client:
+        restarted_system = cast(
+            InMemoryConversationSystem, restarted_app.state.conversation_system
+        )
+        restarted_runtime = SupervisorObligationLoop(
+            str(db_path),
+            restarted_app.state.clock,
+            conversation_system=restarted_system,
+            asyncio_loop=restarted_asyncio_loop,
+        )
+        restarted_runtime.start(60)
+        deadline = monotonic() + 2
+        while monotonic() < deadline:
+            with connect(str(db_path)) as conn:
+                recovered = supervisor_obligations_data.list_for_item(
+                    conn, str(item["id"])
+                )
+            if recovered and recovered[0].lifecycle.value == "failed":
+                break
+        restarted_runtime.stop(deadline=monotonic() + 2)
+        assert recovered[0].lifecycle.value == "failed"
+        assert recovered[0].last_error == (
+            "queued delivery left memory without a durable outcome"
+        )
+
+        resolved = restarted_client.post(
+            f"/api/tickets/{ticket_id}/accept/wireframe",
+            json={"next_ceiling": "needs_design", "at_cap": "agent_review"},
         )
         assert resolved.status_code == 200, resolved.text
+        assert resolved.json()["stage"] == "needs_design"
+        assert resolved.json()["effective_stage_ownership_mode"] == "worker"
         with connect(str(db_path)) as conn:
-            supervisor_obligations_data.reconcile(conn, 29)
-            assert supervisor_obligations_data.list_for_item(conn, str(item["id"])) == ()
+            assert restarted_runtime.run_once(conn) is False
+        obligations = restarted_client.get(
+            f"/api/items/{item['id']}/supervisor/obligations",
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        assert obligations.status_code == 200, obligations.text
+        assert obligations.json()["obligations"] == []
+
+    restarted_asyncio_loop.call_soon_threadsafe(restarted_asyncio_loop.stop)
+    restarted_asyncio_thread.join()
+    restarted_asyncio_loop.close()
 
 
 def test_first_message_creates_the_conversation_and_reset_preserves_history(
