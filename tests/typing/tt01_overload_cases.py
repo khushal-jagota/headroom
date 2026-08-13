@@ -49,7 +49,7 @@ def _cases(
         machine.resolve_scope(
             stage,
             "none",
-            AtCap.propose,
+            AtCap.user_review,
             worker_type_definition=definition,
         ),
         ScopePair,

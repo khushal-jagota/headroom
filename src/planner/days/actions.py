@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 
 from planner.days import data as days_data
 from planner.tickets import data as tickets_data
@@ -14,9 +15,12 @@ def add_ticket_to_day(
     ticket_id: str,
     *,
     now: int,
+    admit: Callable[[], None] | None = None,
 ) -> bool:
     conn.execute("BEGIN IMMEDIATE")
     try:
+        if admit is not None:
+            admit()
         tickets_data.read_ticket(conn, ticket_id)
         changed = days_data.add_day_ticket(conn, day_id, ticket_id, now)
     except BaseException:
@@ -33,9 +37,12 @@ def remove_ticket_from_day(
     ticket_id: str,
     *,
     now: int,
+    admit: Callable[[], None] | None = None,
 ) -> bool:
     conn.execute("BEGIN IMMEDIATE")
     try:
+        if admit is not None:
+            admit()
         changed = days_data.remove_day_ticket(conn, day_id, ticket_id, now)
     except BaseException:
         conn.execute("ROLLBACK")

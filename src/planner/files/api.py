@@ -8,8 +8,10 @@ import re
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse
 
+from planner.core.authctx import request_context, require_sprint_item_supervisor_read
+from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
-from planner.files.logic.paths import resolve_ticket_file
+from planner.files.logic.paths import resolve_sprint_item_file, resolve_ticket_file
 
 router = APIRouter()
 
@@ -65,10 +67,39 @@ async def get_ticket_file(request: Request, ticket_id: str, file_path: str) -> F
     return response
 
 
-def _reject_raw_encoded_unsafe_path(request: Request) -> None:
+@router.get("/files/sprint-items/{sprint_item_id}/{file_path:path}")
+async def get_sprint_item_file(
+    request: Request, sprint_item_id: str, file_path: str
+) -> FileResponse:
+    _reject_raw_encoded_unsafe_path(request, "Sprint Item file not found")
+    with connect(request.app.state.config.db_path) as conn:
+        require_sprint_item_supervisor_read(conn, request_context(request), sprint_item_id)
+    try:
+        managed_file = resolve_sprint_item_file(
+            request.app.state.config.db_path, sprint_item_id, file_path
+        )
+    except ValueError as exc:
+        raise PlannerError(ErrorCode.not_found, "Sprint Item file not found") from exc
+    media_type = (
+        mimetypes.guess_type(managed_file.absolute_path.name)[0] or "application/octet-stream"
+    )
+    disposition = "inline" if _may_inline(media_type) else "attachment"
+    response = FileResponse(
+        managed_file.absolute_path,
+        media_type=media_type,
+        filename=managed_file.absolute_path.name,
+        content_disposition_type=disposition,
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+def _reject_raw_encoded_unsafe_path(
+    request: Request, message: str = "ticket file not found"
+) -> None:
     raw_path = request.scope.get("raw_path", b"")
     if _RAW_UNSAFE_RE.search(raw_path):
-        raise PlannerError(ErrorCode.not_found, "ticket file not found")
+        raise PlannerError(ErrorCode.not_found, message)
 
 
 def _may_inline(media_type: str) -> bool:

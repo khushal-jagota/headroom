@@ -25,10 +25,14 @@
     return 2 * Math.PI * radius;
   }
 
-  function dash(percent: number, radius: number): string {
+  function remainingPercent(usedPercent: number): number {
+    return 100 - Math.min(100, Math.max(0, usedPercent));
+  }
+
+  function dash(remainingPercent: number, radius: number): string {
     const total = circumference(radius);
-    const used = total * Math.min(100, Math.max(0, percent)) / 100;
-    return `${used} ${total - used}`;
+    const remaining = total * remainingPercent / 100;
+    return `${remaining} ${total - remaining}`;
   }
 
   function ringLabel(label: string, window: BackendUsageWindow | null): string {
@@ -38,7 +42,7 @@
       timeStyle: "short"
     }).format(new Date(window.resets_at));
     const warning = usageIsNearlySpent(window.used_percent) ? ", warning, nearly spent" : "";
-    return `${label}: ${window.used_percent}% used${warning}, resets ${reset}`;
+    return `${label}: ${remainingPercent(window.used_percent)}% remaining${warning}, resets ${reset}`;
   }
 </script>
 
@@ -52,6 +56,7 @@
       aria-label={ringLabel(value.label, value.window)}
       data-usage-window={value.kind}
       data-usage-percent={value.window?.used_percent}
+      data-remaining-percent={value.window === null ? undefined : remainingPercent(value.window.used_percent)}
     >
       <span class="usage-ring-visual">
         <svg
@@ -77,13 +82,13 @@
               fill="none"
               stroke={usageIsNearlySpent(value.window.used_percent) ? "var(--accent-error)" : "var(--text-faint)"}
               stroke-width={compact ? 2 : 2.5}
-              stroke-dasharray={dash(value.window.used_percent, compact ? 7 : 14)}
+              stroke-dasharray={dash(remainingPercent(value.window.used_percent), compact ? 7 : 14)}
               transform={`rotate(-90 ${compact ? 9 : 17} ${compact ? 9 : 17})`}
             />
           {/if}
         </svg>
         {#if !compact}
-          <span class="usage-ring-percent" aria-hidden="true">{value.window === null ? "—" : value.window.used_percent}</span>
+          <span class="usage-ring-percent" aria-hidden="true">{value.window === null ? "—" : remainingPercent(value.window.used_percent)}</span>
         {/if}
       </span>
       {#if !compact}<span class="usage-ring-label" aria-hidden="true">{value.label}</span>{/if}

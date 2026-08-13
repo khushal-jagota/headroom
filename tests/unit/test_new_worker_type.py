@@ -303,7 +303,7 @@ def test_new_worker_drives_to_done_via_real_writers(
         actor="human",
         now=now,
         next_ceiling="needs_closeout",
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     assert t.stage == "needs_understanding"
     assert t.ceiling == "needs_closeout"
@@ -327,7 +327,7 @@ def test_new_worker_drives_to_done_via_real_writers(
         actor="human",
         now=now,
         next_ceiling="needs_closeout",
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     assert t.stage == "needs_stages"
     assert fields_codec.get_slot(t.fields, "understanding").value == "understanding body"
@@ -360,7 +360,7 @@ def test_new_worker_drives_to_done_via_real_writers(
         actor="human",
         now=now,
         next_ceiling="needs_closeout",
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     assert t.stage == "needs_drafting"
     assert fields_codec.get_slot(t.fields, "runtime_defaults").value == (

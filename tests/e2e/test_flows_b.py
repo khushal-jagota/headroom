@@ -78,9 +78,9 @@ def _scope_and_advance(
 ) -> JsonObject:
     # Unattributed direct scope; attributed worker agents are rejected.
     g = api.direct_post(
-        server, f"/api/tickets/{tid}/scope", {"ceiling": ceiling, "at_cap": "propose"}
+        server, f"/api/tickets/{tid}/scope", {"ceiling": ceiling, "at_cap": "user_review"}
     )
-    assert g["ceiling"] == ceiling and g["at_cap"] == "propose", g
+    assert g["ceiling"] == ceiling and g["at_cap"] == "user_review", g
     # Claimless CLI proposals auto-accept up the chain to needs_implementation (like flows_a e27).
     for field in ("success", "approach", "plan"):
         cli(
@@ -123,11 +123,12 @@ def _snap_board(p: Page, mid: str) -> dict[str, Any]:
     card = (
         f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
     )
-    bucket = '[data-bucket-section][data-bucket-key="awaiting_approval"]'
+    no_item = "[data-no-item]"
     return {
         "title": p.inner_text(f"{card} .list-row-title"),
-        "bucket": p.inner_text(f"{bucket} > summary .board-workspace-bucket-label"),
-        "nested": p.eval_on_selector_all(f"{bucket} {card}", "e=>e.length"),
+        "tail": p.inner_text(f"{no_item} h2"),
+        "nested": p.eval_on_selector_all(f"{no_item} {card}", "e=>e.length"),
+        "status": p.get_attribute(card, "data-ticket-status"),
         "marks": p.eval_on_selector_all(
             f"{card} .board-workspace-stage-mark", "e=>e.length"
         ),
@@ -415,8 +416,9 @@ def test_e31_refresh_restores_state(
     after_b = _snap_board(page_b, mid)
     expected_b = {
         "title": E31_TITLE,
-        "bucket": "Awaiting approval",
+        "tail": "NO ITEM",
         "nested": 1,
+        "status": "awaiting_user_review",
         "marks": 1,
         "agent_working": "false",
     }
@@ -442,7 +444,7 @@ def test_e31_refresh_restores_state(
     assert before_d == after_d == expected_d, (before_d, after_d)
 
 
-def test_e32_sprint_live_status_and_fallback(
+def test_e32_sprint_live_status_and_view_only_other(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
@@ -470,7 +472,7 @@ def test_e32_sprint_live_status_and_fallback(
         "--priority",
         "P2",
     )["id"]
-    fallback_ticket_id = cli(
+    other_ticket_id = cli(
         server,
         "ticket",
         "create",
@@ -480,22 +482,16 @@ def test_e32_sprint_live_status_and_fallback(
         E32_FALLBACK_TITLE,
         "--project",
         E32_ITEM_PROJECT,
+        "--sprint",
+        sid,
         "--priority",
         "P1",
     )["id"]
 
-    # Status groups were replaced by Project groups. The Item's status remains as an
-    # invisible row attribute for live updates. Omitted placement resolves the current
-    # sprint's Other Item, which remains visible without a fallback chip.
+    # The Item's status remains as an invisible row attribute for live updates. Direct
+    # Sprint placement appears under view-only Other without a Sprint Item identity.
     current_before = api.get(server, "/api/sprint/current")
-    fallback_item = next(
-        item
-        for group in current_before["groups"].values()
-        for item in group
-        if item["kind"] == "other"
-        and any(ticket["id"] == fallback_ticket_id for ticket in item["tickets"])
-    )
-    fallback_item_id = fallback_item["id"]
+    assert any(ticket["id"] == other_ticket_id for ticket in current_before["other_tickets"])
 
     ready = f'[data-item-id="{iid}"][data-item-status="todo"]'
     pa = open_page(context_factory(), server, "#/sprint", ready)
@@ -509,35 +505,23 @@ def test_e32_sprint_live_status_and_fallback(
             == 1
         )
         assert p.get_attribute(f'[data-item-id="{iid}"]', "data-item-status") == "todo"
-        assert (
-            p.get_attribute(f'[data-item-id="{fallback_item_id}"]', "data-item-kind")
-            == "other"
-        )
         assert p.locator('[data-item-id] [data-sprint-ticket-id]').count() == 0
-        assert p.locator(f'[data-item-id="{fallback_item_id}"] .chip').count() == 0
-        assert p.query_selector("[data-loose]") is None
+        other_ticket_row = p.locator(
+            f'[data-sprint-other] [data-sprint-ticket-id="{other_ticket_id}"]'
+        )
+        assert other_ticket_row.count() == 1
+        assert E32_FALLBACK_TITLE in other_ticket_row.inner_text()
+        assert "P1" in other_ticket_row.inner_text()
+        assert p.locator('[data-sprint-other] [data-item-id]').count() == 0
 
-    fallback_item_page = open_page(
-        context_factory(),
-        server,
-        f"#/sprint?item={fallback_item_id}",
-        f'[data-sprint-item-view="{fallback_item_id}"]',
-    )
-    fallback_ticket_row = fallback_item_page.locator(
-        f'[data-sprint-ticket-id="{fallback_ticket_id}"]'
-    )
-    assert fallback_ticket_row.count() == 1
-    assert E32_FALLBACK_TITLE in fallback_ticket_row.inner_text()
-    assert "P1" in fallback_ticket_row.inner_text()
-
-    # The Ticket header now keeps only priority, project, and worker identity.
+    # The Ticket page exposes the compound placement controls for direct Sprint changes.
     ticket_page = open_page(
         context_factory(),
         server,
-        f"#/ticket/{fallback_ticket_id}",
+        f"#/ticket/{other_ticket_id}",
         "[data-ticket-identity]",
     )
-    assert ticket_page.locator("[data-sprint-item-control]").count() == 0
+    assert ticket_page.locator("[data-sprint-item-control]").count() == 1
     assert ticket_page.locator("[data-deadline-control]").count() == 0
 
     fa = pa.evaluate("window.__plannerDebug.flushes")

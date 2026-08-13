@@ -4,7 +4,7 @@ No ``X-Plan-Actor`` header means the request is unattributed. ``chief`` identifi
 the Panels Chief. Every other non-empty actor value identifies an attributed
 non-Chief agent. Direct product operations permit unattributed and Chief requests;
 worker identities remain subject to the existing direct-write restrictions except
-for the narrow, Ticket-backed planning capabilities defined here.
+for the narrow, Ticket-backed operations defined here.
 """
 
 from __future__ import annotations
@@ -20,11 +20,14 @@ from planner.core.errors import ErrorCode, PlannerError
 
 X_PLAN_ACTOR: Final = "X-Plan-Actor"
 X_PLAN_TICKET_ID: Final = "X-Plan-Ticket-ID"
+X_PLAN_SPRINT_ITEM_ID: Final = "X-Plan-Sprint-Item-ID"
 PLAN_ACTOR_SCOPE_KEY: Final = "planner.request_actor"
 PLAN_TICKET_ID_SCOPE_KEY: Final = "planner.request_ticket_id"
+PLAN_SPRINT_ITEM_ID_SCOPE_KEY: Final = "planner.request_sprint_item_id"
 _UNATTRIBUTED_ACTOR: Final = "unattributed"
 _CHIEF_ACTOR: Final = "chief"
 _WORKER_ACTOR: Final = "worker"
+SPRINT_ITEM_SUPERVISOR_ACTOR: Final = "sprint_item_supervisor"
 
 PlanningCapability = Literal[
     "planning-day",
@@ -42,6 +45,7 @@ class RequestContext:
     is_attributed: bool
     is_chief: bool
     ticket_id: str | None = None
+    sprint_item_id: str | None = None
 
 
 def _normalize(raw: str | None) -> str | None:
@@ -52,20 +56,27 @@ def _normalize(raw: str | None) -> str | None:
     return stripped or None
 
 
-def _classify(actor: str | None, ticket_id: str | None = None) -> RequestContext:
+def _classify(
+    actor: str | None,
+    ticket_id: str | None = None,
+    sprint_item_id: str | None = None,
+) -> RequestContext:
     normalized_ticket_id = _normalize(ticket_id)
+    normalized_sprint_item_id = _normalize(sprint_item_id)
     if actor is None:
         return RequestContext(
             actor=_UNATTRIBUTED_ACTOR,
             is_attributed=False,
             is_chief=False,
             ticket_id=normalized_ticket_id,
+            sprint_item_id=normalized_sprint_item_id,
         )
     return RequestContext(
         actor=actor,
         is_attributed=True,
         is_chief=actor == _CHIEF_ACTOR,
         ticket_id=normalized_ticket_id,
+        sprint_item_id=normalized_sprint_item_id,
     )
 
 
@@ -81,7 +92,73 @@ def request_context(request: Request) -> RequestContext:
         if PLAN_TICKET_ID_SCOPE_KEY in request.scope
         else request.headers.get(X_PLAN_TICKET_ID)
     )
-    return _classify(_normalize(actor), _normalize(ticket_id))
+    sprint_item_id = (
+        request.scope[PLAN_SPRINT_ITEM_ID_SCOPE_KEY]
+        if PLAN_SPRINT_ITEM_ID_SCOPE_KEY in request.scope
+        else request.headers.get(X_PLAN_SPRINT_ITEM_ID)
+    )
+    return _classify(_normalize(actor), _normalize(ticket_id), _normalize(sprint_item_id))
+
+
+def require_sprint_item_supervisor_read(
+    conn: sqlite3.Connection, ctx: RequestContext, sprint_item_id: str
+) -> None:
+    """Permit direct readers or the exact durable supervisor for this normal item."""
+    row = conn.execute(
+        "SELECT 1 FROM sprint_items WHERE id=? AND kind='normal'", (sprint_item_id,)
+    ).fetchone()
+    if row is None:
+        if ctx.actor == SPRINT_ITEM_SUPERVISOR_ACTOR:
+            _reject_sprint_item_supervisor_read(ctx, sprint_item_id)
+        raise PlannerError(ErrorCode.not_found, "sprint item not found", {"id": sprint_item_id})
+    if not ctx.is_attributed or ctx.is_chief:
+        return
+    if ctx.actor != SPRINT_ITEM_SUPERVISOR_ACTOR or ctx.sprint_item_id != sprint_item_id:
+        _reject_sprint_item_supervisor_read(ctx, sprint_item_id)
+
+
+def require_sprint_item_supervisor_ticket_write(
+    conn: sqlite3.Connection,
+    ctx: RequestContext,
+    sprint_item_id: str,
+    ticket_id: str,
+) -> None:
+    """Permit only the exact durable supervisor and its direct child Ticket."""
+    if (
+        ctx.actor != SPRINT_ITEM_SUPERVISOR_ACTOR
+        or ctx.sprint_item_id != sprint_item_id
+    ):
+        _reject_sprint_item_supervisor_write(ctx, sprint_item_id, ticket_id)
+    row = conn.execute(
+        "SELECT 1 FROM sprint_items AS item "
+        "JOIN tickets AS ticket ON ticket.sprint_item_id = item.id "
+        "WHERE item.id = ? AND item.kind = 'normal' AND ticket.id = ?",
+        (sprint_item_id, ticket_id),
+    ).fetchone()
+    if row is None:
+        _reject_sprint_item_supervisor_write(ctx, sprint_item_id, ticket_id)
+
+
+def _reject_sprint_item_supervisor_write(
+    ctx: RequestContext, sprint_item_id: str, ticket_id: str
+) -> None:
+    raise PlannerError(
+        ErrorCode.agent_forbidden,
+        "Ticket review is not available to this Sprint Item supervisor",
+        {
+            "actor": ctx.actor,
+            "sprint_item_id": sprint_item_id,
+            "ticket_id": ticket_id,
+        },
+    )
+
+
+def _reject_sprint_item_supervisor_read(ctx: RequestContext, sprint_item_id: str) -> None:
+    raise PlannerError(
+        ErrorCode.agent_forbidden,
+        "Sprint Item read is not available to this supervisor",
+        {"actor": ctx.actor, "sprint_item_id": sprint_item_id},
+    )
 
 
 def require_direct_write(ctx: RequestContext) -> None:
@@ -91,6 +168,32 @@ def require_direct_write(ctx: RequestContext) -> None:
     raise PlannerError(
         ErrorCode.agent_forbidden,
         "direct operation is not available to this actor",
+        {"actor": ctx.actor},
+    )
+
+
+def require_ticket_worker_write(
+    conn: sqlite3.Connection,
+    ctx: RequestContext,
+) -> None:
+    """Permit a direct caller or any exact Ticket-backed Worker."""
+    if not ctx.is_attributed or ctx.is_chief:
+        return
+    if ctx.actor != _WORKER_ACTOR or ctx.ticket_id is None:
+        _reject_ticket_worker_write(ctx)
+
+    row = conn.execute(
+        "SELECT 1 FROM tickets WHERE id = ?",
+        (ctx.ticket_id,),
+    ).fetchone()
+    if row is None:
+        _reject_ticket_worker_write(ctx)
+
+
+def _reject_ticket_worker_write(ctx: RequestContext) -> None:
+    raise PlannerError(
+        ErrorCode.agent_forbidden,
+        "ticket operation is not available to this worker",
         {"actor": ctx.actor},
     )
 

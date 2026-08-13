@@ -240,7 +240,7 @@ def _create_tickets(
         kickoff_note="Keep this pending to show approval state.",
         project_id=project_id,
         priority=Priority.P2,
-        fallback_sprint_id=sprint_id,
+        sprint_id=sprint_id,
         worker_type="initiative_planning",
     )
     tickets_data.mark_ticket_errored(

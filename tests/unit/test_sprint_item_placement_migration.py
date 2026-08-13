@@ -13,7 +13,7 @@ from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 
 PREVIOUS_REVISION = "day_midday_reconciliation"
-HEAD_REVISION = "weekly_sprint_checkpoint_schedule"
+HEAD_REVISION = "supervisor_obligations"
 
 
 def _upgrade_to_previous_revision(path: Path) -> sqlite3.Connection:
@@ -157,10 +157,10 @@ def test_migration_moves_direct_placements_to_shared_other_items_and_preserves_s
     assert upgraded.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
         HEAD_REVISION
     )
-    assert "sprint_id" not in {
+    assert "sprint_id" in {
         str(row["name"]) for row in upgraded.execute("PRAGMA table_info(tickets)")
     }
-    assert "sprint_id" not in {
+    assert "sprint_id" in {
         str(row["name"])
         for row in upgraded.execute("PRAGMA table_info(scheduled_ticket_schedules)")
     }
@@ -170,61 +170,52 @@ def test_migration_moves_direct_placements_to_shared_other_items_and_preserves_s
     }["kind"]
     assert (kind["notnull"], kind["dflt_value"]) == (1, "'normal'")
 
-    other_items = upgraded.execute(
-        "SELECT id, project_id FROM sprint_items "
-        "WHERE sprint_id = 'sp_one' AND kind = 'other' ORDER BY project_id"
-    ).fetchall()
-    assert [str(row["project_id"]) for row in other_items] == [
-        "project_other",
-        "project_vylo",
-    ]
-    other_by_project = {
-        str(row["project_id"]): str(row["id"]) for row in other_items
-    }
+    assert upgraded.execute(
+        "SELECT count(*) FROM sprint_items WHERE kind = 'other'"
+    ).fetchone()[0] == 0
     assert upgraded.execute(
         "SELECT kind FROM sprint_items WHERE id = 'si_normal'"
     ).fetchone()[0] == "normal"
 
     ticket_rows = {
-        str(row["id"]): (row["project_id"], row["sprint_item_id"])
+        str(row["id"]): (row["project_id"], row["sprint_id"], row["sprint_item_id"])
         for row in upgraded.execute(
-            "SELECT id, project_id, sprint_item_id FROM tickets ORDER BY id"
+            "SELECT id, project_id, sprint_id, sprint_item_id FROM tickets ORDER BY id"
         )
     }
-    assert ticket_rows["t_vylo_one"] == (None, other_by_project["project_vylo"])
-    assert ticket_rows["t_vylo_two"] == (None, other_by_project["project_vylo"])
-    assert ticket_rows["t_other"] == (None, other_by_project["project_other"])
-    assert ticket_rows["t_already_parented"] == (None, "si_normal")
-    assert ticket_rows["t_backlog"] == ("project_tribe", None)
+    assert ticket_rows["t_vylo_one"] == ("project_vylo", "sp_one", None)
+    assert ticket_rows["t_vylo_two"] == ("project_vylo", "sp_one", None)
+    assert ticket_rows["t_other"] == ("project_other", "sp_one", None)
+    assert ticket_rows["t_already_parented"] == ("project_vylo", "sp_one", "si_normal")
+    assert ticket_rows["t_backlog"] == ("project_tribe", None, None)
 
     schedule_rows = {
         str(row["id"]): (
             row["project_id"],
+            row["sprint_id"],
             row["sprint_item_id"],
             row["placement_mode"],
         )
         for row in upgraded.execute(
-            "SELECT id, project_id, sprint_item_id, placement_mode "
+            "SELECT id, project_id, sprint_id, sprint_item_id, placement_mode "
             "FROM scheduled_ticket_schedules ORDER BY id"
         )
     }
     assert schedule_rows["schedule_vylo"] == (
-        None,
-        other_by_project["project_vylo"],
-        "sprint_item",
+        "project_vylo", "sp_one", None, "current_sprint",
     )
     assert schedule_rows["schedule_other"] == (
-        None,
-        other_by_project["project_other"],
-        "sprint_item",
+        "project_other", "sp_one", None, "current_sprint",
     )
     assert schedule_rows["schedule_already_parented"] == (
-        None,
+        "project_vylo",
+        "sp_one",
         "si_normal",
         "sprint_item",
     )
     assert schedule_rows["schedule_project_template"] == (
         "project_tribe",
+        None,
         None,
         "current_sprint",
     )
@@ -260,14 +251,6 @@ def test_migration_moves_direct_placements_to_shared_other_items_and_preserves_s
 
     with pytest.raises(sqlite3.IntegrityError):
         upgraded.execute("UPDATE sprint_items SET kind = 'catch_all' WHERE id = 'si_normal'")
-    with pytest.raises(sqlite3.IntegrityError):
-        upgraded.execute(
-            "INSERT INTO sprint_items ("
-            "id, title, project_id, sprint_id, kind, created_at, updated_at"
-            ") VALUES ("
-            "'si_duplicate_other', 'Duplicate', 'project_vylo', 'sp_one', 'other', 1, 1"
-            ")"
-        )
     with pytest.raises(sqlite3.IntegrityError):
         upgraded.execute(
             "UPDATE scheduled_ticket_schedules SET cadence = 'sometimes' "

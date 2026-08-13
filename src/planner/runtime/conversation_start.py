@@ -22,11 +22,12 @@ can see and nobody can send from, which is what a separate start door left behin
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 from uuid import uuid4
 
 from planner.conversation.contracts import (
@@ -39,14 +40,20 @@ from planner.conversation.contracts import (
     PromptDeliveryRefused,
     PromptDeliveryStarted,
 )
+from planner.conversation.logic.conversation_start_resolution import (
+    resolve_conversation_start_request,
+)
 from planner.conversation.message_content import MessageContent
+from planner.conversation.storage import ensure_started_conversation_record
 from planner.core.errors import ErrorCode, PlannerError
+from planner.projects import data as projects_data
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
     ConversationStartConfiguration,
     ConversationStartOverrides,
     ConversationStartValues,
     resolve_agent_conversation_start,
+    resolve_sprint_item_supervisor_conversation_start,
     resolve_worker_conversation_start,
 )
 from planner.tickets import data as tickets_data
@@ -58,6 +65,9 @@ from planner.worker_settings.service import (
 )
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.registry import WorkerTypeRegistry
+
+if TYPE_CHECKING:
+    from planner.sprints.contracts import SprintItem
 
 CONVERSATION_ID_PREFIX: Final = "conv_"
 
@@ -122,10 +132,20 @@ def worker_resolve(
             )
         ),
         overrides=overrides,
-        workspace_folder=(
-            _default_workspace_folder() if workspace_folder is None else workspace_folder
-        ),
+        workspace_folder=_worker_workspace_folder(conn, ticket, workspace_folder),
     )
+
+
+def _worker_workspace_folder(
+    conn: sqlite3.Connection, ticket: Ticket, explicit: Path | None
+) -> Path:
+    if explicit is not None:
+        return explicit
+    if ticket.project_id is not None:
+        project_folder = projects_data.read_project(conn, ticket.project_id).folder_path
+        if project_folder is not None and project_folder.is_dir():
+            return project_folder.resolve(strict=False)
+    return _default_workspace_folder()
 
 
 def agent_resolve(
@@ -148,6 +168,27 @@ def agent_resolve(
             backend_key=ConversationBackendKey(launch_defaults.employee_backend),
             model=launch_defaults.employee_launch_model,
             reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
+        ),
+        overrides=overrides,
+        workspace_folder=(
+            _default_workspace_folder() if workspace_folder is None else workspace_folder
+        ),
+    )
+
+
+def sprint_item_supervisor_resolve(
+    item: SprintItem,
+    overrides: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
+    *,
+    workspace_folder: Path | None = None,
+) -> ConversationStartValues:
+    launch = item.supervisor_launch_configuration
+    return resolve_sprint_item_supervisor_conversation_start(
+        sprint_item_id=item.id,
+        launch_configuration=ConversationStartConfiguration(
+            backend_key=launch.employee_backend,
+            model=launch.employee_launch_model,
+            reasoning_effort=launch.employee_launch_reasoning_effort,
         ),
         overrides=overrides,
         workspace_folder=(
@@ -203,26 +244,37 @@ async def start_ticket_conversation(
     conversation that will never be spoken into, which is the whole of what this rule is
     against.
     """
-    await system.start_conversation(
-        ConversationStartRequest(
-            conversation_id=conversation_id,
-            backend_key=values.backend_key,
-            model=values.model,
-            reasoning_effort=values.reasoning_effort,
-            role_materials=values.role_materials,
-            workspace_folder=values.workspace_folder,
-            access=values.access,
-        )
-    )
-    linked = tickets_data.write_ticket_conversation_start(
-        conn,
-        ticket.id,
+    request = ConversationStartRequest(
         conversation_id=conversation_id,
-        backend=values.backend_key.value,
+        backend_key=values.backend_key,
         model=values.model,
         reasoning_effort=values.reasoning_effort,
-        now=now,
+        role_materials=values.role_materials,
+        workspace_folder=values.workspace_folder,
+        access=values.access,
     )
+    await system.start_conversation(request)
+    try:
+        ensure_started_conversation_record(
+            conn, resolve_conversation_start_request(request), created_at=now
+        )
+        linked = tickets_data.write_ticket_conversation_start(
+            conn,
+            ticket.id,
+            conversation_id=conversation_id,
+            backend=values.backend_key.value,
+            model=values.model,
+            reasoning_effort=values.reasoning_effort,
+            now=now,
+        )
+    except BaseException as start_error:
+        try:
+            await system.kill(conversation_id)
+        except BaseException as cleanup_error:
+            start_error.add_note(
+                f"cleanup also failed for conversation {conversation_id}: {cleanup_error}"
+            )
+        raise
     # Either this one landed or the Ticket already had one; both leave it naming a
     # conversation, and that is the one the caller has to send into.
     now_in = linked.conversation_id or conversation_id
@@ -257,6 +309,7 @@ async def send_to_ticket_conversation(
     sent_at_unix_milliseconds: int | None = None,
     worker_type_registry: WorkerTypeRegistry | None = None,
     now: int,
+    required_sprint_item_id: str | None = None,
 ) -> DeliveredMessage:
     """Send a message into this Ticket's conversation, making one if there is none yet.
 
@@ -293,6 +346,22 @@ async def send_to_ticket_conversation(
     own values.
     """
     ticket = tickets_data.read_ticket(conn, ticket_id)
+    if required_sprint_item_id is not None:
+        if ticket.sprint_item_id != required_sprint_item_id:
+            raise PlannerError(
+                ErrorCode.agent_forbidden,
+                "the ticket is not a current child of this Sprint Item supervisor",
+                {
+                    "ticket_id": ticket_id,
+                    "sprint_item_id": required_sprint_item_id,
+                },
+            )
+        if ticket.conversation_id is None:
+            raise PlannerError(
+                ErrorCode.not_found,
+                "the ticket has no current Worker conversation",
+                {"ticket_id": ticket_id},
+            )
     if conversation_id is None and ticket.conversation_id is None:
         if mode is PromptDeliveryMode.steer:
             # A steer is text for a turn that is already running, and there is no
@@ -382,9 +451,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
             conn,
             ticket_id,
             expected_conversation_id=sending_into,
-            model=(
-                ticket.employee_launch_model if runs_under.model is None else runs_under.model
-            ),
+            model=(ticket.employee_launch_model if runs_under.model is None else runs_under.model),
             reasoning_effort=(
                 ticket.employee_launch_reasoning_effort
                 if runs_under.reasoning_effort is None
@@ -488,8 +555,8 @@ async def _let_go_of_a_conversation_that_was_never_spoken_in(
 ) -> None:
     """Undo a conversation whose first message did not land, and only that one."""
     await system.kill(conversation_id)
-    tickets_data.clear_ticket_conversation_link(
-        conn, ticket_id, expected_conversation_id=conversation_id, now=now
+    tickets_data.remove_ticket_conversation_start(
+        conn, ticket_id, conversation_id=conversation_id, now=now
     )
 
 
@@ -530,6 +597,41 @@ def read_agent_conversations(
     return {str(row[0]): str(row[1]) for row in rows}
 
 
+def read_sprint_item_supervisor_conversation_history(
+    conn: sqlite3.Connection, sprint_item_id: str
+) -> list[dict[str, str | int]]:
+    """Find every durable transcript started under one Sprint Item identity."""
+    rows = conn.execute(
+        "SELECT conversation_id,identity_environment_variables,created_at "
+        "FROM conversations ORDER BY created_at,conversation_id"
+    ).fetchall()
+    history: list[dict[str, str | int]] = []
+    for row in rows:
+        try:
+            identity = json.loads(str(row["identity_environment_variables"]))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(identity, list):
+            continue
+        values = {
+            str(pair[0]): str(pair[1])
+            for pair in identity
+            if isinstance(pair, list) and len(pair) == 2
+        }
+        if (
+            values.get("PLAN_ACTOR") != "sprint_item_supervisor"
+            or values.get("PLAN_SPRINT_ITEM_ID") != sprint_item_id
+        ):
+            continue
+        history.append(
+            {
+                "conversation_id": str(row["conversation_id"]),
+                "created_at": int(row["created_at"]),
+            }
+        )
+    return history
+
+
 async def start_agent_conversation(
     system: ConversationSystem,
     conn: sqlite3.Connection,
@@ -537,6 +639,7 @@ async def start_agent_conversation(
     values: ConversationStartValues,
     *,
     conversation_id: str,
+    required_sprint_item_id: str | None = None,
 ) -> LinkedConversation:
     """Start a conversation for an agent that is not a Ticket, under a minted name.
 
@@ -558,12 +661,28 @@ async def start_agent_conversation(
         )
     )
     with conn:
-        conn.execute(
-            "INSERT INTO agents (agent_key, conversation_id) VALUES (?, ?) "
-            "ON CONFLICT(agent_key) DO UPDATE SET conversation_id = excluded.conversation_id "
-            "WHERE agents.conversation_id IS NULL",
-            (agent_key, conversation_id),
-        )
+        if required_sprint_item_id is None:
+            conn.execute(
+                "INSERT INTO agents (agent_key, conversation_id) VALUES (?, ?) "
+                "ON CONFLICT(agent_key) DO UPDATE SET conversation_id = excluded.conversation_id "
+                "WHERE agents.conversation_id IS NULL",
+                (agent_key, conversation_id),
+            )
+        else:
+            linked = conn.execute(
+                "UPDATE agents SET conversation_id=? WHERE agent_key=? "
+                "AND conversation_id IS NULL AND EXISTS ("
+                "SELECT 1 FROM sprint_items WHERE id=? AND kind='normal' "
+                "AND supervisor_agent_key=agents.agent_key)",
+                (conversation_id, agent_key, required_sprint_item_id),
+            )
+            if linked.rowcount == 0 and read_agent_conversation(conn, agent_key) is None:
+                await system.kill(conversation_id)
+                raise PlannerError(
+                    ErrorCode.not_found,
+                    "Sprint Item supervisor no longer exists",
+                    {"sprint_item_id": required_sprint_item_id},
+                )
     now_in = read_agent_conversation(conn, agent_key) or conversation_id
     return LinkedConversation(conversation_id=now_in, made_here=now_in == conversation_id)
 
@@ -582,6 +701,7 @@ async def send_to_agent_conversation(
     mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
+    required_sprint_item_id: str | None = None,
 ) -> DeliveredMessage:
     """Send a message into this agent's conversation, making one if there is none yet.
 
@@ -596,7 +716,12 @@ async def send_to_agent_conversation(
             return _no_turn_to_steer_into()
         making = created_conversation_id or new_conversation_id()
         linked = await start_agent_conversation(
-            system, conn, agent_key, values, conversation_id=making
+            system,
+            conn,
+            agent_key,
+            values,
+            conversation_id=making,
+            required_sprint_item_id=required_sprint_item_id,
         )
         if linked.made_here:
             # Made here, on the values this message says it runs under, so the message has
@@ -656,8 +781,7 @@ async def _let_go_of_an_agent_conversation(
     await system.kill(conversation_id)
     with conn:
         conn.execute(
-            "UPDATE agents SET conversation_id = NULL "
-            "WHERE agent_key = ? AND conversation_id = ?",
+            "UPDATE agents SET conversation_id = NULL WHERE agent_key = ? AND conversation_id = ?",
             (agent_key, conversation_id),
         )
 
@@ -687,8 +811,7 @@ async def reset_agent_conversation(
     await system.kill(conversation_id)
     with conn:
         conn.execute(
-            "UPDATE agents SET conversation_id = NULL "
-            "WHERE agent_key = ? AND conversation_id = ?",
+            "UPDATE agents SET conversation_id = NULL WHERE agent_key = ? AND conversation_id = ?",
             (agent_key, conversation_id),
         )
 

@@ -441,7 +441,7 @@ def test_real_server_chief_external_work_terse_output_and_actor_rejection(
         "--ceiling",
         "none",
         "--at-cap",
-        "propose",
+        "user_review",
         "--json",
         actor=None,
     )

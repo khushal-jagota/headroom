@@ -64,13 +64,17 @@ value path.
 
 _Code paths:_ `src/planner/tickets/` (the Ticket Stage and its fields).
 
-### The Ticket's one conversation
+### The Ticket's conversations
 
-A Ticket points at one conversation, and everything reaches the worker through it:
+A Ticket points at one active conversation, and everything reaches the worker through it:
 worker steps Panels starts on its own, what the human types in the pane, and revision
 guidance sent back from Review. Starting a fresh one is deliberate — it stops the old
 worker outright and discards anything it was still holding — and the new one starts from
 the Ticket's last-chosen backend, model and reasoning.
+
+The Ticket also keeps every conversation it has had. Reset clears only the active
+pointer. The history remains in oldest-first order, and each past transcript remains
+reachable from the Ticket. A past conversation is a record, not a place to send new work.
 
 The conversation system owns the transcript. Panels keeps no second message or
 active-turn table. Pending worker context reaches the worker only when it is included
@@ -97,7 +101,7 @@ is not a worker proposal and not a general Stage bypass. The operation requires 
 complete Kickoff field value, an exact settled-field prefix for the target Stage, and a Chief
 request. It refuses backward moves, pending proposals, active ticket control, and a
 worker that is mid-turn. It moves the ceiling to the imported Stage but preserves the Ticket's
-at-cap choice: an explicit **Stop** remains Stop; otherwise **Continue** remains. The
+review route: an explicit **Stop** remains Stop; otherwise **User review** remains. The
 target Stage's effective ownership then determines whether the Ticket rests ready for
 the worker, with the user, or paired.
 
@@ -106,12 +110,15 @@ scope, and ownership-derived resting status together. A validation or concurrenc
 failure leaves the ticket exactly as it was. Committing is itself what tells the
 readiness loop to look again.
 
-An unparented backlog Ticket may point at a project by `project_id`. A Ticket under a
-Sprint Item derives its Project and effective sprint from that item. Ticket responses
-expose `sprint_item_id`, `effective_sprint_id`, and `resolved_priority_anchors`; they do
-not expose or accept a direct Ticket `sprint_id`. The resolved anchors name the Sprint
-Item and Project, with each anchor's priority state, so callers can explain the context
-used at creation. The `project` display name remains in responses for compatibility.
+Every Ticket stores its Project and optional Sprint directly. A `null` Sprint means
+backlog. A Ticket can also name one optional Sprint Item whose Project and Sprint match
+the Ticket. The compound placement writer rejects mismatched combinations and clears a
+classification that no longer matches a changed Project or Sprint.
+
+Ticket responses expose `project_id`, `sprint_id`, `sprint_item_id`, and
+`resolved_priority_anchors`. `effective_sprint_id` remains a compatibility alias for the
+direct Sprint. The resolved anchors name the optional Sprint Item and Project, with each
+anchor's priority state. The `project` display name also remains for compatibility.
 
 If creation does not supply a Ticket priority, Panels uses the Sprint Item priority
 when the Ticket has an item, otherwise the assessed Project priority, otherwise P3. An
@@ -155,10 +162,15 @@ when no active blocker remains. Panels does not show reverse, cleared, transitiv
 graph views. A Ticket may still block a Sprint item through the same existing directed
 link engine.
 
+Any Ticket worker can add or remove these supported blocking links. The worker must
+send its own existing Ticket id with its worker identity. Direct callers keep the same
+access. The link writer still validates every endpoint, rejects active cycles, updates
+blocked Ticket status, and commits the complete change once.
+
 ### Ordinary Ticket edits
 
-One ordinary edit may change a Ticket's title, priority, deadline, project, and
-sprint together. Panels checks the whole request before saving any of it. All requested
+One ordinary edit may change a Ticket's title, priority, deadline, Project, Sprint, and
+optional Sprint Item together. Panels checks the whole request before saving any of it. All requested
 changes succeed together or none do, and the history records
 only fields that really changed. Sending values the Ticket already has leaves it
 unchanged.
@@ -218,17 +230,23 @@ _Code paths:_ `src/planner/tickets/logic/resolution.py` (the proposal resolver),
 
 ## How far a worker may go: the scope
 
-Every ticket carries a permission with two parts — together, its **scope**:
+Every ticket carries a permission with two parts. Together, these parts form its **scope**:
 
 - **The ceiling** — how far along the stages a worker may push this ticket on its own.
-- **At the cap** — what a worker may do once the ticket reaches that ceiling: either
-  **Stop** (don't even suggest anything) or **Continue** (draft the next step and park
-  it for approval). Continue keeps the stored `propose` value and its existing behavior.
+- **At the cap** — the route at the ceiling:
+
+| Route | Paired Stage behavior | At the ceiling | User Review |
+| --- | --- | --- | --- |
+| **Stop** | Preserve normal ownership | Prevent a proposal | Hidden |
+| **Agent review** | Use worker ownership through the ceiling | Park for the owning Sprint Item supervisor | Hidden |
+| **User review** | Preserve normal ownership | Park for the user | Visible |
 
 Below the ceiling, a worker-owned Stage's proposal is accepted automatically and the
-ticket advances. A paired Stage's proposal always parks instead. At the ceiling, the
-at-cap rule decides whether a worker-owned Stage may propose. User-owned Stages are not
-automatically dispatched; paired Stages only get their opening turn. New tickets start leashed right at
+ticket advances. Agent review makes paired Stages worker-owned through the ceiling.
+The explicit ownership override still takes priority. Stop and User review preserve the
+normal Stage ownership. At the ceiling, the route decides whether a worker-owned Stage
+can propose and where that proposal parks. User-owned Stages do not dispatch automatically.
+Paired Stages get one opening turn. New tickets start leashed right at
 **Kickoff**: the ceiling is `needs_kickoff` for every Worker type, so nothing advances past
 the human-approved intake until the human grants scope onward — review before agents
 start. Every later stage behaves the same way, including the last two: an accepted
@@ -236,24 +254,24 @@ implementation advances to **needs closeout**, and an accepted closeout advances
 straight to **done**. (The threshold used by sprint-in-progress behavior is the
 *second* stage, held distinct from this start ceiling; see `worker-types.md`.)
 
-## The approval gate, and the scope row
+## The approval gate and Ticket leash
 
 Whenever the human approves a step, they must say in the same breath how far the
-worker may go next — the system refuses an approval that doesn't answer that
-question. That same scope is shown and editable right on the ticket header as a plain
-row: "approved until [a stage] then Continue" — or "then Stop", rendered as pills you
-can tap to change any time. A fresh approval starts on Continue so the worker
-keeps drafting the next gated step unless the human changes it. At Kickoff, an unchosen
+worker can go next. The system refuses an approval that does not answer that
+question. The Ticket details disclosure shows the same scope as a readable leash:
+"approved until [a stage], then [route]." The disclosure includes selects for the
+ceiling and route, plus Take over or Release. A fresh approval starts on User review.
+This default preserves the direct user gate unless the user selects another route. At Kickoff, an unchosen
 ceiling starts from that Worker type's managed suggestion. Other approvals start from
 their normal next Stage. `No further` remains a one-off choice. The stages it offers
 are always the current one and the
 ones after it, never an earlier one, so you can't hand back ground the ticket has
-already covered. One shared source of the allowed stages feeds both the header row
-and the approval screen, so the two can never disagree.
+already covered. One shared source of the allowed stages feeds both the Ticket leash
+and the approval screen, so the two cannot disagree.
 
 Review's single, oldest-first walk shows today's tickets whose status is
-`awaiting_approval` or `needs_user` — nothing else decides membership. A parked
-proposal keeps its approval and revision controls. A Worker help request uses the same
+`awaiting_user_review` or `needs_user`. It excludes `awaiting_agent_review`.
+A user-review proposal keeps its approval and revision controls. A Worker help request uses the same
 Ticket title, Skip, and Open Ticket structure without proposal controls; the answer
 belongs in the Ticket conversation. Either kind leaves Review the moment its status
 changes, whichever way that happens.
@@ -265,7 +283,7 @@ leaves Review. It moves when the message has actually reached the conversation: 
 that got nowhere is not a reply. Only a person can do this. The automatic loop sends into
 the same conversation, and its prompts are not replies.
 
-The Review screen can also send a ticket back instead of accepting it, whatever field
+The Review screen can also send a user-review ticket back instead of accepting it, whatever field
 is currently gated. The human writes short guidance in the review card. Panels
 sends that guidance as the real next message into the Ticket's conversation, and only
 then hands the Ticket back to the worker — that order matters, because the hand-back
@@ -276,12 +294,24 @@ its control status is `agent`. The gated field can therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
 submits the revision.
 
-Replying in chat to a ticket that is waiting for approval is the third way out. The
-reply moves the ticket to `paired` — the human and the worker are now talking — and the
-ticket drops out of Review. The parked proposal is not touched: it stays filed on its
-field, ready to be approved later. Nothing else about the ticket changes.
+An agent-review proposal stores `agent_review` as its route snapshot and enters
+`awaiting_agent_review`. A later scope edit does not redirect it. The exact owning Sprint
+Item supervisor can approve it, reject it with focused revision guidance, or transfer it
+to User Review. Approval uses the canonical proposal resolver. Transfer changes only the
+parked proposal route and status. The user can still approve or reject either parked route
+through the direct Ticket controls. Agent review is available only while the Ticket belongs
+to a normal Sprint Item; placement edits cannot detach a Ticket whose scope or parked proposal
+still requires that supervisor.
 
-_Code paths:_ `web/src/routes/TicketRoute.svelte` (the scope row),
+The database migration maps legacy `propose` scope to `user_review`. It maps legacy parked
+proposals to `awaiting_user_review` and gives each one a `user_review` route snapshot. It
+preserves the proposal body, author, timestamp, Stage, ceiling, status time, and status revision.
+
+Panels creates a durable supervisor obligation for agent and user review. It sends bounded
+batches through the Sprint Item conversation. General Worker messages use the separate
+targeted message path and require an existing Worker conversation.
+
+_Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
 (the approval walk).
 
@@ -298,8 +328,8 @@ tickets and day ordering stay intact.
 Blocker links are removed in the same transaction, and the delete response lists the
 surviving Ticket and Sprint-item endpoints those links pointed at.
 
-The conversation itself lives outside Panels' record and is not erased, but nothing in
-Panels points at it any more.
+The conversations live outside the Ticket record and are not erased. Deletion removes
+their Ticket associations, so Panels no longer assigns those transcripts to that Ticket.
 
 The whole deletion is one transaction, so it announces one change — not one per removed
 day or link.
@@ -316,11 +346,12 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
   these proposals gets asked to take the next step; committing a write is what tells the
   readiness loop to look again at once.
 - **The command-line tool** (`cli.md`) — how a worker files proposals, recaps, and
-  notes; it deliberately holds no accept/approve/grant verb.
+  notes. The direct `ticket approve` command exists, but the `worker` subgroup and a
+  Worker identity hold no approval verb or authority.
 - **The front end** (`frontend.md`) — the Ticket, Review, and Board screens that
   render a ticket's story and carry the human's decisions.
-- **Projects** (`projects.md`) — the catalog used directly by backlog Tickets and
-  inherited through Sprint Items by scheduled Tickets.
+- **Projects** (`projects.md`) — the catalog that Tickets, Sprint Items, and Ideas use
+  directly.
 
 ## Deferred
 
@@ -329,5 +360,4 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 
 ---
 
-_Last verified: 2026-07-27 (the eight Ticket statuses, the unified Review walk, the
-commit itself as the change signal, and revision sent before the Ticket is handed back)._
+_Last verified: 2026-08-12._

@@ -18,6 +18,8 @@ from planner.days import actions as days_actions
 from planner.days import data as days_data
 from planner.days.contracts import AddDayTicketBody
 from planner.days.logic import dates
+from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
+from planner.list_reads.contracts import ListPageRequest
 from planner.tickets.api import (
     Cfg,
     Clk,
@@ -30,8 +32,9 @@ from planner.tickets.api import (
     body_str,
     txn,
 )
+from planner.tickets.contracts import TicketListFilters
 from planner.tickets.data import read_ticket
-from planner.tickets.views import board_view, ticket_json
+from planner.tickets.views import board_view, list_ticket_summaries, ticket_json
 
 router = APIRouter()
 
@@ -142,6 +145,33 @@ async def patch_day(
         for field, value in edits.items():
             days_data.set_day_field(conn, did, field, value, now)
     return await _day_view(conn, did, now, conversations, conversation_record)
+
+
+@router.get("/day/{date}/tickets")
+async def get_day_ticket_summaries(
+    date: str,
+    conn: DbConn,
+    cfg: Cfg,
+    clk: Clk,
+    limit: int = DEFAULT_LIST_LIMIT,
+    offset: int = 0,
+) -> JsonDict:
+    did = resolve_day_id(date, clk, cfg)
+    with txn(conn):
+        days_data.read_day(conn, did, clk.now_unix())
+    page = list_ticket_summaries(
+        conn,
+        page_request=ListPageRequest(limit=limit, offset=offset),
+        filters=TicketListFilters(include_terminal=True),
+        project_id=None,
+        sprint_id=None,
+        sprint_item_id=None,
+        day_id=did,
+        day_order=True,
+    )
+    response = page.response("tickets")
+    response["id"] = did
+    return response
 
 
 @router.post("/day/{date}/tickets")

@@ -28,9 +28,9 @@ def test_an_absent_backend_key_resolves_to_codex() -> None:
     assert resolved.backend_key is ConversationBackendKey.codex
 
 
-def test_an_absent_workspace_folder_resolves_to_the_coding_folder() -> None:
+def test_an_absent_workspace_folder_resolves_to_the_projects_folder() -> None:
     resolved = resolve_conversation_start_request(_request_naming_only_a_model())
-    assert resolved.workspace_folder == Path.home() / "Coding"
+    assert resolved.workspace_folder == Path.home() / "projects"
 
 
 def test_an_absent_access_posture_resolves_to_full_access() -> None:

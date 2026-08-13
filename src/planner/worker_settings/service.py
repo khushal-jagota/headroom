@@ -22,6 +22,7 @@ import yaml
 from planner.conversation.contracts import require_conversation_backend_key
 from planner.core.contracts import ErrorCode, JsonDict, PlannerError
 from planner.skill_sources import ensure_managed_panels_skills, panels_skill_root
+from planner.skill_versions import capture_skill_version
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_settings.contracts import (
     ManagedChiefSettings,
@@ -78,7 +79,7 @@ class _PathSnapshot:
             self._path.symlink_to(self._link_target)
             return
         if self._bytes is not None:
-            self._path.write_bytes(self._bytes)
+            _atomic_replace_bytes(self._path, self._bytes)
 
 
 def managed_worker_settings_root(configured_database_parent: Path | str) -> Path:
@@ -125,6 +126,11 @@ def _worker_settings_lock(root: Path, worker_type: str) -> threading.RLock:
         return lock
 
 
+def _managed_skill_lock(path: Path) -> threading.RLock:
+    resolved = path.expanduser().resolve()
+    return _worker_settings_lock(resolved.parent, f"managed-skill:{resolved.name}")
+
+
 def chief_settings_binding_snapshot_lock(
     configured_database_parent: Path | str,
 ) -> threading.RLock:
@@ -134,12 +140,16 @@ def chief_settings_binding_snapshot_lock(
 
 
 def _atomic_replace_text(path: Path, text: str) -> None:
+    _atomic_replace_bytes(path, text.encode("utf-8"))
+
+
+def _atomic_replace_bytes(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.tmp-{os.getpid()}-", dir=path.parent)
     tmp_path = Path(tmp_name)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as tmp:
-            tmp.write(text)
+        with os.fdopen(fd, "wb") as tmp:
+            tmp.write(content)
         os.replace(tmp_path, path)
     finally:
         try:
@@ -211,6 +221,7 @@ def save_skill(
     payload: dict[str, Any],
     *,
     after_publish: Callable[[], None] | None = None,
+    version_connection: sqlite3.Connection | None = None,
 ) -> ManagedSkill:
     root = ensure_managed_panels_skills(
         configured_database_parent, packaged_skill_root=panels_skill_root()
@@ -224,7 +235,7 @@ def save_skill(
     unexpected = sorted(set(payload) - allowed)
     if unexpected:
         raise PlannerError(ErrorCode.validation, "unknown skill field", {"field": unexpected[0]})
-    with _worker_settings_lock(root, f"skill:{skill_name}"):
+    with _managed_skill_lock(path):
         current = _parse_skill(path.read_text(encoding="utf-8"), skill_name)
         if "name" in payload and payload["name"] != skill_name:
             raise PlannerError(ErrorCode.validation, "skill name is immutable", {})
@@ -242,6 +253,8 @@ def save_skill(
         snapshot = _PathSnapshot(path)
         try:
             _atomic_replace_text(path, rendered)
+            if version_connection is not None:
+                capture_skill_version(version_connection, skill_name, rendered.encode("utf-8"))
             if after_publish is not None:
                 after_publish()
         except Exception:
@@ -938,6 +951,7 @@ def save_chief_skill(
     payload: dict[str, Any],
     *,
     after_publish: Callable[[], None] | None = None,
+    version_connection: sqlite3.Connection | None = None,
 ) -> ManagedChiefSettings:
     """Atomically edit the canonical Chief skill file."""
     allowed = {"name", "description", "markdown_body", "body"}
@@ -951,9 +965,7 @@ def save_chief_skill(
     if "name" in payload and payload["name"] != CHIEF_SKILL_NAME:
         raise PlannerError(ErrorCode.validation, "Chief skill name is immutable", {})
     current_path = _managed_skill_path(configured_database_parent, CHIEF_SKILL_NAME)
-    with _worker_settings_lock(
-        managed_worker_settings_root(configured_database_parent), CHIEF_SETTINGS_KEY
-    ):
+    with _managed_skill_lock(current_path):
         current = _parse_skill(current_path.read_text(encoding="utf-8"), CHIEF_SKILL_NAME)
         description = payload.get("description", current.description)
         body = payload.get("markdown_body", payload.get("body", current.markdown_body))
@@ -971,6 +983,10 @@ def save_chief_skill(
         snapshot = _PathSnapshot(current_path)
         try:
             _atomic_replace_text(current_path, rendered)
+            if version_connection is not None:
+                capture_skill_version(
+                    version_connection, CHIEF_SKILL_NAME, rendered.encode("utf-8")
+                )
             if after_publish is not None:
                 after_publish()
         except Exception:
@@ -1050,6 +1066,7 @@ def save_specialist_skill(
     *,
     after_publish: Callable[[], None] | None = None,
     runtime_skills_root: Path | None = None,
+    version_connection: sqlite3.Connection | None = None,
 ) -> ManagedWorkerSettings:
     definition = registry.require(worker_type)
     allowed = {"description", "markdown_body", "body"}
@@ -1075,7 +1092,10 @@ def save_specialist_skill(
             {"worker_type": worker_type},
         )
     root = managed_worker_settings_root(configured_database_parent)
-    with _worker_settings_lock(root, worker_type):
+    canonical_skill_path = _managed_skill_path(
+        configured_database_parent, definition.worker_profile.specialist_skill
+    )
+    with _managed_skill_lock(canonical_skill_path):
         current = _read_settings_with_recovery(root, definition)
         rendered = _render_skill_from_existing_frontmatter(
             current.specialist_skill.source_text,
@@ -1093,12 +1113,15 @@ def save_specialist_skill(
                     "expected": definition.worker_profile.specialist_skill,
                 },
             )
-        canonical_skill_path = _managed_skill_path(
-            configured_database_parent, definition.worker_profile.specialist_skill
-        )
         skill_snapshot = _PathSnapshot(canonical_skill_path)
         try:
             _atomic_replace_text(canonical_skill_path, rendered)
+            if version_connection is not None:
+                capture_skill_version(
+                    version_connection,
+                    definition.worker_profile.specialist_skill,
+                    rendered.encode("utf-8"),
+                )
             if after_publish is not None:
                 after_publish()
         except Exception:
@@ -1115,6 +1138,7 @@ def patch_specialist_skill(
     *,
     after_publish: Callable[[], None] | None = None,
     runtime_skills_root: Path | None = None,
+    version_connection: sqlite3.Connection | None = None,
 ) -> ManagedWorkerSettings:
     field_names = set(patch)
     if field_names not in ({"description"}, {"markdown_body"}):
@@ -1132,7 +1156,10 @@ def patch_specialist_skill(
         )
     definition = registry.require(worker_type)
     root = managed_worker_settings_root(configured_database_parent)
-    with _worker_settings_lock(root, worker_type):
+    canonical_skill_path = _managed_skill_path(
+        configured_database_parent, definition.worker_profile.specialist_skill
+    )
+    with _managed_skill_lock(canonical_skill_path):
         current = _read_settings_with_recovery(root, definition)
         canonical_payload: dict[str, Any] = {
             "description": current.specialist_skill.description,
@@ -1146,6 +1173,7 @@ def patch_specialist_skill(
             canonical_payload,
             after_publish=after_publish,
             runtime_skills_root=runtime_skills_root,
+            version_connection=version_connection,
         )
 
 

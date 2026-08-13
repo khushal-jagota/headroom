@@ -95,8 +95,9 @@ Before running a `panels chief` command, export `PLAN_ACTOR=chief` so the CLI se
    reconciled existing Ticket, add it to today unless the user explicitly wants it off
    the roster. If a newly created Ticket should be off today, remove it from the Day as
    a separate follow-up; backlog placement is an independent choice.
-6. Read the resulting Ticket back with `panels ticket show <id> --json` and report the
-   Ticket id, resulting Stage, and today placement.
+6. Read the resulting Ticket header with `panels ticket show <id> --json`. Use
+   `panels day list-tickets --json` for today placement. Report the Ticket id,
+   resulting Stage, and today placement.
 
 Do not use these commands for ordinary Ticket edits, convenient Stage jumps, or work a
 Ticket worker is doing inside Panels. Clear ambiguity with the user instead of
@@ -127,12 +128,17 @@ For broad questions, inspect the smallest useful set first:
 
 ```sh
 panels day show --json
+panels day list-tickets --json
 panels sprint show current --json
 panels ticket list --json
 panels sprint item list --json
 ```
 
 For review questions, inspect the review queue or relevant tickets before advising.
+
+List commands return bounded summaries. Read their page facts before you assume that a
+result is complete. Prefer Ticket filters and `--search` before a larger `--limit`. Use
+`--include-terminal` only when finished or dropped work is relevant.
 
 For capture, create the smallest correct object. **A Kickoff is intake, not your plan,
 interpretation, or extrapolation.** Preserve the user's wording closely and include only

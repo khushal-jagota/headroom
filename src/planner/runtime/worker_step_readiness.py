@@ -87,11 +87,13 @@ def is_ready_for_worker_step(
         ticket.stage_ownership_overrides,
         worker_type_definition=worker_type_definition,
         default_stage_ownership_mode=ticket.default_stage_ownership_mode,
+        ceiling=ticket.ceiling,
+        at_cap=ticket.at_cap,
     )
     if ownership_mode is StageOwnershipMode.user:
         return False
     # `empty` is the only startable status. It covers blocked, needs_user, paired,
-    # awaiting_approval, agent, user, and errored in one gate.
+    # either review status, agent, user, and errored in one gate.
     if ticket.ticket_status is not TicketStatus.empty:
         return False
     if worker_type_definition.gating_field(ticket.stage) is None:

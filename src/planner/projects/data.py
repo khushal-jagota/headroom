@@ -6,18 +6,23 @@ import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
+from typing import Final
 
 from planner.core.contracts import JsonDict, Priority
 from planner.core.errors import ErrorCode, PlannerError
+from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.projects.contracts import Project
 
 DEFAULT_PROJECTS: tuple[tuple[str, str], ...] = (
     ("project_vylo", "Vylo"),
     ("project_tribe", "Tribe"),
     ("project_other", "Other"),
+    ("project_personal", "Personal"),
 )
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+_FOLDER_PATH_UNSET: Final = object()
 
 
 @contextmanager
@@ -38,6 +43,7 @@ def _row_to_project(row: sqlite3.Row) -> Project:
         name=str(row["name"]),
         summary=str(row["summary"]),
         priority=Priority(str(row["priority"])) if row["priority"] is not None else None,
+        folder_path=Path(str(row["folder_path"])) if row["folder_path"] is not None else None,
         created_at=int(row["created_at"]),
         updated_at=int(row["updated_at"]),
     )
@@ -49,6 +55,7 @@ def project_json(project: Project) -> JsonDict:
         "name": project.name,
         "summary": project.summary,
         "priority": project.priority.value if project.priority is not None else None,
+        "folder_path": str(project.folder_path) if project.folder_path is not None else None,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
     }
@@ -71,15 +78,37 @@ def seed_default_projects(conn: sqlite3.Connection) -> None:
 
 def list_projects(conn: sqlite3.Connection) -> list[Project]:
     rows = conn.execute(
-        "SELECT id, name, summary, priority, created_at, updated_at "
+        "SELECT id, name, summary, priority, folder_path, created_at, updated_at "
         "FROM projects ORDER BY lower(name), id"
     ).fetchall()
     return [_row_to_project(row) for row in rows]
 
 
+def list_project_summaries(
+    conn: sqlite3.Connection, *, page_request: ListPageRequest
+) -> ListPage[JsonDict]:
+    rows = conn.execute(
+        "SELECT id, name, priority FROM projects ORDER BY lower(name), id"
+    ).fetchall()
+    summaries = [
+        {
+            "id": str(row["id"]),
+            "name": str(row["name"]),
+            "priority": str(row["priority"]) if row["priority"] is not None else None,
+        }
+        for row in rows[page_request.offset : page_request.offset + page_request.limit]
+    ]
+    return ListPage(
+        rows=tuple(summaries),
+        match_count=len(rows),
+        limit=page_request.limit,
+        offset=page_request.offset,
+    )
+
+
 def read_project(conn: sqlite3.Connection, project_id: str) -> Project:
     row = conn.execute(
-        "SELECT id, name, summary, priority, created_at, updated_at "
+        "SELECT id, name, summary, priority, folder_path, created_at, updated_at "
         "FROM projects WHERE id = ?",
         (project_id,),
     ).fetchone()
@@ -90,7 +119,7 @@ def read_project(conn: sqlite3.Connection, project_id: str) -> Project:
 
 def read_project_by_name(conn: sqlite3.Connection, name: str) -> Project:
     row = conn.execute(
-        "SELECT id, name, summary, priority, created_at, updated_at "
+        "SELECT id, name, summary, priority, folder_path, created_at, updated_at "
         "FROM projects WHERE name = ? COLLATE NOCASE",
         (name.strip(),),
     ).fetchone()
@@ -126,10 +155,12 @@ def create_project(
     name: str,
     priority: Priority,
     summary: str = "",
+    folder_path: str | Path | None = None,
     now: int,
 ) -> Project:
     clean_name = name.strip()
     clean_summary = summary.strip()
+    normalized_folder_path = _normalize_folder_path(folder_path)
     if not clean_name:
         raise PlannerError(ErrorCode.validation, "project name is required", {})
 
@@ -152,9 +183,18 @@ def create_project(
             project_id = f"{base_id}_{suffix}"
             suffix += 1
         conn.execute(
-            "INSERT INTO projects (id, name, summary, priority, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (project_id, clean_name, clean_summary, priority.value, now, now),
+            "INSERT INTO projects "
+            "(id, name, summary, priority, folder_path, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                project_id,
+                clean_name,
+                clean_summary,
+                priority.value,
+                str(normalized_folder_path) if normalized_folder_path is not None else None,
+                now,
+                now,
+            ),
         )
     return read_project(conn, project_id)
 
@@ -166,9 +206,10 @@ def update_project(
     name: str | None = None,
     summary: str | None = None,
     priority: Priority | None = None,
+    folder_path: str | Path | None | object = _FOLDER_PATH_UNSET,
     now: int,
 ) -> Project:
-    updates: dict[str, str] = {}
+    updates: dict[str, str | None] = {}
     if name is not None:
         clean_name = name.strip()
         if not clean_name:
@@ -178,6 +219,11 @@ def update_project(
         updates["summary"] = summary.strip()
     if priority is not None:
         updates["priority"] = priority.value
+    if folder_path is not _FOLDER_PATH_UNSET:
+        normalized_folder_path = _normalize_folder_path(folder_path)
+        updates["folder_path"] = (
+            str(normalized_folder_path) if normalized_folder_path is not None else None
+        )
     if not updates:
         raise PlannerError(ErrorCode.validation, "no project fields to update", {})
 
@@ -198,3 +244,19 @@ def update_project(
         params = [*updates.values(), now, project_id]
         conn.execute(f"UPDATE projects SET {assignments}, updated_at = ? WHERE id = ?", params)
     return read_project(conn, project_id)
+
+
+def _normalize_folder_path(folder_path: str | Path | None | object) -> Path | None:
+    if folder_path is None:
+        return None
+    if not isinstance(folder_path, (str, Path)):
+        raise PlannerError(ErrorCode.validation, "invalid folder_path", {})
+    try:
+        path = Path(folder_path).expanduser()
+    except RuntimeError:
+        raise PlannerError(
+            ErrorCode.validation, "folder_path must be absolute or start with ~", {}
+        ) from None
+    if not path.is_absolute():
+        raise PlannerError(ErrorCode.validation, "folder_path must be absolute or start with ~", {})
+    return path.resolve(strict=False)

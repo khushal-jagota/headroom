@@ -19,7 +19,7 @@
   import { taskProgressFrom } from "../../lib/conversation/taskProgress";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import type {
-    AgentCommand,
+    ComposerCatalogEntry,
     BackendModel,
     BackendSnapshot,
     ConversationBackendKey,
@@ -48,7 +48,7 @@
     ownSenderLabel = null,
     livenessPulse = 0,
     effortOptions = [],
-    availableCommands = [],
+    composerCatalog = [],
     startsOnModel = null,
     startsOnReasoningEffort = null,
     heldPromptRows = [],
@@ -58,6 +58,7 @@
     composerPlaceholder = "Message the agent...",
     composerDisabled = false,
     showRunPicker = true,
+    readOnly = false,
     conversationState = $bindable(null),
     emptyState,
     onSend,
@@ -104,9 +105,8 @@
     ownSenderLabel?: string | null;
     livenessPulse?: number;
     effortOptions?: readonly string[];
-    /** The commands this conversation's agent reports, which the composer offers under a
-     *  line being written as one. */
-    availableCommands?: readonly AgentCommand[];
+    /** The typed text shortcuts this conversation offers in the composer. */
+    composerCatalog?: readonly ComposerCatalogEntry[];
     /** What a conversation started from here would run on, for the composer to show while
      *  there is none. Its owner resolved them; nothing here reads them. */
     startsOnModel?: string | null;
@@ -118,6 +118,9 @@
     composerPlaceholder?: string;
     composerDisabled?: boolean;
     showRunPicker?: boolean;
+    /** A historical transcript is visible through this single boundary. No mutation
+     *  control is rendered inside it. */
+    readOnly?: boolean;
     /** How far open the conversation is, or null for a page that is not making a layer of
      *  it. The page sets what it opens in; this writes back when the person moves it. */
     conversationState?: ConversationState | null;
@@ -147,6 +150,7 @@
   let menuButton = $state<HTMLButtonElement | null>(null);
 
   let headerException = $derived.by(() => {
+    if (readOnly) return { text: "past · read only", accent: false };
     if (ask || userInput) return { text: "waiting for you", accent: true };
     if (running) return { text: "working", accent: false };
     return null;
@@ -237,6 +241,8 @@
 <div
   class="chat-panel"
   data-conversation-pane
+  data-conversation-read-only={readOnly ? "true" : undefined}
+  data-conversation-read-only-boundary={readOnly ? "true" : undefined}
   data-conversation-state={conversationState}
   bind:this={paneElement}
 >
@@ -266,43 +272,45 @@
           onclick={moveThroughTheStates}
         >{stateControl.glyph}</button>
       {/if}
-      <div class="chat-overflow" bind:this={menuElement}>
-        <button
-          type="button"
-          class="chat-overflow-btn"
-          bind:this={menuButton}
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          aria-label="Conversation options"
-          onclick={() => (menuOpen ? closeMenu() : (menuOpen = true))}
-        >⋯</button>
-        {#if menuOpen}
-          <div class="chat-overflow-menu">
-            <div class="chat-overflow-actions" role="menu">
-              {#if confirmArmed}
-                <button
-                  type="button"
-                  class="chat-overflow-item chat-overflow-item--confirm"
-                  role="menuitem"
-                  data-conversation-new-confirm
-                  onclick={confirmNewConversation}
-                >Confirm — this kills the old one</button>
-              {:else}
-                <button
-                  type="button"
-                  class="chat-overflow-item"
-                  role="menuitem"
-                  data-conversation-new-arm
-                  onclick={() => (confirmArmed = true)}
-                >New conversation</button>
+      {#if !readOnly}
+        <div class="chat-overflow" bind:this={menuElement}>
+          <button
+            type="button"
+            class="chat-overflow-btn"
+            bind:this={menuButton}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label="Conversation options"
+            onclick={() => (menuOpen ? closeMenu() : (menuOpen = true))}
+          >⋯</button>
+          {#if menuOpen}
+            <div class="chat-overflow-menu">
+              <div class="chat-overflow-actions" role="menu">
+                {#if confirmArmed}
+                  <button
+                    type="button"
+                    class="chat-overflow-item chat-overflow-item--confirm"
+                    role="menuitem"
+                    data-conversation-new-confirm
+                    onclick={confirmNewConversation}
+                  >Confirm — this kills the old one</button>
+                {:else}
+                  <button
+                    type="button"
+                    class="chat-overflow-item"
+                    role="menuitem"
+                    data-conversation-new-arm
+                    onclick={() => (confirmArmed = true)}
+                  >New conversation</button>
+                {/if}
+              </div>
+              {#if conversationState === "opened" && workspaceFolder}
+                <div class="chat-overflow-path" data-conversation-workspace>{workspaceFolder}</div>
               {/if}
             </div>
-            {#if conversationState === "opened" && workspaceFolder}
-              <div class="chat-overflow-path" data-conversation-workspace>{workspaceFolder}</div>
-            {/if}
-          </div>
-        {/if}
-      </div>
+          {/if}
+        </div>
+      {/if}
     </div>
   </div>
 
@@ -333,35 +341,41 @@
     <ConversationRestBar line={restLine} />
   {/if}
 
-  <ConversationComposer
-    conversationId={conversationExists ? conversationId : null}
-    {backendKey}
-    {conversationExists}
-    {running}
-    {ask}
-    {askNote}
-    {current}
-    {models}
-    {backends}
-    {effortOptions}
-    {availableCommands}
-    {startsOnModel}
-    {startsOnReasoningEffort}
-    {heldPromptRows}
-    {fateNote}
-    {errorNote}
-    placeholder={composerPlaceholder}
-    disabled={composerDisabled}
-    {showRunPicker}
-    {onSend}
-    {onStop}
-    {onAnswer}
-    {userInput}
-    {onSubmitUserInput}
-    {onCancelTurn}
-    {onDiscardHeldPrompt}
-    {onPromoteHeldPrompt}
-  />
+  {#if readOnly}
+    <div class="conversation-read-only" data-conversation-read-only-notice>
+      Past conversation · read only
+    </div>
+  {:else}
+    <ConversationComposer
+      conversationId={conversationExists ? conversationId : null}
+      {backendKey}
+      {conversationExists}
+      {running}
+      {ask}
+      {askNote}
+      {current}
+      {models}
+      {backends}
+      {effortOptions}
+      {composerCatalog}
+      {startsOnModel}
+      {startsOnReasoningEffort}
+      {heldPromptRows}
+      {fateNote}
+      {errorNote}
+      placeholder={composerPlaceholder}
+      disabled={composerDisabled}
+      {showRunPicker}
+      {onSend}
+      {onStop}
+      {onAnswer}
+      {userInput}
+      {onSubmitUserInput}
+      {onCancelTurn}
+      {onDiscardHeldPrompt}
+      {onPromoteHeldPrompt}
+    />
+  {/if}
 </div>
 
 <style>
@@ -372,5 +386,17 @@
   :global([data-conversation-pane][data-conversation-state="rest"] .chat-head),
   :global([data-conversation-pane][data-conversation-state="rest"] .chat-thread-shell) {
     display: none;
+  }
+  .conversation-read-only {
+    flex: none;
+    margin: 0 calc(var(--space-4) * -1);
+    border-top: var(--border-hairline) solid var(--border-color);
+    padding: var(--space-3) var(--space-4);
+    color: var(--text-faint);
+    font-family: var(--font-ui);
+    font-size: var(--type-xs);
+    letter-spacing: var(--tracking-label);
+    text-align: center;
+    text-transform: uppercase;
   }
 </style>

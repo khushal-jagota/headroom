@@ -51,7 +51,7 @@ def _a_ticket_on_a_proposal(
         ticket_id=ticket_id,
         stdin=PROPOSAL,
     )
-    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_approval"
+    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_user_review"
     return ticket_id
 
 
@@ -115,7 +115,7 @@ def test_a_paired_visit_stays_open_when_status_changes_to_awaiting_approval(
         ticket_id=ticket_id,
         stdin=APPROACH,
     )
-    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_approval"
+    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_user_review"
 
     _wait_for_ticket_refresh(server, api, page, ticket_id, "Still open after proposal")
     page.wait_for_selector(f'{PANE}[data-conversation-state="opened"]', timeout=WAIT_MS)

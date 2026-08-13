@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   dayActionTiles,
+  dayDotOrder,
   dayPageState,
   dayVisualTicket
 } from "../src/lib/dayPresentation";
@@ -27,7 +28,7 @@ describe("Day presentation", () => {
       ticket("done", { stage: "done", is_done: true }),
       ticket("working", { ticket_status: "agent", agent_working: true }),
       ticket("paired", { ticket_status: "paired" }),
-      ticket("review", { ticket_status: "awaiting_approval" }),
+      ticket("review", { ticket_status: "awaiting_user_review" }),
       ticket("needs-you", { needs_me: true }),
       ticket("upcoming")
     ].map((item) => dayVisualTicket(item, {}));
@@ -47,6 +48,40 @@ describe("Day presentation", () => {
       { key: "working", label: "Working", count: 1, href: "#/workspace" },
       { key: "paired", label: "Paired", count: 1, href: "#/workspace" },
       { key: "done", label: "Done", count: 1, href: "#/workspace" }
+    ]);
+  });
+
+  it("orders the progress dots by state and keeps roster order inside a run", () => {
+    const visuals = [
+      ticket("done-1", { stage: "done", is_done: true }),
+      ticket("working-1", { ticket_status: "agent", agent_working: true }),
+      ticket("upcoming-1"),
+      ticket("review-1", { ticket_status: "awaiting_user_review" }),
+      ticket("needs-you-1", { needs_me: true }),
+      ticket("paired-1", { ticket_status: "paired" }),
+      ticket("done-2", { stage: "done", is_done: true }),
+      ticket("working-2", { ticket_status: "agent", agent_working: true })
+    ].map((item) => dayVisualTicket(item, {}));
+
+    expect(dayDotOrder(visuals).map((item) => item.ticket.id)).toEqual([
+      "needs-you-1",
+      "review-1",
+      "paired-1",
+      "working-1",
+      "working-2",
+      "upcoming-1",
+      "done-1",
+      "done-2"
+    ]);
+    expect(visuals.map((item) => item.ticket.id)).toEqual([
+      "done-1",
+      "working-1",
+      "upcoming-1",
+      "review-1",
+      "needs-you-1",
+      "paired-1",
+      "done-2",
+      "working-2"
     ]);
   });
 

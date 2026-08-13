@@ -280,16 +280,79 @@ def test_skills_home_api_lists_and_edits_any_packaged_skill(
     target = tmp_path / "skills"
     shutil.copytree(source, target)
     monkeypatch.setattr(worker_settings_service, "panels_skill_root", lambda: target)
-    client, _ = _app(tmp_path)
+    client, db_path = _app(tmp_path)
     with client:
         listed = client.get("/api/skills")
         assert listed.status_code == 200
-        assert any(skill["name"] == "panels" for skill in listed.json()["skills"])
-        edited = client.patch("/api/skills/panels", json={"description": "edited from home"})
+        assert any(
+            skill["name"] == "panels-sprint-item-supervisor"
+            for skill in listed.json()["skills"]
+        )
+        edited = client.patch(
+            "/api/skills/panels-sprint-item-supervisor",
+            json={"description": "edited from Config"},
+        )
         assert edited.status_code == 200
-        assert edited.json()["description"] == "edited from home"
-        assert "edited from home" in (target / "panels" / "SKILL.md").read_text(encoding="utf-8")
+        assert edited.json()["description"] == "edited from Config"
+        skill_path = target / "panels-sprint-item-supervisor" / "SKILL.md"
+        assert "edited from Config" in skill_path.read_text(encoding="utf-8")
         assert client.patch("/api/skills/panels", json={"name": "other"}).status_code == 400
+
+    with connect(str(db_path)) as conn:
+        version = conn.execute(
+            "SELECT content FROM managed_skill_versions WHERE skill_name = ? "
+            "ORDER BY rowid DESC LIMIT 1",
+            ("panels-sprint-item-supervisor",),
+        ).fetchone()
+    assert bytes(version["content"]) == skill_path.read_bytes()
+
+
+def test_supervisor_skill_edit_does_not_rewrite_current_conversation_records(
+    tmp_path: Path, canonical_skills_root: Path
+) -> None:
+    client, db_path = _app(tmp_path)
+    with client:
+        item = client.post(
+            "/api/items",
+            json={"title": "Current supervisor", "project_id": "project_vylo"},
+        ).json()
+        agent_key = item["supervisor"]["agent_key"]
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "INSERT INTO conversations(conversation_id,backend_key,model,"
+                "workspace_folder,access,latest_sequence,created_at) "
+                "VALUES ('conv-current-supervisor','codex','test','/tmp','floor',1,1)"
+            )
+            conn.execute(
+                "INSERT INTO conversation_events "
+                "(conversation_id,sequence,kind,payload,created_at) "
+                "VALUES ('conv-current-supervisor',1,'agent_message',?,1)",
+                (json.dumps({"text": "Keep this exact history"}),),
+            )
+            conn.execute(
+                "UPDATE agents SET conversation_id='conv-current-supervisor' "
+                "WHERE agent_key=?",
+                (agent_key,),
+            )
+            conn.commit()
+
+        edited = client.patch(
+            "/api/skills/panels-sprint-item-supervisor",
+            json={"description": "Future supervisor guidance"},
+        )
+        assert edited.status_code == 200, edited.text
+
+    with connect(str(db_path)) as conn:
+        agent = conn.execute(
+            "SELECT conversation_id FROM agents WHERE agent_key=?", (agent_key,)
+        ).fetchone()
+        event = conn.execute(
+            "SELECT kind,payload FROM conversation_events "
+            "WHERE conversation_id='conv-current-supervisor' AND sequence=1"
+        ).fetchone()
+    assert agent["conversation_id"] == "conv-current-supervisor"
+    assert event["kind"] == "agent_message"
+    assert json.loads(event["payload"]) == {"text": "Keep this exact history"}
 
 
 def test_launch_defaults_are_file_backed_and_only_future_tickets_change(

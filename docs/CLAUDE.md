@@ -29,9 +29,10 @@ and never narrates stages ("Stage 4 did X"); it states what stands today.
 - **Leads with what the system _is_ and what it's _for_** — where its work lands
   in the product — then the load-bearing decisions. A doc is an editorial cut, not
   a catalogue: drop anything that doesn't earn its place.
-- **One ASCII diagram of the shape** near the top — ordered stages where order is
-  the point, or a two-region split for a non-linear system. Never a call-graph of
-  function names. Mermaid and other renderer-dependent formats don't display here.
+- **An ASCII diagram when shape is the point** — use one near the top for ordered
+  stages, ownership splits, or multi-system flow. Do not force one into a reference or
+  operator page that is clearer without it. Never use a call graph of function names.
+  Mermaid and other renderer-dependent formats do not display here.
 - **Plain language, the system's own words** — never the code's vocabulary as
   substance (signatures, types, control flow). Names appear only in the code-path
   pointers.
@@ -41,10 +42,11 @@ and never narrates stages ("Stage 4 did X"); it states what stands today.
 - **Honest, not aspirational.** State what actually works today, including when
   that's thin or blocked. A thin system written as thin is the point; a blocker
   named is worth more than a blocker hidden.
-- **Handoffs** — where this system hands to another: one line on the neighbour
-  plus a pointer to its doc.
-- **Deferred** — one section at the end for known gaps and obligations, each bound
-  to a _trigger_ ("when recovery ships," "before real users"), never a stage number.
+- **Handoffs where systems meet** — name the neighbor and point to its doc. A focused
+  operator or interface reference does not need a mechanical Handoffs section.
+- **Deferred only for known gaps** — bind each item to a _trigger_ ("when recovery
+  ships," "before real users"), never a stage number. Omit the section when the page
+  owns no known gap.
 - A footer: `_Last verified: <date>._` — when the doc was last checked against code.
 
 ## The map

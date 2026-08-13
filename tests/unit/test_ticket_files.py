@@ -13,8 +13,8 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.files.contracts import TicketFile
-from planner.files.logic.paths import resolve_ticket_file
+from planner.files.contracts import SprintItemFile, TicketFile
+from planner.files.logic.paths import resolve_sprint_item_file, resolve_ticket_file
 
 
 def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
@@ -40,6 +40,72 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
 
 def _ticket_root(db_path: Path) -> Path:
     return db_path.parent / "files" / "tickets"
+
+
+def _sprint_item_root(db_path: Path) -> Path:
+    return db_path.parent / "files" / "sprint-items"
+
+
+def test_sprint_item_files_use_an_isolated_root_and_route(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    target = _sprint_item_root(db_path) / "si_files" / "notes" / "brief.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("brief", encoding="utf-8")
+    with connect(str(db_path)) as conn:
+        conn.execute(
+            "INSERT INTO sprint_items(id,title,project_id,created_at,updated_at) "
+            "VALUES ('si_files','Files','project_vylo',1,1)"
+        )
+        conn.commit()
+
+    assert resolve_sprint_item_file(db_path, "si_files", "notes/brief.md") == (
+        SprintItemFile("si_files", "notes/brief.md", target.resolve(strict=True))
+    )
+    with TestClient(app) as client:
+        response = client.get("/files/sprint-items/si_files/notes/brief.md")
+        missing = client.get("/files/sprint-items/si_other/notes/brief.md")
+
+    assert response.status_code == 200 and response.text == "brief"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert missing.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    ("", "../brief.md", "notes\\brief.md", "%2e%2e/brief.md", "folder"),
+)
+def test_sprint_item_file_resolution_rejects_unsafe_or_non_file_targets(
+    tmp_path: Path, relative_path: str
+) -> None:
+    db_path = tmp_path / "data" / "planning.db"
+    folder = _sprint_item_root(db_path) / "si_files" / "folder"
+    folder.mkdir(parents=True)
+    with pytest.raises(ValueError):
+        resolve_sprint_item_file(db_path, "si_files", relative_path)
+
+
+def test_sprint_item_file_resolution_rejects_root_entity_and_file_symlinks(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "data" / "planning.db"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "brief.md").write_text("outside", encoding="utf-8")
+    root = _sprint_item_root(db_path)
+    root.parent.mkdir(parents=True)
+    root.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError):
+        resolve_sprint_item_file(db_path, "si_files", "brief.md")
+    root.unlink()
+    root.mkdir()
+    (root / "si_files").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError):
+        resolve_sprint_item_file(db_path, "si_files", "brief.md")
+    (root / "si_files").unlink()
+    (root / "si_files").mkdir()
+    (root / "si_files" / "brief.md").symlink_to(outside / "brief.md")
+    with pytest.raises(ValueError):
+        resolve_sprint_item_file(db_path, "si_files", "brief.md")
 
 
 def test_resolve_ticket_file_accepts_nested_paths_and_spaces(tmp_path: Path) -> None:

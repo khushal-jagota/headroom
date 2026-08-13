@@ -9,11 +9,9 @@ from alembic import command
 from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 from planner.notifications import data as notifications_data
-from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS
 
 PREVIOUS_REVISION = "notifications"
-HEAD_REVISION = "weekly_sprint_checkpoint_schedule"
+HEAD_REVISION = "supervisor_obligations"
 
 
 def _upgrade_to_previous_revision(path: Path) -> None:
@@ -30,13 +28,14 @@ def test_upgrade_preserves_delivery_graph_and_seeds_agent_no_history_cursor(
     db_path = tmp_path / "notification-subjects.db"
     _upgrade_to_previous_revision(db_path)
     conn = connect(str(db_path))
-    ticket = tickets_data.create_ticket(
-        conn,
-        worker_type="coding",
-        title="Existing Ticket",
-        actor="human",
-        now=1,
-        title_max_chars=TITLE_MAX_CHARS,
+    ticket_id = "t_existing"
+    conn.execute(
+        "INSERT INTO tickets "
+        "(id, title, worker_type, employee_backend, stage, ceiling, fields, "
+        "created_at, updated_at) VALUES "
+        "(?, 'Existing Ticket', 'coding', 'hermes', 'needs_kickoff', "
+        "'needs_success', '{}', 1, 1)",
+        (ticket_id,),
     )
     conn.execute(
         "INSERT INTO conversations"
@@ -59,7 +58,7 @@ def test_upgrade_preserves_delivery_graph_and_seeds_agent_no_history_cursor(
         "source_sequence, occurred_at, payload) "
         "VALUES ('old:decided', 'worker_completed', ?, 'ticket', ?, 1, 2, "
         '\'{"ticket_title":"Existing Ticket"}\')',
-        (ticket.id, ticket.id),
+        (ticket_id, ticket_id),
     )
     conn.execute(
         "INSERT INTO notification_decisions(fact_id, outcome, decided_at) "
@@ -88,7 +87,7 @@ def test_upgrade_preserves_delivery_graph_and_seeds_agent_no_history_cursor(
         "source_sequence, occurred_at, payload) "
         "VALUES ('old:undecided', 'worker_failed', ?, 'ticket', ?, 2, 5, "
         '\'{"ticket_title":"Existing Ticket"}\')',
-        (ticket.id, ticket.id),
+        (ticket_id, ticket_id),
     )
     conn.close()
 
@@ -108,13 +107,13 @@ def test_upgrade_preserves_delivery_graph_and_seeds_agent_no_history_cursor(
         (
             "old:decided",
             "ticket",
-            ticket.id,
+            ticket_id,
             '{"ticket_title":"Existing Ticket"}',
         ),
         (
             "old:undecided",
             "ticket",
-            ticket.id,
+            ticket_id,
             '{"ticket_title":"Existing Ticket"}',
         ),
     ]

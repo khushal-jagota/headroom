@@ -95,7 +95,11 @@ export function sprintTicketCondition(ticket: SprintTicket): SprintTicketConditi
   if (ticket.ticket_status === "blocked" || ticket.ticket_status === "errored") {
     return { mark: "errored", word: "blocked" };
   }
-  if (ticket.has_pending_proposal || ticket.ticket_status === "awaiting_approval") {
+  if (
+    ticket.has_pending_proposal ||
+    ticket.ticket_status === "awaiting_agent_review" ||
+    ticket.ticket_status === "awaiting_user_review"
+  ) {
     return { mark: "current-awaiting-approval", word: "to review" };
   }
   if (ticket.ticket_status === "needs_user") return { mark: "needs-me", word: "need you" };
@@ -123,10 +127,17 @@ export function sprintTicketSections(
   item: SprintItem,
   todayTicketIds: ReadonlySet<string>
 ): SprintTicketSections {
+  return sprintTicketSectionsForTickets(item.tickets || [], todayTicketIds);
+}
+
+export function sprintTicketSectionsForTickets(
+  tickets: SprintTicket[],
+  todayTicketIds: ReadonlySet<string>
+): SprintTicketSections {
   const today: SprintTicket[] = [];
   const later: SprintTicket[] = [];
   const done: SprintTicket[] = [];
-  for (const ticket of item.tickets || []) {
+  for (const ticket of tickets) {
     if (ticket.stage === "dropped") continue;
     if (ticket.stage === "done") done.push(ticket);
     else if (todayTicketIds.has(ticket.id)) today.push(ticket);
@@ -176,7 +187,6 @@ export function sprintProjectGroups(
   for (const group of grouped.values()) {
     group.items.sort((left, right) =>
       Number(sprintItemIsDone(left)) - Number(sprintItemIsDone(right)) ||
-      Number(left.kind === "other") - Number(right.kind === "other") ||
       rankPriority(left.priority) - rankPriority(right.priority) ||
       left.title.localeCompare(right.title, undefined, { sensitivity: "base" }) ||
       left.id.localeCompare(right.id)

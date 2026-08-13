@@ -4,7 +4,7 @@
   import { fetchText } from "../lib/api";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
-  import { fieldSlot, labelize, stageLabel } from "../lib/ui";
+  import { fieldSlot, labelize, reviewRouteLabel, stageLabel } from "../lib/ui";
   import {
     ceilingOptionsFor,
     fieldStageVisualStateFor,
@@ -32,6 +32,9 @@
   import StageMark from "../components/StageMark.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import TicketPriorityControl from "../components/TicketPriorityControl.svelte";
+  import TicketConversationHistory from "../components/TicketConversationHistory.svelte";
+  import TicketVerdict from "../components/TicketVerdict.svelte";
+  import TicketTroubleNotes from "../components/TicketTroubleNotes.svelte";
 
   let { id }: { id: string } = $props();
   const stableId = untrack(() => id);
@@ -44,6 +47,8 @@
     queries.ticketConversationStartValues(stableId)
   );
   const projects = createQuery(() => queries.projects());
+  const sprints = createQuery(() => queries.sprintSummaries());
+  const sprintItems = createQuery(() => queries.sprintItems());
   const manifest = createQuery(() => queries.workerTypeManifests());
 
   // Derive the per-Worker-type lifecycle from the QUERY (ticket.data?.worker_type), not
@@ -76,6 +81,13 @@
    * the conversation writes back here when they do.
    */
   let conversationState = $state<ConversationState>("rest");
+  /** Null means that this screen follows the Ticket's active conversation. An id means
+   *  that the person explicitly chose one durable history entry, so detail refreshes do
+   *  not move the transcript when the active pointer changes. */
+  let selectedPastConversationId = $state<string | null>(null);
+  let selectedConversationId = $derived(
+    selectedPastConversationId ?? ticket.data?.conversation_id ?? null
+  );
 
   /** Seed the conversation once from the status at the start of this Ticket visit.
    *
@@ -115,6 +127,18 @@
     { value: "", label: "No project" },
     ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
   ]);
+  let sprintOptions = $derived([
+    { value: "", label: "Backlog" },
+    ...(sprints.data?.sprints || []).map((sprint) => ({ value: sprint.id, label: sprint.name }))
+  ]);
+  let placementItemOptions = $derived(
+    (sprintItems.data?.items || []).filter(
+      (item) =>
+        item.kind === "normal" &&
+        item.project_id === ticket.data?.project_id &&
+        item.sprint_id === ticket.data?.sprint_id
+    )
+  );
 
   $effect(() => {
     const recap = ticket.data?.recap;
@@ -190,6 +214,27 @@
     return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body });
   }
 
+  async function patchPlacement(
+    detail: TicketDetail,
+    changes: Partial<Pick<TicketDetail, "project_id" | "sprint_id" | "sprint_item_id">>
+  ): Promise<void> {
+    const projectId = changes.project_id !== undefined ? changes.project_id : detail.project_id ?? null;
+    const sprintId = changes.sprint_id !== undefined ? changes.sprint_id : detail.sprint_id ?? null;
+    const requestedItemId =
+      changes.sprint_item_id !== undefined ? changes.sprint_item_id : detail.sprint_item_id ?? null;
+    const requestedItem = (sprintItems.data?.items || []).find((item) => item.id === requestedItemId);
+    const sprintItemId =
+      requestedItem?.project_id === projectId && requestedItem?.sprint_id === sprintId
+        ? requestedItem.id
+        : null;
+    headerError = null;
+    try {
+      await patch({ project_id: projectId, sprint_id: sprintId, sprint_item_id: sprintItemId });
+    } catch (err) {
+      headerError = err;
+    }
+  }
+
   function saveScope(body: Record<string, unknown>): Promise<unknown> {
     return mutateJson(`/api/tickets/${stableId}/scope`, { method: "POST", body });
   }
@@ -246,6 +291,13 @@
     return mutateJson(`/api/tickets/${stableId}/value/${field}`, {
       method: "PUT",
       body: { body }
+    });
+  }
+
+  function saveVerdict(verdict: { rating: number | null; text: string | null }): Promise<unknown> {
+    return mutateJson(`/api/tickets/${stableId}/verdict`, {
+      method: "PUT",
+      body: verdict
     });
   }
 
@@ -317,7 +369,8 @@
 
   function currentStageRunLabel(detail: TicketDetail): string | null {
     if (detail.blocked || detail.ticket_status === "blocked") return null;
-    if (detail.ticket_status === "awaiting_approval") return "awaiting approval";
+    if (detail.ticket_status === "awaiting_agent_review") return "awaiting agent review";
+    if (detail.ticket_status === "awaiting_user_review") return "awaiting user review";
     if (userOwnsCurrentStage(detail)) {
       return "you're on it";
     }
@@ -382,7 +435,7 @@
                 if (priority !== detail.priority) void patch({ priority });
               }}
             />
-            <span class="ticket-identity-group">
+            <span class="ticket-identity-group" data-ticket-placement>
               <span class="ticket-identity-separator" aria-hidden="true">·</span>
               <span
                 class="ticket-identity-fact"
@@ -394,18 +447,57 @@
                 {:else}
                   No project
                 {/if}
-                {#if !detail.sprint_item_id}
+                <select
+                  aria-label={detail.project_id ? "Ticket project" : "Add ticket project"}
+                  value={detail.project_id || ""}
+                  onchange={(event) => void patchPlacement(detail, {
+                    project_id: event.currentTarget.value || null,
+                    sprint_item_id: null
+                  })}
+                >
+                  {#each projectOptions as option}
+                    <option value={option.value}>{option.label}</option>
+                  {/each}
+                </select>
+              </span>
+              <span class="ticket-identity-separator" aria-hidden="true">·</span>
+              <span class="ticket-identity-fact" data-sprint-control>
+                {sprintOptions.find((option) => option.value === (detail.sprint_id || ""))?.label || "Backlog"}
+                <select
+                  aria-label="Ticket sprint"
+                  value={detail.sprint_id || ""}
+                  onchange={(event) => void patchPlacement(detail, {
+                    sprint_id: event.currentTarget.value || null,
+                    sprint_item_id: null
+                  })}
+                >
+                  {#each sprintOptions as option}
+                    <option value={option.value}>{option.label}</option>
+                  {/each}
+                </select>
+              </span>
+              {#if detail.sprint_id}
+                <span class="ticket-identity-separator" aria-hidden="true">·</span>
+                <span
+                  class="ticket-identity-fact"
+                  class:ticket-identity-add={!detail.sprint_item_id}
+                  data-sprint-item-control
+                >
+                  {placementItemOptions.find((item) => item.id === detail.sprint_item_id)?.title || "Other"}
                   <select
-                    aria-label={detail.project_id ? "Ticket project" : "Add ticket project"}
-                    value={detail.project_id || ""}
-                    onchange={(event) => void patch({ project_id: event.currentTarget.value || null })}
+                    aria-label="Ticket sprint item"
+                    value={detail.sprint_item_id || ""}
+                    onchange={(event) => void patchPlacement(detail, {
+                      sprint_item_id: event.currentTarget.value || null
+                    })}
                   >
-                    {#each projectOptions as option}
-                      <option value={option.value}>{option.label}</option>
+                    <option value="">Other</option>
+                    {#each placementItemOptions as item}
+                      <option value={item.id}>{item.title}</option>
                     {/each}
                   </select>
-                {/if}
-              </span>
+                </span>
+              {/if}
             </span>
             {#if lc}
               <span class="ticket-identity-group">
@@ -462,7 +554,7 @@
                   {/if}
                   approved until
                   <span class="ticket-leash-value" data-leash-ceiling>{stageLabel(detail.ceiling)}</span>,
-                  then <span class="ticket-leash-value" data-leash-cap>{detail.at_cap === "propose" ? "continue" : "stop"}</span>
+                  then <span class="ticket-leash-value" data-leash-cap>{reviewRouteLabel(detail.at_cap)}</span>
                   <span class="disclosure-chev" aria-hidden="true"></span>
                 </summary>
                 <div class="ticket-leash-menu" role="menu">
@@ -486,7 +578,10 @@
                       onchange={(event) => void updateScope({ ceiling: detail.ceiling, at_cap: event.currentTarget.value })}
                     >
                       <option value="stop">then stop</option>
-                      <option value="propose">then continue</option>
+                      {#if detail.sprint_item_id !== null}
+                        <option value="agent_review">then agent review</option>
+                      {/if}
+                      <option value="user_review">then user review</option>
                     </select>
                   </div>
                   <div class="ticket-leash-rule"></div>
@@ -548,6 +643,8 @@
         </header>
 
         <div class="ticket-col">
+          <TicketVerdict stage={detail.stage} verdict={detail.verdict} onSave={saveVerdict} />
+          <TicketTroubleNotes notes={detail.trouble_notes} />
           <div class="fields">
             {#snippet kickoffContextRow()}
               {#if detail.employee_configuration_editable}
@@ -583,6 +680,7 @@
                         ticketStage={detail.stage}
                         ceiling={detail.ceiling}
                         suggestedNextCeiling={detail.suggested_next_ceiling}
+                        allowAgentReview={detail.sprint_item_id !== null}
                         emptyText={emptyTicketFieldText}
                         runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                         runLabelAttention={stageState === "current-awaiting-approval"}
@@ -620,6 +718,7 @@
                   ticketStage={detail.stage}
                   ceiling={detail.ceiling}
                   suggestedNextCeiling={detail.suggested_next_ceiling}
+                  allowAgentReview={detail.sprint_item_id !== null}
                   emptyText={emptyTicketFieldText}
                   runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                   runLabelAttention={stageState === "current-awaiting-approval"}
@@ -644,10 +743,16 @@
         onclickcapture={dismissConversationOnAPressBesideTheCard}
       >
         <div class="ticket-conversation-column">
+          <TicketConversationHistory
+            history={detail.conversation_history}
+            activeConversationId={detail.conversation_id}
+            bind:selectedPastConversationId
+          />
           <LiveConversation
             bind:conversationState
-            conversationId={detail.conversation_id}
+            conversationId={selectedConversationId}
             ticketId={detail.id}
+            readOnly={selectedPastConversationId !== null}
             label={conversationWorkerTypeLabel(detail)}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
             backends={conversationBackends}

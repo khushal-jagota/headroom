@@ -4,7 +4,7 @@ These checked-in files describe the Linux and macOS operating surface. They do n
 modify a host by themselves.
 
 The VPS has one Panels identity: the existing UID-1000 `vps` user. Source lives at
-`~/Coding/Panels`; the deployed app and live state live at
+`~/projects/Panels/Panels`; the deployed app and live state live at
 `~/Deployments/Panels/current`. Do not create `panels-live`, `panels-worker`, or
 `panels-deploy` accounts and do not install these units as system services.
 
@@ -64,7 +64,8 @@ environment intact. It is separate from `bin/panels-launcher`, which rebuilds an
 isolated environment for the live service, scheduled maintenance, and backups.
 
 Staging is not a service. Prepare its fake state under
-`~/Coding/Panels/data/environments/staging`, start it from `~/Coding/Panels` on demand,
+`~/projects/Panels/Panels/data/environments/staging`, start it from
+`~/projects/Panels/Panels` on demand,
 and stop it after active work. Ticket servers follow the same on-demand rule from their
 isolated worktrees.
 

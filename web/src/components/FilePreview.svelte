@@ -83,11 +83,11 @@
 {/snippet}
 
 <div
-  class={`file-preview file-preview--${mode}${inline ? " file-preview--inline" : ""}${resolved.target.kind === "ticket-file" ? " file-preview--managed" : ""}`}
+  class={`file-preview file-preview--${mode}${inline ? " file-preview--inline" : ""}${resolved.target.kind !== "external-link" ? " file-preview--managed" : ""}`}
   data-file-preview
   data-file-preview-kind={resolved.kind}
 >
-  {#if mode === "embedded" && resolved.kind !== "download" && resolved.target.kind === "ticket-file" && resolved.previewHref}
+  {#if mode === "embedded" && resolved.kind !== "download" && resolved.target.kind !== "external-link" && resolved.previewHref}
     {@render mobilePreviewLink(resolved.previewHref)}
   {/if}
   {#if resolved.kind === "image"}

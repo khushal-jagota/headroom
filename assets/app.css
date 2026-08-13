@@ -2346,8 +2346,8 @@ button.list-row:hover .list-row-title {
  * lives here because component styles may not declare box-shadow. */
 .task-pop { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
 
-/* the "/" command menu = a raised popover above the composer; a read of the
- * gateway catalog. No dividers, no accent — grouped rows fade into the surface. */
+/* The composer catalog is a raised popover above the composer. No dividers and no accent:
+ * grouped rows fade into the surface. */
 .chat-menu {
   position: absolute;
   left: 0;
@@ -3229,6 +3229,12 @@ select {
   background: var(--surface-base);
 }
 
+.board-workspace-right--item {
+  padding: 0;
+  overflow: hidden;
+  background: var(--surface-base);
+}
+
 .board-workspace-right--chief {
   padding: var(--space-5) var(--space-6);
   background: var(--surface-sunken);
@@ -3255,9 +3261,9 @@ select {
   font-size: var(--type-sm);
 }
 
-/* Status buckets — the rail's one level. Each bucket is a box (the worker-section
- * idiom), headed by the serif voice. A bucket with no tickets is not rendered. */
-.disclosure--workspace-bucket {
+/* One box represents one Sprint Item. The fixed priority gutter and the row inset
+ * form one shared left rule from the Item title through its Tickets. */
+.board-workspace-item {
   min-width: 0;
   padding: var(--space-4);
   border: var(--border-hairline) solid var(--border-color);
@@ -3265,25 +3271,46 @@ select {
   background: transparent;
 }
 
-.disclosure--workspace-bucket + .disclosure--workspace-bucket {
+.board-workspace-item + .board-workspace-item {
   margin-top: var(--space-4);
 }
 
-.disclosure--workspace-bucket > .disclosure-summary {
+.board-workspace-item.active {
+  border-color: var(--text-faintest);
+}
+
+.board-workspace-item-head {
   width: 100%;
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  text-align: left;
-  margin: 0;
   color: var(--text-strong);
 }
 
-.disclosure--workspace-bucket[open] > .disclosure-summary {
+.board-workspace-item--open > .board-workspace-item-head {
   margin-bottom: var(--space-3);
 }
 
-.board-workspace-bucket-label {
+.board-workspace-item-open {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-workspace-item-priority {
+  display: flex;
+  align-items: center;
+  flex: 0 0 var(--space-6);
+}
+
+.board-workspace-item-title {
   min-width: 0;
   font-family: var(--font-serif);
   font-size: var(--type-serif-xl);
@@ -3292,70 +3319,117 @@ select {
   line-height: 1.2;
 }
 
-/* A folded status group hides its rows, so it carries their number in the
- * trailing slot. An open group does not need one: the rows are the count.
- * The count and the chevron share the one slot, so nothing moves between
- * the two states. */
-.board-workspace-bucket-count {
+.board-workspace-item--quiet .board-workspace-item-title {
+  color: var(--text-muted);
+}
+
+.board-workspace-item-fold {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   flex: 0 0 auto;
-  margin-left: auto;
+  min-height: var(--space-5);
+  padding: 0 0 0 var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.board-workspace-item-count {
   font-size: var(--type-md);
   font-variant-numeric: tabular-nums;
-  color: var(--text-faint);
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
-.disclosure--workspace-bucket[open]
-  > .disclosure-summary
-  > .board-workspace-bucket-count {
-  display: none;
-}
-
-/* The count is the folded group's only mark, so the chevron stands down and
- * the count carries the pointer and keyboard feedback in its place. */
-.disclosure--workspace-bucket:not([open])
-  > .disclosure-summary
-  > .disclosure-chev {
-  display: none;
-}
-
-.disclosure--workspace-bucket
-  > .disclosure-summary:hover
-  > .board-workspace-bucket-count,
-.disclosure--workspace-bucket
-  > .disclosure-summary:focus-visible
-  > .board-workspace-bucket-count {
+.board-workspace-item-fold:hover .board-workspace-item-count {
   color: var(--text-strong);
 }
 
-/* Errored carries the app's error red at the bucket level, so the row marks
- * stay free to carry only the two activity signals. */
-.disclosure--workspace-bucket[data-bucket-key="errored"] .board-workspace-bucket-label {
-  color: var(--accent-error);
-}
-
-.board-workspace-bucket-tickets {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-/* Buckets use the shared trailing disclosure mark. The mark stays at the far
- * edge and appears only when its own summary carries pointer or keyboard intent. */
-.disclosure--workspace-bucket > .disclosure-summary > .disclosure-chev {
-  flex: 0 0 auto;
-  margin-left: auto;
+.board-workspace-item-chevron {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-right: var(--border-strong) solid var(--text-faintest);
+  border-bottom: var(--border-strong) solid var(--text-faintest);
+  transform: rotate(45deg);
   opacity: 0;
   transition: opacity var(--motion-fast) var(--motion-ease);
 }
 
-.disclosure--workspace-bucket > .disclosure-summary:hover > .disclosure-chev,
-.disclosure--workspace-bucket > .disclosure-summary:focus-visible > .disclosure-chev {
+.board-workspace-item-fold:hover .board-workspace-item-chevron,
+.board-workspace-item-fold:focus-visible .board-workspace-item-chevron {
   opacity: 1;
 }
 
-/* Ticket rows keep priority in a fixed leading gutter, followed by the title and
- * the existing condition mark. Priority never displaces the status signal. */
+.board-workspace-item-tickets,
+.board-workspace-no-item-tickets {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-left: var(--space-6);
+}
+
+.board-workspace-item-more {
+  align-self: flex-start;
+  margin-top: var(--space-1);
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-faintest);
+  font-size: var(--type-sm);
+  cursor: pointer;
+}
+
+.board-workspace-item-more:hover {
+  color: var(--text-muted);
+}
+
+.board-workspace-view-control {
+  display: flex;
+  justify-content: flex-end;
+  margin: calc(-1 * var(--space-2)) var(--board-workspace-rail-pad-x) var(--space-3);
+}
+
+.board-workspace-view-control button {
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  cursor: pointer;
+}
+
+.board-workspace-view-control button:hover {
+  color: var(--text-muted);
+}
+
+.board-workspace-no-item {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+.board-workspace-no-item h2 {
+  margin: 0;
+  padding: 0 calc(var(--space-4) + var(--space-6));
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.board-workspace-no-item-tickets {
+  padding-left: calc(var(--space-4) + var(--space-6));
+}
+
+.board-workspace-quiet-line {
+  padding: var(--space-2) var(--board-workspace-rail-pad-x);
+  color: var(--text-faintest);
+  font-size: var(--type-sm);
+}
+
+/* Ticket rows begin at the Item title edge and retain their condition mark. */
 .list-row--board {
   width: 100%;
   display: flex;
@@ -3383,7 +3457,11 @@ select {
 
 /* Needs-you rows — an ask is waiting — read one text-step stronger at rest, keyed
  * off the existing status attribute (no new props). */
-.list-row--board[data-ticket-status="awaiting_approval"] {
+.list-row--board[data-ticket-status="awaiting_approval"],
+.list-row--board[data-ticket-status="awaiting_user_review"],
+.list-row--board[data-ticket-status="needs_user"],
+.list-row--board[data-ticket-status="user"],
+.list-row--board[data-ticket-status="paired"] {
   color: var(--text-default);
 }
 
@@ -4984,9 +5062,18 @@ select {
     display: none;
   }
 
+  .board-workspace-shell--item .board-workspace-left {
+    display: none;
+  }
+
   .board-workspace-right.board-workspace-right--chief {
     display: flex;
     padding: var(--space-5);
+  }
+
+  .board-workspace-right.board-workspace-right--item {
+    display: flex;
+    padding: 0;
   }
 
 }
@@ -5423,6 +5510,368 @@ select {
   [data-screen="sprint"] .sprint-ticket-row .stage-mark,
   [data-screen="sprint"] .sprint-ticket-state {
     margin-top: 3px;
+  }
+}
+
+/* --- Sprint Item workspace ----------------------------------------------- */
+.shell:has(.sprint-screen--workspace) {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell:has(.sprint-screen--workspace) .shell-content,
+.shell:has(.sprint-screen--workspace) .screen,
+.sprint-screen--workspace {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.shell:has(.sprint-screen--workspace) .shell-content {
+  padding: 0;
+}
+
+.sprint-screen--workspace {
+  container-type: inline-size;
+  container-name: sprint-item-pane;
+}
+
+.sprint-item-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: max(var(--space-6), env(safe-area-inset-bottom));
+}
+
+.sprint-item-doc {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.sprint-item-column,
+.sprint-item-conversation-column {
+  width: 100%;
+  max-width: calc(var(--ticket-column-measure) + var(--ticket-column-gutter));
+  margin: 0 auto;
+  padding-inline: var(--space-7);
+}
+
+.sprint-item-column {
+  padding-bottom: var(--space-6);
+}
+
+.sprint-workspace-head {
+  padding-top: var(--space-4);
+}
+
+.sprint-workspace-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.sprint-workspace-title {
+  margin: var(--space-3) 0 0;
+  color: var(--text-strong);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-display);
+  font-weight: 500;
+  letter-spacing: var(--tracking-title);
+  line-height: 1.26;
+}
+
+.sprint-workspace-title .inline-edit-display,
+.sprint-workspace-brief .inline-edit-display {
+  padding: 0;
+}
+
+.sprint-workspace-brief {
+  max-width: 62ch;
+  margin-top: var(--space-2);
+  color: var(--text-faint);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-lg);
+  line-height: 1.5;
+}
+
+.sprint-workspace-brief .quiet-line {
+  color: var(--text-faintest);
+  font-style: italic;
+}
+
+.sprint-workspace-attention {
+  margin-top: var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-hairline) solid color-mix(in srgb, var(--accent-error) 45%, transparent);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: var(--type-sm);
+}
+
+.sprint-workspace-attention strong {
+  color: var(--accent-error);
+  margin-right: var(--space-1);
+}
+
+.sprint-workspace-section {
+  margin-top: var(--space-6);
+}
+
+.sprint-workspace-section > summary,
+.sprint-workspace-group > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  list-style: none;
+  cursor: pointer;
+}
+
+.sprint-workspace-section > summary::-webkit-details-marker,
+.sprint-workspace-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sprint-workspace-section[open] > summary {
+  margin-bottom: var(--space-3);
+}
+
+.sprint-workspace-section-label {
+  color: var(--text-strong);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-xl);
+  font-weight: 500;
+  letter-spacing: var(--tracking-title);
+  line-height: 1.2;
+}
+
+.sprint-workspace-count {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.sprint-workspace-chevron {
+  flex: none;
+  margin-left: auto;
+}
+
+.sprint-workspace-chevron::before {
+  content: "›";
+  color: var(--text-faintest);
+}
+
+details[open] > summary > .sprint-workspace-count {
+  display: none;
+}
+
+details[open] > summary > .sprint-workspace-chevron::before {
+  content: "⌄";
+}
+
+details:not([open]) > summary > .sprint-workspace-chevron {
+  display: none;
+}
+
+.sprint-workspace-group {
+  margin-top: var(--space-4);
+}
+
+.sprint-workspace-group:first-of-type {
+  margin-top: 0;
+}
+
+.sprint-workspace-group[open] > summary {
+  margin-bottom: var(--space-1);
+}
+
+.sprint-workspace-group > summary {
+  color: var(--text-faintest);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.sprint-workspace-group .sprint-workspace-count {
+  font-size: var(--type-sm);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.sprint-workspace-ticket-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  margin-inline: calc(var(--space-2) * -1);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+}
+
+.sprint-workspace-ticket-row:hover,
+.sprint-workspace-name-row:hover,
+.sprint-workspace-artifact:hover {
+  background: var(--surface-overlay);
+  color: var(--text-strong);
+}
+
+.sprint-workspace-ticket-row > :nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+
+.sprint-workspace-name-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-inline: calc(var(--space-2) * -1);
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--text-faint);
+  font-size: var(--type-sm);
+  text-decoration: none;
+}
+
+.sprint-workspace-name-row > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.sprint-workspace-name-row--attention {
+  color: var(--text-default);
+}
+
+.sprint-workspace-name-state {
+  flex: none;
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+}
+
+.sprint-workspace-name-row--done {
+  color: var(--text-faintest);
+}
+
+.sprint-workspace-artifact {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-inline: calc(var(--space-2) * -1);
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--accent-bright);
+  font-size: var(--type-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.sprint-workspace-artifact small {
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  font-weight: 400;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.sprint-workspace-empty {
+  padding-block: var(--space-2);
+  color: var(--text-faintest);
+  font-size: var(--type-sm);
+}
+
+.sprint-item-conversation-layer {
+  z-index: 1;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sprint-item-conversation-column {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sprint-item-conversation-layer [data-conversation-pane] {
+  padding-inline: var(--space-4);
+}
+
+.sprint-item-conversation-layer [data-conversation-pane][data-conversation-state="rest"],
+.sprint-item-conversation-layer [data-conversation-pane][data-conversation-state="peeked"] {
+  background: var(--accent-ink);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.sprint-item-conversation-layer .chat-box {
+  margin-inline: calc(var(--space-4) * -1);
+  padding-inline: var(--space-4);
+  border-width: var(--border-hairline);
+  border-color: transparent;
+  border-top-color: var(--border-color);
+  border-radius: 0;
+}
+
+.sprint-item-conversation-layer [data-conversation-pane]:not([data-conversation-state="opened"]) .chat-box {
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.sprint-item-conversation-layer:has([data-conversation-state="peeked"]) {
+  height: 60%;
+}
+
+.sprint-item-conversation-layer:has([data-conversation-state="opened"]) {
+  height: 100%;
+}
+
+@container sprint-item-pane (max-width: 720px) {
+  .sprint-item-column,
+  .sprint-item-conversation-column {
+    padding-inline: var(--page-gutter);
+  }
+
+  .sprint-item-conversation-layer [data-conversation-pane] {
+    padding-inline: var(--surface-pad);
+  }
+
+  .sprint-item-conversation-layer .chat-box {
+    margin-inline: calc(var(--surface-pad) * -1);
+    padding-inline: var(--surface-pad);
+  }
+
+  .sprint-workspace-title {
+    font-size: 24px;
+  }
+
+  .sprint-workspace-ticket-row {
+    align-items: flex-start;
+  }
+
+  .sprint-workspace-ticket-row > :nth-child(2) {
+    display: -webkit-box;
+    overflow: hidden;
+    line-height: 1.35;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 }
 

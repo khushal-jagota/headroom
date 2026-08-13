@@ -89,7 +89,7 @@ def _ready_ticket(db_path: str, clock: RealClock) -> str:
             actor="human",
             now=clock.now_unix(),
             next_ceiling=NO_FURTHER,
-            at_cap=AtCap.propose,
+            at_cap=AtCap.user_review,
         )
         conn.execute(
             "UPDATE tickets SET conversation_id = ? WHERE id = ?",

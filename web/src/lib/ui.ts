@@ -1,4 +1,4 @@
-import type { TicketDetail, TicketField } from "./types";
+import type { ReviewRoute, TicketDetail, TicketField } from "./types";
 
 export const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const PRIORITY_ORDER = ["P0", "P1", "P2", "P3"];
@@ -17,6 +17,15 @@ export type FieldStageVisualState =
 
 export function stageLabel(value: string): string {
   return String(value).replace(/_/g, " ");
+}
+
+export function reviewRouteLabel(value: ReviewRoute): string {
+  const labels: Record<ReviewRoute, string> = {
+    stop: "stop",
+    agent_review: "agent review",
+    user_review: "user review"
+  };
+  return labels[value];
 }
 
 // Underscores to spaces; capitalizes the first letter by default. Pass

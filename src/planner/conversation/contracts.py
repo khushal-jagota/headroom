@@ -79,7 +79,7 @@ class ConversationAccess(StrEnum):
 # contract — not as an invitation to omit fields. Callers are expected to pass explicit
 # values.
 FLOOR_DEFAULT_BACKEND_KEY: Final = ConversationBackendKey.codex
-FLOOR_DEFAULT_WORKSPACE_FOLDER: Final[Path] = Path.home() / "Coding"
+FLOOR_DEFAULT_WORKSPACE_FOLDER: Final[Path] = Path.home() / "projects"
 FLOOR_DEFAULT_ACCESS: Final = ConversationAccess.full
 
 BACKEND_KEYS_SUPPORTING_STEER: Final[frozenset[ConversationBackendKey]] = frozenset(
@@ -97,23 +97,28 @@ def backend_supports_steer(backend_key: ConversationBackendKey) -> bool:
     return backend_key in BACKEND_KEYS_SUPPORTING_STEER
 
 
+class ComposerCatalogEntryKind(StrEnum):
+    """The closed kinds of entry the conversation composer can offer."""
+
+    command = "command"
+    skill = "skill"
+    app = "app"
+    plugin = "plugin"
+
+
 @dataclass(frozen=True, slots=True)
-class AgentCommand:
-    """One command the agent says a person may type at it.
+class ComposerCatalogEntry:
+    """One typed text shortcut the conversation composer can offer.
 
-    A command is the agent's own, not Panels'. The agent reports what it answers to,
-    Panels offers that list, and the chosen command goes in as ordinary text at the start
-    of a message — the agent parses its own name back out exactly as it would from
-    something typed by hand. Nothing here is interpreted on the way through.
-
-    ``name`` carries no leading slash: the slash is how a person writes a command, not
-    part of what it is called. ``description`` is what the backend said the command does,
-    which may be nothing. ``argument_hint`` is what to type after the name, and is absent
-    for a command that takes nothing — the backends that report one each call it something
-    different, and this is the one name Panels knows it by.
+    ``display_text`` is the label a person sees. It can include its trigger, but the
+    composer does not require that prefix. ``insertion_text`` is the exact text that
+    replaces the active catalog token. Panels does not interpret that text after
+    insertion. It follows the ordinary plain-text delivery path.
     """
 
-    name: str
+    kind: ComposerCatalogEntryKind
+    display_text: str
+    insertion_text: str
     description: str
     argument_hint: str | None = None
 
@@ -144,7 +149,7 @@ class ConversationStartRequest:
     means nothing to a backend that has never heard of it.
 
     An absent ``backend_key``, ``workspace_folder`` or ``access`` takes its floor default
-    (codex, ``~/Coding``, full access). ``reasoning_effort`` and ``role_materials`` have
+    (codex, ``~/projects``, full access). ``reasoning_effort`` and ``role_materials`` have
     no floor default: absent means the conversation is started without them, and for
     reasoning effort that is a real answer — some models take none.
 

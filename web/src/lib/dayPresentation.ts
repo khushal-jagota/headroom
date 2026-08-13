@@ -19,7 +19,11 @@ export type DayActionTile = {
 function groupKeyFor(ticket: DayTicket): string {
   if (ticket.is_done || ticket.stage === "done") return "done";
   if (ticket.waiting_to_closeout) return "waiting_to_closeout";
-  if (ticket.ticket_status === "awaiting_approval" && ticket.gating_field === "kickoff") {
+  if (
+    (ticket.ticket_status === "awaiting_agent_review" ||
+      ticket.ticket_status === "awaiting_user_review") &&
+    ticket.gating_field === "kickoff"
+  ) {
     return "waiting_for_kickoff";
   }
   return String(ticket.ticket_status);
@@ -52,13 +56,44 @@ export function dayVisualTicket(
   }
   if (
     presentation.state === "upcoming" &&
-    (group === "awaiting_approval" ||
+    (group === "awaiting_agent_review" ||
+      group === "awaiting_user_review" ||
       group === "waiting_for_kickoff" ||
       group === "needs_user")
   ) {
     return { ticket, state: "current-awaiting-approval", ariaLabel: "To review", group };
   }
   return { ticket, state: presentation.state, ariaLabel: presentation.ariaLabel, group };
+}
+
+/**
+ * Where each dot state sits in the Day progress row, most urgent first.
+ *
+ * The Day row only produces `needs-me`, `current-awaiting-approval`,
+ * `current-paired`, `current-running`, `upcoming`, and `completed`. The rest are
+ * ranked so the sort stays total. `errored` sits beside `needs-me`: both mean the
+ * ticket stopped and wants the user.
+ */
+const dotOrder: Record<FieldStageVisualState, number> = {
+  "needs-me": 0,
+  errored: 1,
+  "current-awaiting-approval": 2,
+  "current-paired": 3,
+  "current-running": 4,
+  "current-waiting": 5,
+  upcoming: 6,
+  "reply-seen": 7,
+  completed: 8
+};
+
+/**
+ * The Day's tickets in progress-row order: one unbroken run per state, roster
+ * order inside a run. The sort is stable, and the given list is left alone.
+ */
+export function dayDotOrder(
+  visualTickets: readonly DayVisualTicket[]
+): DayVisualTicket[] {
+  return [...visualTickets].sort((left, right) => dotOrder[left.state] - dotOrder[right.state]);
 }
 
 export function dayActionTiles(visualTickets: readonly DayVisualTicket[]): DayActionTile[] {
@@ -73,7 +108,10 @@ export function dayActionTiles(visualTickets: readonly DayVisualTicket[]): DayAc
   for (const visual of visualTickets) {
     if (visual.state === "needs-me") counts["needs-me"] += 1;
     else if (visual.state === "current-running") counts.working += 1;
-    else if (visual.state === "current-awaiting-approval") counts.review += 1;
+    else if (
+      visual.state === "current-awaiting-approval" &&
+      (visual.group === "awaiting_user_review" || visual.group === "waiting_for_kickoff")
+    ) counts.review += 1;
     else if (visual.state === "current-paired") counts.paired += 1;
     else if (visual.state === "completed") counts.done += 1;
   }

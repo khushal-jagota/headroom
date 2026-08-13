@@ -52,6 +52,7 @@ def _ticket(stage: str, fields: TicketFields, *, ceiling: str = "done") -> Ticke
         deadline=None,
         project_id=None,
         project_name=None,
+        sprint_id=None,
         sprint_item_id=None,
         effective_sprint_id=None,
         resolved_priority_anchors=ResolvedTicketPriorityAnchors(
@@ -59,7 +60,7 @@ def _ticket(stage: str, fields: TicketFields, *, ceiling: str = "done") -> Ticke
         ),
         recap="",
         ceiling=ceiling,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
         ticket_status=TicketStatus.empty,
         ticket_status_changed_at=0,
         ticket_status_revision=0,
@@ -110,10 +111,10 @@ def _passed_ticket(conn: Connection, cfg: Config, clock: TestClock) -> Ticket:
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     t = data.change_scope(
-        conn, t.id, ceiling="needs_plan", at_cap=AtCap.propose, actor="human", now=now
+        conn, t.id, ceiling="needs_plan", at_cap=AtCap.user_review, actor="human", now=now
     )
     t = data.file_proposal(
         conn, t.id, field="success", body="success v1", actor="agent", now=now
@@ -157,7 +158,7 @@ def test_edit_passed_field_succeeds(
     assert fields_codec.get_slot(t.fields, "success").value == "success EDITED"
     assert t.stage == "needs_plan"
     assert t.ceiling == "needs_plan"
-    assert t.at_cap is AtCap.propose
+    assert t.at_cap is AtCap.user_review
 
 
 def test_edit_unset_value_rejected() -> None:
@@ -245,10 +246,10 @@ def test_accept_dropped_ticket_with_pending_proposal_rejected(
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     t = data.change_scope(
-        tmp_db, t.id, ceiling="needs_plan", at_cap=AtCap.propose, actor="human", now=now
+        tmp_db, t.id, ceiling="needs_plan", at_cap=AtCap.user_review, actor="human", now=now
     )
     t = data.file_proposal(
         tmp_db, t.id, field="success", body="s", actor="agent", now=now
@@ -273,7 +274,7 @@ def test_accept_dropped_ticket_with_pending_proposal_rejected(
             actor="human",
             now=now,
             next_ceiling=NO_FURTHER,
-            at_cap=AtCap.propose,
+            at_cap=AtCap.user_review,
         )
     assert exc.value.code is ErrorCode.validation
     assert exc.value.detail == {"stage": "dropped"}
@@ -304,7 +305,7 @@ def test_accept_non_gating_proposal_keeps_opened_paired_stage_resting(
         actor="human",
         now=now,
         next_ceiling="needs_plan",
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     ticket = data.file_proposal(
         tmp_db,
@@ -337,7 +338,7 @@ def test_accept_non_gating_proposal_keeps_opened_paired_stage_resting(
         now=now,
     )
     assert ticket.stage == "needs_approach"
-    assert ticket.ticket_status is TicketStatus.awaiting_approval
+    assert ticket.ticket_status is TicketStatus.awaiting_user_review
 
     ticket = data.accept_proposal(
         tmp_db,

@@ -30,6 +30,17 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
 def _bind(db_path: Path, ticket_id: str, session_id: str) -> None:
     with connect(str(db_path)) as conn:
         conn.execute(
+            "INSERT OR IGNORE INTO conversations "
+            "(conversation_id, backend_key, model, workspace_folder, access, created_at) "
+            "VALUES (?, 'codex', 'model', '/work', 'full', 1)",
+            (session_id,),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO ticket_conversations (conversation_id, ticket_id) "
+            "VALUES (?, ?)",
+            (session_id, ticket_id),
+        )
+        conn.execute(
             "UPDATE tickets SET conversation_id = ? WHERE id = ?",
             (session_id, ticket_id),
         )
@@ -79,6 +90,6 @@ def test_worker_self_rejects_duplicate_ticket_mirror_ownership(tmp_path: Path) -
         ).json()
         _bind(db_path, first["id"], "duplicate-session")
         _bind(db_path, second["id"], "duplicate-session")
-        response = client.get(f"/api/tickets/{first['id']}/worker-self")
+        response = client.get(f"/api/tickets/{second['id']}/worker-self")
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "validation"

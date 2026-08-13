@@ -113,7 +113,14 @@ def test_full_linear_chain_auto_accepts_to_done(
 ) -> None:
     now = fake_clock.now_unix()
     t = _create(tmp_db, fake_clock)
-    data.change_scope(tmp_db, t.id, ceiling="done", at_cap=AtCap.propose, actor="human", now=now)
+    data.change_scope(
+        tmp_db,
+        t.id,
+        ceiling="done",
+        at_cap=AtCap.user_review,
+        actor="human",
+        now=now,
+    )
     chain = [
         ("kickoff", "needs_success"),
         ("success", "needs_approach"),
@@ -139,7 +146,7 @@ def test_closeout_accept_requires_human_and_reaches_done(
         tmp_db,
         t.id,
         ceiling="needs_closeout",
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
         actor="human",
         now=now,
     )
@@ -168,7 +175,7 @@ def test_closeout_accept_requires_human_and_reaches_done(
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     assert t.stage == "done"
     assert fields_codec.get_slot(t.fields, "closeout").value == "closeout body"

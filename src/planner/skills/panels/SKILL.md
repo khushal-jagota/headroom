@@ -11,8 +11,10 @@ The planning system has these pieces:
 
 - A **day** is what the user wants to get done on a planning date.
 - A **sprint** is a fixed seven-day period.
-- A **sprint item** is a goal or outcome inside a sprint, or in the backlog when unscheduled.
-- A **ticket** is one unit of work, often done by an agent alongside the user.
+- A **sprint item** is an optional goal or outcome classification inside a sprint, or
+  a backlog item when unscheduled.
+- A **ticket** is one unit of work with direct Project and optional Sprint placement,
+  often done by an agent alongside the user.
 - An **idea** is a loose thought that may or may not become committed work.
 
 Tickets have a Worker type that sets their stages and worker. Worker types include
@@ -56,6 +58,9 @@ Panels schedules ordinary planning Tickets and hands each one to its specialist 
 - A personal Checkpoint Ticket prompts reflection at 17:00 on sprint day four.
 - `planning-sprint` reviews the current sprint and plans the next at the boundary.
 
+The three planning Worker types use the Personal Project and each Sprint's Planning
+Item. Initiative Planning stays with its initiative.
+
 The 05:00 boundary determines which Day and sprint day are current. It does not run a
 separate rollover workflow. The Planning Sprint Ticket stays at 17:00 on the final day.
 Scheduled Tickets do not backfill a missed occurrence. If a run is missed, recover by
@@ -77,8 +82,17 @@ The command groups describe both the object being changed and the operation's au
 - `panels worker ...` for the gated worker flow: proposals, recaps, and notes.
 - `panels chief ...` only for importing reality established outside Panels. Its two explicit operations reconcile an existing ticket or create a populated ticket from external work; it is not a general ticket-editing surface.
 
+The main list reads are bounded summaries. `ticket list`, `sprint list`, `sprint item
+list`, `day list-tickets`, and `project list` return 30 rows by default. Their text and
+JSON output state the omissions and the next offset. Use `--limit` and `--offset` for
+another page. Ticket lists exclude terminal Tickets by default. Use repeatable Stage and
+`ticket_status` filters, exclusions, `--include-terminal`, and `--search` to narrow the
+result before you increase its limit.
+
 ## Skills
 
+- **`panels-sprint-item-supervisor`** — supervising one Sprint Item with scoped actions
+  and safe messages to existing child Worker conversations.
 - **`panels-ticket-creation`** — the shared model for creating a coherent Ticket.
 - **`panels-worker`** — working a single ticket: shaping it through its stages, executing it, and reviewing it.
 - **`panels-worker-planning-day`** — gathering evidence and planning the Day.

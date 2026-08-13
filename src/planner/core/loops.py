@@ -15,6 +15,7 @@ from planner.notifications.runtime import NotificationLoop
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
 from planner.runtime.worker_step_readiness_loop import WorkerStepReadinessLoop
 from planner.scheduled_tickets.runtime import ScheduledTicketLoop
+from planner.supervisor_obligations.runtime import SupervisorObligationLoop
 from planner.worker_context.contracts import WorkerContextService
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,10 +32,12 @@ class BackgroundLoops:
         shutdown_grace_seconds: float = 30.0,
         scheduled_ticket_loop: ScheduledTicketLoop | None = None,
         notification_loop: NotificationLoop | None = None,
+        supervisor_obligation_loop: SupervisorObligationLoop | None = None,
     ) -> None:
         self.worker_step_readiness_loop = worker_step_readiness_loop
         self.scheduled_ticket_loop = scheduled_ticket_loop
         self.notification_loop = notification_loop
+        self.supervisor_obligation_loop = supervisor_obligation_loop
         self._lock_path = lock_path
         self._stop_waking_on_change = stop_waking_on_change
         self._shutdown_grace_seconds = shutdown_grace_seconds
@@ -65,6 +68,8 @@ class BackgroundLoops:
                 self.notification_loop.stop,
                 deadline=deadline,
             )
+        if self.supervisor_obligation_loop is not None:
+            await asyncio.to_thread(self.supervisor_obligation_loop.stop, deadline=deadline)
         if self.worker_step_readiness_loop is not None:
             await asyncio.to_thread(
                 self.worker_step_readiness_loop.stop,
@@ -101,6 +106,7 @@ def start_background_loops(
     worker_step_readiness_loop: WorkerStepReadinessLoop | None = None
     scheduled_ticket_loop: ScheduledTicketLoop | None = None
     notification_loop: NotificationLoop | None = None
+    supervisor_obligation_loop: SupervisorObligationLoop | None = None
     lock_path: str | None = None
     stop_waking_on_change: Callable[[], None] | None = None
 
@@ -114,6 +120,7 @@ def start_background_loops(
         candidate_loop: WorkerStepReadinessLoop | None = None
         candidate_schedule_loop: ScheduledTicketLoop | None = None
         candidate_notification_loop: NotificationLoop | None = None
+        candidate_supervisor_obligation_loop: SupervisorObligationLoop | None = None
         candidate_unsubscribe: Callable[[], None] | None = None
         try:
             candidate_schedule_loop = ScheduledTicketLoop(
@@ -137,13 +144,19 @@ def start_background_loops(
                 canonical_origin=config.trusted_ingress_canonical_origin,
                 busy_timeout_ms=config.db_busy_timeout_ms,
             )
+            candidate_supervisor_obligation_loop = SupervisorObligationLoop(
+                config.db_path, clock, conversation_system=conversation_system,
+                asyncio_loop=asyncio_loop, busy_timeout_ms=config.db_busy_timeout_ms,
+            )
             candidate_schedule_loop.start(config.tick_seconds)
             candidate_loop.start(config.tick_seconds)
             candidate_notification_loop.start(config.tick_seconds)
+            candidate_supervisor_obligation_loop.start(config.tick_seconds)
 
             def wake_reconcilers() -> None:
                 candidate_loop.wake()
                 candidate_notification_loop.wake()
+                candidate_supervisor_obligation_loop.wake()
 
             candidate_unsubscribe = change_signal.subscribe(wake_reconcilers)
         except Exception:
@@ -165,11 +178,17 @@ def start_background_loops(
                     candidate_notification_loop.stop()
                 except Exception:
                     _LOGGER.exception("partially started notification loop failed to stop")
+            if candidate_supervisor_obligation_loop is not None:
+                try:
+                    candidate_supervisor_obligation_loop.stop()
+                except Exception:
+                    _LOGGER.exception("partially started supervisor obligation loop failed to stop")
             release_machine_lock(config.dispatcher_lock_path)
         else:
             worker_step_readiness_loop = candidate_loop
             scheduled_ticket_loop = candidate_schedule_loop
             notification_loop = candidate_notification_loop
+            supervisor_obligation_loop = candidate_supervisor_obligation_loop
             stop_waking_on_change = candidate_unsubscribe
             lock_path = config.dispatcher_lock_path
 
@@ -180,6 +199,7 @@ def start_background_loops(
         shutdown_grace_seconds=float(config.shutdown_grace_seconds),
         scheduled_ticket_loop=scheduled_ticket_loop,
         notification_loop=notification_loop,
+        supervisor_obligation_loop=supervisor_obligation_loop,
     )
     _active = loops
     return loops

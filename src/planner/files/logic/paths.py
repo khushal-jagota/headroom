@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path, PurePosixPath
 
-from planner.files.contracts import TicketFile
+from planner.files.contracts import SprintItemFile, TicketFile
 
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _ENCODED_UNSAFE_RE = re.compile(r"%(?:25|2e|2f|5c)", re.IGNORECASE)
@@ -25,6 +25,10 @@ def conversation_files_root(db_path: str | Path) -> Path:
     return Path(db_path).parent / "files" / "conversations"
 
 
+def sprint_item_files_root(db_path: str | Path) -> Path:
+    return Path(db_path).parent / "files" / "sprint-items"
+
+
 def resolve_ticket_file(db_path: str | Path, ticket_id: str, relative_path: str) -> TicketFile:
     ticket_id = str(ticket_id)
     relative_path = str(relative_path)
@@ -32,6 +36,17 @@ def resolve_ticket_file(db_path: str | Path, ticket_id: str, relative_path: str)
     _validate_relative_path(relative_path)
     target = _resolve_managed_file(ticket_files_root(db_path), ticket_id, relative_path)
     return TicketFile(ticket_id=ticket_id, relative_path=relative_path, absolute_path=target)
+
+
+def resolve_sprint_item_file(
+    db_path: str | Path, sprint_item_id: str, relative_path: str
+) -> SprintItemFile:
+    sprint_item_id = str(sprint_item_id)
+    relative_path = str(relative_path)
+    _validate_safe_id(sprint_item_id, "Sprint Item")
+    _validate_relative_path(relative_path)
+    target = _resolve_managed_file(sprint_item_files_root(db_path), sprint_item_id, relative_path)
+    return SprintItemFile(sprint_item_id, relative_path, target)
 
 
 def resolve_conversation_file(
@@ -48,9 +63,7 @@ def resolve_conversation_file(
     stored_file_id = str(stored_file_id)
     _validate_safe_id(conversation_id, "conversation")
     _validate_safe_id(stored_file_id, "stored file")
-    return _resolve_managed_file(
-        conversation_files_root(db_path), conversation_id, stored_file_id
-    )
+    return _resolve_managed_file(conversation_files_root(db_path), conversation_id, stored_file_id)
 
 
 def _validate_safe_id(value: str, label: str) -> None:

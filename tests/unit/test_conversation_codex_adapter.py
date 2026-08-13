@@ -30,6 +30,7 @@ from planner.conversation.backends.codex_app_server import adapter
 from planner.conversation.backends.codex_app_server.adapter import (
     WITHDRAWN_ASK_DECISION,
     CodexAppServerBackendChild,
+    CodexAppServerBackendChildFactory,
     CodexChildLaunch,
 )
 from planner.conversation.backends.contracts import (
@@ -41,14 +42,20 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     ConversationAccess,
+    ConversationBackendKey,
     ConversationRoleMaterials,
+    ConversationStartRequest,
     PromptDeliveryMode,
+    PromptDeliveryRefused,
+    PromptDeliveryStarted,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
     ConversationTurnEnding,
+    PromptEventPayload,
     ToolCallStatus,
     UserInputAnswer,
 )
@@ -60,6 +67,9 @@ from planner.conversation.message_content import (
     text_message_content,
 )
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.conversation.storage import ConversationStore
+from planner.conversation.system import SqliteProcessConversationSystem
+from planner.core.db import connect, create_schema
 
 
 def _message_files() -> ConversationMessageFiles:
@@ -126,22 +136,599 @@ def test_a_fresh_conversation_shakes_hands_starts_a_thread_and_reports_its_curso
     _run(exercise)
 
 
-def test_codex_offers_no_commands_because_its_protocol_has_none_to_declare(
+def test_codex_publishes_only_the_native_built_ins_when_dynamic_sources_are_empty(
     tmp_path: Path,
 ) -> None:
-    """Not a gap in this adapter — codex's wire has no notion of a command a person types.
-
-    Codex's slash commands live inside its own terminal program and are dispatched there,
-    so nothing declares them over the protocol Panels speaks. A codex conversation has
-    none to offer, and this adapter says nothing at all rather than reporting an empty
-    list, which would be codex claiming it had looked and found none.
-    """
 
     async def exercise() -> None:
         async with _scripted_child(tmp_path, script={}) as scripted:
             await scripted.start(cursor=None)
 
-            assert scripted.sink.available_commands_reports == []
+            assert [
+                entry.insertion_text for entry in scripted.sink.composer_catalog_reports[-1]
+            ] == [
+                "/compact",
+                "/review ",
+            ]
+
+    _run(exercise)
+
+
+def test_codex_joins_paginated_metadata_to_callable_apps_and_enabled_plugins(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        script = {
+            "skills": {
+                "data": [
+                    {
+                        "cwd": str(tmp_path),
+                        "errors": [],
+                        "skills": [
+                            {
+                                "name": "ship-it",
+                                "description": "Ship this change",
+                                "enabled": True,
+                                "path": "/skills/ship-it/SKILL.md",
+                                "scope": "user",
+                            },
+                            {
+                                "name": "off",
+                                "description": "Disabled",
+                                "enabled": False,
+                                "path": "/skills/off/SKILL.md",
+                                "scope": "user",
+                            },
+                        ],
+                    }
+                ]
+            },
+            "installed_apps": {
+                "apps": [
+                    {"id": "demo", "runtimeName": "Demo", "enabled": True, "callable": True},
+                    {"id": "idle", "runtimeName": "Idle", "enabled": True, "callable": False},
+                ]
+            },
+            "apps": [
+                {"data": [{"id": "idle", "name": "Idle", "isEnabled": True, "isAccessible": True}]},
+                {
+                    "data": [
+                        {
+                            "id": "demo",
+                            "name": "Demo App",
+                            "description": "Demo tools",
+                            "isEnabled": True,
+                            "isAccessible": True,
+                        }
+                    ]
+                },
+            ],
+            "plugins": {
+                "marketplaces": [
+                    {
+                        "name": "openai-curated-remote",
+                        "plugins": [
+                            _plugin(
+                                "github",
+                                enabled=True,
+                                marketplace="openai-curated-remote",
+                            ),
+                            _plugin(
+                                "disabled",
+                                enabled=False,
+                                marketplace="openai-curated-remote",
+                            ),
+                        ],
+                    }
+                ]
+            },
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+
+            entries = scripted.sink.composer_catalog_reports[-1]
+            assert [(entry.kind.value, entry.insertion_text) for entry in entries] == [
+                ("command", "/compact"),
+                ("command", "/review "),
+                ("app", "@demo-app "),
+                ("plugin", "@github@openai-curated-remote "),
+                ("skill", "$ship-it "),
+            ]
+            assert len(scripted.all_sent("app/list")) == 2
+
+    _run(exercise)
+
+
+def test_catalog_invocations_add_structured_inputs_without_rewriting_the_text(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        script = {
+            **_one_of_each_catalog(tmp_path),
+            "turns": [{}, {}, {}],
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            prompts = [
+                "$ship-it release now",
+                "@demo-app find updates",
+                "@analytics@personal inspect usage",
+            ]
+            for turn_number, prompt in enumerate(prompts, 1):
+                scripted.sink.expect_another_turn()
+                await scripted.write_prompt(turn_number, text_message_content(prompt))
+                await scripted.sink.wait_for_the_turn_to_end()
+
+            inputs = [message["params"]["input"] for message in scripted.all_sent("turn/start")]
+            assert inputs[0] == [
+                {"type": "text", "text": prompts[0]},
+                {"type": "skill", "name": "ship-it", "path": "/skills/ship-it/SKILL.md"},
+            ]
+            assert inputs[1] == [
+                {"type": "text", "text": prompts[1]},
+                {"type": "mention", "name": "Demo App", "path": "app://demo"},
+            ]
+            assert inputs[2] == [
+                {"type": "text", "text": prompts[2]},
+                {
+                    "type": "mention",
+                    "name": "Analytics",
+                    "path": "plugin://analytics@personal",
+                },
+            ]
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_method"),
+    [("$ship-it release now", "turn/start"), ("/compact", "thread/compact/start")],
+)
+def test_the_systems_composed_role_does_not_hide_a_first_prompt_catalog_invocation(
+    tmp_path: Path, prompt_text: str, expected_method: str
+) -> None:
+    """Drive the real core and Codex child together across the first-prompt boundary."""
+
+    async def exercise() -> None:
+        database_path = tmp_path / "system.db"
+        connection = connect(str(database_path))
+        create_schema(connection)
+        connection.close()
+        transcript_path = tmp_path / "system-transcript.jsonl"
+        script_path = tmp_path / "system-script.json"
+        script_path.write_text(
+            json.dumps(
+                {
+                    "transcript_path": str(transcript_path),
+                    **_one_of_each_catalog(tmp_path),
+                }
+            ),
+            encoding="utf-8",
+        )
+        argv, environment = scripted_app_server_launch(script_path)
+        factory = CodexAppServerBackendChildFactory(
+            CodexChildLaunch(argv=argv, environment_overrides=tuple(environment.items()))
+        )
+        store = ConversationStore(str(database_path))
+        system = SqliteProcessConversationSystem(
+            store=store,
+            message_files=ConversationMessageFiles(str(database_path)),
+            backend_child_factories={key: factory for key in ConversationBackendKey},
+        )
+        try:
+            await system.start_conversation(
+                ConversationStartRequest(
+                    conversation_id="system-codex",
+                    backend_key=ConversationBackendKey.codex,
+                    model="gpt-5.4-mini",
+                    reasoning_effort="medium",
+                    role_materials=ConversationRoleMaterials(role_text=ROLE_TEXT),
+                    workspace_folder=tmp_path,
+                )
+            )
+            fate = await system.send(
+                "system-codex",
+                text_message_content(prompt_text),
+                sender_label="owner",
+            )
+            assert fate == PromptDeliveryStarted()
+
+            received = [
+                entry["received"]
+                for entry in (
+                    json.loads(line)
+                    for line in transcript_path.read_text(encoding="utf-8").splitlines()
+                )
+                if "received" in entry and entry["received"].get("method") == expected_method
+            ][0]
+            if expected_method == "turn/start":
+                assert received["params"]["input"] == [
+                    {"type": "text", "text": f"{ROLE_TEXT}\n\n{prompt_text}"},
+                    {
+                        "type": "skill",
+                        "name": "ship-it",
+                        "path": "/skills/ship-it/SKILL.md",
+                    },
+                ]
+            else:
+                assert received["params"] == {"threadId": "thread-1"}
+            events = await store.read_events_after("system-codex", 0)
+            prompt = next(
+                event.payload for event in events if isinstance(event.payload, PromptEventPayload)
+            )
+            assert message_content_text(prompt.content) == prompt_text
+        finally:
+            await system.shutdown()
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_method"),
+    [("$ship-it retry", "turn/start"), ("/compact", "thread/compact/start")],
+)
+def test_a_persisted_cursor_without_a_delivered_prompt_keeps_first_prompt_dispatch(
+    tmp_path: Path, prompt_text: str, expected_method: str
+) -> None:
+    """A restart keeps the core's sender/composed distinction independent of its cursor."""
+
+    async def exercise() -> None:
+        database_path = tmp_path / "restart.db"
+        connection = connect(str(database_path))
+        create_schema(connection)
+        connection.close()
+        store = ConversationStore(str(database_path))
+
+        def build_system(
+            name: str, script: dict[str, Any]
+        ) -> tuple[SqliteProcessConversationSystem, Path]:
+            transcript_path = tmp_path / f"{name}-transcript.jsonl"
+            script_path = tmp_path / f"{name}-script.json"
+            script_path.write_text(
+                json.dumps({"transcript_path": str(transcript_path), **script}),
+                encoding="utf-8",
+            )
+            argv, environment = scripted_app_server_launch(script_path)
+            factory = CodexAppServerBackendChildFactory(
+                CodexChildLaunch(argv=argv, environment_overrides=tuple(environment.items()))
+            )
+            return (
+                SqliteProcessConversationSystem(
+                    store=store,
+                    message_files=ConversationMessageFiles(str(database_path)),
+                    backend_child_factories={key: factory for key in ConversationBackendKey},
+                ),
+                transcript_path,
+            )
+
+        failed_script = _one_of_each_catalog(tmp_path)
+        if expected_method == "turn/start":
+            failed_script["turns"] = [{"respond": "error"}]
+        else:
+            failed_script["compact_response"] = "error"
+        first, _ = build_system("first", failed_script)
+        try:
+            await first.start_conversation(
+                ConversationStartRequest(
+                    conversation_id="restart-codex",
+                    backend_key=ConversationBackendKey.codex,
+                    model="gpt-5.4-mini",
+                    reasoning_effort="medium",
+                    role_materials=ConversationRoleMaterials(role_text=ROLE_TEXT),
+                    workspace_folder=tmp_path,
+                )
+            )
+            refused = await first.send(
+                "restart-codex", text_message_content(prompt_text), sender_label="owner"
+            )
+            assert isinstance(refused, PromptDeliveryRefused)
+            record = await store.read_conversation("restart-codex")
+            assert record is not None and record.vendor_session_cursor == "thread-1"
+            assert await store.has_delivered_prompt("restart-codex") is False
+        finally:
+            await first.shutdown()
+
+        second, transcript_path = build_system(
+            "second", {**_one_of_each_catalog(tmp_path), "turns": [{}]}
+        )
+        try:
+            assert (
+                await second.send(
+                    "restart-codex", text_message_content(prompt_text), sender_label="owner"
+                )
+                == PromptDeliveryStarted()
+            )
+            received = [
+                entry["received"]
+                for entry in (
+                    json.loads(line)
+                    for line in transcript_path.read_text(encoding="utf-8").splitlines()
+                )
+                if "received" in entry and entry["received"].get("method") == expected_method
+            ][0]
+            if expected_method == "turn/start":
+                assert received["params"]["input"][-1] == {
+                    "type": "skill",
+                    "name": "ship-it",
+                    "path": "/skills/ship-it/SKILL.md",
+                }
+                assert received["params"]["input"][0] == {
+                    "type": "text",
+                    "text": f"{ROLE_TEXT}\n\n{prompt_text}",
+                }
+            else:
+                assert received["params"] == {"threadId": "thread-1"}
+        finally:
+            await second.shutdown()
+
+    _run(exercise)
+
+
+def test_unknown_and_ambiguous_tokens_remain_ordinary_text(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        catalog = _one_of_each_catalog(tmp_path)
+        duplicated = dict(catalog["skills"])
+        duplicated["data"] = [
+            *duplicated["data"],
+            {
+                "cwd": "/elsewhere",
+                "errors": [],
+                "skills": [
+                    {
+                        "name": "ship-it",
+                        "description": "Other",
+                        "enabled": True,
+                        "path": "/other/SKILL.md",
+                        "scope": "user",
+                    }
+                ],
+            },
+        ]
+        catalog["skills"] = duplicated
+        catalog["turns"] = [{}, {}]
+        async with _scripted_child(tmp_path, script=catalog) as scripted:
+            await scripted.start(cursor=None)
+            assert "$ship-it " not in {
+                entry.insertion_text for entry in scripted.sink.composer_catalog_reports[-1]
+            }
+            for number, prompt in enumerate(("$ship-it do it", "/unknown keep this"), 1):
+                scripted.sink.expect_another_turn()
+                await scripted.write_prompt(number, text_message_content(prompt))
+                await scripted.sink.wait_for_the_turn_to_end()
+            assert all(
+                len(message["params"]["input"]) == 1 for message in scripted.all_sent("turn/start")
+            )
+
+    _run(exercise)
+
+
+def test_compact_and_review_use_native_methods_and_the_normal_turn_lifecycle(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        script: dict[str, Any] = {
+            "compact_response": "never",
+            "turns": [{}, {"respond": "never"}],
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("/compact"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            scripted.sink.expect_another_turn()
+            await scripted.write_prompt(2, text_message_content("/review focus on races"))
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sent("thread/compact/start")["params"] == {"threadId": "thread-1"}
+            review = scripted.sent("review/start")["params"]
+            assert review["delivery"] == "inline"
+            assert review["target"] == {
+                "type": "custom",
+                "instructions": "focus on races",
+            }
+            assert scripted.sent("turn/start", missing_is_none=True) is None
+            assert scripted.sink.endings == [
+                ConversationTurnEnding.completed,
+                ConversationTurnEnding.completed,
+            ]
+
+    _run(exercise)
+
+
+def test_native_review_failure_is_a_refused_prompt_and_does_not_poison_the_next_turn(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        script: dict[str, Any] = {
+            "turns": [
+                {"respond": "error", "message": "review unavailable"},
+                {},
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            with pytest.raises(PromptWriteFailed, match="review unavailable"):
+                await scripted.write_prompt(1, text_message_content("/review"))
+
+            await scripted.write_prompt(2, text_message_content("ordinary"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            assert scripted.sent("turn/start")["params"]["input"] == [
+                {"type": "text", "text": "ordinary"}
+            ]
+
+    _run(exercise)
+
+
+def test_a_native_command_with_a_model_change_stays_an_ordinary_model_changing_turn(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={}) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("/compact"), model="gpt-5.6-codex")
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            turn = scripted.sent("turn/start")["params"]
+            assert turn["model"] == "gpt-5.6-codex"
+            assert turn["input"] == [{"type": "text", "text": "/compact"}]
+            assert scripted.sent("thread/compact/start", missing_is_none=True) is None
+
+    _run(exercise)
+
+
+def test_catalog_invalidations_refresh_in_the_background_and_preserve_failures(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        first = _skills_response(tmp_path, "first")
+        second = _skills_response(tmp_path, "second")
+        script = {
+            "skills": [first, second, "error"],
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "skills_changed"},
+                        {"do": "skills_changed"},
+                        {"do": "complete", "status": "completed"},
+                    ]
+                },
+                {"actions": [{"do": "apps_changed"}, {"do": "complete", "status": "completed"}]},
+            ],
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("ordinary"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            await _wait_for_catalog_reports(scripted.sink, 2)
+            assert "$second " in {
+                entry.insertion_text for entry in scripted.sink.composer_catalog_reports[-1]
+            }
+            assert len(scripted.all_sent("skills/list")) == 2
+
+            scripted.sink.expect_another_turn()
+            await scripted.write_prompt(2, text_message_content("ordinary again"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            await asyncio.sleep(0.15)
+            assert len(scripted.sink.composer_catalog_reports) == 2
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("reported_error", ["skill", "plugin"])
+def test_reported_catalog_source_errors_preserve_the_last_complete_snapshot(
+    tmp_path: Path, reported_error: str
+) -> None:
+    async def exercise() -> None:
+        good_skills = _skills_response(tmp_path, "first")
+        bad_skills = {
+            "data": [
+                {
+                    "cwd": str(tmp_path),
+                    "skills": [],
+                    "errors": [{"path": "/broken/SKILL.md", "message": "cannot read"}],
+                }
+            ]
+        }
+        good_plugins: dict[str, Any] = {"marketplaces": [], "marketplaceLoadErrors": []}
+        bad_plugins = {
+            "marketplaces": [],
+            "marketplaceLoadErrors": [
+                {"marketplacePath": "/broken/marketplace.json", "message": "invalid"}
+            ],
+        }
+        script = {
+            "skills": [good_skills, bad_skills] if reported_error == "skill" else good_skills,
+            "plugins": [good_plugins, bad_plugins] if reported_error == "plugin" else good_plugins,
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "skills_changed"},
+                        {"do": "complete", "status": "completed"},
+                    ]
+                },
+                {},
+            ],
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("refresh"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            await asyncio.sleep(0.15)
+            assert len(scripted.sink.composer_catalog_reports) == 1
+
+            scripted.sink.expect_another_turn()
+            await scripted.write_prompt(2, text_message_content("$first continue"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            assert scripted.all_sent("turn/start")[-1]["params"]["input"][-1] == {
+                "type": "skill",
+                "name": "first",
+                "path": "/skills/first/SKILL.md",
+            }
+
+    _run(exercise)
+
+
+def test_startup_and_notification_refreshes_publish_in_request_order(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        script = {
+            "skills": [
+                _skills_response(tmp_path, "startup"),
+                _skills_response(tmp_path, "notification"),
+            ],
+            "notify_apps_during_list": True,
+            "app_list_response_delay": 0.1,
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await _wait_for_catalog_reports(scripted.sink, 2)
+
+            skill_tokens = [
+                [
+                    entry.insertion_text
+                    for entry in report
+                    if entry.kind is ComposerCatalogEntryKind.skill
+                ]
+                for report in scripted.sink.composer_catalog_reports
+            ]
+            assert skill_tokens == [["$startup "], ["$notification "]]
+
+    _run(exercise)
+
+
+def test_a_catalog_refresh_that_never_answers_does_not_block_turn_notifications(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(
+            "planner.conversation.backends.codex_app_server.adapter.CATALOG_REQUEST_TIMEOUT_SECONDS",
+            0.05,
+        )
+        script = {
+            "skills": [_skills_response(tmp_path, "first"), "never"],
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "skills_changed"},
+                        {"do": "sleep", "seconds": 0.1},
+                        {"do": "complete", "status": "completed"},
+                    ]
+                },
+                {},
+            ],
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("ordinary"))
+            await asyncio.wait_for(scripted.sink.wait_for_the_turn_to_end(), 0.5)
+            assert scripted.sink.endings == [ConversationTurnEnding.completed]
+            await asyncio.sleep(0.1)
+
+            scripted.sink.expect_another_turn()
+            await scripted.write_prompt(2, text_message_content("wire still works"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            assert scripted.sink.endings == [
+                ConversationTurnEnding.completed,
+                ConversationTurnEnding.completed,
+            ]
 
     _run(exercise)
 
@@ -169,9 +756,30 @@ def test_a_cursor_resumes_that_thread_and_mints_no_new_one(tmp_path: Path) -> No
 
             assert scripted.sent("thread/resume")["params"]["threadId"] == "thread-earlier"
             assert scripted.sent("thread/start", missing_is_none=True) is None
+            assert scripted.sent("app/installed")["params"]["threadId"] == "thread-earlier"
+            assert scripted.sink.composer_catalog_reports
             # Nothing was minted, so nothing is rebound: the cursor the core holds still
             # names the thread this conversation lives in.
             assert scripted.sink.vendor_session_cursor is None
+
+    _run(exercise)
+
+
+def test_a_resumed_thread_never_treats_user_authored_role_text_as_a_core_envelope(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(
+            tmp_path, script={**_one_of_each_catalog(tmp_path), "turns": [{}]}
+        ) as scripted:
+            await scripted.start(cursor="thread-earlier")
+            user_text = f"{ROLE_TEXT}\n\n$ship-it keep this ordinary"
+            await scripted.write_prompt(1, text_message_content(user_text))
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sent("turn/start")["params"]["input"] == [
+                {"type": "text", "text": user_text}
+            ]
 
     _run(exercise)
 
@@ -1202,9 +1810,7 @@ def test_a_notification_this_reads_that_will_not_decode_is_said_out_loud(
     warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
     assert any("item/agentMessage/delta" in record.getMessage() for record in warnings)
     # The one nothing here reads is noise from a protocol far larger than this adapter uses.
-    assert not any(
-        "mcpServer/startupStatus/updated" in record.getMessage() for record in warnings
-    )
+    assert not any("mcpServer/startupStatus/updated" in record.getMessage() for record in warnings)
     assert any(
         "mcpServer/startupStatus/updated" in record.getMessage()
         for record in caplog.records
@@ -1216,7 +1822,7 @@ def test_the_childs_standard_error_is_kept_bounded(tmp_path: Path) -> None:
     """A stderr burst can neither fill the pipe nor grow without limit."""
 
     async def exercise() -> None:
-        flood = ("a codex log line that says very little\n" * 20_000)
+        flood = "a codex log line that says very little\n" * 20_000
         async with _scripted_child(tmp_path, script={"stderr": flood}) as scripted:
             await scripted.start(cursor=None)
             await scripted.write_prompt(1, text_message_content("go"))
@@ -1231,6 +1837,75 @@ def test_the_childs_standard_error_is_kept_bounded(tmp_path: Path) -> None:
 
 
 # --- the scaffolding ------------------------------------------------------------------------------
+
+
+def _plugin(plugin_name: str, *, enabled: bool, marketplace: str = "personal") -> dict[str, Any]:
+    return {
+        "authPolicy": "ON_USE",
+        "enabled": enabled,
+        "id": f"{plugin_name}@{marketplace}",
+        "installPolicy": "AVAILABLE",
+        "installed": True,
+        "interface": {
+            "capabilities": [],
+            "displayName": plugin_name.title(),
+            "shortDescription": f"Use {plugin_name.title()}",
+            "screenshotUrls": [],
+            "screenshots": [],
+        },
+        "name": plugin_name,
+        "source": {"type": "local", "path": f"/plugins/{plugin_name}"},
+    }
+
+
+def _skills_response(workspace: Path, name: str) -> dict[str, Any]:
+    return {
+        "data": [
+            {
+                "cwd": str(workspace),
+                "errors": [],
+                "skills": [
+                    {
+                        "name": name,
+                        "description": f"Use {name}",
+                        "enabled": True,
+                        "path": f"/skills/{name}/SKILL.md",
+                        "scope": "user",
+                    }
+                ],
+            }
+        ]
+    }
+
+
+def _one_of_each_catalog(workspace: Path) -> dict[str, Any]:
+    return {
+        "skills": _skills_response(workspace, "ship-it"),
+        "installed_apps": {
+            "apps": [{"id": "demo", "runtimeName": "Demo", "enabled": True, "callable": True}]
+        },
+        "apps": {
+            "data": [
+                {
+                    "id": "demo",
+                    "name": "Demo App",
+                    "isEnabled": True,
+                    "isAccessible": True,
+                }
+            ]
+        },
+        "plugins": {
+            "marketplaces": [{"name": "personal", "plugins": [_plugin("analytics", enabled=True)]}]
+        },
+    }
+
+
+async def _wait_for_catalog_reports(sink: _RecordingSink, count: int) -> None:
+    for _ in range(100):
+        if len(sink.composer_catalog_reports) >= count:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"only {len(sink.composer_catalog_reports)} catalogue reports arrived")
 
 
 def _resolved_start(workspace: Path) -> ResolvedConversationStart:
@@ -1269,7 +1944,7 @@ class _RecordingSink:
         self.error_summaries: list[str | None] = []
         self.standard_error_tails: list[str | None] = []
         self.vendor_session_cursor: str | None = None
-        self.available_commands_reports: list[tuple[AgentCommand, ...]] = []
+        self.composer_catalog_reports: list[tuple[ComposerCatalogEntry, ...]] = []
         self._turn_over = asyncio.Event()
         self._an_ask = asyncio.Event()
         self._user_input = asyncio.Event()
@@ -1319,15 +1994,12 @@ class _RecordingSink:
     async def context_compacted(self, turn_token: TurnToken) -> None:
         self.compactions += 1
 
-
     @property
     def agent_message_texts(self) -> list[str]:
         """The words of each finished message. The messages themselves are above."""
         return [message_content_text(content) for content in self.agent_contents]
 
-    async def agent_message_completed(
-        self, turn_token: TurnToken, content: MessageContent
-    ) -> None:
+    async def agent_message_completed(self, turn_token: TurnToken, content: MessageContent) -> None:
         self.agent_contents.append(content)
 
     async def tool_call_started(
@@ -1356,9 +2028,7 @@ class _RecordingSink:
     ) -> None:
         self.tool_calls_finished.append((tool_call_id, tool_call_status))
 
-    async def permission_ask_raised(
-        self, turn_token: TurnToken, ask: BackendPermissionAsk
-    ) -> None:
+    async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
         self.asks.append(ask)
         self._an_ask.set()
 
@@ -1390,10 +2060,10 @@ class _RecordingSink:
     async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
         self.vendor_session_cursor = vendor_session_cursor
 
-    async def available_commands_reported(
-        self, available_commands: tuple[AgentCommand, ...]
+    async def composer_catalog_reported(
+        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
     ) -> None:
-        self.available_commands_reports.append(available_commands)
+        self.composer_catalog_reports.append(composer_catalog)
 
 
 @dataclass
@@ -1422,6 +2092,7 @@ class _ScriptedChild:
         await self.child.write_prompt(
             TurnToken(conversation_id="c", turn_number=turn_number),
             content,
+            sender_content=content,
             sender_label="owner",
             mode=PromptDeliveryMode.run_when_free,
             model_change=model,
@@ -1534,6 +2205,10 @@ def test_a_picture_reaches_codex_as_the_file_it_is(tmp_path: Path) -> None:
             await scripted.child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
                 (
+                    MessageText(text="look at this"),
+                    MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
+                ),
+                sender_content=(
                     MessageText(text="look at this"),
                     MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
                 ),

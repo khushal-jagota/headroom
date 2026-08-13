@@ -39,15 +39,15 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "weekly_sprint_checkpoint_schedule"
+HEAD_REVISION = "supervisor_obligations"
 
-# The notification revisions add their durable tables and supporting indexes.
-CURRENT_SCHEMA_OBJECT_COUNT = 37
+# Later revisions add their durable tables, indexes, and immutability triggers.
+CURRENT_SCHEMA_OBJECT_COUNT = 56
 
 # The eight statuses the reshape left behind, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
-    "ticket_status IN ('empty','blocked','agent','paired','awaiting_approval','needs_user',"
-    "'user','errored')"
+    "ticket_status IN ('empty','blocked','agent','paired','awaiting_agent_review',"
+    "'awaiting_user_review','needs_user','user','errored')"
 )
 
 # The names the reshape moved off. None of them survives, in the schema or in the rows.
@@ -98,8 +98,13 @@ def _table_structure_before_status_changed_at(
 ) -> dict[str, object]:
     """The tickets structure before its status-tracking columns were added."""
     columns = list(structure["columns"])  # type: ignore[call-overload]
+    sprint_column = columns.pop()
+    assert sprint_column[:2] == ("sprint_id", "TEXT")
     assert columns[-2:] == [STATUS_CHANGED_AT_COLUMN, STATUS_REVISION_COLUMN]
-    return {**structure, "columns": columns[:-2]}
+    columns = columns[:-2]
+    item_index = next(i for i, column in enumerate(columns) if column[0] == "sprint_item_id")
+    columns.insert(item_index + 1, sprint_column)
+    return {**structure, "columns": columns}
 
 
 def _with_the_conversation_link_renamed(
@@ -111,10 +116,13 @@ def _with_the_conversation_link_renamed(
     "the same table, with exactly the column this build renamed renamed" — which is a
     claim a silent second change would still break.
     """
-    columns = [
-        ("conversation_id", *rest) if name == "employee_session_id" else (name, *rest)
-        for name, *rest in structure["columns"]  # type: ignore[attr-defined]
-    ]
+    columns = []
+    for name, kind, not_null, default, primary_key in structure["columns"]:  # type: ignore[attr-defined]
+        if name == "employee_session_id":
+            name = "conversation_id"
+        if name == "at_cap":
+            default = "'user_review'"
+        columns.append((name, kind, not_null, default, primary_key))
     return {**structure, "columns": columns}
 
 
@@ -267,9 +275,7 @@ def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(
     assert _revision(conn) == HEAD_REVISION
     assert _table_structure_before_status_changed_at(
         _table_structure(conn, "tickets")
-    ) == _without_direct_sprint_placement(
-        _with_the_conversation_link_renamed(structure_before)
-    )
+    ) == _with_the_conversation_link_renamed(structure_before)
     assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
     assert tuple(
         conn.execute(
@@ -338,7 +344,7 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
         "t_paired": "paired",
         "t_takeover": "user",
         "t_discussion": "paired",
-        "t_awaiting": "awaiting_approval",
+        "t_awaiting": "awaiting_user_review",
         "t_needs_user": "needs_user",
         "t_errored": "errored",
         "t_live_blocker": "empty",
@@ -363,9 +369,7 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
     # rebuild recreates only what it was handed, and drops the rest without a trace.
     assert _table_structure_before_status_changed_at(
         _table_structure(conn, "tickets")
-    ) == _without_direct_sprint_placement(
-        _with_the_conversation_link_renamed(structure_before)
-    )
+    ) == _with_the_conversation_link_renamed(structure_before)
 
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
@@ -373,7 +377,7 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
     assert FINAL_TICKET_STATUS_CHECK in tickets_sql
     assert "length(title) <= 200" in tickets_sql
     assert "priority IN ('P0','P1','P2','P3')" in tickets_sql
-    assert "at_cap IN ('stop','propose')" in tickets_sql
+    assert "at_cap IN ('stop','agent_review','user_review')" in tickets_sql
     assert "default_stage_ownership_mode IN ('worker','user','paired')" in tickets_sql
     for retired in RETIRED_TICKET_STATUSES:
         assert retired not in tickets_sql
@@ -920,7 +924,7 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(
     assert "ceiling IN ('needs_success'" not in tickets_sql
     assert "length(title) <= 200" in tickets_sql
     assert "priority IN ('P0','P1','P2','P3')" in tickets_sql
-    assert "at_cap IN ('stop','propose')" in tickets_sql
+    assert "at_cap IN ('stop','agent_review','user_review')" in tickets_sql
     assert FINAL_TICKET_STATUS_CHECK in tickets_sql
     for retired in RETIRED_TICKET_STATUSES:
         assert retired not in tickets_sql
@@ -954,6 +958,7 @@ def test_create_schema_has_projects_project_ids_and_default_rows(
         )
     } == {
         "project_other": ("Other", "", None),
+        "project_personal": ("Personal", "", None),
         "project_tribe": ("Tribe", "", None),
         "project_vylo": ("Vylo", "", None),
     }

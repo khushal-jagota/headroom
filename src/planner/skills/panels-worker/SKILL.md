@@ -53,13 +53,19 @@ ownership. Do not treat Take over, Release, or an owner change as a scope change
 
 Everything runs through the `panels` command — `panels --help` for full usage. The tools you use:
 
-- **`panels worker my-ticket`** — the Ticket you're on: who you are, its current Stage,
-  effective ownership, and scope.
-- **`panels ticket show <id>`** — read any ticket.
+- **`panels worker my-ticket [part,part]`** — read your Ticket header and part
+  manifest, or expand only the named fields. The header says who you are, the current
+  Stage, effective ownership, and scope.
+- **`panels ticket show <id> [part,part]`** — read another Ticket's header and part
+  manifest, or expand only the named fields.
 - **`panels ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** —
   set or clear a Stage ownership override when the user directly instructs that change.
 - **`panels worker propose <id> --body-file - --recap "…"`** — propose the ticket's current gated field; body arrives on stdin or via `--body-file`, and every proposal must also set a recap.
 - **`panels worker recap <id> --body-file -`** — update the running recap outside a proposal.
+- **`panels worker trouble --body-file -`** — record one short trouble note on your
+  current Ticket during the active claimed worker step. Use it for a harness, tool, or
+  Ticket problem that did not go well. Record only trouble that you encountered. Do not
+  grade yourself or record what went well.
 - **`panels worker request-user-help [ticket-id]`** — use this only when you cannot responsibly continue without important user input. Put the free-form request in your ordinary Ticket Chat response, then call this no-payload command. The Ticket enters `needs_user`: automatic work stays paused and Chat remains available until the user explicitly releases it. Do not use this for ordinary discussion, proposals or approvals, permission prompts, Stop, or confirmed Worker errors.
 - **`panels worker note <id> <field> --body-file -`** — replace user guidance next to a field without touching its value. Add `--append` to preserve the existing guidance and add new text.
 - **`panels ticket create --worker-type <id> --title "…"`** — create a Ticket when the

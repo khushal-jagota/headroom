@@ -133,8 +133,8 @@ Each outline should give only what creation and later Ticket work need:
 - **inherited context** — only shared decisions that materially constrain this Ticket;
 - **local questions** — decisions intentionally left to this Ticket;
 - **dependencies** — blocking relationships, interfaces, or ordering that matter; and
-- **destination** — the source sprint item when one exists, otherwise the applicable
-  project and sprint context.
+- **destination** — the initiative's Project and Sprint, plus its Sprint Item when that
+  classification still applies.
 
 Check the package against the Rough Shape. Every important part should be owned, no two
 Tickets should silently own the same decision, and dependencies should not conceal an
@@ -151,9 +151,9 @@ complete enough to approve as the exact creation package.
 Create exactly the approved outlines and nothing broader. Use the outlined Worker type,
 title, placement, and kickoff context. Load and follow `panels-ticket-creation` for the
 shared creation model; the approved outlines remain the authority for what may be
-created. When the planning Ticket belongs to a sprint
-item, create the new Tickets under that same item. Otherwise preserve the planning
-Ticket's project and sprint context without inventing a new container. When creating a
+created. Preserve the planning Ticket's direct Project and Sprint on each new Ticket.
+Preserve its Sprint Item only when that classification applies. Do not move Initiative
+Planning work to Personal / Planning or invent a new container. When creating a
 Ticket that relies on existing Tickets being complete, pass each prerequisite Ticket id
 with repeatable `--blocked-by <ticket-id>`.
 

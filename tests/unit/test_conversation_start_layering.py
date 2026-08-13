@@ -16,10 +16,12 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.runtime.logic.conversation_start_resolution import (
     CHIEF_ROLE_TEXT,
     NO_CONVERSATION_START_OVERRIDES,
+    SPRINT_ITEM_SUPERVISOR_ROLE_TEXT,
     WORKER_ROLE_TEXT,
     ConversationStartConfiguration,
     ConversationStartOverrides,
     resolve_agent_conversation_start,
+    resolve_sprint_item_supervisor_conversation_start,
     resolve_worker_conversation_start,
 )
 
@@ -187,8 +189,28 @@ def test_a_chief_start_carries_the_chief_role_and_its_identity() -> None:
     assert values.access is ConversationAccess.full
 
 
-def test_the_two_role_texts_both_send_the_agent_to_the_panels_skill_first() -> None:
+def test_a_supervisor_start_carries_the_item_scoped_role_and_identity() -> None:
+    values = resolve_sprint_item_supervisor_conversation_start(
+        sprint_item_id="si_abc",
+        launch_configuration=_WORKER_TYPE_DEFAULTS,
+        workspace_folder=_WORKSPACE,
+    )
+
+    assert values.role_materials.role_text == SPRINT_ITEM_SUPERVISOR_ROLE_TEXT
+    assert values.role_materials.identity_environment_variables == (
+        ("PLAN_ACTOR", "sprint_item_supervisor"),
+        ("PLAN_SPRINT_ITEM_ID", "si_abc"),
+    )
+    assert values.workspace_folder == _WORKSPACE
+    assert values.access is ConversationAccess.full
+
+
+def test_all_role_texts_send_the_agent_to_the_panels_skill_first() -> None:
     assert WORKER_ROLE_TEXT.startswith("Start with the `panels` skill.")
     assert CHIEF_ROLE_TEXT.startswith("Start with the `panels` skill.")
+    assert SPRINT_ITEM_SUPERVISOR_ROLE_TEXT.startswith("Start with the `panels` skill.")
     assert WORKER_ROLE_TEXT.endswith("You are a ticket worker.")
     assert CHIEF_ROLE_TEXT.endswith("You are a chief of staff.")
+    assert SPRINT_ITEM_SUPERVISOR_ROLE_TEXT.endswith(
+        "You are a Sprint Item supervisor."
+    )

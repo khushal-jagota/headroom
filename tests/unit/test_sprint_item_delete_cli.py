@@ -12,6 +12,7 @@ from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 from planner.cli.main import main as cli_main
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -30,9 +31,7 @@ def scrub_ambient_plan_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def client(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[TestClient]:
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     db_path = tmp_path / "sprint-item-delete-cli.db"
     with connect(str(db_path)) as conn:
         create_schema(conn)
@@ -40,8 +39,14 @@ def client(
         path=None,
         env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)},
     )
-    app = create_app(config, build_clock(config), lambda: connect(str(db_path)))
+    app = create_app(
+        config,
+        build_clock(config),
+        lambda: connect(str(db_path)),
+        conversation_system_for_test=InMemoryConversationSystem(),
+    )
     with TestClient(app) as test_client:
+
         def request(
             method: str,
             url: str,
@@ -135,3 +140,20 @@ def test_sprint_item_delete_cli_requires_yes_refuses_children_and_deletes(
     assert deleted["ok"] is True
     assert deleted["sprint_item_id"] == deletable_item_id
     assert client.get(f"/api/items/{deletable_item_id}").status_code == 404
+
+
+def test_sprint_item_supervisor_cli_exposes_context_send_and_reset(
+    client: TestClient,
+) -> None:
+    created = _invoke("sprint", "item", "create", "--title", "Supervised", "--project", "Vylo")
+    item_id = json.loads(created.stdout)["id"]
+
+    shown = _invoke("sprint", "item", "supervisor", "show", item_id)
+    context = _invoke("sprint", "item", "supervisor", "context", item_id)
+    sent = _invoke("sprint", "item", "supervisor", "send", item_id, "--message", "Hello")
+    reset = _invoke("sprint", "item", "supervisor", "reset", item_id)
+
+    assert json.loads(shown.stdout)["agent_key"] == f"sprint_item_supervisor_{item_id}"
+    assert json.loads(context.stdout)["sprint_item"]["id"] == item_id
+    assert json.loads(sent.stdout)["conversation_id"].startswith("conv_")
+    assert json.loads(reset.stdout) == {"conversation_id": None}

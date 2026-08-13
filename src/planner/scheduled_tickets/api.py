@@ -39,6 +39,7 @@ _CREATE_KEYS = frozenset(
         "deadline",
         "project",
         "project_id",
+        "sprint_id",
         "placement_mode",
         "sprint_item_id",
         "employee_backend",
@@ -115,6 +116,7 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
         ),
         deadline=body_opt_str(raw, "deadline"),
         project_id=None if project is None else project.id,
+        sprint_id=body_opt_str(raw, "sprint_id"),
         placement_mode=placement_mode,
         sprint_item_id=sprint_item_id,
         employee_backend=body_opt_str(raw, "employee_backend"),
@@ -182,6 +184,7 @@ async def patch_schedule(
     for key in (
         "deadline",
         "project_id",
+        "sprint_id",
         "sprint_item_id",
         "employee_backend",
         "employee_launch_model",
@@ -202,6 +205,11 @@ async def patch_schedule(
         )
         if changes["placement_mode"] is not ScheduledTicketPlacementMode.sprint_item:
             changes["sprint_item_id"] = None
+        if changes["placement_mode"] in {
+            ScheduledTicketPlacementMode.current_sprint,
+            ScheduledTicketPlacementMode.backlog,
+        } and "sprint_id" not in raw:
+            changes["sprint_id"] = None
     if "blocked_by_ticket_ids" in raw:
         changes["blocked_by_ticket_ids"] = tuple(
             body_str_list(raw, "blocked_by_ticket_ids")
