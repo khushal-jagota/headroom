@@ -22,7 +22,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import PlainTextResponse
 
 from planner.conversation.api import (
@@ -45,12 +45,15 @@ from planner.core.authctx import (
     request_context,
     require_chief,
     require_direct_write,
+    require_ticket_worker_write,
 )
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.contracts import JsonDict, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
+from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
+from planner.list_reads.contracts import ListPageRequest
 from planner.projects import data as projects_data
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import (
@@ -82,6 +85,8 @@ from planner.tickets.contracts import (
     StageOwnershipMode,
     Ticket,
     TicketEdit,
+    TicketListFilters,
+    TicketStatus,
     ValueEditBody,
 )
 from planner.worker_context.contracts import WorkerContextService
@@ -100,6 +105,8 @@ _TICKET_DIRECT_ONLY_FIELDS = (
     "title",
     "project",
     "project_id",
+    "sprint_id",
+    "sprint_item_id",
 )
 
 
@@ -302,10 +309,6 @@ def _validate_field(worker_type_definition: WorkerTypeDefinition, field: str) ->
 
 
 def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
-    if "sprint_id" in raw:
-        raise PlannerError(
-            ErrorCode.validation, "unknown ticket field", {"field": "sprint_id"}
-        )
     body = CreateTicketBody(
         worker_type=_require_create_worker_type(raw),
         title=body_str(raw, "title"),
@@ -314,6 +317,7 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         deadline=body_opt_str(raw, "deadline"),
         project=body_opt_str(raw, "project"),
         project_id=body_opt_str(raw, "project_id"),
+        sprint_id=body_opt_str(raw, "sprint_id"),
         sprint_item_id=body_opt_str(raw, "sprint_item_id"),
         blocked_by_ticket_ids=body_str_list(raw, "blocked_by_ticket_ids"),
     )
@@ -338,6 +342,7 @@ _EXTERNAL_FIXED_CREATE_KEYS = _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(
         "deadline",
         "project",
         "project_id",
+        "sprint_id",
         "sprint_item_id",
         "blocked_by_ticket_ids",
     }
@@ -419,6 +424,8 @@ def _marshal_external_create(
         body["project"] = body_opt_str(raw, "project")
     if "project_id" in raw:
         body["project_id"] = body_opt_str(raw, "project_id")
+    if "sprint_id" in raw:
+        body["sprint_id"] = body_opt_str(raw, "sprint_id")
     if "sprint_item_id" in raw:
         body["sprint_item_id"] = body_opt_str(raw, "sprint_item_id")
     if "employee_backend" in raw:
@@ -524,6 +531,7 @@ async def create_ticket(
         title_max_chars=TITLE_MAX_CHARS,
         kickoff_note=body["kickoff_note"],
         project_id=project.id if project is not None else None,
+        sprint_id=body["sprint_id"],
         priority=priority,
         deadline=body["deadline"],
         sprint_item_id=body["sprint_item_id"],
@@ -534,6 +542,7 @@ async def create_ticket(
         planning_now=clk.now(),
         boundary_hour=cfg.boundary_hour,
         sprint_item_id_explicit="sprint_item_id" in raw,
+        sprint_id_explicit="sprint_id" in raw,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -576,6 +585,7 @@ async def create_ticket_from_external_work(
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         project_id=project.id if project is not None else None,
+        sprint_id=body.get("sprint_id"),
         priority=priority,
         deadline=body.get("deadline"),
         sprint_item_id=body.get("sprint_item_id"),
@@ -586,6 +596,7 @@ async def create_ticket_from_external_work(
         planning_now=clk.now(),
         boundary_hour=cfg.boundary_hour,
         sprint_item_id_explicit="sprint_item_id" in raw,
+        sprint_id_explicit="sprint_id" in raw,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -654,6 +665,75 @@ async def list_tickets(
             day_id=day_id,
         )
     }
+
+
+@router.get("/ticket-summaries")
+async def list_ticket_summaries(
+    conn: DbConn,
+    cfg: Cfg,
+    clk: Clk,
+    stage: Annotated[list[str] | None, Query()] = None,
+    exclude_stage: Annotated[list[str] | None, Query()] = None,
+    ticket_status: Annotated[list[str] | None, Query()] = None,
+    exclude_ticket_status: Annotated[list[str] | None, Query()] = None,
+    include_terminal: bool = False,
+    search: str | None = None,
+    project: str | None = None,
+    project_id: str | None = None,
+    sprint_id: str | None = None,
+    sprint_item_id: str | None = None,
+    day: str | None = None,
+    limit: int = DEFAULT_LIST_LIMIT,
+    offset: int = 0,
+) -> JsonDict:
+    included_stages = tuple(stage or ())
+    registry = configured_worker_type_registry()
+    terminal_stages = {
+        terminal
+        for worker_type in registry.registered_worker_types()
+        for terminal in (
+            registry.require(worker_type).completed_stage(),
+            registry.require(worker_type).dropped_stage.id,
+        )
+    }
+    requested_terminal = sorted(set(included_stages) & terminal_stages)
+    if requested_terminal and not include_terminal:
+        raise PlannerError(
+            ErrorCode.validation,
+            "terminal stages require include_terminal",
+            {"stages": requested_terminal},
+        )
+    statuses = tuple(
+        parse_enum(TicketStatus, value, "ticket_status")
+        for value in (ticket_status or ())
+    )
+    excluded_statuses = tuple(
+        parse_enum(TicketStatus, value, "exclude_ticket_status")
+        for value in (exclude_ticket_status or ())
+    )
+    resolved_project = projects_data.resolve_project(
+        conn, project_id=project_id, project_name=project
+    )
+    day_id = (
+        resolve_day_id(day, clk.now(), cfg.boundary_hour) if day is not None else None
+    )
+    page = tickets_views.list_ticket_summaries(
+        conn,
+        page_request=ListPageRequest(limit=limit, offset=offset),
+        filters=TicketListFilters(
+            stages=included_stages,
+            excluded_stages=tuple(exclude_stage or ()),
+            ticket_statuses=statuses,
+            excluded_ticket_statuses=excluded_statuses,
+            include_terminal=include_terminal,
+            search=search,
+        ),
+        project_id=resolved_project.id if resolved_project is not None else None,
+        sprint_id=sprint_id,
+        sprint_item_id=sprint_item_id,
+        day_id=day_id,
+    )
+    return page.response("tickets")
 
 
 def _backend_snapshots(request: Request) -> BackendSnapshotService:
@@ -732,7 +812,9 @@ async def get_worker_self_ticket(
                     "owner_ticket_id": owner.id,
                 },
             )
-    detail = _ticket_detail_with_worker_settings(conn, ticket.id, clk.now_unix(), config)
+    detail = _ticket_detail_with_worker_settings(
+        conn, ticket.id, clk.now_unix(), config
+    )
     detail["worker"] = (
         configured_worker_type_registry()
         .require(ticket.worker_type)
@@ -893,6 +975,8 @@ async def patch_ticket(
         "deadline",
         "project",
         "project_id",
+        "sprint_id",
+        "sprint_item_id",
     )
     for key in body:
         if key not in recognized:
@@ -918,6 +1002,10 @@ async def patch_ticket(
             conn, project_id=project_id_raw, project_name=project_raw
         )
         edit["project_id"] = project.id if project is not None else None
+    if "sprint_id" in body:
+        edit["sprint_id"] = body_opt_str(body, "sprint_id")
+    if "sprint_item_id" in body:
+        edit["sprint_item_id"] = body_opt_str(body, "sprint_item_id")
     now = clk.now_unix()
     ticket = tickets_data.edit_ticket(
         conn,
@@ -1545,7 +1633,6 @@ async def add_link(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    require_direct_write(ctx)
     body = LinkBody(
         from_id=body_str(raw, "from_id"),
         to_id=body_str(raw, "to_id"),
@@ -1559,6 +1646,7 @@ async def add_link(
         body["to_id"],
         kind,
         now=now,
+        admit=lambda: require_ticket_worker_write(conn, ctx),
     )
     return {"from_id": body["from_id"], "to_id": body["to_id"], "kind": kind.value}
 
@@ -1572,7 +1660,6 @@ async def remove_link(
     to_id: str,
     kind: str,
 ) -> JsonDict:
-    require_direct_write(ctx)
     kind_enum = parse_enum(LinkKind, kind, "kind")
     now = clk.now_unix()
     tickets_actions.remove_link(
@@ -1581,6 +1668,7 @@ async def remove_link(
         to_id,
         kind_enum,
         now=now,
+        admit=lambda: require_ticket_worker_write(conn, ctx),
     )
     return {"ok": True}
 

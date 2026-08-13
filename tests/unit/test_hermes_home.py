@@ -93,6 +93,7 @@ def test_panels_owns_shared_system_and_communication_guidance() -> None:
     chief = (root / "panels-chief-of-staff" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "panels" in PLANNER_SKILL_NAMES
+    assert "panels-sprint-item-supervisor" in PLANNER_SKILL_NAMES
     assert "## Communication" in shared
     assert "Inspect the relevant source, docs, or workspace state before advising." in shared
     assert "## The system" not in worker

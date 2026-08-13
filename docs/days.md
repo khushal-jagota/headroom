@@ -1,11 +1,9 @@
 # Days
 
-A day is one page per day: the small overview you use to orient the day. It has four
-morning fields — focus, brief take, watchout, and what makes the day land — followed
-by a separate **Midday reconciliation** field. The reconciliation records where things
-actually stand without replacing or rewriting the morning plan. The day
-has a deliberate quirk — it flips at **5am, not midnight** — so a late night still
-belongs to the day it felt like.
+A Day is the daily orientation surface. Its four morning fields are focus, brief take,
+watchout, and what makes the day land. A separate **Midday reconciliation** field records
+where things stand without replacing the morning plan. The planning date flips at
+**5am, not midnight**, so late-night work stays with the day it belongs to.
 
 The four morning fields steer attention, motivation, and behavior. They do not act as
 literal summaries of the Tickets on the Day:
@@ -31,33 +29,38 @@ literal summaries of the Tickets on the Day:
 
 ## How a day flows
 
-The current Day page is an overview, not a dashboard. It does not show the plan tree,
-today's ticket list, the Review queue, or chat. Each field saves independently when
-you edit it, and a refresh restores the same values from the server. An empty midday
-reconciliation renders the same `(none)` edit state as the other Markdown sections.
-Crossing the 5am boundary creates the new day record. It does not copy forward a plan or
-start a separate rollover workflow.
+The Home page combines the morning orientation with live Ticket progress. It shows one
+mark per Ticket and action tiles for work that needs the user, needs review, is working,
+is paired, or is done. The tiles lead to Review or Workspace. The page does not edit the
+Day fields or show the Midday reconciliation.
+
+The four morning fields and Midday reconciliation remain canonical Day data. Their
+planning Workers write them through guarded Day actions. Reading or writing a planning
+date creates its row when needed. Crossing 5am only changes which planning date is
+current. It does not copy a plan or start a rollover workflow.
 
 At 05:05 local time, just after the 5am planning-day boundary, the internal schedule
 creates a `planning-day` Ticket for the current planning day. Its specialist Worker
 gathers current evidence, plans the four morning fields with the user, and writes the
 agreed Day only at Closeout. At 14:30, a
 `planning-midday-check` Ticket compares that intent with current execution, agrees any
-useful intervention, carries it out, and records the reconciliation. Scheduling places
-each Ticket in the Panels project's fallback item in the then-current sprint; repeat or
-pre-laid matching Tickets suppress duplicates.
+useful intervention, carries it out, and records the reconciliation. Each planning
+Ticket uses the Personal Project and that Sprint's Planning Item. Repeat or pre-laid
+matching Tickets suppress duplicates.
 
 If a scheduled run is missed, recovery is ordinary creation of the intended planning
 Ticket with `panels ticket create --worker-type planning-day` or
-`--worker-type planning-midday-check`. There is no backfill and no rollover fallback.
+`--worker-type planning-midday-check`, with the Personal Project and current Planning
+Item selected. There is no backfill and no rollover fallback.
 
 ## Quick capture
 
 Loose capture is not in the Day UI right now. Tickets, backlog items, and ideas are
 created through their own surfaces or the command-line tool.
 
-_Code paths:_ `src/planner/days/` (the day record and 5am planning date),
-`web/src/routes/DayRoute.svelte` (the overview fields).
+_Code paths:_ `src/planner/days/` (the Day record, guarded writes, and 5am planning
+date), `web/src/routes/DayRoute.svelte` (the daily hub), and
+`web/src/lib/dayPresentation.ts` (Ticket progress and action tiles).
 
 ## Handoffs
 
@@ -69,4 +72,4 @@ _Code paths:_ `src/planner/days/` (the day record and 5am planning date),
 
 ---
 
-_Last verified: 2026-07-28._
+_Last verified: 2026-08-12._

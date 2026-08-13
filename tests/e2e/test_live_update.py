@@ -100,6 +100,8 @@ def test_a_change_reaches_the_open_board_without_a_reload(
     )["id"]
 
     page = open_page(context_factory(), server, "#/workspace", 'section[data-screen="workspace"]')
+    page.click('[data-workspace-view="attention"]')
+    page.wait_for_selector('[data-workspace-view="all"]', timeout=WAIT_MS)
     card = f'[data-card][data-ticket-id="{ticket_id}"]'
     page.wait_for_selector(card, timeout=WAIT_MS)
     assert "Board card before the change" in page.inner_text(card)

@@ -9,11 +9,9 @@ from alembic import command
 from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 from planner.notifications import data as notifications_data
-from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS
 
 PREVIOUS_REVISION = "backend_usage_and_model_enablement"
-HEAD_REVISION = "weekly_sprint_checkpoint_schedule"
+HEAD_REVISION = "supervisor_obligations"
 
 
 def _upgrade_to_previous_revision(path: Path) -> None:
@@ -30,13 +28,14 @@ def test_upgrade_keys_preferences_by_subject_and_preserves_notification_history(
     db_path = tmp_path / "notification-preferences-by-subject.db"
     _upgrade_to_previous_revision(db_path)
     conn = connect(str(db_path))
-    ticket = tickets_data.create_ticket(
-        conn,
-        worker_type="coding",
-        title="Existing Ticket",
-        actor="human",
-        now=1,
-        title_max_chars=TITLE_MAX_CHARS,
+    ticket_id = "t_existing"
+    conn.execute(
+        "INSERT INTO tickets "
+        "(id, title, worker_type, employee_backend, stage, ceiling, fields, "
+        "created_at, updated_at) VALUES "
+        "(?, 'Existing Ticket', 'coding', 'hermes', 'needs_kickoff', "
+        "'needs_success', '{}', 1, 1)",
+        (ticket_id,),
     )
     conn.executemany(
         "INSERT INTO notification_preferences"
@@ -71,7 +70,7 @@ def test_upgrade_keys_preferences_by_subject_and_preserves_notification_history(
     conn.execute(
         "INSERT INTO notification_projection_cursors(source_kind, source_id, sequence) "
         "VALUES ('ticket', ?, 0)",
-        (ticket.id,),
+        (ticket_id,),
     )
     conn.execute(
         "INSERT INTO notification_facts"
@@ -79,7 +78,7 @@ def test_upgrade_keys_preferences_by_subject_and_preserves_notification_history(
         "source_id, source_sequence, occurred_at, payload) "
         "VALUES ('old:ticket-input', 'ticket_needs_input', 'ticket', ?, NULL, "
         "'ticket', ?, 0, 2, '{\"ticket_title\":\"Existing Ticket\"}')",
-        (ticket.id, ticket.id),
+        (ticket_id, ticket_id),
     )
     conn.execute(
         "INSERT INTO notification_facts"
@@ -154,7 +153,7 @@ def test_upgrade_keys_preferences_by_subject_and_preserves_notification_history(
             "old:ticket-input",
             "needs_input",
             "ticket",
-            ticket.id,
+            ticket_id,
             '{"ticket_title":"Existing Ticket"}',
         ),
     ]
@@ -194,11 +193,11 @@ def test_upgrade_keys_preferences_by_subject_and_preserves_notification_history(
             "SELECT source_kind, source_id, sequence "
             "FROM notification_projection_cursors "
             "WHERE source_id IN (?, 'c_existing_chief') ORDER BY source_kind",
-            (ticket.id,),
+            (ticket_id,),
         )
     ] == [
         ("conversation", "c_existing_chief", 1),
-        ("ticket", ticket.id, 0),
+        ("ticket", ticket_id, 0),
     ]
     notifications_data.project_facts(upgraded)
     assert upgraded.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 2

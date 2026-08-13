@@ -14,7 +14,9 @@ from planner.tickets.contracts import (
     FieldSlot,
     NextCeiling,
     Proposal,
+    ProposalReviewRoute,
     ScopePair,
+    StageOwnershipMode,
     Ticket,
     TicketStatus,
 )
@@ -30,6 +32,7 @@ CAUSE_ONWARD_SCOPE: Final[str] = "onward_scope"
 CAUSE_DIRECT_SCOPE: Final[str] = "direct_scope"
 RESOLVED_BY_AUTO: Final[str] = "auto"
 RESOLVED_BY_DIRECT: Final[str] = "direct"
+RESOLVED_BY_SUPERVISOR: Final[str] = "sprint_item_supervisor"
 
 
 def _stage_change(old: str, new: str, cause: str) -> EventSpec:
@@ -128,6 +131,8 @@ def decide_file_proposal(
         ticket.stage_ownership_overrides,
         worker_type_definition=worker_type_definition,
         default_stage_ownership_mode=ticket.default_stage_ownership_mode,
+        ceiling=ticket.ceiling,
+        at_cap=ticket.at_cap,
     )
     if (
         ownership_mode is not None
@@ -153,7 +158,15 @@ def decide_file_proposal(
         )
     new_slot = FieldSlot(
         value=slot.value,
-        proposal=Proposal(body=body, proposed_by=actor, created_at=now),
+        proposal=Proposal(
+            body=body,
+            proposed_by=actor,
+            created_at=now,
+            review_route=machine.parked_proposal_review_route(
+                ownership_mode or StageOwnershipMode.user,
+                ticket.at_cap,
+            ),
+        ),
         user_note=slot.user_note,
     )
     new_fields = fields_codec.with_slot(ticket.fields, str(field), new_slot)
@@ -174,6 +187,48 @@ def decide_file_proposal(
     return Decision(events=tuple(events), new_fields=new_fields)
 
 
+def decide_transfer_to_user_review(
+    ticket: Ticket,
+    *,
+    worker_type_definition: WorkerTypeDefinition,
+) -> Decision:
+    """Move only the current parked proposal to user review.
+
+    Ticket scope is intentionally absent from the Decision. Future proposals still use
+    the Ticket's selected route.
+    """
+    field = worker_type_definition.gating_field(ticket.stage)
+    if field is None:
+        raise PlannerError(ErrorCode.validation, "ticket has no review item")
+    slot = fields_codec.get_slot(ticket.fields, field)
+    if slot.proposal is None:
+        raise PlannerError(
+            ErrorCode.not_found,
+            "no pending proposal to transfer",
+            {"ticket_id": ticket.id, "field": field},
+        )
+    if slot.proposal.review_route is not ProposalReviewRoute.agent_review:
+        raise PlannerError(
+            ErrorCode.validation,
+            "proposal is not awaiting agent review",
+            {"ticket_id": ticket.id, "field": field},
+        )
+    proposal = Proposal(
+        body=slot.proposal.body,
+        proposed_by=slot.proposal.proposed_by,
+        created_at=slot.proposal.created_at,
+        review_route=ProposalReviewRoute.user_review,
+    )
+    return Decision(
+        events=(),
+        new_fields=fields_codec.with_slot(
+            ticket.fields,
+            field,
+            FieldSlot(value=slot.value, proposal=proposal, user_note=slot.user_note),
+        ),
+    )
+
+
 def decide_accept(
     ticket: Ticket,
     field: str,
@@ -184,7 +239,7 @@ def decide_accept(
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
-    admission.require_direct_actor(actor, "accept_proposal")
+    admission.require_direct_or_supervisor_actor(actor, "accept_proposal")
     if edited_body is not None:
         admission.validate_body(edited_body, "edit-accept text")
     edited = edited_body is not None
@@ -197,6 +252,13 @@ def decide_accept(
         raise PlannerError(
             ErrorCode.not_found,
             "no pending proposal on field",
+            {"ticket_id": ticket.id, "field": str(field)},
+        )
+    supervisor_review = actor == admission.SPRINT_ITEM_SUPERVISOR_ACTOR
+    if supervisor_review and (slot.proposal.review_route is not ProposalReviewRoute.agent_review):
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            "the proposal is not routed to the Sprint Item supervisor",
             {"ticket_id": ticket.id, "field": str(field)},
         )
     stored_body = edited_body if edited_body is not None else slot.proposal.body
@@ -218,7 +280,7 @@ def decide_accept(
             ticket,
             field,
             stored_body=stored_body,
-            resolved_by=RESOLVED_BY_DIRECT,
+            resolved_by=(RESOLVED_BY_SUPERVISOR if supervisor_review else RESOLVED_BY_DIRECT),
             edited=edited,
             scope=scope,
             cause=CAUSE_DIRECT_ACCEPT,
@@ -291,7 +353,7 @@ def decide_return_for_revision(
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
-    admission.require_direct_actor(actor, "return_for_revision")
+    admission.require_direct_or_supervisor_actor(actor, "return_for_revision")
     if ticket.ticket_status is TicketStatus.agent:
         raise PlannerError(
             ErrorCode.already_running,
@@ -322,6 +384,15 @@ def decide_return_for_revision(
         raise PlannerError(
             ErrorCode.not_found,
             "no pending proposal to return",
+            {"ticket_id": ticket.id, "field": str(field)},
+        )
+    if (
+        actor == admission.SPRINT_ITEM_SUPERVISOR_ACTOR
+        and slot.proposal.review_route is not ProposalReviewRoute.agent_review
+    ):
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            "the proposal is not routed to the Sprint Item supervisor",
             {"ticket_id": ticket.id, "field": str(field)},
         )
     new_slot = FieldSlot(value=slot.value, proposal=None, user_note=slot.user_note)
@@ -371,7 +442,7 @@ def decide_scope_change(
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
-    admission.require_direct_actor(actor, "change_scope")
+    admission.require_direct_or_supervisor_actor(actor, "change_scope")
     if ceiling not in worker_type_definition.ceiling_range():
         raise PlannerError(
             ErrorCode.scope_invalid,

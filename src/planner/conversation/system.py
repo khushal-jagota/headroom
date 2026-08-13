@@ -54,7 +54,7 @@ from planner.conversation.backends.contracts import (
     UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
     ConversationBackendKey,
     ConversationStartRequest,
     HeldPrompt,
@@ -229,9 +229,8 @@ class _ConversationState:
     phase: _ConversationPhase = _ConversationPhase.idle
     phase_settled: asyncio.Event = field(default_factory=asyncio.Event)
     held_prompts: deque[_HeldPrompt] = field(default_factory=deque)
-    backend_event_queue: asyncio.Queue[_BackendEventHandler] = field(
-        default_factory=asyncio.Queue
-    )
+    admitted_sender_messages: dict[str, tuple[MessageContent, str]] = field(default_factory=dict)
+    backend_event_queue: asyncio.Queue[_BackendEventHandler] = field(default_factory=asyncio.Queue)
     backend_event_pump: asyncio.Task[None] | None = None
     reserved_turn: _ReservedTurn | None = None
     running_turn: _RunningTurn | None = None
@@ -338,12 +337,57 @@ class SqliteProcessConversationSystem:
             )
         state.last_touched_monotonic = self._monotonic_now()
 
-        if mode is PromptDeliveryMode.steer:
-            return await self._steer(
-                state, content, sender_label, sender_message_id, sent_at_unix_milliseconds
-            )
-        if mode is PromptDeliveryMode.send_now:
-            return await self._send_now(
+        if sender_message_id is not None:
+            async with state.lock:
+                admitted = state.admitted_sender_messages.get(sender_message_id)
+                if admitted is not None:
+                    if admitted != (content, sender_label):
+                        raise ValueError("sender_message_id already names a different message")
+                    return PromptDeliveryQueued(queue_position=1)
+                for position, held in enumerate(state.held_prompts, start=1):
+                    if held.sender_message_id != sender_message_id:
+                        continue
+                    if held.content != content or held.sender_label != sender_label:
+                        raise ValueError("sender_message_id already names a different message")
+                    return PromptDeliveryQueued(queue_position=position)
+            outcome = await self._store.sender_message_outcome(conversation_id, sender_message_id)
+            if outcome is not None:
+                payload = outcome.payload
+                if (
+                    getattr(payload, "content", None) != content
+                    or getattr(payload, "sender_label", None) != sender_label
+                ):
+                    raise ValueError("sender_message_id already names a different message")
+                if isinstance(payload, PromptEventPayload):
+                    return PromptDeliveryStarted()
+                reason = getattr(
+                    payload, "refusal_reason", PromptDeliveryRefusalReason.write_to_backend_failed
+                )
+                return PromptDeliveryRefused(refusal_reason=reason)
+            async with state.lock:
+                admitted = state.admitted_sender_messages.get(sender_message_id)
+                if admitted is not None:
+                    if admitted != (content, sender_label):
+                        raise ValueError("sender_message_id already names a different message")
+                    return PromptDeliveryQueued(queue_position=1)
+                state.admitted_sender_messages[sender_message_id] = (content, sender_label)
+
+        try:
+            if mode is PromptDeliveryMode.steer:
+                return await self._steer(
+                    state, content, sender_label, sender_message_id, sent_at_unix_milliseconds
+                )
+            if mode is PromptDeliveryMode.send_now:
+                return await self._send_now(
+                    state,
+                    content,
+                    sender_label,
+                    model_change,
+                    reasoning_effort_change,
+                    sender_message_id,
+                    sent_at_unix_milliseconds,
+                )
+            return await self._run_when_free(
                 state,
                 content,
                 sender_label,
@@ -352,15 +396,10 @@ class SqliteProcessConversationSystem:
                 sender_message_id,
                 sent_at_unix_milliseconds,
             )
-        return await self._run_when_free(
-            state,
-            content,
-            sender_label,
-            model_change,
-            reasoning_effort_change,
-            sender_message_id,
-            sent_at_unix_milliseconds,
-        )
+        finally:
+            if sender_message_id is not None:
+                async with state.lock:
+                    state.admitted_sender_messages.pop(sender_message_id, None)
 
     async def interrupt(self, conversation_id: str) -> None:
         state = await self._conversation_state(conversation_id)
@@ -414,9 +453,7 @@ class SqliteProcessConversationSystem:
                     if state.child is child:
                         await self._discard_child(state, child)
                 if running is not None:
-                    await self._end_turn(
-                        state, running, ConversationTurnEnding.interrupted, None
-                    )
+                    await self._end_turn(state, running, ConversationTurnEnding.interrupted, None)
             finally:
                 self._settle_phase(state)
         finally:
@@ -526,9 +563,7 @@ class SqliteProcessConversationSystem:
                 if not backend_supports_steer(state.record.backend_key):
                     immediate_refusal = PromptDeliveryRefusalReason.backend_cannot_steer
                 elif state.running_turn is None or state.child is None:
-                    immediate_refusal = (
-                        PromptDeliveryRefusalReason.no_running_turn_to_steer_into
-                    )
+                    immediate_refusal = PromptDeliveryRefusalReason.no_running_turn_to_steer_into
                 else:
                     steer_child = state.child
 
@@ -589,9 +624,7 @@ class SqliteProcessConversationSystem:
         except PromptWriteFailed:
             refusal = PromptDeliveryRefusalReason.write_to_backend_failed
             async with state.lock:
-                await self._record_promoted_refusal(
-                    state, held, PromptDeliveryMode.steer, refusal
-                )
+                await self._record_promoted_refusal(state, held, PromptDeliveryMode.steer, refusal)
             await self._drain_held_prompts(state)
             return PromptDeliveryRefused(refusal_reason=refusal)
 
@@ -717,9 +750,9 @@ class SqliteProcessConversationSystem:
                 return False
             question_ids = tuple(question.question_id for question in questions)
             answers_by_question_id = {answer.question_id: answer for answer in answers}
-            if len(answers_by_question_id) != len(answers) or set(
-                answers_by_question_id
-            ) != set(question_ids):
+            if len(answers_by_question_id) != len(answers) or set(answers_by_question_id) != set(
+                question_ids
+            ):
                 return False
             ordered_answers = tuple(
                 answers_by_question_id[question_id] for question_id in question_ids
@@ -756,9 +789,7 @@ class SqliteProcessConversationSystem:
                 return False
             await self._append_event(
                 state,
-                UserInputAnsweredEventPayload(
-                    request_id=request_id, answers=ordered_answers
-                ),
+                UserInputAnsweredEventPayload(request_id=request_id, answers=ordered_answers),
             )
             return True
 
@@ -820,6 +851,18 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None,
     ) -> PromptDeliveryFate:
         async with state.lock:
+            if sender_message_id is not None:
+                for position, held in enumerate(state.held_prompts, start=1):
+                    if held.sender_message_id != sender_message_id:
+                        continue
+                    if (
+                        held.content != content
+                        or held.sender_label != sender_label
+                        or held.model_change != model_change
+                        or held.reasoning_effort_change != reasoning_effort_change
+                    ):
+                        raise ValueError("sender_message_id already names a different message")
+                    return PromptDeliveryQueued(queue_position=position)
             # Held if anything at all is going on, and held if anything is already
             # waiting: a message that arrived later never runs earlier.
             if state.phase is not _ConversationPhase.idle or state.held_prompts:
@@ -1020,6 +1063,7 @@ class SqliteProcessConversationSystem:
             await child.write_prompt(
                 turn_token,
                 composed,
+                sender_content=content,
                 sender_label=sender_label,
                 mode=mode,
                 model_change=model_change,
@@ -1032,6 +1076,7 @@ class SqliteProcessConversationSystem:
                 state,
                 turn_token,
                 content=composed,
+                sender_content=content,
                 sender_label=sender_label,
                 mode=mode,
                 model_change=model_change,
@@ -1049,6 +1094,7 @@ class SqliteProcessConversationSystem:
         turn_token: TurnToken,
         *,
         content: MessageContent,
+        sender_content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
@@ -1083,6 +1129,7 @@ class SqliteProcessConversationSystem:
             await child.write_prompt(
                 turn_token,
                 content,
+                sender_content=sender_content,
                 sender_label=sender_label,
                 mode=mode,
                 model_change=model_change,
@@ -1572,9 +1619,7 @@ class SqliteProcessConversationSystem:
         finally:
             state.lock.release()
 
-    async def _on_context_compacted(
-        self, state: _ConversationState, turn_token: TurnToken
-    ) -> None:
+    async def _on_context_compacted(self, state: _ConversationState, turn_token: TurnToken) -> None:
         if await self._hold_for_the_live_turn(state, turn_token) is None:
             return
         try:
@@ -1742,9 +1787,7 @@ class SqliteProcessConversationSystem:
         if ending is ConversationTurnEnding.failed:
             # Not conditional on the row: a failed turn's line is the one an operator
             # reads, and it says plainly when there is no row to go and look at.
-            self._log_failed_turn(
-                state, recorded_at_sequence, error_summary, standard_error_tail
-            )
+            self._log_failed_turn(state, recorded_at_sequence, error_summary, standard_error_tail)
         await self._drain_held_prompts(state)
 
     async def _on_vendor_session_cursor_rebound(
@@ -1755,19 +1798,16 @@ class SqliteProcessConversationSystem:
         )
         state.record = replace(state.record, vendor_session_cursor=vendor_session_cursor)
 
-    async def _on_available_commands_reported(
-        self, state: _ConversationState, available_commands: tuple[AgentCommand, ...]
+    async def _on_composer_catalog_reported(
+        self, state: _ConversationState, composer_catalog: tuple[ComposerCatalogEntry, ...]
     ) -> None:
         """The whole menu, as the backend has it now, put where the last one was.
 
-        It goes onto the conversation and nowhere near its record: which commands an agent
-        answers to is something that is true about it, not something that happened in the
-        conversation, so there is nothing here for a transcript to show.
+        It goes onto the conversation and nowhere near its event record. The catalog is a
+        current capability, not something that happened, so no transcript row shows it.
         """
-        await self._store.replace_available_commands(
-            state.record.conversation_id, available_commands
-        )
-        state.record = replace(state.record, available_commands=available_commands)
+        await self._store.replace_composer_catalog(state.record.conversation_id, composer_catalog)
+        state.record = replace(state.record, composer_catalog=composer_catalog)
 
     def _log_failed_turn(
         self,
@@ -1898,13 +1938,9 @@ class SqliteProcessConversationSystem:
         """Tell open readers that the process-owned queue snapshot changed."""
         if self._live_tail is None:
             return
-        self._live_tail.publish_frame(
-            state.record.conversation_id, HeldPromptsChangedFrame()
-        )
+        self._live_tail.publish_frame(state.record.conversation_id, HeldPromptsChangedFrame())
 
-    def _publish_model_thinking(
-        self, state: _ConversationState, turn_token: TurnToken
-    ) -> None:
+    def _publish_model_thinking(self, state: _ConversationState, turn_token: TurnToken) -> None:
         """Say the model is thinking, at most so often, and never say what it thought.
 
         The turn is checked before the rate is, so that a dead turn's reasoning cannot use
@@ -1920,9 +1956,7 @@ class SqliteProcessConversationSystem:
         state.model_thinking_shown_at_monotonic = now
         self._live_tail.publish_frame(state.record.conversation_id, ModelThinkingFrame())
 
-    def _names_a_turn_to_show(
-        self, state: _ConversationState, turn_token: TurnToken
-    ) -> bool:
+    def _names_a_turn_to_show(self, state: _ConversationState, turn_token: TurnToken) -> bool:
         """Whether this token is the turn a watcher should be seeing text from.
 
         The turn that is running, and also the one being started: between reserving a turn
@@ -1945,9 +1979,7 @@ class SqliteProcessConversationSystem:
         """
         self._set_phase(
             state,
-            _ConversationPhase.idle
-            if state.running_turn is None
-            else _ConversationPhase.running,
+            _ConversationPhase.idle if state.running_turn is None else _ConversationPhase.running,
         )
 
     def _set_phase(self, state: _ConversationState, phase: _ConversationPhase) -> None:
@@ -2007,9 +2039,7 @@ class _CoreBackendEventSink:
         """
         self._system._publish_model_thinking(self._state, turn_token)
 
-    async def agent_message_completed(
-        self, turn_token: TurnToken, content: MessageContent
-    ) -> None:
+    async def agent_message_completed(self, turn_token: TurnToken, content: MessageContent) -> None:
         self._enqueue(
             partial(self._system._on_agent_message_completed, self._state, turn_token, content)
         )
@@ -2038,9 +2068,7 @@ class _CoreBackendEventSink:
         )
 
     async def context_compacted(self, turn_token: TurnToken) -> None:
-        self._enqueue(
-            partial(self._system._on_context_compacted, self._state, turn_token)
-        )
+        self._enqueue(partial(self._system._on_context_compacted, self._state, turn_token))
 
     async def tool_call_started(
         self,
@@ -2098,25 +2126,17 @@ class _CoreBackendEventSink:
             )
         )
 
-    async def plan_updated(
-        self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]
-    ) -> None:
+    async def plan_updated(self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]) -> None:
         """A row like any other: it goes through the queue, in order, and is kept.
 
         A plan is not a passing thing to show — somebody opening this conversation later
         still needs to see what the agent set out to do — so it is written down rather
         than shown and forgotten.
         """
-        self._enqueue(
-            partial(self._system._on_plan_updated, self._state, turn_token, entries)
-        )
+        self._enqueue(partial(self._system._on_plan_updated, self._state, turn_token, entries))
 
-    async def permission_ask_raised(
-        self, turn_token: TurnToken, ask: BackendPermissionAsk
-    ) -> None:
-        self._enqueue(
-            partial(self._system._on_permission_ask_raised, self._state, turn_token, ask)
-        )
+    async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
+        self._enqueue(partial(self._system._on_permission_ask_raised, self._state, turn_token, ask))
 
     async def user_input_requested(
         self, turn_token: TurnToken, request: BackendUserInputRequest
@@ -2166,14 +2186,14 @@ class _CoreBackendEventSink:
             )
         )
 
-    async def available_commands_reported(
-        self, available_commands: tuple[AgentCommand, ...]
+    async def composer_catalog_reported(
+        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
     ) -> None:
         self._enqueue(
             partial(
-                self._system._on_available_commands_reported,
+                self._system._on_composer_catalog_reported,
                 self._state,
-                available_commands,
+                composer_catalog,
             )
         )
 

@@ -28,6 +28,7 @@ from planner.core.db import connect
 from planner.core.dev_server_proxy import build_dev_server_proxy_router
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.path_observer import observe_path_changes
+from planner.core.sprint_item_supervisor_scope import SprintItemSupervisorScopeMiddleware
 from planner.core.sse import change_stream
 from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
@@ -40,9 +41,14 @@ from planner.environments.vps_status import (
     collect_vps_status_summary,
 )
 from planner.files.api import router as files_router
+from planner.judgments.api import router as judgments_router
 from planner.notifications.api import router as notifications_router
 from planner.projects.api import router as projects_router
 from planner.scheduled_tickets.api import router as scheduled_tickets_router
+from planner.skill_versions import (
+    reconcile_managed_skill_versions,
+    reconcile_provisional_worker_step_bindings,
+)
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
 from planner.worker_context.service import SqliteWorkerContextService
@@ -72,7 +78,7 @@ def resolve_application_root(
 
 
 _REPO_ROOT = resolve_application_root()
-_PREFERRED_WORKER_WORKSPACE_ROOT = Path.home() / "Coding"
+_PREFERRED_WORKER_WORKSPACE_ROOT = Path.home() / "projects"
 _WEB_DIST = _REPO_ROOT / "web" / "dist"
 _WEB_INDEX = _WEB_DIST / "index.html"
 _ASSETS_DIR = _REPO_ROOT / "assets"
@@ -135,6 +141,8 @@ def create_app(
         audit_conn = conn_factory()
         try:
             tickets_data.audit_ticket_registry_integrity(audit_conn)
+            reconcile_managed_skill_versions(audit_conn, Path(config.db_path).expanduser().parent)
+            reconcile_provisional_worker_step_bindings(audit_conn)
         finally:
             audit_conn.close()
 
@@ -195,6 +203,7 @@ def create_app(
                     await conversation.shutdown()
 
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
+    app.add_middleware(SprintItemSupervisorScopeMiddleware)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
     app.state.config = config
     app.state.clock = clock
@@ -228,6 +237,7 @@ def create_app(
 
     for domain_router in (
         tickets_router,
+        judgments_router,
         projects_router,
         sprints_router,
         days_router,

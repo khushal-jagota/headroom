@@ -17,7 +17,7 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "weekly_sprint_checkpoint_schedule"
+HEAD_REVISION = "supervisor_obligations"
 
 
 def _table_columns(
@@ -61,7 +61,7 @@ def test_a_conversation_holds_what_it_was_started_with_and_where_it_has_got_to(
         ("vendor_session_cursor", "TEXT", 0, 0),
         ("latest_sequence", "INTEGER", 1, 0),
         ("created_at", "INTEGER", 1, 0),
-        ("available_commands", "TEXT", 1, 0),
+        ("composer_catalog", "TEXT", 1, 0),
     ]
 
 
@@ -247,7 +247,7 @@ def test_a_conversation_from_before_the_column_arrives_with_no_commands(
     assert (
         str(
             conn.execute(
-                "SELECT available_commands FROM conversations WHERE conversation_id = 'c'"
+                "SELECT composer_catalog FROM conversations WHERE conversation_id = 'c'"
             ).fetchone()[0]
         )
         == "[]"
@@ -256,7 +256,51 @@ def test_a_conversation_from_before_the_column_arrives_with_no_commands(
 
     read = asyncio.run(ConversationStore(str(path)).read_conversation("c"))
     assert read is not None
-    assert read.available_commands == ()
+    assert read.composer_catalog == ()
+
+
+def test_legacy_commands_become_typed_catalog_entries(tmp_path: Path) -> None:
+    path = tmp_path / "legacy-commands.db"
+    conn = _build_a_database_at(path, "weekly_sprint_checkpoint_schedule")
+    conn.execute(
+        "INSERT INTO conversations (conversation_id, backend_key, model, workspace_folder, "
+        "access, created_at, available_commands) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            "c",
+            "hermes",
+            "a-model",
+            "/tmp/workspace",
+            "full",
+            1,
+            '[{"name":"review","description":"Réview","argument_hint":"[path]"},'
+            '{"name":"clear","description":"Start again","argument_hint":null}]',
+        ),
+    )
+    conn.commit()
+
+    create_schema(conn)
+
+    assert "available_commands" not in {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(conversations)")
+    }
+    assert str(
+        conn.execute(
+            "SELECT composer_catalog FROM conversations WHERE conversation_id = 'c'"
+        ).fetchone()[0]
+    ) == (
+        '[{"kind":"command","display_text":"/review","insertion_text":"/review ",'
+        '"description":"Réview","argument_hint":"[path]"},'
+        '{"kind":"command","display_text":"/clear","insertion_text":"/clear ",'
+        '"description":"Start again","argument_hint":null}]'
+    )
+    conn.close()
+
+    read = asyncio.run(ConversationStore(str(path)).read_conversation("c"))
+    assert read is not None
+    assert [(entry.display_text, entry.insertion_text) for entry in read.composer_catalog] == [
+        ("/review", "/review "),
+        ("/clear", "/clear "),
+    ]
 
 
 # --- conversations nothing was ever said in ----------------------------------------------

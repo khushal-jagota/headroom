@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -67,6 +68,8 @@ from planner.conversation.backends.contracts import (
     UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     ConversationAccess,
     PromptDeliveryMode,
     ResolvedConversationStart,
@@ -148,6 +151,11 @@ TOOL_CALL_TITLE_MAXIMUM_CHARACTERS = 200
 # message that was meant to displace the turn.
 CANCEL_SETTLING_TIMEOUT_SECONDS = 15.0
 
+# Catalogue notifications arrive in bursts while Codex rebuilds a source. Give the reader
+# one short window to collect the burst before issuing one complete snapshot refresh.
+CATALOG_REFRESH_COALESCE_SECONDS = 0.05
+CATALOG_REQUEST_TIMEOUT_SECONDS = 60.0
+
 # What a codex tool item's own status means to a conversation's record. Declined is a
 # finish: the work was asked for and did not happen.
 _FINISHED_TOOL_CALL_STATUSES: dict[str, ToolCallStatus] = {
@@ -163,6 +171,47 @@ _TURN_ENDINGS: dict[str, ConversationTurnEnding] = {
     "failed": ConversationTurnEnding.failed,
     "interrupted": ConversationTurnEnding.interrupted,
 }
+
+_COMPOSER_TOKEN = re.compile(r"^([^\s]+)(?:\s+(.*))?$", re.DOTALL)
+
+
+@dataclass(frozen=True, slots=True)
+class _CatalogInvocation:
+    """The exact Codex input represented by one published composer token."""
+
+    kind: ComposerCatalogEntryKind
+    name: str
+    path: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _CatalogSnapshot:
+    """One complete published catalogue and the exact invocations behind it."""
+
+    entries: tuple[ComposerCatalogEntry, ...] = ()
+    invocations: tuple[tuple[str, _CatalogInvocation | None], ...] = ()
+
+    def resolve(self, token: str) -> _CatalogInvocation | None:
+        return next((invocation for key, invocation in self.invocations if key == token), None)
+
+
+EMPTY_CATALOG_SNAPSHOT = _CatalogSnapshot()
+
+CODEX_BUILT_IN_CATALOG_ENTRIES: tuple[ComposerCatalogEntry, ...] = (
+    ComposerCatalogEntry(
+        kind=ComposerCatalogEntryKind.command,
+        display_text="/compact",
+        insertion_text="/compact",
+        description="Compact the conversation context",
+    ),
+    ComposerCatalogEntry(
+        kind=ComposerCatalogEntryKind.command,
+        display_text="/review",
+        insertion_text="/review ",
+        description="Review the working tree or follow the supplied review instructions",
+        argument_hint="[review instructions]",
+    ),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +297,10 @@ class CodexAppServerBackendChild:
         self._reasoning_effort: str | None = resolved_start.reasoning_effort
         self._turn: _TurnInFlight | None = None
         self._asks_raised = 0
+        self._catalog_snapshot = EMPTY_CATALOG_SNAPSHOT
+        self._catalog_refresh_requested = False
+        self._catalog_refresh_task: asyncio.Task[None] | None = None
+        self._catalog_refresh_lock = asyncio.Lock()
 
     # --- the seam -----------------------------------------------------------------------
 
@@ -278,6 +331,7 @@ class CodexAppServerBackendChild:
                 await self._start_thread(resolved_start)
             else:
                 await self._resume_thread(resolved_start, vendor_session_cursor)
+            await self._refresh_catalog_preserving_last_good()
         except BaseException:
             # The process is up but this child is not usable, and nobody upstream holds it
             # yet, so the only place it can be cleaned up is here.
@@ -289,6 +343,7 @@ class CodexAppServerBackendChild:
         turn_token: TurnToken,
         content: MessageContent,
         *,
+        sender_content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
@@ -307,17 +362,30 @@ class CodexAppServerBackendChild:
         reasoning_effort = (
             self._reasoning_effort if reasoning_effort_change is None else reasoning_effort_change
         )
-        parameters = self._turn_start_parameters(
-            thread_id=thread_id,
-            content=content,
-            model=model,
-            reasoning_effort=reasoning_effort,
-        )
-
         turn = _TurnInFlight(token=turn_token, started=asyncio.get_running_loop().create_future())
         self._turn = turn
+        invocation = self._catalog_invocation(sender_content)
+        native_command = (
+            invocation is not None
+            and invocation.kind is ComposerCatalogEntryKind.command
+            and model_change is None
+            and reasoning_effort_change is None
+        )
         try:
-            turn.turn_id = await self._start_the_turn(parameters, turn)
+            if native_command:
+                assert invocation is not None
+                turn.turn_id = await self._start_native_command(
+                    thread_id=thread_id, invocation=invocation, turn=turn
+                )
+            else:
+                parameters = self._turn_start_parameters(
+                    thread_id=thread_id,
+                    content=content,
+                    model=model,
+                    reasoning_effort=reasoning_effort,
+                    invocation=invocation,
+                )
+                turn.turn_id = await self._start_the_turn(parameters, turn)
         except PromptWriteFailed:
             # No turn started, so there is no ending to report and nothing to settle: the
             # core hears one refusal and the conversation is idle again.
@@ -325,8 +393,9 @@ class CodexAppServerBackendChild:
                 self._turn = None
             raise
         # The turn is running on these values, so these are the conversation's values now.
-        self._model = model
-        self._reasoning_effort = reasoning_effort
+        if not native_command:
+            self._model = model
+            self._reasoning_effort = reasoning_effort
 
     async def steer(self, content: MessageContent, *, sender_label: str) -> None:
         """Never called: codex is one of the backends the contract says cannot steer.
@@ -413,6 +482,12 @@ class CodexAppServerBackendChild:
 
     async def stop(self) -> None:
         """Shut the child down for good."""
+        refresh = self._catalog_refresh_task
+        self._catalog_refresh_task = None
+        if refresh is not None:
+            refresh.cancel()
+            with suppress(asyncio.CancelledError):
+                await refresh
         turn = self._turn
         self._turn = None
         if turn is not None:
@@ -502,9 +577,124 @@ class CodexAppServerBackendChild:
                 f"codex answered {method} with something this cannot read: {would_not_decode}"
             ) from would_not_decode
 
+    # --- the composer catalogue ----------------------------------------------------------
+
+    async def _refresh_catalog_preserving_last_good(self) -> None:
+        """Publish one complete snapshot, or leave the prior snapshot untouched."""
+        async with self._catalog_refresh_lock:
+            try:
+                snapshot = await self._read_catalog_snapshot()
+                await self._sink.composer_catalog_reported(snapshot.entries)
+            except (CodexAppServerError, ValidationError) as failed:
+                LOGGER.warning(
+                    "conversation %s: Codex catalogue refresh failed: %s",
+                    self._resolved_start.conversation_id,
+                    failed,
+                )
+                return
+            self._catalog_snapshot = snapshot
+
+    def _request_catalog_refresh(self) -> None:
+        """Coalesce invalidations without making the app-server reader wait for requests."""
+        self._catalog_refresh_requested = True
+        if self._catalog_refresh_task is not None and not self._catalog_refresh_task.done():
+            return
+        self._catalog_refresh_task = asyncio.create_task(
+            self._run_catalog_refreshes(),
+            name=f"planner.conversation.codex.catalog.{self._resolved_start.conversation_id}",
+        )
+
+    async def _run_catalog_refreshes(self) -> None:
+        try:
+            await asyncio.sleep(CATALOG_REFRESH_COALESCE_SECONDS)
+            while self._catalog_refresh_requested:
+                self._catalog_refresh_requested = False
+                await self._refresh_catalog_preserving_last_good()
+        finally:
+            self._catalog_refresh_task = None
+
+    async def _read_catalog_snapshot(self) -> _CatalogSnapshot:
+        thread_id = self._bound_thread()
+        workspace = str(self._resolved_start.workspace_folder)
+        skills_result = await self._catalog_request(
+            "skills/list", bindings.SkillsListParams(cwds=[workspace])
+        )
+        installed_apps_result = await self._catalog_request(
+            "app/installed", bindings.AppsInstalledParams(threadId=thread_id)
+        )
+        apps = await self._read_all_apps(thread_id)
+        plugins_result = await self._catalog_request(
+            "plugin/installed", bindings.PluginInstalledParams(cwds=[workspace])
+        )
+        skills = bindings.SkillsListResponse.model_validate(skills_result)
+        installed_apps = bindings.AppsInstalledResponse.model_validate(installed_apps_result)
+        plugins = bindings.PluginInstalledResponse.model_validate(plugins_result)
+        skill_errors = [error for entry in skills.data for error in entry.errors]
+        if skill_errors:
+            raise CodexAppServerError(
+                "skills/list reported errors: "
+                + "; ".join(f"{error.path}: {error.message}" for error in skill_errors)
+            )
+        if plugins.marketplaceLoadErrors:
+            raise CodexAppServerError(
+                "plugin/installed reported marketplace errors: "
+                + "; ".join(
+                    f"{error.marketplacePath}: {error.message}"
+                    for error in plugins.marketplaceLoadErrors
+                )
+            )
+        return _catalog_snapshot(skills, installed_apps, apps, plugins)
+
+    async def _catalog_request(self, method: str, parameters: BaseModel) -> Any:
+        """Read catalogue data without letting a stale source poison the prompt wire."""
+        return await self._client.request(
+            method,
+            _wire(parameters),
+            poison_wire_on_timeout=False,
+            timeout_seconds=CATALOG_REQUEST_TIMEOUT_SECONDS,
+        )
+
+    async def _read_all_apps(self, thread_id: str) -> tuple[bindings.AppInfo, ...]:
+        cursor: str | None = None
+        all_apps: list[bindings.AppInfo] = []
+        seen_cursors: set[str] = set()
+        while True:
+            result = await self._catalog_request(
+                "app/list", bindings.AppsListParams(cursor=cursor, threadId=thread_id)
+            )
+            page = bindings.AppsListResponse.model_validate(result)
+            all_apps.extend(page.data)
+            cursor = page.nextCursor
+            if cursor is None:
+                return tuple(all_apps)
+            if cursor in seen_cursors:
+                raise CodexAppServerError("app/list repeated a pagination cursor")
+            seen_cursors.add(cursor)
+
+    def _catalog_invocation(self, content: MessageContent) -> _CatalogInvocation | None:
+        if not content or not isinstance(content[0], MessageText):
+            return None
+        match = _COMPOSER_TOKEN.fullmatch(content[0].text)
+        if match is None:
+            return None
+        token = match.group(1)
+        if token == "/compact":
+            # Compact has no instruction input. Any text or image after it is an ordinary
+            # prompt, because dropping that content would change the stored message.
+            if match.group(2) is None and len(content) == 1:
+                return _CatalogInvocation(ComposerCatalogEntryKind.command, "compact")
+            return None
+        if token == "/review" and len(content) == 1:
+            return _CatalogInvocation(
+                ComposerCatalogEntryKind.command, "review", match.group(2) or ""
+            )
+        return self._catalog_snapshot.resolve(token)
+
     # --- the turn -----------------------------------------------------------------------
 
-    def _turn_input(self, content: MessageContent) -> list[Any]:
+    def _turn_input(
+        self, content: MessageContent, invocation: _CatalogInvocation | None = None
+    ) -> list[Any]:
         """The message as codex's own turn input.
 
         Codex takes a picture as the file it is, which is exactly what this system already
@@ -522,6 +712,21 @@ class CodexAppServerBackendChild:
                             type="localImage", path=str(self._kept_path(piece.stored_file_id))
                         )
                     )
+        if invocation is not None and invocation.kind is ComposerCatalogEntryKind.skill:
+            given.append(
+                bindings.SkillUserInput(
+                    type="skill", name=invocation.name, path=invocation.path or ""
+                )
+            )
+        elif invocation is not None and invocation.kind in {
+            ComposerCatalogEntryKind.app,
+            ComposerCatalogEntryKind.plugin,
+        }:
+            given.append(
+                bindings.MentionUserInput(
+                    type="mention", name=invocation.name, path=invocation.path or ""
+                )
+            )
         return given
 
     def _kept_path(self, stored_file_id: str) -> Path:
@@ -531,9 +736,7 @@ class CodexAppServerBackendChild:
         makes this a refusal rather than a turn started on a message with a hole in it.
         """
         try:
-            return self._message_files.path_of(
-                self._resolved_start.conversation_id, stored_file_id
-            )
+            return self._message_files.path_of(self._resolved_start.conversation_id, stored_file_id)
         except MessageFileMissing as not_there:
             raise PromptWriteFailed(f"{stored_file_id} is not there") from not_there
 
@@ -544,17 +747,87 @@ class CodexAppServerBackendChild:
         content: MessageContent,
         model: str | None,
         reasoning_effort: str | None,
+        invocation: _CatalogInvocation | None = None,
     ) -> bindings.TurnStartParams:
         access = self._resolved_start.access
         return bindings.TurnStartParams(
             threadId=thread_id,
-            input=self._turn_input(content),
+            input=self._turn_input(content, invocation),
             model=model,
             effort=None if reasoning_effort is None else bindings.ReasoningEffort(reasoning_effort),
             approvalPolicy=_approval_policy(access),
             approvalsReviewer=_approvals_reviewer(access),
             sandboxPolicy=_turn_sandbox_policy(access),
         )
+
+    async def _start_native_command(
+        self,
+        *,
+        thread_id: str,
+        invocation: _CatalogInvocation,
+        turn: _TurnInFlight,
+    ) -> str | None:
+        if invocation.name == "compact":
+            compact_parameters = bindings.ThreadCompactStartParams(threadId=thread_id)
+            return await self._start_compaction(compact_parameters, turn)
+
+        instructions = invocation.path or ""
+        target: BaseModel
+        if instructions:
+            target = bindings.CustomReviewTarget(type="custom", instructions=instructions)
+        else:
+            target = bindings.UncommittedChangesReviewTarget(type="uncommittedChanges")
+        review_parameters = bindings.ReviewStartParams(
+            threadId=thread_id, delivery="inline", target=target
+        )
+        return await self._start_review(review_parameters, turn)
+
+    async def _start_compaction(
+        self, parameters: bindings.ThreadCompactStartParams, turn: _TurnInFlight
+    ) -> str | None:
+        """Accept compaction on its immediate response or its standard turn notification."""
+        try:
+            answer = await self._client.begin_request("thread/compact/start", _wire(parameters))
+        except CodexAppServerError as did_not_reach:
+            raise PromptWriteFailed(str(did_not_reach)) from did_not_reach
+        accepted = asyncio.create_task(
+            self._client.finish_request("thread/compact/start", answer),
+            name=f"planner.conversation.codex.compact.{turn.token.conversation_id}",
+        )
+        await asyncio.wait({accepted, turn.started}, return_when=asyncio.FIRST_COMPLETED)
+        if turn.started.done() and not turn.started.cancelled():
+            self._forget(accepted, "thread/compact/start")
+            return turn.started.result()
+        try:
+            result = await accepted
+            bindings.ThreadCompactStartResponse.model_validate(result)
+        except (CodexAppServerError, ValidationError) as would_not_start:
+            raise PromptWriteFailed(str(would_not_start)) from would_not_start
+        # The documented response has no turn id. A later turn/started notification binds
+        # the lifecycle to this turn token.
+        return turn.turn_id
+
+    async def _start_review(
+        self, parameters: bindings.ReviewStartParams, turn: _TurnInFlight
+    ) -> str:
+        """Accept review/start on either acknowledgement Codex documents."""
+        try:
+            answer = await self._client.begin_request("review/start", _wire(parameters))
+        except CodexAppServerError as did_not_reach:
+            raise PromptWriteFailed(str(did_not_reach)) from did_not_reach
+        accepted = asyncio.create_task(
+            self._client.finish_request("review/start", answer),
+            name=f"planner.conversation.codex.review.{turn.token.conversation_id}",
+        )
+        await asyncio.wait({accepted, turn.started}, return_when=asyncio.FIRST_COMPLETED)
+        if turn.started.done() and not turn.started.cancelled():
+            self._forget(accepted, "review/start")
+            return turn.started.result()
+        try:
+            result = await accepted
+            return bindings.ReviewStartResponse.model_validate(result).turn.id
+        except (CodexAppServerError, ValidationError) as would_not_start:
+            raise PromptWriteFailed(str(would_not_start)) from would_not_start
 
     async def _start_the_turn(
         self, parameters: bindings.TurnStartParams, turn: _TurnInFlight
@@ -659,9 +932,7 @@ class CodexAppServerBackendChild:
         turn.parked_asks.clear()
         for parked_user_input in list(turn.parked_user_inputs.values()):
             try:
-                await self._client.respond(
-                    parked_user_input.request_id, _user_input_answer(())
-                )
+                await self._client.respond(parked_user_input.request_id, _user_input_answer(()))
             except (CodexAppServerError, ValidationError) as could_not_settle:
                 LOGGER.debug(
                     "conversation %s: withdrawn Codex user input was not settled: %r",
@@ -720,6 +991,8 @@ class CodexAppServerBackendChild:
                 await self._on_item_completed(notification)
             case bindings.ErrorNotification():
                 self._on_error(notification)
+            case bindings.SkillsChangedNotification() | bindings.AppListUpdatedNotification():
+                self._request_catalog_refresh()
             case _:
                 LOGGER.debug("codex sent %s, which nothing here reads", method)
 
@@ -779,9 +1052,7 @@ class CodexAppServerBackendChild:
             return
         await self._sink.model_thinking_happened(turn.token)
 
-    async def _on_plan_updated(
-        self, notification: bindings.TurnPlanUpdatedNotification
-    ) -> None:
+    async def _on_plan_updated(self, notification: bindings.TurnPlanUpdatedNotification) -> None:
         """The turn's plan, whole, as codex now has it.
 
         Codex sends the entire plan on every change, which is exactly what a plan row is,
@@ -853,9 +1124,7 @@ class CodexAppServerBackendChild:
         item = notification.item
         if isinstance(item, bindings.AgentMessageThreadItem):
             turn.agent_message_texts.pop(item.id, None)
-            await self._sink.agent_message_completed(
-                turn.token, text_message_content(item.text)
-            )
+            await self._sink.agent_message_completed(turn.token, text_message_content(item.text))
             return
         if isinstance(item, bindings.ContextCompactionThreadItem):
             # Codex summarised the conversation so far and dropped what it summarised. It
@@ -966,9 +1235,7 @@ class _CodexServerMessages:
     async def on_notification(self, method: str, notification: BaseModel) -> None:
         await self._child._on_notification(method, notification)
 
-    async def on_server_request(
-        self, method: str, request_id: Any, params: BaseModel
-    ) -> None:
+    async def on_server_request(self, method: str, request_id: Any, params: BaseModel) -> None:
         await self._child._on_server_request(method, request_id, params)
 
     async def on_child_ended(self) -> None:
@@ -1047,8 +1314,7 @@ _PLAN_ENTRY_STATUSES: dict[str, PlanEntryStatus] = {
 
 def _plan_entries(plan: list[bindings.TurnPlanStep]) -> tuple[PlanEntry, ...]:
     return tuple(
-        PlanEntry(text=step.step, status=_PLAN_ENTRY_STATUSES[str(step.status)])
-        for step in plan
+        PlanEntry(text=step.step, status=_PLAN_ENTRY_STATUSES[str(step.status)]) for step in plan
     )
 
 
@@ -1153,9 +1419,7 @@ def _user_input_questions(
         if question.isSecret:
             raise ValueError(f"Codex question {question_id!r} asks for unsupported secret input")
         options = tuple(
-            UserInputOption(
-                label=option.label.strip(), description=option.description.strip()
-            )
+            UserInputOption(label=option.label.strip(), description=option.description.strip())
             for option in (question.options or [])
         )
         if any(not option.label or not option.description for option in options):
@@ -1208,6 +1472,123 @@ def _shortened(text: str, limit: int) -> str:
 
 def _shortened_or_nothing(text: str | None, limit: int) -> str | None:
     return None if text is None else _shortened(text, limit)
+
+
+def _catalog_snapshot(
+    skills: bindings.SkillsListResponse,
+    installed_apps: bindings.AppsInstalledResponse,
+    apps: tuple[bindings.AppInfo, ...],
+    plugins: bindings.PluginInstalledResponse,
+) -> _CatalogSnapshot:
+    """Join Codex's catalogue sources into one deterministic, executable snapshot."""
+    candidates: list[tuple[str, ComposerCatalogEntry, _CatalogInvocation]] = []
+    for cwd in skills.data:
+        for skill in cwd.skills:
+            if not skill.enabled:
+                continue
+            token = f"${skill.name}"
+            display_name = (
+                skill.interface.displayName
+                if skill.interface is not None and skill.interface.displayName
+                else skill.name
+            )
+            description = (
+                skill.interface.shortDescription
+                if skill.interface is not None and skill.interface.shortDescription
+                else skill.shortDescription or skill.description
+            )
+            candidates.append(
+                (
+                    token,
+                    ComposerCatalogEntry(
+                        kind=ComposerCatalogEntryKind.skill,
+                        display_text=f"${display_name}",
+                        insertion_text=f"{token} ",
+                        description=description,
+                    ),
+                    _CatalogInvocation(ComposerCatalogEntryKind.skill, skill.name, skill.path),
+                )
+            )
+
+    callable_apps = {app.id for app in installed_apps.apps if app.enabled and app.callable}
+    for app in apps:
+        if app.id not in callable_apps or not app.isEnabled or not app.isAccessible:
+            continue
+        token = f"@{_mention_token(app.name)}"
+        candidates.append(
+            (
+                token,
+                ComposerCatalogEntry(
+                    kind=ComposerCatalogEntryKind.app,
+                    display_text=f"@{app.name}",
+                    insertion_text=f"{token} ",
+                    description=app.description or f"Use {app.name}",
+                ),
+                _CatalogInvocation(ComposerCatalogEntryKind.app, app.name, f"app://{app.id}"),
+            )
+        )
+
+    for marketplace in plugins.marketplaces:
+        for plugin in marketplace.plugins:
+            if (
+                not plugin.installed
+                or not plugin.enabled
+                or plugin.availability == "DISABLED_BY_ADMIN"
+                or plugin.disabledReason is not None
+            ):
+                continue
+            display_name = (
+                plugin.interface.displayName
+                if plugin.interface is not None and plugin.interface.displayName
+                else plugin.name
+            )
+            description = (
+                plugin.interface.shortDescription
+                if plugin.interface is not None and plugin.interface.shortDescription
+                else f"Use {display_name}"
+            )
+            # A marketplace is part of a plugin's protocol identity. Keep it in the token
+            # too, so two installed marketplaces can never turn the same text into a
+            # different plugin because catalogue ordering changed.
+            token = f"@{_mention_token(plugin.name)}@{_mention_token(marketplace.name)}"
+            candidates.append(
+                (
+                    token,
+                    ComposerCatalogEntry(
+                        kind=ComposerCatalogEntryKind.plugin,
+                        display_text=f"@{display_name}",
+                        insertion_text=f"{token} ",
+                        description=description,
+                    ),
+                    _CatalogInvocation(
+                        ComposerCatalogEntryKind.plugin,
+                        display_name,
+                        f"plugin://{plugin.name}@{marketplace.name}",
+                    ),
+                )
+            )
+
+    occurrences: dict[str, int] = {}
+    for token, _, _ in candidates:
+        occurrences[token] = occurrences.get(token, 0) + 1
+    unique = [candidate for candidate in candidates if occurrences[candidate[0]] == 1]
+    unique.sort(key=lambda candidate: (str(candidate[1].kind), candidate[0].casefold()))
+
+    invocations: list[tuple[str, _CatalogInvocation | None]] = [
+        ("/compact", _CatalogInvocation(ComposerCatalogEntryKind.command, "compact")),
+        ("/review", _CatalogInvocation(ComposerCatalogEntryKind.command, "review")),
+    ]
+    invocations.extend((token, invocation) for token, _, invocation in unique)
+    return _CatalogSnapshot(
+        entries=CODEX_BUILT_IN_CATALOG_ENTRIES + tuple(entry for _, entry, _ in unique),
+        invocations=tuple(invocations),
+    )
+
+
+def _mention_token(name: str) -> str:
+    """Codex's stable lower-case token spelling for a visible mention name."""
+    token = re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-")
+    return token or "item"
 
 
 def _wire(parameters: BaseModel) -> dict[str, Any]:

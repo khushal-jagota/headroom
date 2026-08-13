@@ -98,6 +98,7 @@ from planner.conversation.voice_transcription import (
     VoiceTranscriptionUnconfigured,
     transcribe_conversation_audio,
 )
+from planner.core.db import connect
 from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
 
 # The two things a tail carries, told apart by name so a browser never has to guess which
@@ -121,6 +122,7 @@ class ConversationRuntime:
     backend_snapshots: BackendSnapshotService
     backend_usage: BackendUsageService
     message_files: ConversationMessageFiles
+    database_path: str
     sse_heartbeat_ms: int
     backend_state: BackendStateStore | None = None
 
@@ -159,6 +161,7 @@ def build_conversation_runtime(
         backend_snapshots=BackendSnapshotService(backend_lifecycle=backend_lifecycle),
         backend_usage=production_backend_usage_service(),
         message_files=message_files,
+        database_path=db_path,
         sse_heartbeat_ms=sse_heartbeat_ms,
         backend_state=BackendStateStore(db_path, busy_timeout_ms=db_busy_timeout_ms),
     )
@@ -174,6 +177,33 @@ def _runtime(request: Request) -> ConversationRuntime:
 
 
 Runtime = Annotated[ConversationRuntime, Depends(_runtime)]
+
+
+def _require_mutable_conversation(
+    runtime: ConversationRuntime, conversation_id: str
+) -> None:
+    """Reject writes to a Ticket's past conversation.
+
+    A conversation with no Ticket association belongs to another surface, such as the
+    Chief or development pane, and remains mutable. A Ticket association makes the
+    Ticket's active pointer authoritative.
+    """
+    conn = connect(runtime.database_path)
+    try:
+        row = conn.execute(
+            "SELECT ticket_conversations.ticket_id, tickets.conversation_id "
+            "FROM ticket_conversations JOIN tickets "
+            "ON tickets.id = ticket_conversations.ticket_id "
+            "WHERE ticket_conversations.conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is not None and row["conversation_id"] != conversation_id:
+        raise HTTPException(
+            status_code=409,
+            detail="the conversation is not the Ticket's active conversation",
+        )
 
 
 # --- what the routes are sent -------------------------------------------------------------
@@ -399,6 +429,7 @@ async def send_into_conversation(
     then refused leaves those files behind unnamed, which costs a few bytes on disk and
     loses nothing.
     """
+    _require_mutable_conversation(runtime, conversation_id)
     try:
         content = await _kept_message_content(runtime, conversation_id, body.content)
         fate = await runtime.system.send(
@@ -454,6 +485,7 @@ async def transcribe_voice_note(
     instead of re-uploading the bytes.
     """
     await _require_conversation(runtime, conversation_id)
+    _require_mutable_conversation(runtime, conversation_id)
     if (body.audio is None) == (body.stored_file_id is None):
         raise HTTPException(
             status_code=422,
@@ -500,6 +532,7 @@ async def transcribe_voice_note(
 @router.post("/conversations/{conversation_id}/interrupt", status_code=204)
 async def interrupt_conversation(conversation_id: str, runtime: Runtime) -> Response:
     """Stop the running turn. What was held behind it runs from here."""
+    _require_mutable_conversation(runtime, conversation_id)
     await runtime.system.interrupt(conversation_id)
     return Response(status_code=204)
 
@@ -511,6 +544,7 @@ async def kill_conversation(conversation_id: str, runtime: Runtime) -> Response:
     This is what pressing New uses: an interrupt alone would free the agent and let the
     held messages run, which is exactly what starting again must not do.
     """
+    _require_mutable_conversation(runtime, conversation_id)
     await runtime.system.kill(conversation_id)
     return Response(status_code=204)
 
@@ -526,6 +560,7 @@ async def discard_held_prompt(
     a held message runs the moment the agent frees up — so it is a false rather than an
     error.
     """
+    _require_mutable_conversation(runtime, conversation_id)
     discarded = await runtime.system.discard_held_prompt(conversation_id, held_prompt_id)
     return {"discarded": discarded}
 
@@ -540,6 +575,7 @@ async def promote_held_prompt(
     runtime: Runtime,
 ) -> dict[str, Any]:
     """Claim one waiting message and deliver it now in the selected mode."""
+    _require_mutable_conversation(runtime, conversation_id)
     fate = await runtime.system.promote_held_prompt(
         conversation_id, held_prompt_id, body.mode
     )
@@ -557,6 +593,7 @@ async def answer_permission_ask(
     Not landing is an ordinary outcome — the ask was answered already, or its turn has
     since ended — so it is a false rather than an error.
     """
+    _require_mutable_conversation(runtime, conversation_id)
     landed = await runtime.system.answer_permission_ask(
         conversation_id, body.ask_id, body.option_id
     )
@@ -568,6 +605,7 @@ async def answer_user_input(
     conversation_id: str, body: UserInputAnswerBody, runtime: Runtime
 ) -> dict[str, bool]:
     """Give the backend the complete answer map for one question request."""
+    _require_mutable_conversation(runtime, conversation_id)
     landed = await runtime.system.answer_user_input(
         conversation_id,
         body.request_id,
@@ -717,16 +755,18 @@ async def _conversation_view(
         "identity_environment_variable_names": [
             name for name, _value in record.identity_environment_variables
         ],
-        # The agent's own menu, as it last reported it. It comes off the conversation
-        # rather than off a running child, so it is there for the person opening a
-        # conversation to write the first message into it.
-        "available_commands": [
+        # The conversation's composer catalog, as its backend last reported it. It comes
+        # off the conversation rather than off a running child, so it is there when a
+        # person opens the conversation to write the first message.
+        "composer_catalog": [
             {
-                "name": command.name,
-                "description": command.description,
-                "argument_hint": command.argument_hint,
+                "kind": str(entry.kind),
+                "display_text": entry.display_text,
+                "insertion_text": entry.insertion_text,
+                "description": entry.description,
+                "argument_hint": entry.argument_hint,
             }
-            for command in record.available_commands
+            for entry in record.composer_catalog
         ],
         "latest_sequence": record.latest_sequence,
         "is_running": await runtime.system.is_running(conversation_id),

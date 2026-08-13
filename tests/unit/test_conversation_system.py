@@ -34,7 +34,8 @@ from planner.conversation.backends.contracts import (
     UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     ConversationAlreadyStarted,
     ConversationBackendKey,
     ConversationRoleMaterials,
@@ -106,6 +107,7 @@ class _FakeBackendWrite:
     """
 
     content: MessageContent
+    sender_content: MessageContent | None = None
     steered: bool = False
 
     @property
@@ -169,6 +171,13 @@ class _FakeBackend:
     def written_texts(self) -> tuple[str, ...]:
         return tuple(write.text for write in self.writes)
 
+    def sender_written_texts(self) -> tuple[str, ...]:
+        return tuple(
+            message_content_text(write.sender_content)
+            for write in self.writes
+            if write.sender_content is not None
+        )
+
 
 class _FakeBackendChild:
     """One child process stand-in. Everything it is told goes to its conversation's backend."""
@@ -207,6 +216,7 @@ class _FakeBackendChild:
         turn_token: TurnToken,
         content: MessageContent,
         *,
+        sender_content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
@@ -238,7 +248,9 @@ class _FakeBackendChild:
             self._backend.model = model_change
         if reasoning_effort_change is not None:
             self._backend.reasoning_effort = reasoning_effort_change
-        self._backend.writes.append(_FakeBackendWrite(content=content))
+        self._backend.writes.append(
+            _FakeBackendWrite(content=content, sender_content=sender_content)
+        )
         self._backend.lifecycle_events.append(f"write:{message_content_text(content)}")
         self._backend.live_turn_token = turn_token
         if self._backend.ends_the_turn_while_writing:
@@ -1466,6 +1478,7 @@ def test_a_backend_that_can_only_change_by_starting_again_is_started_again(
         assert backend.started_from_cursor == VENDOR_SESSION_CURSOR
         assert backend.model == "second-model"
         assert backend.written_texts() == ("first", "switch here")
+        assert backend.sender_written_texts() == ("first", "switch here")
 
     _run(exercise)
 
@@ -1974,6 +1987,7 @@ def test_the_role_text_rides_the_very_first_prompt_and_only_that_one(harness: _H
             "You are the Chief of Staff.\n\nfirst",
             "second",
         )
+        assert harness.backend("c").sender_written_texts() == ("first", "second")
         # The record keeps what the sender wrote: the role belongs to the conversation.
         assert await harness.recorded_prompts("c") == (
             ("first", "owner", "run_when_free"),
@@ -2063,10 +2077,28 @@ def test_a_session_cursor_the_backend_mints_is_kept(harness: _Harness) -> None:
 
 
 A_MENU = (
-    AgentCommand(name="review", description="Review the diff", argument_hint="[path]"),
-    AgentCommand(name="compact", description="Summarise the conversation so far"),
+    ComposerCatalogEntry(
+        kind=ComposerCatalogEntryKind.command,
+        display_text="/review",
+        insertion_text="/review ",
+        description="Review the diff",
+        argument_hint="[path]",
+    ),
+    ComposerCatalogEntry(
+        kind=ComposerCatalogEntryKind.skill,
+        display_text="$compact",
+        insertion_text="$compact ",
+        description="Summarise the conversation so far",
+    ),
 )
-A_LATER_MENU = (AgentCommand(name="compact", description="Summarise the conversation so far"),)
+A_LATER_MENU = (
+    ComposerCatalogEntry(
+        kind=ComposerCatalogEntryKind.plugin,
+        display_text="@compact",
+        insertion_text="@compact exact ",
+        description="Summarise the conversation so far",
+    ),
+)
 
 
 def test_the_commands_a_backend_reports_are_kept_and_outlive_its_child(
@@ -2085,7 +2117,7 @@ def test_the_commands_a_backend_reports_are_kept_and_outlive_its_child(
         await harness.system.send("c", text_message_content("first"), sender_label="owner")
         backend = harness.backend("c")
         assert backend.sink is not None
-        await backend.sink.available_commands_reported(A_MENU)
+        await backend.sink.composer_catalog_reported(A_MENU)
         await harness.settle()
         await harness.complete_turn("c")
 
@@ -2095,7 +2127,7 @@ def test_the_commands_a_backend_reports_are_kept_and_outlive_its_child(
 
         stored = await harness.store.read_conversation("c")
         assert stored is not None
-        assert stored.available_commands == A_MENU
+        assert stored.composer_catalog == A_MENU
         assert await harness.recorded_kinds("c") == (
             ConversationEventKind.prompt,
             ConversationEventKind.turn_ended,
@@ -2111,14 +2143,14 @@ def test_a_second_report_leaves_only_what_the_backend_offers_now(harness: _Harne
         backend = harness.backend("c")
         assert backend.sink is not None
 
-        await backend.sink.available_commands_reported(A_MENU)
+        await backend.sink.composer_catalog_reported(A_MENU)
         await harness.settle()
-        await backend.sink.available_commands_reported(A_LATER_MENU)
+        await backend.sink.composer_catalog_reported(A_LATER_MENU)
         await harness.settle()
 
         stored = await harness.store.read_conversation("c")
         assert stored is not None
-        assert stored.available_commands == A_LATER_MENU
+        assert stored.composer_catalog == A_LATER_MENU
 
     _run(exercise)
 

@@ -6,8 +6,8 @@ description: The shared Panels model for creating a coherent Ticket.
 # Creating a Ticket
 
 Use a Ticket for a concrete unit of work that one Worker can carry through its
-lifecycle. A Sprint Item is the broader outcome that can own several Tickets; an idea
-is a loose thought that is not committed work. Choose the Worker type whose lifecycle
+lifecycle. A Sprint Item is an optional broader-outcome classification for several
+Tickets. An idea is a loose thought that is not committed work. Choose the Worker type whose lifecycle
 fits the job, use its registered specialist guidance, and let that type supply its
 normal employee runtime defaults.
 
@@ -23,15 +23,19 @@ adds the Ticket to today, making it part of the active execution roster. This is
 whether the Ticket is in a sprint or the backlog. If the user explicitly wants it off
 today, remove it from the Day as a separate follow-up; backlog does not mean not today.
 
-Sprint placement says which outcome owns the work. Inspect the relevant Project and
-Sprint Items and use an existing specific item when it genuinely owns the Ticket. With
-no explicit placement and a current sprint, Panels creates or reuses that sprint's
-Project-specific `Other` item; without a current sprint, the Ticket remains unparented.
-An explicit Sprint Item selects that item; explicit backlog placement leaves the Ticket
-outside a sprint. A Ticket under an item inherits its Project and effective sprint from
-that item, while an unparented backlog Ticket may carry its Project directly. Do not
-create a new Sprint Item merely to avoid the `Other` fallback; Sprint Item creation and
-priority belong to sprint planning.
+Each Ticket owns its Project and optional Sprint placement. With no explicit Sprint
+choice, creation uses the current Sprint. Without a current Sprint, the Ticket stays in
+backlog. Explicit backlog placement also leaves the Ticket outside a Sprint.
+
+Sprint Item membership is optional classification. Inspect the relevant Project and
+Sprint Items, and use an existing Item only when it genuinely describes the Ticket. The
+Item's Project and Sprint must match the Ticket. Do not create an Item only to classify
+otherwise coherent work. Unclassified Sprint Tickets appear in the view-only Other
+group, not in a stored fallback Item.
+
+Route `planning-day`, `planning-midday-check`, and `planning-sprint` Tickets to the
+Personal Project and that Sprint's Planning Item. Keep an `initiative_planning` Ticket
+with its initiative Project, Sprint, and optional Item.
 
 ## Importance, timing, and dependencies
 
@@ -54,6 +58,6 @@ the Ticket's blockers so Panels can hold the dependent work until the prerequisi
 resolved. Do not use either as a second priority scale.
 
 After creation, read the Ticket back as a whole. Its title, Worker type, Kickoff,
-today status, Sprint Item or backlog placement, inherited Project and sprint, priority,
+today status, direct Project and Sprint, optional Sprint Item, priority,
 deadline, and blockers should tell one coherent story. Correct a mismatch through the
 ordinary owning surface rather than compensating for it in prose.

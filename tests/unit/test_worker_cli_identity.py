@@ -45,6 +45,17 @@ def _bind_session(db_path: Path, ticket_id: str, session_key: str) -> None:
     conn = connect(str(db_path))
     try:
         conn.execute(
+            "INSERT OR IGNORE INTO conversations "
+            "(conversation_id, backend_key, model, workspace_folder, access, created_at) "
+            "VALUES (?, 'codex', 'model', '/work', 'full', 1)",
+            (session_key,),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO ticket_conversations (conversation_id, ticket_id) "
+            "VALUES (?, ?)",
+            (session_key, ticket_id),
+        )
+        conn.execute(
             "UPDATE tickets SET conversation_id = ? WHERE id = ?",
             (session_key, ticket_id),
         )
@@ -94,8 +105,8 @@ def test_worker_self_route_resolves_ticket_with_no_bound_session(tmp_path: Path)
 def test_worker_self_route_ownership_validation_rejects_ambiguous_session(
     tmp_path: Path,
 ) -> None:
-    # Two tickets bound to the SAME durable session id — a corrupt duplicate. The worker-self
-    # route must reject the ambiguously-owned session (the plain /tickets/{id} read does not).
+    # Two active pointers mirror one durable conversation. Its unique history association
+    # belongs to the first Ticket, so the second Ticket must reject that foreign ownership.
     app, db_path = _make_app(tmp_path)
     with TestClient(app) as client:
         first = client.post(
@@ -109,7 +120,7 @@ def test_worker_self_route_ownership_validation_rejects_ambiguous_session(
         _bind_session(db_path, first["id"], "duplicate_session")
         _bind_session(db_path, second["id"], "duplicate_session")
 
-        response = client.get(f"/api/tickets/{first['id']}/worker-self")
+        response = client.get(f"/api/tickets/{second['id']}/worker-self")
 
     assert response.status_code == 400, response.text
     error = response.json()["error"]
@@ -140,10 +151,13 @@ class _RecordingSend:
 
 _DETAIL_BODY = {
     "id": "t_abc",
+    "worker_type": "coding",
     "stage": "coding",
+    "ticket_status": "agent",
     "priority": "P1",
     "title": "Do the thing",
     "worker": "panels-worker-coding",
+    "fields": {"implementation": {"value": None, "user_note": None, "proposal": None}},
 }
 
 

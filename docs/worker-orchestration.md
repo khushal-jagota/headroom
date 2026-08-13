@@ -1,7 +1,8 @@
 # Worker orchestration
 
-Each Ticket has one conversation, and one worker on the other end of it. This system
-decides when that worker should be asked to take the Ticket's next step, and asks it.
+Each Ticket has one active conversation, and one worker on the other end of it. A Ticket
+also retains its past conversations. This system decides when the active worker receives
+the Ticket's next step, and sends that step.
 That is the whole job. It does not watch the worker, wait for it to finish, or settle
 anything afterwards — a Ticket moves again only when someone acts on it: a proposal
 filed, an approval given, a take-over.
@@ -59,19 +60,13 @@ _Code paths:_ `src/planner/runtime/worker_step_readiness.py`,
 
 ## Scheduled Ticket handoff
 
-A sibling loop can supply an ordinary Ticket at an exact configured local time. It
-shares the readiness loop's server lifespan, periodic interval, and single-machine lock,
-but not its job: scheduling stops after an atomic Ticket creation and day placement.
-That commit emits the ordinary change signal, and readiness then asks its unchanged
-questions about today, gates, ownership, status, scope, and live conversation activity.
-There is no alternate start path from a schedule into a Worker.
+The scheduled-Ticket loop shares the server lifespan and single-machine lock, but not
+this system's job. Scheduling stops after ordinary Ticket creation and Day placement.
+That commit emits the change signal, and readiness applies the same rules as it does to
+any other Ticket. There is no schedule-to-Worker shortcut.
 
-The schedule loop evaluates only the current local minute. It does not search elapsed
-minutes after downtime. Repeated polls and restarts see the same durable occurrence
-receipt; an existing Ticket of the configured Worker type on the target day suppresses
-creation before readiness is involved.
-
-_Code paths:_ `src/planner/scheduled_tickets/` and `src/planner/core/loops.py`.
+See **Scheduled Ticket creation** (`scheduled-tickets.md`) for schedule configuration,
+occurrences, and suppression.
 
 ## Sending the step
 
@@ -86,13 +81,15 @@ message goes into it. If it has none, the message is what brings one into being 
 what it should run on is resolved from three layers in order: the Worker type's launch
 defaults, the Ticket's own last-chosen values, then anything the sender explicitly asked
 for. The backend, model, and reasoning effort resolve as a unit, because a model name
-means nothing to a backend that has never heard of it. The conversation is created first
-and the Ticket pointed at it second, so a Ticket never names a conversation that does not
-exist.
+means nothing to a backend that has never heard of it. The conversation is created first.
+One guarded transaction points the Ticket at it and records its durable association. If
+another start wins that pointer race, the losing conversation gets no association.
 
 Making a conversation and saying the first thing in it are one act. If the message does
 not land, the conversation goes with it and the Ticket is left with none — which is
-exactly what the next attempt wants to find.
+exactly what the next attempt wants to find. The refusal or exception also removes that
+start's exact provisional association. Reset differs: it clears the active pointer but
+keeps the association and transcript in the Ticket's history.
 
 The conversation system reports one of three fates:
 
@@ -171,17 +168,33 @@ file proposals. Panels exposes the repository's role skills through each backend
 native skill location: project links for Codex and Claude Code, and startup links in
 the configured planner Hermes home.
 
-The production catalog is exactly `hermes`, `codex`, and `claude`. Workers run in
-`~/Coding` when that folder exists, and in the Panels repository otherwise; startup
-only chooses between those two paths and never creates either.
+The production catalog is exactly `hermes`, `codex`, and `claude`. A new Ticket worker
+runs in its Project folder when that path names an existing directory. Otherwise, it
+runs in `~/projects` when that folder exists, and in the Panels repository otherwise.
+Startup creates no folders. Existing conversations keep their stored workspace folder.
 
 The Ticket's stored backend, model, and reasoning effort are its **last-chosen**
 values, kept up to date with what its conversation actually runs on, so a fresh
 conversation starts from where the last one ended. Managed Worker and Chief settings
 own the defaults a Ticket starts from, and the Workers screen edits them.
 
-_Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`, and
-`src/planner/skills/`.
+Panels keeps every distinct byte sequence for each managed skill in SQLite. A SHA-256
+content hash reuses an existing version when an edit returns to the same content. Startup
+records all current managed skills before any worker loop starts.
+
+Each automatic worker-step message gets a sender message ID. Before the send, Panels binds
+that ID to the current `panels`, `panels-worker`, and specialist versions. The binding stays
+provisional while a prompt waits in the process-local queue. The conversation record makes
+it final in the same transaction that stores the prompt event. A refusal or discard event
+removes it. Startup resolves any provisional binding from its durable prompt outcome and
+expires one with no outcome, because the old process queue no longer exists.
+
+The sender message ID links these records without a second run tracker. The prompt row keeps
+the Ticket and Stage instruction that the worker received. This version store has no API or
+browser reader yet.
+
+_Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`,
+`src/planner/skill_versions.py`, and `src/planner/skills/`.
 
 ## Handoffs
 
@@ -201,6 +214,4 @@ _Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`, and
 
 ---
 
-_Last verified: 2026-07-28 (scheduled Ticket supply hands off through the ordinary
-commit; readiness check, one claim flip, no watch-and-settle; one conversation system,
-and a worker step sends into the same conversation a person does)._
+_Last verified: 2026-08-10._

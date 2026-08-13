@@ -27,7 +27,7 @@ SCRIPT_PATH_ENVIRONMENT_NAME = "PANELS_CODEX_SCRIPTED_APP_SERVER_SCRIPT"
 # cares about. Codex's own shapes require them, and a fake that skipped them would be
 # testing the adapter against a protocol nobody speaks.
 _THREAD_FILLER: dict[str, Any] = {
-    "cliVersion": "0.145.0",
+    "cliVersion": "0.147.0",
     "createdAt": 0,
     "updatedAt": 0,
     "ephemeral": False,
@@ -59,15 +59,15 @@ class ScriptedAppServer:
         self._writing = asyncio.Lock()
         self._exit_code: int | None = None
         self._turn_tasks: set[asyncio.Task[None]] = set()
+        self._catalog_reads: dict[str, int] = {}
+        self._app_list_notifications = 0
 
     # --- running ------------------------------------------------------------------------
 
     async def run(self) -> None:
         # What this child was actually launched with, so a test can prove the identity and
         # the workspace folder a conversation runs under reached the process itself.
-        self._write_down(
-            {"launched": {"cwd": str(Path.cwd()), "environment": dict(os.environ)}}
-        )
+        self._write_down({"launched": {"cwd": str(Path.cwd()), "environment": dict(os.environ)}})
         standard_error = self._script.get("stderr")
         if standard_error:
             sys.stderr.write(standard_error)
@@ -115,6 +115,30 @@ class ScriptedAppServer:
                 running = asyncio.create_task(self._run_turn(request_id, parameters))
                 self._turn_tasks.add(running)
                 running.add_done_callback(self._turn_tasks.discard)
+            case "review/start":
+                running = asyncio.create_task(
+                    self._run_turn(request_id, parameters, response_kind="review")
+                )
+                self._turn_tasks.add(running)
+                running.add_done_callback(self._turn_tasks.discard)
+            case "thread/compact/start":
+                compact_response = self._script.get("compact_response", "ok")
+                if compact_response == "error":
+                    await self._respond_with_error(request_id, "compaction unavailable")
+                    return
+                if compact_response != "never":
+                    await self._respond(request_id, {})
+                running = asyncio.create_task(self._run_turn(None, parameters))
+                self._turn_tasks.add(running)
+                running.add_done_callback(self._turn_tasks.discard)
+            case "skills/list":
+                await self._catalog_answer(request_id, "skills", {"data": []})
+            case "app/installed":
+                await self._catalog_answer(request_id, "installed_apps", {"apps": []})
+            case "app/list":
+                await self._answer_app_list(request_id, parameters)
+            case "plugin/installed":
+                await self._catalog_answer(request_id, "plugins", {"marketplaces": []})
             case "turn/interrupt":
                 self._interrupted.set()
                 await self._respond(request_id, {})
@@ -133,7 +157,7 @@ class ScriptedAppServer:
                 "codexHome": str(Path.home() / ".codex"),
                 "platformFamily": "unix",
                 "platformOs": "macos",
-                "userAgent": "codex-cli/0.145.0 (scripted)",
+                "userAgent": "codex-cli/0.147.0 (scripted)",
             },
         )
 
@@ -147,9 +171,7 @@ class ScriptedAppServer:
             await self._respond_with_error(request_id, resume.get("message", "no such thread"))
             return
         # ``other_thread`` is the trap: a resume that answers with a thread nobody asked for.
-        answered_with = (
-            resume["thread_id"] if outcome == "other_thread" else parameters["threadId"]
-        )
+        answered_with = resume["thread_id"] if outcome == "other_thread" else parameters["threadId"]
         self._thread_id = answered_with
         await self._respond(request_id, self._thread_answer(answered_with, parameters))
 
@@ -172,20 +194,59 @@ class ScriptedAppServer:
 
     # --- the turn ---------------------------------------------------------------------------
 
-    async def _run_turn(self, request_id: Any, parameters: dict[str, Any]) -> None:
-        script = (
-            self._turns[self._turns_started] if self._turns_started < len(self._turns) else {}
-        )
+    async def _catalog_answer(self, request_id: Any, key: str, default: Any) -> None:
+        configured = self._script.get(key, default)
+        if isinstance(configured, list):
+            read = self._catalog_reads.get(key, 0)
+            self._catalog_reads[key] = read + 1
+            configured = configured[min(read, len(configured) - 1)]
+        if configured == "error":
+            await self._respond_with_error(request_id, f"{key} failed")
+            return
+        if configured == "never":
+            return
+        await self._respond(request_id, configured)
+
+    async def _answer_app_list(self, request_id: Any, parameters: dict[str, Any]) -> None:
+        configured = self._script.get("apps", {"data": []})
+        if configured == "error":
+            await self._respond_with_error(request_id, "apps failed")
+            return
+        if isinstance(configured, list):
+            cursor = parameters.get("cursor")
+            page = int(cursor) if cursor is not None else 0
+            answer = dict(configured[page])
+            if page + 1 < len(configured):
+                answer["nextCursor"] = str(page + 1)
+            await self._respond(request_id, answer)
+            return
+        if self._script.get("notify_apps_during_list") and self._app_list_notifications == 0:
+            self._app_list_notifications += 1
+            await self._notify("app/list/updated", {"data": configured.get("data", [])})
+            await asyncio.sleep(self._script.get("app_list_response_delay", 0))
+        await self._respond(request_id, configured)
+
+    async def _run_turn(
+        self,
+        request_id: Any,
+        parameters: dict[str, Any],
+        *,
+        response_kind: str = "turn",
+    ) -> None:
+        script = self._turns[self._turns_started] if self._turns_started < len(self._turns) else {}
         self._turns_started += 1
         turn_id = script.get("turn_id", f"turn-{self._turns_started}")
         self._interrupted.clear()
 
-        if script.get("respond") == "error":
+        if script.get("respond") == "error" and request_id is not None:
             await self._respond_with_error(request_id, script.get("message", "turn refused"))
             return
         await self._notify("turn/started", {"threadId": self._thread_id, "turn": _turn(turn_id)})
-        if script.get("respond") != "never":
-            await self._respond(request_id, {"turn": _turn(turn_id)})
+        if request_id is not None and script.get("respond") != "never":
+            response: dict[str, Any] = {"turn": _turn(turn_id)}
+            if response_kind == "review":
+                response["reviewThreadId"] = self._thread_id
+            await self._respond(request_id, response)
         # A turn nobody wrote actions for is a turn that simply finishes. An empty list is
         # a turn that deliberately does not.
         actions = (
@@ -200,6 +261,12 @@ class ScriptedAppServer:
         del parameters
         route = {"threadId": self._thread_id, "turnId": turn_id}
         match action["do"]:
+            case "sleep":
+                await asyncio.sleep(action["seconds"])
+            case "skills_changed":
+                await self._notify("skills/changed", {})
+            case "apps_changed":
+                await self._notify("app/list/updated", {"data": action.get("data", [])})
             case "agent_delta":
                 await self._notify(
                     "item/agentMessage/delta",
@@ -277,6 +344,7 @@ class ScriptedAppServer:
                     {
                         **route,
                         "itemId": action.get("item_id", "input-1"),
+                        "isBlocking": True,
                         "questions": action["questions"],
                     },
                 )

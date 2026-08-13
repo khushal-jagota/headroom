@@ -12,7 +12,7 @@ from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 
 PREVIOUS_REVISION = "notification_preferences_by_subject"
-HEAD_REVISION = "weekly_sprint_checkpoint_schedule"
+HEAD_REVISION = "supervisor_obligations"
 CHECKPOINT_SCHEDULE_ID = "schedule_weekly_sprint_checkpoint"
 
 
@@ -74,6 +74,7 @@ def test_upgrade_preserves_schedules_receipts_and_foreign_keys(tmp_path: Path) -
         "priority": "P1",
         "deadline": "2026-08-31",
         "project_id": "project_existing",
+        "sprint_id": None,
         "sprint_item_id": None,
         "employee_backend": "codex",
         "employee_launch_model": "model-existing",

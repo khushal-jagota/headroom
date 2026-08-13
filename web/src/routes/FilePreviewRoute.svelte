@@ -6,6 +6,7 @@
     MANAGED_HTML_PREVIEW_SANDBOX,
     prepareManagedHtmlPreviewDocument,
     resolvePreview,
+    sprintItemFileTarget,
     ticketFileTarget
   } from "../lib/filePreview";
 
@@ -16,6 +17,9 @@
     const path = params.get("path") || "";
     if (params.get("source") === "ticket") {
       return ticketFileTarget(params.get("ticket") || "", path);
+    }
+    if (params.get("source") === "sprint-item") {
+      return sprintItemFileTarget(params.get("item") || "", path);
     }
     return null;
   }

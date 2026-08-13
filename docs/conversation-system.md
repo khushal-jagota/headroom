@@ -2,22 +2,19 @@
 
 This is how Panels talks to an AI agent. One conversation = one agent
 process (hermes, codex, or claude) working in a folder, plus a permanent notebook
-of everything that happened in it. The rest of the planner can do exactly five
-things to a conversation — start it, send a message into it, interrupt its running
-turn, kill its activity outright, and ask whether it is running. It can also ask whether
-the agent is waiting for a permission decision or answers to its questions.
+of everything that happened in it. The rest of Panels can start it, send a message,
+interrupt or kill activity, manage held messages, and ask about live work that needs
+the user. Those operations form the whole boundary.
 
 It serves every screen that shows a conversation: a Ticket's, the Chief of
-Staff's, and the development pane at `#/dev/conversation`. There is no second
-one. The layer that came before it — a WebSocket, a session-binding table, a
-per-ticket projection of what the agent was doing — is gone, along with the
-second database, relay, neutral protocol and history adapter that preceded it.
+Staff's, and the development pane at `#/dev/conversation`. Worker orchestration
+uses the same system. There is no second path.
 
 ```
   caller (pane, loop)                the conversation system                agent CLIs
   ───────────────────                ───────────────────────                ──────────
   start / send / interrupt   ──▶   one core: queue, turns, asks,   ──▶   hermes (ACP)
-  kill / running / waiting?         notebook, janitor                     codex (app-server)
+  kill / held / live state          notebook, janitor                     codex (app-server)
                                           │                               claude (Agent SDK)
   read: events after N  ◀──   conversations + conversation_events
         + live tail                 (SQLite, written once)
@@ -86,8 +83,9 @@ any file or prompt, and records the media type those bytes prove, not the type t
 browser claimed.
 
 Those files last as long as the notebook does, which is forever. Nothing in
-Panels deletes a conversation: resetting one stops it and unlinks it, and
-deleting a Ticket leaves its conversation behind. A file removed by either would
+Panels deletes a conversation. Reset stops the active conversation and clears its active
+pointer, but its Ticket history association remains. Ticket deletion removes the
+associations and leaves each conversation record behind. A file removed by either would
 turn a picture somebody sent into a picture nobody can see, while the row still
 says a picture was sent.
 
@@ -310,7 +308,8 @@ waiting in line (the notebook keeps what was delivered or discarded). Kill is
 the loud version of stopping: it ends the running turn and throws away the
 waiting line, writing a discard row for each thrown-away message, because text
 someone handed over must never vanish without a trace. Pressing New in the pane
-kills the old conversation before starting fresh.
+kills the old conversation before starting fresh. The old transcript remains part of the
+Ticket's ordered conversation history. Only the active conversation accepts new messages.
 
 ## Backend cards
 
@@ -369,27 +368,40 @@ catalogue, but no model picker offers it. Existing saved selections remain histo
 facts and can still appear as the current value until a person chooses another model.
 New Ticket, Chief, and Worker default saves refuse an off model.
 
-## The commands an agent takes
+## The composer catalog
 
-Each agent has its own commands — the things you type at it starting with a
-slash. They belong to the agent, not to us: the agent says what it takes, the
-composer offers that list and narrows it as you type, and the command you pick
-goes into the message as ordinary text. The agent reads its own name back out of
-that text. Nothing on our side interprets a command or acts on one, and we do not
-add commands of our own to the list or leave any of the agent's out.
+Each conversation keeps one typed catalog for commands, skills, apps, and plugins.
+Each entry carries its visible text, exact insertion text, description, and optional
+argument hint. A slash at the start of a composer line offers commands. A dollar offers
+skills. An at sign offers apps and plugins. The composer narrows that eligible list as
+text is typed.
 
-The three agents answer differently, and all three answers are true. Hermes
-volunteers its list as soon as a session starts, unasked, and may send a fresh one
-later. Claude has its list in the handshake its process gives when it connects,
-which is why the list follows the conversation's folder — a project can keep
-commands of its own. Codex's wire has no notion of a typed command at all; its
-slash commands live inside its own terminal program, so a codex conversation has
-none to offer, and the menu says so rather than sitting there empty.
+A choice replaces the active token with the entry's exact insertion text. That result is
+still an ordinary draft. Message delivery and transcript rendering do not interpret or
+rewrite it.
 
-The last list an agent reported is kept on the conversation, so the menu still
-works when nothing is running — which is exactly when you are likely to be writing
-the first message. A conversation nobody has reported for yet offers nothing, and
-that is honest: until an agent has been up once, nothing has said what it takes.
+Hermes maps the command lists that it volunteers into slash command entries. Claude maps
+the command list from its process handshake in the same way, so project commands still
+follow the conversation folder. Their visible text is `/name`, and their insertion text
+is `/name `.
+
+Codex reads its catalog from the app-server after each thread starts or resumes. It joins
+enabled skills, callable installed apps, and enabled installed plugins with the native
+`/compact` and `/review` commands. App metadata comes from `app/list`. Current app
+callability comes from `app/installed`. This prevents an installed but unusable connector
+from appearing in the menu.
+
+Codex refreshes the complete catalog after skill or app change notifications. Refreshes
+run beside the app-server reader and merge repeated notifications. A failed refresh keeps
+the last complete catalog. A partial result never replaces it.
+
+Codex resolves a selected token against that complete snapshot when the prompt starts.
+Skills use Codex skill input. Apps and plugins use exact mention paths. Unknown or
+ambiguous tokens stay ordinary text. `/compact` and `/review` use their native app-server
+methods and keep the normal conversation turn lifecycle.
+
+The last catalog reported is kept on the conversation. The menu still works when no
+child process runs. A conversation with no report yet offers nothing.
 
 ## Code paths
 
@@ -405,25 +417,23 @@ that is honest: until an agent has been up once, nothing has said what it takes.
 - The three backends: `src/planner/conversation/backends/`.
 - Reading side, live tail, backend cards: `src/planner/conversation/api.py`,
   `live_tail.py`, `snapshot.py`.
-- The pane: `web/src/routes/DevConversationRoute.svelte`,
-  `web/src/components/conversation/`, `web/src/lib/conversation/`.
+- The panes: `web/src/components/conversation/`, `web/src/lib/conversation/`,
+  and the routes that mount them.
 - The contract's proof: `tests/support/conversation_contract_conformance.py`,
   run against the real system in
   `tests/unit/test_conversation_conformance.py`.
 
 ## Handoffs
 
-- Ticket-side surfacing (which ticket needs you, row dots) is the worker
-  orchestration's job, built against this contract: `worker-orchestration.md`.
+- **Worker orchestration** (`worker-orchestration.md`) sends each Worker step into
+  the Ticket's conversation.
+- **The front end** (`frontend.md`) renders the shared pane and its Workspace marks.
 
 ## Deferred
 
-- **Swap**: production screens and the worker loop move onto this system when
-  the program rules the swap; the old layer and this doc's "dev pane" framing
-  are corrected in the same breath.
 - **Held-line durability**: if losing the in-memory waiting line on a restart
   ever bites, the line can be made durable without changing the contract.
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
-  planner's error envelope; unify when the swap wires production screens.
+  planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-08-05._
+_Last verified: 2026-08-10._

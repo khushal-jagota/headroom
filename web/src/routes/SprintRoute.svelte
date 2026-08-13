@@ -12,6 +12,7 @@
     sprintProjectGroups,
     sprintTicketCondition,
     sprintTicketSections,
+    sprintTicketSectionsForTickets,
     type SprintItem,
     type SprintTicket
   } from "../lib/sprintPresentation";
@@ -21,6 +22,7 @@
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import PriorityTile from "../components/PriorityTile.svelte";
   import ResourceState from "../components/ResourceState.svelte";
+  import SprintItemWorkspace from "../components/SprintItemWorkspace.svelte";
   import StageMark from "../components/StageMark.svelte";
 
   let {
@@ -67,6 +69,15 @@
   );
   let selectedSections = $derived(
     selectedItem ? sprintTicketSections(selectedItem, todayTicketIds) : null
+  );
+  let otherSections = $derived(
+    sprintTicketSectionsForTickets(
+      (current.data?.other_tickets || []) as SprintTicket[],
+      todayTicketIds
+    )
+  );
+  let otherTicketCount = $derived(
+    otherSections.today.length + otherSections.later.length + otherSections.done.length
   );
 
   let summaryElement = $state<HTMLElement | null>(null);
@@ -151,7 +162,11 @@
   {/each}
 {/snippet}
 
-<section class="sprint-screen" data-screen="sprint">
+<section
+  class="sprint-screen"
+  class:sprint-screen--workspace={selectedItemId !== null}
+  data-screen="sprint"
+>
   <ResourceState
     error={resource.error}
     loading={resource.loading}
@@ -163,8 +178,11 @@
     {:else}
       {@const sprint = current.data.sprint}
       {@const groups = current.data.groups || {}}
-      <div class="doc">
-        <div class="col">
+      {#if selectedItemId}
+        <SprintItemWorkspace itemId={selectedItemId} sprintName={sprint.name} />
+      {:else}
+        <div class="doc">
+          <div class="col">
           {#if documents}
             <a class="sprint-back" href="#/sprint">‹ {sprint.name}</a>
             <header class="sprint-docs-head">
@@ -315,7 +333,6 @@
                         class:sprint-item-row--settled={sprintItemIsDone(item)}
                         href={`#/sprint?item=${encodeURIComponent(item.id)}`}
                         data-item-id={item.id}
-                        data-item-kind={item.kind}
                         data-item-status={item.status}
                       >
                         <PriorityTile priority={item.priority} />
@@ -326,10 +343,30 @@
                   </div>
                 </Disclosure>
               {/each}
+              {#if otherTicketCount}
+                <Disclosure
+                  variant="workspace-bucket"
+                  defaultOpen={true}
+                  data-sprint-other
+                >
+                  {#snippet summary()}
+                    <span class="board-workspace-bucket-label">Other</span>
+                    <span class="board-workspace-bucket-count" aria-label={`${otherTicketCount} Tickets`}>
+                      {otherTicketCount}
+                    </span>
+                  {/snippet}
+                  <div class="sprint-project-items" data-sprint-other-tickets>
+                    {@render ticketRows(otherSections.today)}
+                    {@render ticketRows(otherSections.later)}
+                    {@render ticketRows(otherSections.done)}
+                  </div>
+                </Disclosure>
+              {/if}
             </div>
           {/if}
+          </div>
         </div>
-      </div>
+      {/if}
     {/if}
   </ResourceState>
 </section>

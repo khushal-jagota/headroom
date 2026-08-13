@@ -3,6 +3,27 @@
 `panels` is the command-line tool. It speaks to the server over HTTP and answers in
 machine-readable JSON with `--json`.
 
+Single-record reads use one grammar. With no part list, a read returns an identity and
+state header plus a manifest. The manifest lists every authored part in stable order,
+including empty parts. It reports the Unicode character count and `has_user_note` for
+each part. Pass one optional comma-separated positional list to expand only those parts.
+Each expanded part contains `value`, `user_note`, and `proposal`:
+
+```sh
+panels ticket show t_example
+panels ticket show t_example success,approach --json
+panels sprint show current primary_bet
+panels sprint item show si_example body
+panels day show 2026-08-10 focus,watchout
+panels day show --date 2026-08-10 focus
+panels project show project_panels summary
+panels worker my-ticket plan,implementation
+```
+
+The same projection serves text and JSON. An unknown or duplicate part name fails and
+lists the valid names. Day records contain authored Day text only. Use `day list-tickets`
+for the linked Tickets.
+
 On the production host, `~/.local/bin/panels` follows
 `~/Deployments/Panels/current/app/bin/panels`. The deployed command locates its own
 interpreter, so it keeps following atomic app replacements and works from any directory.
@@ -28,13 +49,32 @@ declared Stage override; it is not a runtime-status setter. The exceptional `chi
 can establish a coherent Ticket Stage from externally completed work; it is not a
 generic Stage setter.
 
+## Bounded list reads
+
+The five agent-facing list commands return summary rows in pages of 30 by default:
+
+- `ticket list`
+- `sprint list`
+- `sprint item list`
+- `day list-tickets`
+- `project list`
+
+Use `--limit` to select the page size. Use `--offset` to select its starting match.
+Text and JSON responses report the number of matches and returned rows. They also report
+omissions before and after the page, whether the response is complete, and the next
+offset. An empty match set and an empty page at a later offset are different results.
+
+These commands use separate summary reads. Browser collection routes keep their rich
+record shapes. Direct `show` commands also keep their full record shapes.
+
 ## The verbs
 
 - **`day show / list-tickets / set / add-ticket / remove-ticket`** — plan a day and
-  assign tickets to it. `day show` includes the day's tickets; `day list-tickets`
-  returns the ticket list explicitly. `day set midday-reconciliation` writes the
-  day’s separate mid-day check.
-- **`project list / create / set`** — inspect, add, and update projects. Project availability is
+  assign tickets to it. `day show` returns the Day header and authored parts;
+  `day list-tickets` returns the ticket list explicitly. `day set
+  midday-reconciliation` writes the day’s separate mid-day check.
+- **`project list / show / create / set`** — inspect, add, and update projects. `show`
+  exposes the Project header and `summary` part. Project availability is
   data-backed, not enum-backed. `project create` requires
   `--priority P0|P1|P2|P3`; existing Projects may report `null` priority when they
   have not yet been assessed. `project set <project_id> priority --value P0|P1|P2|P3`
@@ -51,8 +91,10 @@ generic Stage setter.
   context, the created Ticket has no pending proposal, so readiness can start its
   Worker-owned Kickoff. Supplying kickoff context creates the ordinary proposed Kickoff
   and waits for approval. By default each
-  occurrence resolves the current sprint's Project fallback item; `--sprint-item`
-  selects an exact item and `--backlog` keeps occurrences out of a sprint. Use
+  occurrence resolves direct placement in the current Sprint; `--sprint-item`
+  selects an exact coherent Item classification and `--backlog` keeps occurrences out
+  of a Sprint. The three planning Worker types use the Personal Project and that
+  Sprint's Planning Item. Use
   `schedule set … placement --value current-sprint|backlog` to switch the reusable
   placement mode. `show` includes its durable created, suppressed, or failed occurrence
   receipts. These commands
@@ -66,10 +108,25 @@ generic Stage setter.
   worker on — the Worker type's own model belongs to the Worker type's own backend.
   When `--priority` is omitted, creation uses the parent Sprint Item priority, then an
   assessed Project priority, then P3. An explicit `--priority P0|P1|P2|P3` overrides
-  that default. `ticket list --stage`
-  compares the stored Stage directly. `ticket set` names one field (`title`, `kickoff-note`, `priority`, `deadline`,
-  or `project` / `project-id`). Sprint placement is a sprint command,
-  not a ticket setter.
+  that default. `ticket list` excludes done and dropped Tickets unless
+  `--include-terminal` is present. Repeat `--stage` or `--exclude-stage` for Stage
+  inclusion or exclusion. Repeat `--ticket-status` or `--exclude-ticket-status` for
+  control-status inclusion or exclusion. Values inside one filter type use OR. Different
+  filter types use AND, and exclusions apply last. A terminal `--stage` also requires
+  `--include-terminal`. An unknown Stage produces no matches.
+  `--search` performs a case-insensitive substring match across the title, recap, field
+  values, proposal bodies, and user notes. Search keeps stable Ticket order and combines
+  with placement filters and page controls. Results include Ticket state, placement, and
+  a short recap preview. Search does not rank matches or return snippets.
+  `ticket create` uses Today and the current Sprint when placement is omitted.
+  `--sprint <id|current>` selects a Sprint, `--backlog` selects no Sprint, and
+  `--sprint-item <id>` adds coherent Item classification.
+  `ticket set` names one field (`title`, `kickoff-note`, `priority`, or `deadline`).
+  `ticket place <ticket-id>` updates Project, Sprint, and optional Sprint Item as one
+  coherent change. Select a Project with `--project` or `--project-id`. Select a Sprint
+  with `--sprint <id|current>` or `--backlog`. Select classification with
+  `--sprint-item <id>` or `--clear-sprint-item`. Omitted dimensions keep their current
+  values, and the server rejects an incoherent final combination.
   `ticket delete` is a permanent direct operation
   and requires `--yes`.
 - **`ticket employee-configuration <id> --backend <key> --model <id> [--reasoning-effort <e>]`**
@@ -84,16 +141,31 @@ generic Stage setter.
 - **`sprint create / list / show / set`** — plan sprints. `current` resolves through
   `/api/sprint/current`; `none` means the backlog where a list supports it.
 - **`sprint item create / list / show / set / move-ticket / move-ticket-to-backlog / block / unblock / delete`**
-  — manage Sprint Items and Ticket placement. Creating a Ticket is still `ticket
-  create`. `sprint item move-ticket <item-id> <ticket-id>` atomically moves an existing
-  Ticket from backlog or another item. `sprint item move-ticket-to-backlog <item-id>
-  <ticket-id>` compare-clears the named current item, so a stale command cannot detach
-  a Ticket that has since moved.
+  — manage Sprint Items and Ticket classification. Creating a Ticket is still `ticket
+  create`. `sprint item move-ticket <item-id> <ticket-id>` classifies an existing Ticket
+  and aligns its Project and Sprint. `sprint item move-ticket-to-backlog <item-id>
+  <ticket-id>` compares the named current Item before it moves the Ticket to backlog, so
+  a stale command cannot move a Ticket that was since reclassified.
   `sprint item block <item-id> --by <ticket-id>` records a Ticket blocking an item.
   Item status is read-only and derived from child tickets and active blocking links.
   `sprint item delete <item-id> --yes` permanently removes a childless item. An item
   with child tickets must have that work explicitly moved or removed first.
-- **`worker propose / recap / note / my-ticket`** — worker actions. `worker propose`
+- **`sprint item supervisor show / context / send / reset`** — inspect the supervisor
+  and launch configuration, read its scoped brief and current Tickets, send a direct
+  user message, or reset its current conversation.
+- **`sprint item supervisor approve / reject / transfer-to-user-review`** — resolve an
+  agent-review proposal for the exact owning Sprint Item. Approval requires the next
+  ceiling and review route. Rejection requires focused revision guidance. Transfer moves
+  only the parked proposal to User Review and preserves future Ticket scope.
+- **`sprint item supervisor ticket-context / history / message-worker`** — read one
+  current child Ticket, page through its current Worker conversation, or send attributed
+  guidance to that exact existing conversation. `message-worker` requires the current
+  conversation id and refuses stale ids.
+- **`sprint item supervisor set-item / set-ticket / scope / add-to-day / remove-from-day / block / unblock`**
+  — use item-scoped canonical actions for the owning Item and its current child Tickets.
+- **`sprint item supervisor artifact-list / artifact-write / artifact-delete`** — manage
+  files under the owning Item's `artifacts/` directory.
+- **`worker propose / recap / note / trouble / request-user-help / my-ticket`** — worker actions. `worker propose`
   infers the current gating field from the Ticket Stage and requires a short recap
   (`--recap` or `--recap-file`) in the same request. `worker note` replaces field
   guidance by default and accepts `--append` for additive guidance without changing
@@ -101,7 +173,10 @@ generic Stage setter.
   a caller. `worker my-ticket`
   reports the current Ticket, and names the **specialist skill** for its Worker type —
   the one the base worker loads to learn that Worker type's Stages (see
-  `worker-types.md`).
+  `worker-types.md`). `worker trouble --body-file PATH` appends one short trouble note
+  to the current worker's Ticket during its active claimed worker step.
+  `request-user-help` parks the Ticket for a user response after the
+  Worker records its request in the conversation.
 - **`chief reconcile-ticket-from-external-work / create-ticket-from-external-work`** —
   record reality established outside Panels. Both require an explicit Chief request,
   a complete Kickoff field value through `--kickoff-note-file`, preserving the report and
@@ -111,7 +186,7 @@ generic Stage setter.
   new Ticket, and a different backend needs `--employee-launch-model` with it.
   Reconciliation refuses pending or active Ticket work; both
   operations move the ceiling to the imported Stage, preserve an explicit Stop
-  (otherwise Continue remains), and apply that Stage's effective ownership.
+  (otherwise User review remains), and apply that Stage's effective ownership.
 - **`serve`** — run the server and background worker runtime in the foreground.
   It keeps ownership while Panels restarts, so the same terminal continues to show the
   server logs.
@@ -134,6 +209,10 @@ generic Stage setter.
   so restart, exact-SHA health, and rollback remain attached to the runner-started operation.
   Linux systemd control is user-scoped; launchctl remains supported.
   `backup-current` requires `--current-app`; it does not inspect Git.
+- **`environment backup / restore / provision-skills`** — create or restore a verified
+  database-and-files snapshot, or reconcile the managed Panels skills into the three
+  production agent homes. Restore requires a stopped live service and the explicit
+  `--live-stopped` acknowledgement.
 - **`restart`** — ask that running `serve` command to load the current Panels code again.
   The command reports when the request is accepted. If `serve` is not running, it reports
   the connection error and stops.
@@ -151,14 +230,14 @@ Project-aware commands accept `--project-id` as the preferred selector and keep
 `--project` as legacy name compatibility. Passing both is allowed only when they
 resolve to the same project.
 
-## Planning Worker identity
+## Ticket Worker identity
 
 A Ticket worker runs with `PLAN_ACTOR=worker` and its own `PLAN_TICKET_ID`. The CLI
 forwards those as `X-Plan-Actor` and `X-Plan-Ticket-ID`, including when the worker uses
-an ordinary planning command. The server checks the claimed Ticket’s stored Worker type.
-Only the exact `planning-day`, `planning-midday-check`, and `planning-sprint`
-capabilities receive their narrow day or sprint writes. These Worker definitions are
-introduced by their own tickets; this change only recognizes their exact stored names.
+an ordinary command. The server checks that the claimed Ticket exists. Any Ticket
+worker can use the existing commands that move Tickets and add or remove blocking
+links. The exact `planning-day`, `planning-midday-check`, and `planning-sprint`
+Worker types keep their other narrow day or sprint writes.
 
 This is a truthful local process claim, like the existing actor header, not a
 cryptographic login or bearer token. Requests arriving through trusted remote ingress
@@ -184,4 +263,4 @@ one worker step at a time and writes the Ticket's status itself (see
 
 ---
 
-_Last verified: 2026-07-29._
+_Last verified: 2026-08-09._

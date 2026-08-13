@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
     PromptDeliveryMode,
     ResolvedConversationStart,
 )
@@ -288,10 +288,10 @@ class BackendEventSink(Protocol):
     async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
         """The backend minted or changed the session id this conversation resumes from."""
 
-    async def available_commands_reported(
-        self, available_commands: tuple[AgentCommand, ...]
+    async def composer_catalog_reported(
+        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
     ) -> None:
-        """The commands this backend says a person may type at it, whole.
+        """The composer catalog this backend reports, whole.
 
         Like the session cursor, this carries no turn token, because it is not a fact
         about a turn. It arrives when a session is established and it stands until the
@@ -299,14 +299,9 @@ class BackendEventSink(Protocol):
         it is kept after the child is gone, because the menu a person opens to write their
         first message is worth more than one that is only right while the agent is up.
 
-        Report the whole list every time it changes rather than what moved in it, and
-        report it as it arrives. The three backends answer this differently and all three
-        answers are true: hermes pushes the list unprompted after every session start and
-        may push it again; claude has it in the handshake its child answers on connect;
-        codex's protocol has no notion of a command a person types, so its adapter reports
-        nothing here and a codex conversation simply has none to offer. A backend with
-        nothing to say says nothing — an empty list is a backend that reported having no
-        commands, which is a different thing and only hermes or claude can say it.
+        Report the whole list every time it changes rather than what moved in it. Hermes
+        and Claude map their command reports into typed command entries. Codex joins its
+        app-server catalog sources and reports one complete typed snapshot.
         """
 
 
@@ -345,12 +340,18 @@ class BackendChild(Protocol):
         turn_token: TurnToken,
         content: MessageContent,
         *,
+        sender_content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
     ) -> None:
         """Start a turn with this message, on these values.
+
+        ``content`` is the complete message that goes to the backend. ``sender_content``
+        is the exact message the sender wrote before the core added conversation-owned
+        material such as the first-prompt role envelope. An adapter can use sender content
+        to resolve backend-specific composer entries, but it must send ``content``.
 
         **Every piece goes over the wire, or none of it does.** The core has already
         refused a message carrying a piece this backend cannot be handed, so an adapter

@@ -53,7 +53,7 @@ def _create(
         actor="human",
         now=clock.now_unix(),
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
 
 

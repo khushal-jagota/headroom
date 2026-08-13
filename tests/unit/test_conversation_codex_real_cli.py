@@ -111,6 +111,7 @@ async def _turn(
     await child.write_prompt(
         TurnToken(conversation_id="real-codex", turn_number=turn_number),
         content,
+        sender_content=content,
         sender_label="owner",
         mode=PromptDeliveryMode.run_when_free,
         model_change=model,
@@ -155,11 +156,13 @@ def test_real_codex_takes_an_interrupt(tmp_path: Path) -> None:
             sink.expect_another_turn()
             from planner.conversation.backends.contracts import TurnToken
 
+            content = text_message_content(
+                "Count slowly from 1 to 300, one number per line, and do not stop early."
+            )
             await child.write_prompt(
                 TurnToken(conversation_id="real-codex", turn_number=1),
-                text_message_content(
-                    "Count slowly from 1 to 300, one number per line, and do not stop early."
-                ),
+                content,
+                sender_content=content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -202,11 +205,13 @@ def test_real_codex_runs_a_send_now_written_the_instant_the_cancel_returns(
         await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
         try:
             sink.expect_another_turn()
+            first_content = text_message_content(
+                "Count slowly from 1 to 300, one number per line, and do not stop early."
+            )
             await child.write_prompt(
                 TurnToken(conversation_id="real-codex", turn_number=1),
-                text_message_content(
-                    "Count slowly from 1 to 300, one number per line, and do not stop early."
-                ),
+                first_content,
+                sender_content=first_content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -218,11 +223,13 @@ def test_real_codex_runs_a_send_now_written_the_instant_the_cancel_returns(
             await child.cancel_running_turn()
             assert sink.endings == [ConversationTurnEnding.interrupted]
             sink.expect_another_turn()
+            urgent_content = text_message_content(
+                "Stop counting. Reply with exactly one word: pineapple. No tools."
+            )
             await child.write_prompt(
                 TurnToken(conversation_id="real-codex", turn_number=2),
-                text_message_content(
-                    "Stop counting. Reply with exactly one word: pineapple. No tools."
-                ),
+                urgent_content,
+                sender_content=urgent_content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -323,6 +330,7 @@ async def _turn_with_effort(
     await child.write_prompt(
         TurnToken(conversation_id="real-codex", turn_number=turn_number),
         content,
+        sender_content=content,
         sender_label="owner",
         mode=PromptDeliveryMode.run_when_free,
         model_change=CHEAP_MODEL,

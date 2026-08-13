@@ -29,7 +29,11 @@ import httpx
 from playwright.sync_api import BrowserContext, Page, Route
 from tests.e2e.harness import ServerHandle
 
-from planner.conversation.contracts import AgentCommand, PromptDeliveryMode
+from planner.conversation.contracts import (
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
+    PromptDeliveryMode,
+)
 from planner.conversation.events import (
     AgentMessageEventPayload,
     ConversationEventPayload,
@@ -259,12 +263,12 @@ def _append_rows(
         raise fell_over[0]
 
 
-def _store_the_commands_the_agent_reported(
-    server: ServerHandle, conversation_id: str, *commands: AgentCommand
+def _store_the_composer_catalog(
+    server: ServerHandle, conversation_id: str, *entries: ComposerCatalogEntry
 ) -> None:
-    """Put the agent's own menu where the backend puts it when it reports one."""
+    """Put the composer catalog where a backend report puts it."""
     _on_its_own_thread(
-        ConversationStore(str(server.db_path)).replace_available_commands(conversation_id, commands)
+        ConversationStore(str(server.db_path)).replace_composer_catalog(conversation_id, entries)
     )
 
 
@@ -712,21 +716,21 @@ def test_a_picture_in_the_record_is_drawn_and_really_loads(
     assert "look at this" in page.inner_text("[data-conversation-row='prompt']")
 
 
-def test_the_commands_an_agent_reports_reach_the_menu_when_its_turn_stops(
+def test_the_mixed_catalog_an_agent_reports_reaches_the_menu_when_its_turn_stops(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
 ) -> None:
-    """An agent reports its commands moments after its session starts.
+    """An agent reports its mixed composer catalog moments after its session starts.
 
     That is during its first turn, so a conversation opened before that turn was told
     none and asking again is the only thing that puts it right. A turn stopping is the
-    occasion to ask, and this is that seen from outside: the commands are reported while
+    occasion to ask, and this is that seen from outside: the entries are reported while
     the turn is open, and they are in the menu once it is over, on the page that was
     already there.
 
     What the pane knows about this conversation is held still while the turn runs, so the
-    only thing that can put the commands in front of a person is the pane asking again.
+    only thing that can put the entries in front of a person is the pane asking again.
     """
     conversation_id = "e2e-commands"
     _create_conversation(server, conversation_id)
@@ -759,18 +763,47 @@ def test_the_commands_an_agent_reports_reach_the_menu_when_its_turn_stops(
     page.wait_for_selector("[data-conversation-alive]", timeout=WAIT_MS)
 
     # Moments into that turn, the agent says what it can be asked to do.
-    _store_the_commands_the_agent_reported(
+    _store_the_composer_catalog(
         server,
         conversation_id,
-        AgentCommand(name="plan", description="Write the plan", argument_hint="[what to plan]"),
-        AgentCommand(name="compact", description="Shrink the context"),
+        ComposerCatalogEntry(
+            kind=ComposerCatalogEntryKind.command,
+            display_text="/plan",
+            insertion_text="/plan ",
+            description="Write the plan",
+            argument_hint="[what to plan]",
+        ),
+        ComposerCatalogEntry(
+            kind=ComposerCatalogEntryKind.command,
+            display_text="/compact",
+            insertion_text="/compact",
+            description="Shrink the context",
+        ),
+        ComposerCatalogEntry(
+            kind=ComposerCatalogEntryKind.skill,
+            display_text="$skill-creator",
+            insertion_text="$skill-creator ",
+            description="Create or update a skill",
+        ),
+        ComposerCatalogEntry(
+            kind=ComposerCatalogEntryKind.app,
+            display_text="@Google Drive",
+            insertion_text="@google-drive ",
+            description="Use Google Drive",
+        ),
+        ComposerCatalogEntry(
+            kind=ComposerCatalogEntryKind.plugin,
+            display_text="@Analytics",
+            insertion_text="@analytics@personal ",
+            description="Use Analytics",
+        ),
     )
 
     # Nothing has told the pane and nothing asks on a clock, so the menu is still the one
     # a conversation that had never run was given.
     page.fill("[data-conversation-input]", "/")
-    page.wait_for_selector("[data-conversation-commands-empty]", timeout=WAIT_MS)
-    assert page.locator("[data-conversation-command]").count() == 0
+    page.wait_for_selector("[data-conversation-catalog-empty]", timeout=WAIT_MS)
+    assert page.locator("[data-conversation-catalog-entry]").count() == 0
 
     # The turn stops. There is no ending row for it — only the system's own word, which is
     # the answer the pane has been holding.
@@ -779,14 +812,31 @@ def test_the_commands_an_agent_reports_reach_the_menu_when_its_turn_stops(
 
     # And the commands are there, under the slash that was already typed.
     page.wait_for_function(
-        "() => document.querySelectorAll('[data-conversation-command]').length === 2",
+        "() => document.querySelectorAll('[data-conversation-catalog-entry]').length === 2",
         timeout=WAIT_MS,
     )
     assert page.eval_on_selector_all(
-        "[data-conversation-command]",
-        "rows => rows.map(row => row.dataset.conversationCommand)",
-    ) == ["compact", "plan"]
-    assert "[what to plan]" in page.inner_text("[data-conversation-commands]")
+        "[data-conversation-catalog-entry]",
+        "rows => rows.map(row => row.dataset.conversationCatalogEntry)",
+    ) == ["/compact", "/plan"]
+    assert "[what to plan]" in page.inner_text("[data-conversation-catalog]")
+    page.fill("[data-conversation-input]", "$")
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation-catalog-entry]').length === 1",
+        timeout=WAIT_MS,
+    )
+    assert page.get_by_text("$skill-creator", exact=True).is_visible()
+    page.fill("[data-conversation-input]", "@")
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation-catalog-entry]').length === 2",
+        timeout=WAIT_MS,
+    )
+    assert page.eval_on_selector_all(
+        "[data-conversation-catalog-entry]",
+        "rows => rows.map(row => row.dataset.conversationCatalogEntry)",
+    ) == ["@Analytics", "@Google Drive"]
+    page.get_by_text("@Analytics", exact=True).click()
+    assert page.input_value("[data-conversation-input]") == "@analytics@personal "
     assert page.evaluate("() => window.__thisVeryPage === true"), (
         "the page that has the commands is the page that was already open"
     )

@@ -31,12 +31,12 @@ Ticket status. Each saved choice uses its subject and notification type as one k
 Chief choice never changes the matching Ticket choice.
 
 The notification contains no transcript, prompt, permission detail, or worker output.
-Opening a Ticket notification goes to `/#/ticket/<ticket-id>`. Opening a Chief of Staff
-notification goes to the Chief workspace at `/#/workspace/chief-of-staff`. The service
-worker accepts the server's matching Chief link and ticket links. A malformed payload or
-an unsupported link opens the safe workspace fallback instead. All notifications for one
-subject use one stable replacement tag, so overlapping facts coalesce at the operating
-system.
+Opening a Ticket notification goes to `/#/ticket/<ticket-id>`. A Chief notification
+uses the retained `/#/agents/chief-of-staff` address, which the app redirects to
+`/#/workspace/chief-of-staff`. The service worker accepts only those subject links. A
+malformed payload or an unsupported link opens the safe Workspace fallback. All
+notifications for one subject use one stable replacement tag, so overlapping facts
+coalesce at the operating system.
 
 ## Durable delivery
 
@@ -73,4 +73,4 @@ Code paths: `src/planner/notifications/`, the notification database migrations,
 `static/service-worker.js`, and
 `web/src/routes/NotificationsRoute.svelte`.
 
-_Last verified: 2026-08-06._
+_Last verified: 2026-08-09._

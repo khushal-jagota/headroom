@@ -92,7 +92,7 @@ class _World:
                 actor="human",
                 now=0,
                 next_ceiling="none",
-                at_cap=AtCap.propose,
+                at_cap=AtCap.user_review,
             )
             if ownership_mode is not None:
                 tickets_data.set_stage_ownership(
@@ -137,6 +137,13 @@ class _World:
     def ticket(self, ticket_id: str) -> Ticket:
         with self.connect() as conn:
             return tickets_data.read_ticket(conn, ticket_id)
+
+    def skill_bindings(self) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT sender_message_id, skill_role, binding_status "
+                "FROM worker_step_skill_bindings ORDER BY skill_role"
+            ).fetchall()
 
     def start_step(self, ticket_id: str) -> bool:
         return asyncio.run(
@@ -291,6 +298,7 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     assert "write_to_backend_failed" in message
     # A refused delivery reached nobody, so the context is still owed.
     assert world.pending_context_keys(ticket_id) == ["ticket_changed"]
+    assert world.skill_bindings() == []
 
 
 def test_a_queued_send_counts_as_a_success(world: _World) -> None:
@@ -346,6 +354,7 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
     assert [write.sender_label for write in writes] == ["browser"]
     assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
     assert world.pending_context_keys(ticket_id) == []
+    assert {row["binding_status"] for row in world.skill_bindings()} == {"provisional"}
 
 
 class _QueueingConversationSystem:
@@ -386,6 +395,8 @@ class _QueueingConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         )
 
     async def interrupt(self, conversation_id: str) -> None:
@@ -407,6 +418,40 @@ def test_pending_context_is_acknowledged_only_after_the_send_lands(world: _World
 
     assert world.start_step(ticket_id) is True
     assert world.pending_context_keys(ticket_id) == []
+    assert {row["binding_status"] for row in world.skill_bindings()} == {"final"}
+
+
+class _PreparationFailure:
+    def prepare(self, worker_entity_id: str, prompt_text: str) -> PreparedWorkerPrompt:
+        raise RuntimeError("prompt preparation failed")
+
+    def acknowledge(
+        self, worker_entity_id: str, receipts: tuple[WorkerContextReceipt, ...]
+    ) -> None:
+        raise AssertionError("nothing was prepared")
+
+
+def test_a_failure_before_send_removes_bindings_and_releases_the_claim(
+    world: _World,
+) -> None:
+    ticket_id = world.ready_ticket(conversation_id="conv-prepare-failure")
+    world.start_conversation("conv-prepare-failure")
+
+    started = asyncio.run(
+        start_ready_worker_step(
+            ticket_id,
+            connect_database=world.connect,
+            conversation_system=cast(ConversationSystem, world.conversations),
+            worker_context_service=cast(WorkerContextService, _PreparationFailure()),
+            worker_type_registry=configured_worker_type_registry(),
+            planning_day_id_resolver=lambda: TODAY_DAY_ID,
+            now=world.clock.now_unix,
+        )
+    )
+
+    assert started is False
+    assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
+    assert world.skill_bindings() == []
 
 
 class _AcknowledgementRefusingContext:
@@ -505,10 +550,15 @@ def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _Worl
     assert len(writes) == 1
     assert writes[0].sender_label == "loop"
     assert writes[0].mode is PromptDeliveryMode.run_when_free
+    sender_message_id = world.conversations.observations("conv-opener")[-1].sender_message_id
+    assert sender_message_id is not None
     assert f"Work ticket {ticket_id} — Ship it" in writes[0].text
     assert "propose the 'success' field for approval" in writes[0].text
     assert "Stage owner: worker" in writes[0].text
     assert "The user renamed the ticket." in writes[0].text
+    bindings = world.skill_bindings()
+    assert len(bindings) == 3
+    assert {row["sender_message_id"] for row in bindings} == {sender_message_id}
 
 
 def test_a_paired_owned_stage_departs_at_paired_and_gets_the_paired_opener(
@@ -607,6 +657,8 @@ class _HeldAtTheOccupancyCheck:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         )
 
     async def interrupt(self, conversation_id: str) -> None:

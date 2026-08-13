@@ -2,16 +2,18 @@
 
 The front end is the web page the human uses — where every decision that matters
 lives. It is a Svelte app built by Vite. FastAPI serves the built `web/dist`
-document at `/`; the Vite chunks are mounted under `/_app/`. Shared tokens,
-application CSS, and the hardened markdown renderer still live in `assets/` so the
-look and written-text rendering stay centralized.
+document at `/`; the Vite chunks are mounted under `/_app/`. Shared tokens and
+application CSS live in `assets/`. The Markdown pipeline and managed rendering
+lifecycle live under `web/src/lib/`.
 
 ## The screens
 
 One screen per part of the system:
 
-- **Day** — the day overview: focus, brief take, watchout, and what makes the day
-  land. Read top to bottom in the serif voice, flat, with no boxes.
+- **Home** — the daily hub. It combines focus, what makes the day land, brief take,
+  and watchout with one progress mark per Ticket. Action tiles lead to work that needs
+  the user, needs review, is working, is paired, or is done. Day fields are written by
+  the planning Workers, not edited on this page.
 - **Review** — the human chamber for parked Ticket proposals and Worker help requests:
   one oldest-first walk with a centred item, its Ticket title, and Skip and Open Ticket
   top-right. Proposal items add their labelled recap, ask, approval, and send-back
@@ -22,22 +24,23 @@ One screen per part of the system:
   go next" has been answered, both halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
   follows the same 5am planning-day boundary as the Day screen; dropped tickets never
-  appear. The rail shows all visible tickets across their effective projects. A Ticket on a
-  Sprint Item uses that item's project; an unparented backlog Ticket uses its own project.
-  The Chief of Staff row leads the ticket groups. The rail groups the visible tickets into
-  collapsible boxed groups in a fixed order that puts what needs the user
-  first: Errored, Needs user, Waiting for Kickoff, User, Paired, Agent, Waiting to
-  Closeout, Awaiting approval, Empty, Blocked, Done. A group with no tickets is not
-  rendered; Blocked and Done start collapsed. Every ticket sits in exactly one group.
+  appear. The Chief of Staff row leads one box for each Sprint Item with a Ticket on
+  today. Tickets without an Item form a No Item tail.
+
+  Items with a user-owned Ticket come first. Priority orders Items within the active
+  and quiet runs. A user-owned Ticket is in `needs_user`, `awaiting_user_review`,
+  `paired`, or `user`, and a blocker removes it from that set. The default rail shows
+  only those Tickets. A quiet Item folds to one line and shows its live Ticket count.
+  The Item control reveals its other non-done Tickets. The rail control switches every
+  Item and No Item to all non-done Tickets on today. Done Tickets stay out of the rows,
+  but an Item with only done Tickets keeps its box.
+
+  The Item title carries the Item priority in a fixed gutter. Its Ticket titles begin
+  at the same edge, and Ticket rows carry no priority tile. Each row keeps the existing
+  conversation mark.
+
   The Chief of Staff row starts with its bundled portrait. The portrait is an agent
   identity on this row only; ticket rows and Worker types do not use it.
-  A done ticket goes to Done. A ticket resting at Closeout with an `empty` status goes
-  to Waiting to Closeout when its current Closeout step is still runnable; Stop at its
-  current Closeout ceiling keeps it under Empty, while Stop at a later ceiling does
-  not. An approval at the Kickoff gated field goes to Waiting for Kickoff; approval at
-  every later field stays under Awaiting approval. Every other ticket goes to its own
-  status. Unknown statuses still get their own group at the end rather than being
-  dropped. Rows carry only the ticket title and one mark, sorted by recent activity.
 
   The mark carries three signals in one order of precedence, and each is one
   system's own fact rather than a blend of several. A **pure white dot** means the
@@ -61,28 +64,35 @@ One screen per part of the system:
   browser that has never seen a conversation has read none of it, so a reply shows —
   every failure path over-shows attention rather than hiding a reply.
 
-  On screens wider than 960px, the right side starts with a quiet invitation to select
-  a ticket. Selecting a ticket opens the same complete ticket screen used by a direct
-  ticket link while leaving the Workspace rail in place, and records the selection at
-  `#/workspace/<ticket-id>`. That address can be loaded, refreshed, shared, or
-  revisited with browser history; a missing ticket safely returns to the unselected
-  Workspace. At 960px or less, selecting a ticket opens its standalone
-  `#/ticket/<ticket-id>` page.
+  On screens wider than 960px, the right side starts with a quiet invitation. An Item
+  title opens the existing Sprint Item workspace at `#/workspace/item/<item-id>`.
+  A Ticket opens the complete Ticket screen at `#/workspace/<ticket-id>`. Both
+  addresses survive refresh, sharing, and browser history. A stale selection returns
+  to the unselected Workspace. At 960px or less, an Item workspace replaces the rail.
+  A Ticket opens its standalone `#/ticket/<ticket-id>` page.
 - **Ticket** — the whole story of one piece of work. A quiet identity eyebrow puts
-  priority, sprint, due date, and project above a serif title on its own row. Project
-  appears when there is no Sprint Item; empty scheduling values are add affordances
-  rather than blank facts. The operating line writes the leash as one readable sentence
-  beside quiet **Take over** or **Release** and **Copy** actions. Direct blockers get
+  priority, effective project, and Worker above a serif title. Scope, takeover or
+  release, and copy actions live in the Ticket details disclosure. Direct blockers get
   their own **Blocked by** line in the masthead, and the exact backend Worker failure
   reason remains visible when one exists. The inline-editable recap is always open on a
   recessed surface, without another label.
+
+  A done Ticket offers an optional verdict above its Stage history. The user can choose
+  one of five ratings, add text, use both, or clear the verdict. A saved verdict remains
+  visible without edit controls if the Ticket returns to an earlier Stage. See
+  `judgments.md`.
+
+  When a worker records trouble during its claimed step, a read-only section appears
+  next to the verdict. It shows each short note and its recorded time in creation order.
+  The section stays absent when no trouble was recorded.
 
   The stages and their workflow remain the Ticket's Worker type's, derived from the
   served manifest (see below and `worker-types.md`); the kickoff user note sits first in
   that spine, collapsed. The current Stage mark speaks without a second status pill.
   Its summary adds words only where the mark would otherwise be ambiguous:
   **you're on it** for user-owned or taken-over work, with **Release**, and
-  **awaiting approval** for a proposal. Running, completed, and upcoming marks need no
+  **awaiting agent review** or **awaiting user review** for a parked proposal. Running,
+  completed, and upcoming marks need no
   extra label. Stage bodies, editing and approval behavior, and the worker conversation
   in serif along the bottom remain in place. **Copy** still produces a plain-text block
   for pasting anywhere. During pristine Kickoff, the approval context also shows a restrained
@@ -90,29 +100,29 @@ One screen per part of the system:
   the same answer the conversation composer's model and effort pickers read. Changing
   it writes the stored Ticket choice but does not create a session. The first prompt attaches
   through that choice; accepting Kickoff may eagerly attach. Once Kickoff advances or the
-  Ticket has a conversation, the pill becomes read-only. Its project picker is backed by the shared
-  `projects` resource. Its placement picker selects one Sprint Item or the explicit
-  unparented Backlog. Moving to an item is atomic; choosing Backlog compare-clears the
-  current item so a stale browser cannot detach a Ticket that has already moved.
+  Ticket has a conversation, the pill becomes read-only. Its Project, Sprint, and
+  optional Sprint Item controls edit one coherent Ticket placement. Changing Project or
+  Sprint clears an incompatible Item classification. The selectors use the shared
+  Project, Sprint, and Item resources.
 - **Sprint** — one tracking overview that presents Projects and their Sprint Items,
-  plus a dedicated view for each Item and a separate documents page. The overview
-  shows Item progress without Ticket rows. An Item view joins today's Day membership
+  plus a dedicated view for each Item and a separate documents page. The overview shows
+  Item progress and presents unclassified Tickets in a view-only Other group. Other has
+  no Item identity or route. An Item view joins today's Day membership
   to split its Tickets into on-today, off-today, and folded done work. Project priority
   orders the Project folds. The documents page presents Kickoff, Checkpoint, and Sprint
   Review. See `sprints.md`.
 - **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
   unboxed serif idiom (see `backlog-and-ideas.md`).
-- **Agents** — the runtime home for agent conversations. Above 960px it follows
-  Workspace's master/detail shape: the agent roster is on the left and the selected
-  agent's canonical conversation fills the right, with Chief of Staff selected by
-  default at `#/agents`. `#/agents/chief-of-staff` records that selection in the
-  address. At 960px or less, `#/agents` is the roster and selecting Chief opens its
-  focused conversation, with a clear return to the roster. Direct loads, refreshes,
-  browser history, and resizing preserve those meanings. The old `#/chief` address
-  redirects to the selected Chief route.
+- **Chief of Staff** — the Chief is the first row in Workspace. On wide screens,
+  selecting it opens the canonical Chief conversation beside the Workspace rail at
+  `#/workspace/chief-of-staff`. On narrow screens, the same address opens the focused
+  conversation. The former `#/chief`, `#/agents`, and
+  `#/agents/chief-of-staff` addresses redirect into Workspace.
 - **Config** — the management surface at `#/config`. It contains Chief of Staff,
-  the shared Worker skill, and every configured Worker type. Chief settings open at
-  `#/config/chief-of-staff`, Worker skill at `#/config/worker-skill`, and a Worker at
+  the Sprint Item supervisor skill, the shared Worker skill, and every configured
+  Worker type. Chief settings open at `#/config/chief-of-staff`, Sprint Item supervisor
+  skill at `#/config/sprint-item-supervisor`, Worker skill at `#/config/worker-skill`,
+  and a Worker at
   `#/config/workers/<worker-type>`. Those detail screens provide the applicable
   launch defaults, suggested Kickoff ceiling controls, Stage ownership controls, and
   skill editors. Worker and skill
@@ -129,14 +139,15 @@ One screen per part of the system:
   presses Enable, registers the browser's Web Push subscription, and can remove it
   again. On iPhone or iPad, Panels explains that the site must first be added to the
   Home Screen.
+- **Scheduled tasks** — the internal schedule editor at `#/scheduled-tasks`. It lists
+  schedules, creates and edits them, and enables or disables future occurrences. It
+  does not start Workers or delete schedules. See `scheduled-tickets.md`.
 
-The shell has three primary destinations in order: Review, Workspace, and Agents. More
-groups Day, Sprint, Backlog, and Ideas under Planning, and Config, Backends, and Notifications
-under System. On
-desktop the four direct controls live in the top bar and More opens a dropdown. On
-mobile those same four text-only controls form a fixed, full-width bottom bar and More
-opens a bottom sheet. Agents remains active on both its roster and selected-agent
-addresses. A slim mobile top bar
+The shell has three primary destinations in order: Home, Review, and Workspace. More
+groups Sprint, Backlog, and Ideas under Planning. It groups Config, Backends,
+Notifications, and Scheduled tasks under System. On desktop, the three destinations
+and More live in the top bar. On mobile, the same four controls form a fixed,
+full-width bottom bar and More opens a bottom sheet. A slim mobile top bar
 shows the current screen and the same quiet connection and worker-presence cluster used
 at desktop. The cluster is a live status label, not a control. It normally says
 **Connected** or **Reconnecting**. During a deployment
@@ -168,13 +179,13 @@ applies the requested update. The push-only service worker and its subscription 
 in place across this page reload.
 
 **Backends** at `#/backends` shows the conversation backends installed on this machine,
-their account and model facts, and any update Panels can run. Codex and Claude cards also
-offer a manual usage-limit check. Opening the page, refreshing its ordinary backend facts,
-and application change events never acquire usage: only pressing that backend's usage
-button calls the provider-facing check. A successful check shows each provider window,
-its used percentage, reset time, and when it was observed. Unavailable, signed-out, and
-failed checks stay visible as their own truthful states. Hermes has no provider allowance
-to acquire, so its card offers no usage action.
+their account and model facts, and any update Panels can run. Its one **Refresh** action
+re-reads every backend catalogue and the Codex and Claude usage sources. A successful
+refresh shows each provider window as its remaining percentage, reset time, and
+observation time. The backend source still reports the used percentage. The shared
+ring derives the remaining value and empties counter-clockwise from the top as the
+allowance falls. One provider failure does not discard the other's new answer. Hermes
+has no usage source.
 
 ## The two rules that shape it
 
@@ -249,6 +260,10 @@ to acquire, so its card offers no usage action.
   `/files/tickets/<ticket_id>/<relative-path>`. The server sends `nosniff`; only
   explicit image, audio, and video types are inline. Markdown, HTML, SVG, and
   unknown files are attachments when opened directly.
+- **Sprint Item files use an isolated sibling root.** Item artifacts live under
+  `files/sprint-items/<sprint_item_id>/` and use
+  `/files/sprint-items/<sprint_item_id>/<relative-path>`. This contract is read-only and
+  applies the same safe-path, symlink, media-type, and `nosniff` response policy.
 - **File previews use one contract.** Markdown turns a link that names a managed file,
   such as `/files/tickets/t_123/notes/plan.md`, into the shared file preview component,
   and every image into that same component wherever the image is hosted. Any other link
@@ -320,7 +335,7 @@ hand-rolling the same shapes per screen. Each does one job:
 - **Pill** — a small static tag with an optional key label (dates, counts, due, sprint).
 - **Chip** — the coloured status/project tags, including "blocked by".
 - **PriorityTile** — the shared always-coloured P0–P3 square. It appears in the
-  Workspace row's leading gutter, the editable Ticket and Review identity control,
+  Workspace Item's leading gutter, the editable Ticket and Review identity control,
   both Sprint priority positions, and once in each Backlog priority group heading.
   Priority never borrows the slate-blue attention accent or the status-mark colours.
 - **StageMark** — the single stage dot showing a field's progress.
@@ -361,10 +376,12 @@ hand-rolling the same shapes per screen. Each does one job:
   Which state it opens in is the page's to choose, and the page can change it later. A
   page that says nothing gets no layer at all: the Chief of Staff, the Workspace desk and
   the development pane each keep a conversation that simply fills the space it is given.
-- **AgentCommandMenu** — the list that opens in the composer when a message is started
-  with a slash. It offers the commands this conversation's agent said it takes, narrowed
-  as the name is typed. Choosing one writes the command into the message as ordinary
-  text; the agent reads its own name back out.
+- **ComposerCatalogMenu** — the typed list that opens when a composer line starts with
+  `/`, `$`, or `@`. Slash offers commands, dollar offers skills, and at offers apps and
+  plugins. The list narrows as text is typed. A choice inserts its exact catalog text
+  into the draft. Sending and transcript display still use ordinary text. Codex resolves
+  that text at its adapter boundary. The browser does not store vendor identifiers or
+  construct structured Codex input.
 - **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
 - **SegmentedControl** — a small set of toggle options (backlog project/priority).
 - **ScopePairPicker** — the "approve until … then …" scope control.
@@ -415,4 +432,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-08-04 (including the Chief of Staff portrait in Workspace)._
+_Last verified: 2026-08-12._

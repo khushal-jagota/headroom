@@ -68,7 +68,8 @@ from planner.conversation.backends.contracts import (
     UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     ConversationAccess,
     ConversationBackendKey,
     ConversationRoleMaterials,
@@ -207,7 +208,7 @@ class _RecordingSink:
         self.user_input_failures: list[tuple[str, str]] = []
         self.endings: list[dict[str, Any]] = []
         self.cursors: list[str] = []
-        self.available_commands: list[tuple[AgentCommand, ...]] = []
+        self.composer_catalog: list[tuple[ComposerCatalogEntry, ...]] = []
         self.token_usage: list[dict[str, Any]] = []
         self.compactions: list[TurnToken] = []
         # The order the facts a result message carries were told in. What is said about a
@@ -345,10 +346,22 @@ class _RecordingSink:
     async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
         self.cursors.append(vendor_session_cursor)
 
-    async def available_commands_reported(
-        self, available_commands: tuple[AgentCommand, ...]
+    async def composer_catalog_reported(
+        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
     ) -> None:
-        self.available_commands.append(available_commands)
+        self.composer_catalog.append(composer_catalog)
+
+
+def _command(
+    name: str, description: str, argument_hint: str | None = None
+) -> ComposerCatalogEntry:
+    return ComposerCatalogEntry(
+        kind=ComposerCatalogEntryKind.command,
+        display_text=f"/{name}",
+        insertion_text=f"/{name} ",
+        description=description,
+        argument_hint=argument_hint,
+    )
 
 
 def _start_request(
@@ -424,9 +437,11 @@ async def _write(
     text: str = "hello",
     turn_token: TurnToken = TURN,
 ) -> None:
+    content = text_message_content(text)
     await child.write_prompt(
         turn_token,
-        text_message_content(text),
+        content,
+        sender_content=content,
         sender_label="owner",
         mode=PromptDeliveryMode.run_when_free,
         model_change=None,
@@ -724,13 +739,13 @@ def test_the_commands_claude_takes_are_reported_as_the_session_is_established(
         )
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
 
-        assert sink.available_commands == [
+        assert sink.composer_catalog == [
             (
-                AgentCommand(
+                _command(
                     name="review", description="Review the working tree", argument_hint="[path]"
                 ),
                 # Nothing to type after it, so there is no hint rather than an empty one.
-                AgentCommand(name="clear", description="Start the conversation again"),
+                _command(name="clear", description="Start the conversation again"),
             )
         ]
         await child.stop()
@@ -757,8 +772,8 @@ def test_the_commands_are_the_answer_for_this_conversations_own_folder(tmp_path:
 
         assert len(clients) == 1
         assert clients[0].options.cwd == str(tmp_path)
-        assert sink.available_commands == [
-            (AgentCommand(name="ship", description="This project's own"),)
+        assert sink.composer_catalog == [
+            (_command(name="ship", description="This project's own"),)
         ]
         await child.stop()
 
@@ -783,8 +798,8 @@ def test_a_commands_other_spellings_are_dropped_rather_than_offered(tmp_path: Pa
         )
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
 
-        assert sink.available_commands == [
-            (AgentCommand(name="review", description="Review the working tree"),)
+        assert sink.composer_catalog == [
+            (_command(name="review", description="Review the working tree"),)
         ]
         await child.stop()
 
@@ -813,8 +828,8 @@ def test_an_entry_with_no_name_to_type_is_left_out_and_the_rest_stand(tmp_path: 
         )
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
 
-        assert sink.available_commands == [
-            (AgentCommand(name="review", description="Review the working tree"),)
+        assert sink.composer_catalog == [
+            (_command(name="review", description="Review the working tree"),)
         ]
         assert sink.cursors != []
         await child.stop()
@@ -830,7 +845,7 @@ def test_a_handshake_that_says_nothing_about_commands_reports_nothing(tmp_path: 
             child, sink, _ = _bench(_start_request(workspace_folder=tmp_path), handshake=handshake)
             await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
 
-            assert sink.available_commands == []
+            assert sink.composer_catalog == []
             assert sink.cursors != []
             await child.stop()
 
@@ -848,7 +863,7 @@ def test_claude_saying_it_has_no_commands_is_not_the_same_as_saying_nothing(
         )
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
 
-        assert sink.available_commands == [()]
+        assert sink.composer_catalog == [()]
         await child.stop()
 
     _run(exercise)
@@ -922,9 +937,11 @@ def test_a_model_change_asks_for_a_child_started_on_it(tmp_path: Path) -> None:
         child, _, clients = _bench(resolved_start)
         await child.start(resolved_start, vendor_session_cursor=None)
         with pytest.raises(NeedsRebind):
+            content = text_message_content("on the other model please")
             await child.write_prompt(
                 TURN,
-                text_message_content("on the other model please"),
+                content,
+                sender_content=content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change="claude-sonnet-4-5",
@@ -942,9 +959,11 @@ def test_a_reasoning_effort_change_asks_for_a_child_started_on_it(tmp_path: Path
         child, _, clients = _bench(resolved_start)
         await child.start(resolved_start, vendor_session_cursor=None)
         with pytest.raises(NeedsRebind):
+            content = text_message_content("think harder")
             await child.write_prompt(
                 TURN,
-                text_message_content("think harder"),
+                content,
+                sender_content=content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -970,9 +989,11 @@ def test_the_rebound_child_takes_the_prompt_that_asked_for_it(tmp_path: Path) ->
         )
         child, _, clients = _bench(resolved_start)
         await child.start(resolved_start, vendor_session_cursor=SESSION_ID)
+        content = text_message_content("on the other model please")
         await child.write_prompt(
             TURN,
-            text_message_content("on the other model please"),
+            content,
+            sender_content=content,
             sender_label="owner",
             mode=PromptDeliveryMode.run_when_free,
             model_change="claude-sonnet-4-5",
@@ -994,9 +1015,11 @@ def test_the_label_and_the_mode_are_taken_and_dropped(tmp_path: Path) -> None:
     async def exercise() -> None:
         child, _, clients = _bench(_start_request(workspace_folder=tmp_path))
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        content = text_message_content("hello")
         await child.write_prompt(
             TURN,
-            text_message_content("hello"),
+            content,
+            sender_content=content,
             sender_label="the automatic loop",
             mode=PromptDeliveryMode.send_now,
             model_change=None,
@@ -2291,9 +2314,13 @@ def test_real_claude_keeps_the_conversation_across_a_model_change(tmp_path: Path
         await _until_the_turn_ends(sink)
 
         with pytest.raises(NeedsRebind):
+            content = text_message_content(
+                "What was the codeword? Reply with just the word."
+            )
             await child.write_prompt(
                 TURN,
-                text_message_content("What was the codeword? Reply with just the word."),
+                content,
+                sender_content=content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=CLAUDE_OTHER_MODEL,
@@ -2306,7 +2333,8 @@ def test_real_claude_keeps_the_conversation_across_a_model_change(tmp_path: Path
         await rebound.start(on_the_new_model, vendor_session_cursor=cursor)
         await rebound.write_prompt(
             TURN,
-            text_message_content("What was the codeword? Reply with just the word."),
+            content,
+            sender_content=content,
             sender_label="owner",
             mode=PromptDeliveryMode.run_when_free,
             model_change=CLAUDE_OTHER_MODEL,
@@ -2415,12 +2443,14 @@ def test_a_picture_reaches_claude_as_a_content_block_beside_the_words(
             "c-claude-1", b"\x89PNG not really", media_type="image/png"
         )
 
+        content = (
+            MessageText(text="look at this"),
+            MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
+        )
         await child.write_prompt(
             TURN,
-            (
-                MessageText(text="look at this"),
-                MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
-            ),
+            content,
+            sender_content=content,
             sender_label="owner",
             mode=PromptDeliveryMode.run_when_free,
             model_change=None,

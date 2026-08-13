@@ -137,19 +137,19 @@ def test_claude_really_takes_a_picture_in_a_message_and_can_see_it(tmp_path: Pat
             kept = await message_files.keep(
                 "real-claude", _solid_png(0, 255, 0), media_type="image/png"
             )
+            content = (
+                MessageText(
+                    text=(
+                        "What colour is this image? Answer with one word and nothing "
+                        "else. Do not use any tools."
+                    )
+                ),
+                MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
+            )
             await child.write_prompt(
                 TurnToken(conversation_id="real-claude", turn_number=1),
-                (
-                    MessageText(
-                        text=(
-                            "What colour is this image? Answer with one word and nothing "
-                            "else. Do not use any tools."
-                        )
-                    ),
-                    MessageImage(
-                        stored_file_id=kept.stored_file_id, media_type="image/png"
-                    ),
-                ),
+                content,
+                sender_content=content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -179,11 +179,13 @@ def test_a_message_of_only_words_still_reaches_the_real_claude_unchanged(
         child = _real_child(tmp_path, sink, message_files)
         await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
         try:
+            content = text_message_content(
+                "Reply with the single word ready and nothing else. Do not use tools."
+            )
             await child.write_prompt(
                 TurnToken(conversation_id="real-claude", turn_number=1),
-                text_message_content(
-                    "Reply with the single word ready and nothing else. Do not use tools."
-                ),
+                content,
+                sender_content=content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,

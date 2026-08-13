@@ -29,8 +29,8 @@ const componentDirectory = new URL("../src/components/conversation/", import.met
 // --- what the components are ----------------------------------------------------------------
 
 const expectedInventory = [
-  "AgentCommandMenu.svelte",
   "BackendMark.svelte",
+  "ComposerCatalogMenu.svelte",
   "ConversationComposer.svelte",
   "ConversationPane.svelte",
   "ConversationRestBar.svelte",
@@ -190,6 +190,41 @@ assert.ok(
 // rather than each in their own. These are assertions about that one piece of code.
 const binderSource = sources["LiveConversation.svelte"];
 
+// A historical pane removes mutation controls at its rendering boundary. The live binder
+// also refuses every mutation callback, so a stale event handler cannot cross it.
+function binderFunction(name, nextName) {
+  const start = binderSource.indexOf(`async function ${name}`);
+  const end = binderSource.indexOf(`async function ${nextName}`, start + 1);
+  assert.ok(start >= 0 && end > start, `find ${name} before ${nextName}`);
+  return binderSource.slice(start, end);
+}
+
+assert.match(binderFunction("send", "stop"), /if \(readOnly\) return false;/);
+assert.match(
+  binderFunction("stop", "discard"),
+  /if \(readOnly \|\| openedId === null\) return;/
+);
+assert.match(
+  binderFunction("discard", "promote"),
+  /if \(readOnly \|\| openedId === null\) return;/
+);
+assert.match(
+  binderFunction("promote", "answer"),
+  /if \(readOnly \|\| openedId === null\) return;/
+);
+assert.match(
+  binderFunction("answer", "submitUserInput"),
+  /if \(readOnly \|\| askId === undefined \|\| openedId === null\) return;/
+);
+assert.match(
+  binderFunction("submitUserInput", "newConversation"),
+  /if \(readOnly \|\| requestId === undefined \|\| openedId === null\) return;/
+);
+assert.match(
+  binderSource.slice(binderSource.indexOf("async function newConversation")),
+  /if \(readOnly \|\| onNewConversation === undefined\) return;/
+);
+
 // Reconnecting is the ordinary read, not a whole-screen refetch.
 assert.match(binderSource, /visibilitychange/);
 assert.match(binderSource, /stream\?\.connect\(\)/);
@@ -280,7 +315,7 @@ try {
       'export { default as NewForm } from "../src/components/conversation/NewConversationForm.svelte";',
       'export { default as Pane } from "../src/components/conversation/ConversationPane.svelte";',
       'export { default as RestBar } from "../src/components/conversation/ConversationRestBar.svelte";',
-      'export { default as CommandMenu } from "../src/components/conversation/AgentCommandMenu.svelte";',
+      'export { default as CommandMenu } from "../src/components/conversation/ComposerCatalogMenu.svelte";',
       ""
     ].join("\n"),
     "utf8"
@@ -433,6 +468,33 @@ try {
   assert.match(peekedPane, /class="chat-lbl">Product Design worker/);
   assert.match(peekedPane, /class="chat-state[^>]*>working/);
   assert.match(peekedPane, /class="chat-usage" data-conversation-workspace/);
+
+  // History uses one boundary around the whole pane. The transcript remains, while the
+  // composer and the options door that owns New do not enter the rendered tree.
+  const historicalPane = drawn(Pane, {
+    conversationId: "past-1",
+    label: "Coding",
+    conversationState: "opened",
+    readOnly: true,
+    rows: [
+      {
+        key: "past-message",
+        kind: "prompt",
+        sequence: 1,
+        createdAt: 1,
+        content: [{ piece: "text", text: "the old request" }],
+        senderLabel: "owner",
+        mode: "run_when_free",
+        sentAtUnixMilliseconds: 1_000
+      }
+    ],
+    onSend: async () => true
+  });
+  assert.match(historicalPane, /data-conversation-read-only="true"/);
+  assert.match(historicalPane, /data-conversation-read-only-boundary="true"/);
+  assert.match(historicalPane, /data-conversation-row="prompt"/);
+  assert.doesNotMatch(historicalPane, /data-conversation-input/);
+  assert.doesNotMatch(historicalPane, /aria-label="Conversation options"/);
 
   const activePlanRows = [
     {
@@ -1170,12 +1232,12 @@ try {
   // The command menu draws what the agent reported and nothing else: the name a person
   // types, what the backend said it does, and the argument where it named one.
   const menu = drawn(CommandMenu, {
-    commands: [
-      { name: "plan", description: "Write the plan", argument_hint: null },
-      { name: "compact", description: "Shrink the context", argument_hint: "[instructions]" }
+    entries: [
+      { kind: "command", display_text: "/plan", insertion_text: "/plan ", description: "Write the plan", argument_hint: null },
+      { kind: "command", display_text: "/compact", insertion_text: "/compact ", description: "Shrink the context", argument_hint: "[instructions]" }
     ],
     activeIndex: 1,
-    anyCommandsAtAll: true,
+    anyEntriesAtAll: true,
     onChoose() {},
     onHighlight() {}
   });
@@ -1198,25 +1260,25 @@ try {
   // commands and an agent that has not reported yet, and nothing here knows which, so the
   // sentence must be true of both and must not put it on the agent.
   const noCommandsAtAll = drawn(CommandMenu, {
-    commands: [],
-    anyCommandsAtAll: false,
+    entries: [],
+    anyEntriesAtAll: false,
     onChoose() {},
     onHighlight() {}
   });
   assert.match(noCommandsAtAll, /data-conversation-commands-empty/);
-  assert.match(noCommandsAtAll, /No commands here\./);
+  assert.match(noCommandsAtAll, /No entries here\./);
   assert.doesNotMatch(
     noCommandsAtAll,
     /agent/i,
     "an empty list is not something the agent can be said to have reported"
   );
   const nothingMatched = drawn(CommandMenu, {
-    commands: [],
-    anyCommandsAtAll: true,
+    entries: [],
+    anyEntriesAtAll: true,
     onChoose() {},
     onHighlight() {}
   });
-  assert.match(nothingMatched, /No command matches that\./);
+  assert.match(nothingMatched, /No catalog entry matches that\./);
 
   // And nothing is on screen until a command is being written.
   assert.doesNotMatch(idleComposer, /data-conversation-commands/);
@@ -1234,6 +1296,7 @@ try {
 <script lang="ts">
   import ConversationComposer from "../src/components/conversation/ConversationComposer.svelte";
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
+  import TicketConversationHistory from "../src/components/TicketConversationHistory.svelte";
   import ConversationTranscript from "../src/components/conversation/ConversationTranscript.svelte";
   import TaskProgress from "../src/components/conversation/TaskProgress.svelte";
   import PermissionAskCard from "../src/components/conversation/PermissionAskCard.svelte";
@@ -1246,6 +1309,8 @@ try {
   let holdNextSend = false;
   let heldSend: ((accepted: boolean) => void) | null = null;
   let showComposer = $state(true);
+  let activeTicketConversation = $state<string | null>("active-1");
+  let selectedPastConversation = $state<string | null>(null);
   (window as any).__sends = () => sends;
   (window as any).__answers = () => answers;
   (window as any).__userInputAnswers = () => userInputAnswers;
@@ -1262,17 +1327,23 @@ try {
   (window as any).__destroyComposer = () => {
     showComposer = false;
   };
+  (window as any).__setActiveTicketConversation = (conversationId: string | null) => {
+    activeTicketConversation = conversationId;
+  };
 
   // What the agent reported it can be asked to do. Settable from the test, because an
   // agent that reports none is a state a person must be able to read, not a second pane.
-  let availableCommands = $state<any[]>([
-    { name: "plan", description: "Write the plan", argument_hint: "[what to plan]" },
-    { name: "replan", description: "Start the plan again", argument_hint: null },
-    { name: "compact", description: "Shrink the context", argument_hint: null },
-    { name: "apply-plan", description: "Do what the plan says", argument_hint: null }
+  let composerCatalog = $state<any[]>([
+    { kind: "command", display_text: "/plan", insertion_text: "/plan ", description: "Write the plan", argument_hint: "[what to plan]" },
+    { kind: "command", display_text: "/replan", insertion_text: "/replan ", description: "Start the plan again", argument_hint: null },
+    { kind: "command", display_text: "/compact", insertion_text: "/compact ", description: "Shrink the context", argument_hint: null },
+    { kind: "command", display_text: "/apply-plan", insertion_text: "/apply-plan ", description: "Do what the plan says", argument_hint: null },
+    { kind: "skill", display_text: "$review", insertion_text: "$review-exact", description: "Review with a skill", argument_hint: null },
+    { kind: "app", display_text: "@drive", insertion_text: "@drive ", description: "Use Drive", argument_hint: null },
+    { kind: "plugin", display_text: "@github", insertion_text: "@github exact ", description: "Use GitHub", argument_hint: null }
   ]);
   (window as any).__setCommands = (next: any[]) => {
-    availableCommands = next;
+    composerCatalog = next;
   };
 
   // What an ask taking the composer over does to the footer, without an ask to write.
@@ -1488,7 +1559,7 @@ try {
       { model_id: "haiku", display_name: "Haiku", enabled: true, reasoning_effort_options: [] }
     ]}
     effortOptions={["low", "high"]}
-    {availableCommands}
+    {composerCatalog}
     {backends}
     {conversationExists}
     {disabled}
@@ -1511,6 +1582,44 @@ try {
       />
     </div>
   </div>
+</div>
+
+<div data-history-fixture>
+  <TicketConversationHistory
+    history={[
+      { conversation_id: "past-1", created_at: 1_700_000_000 },
+      { conversation_id: "active-1", created_at: 1_700_000_100 },
+      { conversation_id: "active-2", created_at: 1_700_000_200 }
+    ]}
+    activeConversationId={activeTicketConversation}
+    bind:selectedPastConversationId={selectedPastConversation}
+  />
+  <span data-history-selection>{selectedPastConversation ?? activeTicketConversation ?? "new"}</span>
+</div>
+
+<div data-read-only-fixture style="width: 100%; max-width: 700px; height: 360px;">
+  <ConversationPane
+    conversationId="past-1"
+    label="Coding"
+    conversationExists={true}
+    conversationState="opened"
+    readOnly={true}
+    running={true}
+    ask={question}
+    userInput={userInputRequest}
+    heldPromptRows={[
+      {
+        key: "held:past",
+        heldPromptId: "past",
+        senderMessageId: "past-message",
+        content: [{ piece: "text", text: "held in the past" }],
+        senderLabel: "owner",
+        sentAtUnixMilliseconds: 1_000,
+        state: "held"
+      }
+    ]}
+    {onSend}
+  />
 </div>
 
 <ConversationTranscript rows={settledRows} ownSenderLabel="owner" />
@@ -1599,6 +1708,33 @@ with sync_playwright() as playwright:
     page.add_style_tag(path="assets/tokens.css")
     page.add_style_tag(path="assets/app.css")
 
+    # An explicit past selection survives active-pointer refreshes. Current follows them,
+    # and a Ticket with no active pointer returns to the writable new-conversation choice.
+    history = page.locator("[data-history-fixture]")
+    selector = history.get_by_label("Ticket conversation")
+    selection = history.locator("[data-history-selection]")
+    assert selection.inner_text() == "active-1"
+    selector.select_option("past-1")
+    assert selection.inner_text() == "past-1"
+    page.evaluate("window.__setActiveTicketConversation('active-2')")
+    assert selection.inner_text() == "past-1"
+    selector.select_option("__current__")
+    assert selection.inner_text() == "active-2"
+    page.evaluate("window.__setActiveTicketConversation(null)")
+    assert selection.inner_text() == "new"
+    assert selector.locator("option:checked").inner_text() == "Current · new conversation"
+
+    # The pane's read-only boundary keeps the transcript surface and removes every action
+    # category together. There is no independent control that can escape this boundary.
+    historical = page.locator("[data-read-only-fixture]")
+    assert historical.locator("[data-conversation-read-only-boundary=true]").count() == 1
+    assert historical.locator("[data-conversation-input]").count() == 0
+    assert historical.locator("[data-conversation-picker-model]").count() == 0
+    assert historical.locator("[data-conversation-stop]").count() == 0
+    assert historical.locator("[data-conversation-held-discard]").count() == 0
+    assert historical.locator("[data-conversation-held-promote]").count() == 0
+    assert historical.get_by_role("button", name="Conversation options").count() == 0
+
     # The opened top bar matches the approved desktop geometry. Its content keeps the
     # complete worker phrase only where that phrase tells the person who receives a message.
     top_bar_fixture = page.locator("[data-top-bar-fixture]")
@@ -1663,6 +1799,7 @@ with sync_playwright() as playwright:
     options.press("Escape")
     page.reload(wait_until="domcontentloaded")
     page.locator("[data-top-bar-fixture]").evaluate("element => element.remove()")
+    page.locator("[data-read-only-fixture]").evaluate("element => element.remove()")
     page.set_viewport_size({"width": 1280, "height": 720})
 
     # FINDING 11 — the pickers show the concrete value already in force, unlabelled, and
@@ -2311,6 +2448,36 @@ with sync_playwright() as playwright:
         "document.querySelector('[data-conversation-input]').value === '/compact '"
     )
 
+    # Each trigger admits only its own kinds. Selection uses the exact insertion text.
+    box.fill("")
+    box.type("$rev")
+    page.wait_for_function(
+        "document.querySelectorAll('[data-conversation-catalog-entry]').length === 1"
+    )
+    assert page.locator("[data-conversation-catalog-entry]").get_attribute(
+        "data-conversation-catalog-kind"
+    ) == "skill"
+    page.keyboard.press("Tab")
+    assert box.input_value() == "$review-exact"
+    assert page.locator("[data-conversation-catalog]").count() == 0
+    assert page.evaluate("window.__sends().length") == sent_before_the_menu
+
+    box.fill("")
+    box.type("@")
+    page.wait_for_function(
+        "document.querySelectorAll('[data-conversation-catalog-entry]').length === 2"
+    )
+    assert page.eval_on_selector_all(
+        "[data-conversation-catalog-entry]",
+        "rows => rows.map(row => row.dataset.conversationCatalogKind)",
+    ) == ["app", "plugin"]
+    page.locator('[data-conversation-catalog-entry="@github"]').click()
+    assert box.input_value() == "@github exact "
+    assert page.evaluate("window.__sends().length") == sent_before_the_menu
+
+    box.fill("not-at-line-start $rev")
+    assert page.locator("[data-conversation-catalog]").count() == 0
+
     # A command is a line that starts with a slash, not a message that does: one written
     # under something already written is offered the same menu, and replaces only itself.
     box.fill("")
@@ -2335,15 +2502,15 @@ with sync_playwright() as playwright:
     )
     assert page.locator("[data-conversation-command]").count() == 0
     matched_nothing = page.locator("[data-conversation-commands-empty]").inner_text()
-    assert "No command matches" in matched_nothing, matched_nothing
+    assert "No catalog entry matches" in matched_nothing, matched_nothing
 
     # The list is the agent's own, and an agent can genuinely report the same name twice —
     # a project command shadowing a user one. Both rows are drawn, rather than the menu
     # throwing on a repeated name and taking the composer down with it.
     page.evaluate(
         'window.__setCommands(['
-        '{ name: "review", description: "the project one", argument_hint: null },'
-        '{ name: "review", description: "the one in your home directory", argument_hint: null }'
+        '{ kind: "command", display_text: "/review", insertion_text: "/review ", description: "the project one", argument_hint: null },'
+        '{ kind: "command", display_text: "/review", insertion_text: "/review ", description: "the one in your home directory", argument_hint: null }'
         '])'
     )
     box.fill("")
@@ -2373,9 +2540,30 @@ with sync_playwright() as playwright:
         "document.querySelectorAll('[data-conversation-commands-empty]').length === 1"
     )
     nothing_to_offer = page.locator("[data-conversation-commands-empty]").inner_text()
-    assert "No commands here." in nothing_to_offer, nothing_to_offer
+    assert "No entries here." in nothing_to_offer, nothing_to_offer
     assert "agent" not in nothing_to_offer.lower(), nothing_to_offer
     assert page.evaluate("window.__sends().length") == sent_before_the_menu
+
+    # Display text does not need to repeat its trigger. The insertion text remains exact,
+    # and sending the selected app uses the ordinary text content path.
+    page.evaluate(
+        'window.__setCommands(['
+        '{ kind: "app", display_text: "Drive", insertion_text: "@drive --open", description: "Open Drive", argument_hint: null }'
+        '])'
+    )
+    box.fill("")
+    box.type("@dr")
+    page.wait_for_function(
+        "document.querySelectorAll('[data-conversation-catalog-entry]').length === 1"
+    )
+    page.locator('[data-conversation-catalog-entry="Drive"]').click()
+    assert box.input_value() == "@drive --open"
+    sends_before_app = page.evaluate("window.__sends().length")
+    page.keyboard.press("Enter")
+    page.wait_for_function(f"window.__sends().length === {sends_before_app + 1}")
+    assert page.evaluate("window.__sends().at(-1).content") == [
+        {"piece": "text", "text": "@drive --open"}
+    ]
 
     # Mid-turn the composer keeps both actions. Enter and the arrow always queue by default.
     box.fill("")

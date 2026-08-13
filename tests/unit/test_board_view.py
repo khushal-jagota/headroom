@@ -89,6 +89,9 @@ _ENRICHMENT_CARD_KEYS = [
     "blocked",
     "conversation_id",
     "waiting_to_closeout",
+    "sprint_item_id",
+    "sprint_item_title",
+    "sprint_item_priority",
 ]
 
 # The three signals the async route asks the conversation system for and appends after
@@ -244,10 +247,16 @@ def test_board_view_groups_parented_ticket_by_parent_item_project(
     assert cards["Parented ticket"]["project"] == "Vylo"
     assert cards["Parented ticket"]["group_project_id"] == "project_vylo"
     assert cards["Parented ticket"]["group_project"] == "Vylo"
+    assert cards["Parented ticket"]["sprint_item_id"] == item.id
+    assert cards["Parented ticket"]["sprint_item_title"] == "Parent item"
+    assert cards["Parented ticket"]["sprint_item_priority"] == "P3"
     assert cards["Standalone ticket"]["group_project_id"] == "project_client_work"
     assert cards["Standalone ticket"]["group_project"] == "Client Work"
     assert cards["Unprojected ticket"]["group_project_id"] is None
     assert cards["Unprojected ticket"]["group_project"] is None
+    assert cards["Unprojected ticket"]["sprint_item_id"] is None
+    assert cards["Unprojected ticket"]["sprint_item_title"] is None
+    assert cards["Unprojected ticket"]["sprint_item_priority"] is None
 
 
 def test_board_coding_card_keys_superset_and_columns_unchanged(
@@ -284,7 +293,7 @@ def test_board_coding_card_keys_superset_and_columns_unchanged(
 @pytest.mark.parametrize(
     ("stage", "ticket_status", "ceiling", "at_cap", "expected"),
     [
-        ("needs_closeout", "empty", "needs_closeout", "propose", True),
+        ("needs_closeout", "empty", "needs_closeout", "user_review", True),
         ("needs_closeout", "empty", "needs_closeout", "stop", False),
         ("needs_closeout", "empty", "done", "stop", True),
         ("needs_success", "empty", "done", "stop", False),
@@ -333,7 +342,7 @@ def test_board_mixed_coding_probe_does_not_throw(
         actor="human",
         now=2,
         next_ceiling=NEEDS_BETA,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
 
     board = _board(tmp_db)
@@ -446,7 +455,7 @@ def test_board_cards_expose_active_incoming_blocking_without_changing_real_stage
         actor="human",
         now=4,
         next_ceiling="needs_success",
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     core_links.add_link(tmp_db, blocker, kickoff_dependent, LinkKind.blocks, 5)
     core_links.add_link(tmp_db, blocker, later_dependent, LinkKind.blocks, 5)

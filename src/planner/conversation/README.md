@@ -38,6 +38,11 @@ conversation runs on the named value. There is no separate set-model operation â
 change rides the message (commit-on-send), a held message applies it when it runs, and a
 refused delivery changes nothing. How a backend realizes the change is internal.
 
+Sprint Item supervisors use the same send operation for targeted Worker guidance. The
+item-scoped service requires the Ticket's exact current conversation and records the
+supervisor agent key as sender. It never creates a Worker conversation. Ticket lifecycle
+facts remain outside this send and use their canonical domain actions.
+
 ## The real build lives here too
 
 What the contract deferred has since been built, in this same package: the event

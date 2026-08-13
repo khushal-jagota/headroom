@@ -166,7 +166,11 @@ export function ticketStageVisualStateFor(
     if (ticketStatus === "agent") return "current-running";
     if (ticketStatus === "errored") return "errored";
     if (ticketStatus === "paired") return "current-paired";
-    if (fieldHasProposal || ticketStatus === "awaiting_approval") {
+    if (
+      fieldHasProposal ||
+      ticketStatus === "awaiting_agent_review" ||
+      ticketStatus === "awaiting_user_review"
+    ) {
       return "current-awaiting-approval";
     }
     return "current-waiting";

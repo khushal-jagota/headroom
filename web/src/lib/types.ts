@@ -54,6 +54,8 @@ export type { WorkerTypesResponse } from "./lifecycle";
 export type SprintSummary = {
   id: string;
   name: string;
+  date_start?: string;
+  date_end?: string;
 };
 
 export type SprintsResponse = {
@@ -62,7 +64,7 @@ export type SprintsResponse = {
 
 export type Priority = "P0" | "P1" | "P2" | "P3";
 
-export type SprintItemKind = "normal" | "other";
+export type SprintItemKind = "normal";
 
 export type SprintItemSummary = AnyRecord & {
   id: string;
@@ -108,6 +110,7 @@ export type ScheduledTask = {
   priority: Priority;
   deadline: string | null;
   project_id: string | null;
+  sprint_id: string | null;
   placement_mode: SchedulePlacementMode;
   sprint_item_id: string | null;
   employee_backend: string | null;
@@ -127,8 +130,11 @@ export type TicketField = {
   proposal?: {
     body: string;
     proposed_by: string;
+    review_route?: ReviewRoute;
   } | null;
 };
+
+export type ReviewRoute = "stop" | "agent_review" | "user_review";
 
 export type BlockedByTicket = {
   ticket_id: string;
@@ -202,6 +208,11 @@ export type ResolvedTicketPriorityAnchors = {
   } | null;
 };
 
+export type TicketConversationHistoryEntry = {
+  conversation_id: string;
+  created_at: number;
+};
+
 export type TicketDetail = {
   id: string;
   title: string;
@@ -212,12 +223,13 @@ export type TicketDetail = {
   employee_configuration_editable: boolean;
   stage: string;
   ceiling: string;
-  at_cap: string;
+  at_cap: ReviewRoute;
   suggested_next_ceiling: string;
   priority: string;
   deadline?: string | null;
   project_id?: string | null;
   project?: string | null;
+  sprint_id?: string | null;
   effective_sprint_id?: string | null;
   sprint_item_id?: string | null;
   resolved_priority_anchors: ResolvedTicketPriorityAnchors;
@@ -227,11 +239,25 @@ export type TicketDetail = {
   default_stage_ownership_mode: StageOwnershipMode | null;
   effective_stage_ownership_mode: StageOwnershipMode | null;
   conversation_id: string | null;
+  conversation_history: TicketConversationHistoryEntry[];
   day_ids?: string[];
   blocked?: boolean;
   blocker_summary?: BlockerSummary;
   recap?: string | null;
+  verdict: TicketVerdict | null;
+  trouble_notes: TicketTroubleNote[];
   fields: Record<string, TicketField>;
+};
+
+export type TicketVerdict = {
+  rating: number | null;
+  text: string | null;
+};
+
+export type TicketTroubleNote = {
+  sequence: number;
+  body: string;
+  created_at: number;
 };
 
 export type EmployeeConfigurationSnapshot = {
@@ -259,6 +285,49 @@ export type CurrentSprintResponse = {
   planning_date: string;
   sprint: CurrentSprint | null;
   groups: Record<string, AnyRecord[]>;
+  other_tickets: AnyRecord[];
+};
+
+export type SprintItemWorkspaceTicket = {
+  id: string;
+  title: string;
+  stage: string;
+  priority: Priority;
+  ticket_status: string;
+  has_pending_proposal: boolean;
+  proposal_review_route: ReviewRoute | null;
+  review_route: ReviewRoute;
+  worker_type: string;
+  day_ids: string[];
+};
+
+export type SprintItemWorkspaceObligation = {
+  id: string;
+  ticket_id: string;
+  kind: string;
+  lifecycle: string;
+  attempt_count: number;
+  retry_at: number | null;
+  last_error: string | null;
+};
+
+export type SprintItemWorkspace = SprintItemSummary & {
+  body: string;
+  status: string;
+  priority: Priority;
+  deadline: string | null;
+  rollup: Record<string, number>;
+  supervisor: {
+    agent_key: string;
+    conversation_id: string | null;
+    launch_configuration: EmployeeConfigurationSnapshot;
+  };
+  planning_day_id: string;
+  today_ticket_ids: string[];
+  tickets: SprintItemWorkspaceTicket[];
+  artifacts: string[];
+  obligations: SprintItemWorkspaceObligation[];
+  conversation_history: TicketConversationHistoryEntry[];
 };
 
 export type ReviewProposalItem = {
@@ -286,8 +355,40 @@ export type ReviewResponse = {
 export type BoardResponse = {
   columns: Array<{
     stage: string;
-    cards: AnyRecord[];
+    cards: BoardCard[];
   }>;
+};
+
+export type BoardCard = {
+  id: string;
+  title: string;
+  priority: Priority;
+  deadline: string | null;
+  project_id: string | null;
+  project: string | null;
+  group_project_id: string | null;
+  group_project: string | null;
+  activity_at: number;
+  has_pending_proposal: boolean;
+  ticket_status: string;
+  backend_error: string | null;
+  worker_type: string;
+  employee_backend: string;
+  stage: string;
+  stage_label: string;
+  gating_field: string | null;
+  gating_field_label: string | null;
+  is_done: boolean;
+  is_dropped: boolean;
+  blocked: boolean;
+  conversation_id: string | null;
+  waiting_to_closeout: boolean;
+  sprint_item_id: string | null;
+  sprint_item_title: string | null;
+  sprint_item_priority: Priority | null;
+  agent_working: boolean;
+  needs_me: boolean;
+  latest_turn_ended_sequence: number;
 };
 
 export type DayTicket = AnyRecord & {

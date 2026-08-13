@@ -27,6 +27,7 @@ from planner.scheduled_tickets.contracts import (
 )
 from planner.scheduled_tickets.logic import cadence_qualifies, validate_local_time
 from planner.scheduled_tickets.runtime import ScheduledTicketLoop
+from planner.sprints import data as sprints_data
 from planner.sprints.logic import DateRange
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
@@ -47,6 +48,7 @@ def _template(
     blocked_by: tuple[str, ...] = (),
     project_id: str | None = None,
     placement_mode: ScheduledTicketPlacementMode = ScheduledTicketPlacementMode.current_sprint,
+    sprint_id: str | None = None,
     sprint_item_id: str | None = None,
 ) -> ScheduledTicketTemplate:
     return ScheduledTicketTemplate(
@@ -61,6 +63,7 @@ def _template(
         employee_backend=None,
         employee_launch_model=None,
         blocked_by_ticket_ids=blocked_by,
+        sprint_id=sprint_id,
     )
 
 
@@ -279,16 +282,9 @@ def test_production_planning_schedules_create_place_receipt_and_reach_handoff(
         assert ticket.deadline is None
         assert ticket.ticket_status is TicketStatus.empty
         assert fields_codec.get_slot(ticket.fields, "kickoff").proposal is None
-        assert ticket.project_id == "project_panels"
+        assert ticket.project_id == "project_personal"
         assert ticket.effective_sprint_id == "sp_current"
-        assert ticket.sprint_item_id is not None
-        assert (
-            tmp_db.execute(
-                "SELECT kind FROM sprint_items WHERE id = ?",
-                (ticket.sprint_item_id,),
-            ).fetchone()["kind"]
-            == "other"
-        )
+        assert ticket.sprint_item_id == "si_planning_current"
         assert data.list_occurrences(tmp_db, result.schedule_id) == [result]
 
         assert worker_step_readiness.is_ready_for_worker_step(
@@ -303,7 +299,7 @@ def test_production_planning_schedules_create_place_receipt_and_reach_handoff(
         tmp_db.execute(
             "SELECT count(*) FROM sprint_items "
             "WHERE sprint_id = 'sp_current' "
-            "AND project_id = 'project_panels' AND kind = 'other'"
+            "AND project_id = 'project_personal' AND title = 'Planning'"
         ).fetchone()[0]
         == 1
     )
@@ -448,7 +444,7 @@ def test_due_occurrence_creates_and_places_one_ordinary_ticket(
     ticket = tickets_data.read_ticket(tmp_db, ticket_id)
     assert ticket.title == "Planned session"
     assert ticket.worker_type == "coding"
-    assert ticket.ticket_status is TicketStatus.awaiting_approval
+    assert ticket.ticket_status is TicketStatus.awaiting_user_review
     kickoff_proposal = fields_codec.get_slot(ticket.fields, "kickoff").proposal
     assert kickoff_proposal is not None
     assert kickoff_proposal.body == "Gather evidence first."
@@ -568,8 +564,21 @@ def test_schedule_placement_transitions_preserve_effective_project(
         },
         now=60,
     )
-    assert exact_again.template.project_id is None
+    assert exact_again.template.project_id == "project_vylo"
+    assert exact_again.template.sprint_id == "sp_current"
     assert exact_again.template.sprint_item_id == "si_target"
+
+    tmp_db.execute(
+        "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
+        "VALUES ('sp_next', 'Next', '2026-08-03', '2026-08-16', 0, 0)"
+    )
+    sprints_data.assign_item_sprint(
+        tmp_db,
+        "si_target",
+        "sp_next",
+        clock=MutableClock(_now("2026-07-28T14:30:00")),
+    )
+    assert data.read_schedule(tmp_db, exact).template.sprint_id == "sp_next"
 
     current_sprint = actions.update_schedule(
         tmp_db,
@@ -652,7 +661,7 @@ def test_seeded_checkpoint_creates_a_user_owned_personal_ticket_on_day_four(
     assert ticket.title == "Checkpoint"
     assert ticket.worker_type == "personal"
     assert ticket.stage == "needs_kickoff"
-    assert ticket.ticket_status is TicketStatus.awaiting_approval
+    assert ticket.ticket_status is TicketStatus.awaiting_user_review
     kickoff_proposal = fields_codec.get_slot(ticket.fields, "kickoff").proposal
     assert kickoff_proposal is not None
     assert kickoff_proposal.body == (
@@ -829,14 +838,33 @@ def test_final_sprint_day_uses_canonical_sprint_range(tmp_db: Connection) -> Non
     assert result[0].ticket_id is not None
     ticket = tickets_data.read_ticket(tmp_db, result[0].ticket_id)
     assert ticket.effective_sprint_id == "sp_current"
-    assert ticket.sprint_item_id is not None
-    assert (
-        tmp_db.execute(
-            "SELECT kind FROM sprint_items WHERE id = ?", (ticket.sprint_item_id,)
-        ).fetchone()["kind"]
-        == "other"
-    )
+    assert ticket.sprint_item_id is None
     assert data.list_occurrences(tmp_db, schedule_id) == result
+
+
+def test_current_sprint_schedule_with_fixed_sprint_keeps_that_sprint(
+    tmp_db: Connection,
+) -> None:
+    tmp_db.execute(
+        "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
+        "VALUES ('sp_fixed', 'Fixed', '2026-06-01', '2026-06-14', 0, 0)"
+    )
+    schedule_id = _schedule(
+        tmp_db,
+        template=_template(
+            placement_mode=ScheduledTicketPlacementMode.current_sprint,
+            sprint_id="sp_fixed",
+        ),
+    )
+    now = _now("2026-07-28T14:30:00")
+
+    result = actions.run_current_slot(
+        tmp_db, planning_now=now, now=int(now.timestamp()), boundary_hour=5
+    )
+
+    ticket = tickets_data.read_ticket(tmp_db, str(result[0].ticket_id))
+    assert ticket.sprint_id == "sp_fixed"
+    assert data.read_schedule(tmp_db, schedule_id).template.sprint_id == "sp_fixed"
 
 
 def test_failure_is_recorded_once_and_does_not_stop_another_schedule(

@@ -36,6 +36,7 @@ RequestActor = Literal["ordinary", "worker", "chief"]
 def _headers(request_actor: RequestActor) -> dict[str, str]:
     ambient = os.environ.get("PLAN_ACTOR", "").strip()
     ticket_id = os.environ.get("PLAN_TICKET_ID", "").strip()
+    sprint_item_id = os.environ.get("PLAN_SPRINT_ITEM_ID", "").strip()
     if request_actor == "worker":
         headers = {"X-Plan-Actor": ambient or "agent"}
     elif ambient:
@@ -44,6 +45,8 @@ def _headers(request_actor: RequestActor) -> dict[str, str]:
         headers = {}
     if ambient == "worker" and ticket_id:
         headers["X-Plan-Ticket-ID"] = ticket_id
+    if ambient == "sprint_item_supervisor" and sprint_item_id:
+        headers["X-Plan-Sprint-Item-ID"] = sprint_item_id
     return headers
 
 
@@ -117,9 +120,7 @@ def emit(data: Any, as_json: bool, human: str) -> NoReturn:
     sys.exit(EXIT_OK)
 
 
-def fail_validation(
-    message: str, as_json: bool, detail: dict[str, Any] | None = None
-) -> NoReturn:
+def fail_validation(message: str, as_json: bool, detail: dict[str, Any] | None = None) -> NoReturn:
     """Client-side validation error, rendered in the same style as a server error. exit 1."""
     payload = {"error": {"code": "validation", "message": message, "detail": detail or {}}}
     if as_json:

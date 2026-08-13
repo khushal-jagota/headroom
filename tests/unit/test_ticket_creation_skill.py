@@ -52,14 +52,17 @@ def test_creation_model_covers_the_system_without_becoming_a_command_recipe() ->
     compact_skill = " ".join(skill.split())
 
     for marker in (
-        "A Sprint Item is the broader outcome",
+        "A Sprint Item is an optional broader-outcome classification",
         "Choose the Worker type whose lifecycle fits the job",
         "use its registered specialist guidance",
         "light, faithful Kickoff",
         "Today and sprint placement answer different questions",
-        "no explicit placement and a current sprint",
-        "without a current sprint, the Ticket remains unparented",
-        "explicit backlog placement",
+        "With no explicit Sprint choice",
+        "Without a current Sprint, the Ticket stays in backlog",
+        "Explicit backlog placement",
+        "view-only Other group",
+        "Personal Project",
+        "Keep an `initiative_planning` Ticket with its initiative",
         "Priority is strategic importance, not urgency",
         "**P0:** rare",
         "**P1:** strongly and directly contributes",

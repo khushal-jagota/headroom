@@ -12,7 +12,7 @@ from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 
 PREVIOUS_REVISION = "sprint_item_only_placement"
-HEAD_REVISION = "weekly_sprint_checkpoint_schedule"
+HEAD_REVISION = "supervisor_obligations"
 
 
 def _upgrade_to_previous_revision(path: Path) -> sqlite3.Connection:
@@ -55,6 +55,7 @@ def test_existing_projects_stay_unassessed_and_the_column_constrains_assessed_va
         )
     } == {
         "project_other": None,
+        "project_personal": None,
         "project_tribe": None,
         "project_vylo": None,
     }

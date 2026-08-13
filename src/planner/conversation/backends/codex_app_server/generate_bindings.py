@@ -40,11 +40,11 @@ from typing import Any
 # ---------------------------------------------------------------------------------------
 
 # What ``codex --version`` must print for this generated file to be the one that matches.
-PINNED_CODEX_CLI_VERSION = "codex-cli 0.145.0"
+PINNED_CODEX_CLI_VERSION = "codex-cli 0.147.0"
 
 # The upstream tag that binary was cut from, and its commit, so the Rust can be read.
-PINNED_UPSTREAM_TAG = "rust-v0.145.0"
-PINNED_UPSTREAM_COMMIT = "25af12f7e61572b0bc18ddb1008be543b91519b0"
+PINNED_UPSTREAM_TAG = "rust-v0.147.0"
+PINNED_UPSTREAM_COMMIT = "be6e8eac029b183056b7e4402879f15d2c85f61b"
 
 # ---------------------------------------------------------------------------------------
 
@@ -111,6 +111,24 @@ SCHEMA_ROOTS: tuple[tuple[str, str], ...] = (
     (_V2_NAMESPACE, "TurnPlanUpdatedNotification"),
     # What the thread has cost so far, every time codex recounts it.
     (_V2_NAMESPACE, "ThreadTokenUsageUpdatedNotification"),
+    # The composer catalogue and the two invalidations Codex publishes for it. Apps use
+    # both surfaces: app/list owns metadata, while app/installed owns current callability.
+    (_V2_NAMESPACE, "SkillsListParams"),
+    (_V2_NAMESPACE, "SkillsListResponse"),
+    (_V2_NAMESPACE, "SkillsChangedNotification"),
+    (_V2_NAMESPACE, "AppsListParams"),
+    (_V2_NAMESPACE, "AppsListResponse"),
+    (_V2_NAMESPACE, "AppsInstalledParams"),
+    (_V2_NAMESPACE, "AppsInstalledResponse"),
+    (_V2_NAMESPACE, "AppListUpdatedNotification"),
+    (_V2_NAMESPACE, "PluginInstalledParams"),
+    (_V2_NAMESPACE, "PluginInstalledResponse"),
+    # The executable built-ins Panels exposes. They are protocol methods rather than
+    # text prompts, and both run through the ordinary turn notification lifecycle.
+    (_V2_NAMESPACE, "ReviewStartParams"),
+    (_V2_NAMESPACE, "ReviewStartResponse"),
+    (_V2_NAMESPACE, "ThreadCompactStartParams"),
+    (_V2_NAMESPACE, "ThreadCompactStartResponse"),
     # The two snapshot probes, which are requests like any other.
     (_V2_NAMESPACE, "GetAccountParams"),
     (_V2_NAMESPACE, "GetAccountResponse"),

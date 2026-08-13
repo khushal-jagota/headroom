@@ -158,9 +158,8 @@ snapshot; a later intentional rollback deploy does not independently rewind data
 ## Existing-host precondition
 
 The operator must establish the single-user filesystem layout, user units, runner, and
-persistent paths before enabling automatic deployment. This ticket does not migrate the
-live host, rename `vps-agent`, or change the existing Tailscale Serve route. UID 1000 is
-preserved later by renaming that account, not by creating a second identity.
+persistent paths before enabling automatic deployment. Repository deployment does not
+perform that host setup or change the existing Tailscale Serve route.
 
 Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/app.py`,
 `src/planner/environments/deployment.py`,
@@ -169,4 +168,4 @@ Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/app.py`,
 
 ---
 
-_Last verified: 2026-07-29._
+_Last verified: 2026-08-09._

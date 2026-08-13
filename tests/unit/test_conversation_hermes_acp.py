@@ -49,7 +49,8 @@ from planner.conversation.backends.hermes_acp import (
     hermes_acp_child_launch,
 )
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     ConversationAccess,
     ConversationBackendKey,
     ConversationRoleMaterials,
@@ -626,9 +627,11 @@ def test_an_answer_the_wire_would_not_take_leaves_the_ask_answerable(tmp_path: P
     async def exercise() -> None:
         async with _scripted_child(tmp_path) as (child, control, sink):
             await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            content = text_message_content("work")
             await child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
-                text_message_content("work"),
+                content,
+                sender_content=content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -672,9 +675,11 @@ def test_an_answer_that_cannot_be_shown_to_have_landed_does_not_wait_for_good(
     async def exercise() -> None:
         async with _scripted_child(tmp_path) as (child, control, sink):
             await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            content = text_message_content("work")
             await child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
-                text_message_content("work"),
+                content,
+                sender_content=content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -700,9 +705,11 @@ def test_an_answer_that_reached_the_wire_uses_the_ask_up(tmp_path: Path) -> None
     async def exercise() -> None:
         async with _scripted_child(tmp_path) as (child, control, sink):
             await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            content = text_message_content("work")
             await child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
-                text_message_content("work"),
+                content,
+                sender_content=content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -762,9 +769,11 @@ def test_real_hermes_holds_a_turn_and_records_what_it_said(tmp_path: Path) -> No
         await child.start(resolved, vendor_session_cursor=None)
         try:
             assert sink.vendor_session_cursor is not None
+            content = text_message_content("Reply with exactly the word: ready")
             await child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
-                text_message_content("Reply with exactly the word: ready"),
+                content,
+                sender_content=content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -845,9 +854,13 @@ def test_real_hermes_answers_the_message_that_replaced_a_running_turn(tmp_path: 
         )
         await child.start(resolved, vendor_session_cursor=None)
         try:
+            first_content = text_message_content(
+                "Count slowly from 1 to 200, one number per line."
+            )
             await child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
-                text_message_content("Count slowly from 1 to 200, one number per line."),
+                first_content,
+                sender_content=first_content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -859,9 +872,13 @@ def test_real_hermes_answers_the_message_that_replaced_a_running_turn(tmp_path: 
             assert sink.endings == [ConversationTurnEnding.interrupted]
 
             sink.expect_another_turn()
+            urgent_content = text_message_content(
+                "Reply with exactly the word: pineapple"
+            )
             await child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=2),
-                text_message_content("Reply with exactly the word: pineapple"),
+                urgent_content,
+                sender_content=urgent_content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.send_now,
                 model_change=None,
@@ -892,9 +909,13 @@ def test_real_hermes_stops_a_running_turn_when_it_is_cancelled(tmp_path: Path) -
         )
         await child.start(resolved, vendor_session_cursor=None)
         try:
+            content = text_message_content(
+                "Count slowly from 1 to 200, one number per line."
+            )
             await child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
-                text_message_content("Count slowly from 1 to 200, one number per line."),
+                content,
+                sender_content=content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -955,6 +976,7 @@ async def _real_turn(
     await child.write_prompt(
         TurnToken(conversation_id="c", turn_number=turn_number),
         content,
+        sender_content=content,
         sender_label="owner",
         mode=PromptDeliveryMode.run_when_free,
         model_change=model,
@@ -974,7 +996,7 @@ class _RecordingSink:
         self.token_usage: list[dict[str, object]] = []
         self.compactions = 0
         self.vendor_session_cursor: str | None = None
-        self.available_commands: list[tuple[AgentCommand, ...]] = []
+        self.composer_catalog: list[tuple[ComposerCatalogEntry, ...]] = []
         self._turn_over = asyncio.Event()
         self._an_ask_arrived = asyncio.Event()
         self._a_compaction_arrived = asyncio.Event()
@@ -1079,12 +1101,12 @@ class _RecordingSink:
     async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
         self.vendor_session_cursor = vendor_session_cursor
 
-    async def available_commands_reported(
-        self, available_commands: tuple[AgentCommand, ...]
+    async def composer_catalog_reported(
+        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
     ) -> None:
         # Each report is kept whole and on its own, so an exercise can say what the last
         # one was and how many there have been.
-        self.available_commands.append(available_commands)
+        self.composer_catalog.append(composer_catalog)
         self._commands_arrived.set()
 
     @property
@@ -1136,12 +1158,14 @@ def test_a_picture_reaches_hermes_as_its_bytes(tmp_path: Path) -> None:
                 "c", b"\x89PNG not really", media_type="image/png"
             )
 
+            content = (
+                MessageText(text="look at this"),
+                MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
+            )
             await child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
-                (
-                    MessageText(text="look at this"),
-                    MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
-                ),
+                content,
+                sender_content=content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -1172,9 +1196,11 @@ def test_a_picture_hermes_hands_back_is_kept_and_becomes_a_piece_of_its_message(
     async def exercise() -> None:
         async with _scripted_child(tmp_path) as (child, control, sink):
             await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            content = text_message_content("draw me something")
             await child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
-                text_message_content("draw me something"),
+                content,
+                sender_content=content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -1212,9 +1238,11 @@ async def _start_the_child_and_a_turn(child: HermesAcpBackendChild, workspace: P
 
 
 async def _write_the_turns_prompt(child: HermesAcpBackendChild, turn_number: int) -> None:
+    content = text_message_content("work")
     await child.write_prompt(
         TurnToken(conversation_id="c", turn_number=turn_number),
-        text_message_content("work"),
+        content,
+        sender_content=content,
         sender_label="owner",
         mode=PromptDeliveryMode.run_when_free,
         model_change=None,
@@ -1409,15 +1437,22 @@ def test_the_commands_hermes_pushes_before_any_turn_reach_the_sink_whole(
             await sink.wait_for_available_commands()
 
             assert child._turn is None
-            assert sink.available_commands[-1] == (
-                AgentCommand(
-                    name="plan",
+            assert sink.composer_catalog[-1] == (
+                ComposerCatalogEntry(
+                    kind=ComposerCatalogEntryKind.command,
+                    display_text="/plan",
+                    insertion_text="/plan ",
                     description="Write a plan for the work",
                     argument_hint="what to plan",
                 ),
-                AgentCommand(name="clear", description="Start the thread again"),
+                ComposerCatalogEntry(
+                    kind=ComposerCatalogEntryKind.command,
+                    display_text="/clear",
+                    insertion_text="/clear ",
+                    description="Start the thread again",
+                ),
             )
-            assert sink.available_commands[-1][1].argument_hint is None
+            assert sink.composer_catalog[-1][1].argument_hint is None
 
     _run(exercise)
 
@@ -1448,11 +1483,22 @@ def test_the_commands_pushed_a_second_time_replace_the_ones_before_them(
             )
             await sink.wait_for_available_commands()
 
-            assert sink.available_commands == [
-                (AgentCommand(name="plan", description="Write a plan"),),
+            assert sink.composer_catalog == [
                 (
-                    AgentCommand(
-                        name="review", description="Look it over", argument_hint="what to read"
+                    ComposerCatalogEntry(
+                        kind=ComposerCatalogEntryKind.command,
+                        display_text="/plan",
+                        insertion_text="/plan ",
+                        description="Write a plan",
+                    ),
+                ),
+                (
+                    ComposerCatalogEntry(
+                        kind=ComposerCatalogEntryKind.command,
+                        display_text="/review",
+                        insertion_text="/review ",
+                        description="Look it over",
+                        argument_hint="what to read",
                     ),
                 ),
             ]

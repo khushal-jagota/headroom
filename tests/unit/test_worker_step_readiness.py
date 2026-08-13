@@ -44,7 +44,7 @@ def _ticket(
     worker_type: str = "coding",
     planning_day_id: str | None = PLANNING_DAY_ID,
     ceiling: str | None = None,
-    at_cap: AtCap = AtCap.propose,
+    at_cap: AtCap = AtCap.user_review,
     project_id: str | None = None,
     sprint_item_id: str | None = None,
 ) -> Ticket:
@@ -207,7 +207,7 @@ def test_paired_stage_preserves_every_non_ownership_condition(
             conn,
             worker_type="new_worker",
             ceiling="needs_understanding",
-            at_cap=AtCap.propose,
+            at_cap=AtCap.user_review,
         )
         assert _ready(conn, ticket)
 
@@ -267,7 +267,8 @@ _READY_UNDER_WORKER_OWNERSHIP: dict[TicketStatus, bool] = {
     TicketStatus.empty: True,
     TicketStatus.blocked: False,
     TicketStatus.agent: False,
-    TicketStatus.awaiting_approval: False,
+    TicketStatus.awaiting_agent_review: False,
+    TicketStatus.awaiting_user_review: False,
     TicketStatus.paired: False,
     TicketStatus.user: False,
     TicketStatus.needs_user: False,
@@ -344,7 +345,7 @@ def test_parked_current_field_proposal_is_never_ready(tmp_path: Path) -> None:
             actor="agent",
             now=4,
         )
-        assert ticket.ticket_status is TicketStatus.awaiting_approval
+        assert ticket.ticket_status is TicketStatus.awaiting_user_review
         assert not _ready(conn, ticket)
     finally:
         conn.close()
@@ -354,10 +355,10 @@ def test_parked_current_field_proposal_is_never_ready(tmp_path: Path) -> None:
     ("worker_type", "ceiling", "at_cap", "expected"),
     [
         ("coding", "needs_approach", AtCap.stop, True),
-        ("coding", "needs_success", AtCap.propose, True),
+        ("coding", "needs_success", AtCap.user_review, True),
         ("coding", "needs_success", AtCap.stop, False),
         ("new_worker", "needs_thinking", AtCap.stop, True),
-        ("new_worker", "needs_stages", AtCap.propose, True),
+        ("new_worker", "needs_stages", AtCap.user_review, True),
         ("new_worker", "needs_stages", AtCap.stop, False),
     ],
 )
@@ -427,7 +428,7 @@ def test_all_conditions_true_then_one_at_a_time_false(
 ) -> None:
     conn = _db(tmp_path)
     try:
-        ticket = _ticket(conn, ceiling="needs_success", at_cap=AtCap.propose)
+        ticket = _ticket(conn, ceiling="needs_success", at_cap=AtCap.user_review)
         assert _ready(conn, ticket)
 
         definition: WorkerTypeDefinition | Any = CODING_WORKER_TYPE_DEFINITION
@@ -508,7 +509,7 @@ def _to_closeout(conn: sqlite3.Connection, ticket_id: str) -> None:
     "occupying_status",
     [
         TicketStatus.agent,
-        TicketStatus.awaiting_approval,
+        TicketStatus.awaiting_user_review,
         TicketStatus.user,
         TicketStatus.paired,
         TicketStatus.errored,
@@ -566,7 +567,7 @@ def test_the_closeout_lane_uses_the_parent_sprint_item_project(tmp_path: Path) -
         _to_closeout(conn, waiting.id)
         conn.execute(
             "UPDATE tickets SET ticket_status = ? WHERE id = ?",
-            (TicketStatus.awaiting_approval.value, occupying.id),
+            (TicketStatus.awaiting_user_review.value, occupying.id),
         )
 
         waiting_ticket = tickets_data.read_ticket(conn, waiting.id)

@@ -6,6 +6,7 @@ import {
   sprintProjectGroups,
   sprintTicketCondition,
   sprintTicketSections,
+  sprintTicketSectionsForTickets,
   type SprintItem,
   type SprintTicket
 } from "../src/lib/sprintPresentation";
@@ -52,7 +53,8 @@ describe("Sprint ticket conditions", () => {
     [ticket({ ticket_status: "blocked" }), "errored", "blocked"],
     [ticket({ ticket_status: "errored" }), "errored", "blocked"],
     [ticket({ has_pending_proposal: true }), "current-awaiting-approval", "to review"],
-    [ticket({ ticket_status: "awaiting_approval" }), "current-awaiting-approval", "to review"],
+    [ticket({ ticket_status: "awaiting_agent_review" }), "current-awaiting-approval", "to review"],
+    [ticket({ ticket_status: "awaiting_user_review" }), "current-awaiting-approval", "to review"],
     [ticket({ ticket_status: "needs_user" }), "needs-me", "need you"],
     [ticket({ ticket_status: "user" }), "needs-me", "yours"],
     [ticket({ ticket_status: "agent" }), "current-running", "working"],
@@ -71,6 +73,17 @@ describe("Sprint Item presentation", () => {
     const settled = item({ tickets: [ticket({ stage: "done" }), ticket({ id: "t_2", stage: "done" })] });
     expect(sprintItemRollup(settled)).toBe("done");
     expect(sprintItemIsDone(settled)).toBe(true);
+  });
+
+  it("presents unclassified Sprint Tickets without a Sprint Item identity", () => {
+    const today = ticket({ id: "t_today", priority: "P2" });
+    const later = ticket({ id: "t_later", priority: "P1" });
+    const dropped = ticket({ id: "t_dropped", stage: "dropped" });
+    expect(sprintTicketSectionsForTickets([today, later, dropped], new Set([today.id]))).toEqual({
+      today: [today],
+      later: [later],
+      done: []
+    });
   });
 
   it("excludes dropped Tickets from sections and rollups", () => {
@@ -107,11 +120,11 @@ describe("Sprint Project overview", () => {
     expect(groups.map((group) => group.label)).toEqual(["Panels", "Vylo", "Other"]);
   });
 
-  it("puts completed and fallback Items last within each Project", () => {
+  it("puts completed Items last within each Project", () => {
     const normal = item({ id: "si_normal", priority: "P3" });
-    const fallback = item({ id: "si_fallback", priority: "P0", kind: "other" });
+    const urgent = item({ id: "si_urgent", priority: "P0" });
     const done = item({ id: "si_done", priority: "P0", tickets: [ticket({ stage: "done" })] });
-    const [group] = sprintProjectGroups([fallback, done, normal], []);
-    expect(group.items.map((entry) => entry.id)).toEqual(["si_normal", "si_fallback", "si_done"]);
+    const [group] = sprintProjectGroups([normal, done, urgent], []);
+    expect(group.items.map((entry) => entry.id)).toEqual(["si_urgent", "si_normal", "si_done"]);
   });
 });

@@ -5,14 +5,14 @@ Regenerate with:
 
 The pin these models were generated under:
 
-    codex binary version   codex-cli 0.145.0
-    upstream openai/codex  rust-v0.145.0 = 25af12f7e61572b0bc18ddb1008be543b91519b0
+    codex binary version   codex-cli 0.147.0
+    upstream openai/codex  rust-v0.147.0 = be6e8eac029b183056b7e4402879f15d2c85f61b
     schema obtained by     codex app-server generate-json-schema --out <dir>
     from the dump's        codex_app_server_protocol.schemas.json
-    dump digest (sha256)   5469280cfbdaa12f6d28e2206f942da808f8b699ce6c43b13f2439d843432f38
+    dump digest (sha256)   684b49ae64bd09cb27dbf85b6d2ad0380d16d267307a9ec2eae27277045ff4c7
     pruned and vendored    schema/codex_app_server_protocol.subset.schema.json
-    subset digest (sha256) f061a9b4655186c657b67babf6be001eff84ec9ce8375993d0daf2bc00d85176
-    definitions generated  109
+    subset digest (sha256) 8a2926d9f8fdee0de55dca762e852e4959d908f309bfa6fe41c5d900d134e92b
+    definitions generated  155
 
 The digests are taken over the JSON's meaning — keys sorted — so they change
 when the protocol changes and not when the dump is printed differently.
@@ -63,6 +63,7 @@ class FileChangeRequestApprovalResponse(BaseModel):
 
 class InitializeCapabilities(BaseModel):
     experimentalApi: bool | None = False
+    extensions: dict[str, Any] | None = None
     mcpServerOpenaiFormElicitation: bool | None = None
     optOutNotificationMethods: list[str] | None = None
     requestAttestation: bool | None = False
@@ -109,6 +110,37 @@ class AgentMessageDeltaNotification(BaseModel):
     itemId: str
     threadId: str
     turnId: str
+
+
+class AppBranding(BaseModel):
+    category: str | None = None
+    developer: str | None = None
+    isDiscoverableApp: bool
+    privacyPolicy: str | None = None
+    termsOfService: str | None = None
+    website: str | None = None
+
+
+class AppReview(BaseModel):
+    status: str
+
+
+class AppScreenshot(BaseModel):
+    fileId: str | None = None
+    url: str | None = None
+    userPrompt: str
+
+
+class AppsInstalledParams(BaseModel):
+    forceRefresh: bool | None = None
+    threadId: str | None = None
+
+
+class AppsListParams(BaseModel):
+    cursor: str | None = None
+    forceRefetch: bool | None = None
+    limit: Annotated[int | None, Field(ge=0)] = None
+    threadId: str | None = None
 
 
 class Granular(BaseModel):
@@ -175,13 +207,6 @@ class ResponseTooManyFailedAttemptsCodexErrorInfo(BaseModel):
     responseTooManyFailedAttempts: ResponseTooManyFailedAttempts
 
 
-class ReadCommandAction(BaseModel):
-    command: str
-    name: str
-    path: str
-    type: Annotated[Literal["read"], Field(title="ReadCommandActionType")]
-
-
 class ListFilesCommandAction(BaseModel):
     command: str
     path: str | None = None
@@ -241,6 +266,22 @@ class GitInfo(BaseModel):
 class HookPromptFragment(BaseModel):
     hookRunId: str
     text: str
+
+
+class InstalledApp(BaseModel):
+    callable: bool
+    enabled: bool
+    id: str
+    runtimeName: str | None = None
+
+
+class MarketplaceInterface(BaseModel):
+    displayName: str | None = None
+
+
+class MarketplaceLoadErrorInfo(BaseModel):
+    marketplacePath: str
+    message: str
 
 
 class McpToolCallAppContext(BaseModel):
@@ -311,6 +352,57 @@ class UpdatePatchChangeKind(BaseModel):
     type: Annotated[Literal["update"], Field(title="UpdatePatchChangeKindType")]
 
 
+class PluginInstalledParams(BaseModel):
+    cwds: list[str] | None = None
+    installSuggestionPluginNames: list[str] | None = None
+
+
+class PluginInterface(BaseModel):
+    brandColor: str | None = None
+    capabilities: list[str]
+    category: str | None = None
+    composerIcon: str | None = None
+    composerIconUrl: str | None = None
+    defaultPrompt: list[str] | None = None
+    developerName: str | None = None
+    displayName: str | None = None
+    logo: str | None = None
+    logoDark: str | None = None
+    logoUrl: str | None = None
+    logoUrlDark: str | None = None
+    longDescription: str | None = None
+    privacyPolicyUrl: str | None = None
+    screenshotUrls: list[str]
+    screenshots: list[str]
+    shortDescription: str | None = None
+    termsOfServiceUrl: str | None = None
+    websiteUrl: str | None = None
+
+
+class LocalPluginSource(BaseModel):
+    path: str
+    type: Annotated[Literal["local"], Field(title="LocalPluginSourceType")]
+
+
+class GitPluginSource(BaseModel):
+    path: str | None = None
+    refName: str | None = None
+    sha: str | None = None
+    type: Annotated[Literal["git"], Field(title="GitPluginSourceType")]
+    url: str
+
+
+class NpmPluginSource(BaseModel):
+    package: str
+    registry: str | None = None
+    type: Annotated[Literal["npm"], Field(title="NpmPluginSourceType")]
+    version: str | None = None
+
+
+class RemotePluginSource(BaseModel):
+    type: Annotated[Literal["remote"], Field(title="RemotePluginSourceType")]
+
+
 class ReasoningEffort(RootModel[str]):
     root: Annotated[str, Field(min_length=1)]
 
@@ -334,6 +426,28 @@ class ReasoningTextDeltaNotification(BaseModel):
     itemId: str
     threadId: str
     turnId: str
+
+
+class UncommittedChangesReviewTarget(BaseModel):
+    type: Annotated[
+        Literal["uncommittedChanges"], Field(title="UncommittedChangesReviewTargetType")
+    ]
+
+
+class BaseBranchReviewTarget(BaseModel):
+    branch: str
+    type: Annotated[Literal["baseBranch"], Field(title="BaseBranchReviewTargetType")]
+
+
+class CommitReviewTarget(BaseModel):
+    sha: str
+    title: str | None = None
+    type: Annotated[Literal["commit"], Field(title="CommitReviewTargetType")]
+
+
+class CustomReviewTarget(BaseModel):
+    instructions: str
+    type: Annotated[Literal["custom"], Field(title="CustomReviewTargetType")]
 
 
 class DangerFullAccessSandboxPolicy(BaseModel):
@@ -365,6 +479,40 @@ class CustomSessionSource(BaseModel):
     custom: str
 
 
+class SkillErrorInfo(BaseModel):
+    message: str
+    path: str
+
+
+class SkillInterface(BaseModel):
+    brandColor: str | None = None
+    defaultPrompt: str | None = None
+    displayName: str | None = None
+    iconLarge: str | None = None
+    iconLargeUrl: str | None = None
+    iconSmall: str | None = None
+    iconSmallUrl: str | None = None
+    shortDescription: str | None = None
+
+
+class SkillToolDependency(BaseModel):
+    command: str | None = None
+    description: str | None = None
+    transport: str | None = None
+    type: str
+    url: str | None = None
+    value: str
+
+
+class SkillsChangedNotification(BaseModel):
+    pass
+
+
+class SkillsListParams(BaseModel):
+    cwds: list[str] | None = None
+    forceReload: bool | None = None
+
+
 class OtherSubAgentSource(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -375,6 +523,14 @@ class OtherSubAgentSource(BaseModel):
 class TextElement(BaseModel):
     byteRange: ByteRange
     placeholder: str | None = None
+
+
+class ThreadCompactStartParams(BaseModel):
+    threadId: str
+
+
+class ThreadCompactStartResponse(BaseModel):
+    pass
 
 
 class HookPromptThreadItem(BaseModel):
@@ -396,24 +552,6 @@ class ReasoningThreadItem(BaseModel):
     type: Annotated[Literal["reasoning"], Field(title="ReasoningThreadItemType")]
 
 
-class CommandExecutionThreadItem(BaseModel):
-    aggregatedOutput: str | None = None
-    command: str
-    commandActions: list[
-        ReadCommandAction | ListFilesCommandAction | SearchCommandAction | UnknownCommandAction
-    ]
-    cwd: str
-    durationMs: int | None = None
-    exitCode: int | None = None
-    id: str
-    processId: str | None = None
-    source: Literal["agent", "userShell", "unifiedExecStartup", "unifiedExecInteraction"] | None = (
-        "agent"
-    )
-    status: Literal["inProgress", "completed", "failed", "declined"]
-    type: Annotated[Literal["commandExecution"], Field(title="CommandExecutionThreadItemType")]
-
-
 class McpToolCallThreadItem(BaseModel):
     appContext: McpToolCallAppContext | None = None
     arguments: Any
@@ -422,6 +560,7 @@ class McpToolCallThreadItem(BaseModel):
     id: str
     mcpAppResourceUri: str | None = None
     pluginId: str | None = None
+    readOnlyHint: bool | None = None
     result: McpToolCallResult | None = None
     server: str
     status: Literal["inProgress", "completed", "failed"]
@@ -474,6 +613,7 @@ class ImageGenerationThreadItem(BaseModel):
     revisedPrompt: str | None = None
     savedPath: str | None = None
     status: str
+    transparentBackground: bool | None = None
     type: Annotated[Literal["imageGeneration"], Field(title="ImageGenerationThreadItemType")]
 
 
@@ -503,12 +643,17 @@ class ThreadResumeParams(BaseModel):
     config: dict[str, Any] | None = None
     cwd: str | None = None
     developerInstructions: str | None = None
-    personality: Literal["none", "friendly", "pragmatic"] | None = None
-    serviceTier: str | None = None
-    sandbox: Literal["read-only", "workspace-write", "danger-full-access"] | None = None
     model: str | None = None
     modelProvider: str | None = None
+    personality: Literal["none", "friendly", "pragmatic"] | None = None
+    sandbox: Literal["read-only", "workspace-write", "danger-full-access"] | None = None
+    serviceTier: str | None = None
     threadId: str
+
+
+class ThreadSection(BaseModel):
+    id: str
+    name: str
 
 
 class NotLoadedThreadStatus(BaseModel):
@@ -626,6 +771,7 @@ class NetworkPolicyAmendment(BaseModel):
 
 class ToolRequestUserInputParams(BaseModel):
     autoResolutionMs: Annotated[int | None, Field(ge=0)] = None
+    isBlocking: bool
     itemId: str
     questions: list[ToolRequestUserInputQuestion]
     threadId: str
@@ -641,14 +787,35 @@ class ChatgptAccount(BaseModel):
         "pro",
         "prolite",
         "team",
+        "self_serve_business_prolite",
         "self_serve_business_usage_based",
         "business",
+        "ent26",
+        "enterprise_cbp_automation",
         "enterprise_cbp_usage_based",
         "enterprise",
         "edu",
         "unknown",
     ]
     type: Annotated[Literal["chatgpt"], Field(title="ChatgptAccountType")]
+
+
+class AppMetadata(BaseModel):
+    categories: list[str] | None = None
+    developer: str | None = None
+    firstPartyRequiresInstall: bool | None = None
+    review: AppReview | None = None
+    screenshots: list[AppScreenshot] | None = None
+    seoDescription: str | None = None
+    showInComposerWhenUnlinked: bool | None = None
+    subCategories: list[str] | None = None
+    version: str | None = None
+    versionId: str | None = None
+    versionNotes: str | None = None
+
+
+class AppsInstalledResponse(BaseModel):
+    apps: list[InstalledApp]
 
 
 class ActiveTurnNotSteerable(BaseModel):
@@ -667,6 +834,13 @@ class CollabAgentState(BaseModel):
     status: Literal[
         "pendingInit", "running", "interrupted", "completed", "errored", "shutdown", "notFound"
     ]
+
+
+class ReadCommandAction(BaseModel):
+    command: str
+    name: str
+    path: str
+    type: Annotated[Literal["read"], Field(title="ReadCommandActionType")]
 
 
 class FileUpdateChange(BaseModel):
@@ -700,6 +874,7 @@ class Model1(BaseModel):
     ]
     isDefault: bool
     model: str
+    modelSpecialty: str | None = None
     serviceTiers: Annotated[list[ModelServiceTier] | None, Field(validate_default=True)] = []
     supportedReasoningEfforts: list[ReasoningEffortOption]
     supportsPersonality: bool | None = False
@@ -710,6 +885,49 @@ class Model1(BaseModel):
 class ModelListResponse(BaseModel):
     data: list[Model1]
     nextCursor: str | None = None
+
+
+class PluginSharePrincipal(BaseModel):
+    name: str
+    principalId: str
+    principalType: Literal["user", "group", "workspace"]
+    role: Literal["reader", "editor", "owner"]
+
+
+class ReviewStartParams(BaseModel):
+    delivery: Literal["inline", "detached"] | None = None
+    target: (
+        UncommittedChangesReviewTarget
+        | BaseBranchReviewTarget
+        | CommitReviewTarget
+        | CustomReviewTarget
+    )
+    threadId: str
+
+
+class SkillDependencies(BaseModel):
+    tools: list[SkillToolDependency]
+
+
+class SkillMetadata(BaseModel):
+    dependencies: SkillDependencies | None = None
+    description: str
+    enabled: bool
+    interface: SkillInterface | None = None
+    name: str
+    path: str
+    scope: Literal["user", "repo", "system", "admin"]
+    shortDescription: str | None = None
+
+
+class SkillsListEntry(BaseModel):
+    cwd: str
+    errors: list[SkillErrorInfo]
+    skills: list[SkillMetadata]
+
+
+class SkillsListResponse(BaseModel):
+    data: list[SkillsListEntry]
 
 
 class ThreadSpawn(BaseModel):
@@ -750,6 +968,26 @@ class AgentMessageThreadItem(BaseModel):
     type: Annotated[Literal["agentMessage"], Field(title="AgentMessageThreadItemType")]
 
 
+class CommandExecutionThreadItem(BaseModel):
+    aggregatedOutput: str | None = None
+    command: str
+    commandActions: list[
+        ReadCommandAction | ListFilesCommandAction | SearchCommandAction | UnknownCommandAction
+    ]
+    cwd: str
+    durationMs: int | None = None
+    exitCode: int | None = None
+    id: str
+    pluginId: str | None = None
+    processId: str | None = None
+    scriptPath: str | None = None
+    source: Literal["agent", "userShell", "unifiedExecStartup", "unifiedExecInteraction"] | None = (
+        "agent"
+    )
+    status: Literal["inProgress", "completed", "failed", "declined"]
+    type: Annotated[Literal["commandExecution"], Field(title="CommandExecutionThreadItemType")]
+
+
 class FileChangeThreadItem(BaseModel):
     changes: list[FileUpdateChange]
     id: str
@@ -787,7 +1025,6 @@ class WebSearchThreadItem(BaseModel):
 
 
 class ThreadStartParams(BaseModel):
-    serviceName: str | None = None
     approvalPolicy: Literal["untrusted", "on-request", "never"] | GranularAskForApproval | None = (
         None
     )
@@ -796,14 +1033,15 @@ class ThreadStartParams(BaseModel):
     config: dict[str, Any] | None = None
     cwd: str | None = None
     developerInstructions: str | None = None
-    personality: Literal["none", "friendly", "pragmatic"] | None = None
-    sandbox: Literal["read-only", "workspace-write", "danger-full-access"] | None = None
     ephemeral: bool | None = None
-    serviceTier: str | None = None
-    threadSource: str | None = None
-    sessionStartSource: Literal["startup", "clear"] | None = None
     model: str | None = None
     modelProvider: str | None = None
+    personality: Literal["none", "friendly", "pragmatic"] | None = None
+    sandbox: Literal["read-only", "workspace-write", "danger-full-access"] | None = None
+    serviceName: str | None = None
+    serviceTier: str | None = None
+    sessionStartSource: Literal["startup", "clear"] | None = None
+    threadSource: str | None = None
 
 
 class ThreadTokenUsage(BaseModel):
@@ -857,22 +1095,13 @@ class TurnPlanUpdatedNotification(BaseModel):
 
 
 class TurnStartParams(BaseModel):
-    threadId: str
     approvalPolicy: Literal["untrusted", "on-request", "never"] | GranularAskForApproval | None = (
         None
     )
     approvalsReviewer: Literal["user", "auto_review", "guardian_subagent"] | None = None
     clientUserMessageId: str | None = None
-    serviceTier: str | None = None
     cwd: str | None = None
     effort: ReasoningEffort | None = None
-    sandboxPolicy: (
-        DangerFullAccessSandboxPolicy
-        | ReadOnlySandboxPolicy
-        | ExternalSandboxSandboxPolicy
-        | WorkspaceWriteSandboxPolicy
-        | None
-    ) = None
     input: list[
         TextUserInput
         | ImageUserInput
@@ -883,9 +1112,18 @@ class TurnStartParams(BaseModel):
         | MentionUserInput
     ]
     model: str | None = None
-    summary: Literal["auto", "concise", "detailed"] | Literal["none"] | None = None
     outputSchema: Any | None = None
     personality: Literal["none", "friendly", "pragmatic"] | None = None
+    sandboxPolicy: (
+        DangerFullAccessSandboxPolicy
+        | ReadOnlySandboxPolicy
+        | ExternalSandboxSandboxPolicy
+        | WorkspaceWriteSandboxPolicy
+        | None
+    ) = None
+    serviceTier: str | None = None
+    summary: Literal["auto", "concise", "detailed"] | Literal["none"] | None = None
+    threadId: str
 
 
 class ApplyNetworkPolicyAmendment(BaseModel):
@@ -900,9 +1138,7 @@ class ApplyNetworkPolicyAmendmentCommandExecutionApprovalDecision(BaseModel):
 
 
 class CommandExecutionRequestApprovalParams(BaseModel):
-    threadId: str
     approvalId: str | None = None
-    turnId: str
     command: str | None = None
     commandActions: (
         list[
@@ -918,6 +1154,8 @@ class CommandExecutionRequestApprovalParams(BaseModel):
     proposedNetworkPolicyAmendments: list[NetworkPolicyAmendment] | None = None
     reason: str | None = None
     startedAtMs: int
+    threadId: str
+    turnId: str
 
 
 class CommandExecutionRequestApprovalResponse(BaseModel):
@@ -929,6 +1167,33 @@ class CommandExecutionRequestApprovalResponse(BaseModel):
         | Literal["decline"]
         | Literal["cancel"]
     )
+
+
+class AppInfo(BaseModel):
+    appMetadata: AppMetadata | None = None
+    branding: AppBranding | None = None
+    description: str | None = None
+    distributionChannel: str | None = None
+    iconAssets: dict[str, Any] | None = None
+    iconDarkAssets: dict[str, Any] | None = None
+    id: str
+    installUrl: str | None = None
+    isAccessible: bool | None = False
+    isEnabled: bool | None = True
+    labels: dict[str, Any] | None = None
+    logoUrl: str | None = None
+    logoUrlDark: str | None = None
+    name: str
+    pluginDisplayNames: list[str] | None = []
+
+
+class AppListUpdatedNotification(BaseModel):
+    data: list[AppInfo]
+
+
+class AppsListResponse(BaseModel):
+    data: list[AppInfo]
+    nextCursor: str | None = None
 
 
 class ErrorNotification(BaseModel):
@@ -990,6 +1255,42 @@ class ItemStartedNotification(BaseModel):
     turnId: str
 
 
+class PluginShareContext(BaseModel):
+    canPublishToWorkspace: bool | None = None
+    creatorAccountUserId: str | None = None
+    creatorName: str | None = None
+    discoverability: Literal["LISTED", "UNLISTED", "PRIVATE"] | None = None
+    remotePluginId: str
+    remoteVersion: str | None = None
+    sharePrincipals: list[PluginSharePrincipal] | None = None
+    shareUrl: str | None = None
+
+
+class PluginSummary(BaseModel):
+    authPolicy: Literal["ON_INSTALL", "ON_USE"]
+    availability: Literal["DISABLED_BY_ADMIN"] | Literal["AVAILABLE"] | None = "AVAILABLE"
+    disabledReason: (
+        Literal["disabled_by_admin", "plan_not_eligible", "required_app_unavailable", "unknown"]
+        | None
+    ) = None
+    eligiblePlanTypes: list[str] | None = None
+    enabled: bool
+    id: str
+    installPolicy: Literal["NOT_AVAILABLE", "AVAILABLE", "INSTALLED_BY_DEFAULT"]
+    installPolicySource: Literal["WORKSPACE_SETTING", "IMPLICIT_CANONICAL_APP"] | None = None
+    installed: bool
+    installedAt: int | None = None
+    interface: PluginInterface | None = None
+    keywords: list[str] | None = []
+    localVersion: str | None = None
+    mustShowInstallationInterstitial: bool | None = None
+    name: str
+    remotePluginId: str | None = None
+    shareContext: PluginShareContext | None = None
+    source: LocalPluginSource | GitPluginSource | NpmPluginSource | RemotePluginSource
+    version: str | None = None
+
+
 class SubAgentSessionSource(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1045,18 +1346,27 @@ class TurnStartedNotification(BaseModel):
     turn: Turn
 
 
+class PluginMarketplaceEntry(BaseModel):
+    interface: MarketplaceInterface | None = None
+    name: str
+    path: str | None = None
+    plugins: list[PluginSummary]
+
+
+class ReviewStartResponse(BaseModel):
+    reviewThreadId: str
+    turn: Turn
+
+
 class Thread(BaseModel):
     agentNickname: str | None = None
     agentRole: str | None = None
-    threadSource: str | None = None
     cliVersion: str
     createdAt: int
     cwd: str
     ephemeral: bool
-    updatedAt: int
     forkedFromId: str | None = None
     gitInfo: GitInfo | None = None
-    turns: list[Turn]
     id: str
     modelProvider: str
     name: str | None = None
@@ -1064,6 +1374,8 @@ class Thread(BaseModel):
     path: str | None = None
     preview: str
     recencyAt: int | None = None
+    section: ThreadSection | None = None
+    sectionEnteredAt: int | None = None
     sessionId: str
     source: (
         Literal["cli", "vscode", "exec", "appServer", "unknown"]
@@ -1071,43 +1383,53 @@ class Thread(BaseModel):
         | SubAgentSessionSource
     )
     status: NotLoadedThreadStatus | IdleThreadStatus | SystemErrorThreadStatus | ActiveThreadStatus
+    threadSource: str | None = None
+    turns: list[Turn]
+    updatedAt: int
 
 
 class ThreadResumeResponse(BaseModel):
-    serviceTier: str | None = None
     approvalPolicy: Literal["untrusted", "on-request", "never"] | GranularAskForApproval
     approvalsReviewer: Literal["user", "auto_review", "guardian_subagent"]
     cwd: str
-    thread: Thread
     instructionSources: list[str] | None = []
+    model: str
+    modelProvider: str
+    reasoningEffort: ReasoningEffort | None = None
     sandbox: (
         DangerFullAccessSandboxPolicy
         | ReadOnlySandboxPolicy
         | ExternalSandboxSandboxPolicy
         | WorkspaceWriteSandboxPolicy
     )
-    model: str
-    modelProvider: str
-    reasoningEffort: ReasoningEffort | None = None
+    serviceTier: str | None = None
+    thread: Thread
 
 
 class ThreadStartResponse(BaseModel):
-    sandbox: (
-        DangerFullAccessSandboxPolicy
-        | ReadOnlySandboxPolicy
-        | ExternalSandboxSandboxPolicy
-        | WorkspaceWriteSandboxPolicy
-    )
     approvalPolicy: Literal["untrusted", "on-request", "never"] | GranularAskForApproval
     approvalsReviewer: Literal["user", "auto_review", "guardian_subagent"]
     cwd: str
     instructionSources: list[str] | None = []
     model: str
     modelProvider: str
-    serviceTier: str | None = None
     reasoningEffort: ReasoningEffort | None = None
+    sandbox: (
+        DangerFullAccessSandboxPolicy
+        | ReadOnlySandboxPolicy
+        | ExternalSandboxSandboxPolicy
+        | WorkspaceWriteSandboxPolicy
+    )
+    serviceTier: str | None = None
     thread: Thread
 
 
 class ThreadStartedNotification(BaseModel):
     thread: Thread
+
+
+class PluginInstalledResponse(BaseModel):
+    marketplaceLoadErrors: Annotated[
+        list[MarketplaceLoadErrorInfo] | None, Field(validate_default=True)
+    ] = []
+    marketplaces: list[PluginMarketplaceEntry]

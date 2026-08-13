@@ -9,11 +9,16 @@ import sqlite3
 
 from planner.core import links as core_links
 from planner.core.contracts import BlockerSummary, JsonDict
+from planner.judgments import data as judgments_data
+from planner.list_reads.configuration import TICKET_RECAP_PREVIEW_CHARS
+from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     AtCap,
+    BoardCard,
     FieldSlot,
     Ticket,
+    TicketListFilters,
     TicketStatus,
 )
 from planner.tickets.logic import fields_codec, machine
@@ -59,6 +64,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "deadline": ticket.deadline,
         "project_id": ticket.project_id,
         "project": ticket.project_name,
+        "sprint_id": ticket.sprint_id,
         "sprint_item_id": ticket.sprint_item_id,
         "effective_sprint_id": ticket.effective_sprint_id,
         "resolved_priority_anchors": {
@@ -131,13 +137,13 @@ def list_tickets(
         clauses.append("tickets.stage = ?")
         params.append(str(stage))
     if project_id is not None:
-        clauses.append("COALESCE(sprint_items.project_id, tickets.project_id) = ?")
+        clauses.append("tickets.project_id = ?")
         params.append(project_id)
     if sprint_id is not None:
         if sprint_id == "null":
-            clauses.append("sprint_items.sprint_id IS NULL")
+            clauses.append("tickets.sprint_id IS NULL")
         else:
-            clauses.append("sprint_items.sprint_id = ?")
+            clauses.append("tickets.sprint_id = ?")
             params.append(sprint_id)
     if sprint_item_id is not None:
         clauses.append("tickets.sprint_item_id = ?")
@@ -160,6 +166,143 @@ def list_tickets(
     ]
 
 
+def _ticket_search_text(row: sqlite3.Row) -> str:
+    registry = configured_worker_type_registry()
+    definition = registry.require(str(row["worker_type"]))
+    fields = fields_codec.declared_fields_from_json(
+        str(row["fields"]), definition.field_ids()
+    )
+    field_text: list[str] = []
+    for slot in fields.slots.values():
+        if slot.value:
+            field_text.append(slot.value)
+        if slot.proposal is not None:
+            field_text.append(slot.proposal.body)
+        if slot.user_note:
+            field_text.append(slot.user_note)
+    return "\n".join((str(row["title"]), str(row["recap"]), *field_text))
+
+
+def _recap_preview(recap: str) -> str:
+    compact = " ".join(recap.split())
+    if len(compact) <= TICKET_RECAP_PREVIEW_CHARS:
+        return compact
+    return compact[: TICKET_RECAP_PREVIEW_CHARS - 1].rstrip() + "…"
+
+
+def _ticket_summary_json(row: sqlite3.Row) -> JsonDict:
+    return {
+        "id": str(row["id"]),
+        "title": str(row["title"]),
+        "worker_type": str(row["worker_type"]),
+        "stage": str(row["stage"]),
+        "ticket_status": str(row["ticket_status"]),
+        "priority": str(row["priority"]),
+        "project_id": (
+            str(row["effective_project_id"])
+            if row["effective_project_id"] is not None
+            else None
+        ),
+        "project": (
+            str(row["project_name"]) if row["project_name"] is not None else None
+        ),
+        "sprint_item_id": (
+            str(row["sprint_item_id"]) if row["sprint_item_id"] is not None else None
+        ),
+        "sprint_item": (
+            str(row["sprint_item_title"])
+            if row["sprint_item_title"] is not None
+            else None
+        ),
+        "sprint_id": str(row["sprint_id"]) if row["sprint_id"] is not None else None,
+        "effective_sprint_id": str(row["sprint_id"]) if row["sprint_id"] is not None else None,
+        "recap_preview": _recap_preview(str(row["recap"])),
+    }
+
+
+def list_ticket_summaries(
+    conn: sqlite3.Connection,
+    *,
+    page_request: ListPageRequest,
+    filters: TicketListFilters,
+    project_id: str | None,
+    sprint_id: str | None,
+    sprint_item_id: str | None,
+    day_id: str | None = None,
+    day_order: bool = False,
+) -> ListPage[JsonDict]:
+    clauses: list[str] = []
+    params: list[str] = []
+    if project_id is not None:
+        clauses.append("tickets.project_id = ?")
+        params.append(project_id)
+    if sprint_id is not None:
+        if sprint_id == "null":
+            clauses.append("tickets.sprint_id IS NULL")
+        else:
+            clauses.append("tickets.sprint_id = ?")
+            params.append(sprint_id)
+    if sprint_item_id is not None:
+        clauses.append("tickets.sprint_item_id = ?")
+        params.append(sprint_item_id)
+    join_day = ""
+    if day_id is not None:
+        join_day = " JOIN day_tickets ON day_tickets.ticket_id = tickets.id"
+        clauses.append("day_tickets.day_id = ?")
+        params.append(day_id)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    order = (
+        "day_tickets.position ASC, tickets.id"
+        if day_order
+        else "tickets.created_at ASC, tickets.id"
+    )
+    searchable_fields = "tickets.fields" if filters.search else "NULL"
+    rows = conn.execute(
+        "SELECT tickets.id, tickets.title, tickets.worker_type, tickets.stage, "
+        "tickets.ticket_status, tickets.priority, tickets.recap, "
+        + searchable_fields
+        + " AS fields, "
+        "tickets.project_id AS effective_project_id, "
+        "projects.name AS project_name, tickets.sprint_item_id, "
+        "sprint_items.title AS sprint_item_title, tickets.sprint_id "
+        "FROM tickets "
+        "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
+        "LEFT JOIN projects ON projects.id = tickets.project_id"
+        + join_day
+        + where
+        + " ORDER BY "
+        + order,
+        tuple(params),
+    ).fetchall()
+    registry = configured_worker_type_registry()
+    search = filters.search.casefold() if filters.search else None
+    matches: list[sqlite3.Row] = []
+    for row in rows:
+        stage = str(row["stage"])
+        status = TicketStatus(str(row["ticket_status"]))
+        definition = registry.require(str(row["worker_type"]))
+        if not filters.include_terminal and definition.is_terminal(stage):
+            continue
+        if filters.stages and stage not in filters.stages:
+            continue
+        if stage in filters.excluded_stages:
+            continue
+        if filters.ticket_statuses and status not in filters.ticket_statuses:
+            continue
+        if status in filters.excluded_ticket_statuses:
+            continue
+        if search is not None and search not in _ticket_search_text(row).casefold():
+            continue
+        matches.append(row)
+    selected = matches[page_request.offset : page_request.offset + page_request.limit]
+    return ListPage(
+        rows=tuple(_ticket_summary_json(row) for row in selected),
+        match_count=len(matches),
+        limit=page_request.limit,
+        offset=page_request.offset,
+    )
+
+
 def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDict:
     ticket = tickets_data.read_ticket(conn, ticket_id)
     detail = ticket_json(ticket, now)
@@ -168,6 +311,15 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
         (ticket_id,),
     ).fetchall()
     blocker_summary = core_links.blocker_summary(conn, ticket_id)
+    conversation_rows = conn.execute(
+        "SELECT ticket_conversations.conversation_id, conversations.created_at "
+        "FROM ticket_conversations JOIN conversations "
+        "ON conversations.conversation_id = ticket_conversations.conversation_id "
+        "WHERE ticket_conversations.ticket_id = ? "
+        "ORDER BY conversations.created_at, ticket_conversations.conversation_id",
+        (ticket_id,),
+    ).fetchall()
+    judgment = judgments_data.read_ticket_judgment(conn, ticket_id)
     detail.update(
         {
             "blocked": blocker_summary.blocked,
@@ -175,6 +327,35 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
             "employee_configuration_editable": tickets_data.employee_configuration_editable(
                 ticket
             ),
+            "conversation_history": [
+                {
+                    "conversation_id": str(row["conversation_id"]),
+                    "created_at": int(row["created_at"]),
+                }
+                for row in conversation_rows
+            ],
+            "verdict": (
+                {
+                    "rating": judgment.verdict_rating,
+                    "text": judgment.verdict_text,
+                }
+                if judgment is not None
+                and (
+                    judgment.verdict_rating is not None
+                    or judgment.verdict_text is not None
+                )
+                else None
+            ),
+            "trouble_notes": [
+                {
+                    "sequence": note.sequence,
+                    "body": note.body,
+                    "created_at": note.created_at,
+                }
+                for note in (
+                    judgment.trouble_notes if judgment is not None else ()
+                )
+            ],
         }
     )
     if blocker_summary.blocked:
@@ -249,6 +430,8 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "SELECT tickets.id, tickets.title, tickets.stage, tickets.priority, tickets.deadline, "
         "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
         "sprint_items.project_id AS parent_project_id, "
+        "sprint_items.title AS sprint_item_title, "
+        "sprint_items.priority AS sprint_item_priority, "
         "parent_projects.name AS parent_project_name, tickets.fields, tickets.worker_type, "
         "tickets.employee_backend, "
         "tickets.conversation_id, "
@@ -267,7 +450,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
     blocked_target_ids = core_links.blocked_target_ids(conn)
     coding_order = registry.require("coding").stage_ids()
     column_order: list[str] = list(coding_order)
-    by_stage: dict[str, list[tuple[tuple[int, int, str, int], JsonDict]]] = {
+    by_stage: dict[str, list[tuple[tuple[int, int, str, int], BoardCard]]] = {
         sid: [] for sid in column_order
     }
     for row in rows:
@@ -312,7 +495,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             str(row["ceiling"]),
             worker_type_definition=worker_type_definition,
         )
-        card: JsonDict = {
+        card: BoardCard = {
             "id": str(row["id"]),
             "title": str(row["title"]),
             "priority": priority,
@@ -349,6 +532,21 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
                 gating_field_id == "closeout"
                 and ticket_status == TicketStatus.empty.value
                 and not stopped_at_current_stage
+            ),
+            "sprint_item_id": (
+                str(row["sprint_item_id"])
+                if row["sprint_item_id"] is not None
+                else None
+            ),
+            "sprint_item_title": (
+                str(row["sprint_item_title"])
+                if row["sprint_item_title"] is not None
+                else None
+            ),
+            "sprint_item_priority": (
+                str(row["sprint_item_priority"])
+                if row["sprint_item_priority"] is not None
+                else None
             ),
         }
         sort_key = (
@@ -397,9 +595,9 @@ def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
                 }
             )
             continue
-        # Review is a pure filter on the control statuses that mean the user has
-        # something to handle: a parked proposal or an explicit Worker help request.
-        if ticket_status != TicketStatus.awaiting_approval.value:
+        # Review contains user work only. Agent-review proposals remain with the
+        # owning Sprint Item supervisor until that supervisor transfers them.
+        if ticket_status != TicketStatus.awaiting_user_review.value:
             continue
         worker_type_definition = registry.require(str(row["worker_type"]))
         stage = str(row["stage"])

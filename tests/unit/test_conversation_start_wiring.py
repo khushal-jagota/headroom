@@ -32,7 +32,10 @@ from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
 from planner.conversation.message_content import MessageContent, text_message_content
+from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
+from planner.projects.data import create_project, update_project
+from planner.runtime import conversation_start as conversation_start_module
 from planner.runtime.conversation_start import (
     CONVERSATION_ID_PREFIX,
     agent_resolve,
@@ -74,6 +77,17 @@ def _values(ticket_id: str) -> ConversationStartValues:
         workspace_folder=_WORKSPACE,
         access=ConversationAccess.full,
     )
+
+
+def _history(conn: Connection, ticket_id: str) -> list[str]:
+    return [
+        str(row["conversation_id"])
+        for row in conn.execute(
+            "SELECT conversation_id FROM ticket_conversations "
+            "WHERE ticket_id = ? ORDER BY conversation_id",
+            (ticket_id,),
+        )
+    ]
 
 
 class _LinkWatchingConversationSystem:
@@ -164,16 +178,30 @@ class _WhoseFirstWriteFails(_LinkWatchingConversationSystem):
         self._system.arm_backend_write_failure(request.conversation_id)
 
 
+class _KillWatchingConversationSystem(InMemoryConversationSystem):
+    def __init__(self, *, kill_fails: bool = False) -> None:
+        super().__init__()
+        self.killed: list[str] = []
+        self.kill_fails = kill_fails
+
+    async def kill(self, conversation_id: str) -> None:
+        self.killed.append(conversation_id)
+        if self.kill_fails:
+            raise RuntimeError("cleanup failed")
+        await super().kill(conversation_id)
+
+
 async def _started(
     system: object, conn: Connection, ticket: Ticket, values: ConversationStartValues, *, now: int
 ) -> str:
     """The conversation a Ticket is in after one is started for it."""
+    conversation_id = new_conversation_id()
     linked = await start_ticket_conversation(
         system,  # type: ignore[arg-type]
         conn,
         ticket,
         values,
-        conversation_id=new_conversation_id(),
+        conversation_id=conversation_id,
         now=now,
     )
     return linked.conversation_id
@@ -242,6 +270,70 @@ def test_starting_writes_the_link_and_the_last_chosen_configuration(
         assert started.employee_launch_model == "opus"
         assert started.employee_launch_reasoning_effort == "high"
         assert started.updated_at == 10
+        assert _history(tmp_db, ticket.id) == [conversation_id]
+
+    asyncio.run(exercise())
+
+
+def test_a_start_that_loses_the_active_pointer_race_records_no_history(
+    tmp_db: Connection, ticket: Ticket
+) -> None:
+    async def exercise() -> None:
+        system = InMemoryConversationSystem()
+        winner = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
+        loser = new_conversation_id()
+
+        linked = await start_ticket_conversation(
+            system,
+            tmp_db,
+            ticket,
+            _values(ticket.id),
+            conversation_id=loser,
+            now=20,
+        )
+
+        assert linked.conversation_id == winner
+        assert linked.made_here is False
+        assert _history(tmp_db, ticket.id) == [winner]
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("kill_fails", [False, True])
+def test_an_immutable_record_mismatch_refuses_association_and_kills_the_start(
+    tmp_db: Connection, ticket: Ticket, kill_fails: bool
+) -> None:
+    async def exercise() -> None:
+        conversation_id = "conv_mismatched"
+        tmp_db.execute(
+            "INSERT INTO conversations (conversation_id, backend_key, model, workspace_folder, "
+            "role_text, identity_environment_variables, access, created_at) "
+            "VALUES (?, 'claude', 'opus', '/different-worktree', ?, ?, 'full', 1)",
+            (
+                conversation_id,
+                worker_conversation_role_materials(ticket.id).role_text,
+                '[["PLAN_ACTOR","worker"],["PLAN_TICKET_ID","' + ticket.id + '"]]'
+            ),
+        )
+        system = _KillWatchingConversationSystem(kill_fails=kill_fails)
+
+        with pytest.raises(RuntimeError, match="differ from its durable record") as raised:
+            await start_ticket_conversation(
+                system,
+                tmp_db,
+                ticket,
+                _values(ticket.id),
+                conversation_id=conversation_id,
+                now=10,
+            )
+
+        assert system.killed == [conversation_id]
+        assert read_ticket(tmp_db, ticket.id).conversation_id is None
+        assert _history(tmp_db, ticket.id) == []
+        if kill_fails:
+            assert raised.value.__notes__ == [
+                f"cleanup also failed for conversation {conversation_id}: cleanup failed"
+            ]
 
     asyncio.run(exercise())
 
@@ -545,6 +637,7 @@ def test_a_message_to_a_ticket_with_no_conversation_makes_one_and_goes_into_it(
 
     async def exercise() -> None:
         system = InMemoryConversationSystem()
+        created = new_conversation_id()
 
         delivered = await send_to_ticket_conversation(
             system,
@@ -552,6 +645,7 @@ def test_a_message_to_a_ticket_with_no_conversation_makes_one_and_goes_into_it(
             ticket.id,
             text_message_content("first words"),
             conversation_id=None,
+            created_conversation_id=created,
             runs_under=ConversationStartOverrides(model="sonnet", reasoning_effort="low"),
             sender_label="owner",
             now=20,
@@ -586,6 +680,7 @@ def test_a_first_message_that_is_refused_leaves_the_ticket_with_no_conversation(
     async def exercise() -> None:
         system = InMemoryConversationSystem()
         refusing = _WhoseFirstWriteFails(system, tmp_db, ticket.id)
+        created = new_conversation_id()
 
         delivered = await send_to_ticket_conversation(
             refusing,
@@ -593,6 +688,7 @@ def test_a_first_message_that_is_refused_leaves_the_ticket_with_no_conversation(
             ticket.id,
             text_message_content("first words"),
             conversation_id=None,
+            created_conversation_id=created,
             sender_label="owner",
             now=20,
         )
@@ -600,6 +696,7 @@ def test_a_first_message_that_is_refused_leaves_the_ticket_with_no_conversation(
         assert isinstance(delivered.fate, PromptDeliveryRefused)
         assert delivered.conversation_id is None
         assert read_ticket(tmp_db, ticket.id).conversation_id is None
+        assert _history(tmp_db, ticket.id) == []
 
     asyncio.run(exercise())
 
@@ -648,6 +745,7 @@ def test_resetting_stops_the_conversation_and_unlinks_it(
         assert await system.is_running(conversation_id) is False
         after = read_ticket(tmp_db, ticket.id)
         assert after.conversation_id is None
+        assert _history(tmp_db, ticket.id) == [conversation_id]
         # The last-chosen values stay: they are what the next conversation starts from.
         assert after.employee_backend == "claude"
         assert after.employee_launch_model == "opus"
@@ -718,6 +816,130 @@ def test_worker_resolve_reads_the_worker_types_managed_launch_defaults(
     assert values.reasoning_effort == "medium"
     assert values.role_materials == worker_conversation_role_materials(ticket.id)
     assert values.workspace_folder == _WORKSPACE
+
+
+def test_worker_resolve_uses_an_existing_project_folder(
+    tmp_db: Connection, ticket: Ticket, tmp_path: Path
+) -> None:
+    project_folder = tmp_path / "project"
+    project_folder.mkdir()
+    project = create_project(
+        tmp_db,
+        name="Folder Project",
+        priority=Priority.P1,
+        folder_path=project_folder,
+        now=2,
+    )
+    tmp_db.execute("UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id))
+
+    values = worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id))
+
+    assert values.workspace_folder == project_folder.resolve()
+
+
+@pytest.mark.parametrize("configured_path_kind", ["null", "missing", "file"])
+def test_worker_resolve_falls_back_when_the_project_folder_is_not_an_existing_directory(
+    tmp_db: Connection,
+    ticket: Ticket,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    configured_path_kind: str,
+) -> None:
+    fallback = tmp_path / "fallback"
+    configured_path: Path | None = None
+    if configured_path_kind == "missing":
+        configured_path = tmp_path / "missing"
+    elif configured_path_kind == "file":
+        configured_path = tmp_path / "file"
+        configured_path.write_text("not a directory", encoding="utf-8")
+    project = create_project(
+        tmp_db,
+        name=f"Fallback {configured_path_kind}",
+        priority=Priority.P1,
+        folder_path=configured_path,
+        now=2,
+    )
+    tmp_db.execute("UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id))
+    monkeypatch.setattr(conversation_start_module, "_default_workspace_folder", lambda: fallback)
+
+    values = worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id))
+
+    assert values.workspace_folder == fallback
+
+
+def test_worker_resolve_falls_back_when_the_ticket_has_no_project(
+    tmp_db: Connection,
+    ticket: Ticket,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fallback = tmp_path / "fallback"
+    monkeypatch.setattr(conversation_start_module, "_default_workspace_folder", lambda: fallback)
+
+    assert worker_resolve(tmp_db, ticket).workspace_folder == fallback
+
+
+def test_worker_resolve_explicit_folder_beats_the_project_folder(
+    tmp_db: Connection, ticket: Ticket, tmp_path: Path
+) -> None:
+    project_folder = tmp_path / "project"
+    project_folder.mkdir()
+    project = create_project(
+        tmp_db,
+        name="Override Project",
+        priority=Priority.P1,
+        folder_path=project_folder,
+        now=2,
+    )
+    tmp_db.execute("UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id))
+
+    assert (
+        worker_resolve(
+            tmp_db, read_ticket(tmp_db, ticket.id), workspace_folder=_WORKSPACE
+        ).workspace_folder
+        == _WORKSPACE
+    )
+
+
+def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_changes(
+    tmp_db: Connection, ticket: Ticket, tmp_path: Path
+) -> None:
+    async def exercise() -> None:
+        original_folder = tmp_path / "original"
+        replacement_folder = tmp_path / "replacement"
+        original_folder.mkdir()
+        replacement_folder.mkdir()
+        project = create_project(
+            tmp_db,
+            name="Moved Project",
+            priority=Priority.P1,
+            folder_path=original_folder,
+            now=2,
+        )
+        tmp_db.execute(
+            "UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id)
+        )
+        system = InMemoryConversationSystem()
+        conversation_id = await _started(
+            system,
+            tmp_db,
+            read_ticket(tmp_db, ticket.id),
+            worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id)),
+            now=3,
+        )
+
+        update_project(tmp_db, project.id, folder_path=replacement_folder, now=4)
+        fate = await _sent(system, tmp_db, ticket.id, "continue", now=5)
+
+        assert isinstance(fate, PromptDeliveryStarted)
+        stored_workspace = tmp_db.execute(
+            "SELECT workspace_folder FROM conversations WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        assert stored_workspace is not None
+        assert Path(str(stored_workspace["workspace_folder"])) == original_folder.resolve()
+
+    asyncio.run(exercise())
 
 
 def test_worker_resolve_lets_the_tickets_own_values_beat_the_worker_type_defaults(

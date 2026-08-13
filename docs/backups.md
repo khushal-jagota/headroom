@@ -41,6 +41,10 @@ The database and managed-file tree are independently verified recovery artifacts
 back-to-back at nightly granularity; they are not a single transactional point-in-time. This is
 recoverability to recent state, not point-in-time versioning.
 
+The SQLite record keeps immutable copies of every managed skill version and the versions
+bound to worker-step messages. The managed `skills/` tree keeps the current editable files.
+A normal snapshot preserves both the current skills and their earlier recorded content.
+
 Notification choices, device subscriptions, delivery state, and the Web Push identity
 are all part of the SQLite record. The ordinary verified database snapshot therefore
 preserves them together. Restoring that database keeps installed devices usable; replacing
@@ -94,4 +98,4 @@ Off-host copies and a broader disaster recovery product remain out of scope unti
 recovery design exists. Deployment's automatic app recovery is described in
 [production deployment](deployment.md); it does not restore persistent state.
 
-_Last verified: 2026-07-25._
+_Last verified: 2026-08-10._
