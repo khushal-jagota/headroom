@@ -1,6 +1,7 @@
 import "@fontsource/newsreader/400.css";
 import "@fontsource/newsreader/500.css";
 import "@fontsource/newsreader/600.css";
+import "./atlas/theme.css";
 import AppWithQueryClient from "./AppWithQueryClient.svelte";
 import { ensureDebug } from "./lib/debug";
 import { mount } from "svelte";

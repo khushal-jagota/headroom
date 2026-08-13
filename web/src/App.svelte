@@ -17,6 +17,7 @@
   import ConfigRoute from "./routes/ConfigRoute.svelte";
   import DevConversationRoute from "./routes/DevConversationRoute.svelte";
   import DevFilePreviewGalleryRoute from "./routes/DevFilePreviewGalleryRoute.svelte";
+  import AtlasRoute from "./routes/AtlasRoute.svelte";
   import ReleaseUpdate from "./components/ReleaseUpdate.svelte";
   import ShellStatus from "./components/ShellStatus.svelte";
 
@@ -172,6 +173,7 @@
       return route.params.sub === "conversation" || route.params.sub === "file-preview-gallery";
     }
     return [
+      "atlas",
       "day",
       "review",
       "workspace",
@@ -190,6 +192,7 @@
   }
 
   function screenTitle(): string {
+    if (route.name === "atlas") return "Nightshift Atlas";
     if (route.name === "board" || route.name === "workspace") return "Workspace";
     if (route.name === "day") return "Home";
     if (route.name === "ticket") return "Ticket";
@@ -245,6 +248,7 @@
   </header>
   <header class="shell-nav">
     <nav class="shell-links">
+      <a class:active={currentNav("atlas")} class="nav-link" data-screen="atlas" href="#/atlas">Atlas</a>
       <a class:active={currentNav("day")} class="nav-link" data-screen="home" href="#/day">Home</a>
       <a class:active={currentNav("review")} class="nav-link nav-link--review" data-screen="review" href="#/review">
         Review
@@ -325,6 +329,8 @@
         <div class="screen screen-enter">
           {#if route.name === "day"}
             <DayRoute />
+          {:else if route.name === "atlas"}
+            <AtlasRoute />
           {:else if route.name === "review"}
             <ReviewRoute />
           {:else if route.name === "workspace" || route.name === "board"}
