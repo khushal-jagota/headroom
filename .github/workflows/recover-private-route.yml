@@ -13,5 +13,5 @@ jobs:
           head -c 1000 /tmp/panels-health-body 2>/dev/null || true
       - name: Restore private HTTPS route
         run: |
-          tailscale serve --https=443 http://127.0.0.1:8767
-          tailscale serve status
+          sudo -n tailscale serve --https=443 http://127.0.0.1:8767
+          sudo -n tailscale serve status
