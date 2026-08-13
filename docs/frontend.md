@@ -118,8 +118,10 @@ One screen per part of the system:
   conversation. The former `#/chief`, `#/agents`, and
   `#/agents/chief-of-staff` addresses redirect into Workspace.
 - **Config** — the management surface at `#/config`. It contains Chief of Staff,
-  the shared Worker skill, and every configured Worker type. Chief settings open at
-  `#/config/chief-of-staff`, Worker skill at `#/config/worker-skill`, and a Worker at
+  the Sprint Item supervisor skill, the shared Worker skill, and every configured
+  Worker type. Chief settings open at `#/config/chief-of-staff`, Sprint Item supervisor
+  skill at `#/config/sprint-item-supervisor`, Worker skill at `#/config/worker-skill`,
+  and a Worker at
   `#/config/workers/<worker-type>`. Those detail screens provide the applicable
   launch defaults, suggested Kickoff ceiling controls, Stage ownership controls, and
   skill editors. Worker and skill

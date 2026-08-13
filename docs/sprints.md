@@ -123,6 +123,10 @@ Its managed skill uses one item-scoped service for Item fields, child Ticket fie
 Day membership, blocks, scope, proposal review, and Item artifacts. Each write delegates
 to the same domain action that direct product routes use.
 
+Config edits the canonical Sprint Item supervisor role skill. Supported backends read
+that managed source for future conversations. A save does not rewrite an existing
+conversation, its role record, or its history.
+
 Ticket context includes current Ticket facts, Day membership, the current Worker
 conversation, and the exact triggering Worker message when its sequence is supplied.
 The supervisor can read bounded pages from that current conversation.

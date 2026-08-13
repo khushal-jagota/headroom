@@ -345,6 +345,52 @@ def test_shared_worker_skill_detail_edits_independently_and_retries_failure(
     assert saved["markdown_body"] == f"\n{attempted_body}\n"
 
 
+def test_sprint_item_supervisor_skill_is_visible_and_edits_from_config(
+    server: ServerHandle, context_factory: Callable[[], BrowserContext], api: ApiHelper
+) -> None:
+    page = context_factory().new_page()
+    page.goto(server.base + "/#/config")
+    destination = page.locator(
+        "[data-agent-destination]", has_text="Sprint Item supervisor"
+    )
+    destination.wait_for(state="visible", timeout=WAIT_MS)
+    assert destination.locator("[data-destination-description]").inner_text().strip()
+
+    destination.click()
+    page.wait_for_selector(
+        '[data-agent-detail][data-agent-id="panels-sprint-item-supervisor"]',
+        timeout=WAIT_MS,
+    )
+    assert page.url.endswith("#/config/sprint-item-supervisor")
+    assert page.locator("[data-role-name]").inner_text() == "Sprint Item supervisor"
+    assert page.locator("[data-launch-defaults]").count() == 0
+    assert page.locator("[data-worker-stage-table]").count() == 0
+    assert page.locator("[data-skill-name]").inner_text() == (
+        "panels-sprint-item-supervisor"
+    )
+    assert page.locator(DESCRIPTION_EDIT).get_attribute("contenteditable") == "true"
+    assert page.locator(BODY_EDIT).get_attribute("contenteditable") == "true"
+
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith("/api/skills/panels-sprint-item-supervisor")
+        and response.status < 300
+    ):
+        _replace_inline_edit_text(
+            page,
+            DESCRIPTION_EDIT,
+            "Supervisor purpose saved through the canonical skill home",
+        )
+    saved = next(
+        skill
+        for skill in api.get(server, "/api/skills")["skills"]
+        if skill["name"] == "panels-sprint-item-supervisor"
+    )
+    assert saved["description"] == (
+        "Supervisor purpose saved through the canonical skill home"
+    )
+
+
 def test_worker_selection_persists_from_kickoff_card_context_row(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],

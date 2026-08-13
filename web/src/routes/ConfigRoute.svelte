@@ -20,6 +20,29 @@
 
   type RoleKind = "index" | "agent" | "skill" | "worker";
 
+  const roleSkillProfiles: Record<string, {
+    label: string;
+    fact: string;
+    descriptionAriaLabel: string;
+    bodyAriaLabel: string;
+    bodyPlaceholder: string;
+  }> = {
+    "panels-sprint-item-supervisor": {
+      label: "Sprint Item supervisor",
+      fact: "Agent role skill · one identity per Sprint Item",
+      descriptionAriaLabel: "Sprint Item supervisor skill description",
+      bodyAriaLabel: "Sprint Item supervisor skill Markdown body",
+      bodyPlaceholder: "Write the complete Sprint Item supervisor skill body..."
+    },
+    "panels-worker": {
+      label: "Worker skill",
+      fact: "Shared role skill · no independent runtime",
+      descriptionAriaLabel: "Worker skill description",
+      bodyAriaLabel: "Worker skill Markdown body",
+      bodyPlaceholder: "Write the complete shared Worker skill body..."
+    }
+  };
+
   let { roleKind, roleId }: { roleKind: RoleKind; roleId?: string } = $props();
   const stableRoleKind = untrack(() => roleKind);
   const stableRoleId = untrack(() => roleId || null);
@@ -64,6 +87,11 @@
     )
   );
   let sharedWorkerSkill = $derived(indexedSkills.get("panels-worker"));
+  let supervisorSkill = $derived(indexedSkills.get("panels-sprint-item-supervisor"));
+  let roleSkill = $derived(stableRoleId ? indexedSkills.get(stableRoleId) : undefined);
+  let roleSkillProfile = $derived(
+    stableRoleId ? roleSkillProfiles[stableRoleId] : undefined
+  );
 
   function displaySkillForEdit(settings: WorkerManagementSettings): ManagedSkill {
     return settings.candidate_specialist_skill || settings.specialist_skill;
@@ -90,11 +118,12 @@
     });
   }
 
-  async function saveSharedWorkerSkillField(
+  async function saveRoleSkillField(
+    skillName: string,
     field: "description" | "markdown_body",
     raw: string
   ): Promise<void> {
-    await mutateJson<ManagedSkill>("/api/skills/panels-worker", {
+    await mutateJson<ManagedSkill>(`/api/skills/${encodeURIComponent(skillName)}`, {
       method: "PATCH",
       body: { [field]: raw }
     });
@@ -243,6 +272,23 @@
                 </span>
                 <span class="agents-destination-arrow" aria-hidden="true">→</span>
               </a>
+              {#if supervisorSkill}
+                <a
+                  class="agents-destination"
+                  href="#/config/sprint-item-supervisor"
+                  data-agent-destination
+                >
+                  <span class="agents-destination-copy">
+                    <span class="agents-destination-name" data-destination-name>
+                      Sprint Item supervisor
+                    </span>
+                    <span class="agents-destination-description" data-destination-description>
+                      {supervisorSkill.description}
+                    </span>
+                  </span>
+                  <span class="agents-destination-arrow" aria-hidden="true">→</span>
+                </a>
+              {/if}
               {#if sharedWorkerSkill}
                 <a
                   class="agents-destination"
@@ -332,28 +378,31 @@
       <ResourceState
         error={skillsHome.error}
         loading={skillsHome.isFetching}
-        hasData={Boolean(sharedWorkerSkill)}
-        loadingText="Loading Worker skill..."
+        hasData={Boolean(roleSkill && roleSkillProfile)}
+        loadingText="Loading role skill..."
       >
-        {#if sharedWorkerSkill}
-          <article class="role-detail" data-agent-detail data-agent-id="panels-worker">
+        {#if roleSkill && roleSkillProfile}
+          <article class="role-detail" data-agent-detail data-agent-id={roleSkill.name}>
             <header class="agents-detail-head">
-              <h1 data-role-name>Worker skill</h1>
+              <h1 data-role-name>{roleSkillProfile.label}</h1>
               <div class="role-detail-facts">
-                <span data-role-structural-id>{sharedWorkerSkill.name}</span>
-                <span>Shared role skill · no independent runtime</span>
+                <span data-role-structural-id>{roleSkill.name}</span>
+                <span>{roleSkillProfile.fact}</span>
               </div>
-              <p data-role-purpose>{sharedWorkerSkill.description}</p>
+              <p data-role-purpose>{roleSkill.description}</p>
             </header>
 
-            <div data-shared-worker-skill>
+            <div
+              data-role-skill
+              data-shared-worker-skill={roleSkill.name === "panels-worker" ? "" : undefined}
+            >
               <RoleSkillEditor
                 heading="Skill"
-                skill={sharedWorkerSkill}
-                descriptionAriaLabel="Worker skill description"
-                bodyAriaLabel="Worker skill Markdown body"
-                bodyPlaceholder="Write the complete shared Worker skill body..."
-                onSave={saveSharedWorkerSkillField}
+                skill={roleSkill}
+                descriptionAriaLabel={roleSkillProfile.descriptionAriaLabel}
+                bodyAriaLabel={roleSkillProfile.bodyAriaLabel}
+                bodyPlaceholder={roleSkillProfile.bodyPlaceholder}
+                onSave={(field, raw) => saveRoleSkillField(roleSkill.name, field, raw)}
               />
             </div>
           </article>

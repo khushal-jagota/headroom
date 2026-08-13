@@ -118,6 +118,9 @@
       } else if (segments[1] === "worker-skill" && segments.length === 2) {
         params.roleKind = "skill";
         params.id = "panels-worker";
+      } else if (segments[1] === "sprint-item-supervisor" && segments.length === 2) {
+        params.roleKind = "skill";
+        params.id = "panels-sprint-item-supervisor";
       } else if (segments[1] === "workers" && segments[2] && segments.length === 3) {
         params.roleKind = "worker";
         params.id = decodeRouteSegment(segments[2]);

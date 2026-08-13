@@ -53,6 +53,59 @@ def test_hermes_skill_is_symlink_to_managed_source(tmp_path: Path) -> None:
     assert supervisor_target.resolve() == supervisor_source.resolve()
 
 
+def test_supervisor_edit_reaches_every_backend_home_from_one_managed_source(
+    tmp_path: Path,
+) -> None:
+    managed = ensure_managed_panels_skills(tmp_path)
+    homes = {
+        "hermes": tmp_path / "hermes-home",
+        "codex": tmp_path / "codex-home",
+        "claude": tmp_path / "claude-home",
+    }
+    provision_planner_home_skills(
+        homes["hermes"], configured_database_parent=tmp_path
+    )
+    provision_native_backend_skills(homes["codex"], tmp_path)
+    provision_native_backend_skills(homes["claude"], tmp_path)
+
+    service.save_skill(
+        tmp_path,
+        "panels-sprint-item-supervisor",
+        {
+            "description": "Future conversations read this revision",
+            "markdown_body": "# Supervisor\n\nUse canonical context.\n",
+        },
+    )
+
+    canonical = managed / "panels-sprint-item-supervisor"
+    for home in homes.values():
+        exposed = home / "skills" / "panels-sprint-item-supervisor"
+        assert exposed.resolve() == canonical.resolve()
+        assert "Future conversations read this revision" in (
+            exposed / "SKILL.md"
+        ).read_text(encoding="utf-8")
+
+
+def test_supervisor_skill_preserves_the_operating_contract() -> None:
+    guidance = (
+        panels_skill_root() / "panels-sprint-item-supervisor" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    normalized = " ".join(guidance.split())
+
+    for required in (
+        "The Sprint Item body is the shared brief.",
+        "Routine progress needs no response.",
+        "If a required action or message fails, do not acknowledge the obligation.",
+        "Supervise only current child Tickets.",
+        "Approve only when the current record proves the accepted outcome.",
+        "Ask the user before destructive, irreversible, security-sensitive, or",
+        "`awaiting_user_review` and `needs_user` as user-owned escalation states",
+        "The readiness system owns Worker starts.",
+        "Re-read canonical context after a restart",
+    ):
+        assert required in normalized
+
+
 def test_debugging_worker_runtime_app_boundary_is_packaged_for_new_homes(tmp_path: Path) -> None:
     source = panels_skill_root() / "panels-worker-debugging" / "SKILL.md"
     guidance = source.read_text(encoding="utf-8")

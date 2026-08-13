@@ -215,14 +215,17 @@ arrow. The index does not show structural ids, skill names, launch settings, Sta
 counts, or configuration labels, and it keeps the same one-column order on narrow
 screens.
 
-- **Config** contains Chief of Staff and the shared Worker role skill. Chief
+- **Config** contains Chief of Staff, the Sprint Item supervisor, and the shared Worker
+  role skill. Chief
   opens at `#/config/chief-of-staff` with one picker for its launch defaults
   and its canonical editable skill. It has no Ticket lifecycle or Stage table. Worker
   skill opens at `#/config/worker-skill`. It is shown as an Agent-like configurable
   role because it guides every Ticket worker, although it is not an independent
   runtime. Its name is read-only; its description and Markdown body edit the canonical
   skill through the shared skills home. It has no independent launch, model, reasoning,
-  or Stage controls.
+  or Stage controls. Sprint Item supervisor opens at
+  `#/config/sprint-item-supervisor`. It uses the same canonical skill editor and has no
+  global launch or Stage controls. Each Sprint Item owns its supervisor launch snapshot.
 - **Workers** links the configured Worker types. Each supporting line comes from that
   Worker's managed specialist skill. A Worker opens at
   `#/config/workers/<worker-type>` with its launch defaults, suggested Kickoff ceiling,
@@ -249,11 +252,12 @@ entry also carries its current `conversation_id`, whether it is working or needs
 owner, and the sequence where its latest turn ended. The Workspace Chief row uses those
 conversation-owned signals without turning them into managed settings.
 `GET /api/workers/{id}` composes Worker registry structure with managed settings.
-`GET /api/skills` serves the shared skills home used for the Worker role and specialist
+`GET /api/skills` serves the shared skills home used for role skills and specialist
 descriptions on the index. Worker and Chief endpoints edit skill description and body
-or launch defaults. A focused endpoint edits the suggested Kickoff ceiling; the shared
-`PATCH /api/skills/{skill-name}` endpoint edits the Worker role skill. A saved change
-announces itself, and any Config screen on display refetches what it is showing.
+or launch defaults. A focused endpoint edits the suggested Kickoff ceiling. The generic
+`PATCH /api/skills/{skill-name}` endpoint edits the Worker and Sprint Item supervisor
+role skills. A saved change announces itself, and any Config screen on display refetches
+what it is showing.
 
 An absent suggested ceiling takes the Worker's normal Kickoff advance target. The saved
 value must be a later ceiling from that Worker's lifecycle. `No further` is not a managed
