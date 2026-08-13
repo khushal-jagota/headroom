@@ -1,4 +1,4 @@
-import type { AnyRecord } from "../lib/types";
+import type { BoardCard } from "../lib/types";
 import type { AtlasBuilding, AtlasDistrict, AtlasInputs, AtlasWorld } from "./contracts";
 
 const DISTRICTS: readonly AtlasDistrict[] = ["northbank", "rivergate", "southfield"];
@@ -15,13 +15,13 @@ function stableNumber(value: string): number {
   return hash >>> 0;
 }
 
-function ticketCards(inputs: AtlasInputs): AnyRecord[] {
+function ticketCards(inputs: AtlasInputs): BoardCard[] {
   return inputs.board.columns.flatMap((column) =>
     column.cards.map((card) => ({ ...card, stage: column.stage }))
   );
 }
 
-function projectBuilding(project: AtlasInputs["projects"][number], cards: AnyRecord[], index: number): AtlasBuilding {
+function projectBuilding(project: AtlasInputs["projects"][number], cards: BoardCard[], index: number): AtlasBuilding {
   const projectCards = cards.filter((card) => card.project_id === project.id);
   const active = projectCards.find((card) => !card.is_done) ?? projectCards[0] ?? null;
   const slot = BUILDING_SLOTS[index % BUILDING_SLOTS.length];
