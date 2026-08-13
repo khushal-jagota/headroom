@@ -1,0 +1,16 @@
+name: Recover private route
+on:
+  workflow_dispatch:
+
+jobs:
+  recover:
+    runs-on: [self-hosted, linux, production, panels-deploy]
+    steps:
+      - name: Prove Panels is healthy
+        run: |
+          systemctl --user is-active panels-live.service
+          curl --fail --silent --max-time 10 http://127.0.0.1:8767/api/health
+      - name: Restore private HTTPS route
+        run: |
+          tailscale serve --https=443 http://127.0.0.1:8767
+          tailscale serve status
