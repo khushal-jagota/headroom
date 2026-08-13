@@ -89,6 +89,9 @@ _ENRICHMENT_CARD_KEYS = [
     "blocked",
     "conversation_id",
     "waiting_to_closeout",
+    "sprint_item_id",
+    "sprint_item_title",
+    "sprint_item_priority",
 ]
 
 # The three signals the async route asks the conversation system for and appends after
@@ -244,10 +247,16 @@ def test_board_view_groups_parented_ticket_by_parent_item_project(
     assert cards["Parented ticket"]["project"] == "Vylo"
     assert cards["Parented ticket"]["group_project_id"] == "project_vylo"
     assert cards["Parented ticket"]["group_project"] == "Vylo"
+    assert cards["Parented ticket"]["sprint_item_id"] == item.id
+    assert cards["Parented ticket"]["sprint_item_title"] == "Parent item"
+    assert cards["Parented ticket"]["sprint_item_priority"] == "P3"
     assert cards["Standalone ticket"]["group_project_id"] == "project_client_work"
     assert cards["Standalone ticket"]["group_project"] == "Client Work"
     assert cards["Unprojected ticket"]["group_project_id"] is None
     assert cards["Unprojected ticket"]["group_project"] is None
+    assert cards["Unprojected ticket"]["sprint_item_id"] is None
+    assert cards["Unprojected ticket"]["sprint_item_title"] is None
+    assert cards["Unprojected ticket"]["sprint_item_priority"] is None
 
 
 def test_board_coding_card_keys_superset_and_columns_unchanged(

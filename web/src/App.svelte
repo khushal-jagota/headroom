@@ -3,6 +3,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "./lib/queryCatalogue";
   import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
+  import { parseWorkspaceAddress } from "./lib/workspaceAddress";
   import BacklogRoute from "./routes/BacklogRoute.svelte";
   import BackendsRoute from "./routes/BackendsRoute.svelte";
   import BoardRoute from "./routes/BoardRoute.svelte";
@@ -65,8 +66,14 @@
     if (name === "ticket" && segments[1]) {
       params.id = segments[1];
     }
-    if (name === "workspace" && segments[1]) {
-      params.id = decodeRouteSegment(segments[1]);
+    if (name === "workspace") {
+      const selection = parseWorkspaceAddress(hash);
+      if (selection === null) {
+        return { name: "unknown", params: {}, key: "unknown" };
+      }
+      if (selection.kind === "chief") params.id = "chief-of-staff";
+      if (selection.kind === "ticket") params.id = selection.id;
+      if (selection.kind === "item") params.item = selection.id;
     }
     if (name === "workers") {
       const legacyDetail = segments[1]
@@ -331,7 +338,7 @@
           {:else if route.name === "review"}
             <ReviewRoute />
           {:else if route.name === "workspace" || route.name === "board"}
-            <BoardRoute ticketId={route.params.id} />
+            <BoardRoute ticketId={route.params.id} itemId={route.params.item} />
           {:else if route.name === "ticket"}
             <TicketRoute id={route.params.id} />
           {:else if route.name === "sprint"}

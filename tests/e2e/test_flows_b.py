@@ -123,11 +123,12 @@ def _snap_board(p: Page, mid: str) -> dict[str, Any]:
     card = (
         f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
     )
-    bucket = '[data-bucket-section][data-bucket-key="awaiting_user_review"]'
+    no_item = "[data-no-item]"
     return {
         "title": p.inner_text(f"{card} .list-row-title"),
-        "bucket": p.inner_text(f"{bucket} > summary .board-workspace-bucket-label"),
-        "nested": p.eval_on_selector_all(f"{bucket} {card}", "e=>e.length"),
+        "tail": p.inner_text(f"{no_item} h2"),
+        "nested": p.eval_on_selector_all(f"{no_item} {card}", "e=>e.length"),
+        "status": p.get_attribute(card, "data-ticket-status"),
         "marks": p.eval_on_selector_all(
             f"{card} .board-workspace-stage-mark", "e=>e.length"
         ),
@@ -415,8 +416,9 @@ def test_e31_refresh_restores_state(
     after_b = _snap_board(page_b, mid)
     expected_b = {
         "title": E31_TITLE,
-            "bucket": "Awaiting user review",
+        "tail": "NO ITEM",
         "nested": 1,
+        "status": "awaiting_user_review",
         "marks": 1,
         "agent_working": "false",
     }

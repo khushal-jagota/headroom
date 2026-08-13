@@ -69,6 +69,40 @@ class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer 
     errored = "errored"
 
 
+class BoardCard(TypedDict):
+    """The Ticket projection consumed by the Workspace rail."""
+
+    id: str
+    title: str
+    priority: str
+    deadline: str | None
+    project_id: str | None
+    project: str | None
+    group_project_id: str | None
+    group_project: str | None
+    activity_at: int
+    has_pending_proposal: bool
+    ticket_status: str
+    backend_error: str | None
+    worker_type: str
+    employee_backend: str
+    stage: str
+    stage_label: str
+    gating_field: str | None
+    gating_field_label: str | None
+    is_done: bool
+    is_dropped: bool
+    blocked: bool
+    conversation_id: str | None
+    waiting_to_closeout: bool
+    sprint_item_id: str | None
+    sprint_item_title: str | None
+    sprint_item_priority: str | None
+    agent_working: NotRequired[bool]
+    needs_me: NotRequired[bool]
+    latest_turn_ended_sequence: NotRequired[int]
+
+
 @dataclass(frozen=True, slots=True)
 class TicketListFilters:
     stages: tuple[str, ...] = ()

@@ -92,57 +92,43 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
         context_factory(),
         server,
         "#/workspace",
-        f'[data-card][data-ticket-id="{later_dependent}"]',
+        '[data-workspace-view="attention"]',
     )
-    blocked = '[data-bucket-section][data-bucket-key="blocked"]'
-    empty = '[data-bucket-section][data-bucket-key="empty"]'
-    kickoff = '[data-bucket-section][data-bucket-key="waiting_for_kickoff"]'
-    approval = '[data-bucket-section][data-bucket-key="awaiting_user_review"]'
+    page.click('[data-workspace-view="attention"]')
+    page.wait_for_selector('[data-workspace-view="all"]', timeout=WAIT_MS)
+    no_item = "[data-no-item]"
     active_card = f'[data-card][data-ticket-id="{blocker}"]'
     later_card = f'[data-card][data-ticket-id="{later_dependent}"]'
     kickoff_card = f'[data-card][data-ticket-id="{kickoff_dependent}"]'
     shared_card = f'[data-card][data-ticket-id="{shared_dependent}"]'
 
-    # Blocked is the resting status of a ticket held by a live blocker. Both
-    # Blocked and Waiting for Kickoff collapse by default. The blocker itself
-    # does not choose the group: Kickoff approvals use their own group, while
-    # approval at a later gated field remains under the generic approval status.
-    assert page.locator(blocked).get_attribute("open") is None
-    assert page.locator(empty).get_attribute("open") is not None
-    assert page.locator(f"{empty} {active_card}").is_visible()
-    assert page.locator(approval).get_attribute("open") is not None
-    assert page.locator(f"{approval} {later_card}").is_visible()
-    assert page.locator(f"{blocked} {later_card}").count() == 0
-    assert page.locator(kickoff).get_attribute("open") is None
-    assert page.locator(f"{kickoff} {kickoff_card}").count() == 1
-    assert not page.locator(f"{kickoff} {kickoff_card}").is_visible()
-    assert page.locator(f"{approval} {kickoff_card}").count() == 0
-    assert page.locator(f"{blocked} {kickoff_card}").count() == 0
-    assert not page.locator(f"{blocked} {shared_card}").is_visible()
-    page.locator(f"{blocked} > summary").click()
-    assert page.locator(blocked).get_attribute("open") is not None
-    page.wait_for_selector(f"{blocked} {shared_card}", state="visible", timeout=WAIT_MS)
-    assert page.locator(f"{blocked} {shared_card}").count() == 1
+    # Everything on today exposes quiet blocked and resting Tickets. Unclassified
+    # Tickets share the No Item tail, while their own status and stage remain intact.
+    for card in (active_card, later_card, kickoff_card, shared_card):
+        assert page.locator(f"{no_item} {card}").is_visible()
+    assert page.get_attribute(active_card, "data-ticket-status") == "empty"
+    assert page.get_attribute(later_card, "data-ticket-status") == "awaiting_user_review"
+    assert page.get_attribute(kickoff_card, "data-ticket-status") == "awaiting_user_review"
+    assert page.get_attribute(shared_card, "data-ticket-status") == "blocked"
     assert page.get_attribute(later_card, "data-ticket-stage") == "needs_plan"
     assert page.get_attribute(
         f"{later_card} .board-workspace-stage-mark", "data-agent-working"
     ) == "false"
-    assert "Prerequisite" not in page.inner_text(f"{blocked} > .disclosure-body")
+    assert page.get_attribute(shared_card, "data-ticket-stage") == "needs_approach"
 
-    # Removing the last live blocker settles the ticket back to empty, so the
-    # card moves out of Blocked and the emptied group stops rendering.
+    # Removing the last live blocker settles the same row back to empty.
     cli(server, "ticket", "unblock", shared_dependent, "--by", blocker)
-    page.wait_for_selector(f"{empty} {shared_card}", timeout=WAIT_MS)
-    assert page.locator(blocked).count() == 0
-
-    _post_stage(server, blocker, "done")
-    page.wait_for_selector(
-        f'[data-bucket-section][data-bucket-key="done"] {active_card}',
-        state="attached",
+    page.wait_for_function(
+        "selector => document.querySelector(selector)?.getAttribute('data-ticket-status') "
+        "=== 'empty'",
+        arg=shared_card,
         timeout=WAIT_MS,
     )
-    assert page.locator(f"{kickoff} {kickoff_card}").count() == 1
-    assert page.locator(f"{approval} {later_card}").count() == 1
+
+    _post_stage(server, blocker, "done")
+    page.wait_for_selector(active_card, state="detached", timeout=WAIT_MS)
+    assert page.locator(f"{no_item} {kickoff_card}").count() == 1
+    assert page.locator(f"{no_item} {later_card}").count() == 1
     assert _get_ticket(server, later_dependent)["stage"] == "needs_plan"
     assert _get_ticket(server, shared_dependent)["stage"] == "needs_approach"
 

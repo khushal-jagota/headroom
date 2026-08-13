@@ -133,7 +133,9 @@ def test_workspace_reply_mark_follows_the_record_and_what_this_browser_has_read(
     ticket_id = _create_ticket(cli, server, "Reply mark Workspace ticket")
     _add_today(api, server, ticket_id)
     _set_ticket_stage(server, ticket_id, "needs_success")
-    _set_ticket_status(server, ticket_id, "empty")
+    # Keep the row in the default attention view. This test owns the conversation
+    # mark boundary, not the quiet-row disclosure boundary.
+    _set_ticket_status(server, ticket_id, "user")
     _start_conversation(server, conversation_id)
     _link_conversation(server, ticket_id, conversation_id)
 

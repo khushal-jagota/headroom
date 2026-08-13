@@ -355,8 +355,40 @@ export type ReviewResponse = {
 export type BoardResponse = {
   columns: Array<{
     stage: string;
-    cards: AnyRecord[];
+    cards: BoardCard[];
   }>;
+};
+
+export type BoardCard = {
+  id: string;
+  title: string;
+  priority: Priority;
+  deadline: string | null;
+  project_id: string | null;
+  project: string | null;
+  group_project_id: string | null;
+  group_project: string | null;
+  activity_at: number;
+  has_pending_proposal: boolean;
+  ticket_status: string;
+  backend_error: string | null;
+  worker_type: string;
+  employee_backend: string;
+  stage: string;
+  stage_label: string;
+  gating_field: string | null;
+  gating_field_label: string | null;
+  is_done: boolean;
+  is_dropped: boolean;
+  blocked: boolean;
+  conversation_id: string | null;
+  waiting_to_closeout: boolean;
+  sprint_item_id: string | null;
+  sprint_item_title: string | null;
+  sprint_item_priority: Priority | null;
+  agent_working: boolean;
+  needs_me: boolean;
+  latest_turn_ended_sequence: number;
 };
 
 export type DayTicket = AnyRecord & {

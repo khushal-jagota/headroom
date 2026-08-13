@@ -3229,6 +3229,12 @@ select {
   background: var(--surface-base);
 }
 
+.board-workspace-right--item {
+  padding: 0;
+  overflow: hidden;
+  background: var(--surface-base);
+}
+
 .board-workspace-right--chief {
   padding: var(--space-5) var(--space-6);
   background: var(--surface-sunken);
@@ -3255,9 +3261,9 @@ select {
   font-size: var(--type-sm);
 }
 
-/* Status buckets — the rail's one level. Each bucket is a box (the worker-section
- * idiom), headed by the serif voice. A bucket with no tickets is not rendered. */
-.disclosure--workspace-bucket {
+/* One box represents one Sprint Item. The fixed priority gutter and the row inset
+ * form one shared left rule from the Item title through its Tickets. */
+.board-workspace-item {
   min-width: 0;
   padding: var(--space-4);
   border: var(--border-hairline) solid var(--border-color);
@@ -3265,25 +3271,46 @@ select {
   background: transparent;
 }
 
-.disclosure--workspace-bucket + .disclosure--workspace-bucket {
+.board-workspace-item + .board-workspace-item {
   margin-top: var(--space-4);
 }
 
-.disclosure--workspace-bucket > .disclosure-summary {
+.board-workspace-item.active {
+  border-color: var(--text-faintest);
+}
+
+.board-workspace-item-head {
   width: 100%;
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  text-align: left;
-  margin: 0;
   color: var(--text-strong);
 }
 
-.disclosure--workspace-bucket[open] > .disclosure-summary {
+.board-workspace-item--open > .board-workspace-item-head {
   margin-bottom: var(--space-3);
 }
 
-.board-workspace-bucket-label {
+.board-workspace-item-open {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-workspace-item-priority {
+  display: flex;
+  align-items: center;
+  flex: 0 0 var(--space-6);
+}
+
+.board-workspace-item-title {
   min-width: 0;
   font-family: var(--font-serif);
   font-size: var(--type-serif-xl);
@@ -3292,70 +3319,117 @@ select {
   line-height: 1.2;
 }
 
-/* A folded status group hides its rows, so it carries their number in the
- * trailing slot. An open group does not need one: the rows are the count.
- * The count and the chevron share the one slot, so nothing moves between
- * the two states. */
-.board-workspace-bucket-count {
+.board-workspace-item--quiet .board-workspace-item-title {
+  color: var(--text-muted);
+}
+
+.board-workspace-item-fold {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   flex: 0 0 auto;
-  margin-left: auto;
+  min-height: var(--space-5);
+  padding: 0 0 0 var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.board-workspace-item-count {
   font-size: var(--type-md);
   font-variant-numeric: tabular-nums;
-  color: var(--text-faint);
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
-.disclosure--workspace-bucket[open]
-  > .disclosure-summary
-  > .board-workspace-bucket-count {
-  display: none;
-}
-
-/* The count is the folded group's only mark, so the chevron stands down and
- * the count carries the pointer and keyboard feedback in its place. */
-.disclosure--workspace-bucket:not([open])
-  > .disclosure-summary
-  > .disclosure-chev {
-  display: none;
-}
-
-.disclosure--workspace-bucket
-  > .disclosure-summary:hover
-  > .board-workspace-bucket-count,
-.disclosure--workspace-bucket
-  > .disclosure-summary:focus-visible
-  > .board-workspace-bucket-count {
+.board-workspace-item-fold:hover .board-workspace-item-count {
   color: var(--text-strong);
 }
 
-/* Errored carries the app's error red at the bucket level, so the row marks
- * stay free to carry only the two activity signals. */
-.disclosure--workspace-bucket[data-bucket-key="errored"] .board-workspace-bucket-label {
-  color: var(--accent-error);
-}
-
-.board-workspace-bucket-tickets {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-/* Buckets use the shared trailing disclosure mark. The mark stays at the far
- * edge and appears only when its own summary carries pointer or keyboard intent. */
-.disclosure--workspace-bucket > .disclosure-summary > .disclosure-chev {
-  flex: 0 0 auto;
-  margin-left: auto;
+.board-workspace-item-chevron {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-right: var(--border-strong) solid var(--text-faintest);
+  border-bottom: var(--border-strong) solid var(--text-faintest);
+  transform: rotate(45deg);
   opacity: 0;
   transition: opacity var(--motion-fast) var(--motion-ease);
 }
 
-.disclosure--workspace-bucket > .disclosure-summary:hover > .disclosure-chev,
-.disclosure--workspace-bucket > .disclosure-summary:focus-visible > .disclosure-chev {
+.board-workspace-item-fold:hover .board-workspace-item-chevron,
+.board-workspace-item-fold:focus-visible .board-workspace-item-chevron {
   opacity: 1;
 }
 
-/* Ticket rows keep priority in a fixed leading gutter, followed by the title and
- * the existing condition mark. Priority never displaces the status signal. */
+.board-workspace-item-tickets,
+.board-workspace-no-item-tickets {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-left: var(--space-6);
+}
+
+.board-workspace-item-more {
+  align-self: flex-start;
+  margin-top: var(--space-1);
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-faintest);
+  font-size: var(--type-sm);
+  cursor: pointer;
+}
+
+.board-workspace-item-more:hover {
+  color: var(--text-muted);
+}
+
+.board-workspace-view-control {
+  display: flex;
+  justify-content: flex-end;
+  margin: calc(-1 * var(--space-2)) var(--board-workspace-rail-pad-x) var(--space-3);
+}
+
+.board-workspace-view-control button {
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  cursor: pointer;
+}
+
+.board-workspace-view-control button:hover {
+  color: var(--text-muted);
+}
+
+.board-workspace-no-item {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+.board-workspace-no-item h2 {
+  margin: 0;
+  padding: 0 calc(var(--space-4) + var(--space-6));
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.board-workspace-no-item-tickets {
+  padding-left: calc(var(--space-4) + var(--space-6));
+}
+
+.board-workspace-quiet-line {
+  padding: var(--space-2) var(--board-workspace-rail-pad-x);
+  color: var(--text-faintest);
+  font-size: var(--type-sm);
+}
+
+/* Ticket rows begin at the Item title edge and retain their condition mark. */
 .list-row--board {
   width: 100%;
   display: flex;
@@ -3383,7 +3457,11 @@ select {
 
 /* Needs-you rows — an ask is waiting — read one text-step stronger at rest, keyed
  * off the existing status attribute (no new props). */
-.list-row--board[data-ticket-status="awaiting_approval"] {
+.list-row--board[data-ticket-status="awaiting_approval"],
+.list-row--board[data-ticket-status="awaiting_user_review"],
+.list-row--board[data-ticket-status="needs_user"],
+.list-row--board[data-ticket-status="user"],
+.list-row--board[data-ticket-status="paired"] {
   color: var(--text-default);
 }
 
@@ -4984,9 +5062,18 @@ select {
     display: none;
   }
 
+  .board-workspace-shell--item .board-workspace-left {
+    display: none;
+  }
+
   .board-workspace-right.board-workspace-right--chief {
     display: flex;
     padding: var(--space-5);
+  }
+
+  .board-workspace-right.board-workspace-right--item {
+    display: flex;
+    padding: 0;
   }
 
 }

@@ -15,6 +15,7 @@ from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     AtCap,
+    BoardCard,
     FieldSlot,
     Ticket,
     TicketListFilters,
@@ -429,6 +430,8 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "SELECT tickets.id, tickets.title, tickets.stage, tickets.priority, tickets.deadline, "
         "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
         "sprint_items.project_id AS parent_project_id, "
+        "sprint_items.title AS sprint_item_title, "
+        "sprint_items.priority AS sprint_item_priority, "
         "parent_projects.name AS parent_project_name, tickets.fields, tickets.worker_type, "
         "tickets.employee_backend, "
         "tickets.conversation_id, "
@@ -447,7 +450,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
     blocked_target_ids = core_links.blocked_target_ids(conn)
     coding_order = registry.require("coding").stage_ids()
     column_order: list[str] = list(coding_order)
-    by_stage: dict[str, list[tuple[tuple[int, int, str, int], JsonDict]]] = {
+    by_stage: dict[str, list[tuple[tuple[int, int, str, int], BoardCard]]] = {
         sid: [] for sid in column_order
     }
     for row in rows:
@@ -492,7 +495,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             str(row["ceiling"]),
             worker_type_definition=worker_type_definition,
         )
-        card: JsonDict = {
+        card: BoardCard = {
             "id": str(row["id"]),
             "title": str(row["title"]),
             "priority": priority,
@@ -529,6 +532,21 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
                 gating_field_id == "closeout"
                 and ticket_status == TicketStatus.empty.value
                 and not stopped_at_current_stage
+            ),
+            "sprint_item_id": (
+                str(row["sprint_item_id"])
+                if row["sprint_item_id"] is not None
+                else None
+            ),
+            "sprint_item_title": (
+                str(row["sprint_item_title"])
+                if row["sprint_item_title"] is not None
+                else None
+            ),
+            "sprint_item_priority": (
+                str(row["sprint_item_priority"])
+                if row["sprint_item_priority"] is not None
+                else None
             ),
         }
         sort_key = (

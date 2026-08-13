@@ -24,21 +24,23 @@ One screen per part of the system:
   go next" has been answered, both halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
   follows the same 5am planning-day boundary as the Day screen; dropped tickets never
-  appear. The rail shows all visible tickets across their direct Projects.
-  The Chief of Staff row leads the ticket groups. The rail groups the visible tickets into
-  collapsible boxed groups in a fixed order that puts what needs the user
-  first: Errored, Needs user, Waiting for Kickoff, User, Paired, Agent, Waiting to
-  Closeout, Awaiting approval, Empty, Blocked, Done. A group with no tickets is not
-  rendered; Blocked and Done start collapsed. Every ticket sits in exactly one group.
+  appear. The Chief of Staff row leads one box for each Sprint Item with a Ticket on
+  today. Tickets without an Item form a No Item tail.
+
+  Items with a user-owned Ticket come first. Priority orders Items within the active
+  and quiet runs. A user-owned Ticket is in `needs_user`, `awaiting_user_review`,
+  `paired`, or `user`, and a blocker removes it from that set. The default rail shows
+  only those Tickets. A quiet Item folds to one line and shows its live Ticket count.
+  The Item control reveals its other non-done Tickets. The rail control switches every
+  Item and No Item to all non-done Tickets on today. Done Tickets stay out of the rows,
+  but an Item with only done Tickets keeps its box.
+
+  The Item title carries the Item priority in a fixed gutter. Its Ticket titles begin
+  at the same edge, and Ticket rows carry no priority tile. Each row keeps the existing
+  conversation mark.
+
   The Chief of Staff row starts with its bundled portrait. The portrait is an agent
   identity on this row only; ticket rows and Worker types do not use it.
-  A done ticket goes to Done. A ticket resting at Closeout with an `empty` status goes
-  to Waiting to Closeout when its current Closeout step is still runnable; Stop at its
-  current Closeout ceiling keeps it under Empty, while Stop at a later ceiling does
-  not. An approval at the Kickoff gated field goes to Waiting for Kickoff; approval at
-  every later field stays under Awaiting approval. Every other ticket goes to its own
-  status. Unknown statuses still get their own group at the end rather than being
-  dropped. Rows carry only the ticket title and one mark, sorted by recent activity.
 
   The mark carries three signals in one order of precedence, and each is one
   system's own fact rather than a blend of several. A **pure white dot** means the
@@ -62,13 +64,12 @@ One screen per part of the system:
   browser that has never seen a conversation has read none of it, so a reply shows —
   every failure path over-shows attention rather than hiding a reply.
 
-  On screens wider than 960px, the right side starts with a quiet invitation to select
-  a ticket. Selecting a ticket opens the same complete ticket screen used by a direct
-  ticket link while leaving the Workspace rail in place, and records the selection at
-  `#/workspace/<ticket-id>`. That address can be loaded, refreshed, shared, or
-  revisited with browser history; a missing ticket safely returns to the unselected
-  Workspace. At 960px or less, selecting a ticket opens its standalone
-  `#/ticket/<ticket-id>` page.
+  On screens wider than 960px, the right side starts with a quiet invitation. An Item
+  title opens the existing Sprint Item workspace at `#/workspace/item/<item-id>`.
+  A Ticket opens the complete Ticket screen at `#/workspace/<ticket-id>`. Both
+  addresses survive refresh, sharing, and browser history. A stale selection returns
+  to the unselected Workspace. At 960px or less, an Item workspace replaces the rail.
+  A Ticket opens its standalone `#/ticket/<ticket-id>` page.
 - **Ticket** — the whole story of one piece of work. A quiet identity eyebrow puts
   priority, effective project, and Worker above a serif title. Scope, takeover or
   release, and copy actions live in the Ticket details disclosure. Direct blockers get
@@ -334,7 +335,7 @@ hand-rolling the same shapes per screen. Each does one job:
 - **Pill** — a small static tag with an optional key label (dates, counts, due, sprint).
 - **Chip** — the coloured status/project tags, including "blocked by".
 - **PriorityTile** — the shared always-coloured P0–P3 square. It appears in the
-  Workspace row's leading gutter, the editable Ticket and Review identity control,
+  Workspace Item's leading gutter, the editable Ticket and Review identity control,
   both Sprint priority positions, and once in each Backlog priority group heading.
   Priority never borrows the slate-blue attention accent or the status-mark colours.
 - **StageMark** — the single stage dot showing a field's progress.

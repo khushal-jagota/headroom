@@ -25,7 +25,11 @@
   import StageMark from "./StageMark.svelte";
   import TicketConversationHistory from "./TicketConversationHistory.svelte";
 
-  let { itemId, sprintName }: { itemId: string; sprintName: string } = $props();
+  let {
+    itemId,
+    sprintName,
+    backHref = "#/sprint"
+  }: { itemId: string; sprintName: string; backHref?: string } = $props();
 
   const workspace = createQuery(() => queries.sprintItemWorkspace(itemId));
   const startValues = createQuery(() => queries.sprintItemConversationStartValues(itemId));
@@ -118,7 +122,7 @@
       {#if workspace.data}
         {@const item = workspace.data}
         <div class="sprint-item-column">
-          <a class="sprint-item-back" href="#/sprint">‹ {sprintName}</a>
+          <a class="sprint-item-back" href={backHref}>‹ {sprintName}</a>
           <header class="sprint-workspace-head">
             <div class="sprint-workspace-identity">
               <PriorityTile priority={item.priority} />
