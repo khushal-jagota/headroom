@@ -479,9 +479,9 @@ def test_same_mode_ownership_does_not_reopen_but_real_paired_transition_does(
         )
         assert same_paired.status_code == 200, same_paired.text
         assert same_paired.json()["ticket_status"] == TicketStatus.paired.value
-        # Rewriting the same ownership mode changes nothing canonical, but the writer
-        # still opens and commits its transaction, and every commit signals.
-        assert changes.calls == 1
+        # Rewriting the same ownership mode changes nothing canonical; the writer's
+        # committed transaction changed no rows, so the door stays silent.
+        assert changes.calls == 0
         assert not _is_ready_today(db_path, ticket_id)
 
         changes.reset()
@@ -837,15 +837,16 @@ def test_day_membership_add_and_remove_signal_and_a_missing_ticket_does_not(
     ticket_id = _create_direct(db_path)
     with TestClient(app) as client:
         # Each day route commits twice: the membership write, then the day view it
-        # returns, which materializes the day in a transaction of its own.
+        # returns, which materializes the day in a transaction of its own. Only the
+        # membership write changes rows, so only it signals.
         changes.reset()
         added = client.post(f"/api/day/{date}/tickets", json={"ticket_id": ticket_id})
         assert added.status_code == 200, added.text
-        assert changes.calls == 2
+        assert changes.calls == 1
         changes.reset()
         removed = client.delete(f"/api/day/{date}/tickets/{ticket_id}")
         assert removed.status_code == 200, removed.text
-        assert changes.calls == 2
+        assert changes.calls == 1
 
         changes.reset()
         invalid = client.post(f"/api/day/{date}/tickets", json={"ticket_id": "t_missing"})
@@ -1151,8 +1152,9 @@ def test_every_committed_ticket_and_day_write_signals(tmp_path: Path) -> None:
         day = client.patch("/api/day/2099-03-04", json={"focus": "Focus"})
         assert day.status_code == 200, day.text
         assert day.json()["focus"] == "Focus"
-        # The field write, then the day view that materializes the day it returns.
-        assert changes.calls == 2
+        # The field write signals; the day view it returns re-materializes an
+        # existing day, changes no rows, and stays silent.
+        assert changes.calls == 1
 
     conn = connect(str(db_path))
     try:
