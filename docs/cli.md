@@ -276,4 +276,4 @@ one worker step at a time and writes the Ticket's status itself (see
 
 ---
 
-_Last verified: 2026-08-09._
+_Last verified: 2026-08-14._

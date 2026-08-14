@@ -272,9 +272,8 @@ has no usage source.
   path is `data/files/tickets/<ticket_id>/...`. The browser reads them through
   `/files/tickets/<ticket_id>/<relative-path>`. The contract is read-only: a worker
   writes the file into that directory itself, and Panels serves it. The server sends
-  `nosniff`; only
-  explicit image, audio, and video types are inline. Markdown, HTML, SVG, and
-  unknown files are attachments when opened directly.
+  `nosniff`; only explicit image, audio, and video types are inline. Markdown, HTML,
+  SVG, and unknown files are attachments when opened directly.
 - **Sprint Item files use an isolated sibling root.** Item artifacts live under
   `files/sprint-items/<sprint_item_id>/` and use
   `/files/sprint-items/<sprint_item_id>/<relative-path>`. This contract is read-only and
@@ -447,4 +446,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-08-12._
+_Last verified: 2026-08-14._
