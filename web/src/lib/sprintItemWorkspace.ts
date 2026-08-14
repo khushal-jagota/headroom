@@ -17,6 +17,7 @@ const groupOrder = [
   ["current-paired", "Paired"],
   ["current-running", "Agent"],
   ["errored", "Blocked"],
+  ["current-waiting", "Waiting for closeout"],
   ["upcoming", "To do"],
   ["completed", "Done"]
 ] as const;

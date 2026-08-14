@@ -95,6 +95,23 @@ describe("Workspace rail", () => {
     );
     expect(workspaceCardGroupKey(card("i"))).toBe("upcoming");
     expect(workspaceCardGroupKey(card("j", { stage: "done", is_done: true }))).toBe("completed");
+    expect(workspaceCardGroupKey(card("k", { waiting_to_closeout: true }))).toBe(
+      "current-waiting"
+    );
+  });
+
+  it("shows a closeout-ready card as waiting for closeout, not lumped in with To do", () => {
+    const item = buildWorkspaceRail([
+      card("ready", { waiting_to_closeout: true, sprint_item_id: "si_one" }),
+      card("idle", { sprint_item_id: "si_one" })
+    ]).items[0];
+
+    expect(item.groups.map((group) => group.label)).toEqual(["Waiting for closeout", "To do"]);
+    // Not one of the quiet-three hidden groups: it shows without revealing.
+    expect(workspaceItemGroups(item.groups, false).map((group) => group.label)).toEqual([
+      "Waiting for closeout",
+      "To do"
+    ]);
   });
 
   it("orders the groups, hides the quiet three, and reveals them on request", () => {

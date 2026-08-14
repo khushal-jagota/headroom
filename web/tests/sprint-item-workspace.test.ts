@@ -39,6 +39,7 @@ function workspace(): SprintItemWorkspace {
         stage: "needs_implementation",
         priority: "P1",
         ticket_status: "awaiting_agent_review",
+        waiting_to_closeout: false,
         has_pending_proposal: true,
         proposal_review_route: "agent_review",
         review_route: "agent_review",
@@ -51,6 +52,7 @@ function workspace(): SprintItemWorkspace {
         stage: "done",
         priority: "P3",
         ticket_status: "empty",
+        waiting_to_closeout: false,
         has_pending_proposal: false,
         proposal_review_route: null,
         review_route: "stop",
@@ -63,6 +65,7 @@ function workspace(): SprintItemWorkspace {
         stage: "needs_success",
         priority: "P2",
         ticket_status: "agent",
+        waiting_to_closeout: false,
         has_pending_proposal: false,
         proposal_review_route: null,
         review_route: "stop",
@@ -121,6 +124,31 @@ describe("Sprint Item workspace presentation", () => {
         tickets: [upcoming]
       }).map((group) => group.label)
     ).toEqual(["To do"]);
+  });
+
+  it("labels a closeout-ready Ticket as waiting for closeout, not To do", () => {
+    const value = workspace();
+    const readyForCloseout = {
+      ...value.tickets[0],
+      id: "t_ready",
+      ticket_status: "empty",
+      has_pending_proposal: false,
+      waiting_to_closeout: true
+    };
+    expect(
+      todayWorkspaceTicketGroups({
+        ...value,
+        today_ticket_ids: ["t_ready"],
+        tickets: [readyForCloseout]
+      }).map((group) => group.label)
+    ).toEqual(["Waiting for closeout"]);
+    expect(
+      remainingWorkspaceTicketGroups({
+        ...value,
+        today_ticket_ids: [],
+        tickets: [readyForCloseout]
+      }).map((group) => group.label)
+    ).toEqual(["Waiting for closeout"]);
   });
 
   it("routes Sprint Item artifacts through the shared managed preview", () => {

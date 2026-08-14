@@ -7,6 +7,7 @@ export type SprintTicket = {
   stage: string;
   priority: Priority;
   ticket_status: string;
+  waiting_to_closeout?: boolean;
   has_pending_proposal?: boolean;
 };
 
@@ -42,6 +43,7 @@ export type TicketConditionFacts = {
   stage: string;
   ticket_status: string;
   has_pending_proposal?: boolean;
+  waiting_to_closeout?: boolean;
 };
 
 export type SprintTicketSections = {
@@ -115,6 +117,7 @@ export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicke
   if (ticket.ticket_status === "user") return { mark: "needs-me", word: "yours" };
   if (ticket.ticket_status === "agent") return { mark: "current-running", word: "working" };
   if (ticket.ticket_status === "paired") return { mark: "current-paired", word: "paired" };
+  if (ticket.waiting_to_closeout) return { mark: "current-waiting", word: "waiting for closeout" };
   return { mark: "upcoming", word: "to do" };
 }
 
