@@ -951,8 +951,6 @@ def test_loaded_preview_proposal_approves_without_edited_body(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Preview proposal ready.",
         ticket_id=ticket_id,

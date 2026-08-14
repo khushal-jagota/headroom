@@ -5,7 +5,6 @@ import {
   sprintDayLabel,
   sprintProjectGroups,
   sprintTicketCondition,
-  sprintTicketSections,
   sprintTicketSectionsForTickets,
   type SprintItem,
   type SprintTicket
@@ -89,7 +88,11 @@ describe("Sprint Item presentation", () => {
   it("excludes dropped Tickets from sections and rollups", () => {
     const value = item({ tickets: [ticket({ stage: "done" }), ticket({ id: "t_drop", stage: "dropped" })] });
     expect(sprintItemRollup(value)).toBe("done");
-    expect(sprintTicketSections(value, new Set())).toEqual({ today: [], later: [], done: [value.tickets?.[0]] });
+    expect(sprintTicketSectionsForTickets(value.tickets || [], new Set())).toEqual({
+      today: [],
+      later: [],
+      done: [value.tickets?.[0]]
+    });
   });
 
   it("separates live, off-today, and done work with blocked live work last", () => {
@@ -98,7 +101,7 @@ describe("Sprint Item presentation", () => {
     const later = ticket({ id: "t_later", priority: "P1" });
     const done = ticket({ id: "t_done", stage: "done", priority: "P3" });
     expect(
-      sprintTicketSections(item({ tickets: [blocked, moving, later, done] }), new Set([blocked.id, moving.id]))
+      sprintTicketSectionsForTickets([blocked, moving, later, done], new Set([blocked.id, moving.id]))
     ).toEqual({ today: [moving, blocked], later: [later], done: [done] });
   });
 });

@@ -24,9 +24,9 @@ to an earlier Stage, its saved verdict remains visible without edit controls. Pa
 no judgment list, filter, or analysis surface.
 
 A Ticket worker can record a short trouble note during its active claimed worker step.
-Use `panels worker trouble --body-file PATH`. The command accepts one nonempty line of
-at most 500 characters. It records trouble that the worker encountered. It does not
-rate the worker or record what went well.
+Use `panels worker trouble` and pipe the note on stdin. The command accepts one
+nonempty line of at most 500 characters. It records trouble that the worker
+encountered. It does not rate the worker or record what went well.
 
 Trouble notes are append-only and keep their creation order. The Ticket screen shows
 the notes and their recorded times near the verdict. Panels does not provide edit,

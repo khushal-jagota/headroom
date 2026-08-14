@@ -44,7 +44,13 @@ for exactly what they are, avoid speculative machinery, and preserve direct user
 
 ## Ticket-owned artifacts
 
-A ticket can own durable work products such as HTML, images, Markdown documents, and other files. These live in Panels-managed ticket storage — by default under `data/files/tickets/<ticket-id>/...` — and appear in ticket Markdown through ordinary links such as `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Use the served `/files/tickets/...` link rather than exposing a local filesystem path; Panels owns how the file is previewed or opened.
+A ticket can own durable work products such as HTML, images, Markdown documents, and other files. Panels owns where they live, so hand the file to Panels instead of writing it to a path of your own:
+
+```
+panels ticket file put <ticket-id> artifacts/ui-plan.html --from ./ui-plan.html
+```
+
+The command works from any directory, including a ticket worktree, and prints the link to paste into ticket Markdown, for example `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Never write an artifact straight to a filesystem path. A file written beside your working copy is lost when that copy is removed, and the link then points at nothing.
 
 Artifacts complement the ticket record. The Worker type's gated fields, recap, and notes
 remain concise canonical Markdown, with links to richer work when it helps.

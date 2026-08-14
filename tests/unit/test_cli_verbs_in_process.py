@@ -71,12 +71,15 @@ def cli_app(
             params: dict[str, Any] | None = None,
             headers: dict[str, str] | None = None,
             timeout: float | None = None,
+            content: bytes | None = None,
         ) -> httpx.Response:
             del timeout
             path = httpx.URL(url).raw_path.decode()
             return cast(
                 httpx.Response,
-                client.request(method, path, json=json, params=params, headers=headers),
+                client.request(
+                    method, path, json=json, params=params, headers=headers, content=content
+                ),
             )
 
         monkeypatch.setattr(httpx, "request", request)
@@ -784,8 +787,6 @@ def test_ticket_approval_copy_and_worker_note_shape(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Ready to approve.",
         ticket_id=tid,
@@ -803,8 +804,6 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "note",
         tid,
         "approach",
-        "--body-file",
-        "-",
         stdin="approach note",
     )
     cli(
@@ -814,8 +813,6 @@ def test_ticket_approval_copy_and_worker_note_shape(
         tid,
         "approach",
         "--append",
-        "--body-file",
-        "-",
         stdin="additional approach note",
     )
     appended_detail = api.get(server, f"/api/tickets/{tid}")
@@ -830,8 +827,6 @@ def test_ticket_approval_copy_and_worker_note_shape(
         tid,
         "approach",
         "--replace",
-        "--body-file",
-        "-",
         stdin="replaced approach note",
     )
     detail = api.get(server, f"/api/tickets/{tid}")
@@ -852,8 +847,6 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "note",
         new_worker_id,
         "stages",
-        "--body-file",
-        "-",
         stdin="stages note",
     )
     new_worker_detail = api.get(server, f"/api/tickets/{new_worker_id}")
@@ -863,6 +856,84 @@ def test_ticket_approval_copy_and_worker_note_shape(
     assert "CLI approve ticket" in copied["text"]
     assert "updated intake" in copied["text"]
     assert "replaced approach note" in copied["text"]
+
+
+def test_worker_write_commands_take_text_on_stdin_only(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
+) -> None:
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Stdin-only worker commands",
+        "--kickoff-note",
+        "intake context",
+    )["id"]
+
+    cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "user_review")
+
+    env = {"PLAN_SERVER_URL": server.base, "PLAN_TICKET_ID": tid}
+
+    refused_propose = CliRunner().invoke(
+        cli_main,
+        ["worker", "propose", "--body-file", "/tmp/whatever.md", "--recap", "r", "--json"],
+        env=env,
+    )
+    assert refused_propose.exit_code != 0
+    error = json.loads(refused_propose.stderr)["error"]
+    assert "stdin" in error["message"]
+
+    refused_recap_file = CliRunner().invoke(
+        cli_main,
+        ["worker", "propose", "--recap-file", "/tmp/whatever.md", "--json"],
+        input="success body",
+        env=env,
+    )
+    assert refused_recap_file.exit_code != 0
+    error = json.loads(refused_recap_file.stderr)["error"]
+    assert "--recap TEXT" in error["message"]
+
+    refused_trouble = CliRunner().invoke(
+        cli_main,
+        ["worker", "trouble", "--body-file", "/tmp/whatever.md", "--json"],
+        env=env,
+    )
+    assert refused_trouble.exit_code != 0
+    error = json.loads(refused_trouble.stderr)["error"]
+    assert "stdin" in error["message"]
+
+    refused_note = CliRunner().invoke(
+        cli_main,
+        ["worker", "note", tid, "approach", "--body-file", "/tmp/whatever.md", "--json"],
+        env=env,
+    )
+    assert refused_note.exit_code != 0
+    error = json.loads(refused_note.stderr)["error"]
+    assert "stdin" in error["message"]
+
+    cli(
+        server,
+        "worker",
+        "propose",
+        "--recap",
+        "Success via stdin.",
+        ticket_id=tid,
+        stdin="success body from stdin",
+    )
+    cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "user_review")
+    approved_detail = api.get(server, f"/api/tickets/{tid}")
+    assert approved_detail["fields"]["success"]["value"] == "success body from stdin"
+
+    cli(server, "worker", "recap", tid, stdin="recap from stdin")
+    detail = api.get(server, f"/api/tickets/{tid}")
+    assert detail["recap"] == "recap from stdin"
+
+    # `trouble` only accepts writes during an active claimed worker step; its stdin
+    # acceptance is proven end-to-end in tests/e2e/test_ticket_trouble_notes.py. The
+    # refusal assertion above already covers its argument parsing.
 
 
 def test_sprint_item_ticket_commands_move_atomically_and_to_backlog(
@@ -1012,3 +1083,63 @@ def test_ticket_creation_rejects_backlog_with_sprint(command: tuple[str, ...]) -
     )
     assert result.exit_code == 1
     assert "--backlog cannot be combined with --sprint or --sprint-item" in result.output
+
+
+def test_ticket_file_put_stores_the_file_and_prints_its_link(
+    tmp_path: Path,
+    server: ServerHandle,
+    cli: Callable[..., JsonObject],
+) -> None:
+    ticket_id = cli(
+        server, "ticket", "create", "--worker-type", "coding", "--title", "Artifacts"
+    )["id"]
+    source = tmp_path / "plan.html"
+    source.write_bytes(b"<h1>Plan</h1>")
+
+    stored = cli(
+        server,
+        "ticket",
+        "file",
+        "put",
+        ticket_id,
+        "artifacts/plan.html",
+        "--from",
+        str(source),
+    )
+
+    assert stored["url"] == f"/files/tickets/{ticket_id}/artifacts/plan.html"
+    landed = tmp_path / "files" / "tickets" / ticket_id / "artifacts" / "plan.html"
+    assert landed.read_bytes() == b"<h1>Plan</h1>"
+
+
+def test_ticket_file_put_reports_a_missing_local_file(
+    tmp_path: Path,
+    server: ServerHandle,
+) -> None:
+    result = CliRunner().invoke(
+        cli_main,
+        ["ticket", "file", "put", "t_missing", "plan.html", "--from", str(tmp_path / "gone.html")],
+        env={"PLAN_SERVER_URL": server.base},
+    )
+
+    assert result.exit_code == 1
+    assert "cannot read" in result.output
+
+
+@pytest.mark.parametrize("relative_path", ["../escape.html", "nested/../escape.html", "/abs.html"])
+def test_ticket_file_put_refuses_an_unsafe_relative_path_before_sending(
+    tmp_path: Path,
+    server: ServerHandle,
+    relative_path: str,
+) -> None:
+    source = tmp_path / "plan.html"
+    source.write_bytes(b"<h1>Plan</h1>")
+
+    result = CliRunner().invoke(
+        cli_main,
+        ["ticket", "file", "put", "t_file123", relative_path, "--from", str(source)],
+        env={"PLAN_SERVER_URL": server.base},
+    )
+
+    assert result.exit_code == 1
+    assert "unsafe ticket file path" in result.output

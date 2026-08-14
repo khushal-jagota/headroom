@@ -165,8 +165,6 @@ def _parked_on_a_proposal(server: ServerHandle, cli: Callable[..., JsonObject]) 
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Success criteria proposed.",
         ticket_id=ticket_id,

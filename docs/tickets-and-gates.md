@@ -249,7 +249,17 @@ can propose and where that proposal parks. User-owned Stages do not dispatch aut
 Paired Stages get one opening turn. New tickets start leashed right at
 **Kickoff**: the ceiling is `needs_kickoff` for every Worker type, so nothing advances past
 the human-approved intake until the human grants scope onward — review before agents
-start. Every later stage behaves the same way, including the last two: an accepted
+start.
+
+A creator can state the scope instead, at creation, with `ticket create --ceiling` and
+`--at-cap`. Whoever has the authority to grant scope says so in the same breath as the
+Ticket, so nothing parks that the creator cannot resolve. The kickoff is then judged by
+the stated scope exactly as a later proposal is: it settles and the Ticket starts at the
+next Stage when the stated ceiling is past kickoff, and it parks for the stated reviewer
+otherwise. State nothing and the default leash holds, which is the ordinary case for
+intake the human wants to sense-check.
+
+Every later stage behaves the same way, including the last two: an accepted
 implementation advances to **needs closeout**, and an accepted closeout advances
 straight to **done**. (The threshold used by sprint-in-progress behavior is the
 *second* stage, held distinct from this start ceiling; see `worker-types.md`.)
