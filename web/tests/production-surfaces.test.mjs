@@ -176,14 +176,15 @@ assert.match(
   boardRouteSource,
   /<PriorityTile priority=\{item\.priority\} \/>[\s\S]*<span class="board-workspace-item-title">\{item\.title\}<\/span>/,
 );
-assert.doesNotMatch(
+// The rail row is the shared ticket row, so its priority tile comes from SprintTicketRow.
+assert.match(
   boardRouteSource.slice(
     boardRouteSource.indexOf("{#snippet ticketRow"),
     boardRouteSource.indexOf("{/snippet}", boardRouteSource.indexOf("{#snippet ticketRow")),
   ),
-  /<PriorityTile/,
+  /<SprintTicketRow[\s\S]*priority=\{card\.priority\}/,
 );
-assert.equal((sprintRouteSource.match(/<PriorityTile priority=/g) || []).length, 2);
+assert.equal((sprintRouteSource.match(/<PriorityTile priority=/g) || []).length, 1);
 assert.match(backlogRouteSource, /labelContent\(\)}<PriorityTile priority=\{p\} \/>/);
 assert.doesNotMatch(
   backlogRouteSource.slice(backlogRouteSource.indexOf("{#each groups[p] as item}")),

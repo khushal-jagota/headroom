@@ -102,6 +102,17 @@ describe("Sprint Item workspace presentation", () => {
     ]);
   });
 
+  it("labels a not-yet-started Ticket with the word used everywhere else", () => {
+    const value = workspace();
+    const upcoming = { ...value.tickets[0], id: "t_upcoming", ticket_status: "empty", has_pending_proposal: false };
+    const groups = todayWorkspaceTicketGroups({
+      ...value,
+      today_ticket_ids: ["t_upcoming"],
+      tickets: [upcoming]
+    });
+    expect(groups.map((group) => group.label)).toEqual(["To do"]);
+  });
+
   it("routes Sprint Item artifacts through the shared managed preview", () => {
     const target = sprintItemFileTarget("si_workspace", "notes/proof.md");
     expect(target).not.toBeNull();

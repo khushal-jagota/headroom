@@ -17,7 +17,7 @@ const groupOrder = [
   ["current-paired", "Paired"],
   ["current-running", "Agent"],
   ["errored", "Blocked"],
-  ["upcoming", "Empty"]
+  ["upcoming", "To do"]
 ] as const;
 
 function ticketOrder(left: SprintItemWorkspaceTicket, right: SprintItemWorkspaceTicket): number {

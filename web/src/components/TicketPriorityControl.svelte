@@ -6,11 +6,13 @@
     priority,
     disabled = false,
     surface = "ticket",
+    ariaLabel = "Ticket priority",
     onChange
   }: {
     priority: string;
     disabled?: boolean;
     surface?: "ticket" | "review";
+    ariaLabel?: string;
     onChange: (priority: string, select: HTMLSelectElement) => void;
   } = $props();
 
@@ -23,7 +25,7 @@
 >
   <PriorityTile {priority} decorative />
   <select
-    aria-label="Ticket priority"
+    aria-label={ariaLabel}
     value={priority}
     {disabled}
     onchange={(event) => onChange(event.currentTarget.value, event.currentTarget)}
