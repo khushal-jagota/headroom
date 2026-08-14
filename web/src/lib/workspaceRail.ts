@@ -34,6 +34,7 @@ export type WorkspaceRailItem = {
   id: string;
   title: string;
   priority: Priority;
+  createdAt: number;
   project: string | null;
   progress: { done: number; total: number } | null;
   cards: BoardCard[];
@@ -129,6 +130,7 @@ export function buildWorkspaceRail(
       id,
       title: first.sprint_item_title ?? "Untitled Sprint Item",
       priority: first.sprint_item_priority ?? "P3",
+      createdAt: summary?.created_at ?? 0,
       project: summary?.project ?? null,
       progress: summary
         ? { done: summary.done_ticket_count, total: summary.total_ticket_count }
@@ -143,9 +145,8 @@ export function buildWorkspaceRail(
 
   items.sort(
     (left, right) =>
-      Number(right.needsUser) - Number(left.needsUser) ||
       priorityRank(left.priority) - priorityRank(right.priority) ||
-      left.title.localeCompare(right.title, undefined, { sensitivity: "base" }) ||
+      left.createdAt - right.createdAt ||
       left.id.localeCompare(right.id)
   );
 

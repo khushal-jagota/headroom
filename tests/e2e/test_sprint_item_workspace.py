@@ -193,3 +193,67 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     page.locator('[data-sprint-item-view]').wait_for(timeout=WAIT_MS)
     assert page.locator("[data-conversation-input]").is_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= 390") is True
+
+    # The same component also renders from the Workspace route, where no Sprint screen
+    # surrounds it. That route is where the pane's own rules were dead, so a phone is
+    # proven here as well: the rules have to travel with the pane and not with a route.
+    column = (
+        "([column, doc]) => { const el = document.querySelector(column);"
+        " const style = getComputedStyle(el);"
+        " return [Math.round(el.getBoundingClientRect().width)"
+        " === document.querySelector(doc).clientWidth,"
+        " style.paddingLeft, style.paddingRight]; }"
+    )
+    page.goto(f"{server.base}/#/workspace/item/{item['id']}")
+    page.locator(f'[data-sprint-item-view="{item["id"]}"]').wait_for(timeout=WAIT_MS)
+    assert page.locator("[data-conversation-input]").is_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= 390") is True
+    assert (
+        page.evaluate(
+            "() => { const pane = document.querySelector('[data-sprint-item-view]');"
+            " return pane.scrollWidth <= pane.clientWidth; }"
+        )
+        is True
+    )
+    item_column = page.evaluate(column, [".sprint-item-column", ".sprint-item-doc"])
+    assert item_column == [True, "16px", "16px"], item_column
+    # The conversation column is what proves the pane's own rules are alive on this
+    # route: its inset is 48px unless a query on this pane brings it down. The column
+    # above would read 16px from an unconditional rule even with every query dead.
+    assert (
+        page.evaluate(
+            "() => getComputedStyle(document.querySelector("
+            "'.sprint-item-conversation-column')).paddingLeft"
+        )
+        == "16px"
+    )
+
+    # An Item and a Ticket open one after the other in this same slot, so they read
+    # against one edge only if a single measure serves both. The Ticket answers for the
+    # Item, at a phone width and again past the width where the column takes the wider
+    # inset — one sample cannot see a rule that only applies beyond it.
+    page.goto(f"{server.base}/#/workspace/{today_ticket['id']}")
+    page.locator("[data-conversation-input]").wait_for(timeout=WAIT_MS)
+    assert item_column == page.evaluate(column, [".ticket-col", ".ticket-doc"])
+
+    page.set_viewport_size({"width": 2200, "height": 1200})
+    page.locator(".ticket-col").wait_for(timeout=WAIT_MS)
+    ticket_wide = page.evaluate(column, [".ticket-col", ".ticket-doc"])
+    assert ticket_wide == [False, "48px", "48px"], ticket_wide
+    page.goto(f"{server.base}/#/workspace/item/{item['id']}")
+    page.locator(f'[data-sprint-item-view="{item["id"]}"]').wait_for(timeout=WAIT_MS)
+    assert ticket_wide == page.evaluate(
+        column, [".sprint-item-column", ".sprint-item-doc"]
+    )
+
+    # A window this wide keeps the rail, so the pane beside it is narrow while the window
+    # is not. Both panes must read their own width here. This is the only band that tells
+    # a pane query from a window query, so it is the only place a return to a window query
+    # shows up as the step it is.
+    inset = "() => getComputedStyle(document.querySelector('%s')).paddingLeft"
+    page.set_viewport_size({"width": 1000, "height": 900})
+    page.locator("[data-conversation-input]").wait_for(timeout=WAIT_MS)
+    assert page.evaluate(inset % ".sprint-item-conversation-column") == "24px"
+    page.goto(f"{server.base}/#/workspace/{today_ticket['id']}")
+    page.locator("[data-conversation-input]").wait_for(timeout=WAIT_MS)
+    assert page.evaluate(inset % ".ticket-conversation-column") == "24px"

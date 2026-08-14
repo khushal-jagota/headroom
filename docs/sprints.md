@@ -66,7 +66,9 @@ preview. Delivery failures appear as attention above the work. The supervisor us
 same live conversation, composer, model controls, transcript, reset, and change-stream
 behavior as Ticket conversations. Reset starts a new current conversation without hiding
 prior transcripts. The layout preserves the same document and conversation split on
-desktop and phone.
+desktop and phone. An Item reads at the same width and against the same edges as a
+Ticket, whichever address it is opened from, so opening one after the other in the same
+place shows no step between them.
 
 Each Sprint Item stores plain fields and placement only: title, body, priority,
 deadline, Project, and optional Sprint. Its status is derived when read:
