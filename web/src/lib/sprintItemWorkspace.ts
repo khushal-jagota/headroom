@@ -1,3 +1,4 @@
+import { previewHashHref, sprintItemFileTarget } from "./filePreview";
 import { sprintTicketCondition } from "./sprintPresentation";
 import type {
   SprintItemWorkspace,
@@ -70,4 +71,26 @@ export function failedWorkspaceDeliveries(
   return workspace.obligations.filter(
     (obligation) => obligation.lifecycle === "failed" || obligation.last_error !== null
   );
+}
+
+export type WorkspaceArtifactRow = {
+  path: string;
+  label: string;
+  kind: string;
+  href: string | null;
+};
+
+// A row's href is null only when the path itself cannot resolve to a real managed file —
+// it must never be an empty string, which renders as a dead anchor.
+export function workspaceArtifactRows(workspace: SprintItemWorkspace): WorkspaceArtifactRow[] {
+  return workspace.artifacts.map((path) => {
+    const target = sprintItemFileTarget(workspace.id, path);
+    const dot = path.lastIndexOf(".");
+    return {
+      path,
+      label: path.split("/").at(-1) || path,
+      kind: dot < 0 ? "file" : path.slice(dot + 1),
+      href: target ? previewHashHref(target) : null
+    };
+  });
 }
