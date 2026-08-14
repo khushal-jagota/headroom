@@ -7,7 +7,6 @@ import logging
 import sqlite3
 import threading
 from collections.abc import Sequence
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from time import monotonic
 
 from planner.conversation.contracts import (
@@ -27,7 +26,6 @@ from planner.supervisor_obligations.contracts import SupervisorDelivery, Supervi
 
 _LOGGER = logging.getLogger(__name__)
 MAXIMUM_ATTEMPTS = 5
-DELIVERY_TIMEOUT_SECONDS = 30
 
 
 class SupervisorObligationLoop:
@@ -103,18 +101,11 @@ class SupervisorObligationLoop:
                 self._asyncio_loop,
             )
             try:
-                result = future.result(timeout=DELIVERY_TIMEOUT_SECONDS)
-            except FutureTimeoutError:
-                future.cancel()
-                data.settle_delivery(
-                    conn,
-                    delivery.id,
-                    state="uncertain",
-                    now=now,
-                    error="delivery timed out after dispatch began",
-                    terminal=True,
-                )
-                return True
+                # No deadline. Cancelling here does not stop the send; it lands inside a
+                # send that is already running and leaves the conversation idle with its
+                # held line intact and nothing coming back to empty it. Starting a backend
+                # child regularly takes longer than any cap worth setting.
+                result = future.result()
             except Exception as exc:
                 future.cancel()
                 terminal = (
