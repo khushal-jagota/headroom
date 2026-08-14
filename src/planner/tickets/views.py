@@ -16,6 +16,7 @@ from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     AtCap,
     BoardCard,
+    BoardSprintItem,
     FieldSlot,
     Ticket,
     TicketListFilters,
@@ -23,6 +24,7 @@ from planner.tickets.contracts import (
 )
 from planner.tickets.logic import fields_codec, machine
 from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.registry import WorkerTypeRegistry
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
@@ -425,6 +427,10 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
     waiting on a permission ask (``needs_me``), and where its conversation last had a
     turn end (``latest_turn_ended_sequence``) all belong to the conversation system and
     are added by the async board route, which can await it.
+
+    Beside the columns, ``sprint_items`` carries each represented Sprint Item's project
+    and progress. The cards are today's Tickets only, so the Item's own counts cannot be
+    derived from them.
     """
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.stage, tickets.priority, tickets.deadline, "
@@ -568,7 +574,60 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         }
         for sid in column_order
     ]
-    return {"columns": columns}
+    return {
+        "columns": columns,
+        "sprint_items": _board_sprint_items(
+            conn,
+            registry=registry,
+            item_ids=sorted(
+                {
+                    str(row["sprint_item_id"])
+                    for row in rows
+                    if row["sprint_item_id"] is not None
+                }
+            ),
+        ),
+    }
+
+
+def _board_sprint_items(
+    conn: sqlite3.Connection,
+    *,
+    registry: WorkerTypeRegistry,
+    item_ids: list[str],
+) -> list[JsonDict]:
+    """Each Sprint Item's project and its done-of-total across all its Tickets."""
+    if not item_ids:
+        return []
+    placeholders = ",".join("?" * len(item_ids))
+    rows = conn.execute(
+        "SELECT sprint_items.id AS id, projects.name AS project_name, "
+        "tickets.stage AS ticket_stage, tickets.worker_type AS ticket_worker_type "
+        "FROM sprint_items "
+        "JOIN projects ON projects.id = sprint_items.project_id "
+        "JOIN tickets ON tickets.sprint_item_id = sprint_items.id "
+        f"WHERE sprint_items.id IN ({placeholders})",
+        item_ids,
+    ).fetchall()
+    project_names = {str(row["id"]): str(row["project_name"]) for row in rows}
+    counted: dict[str, list[int]] = {item_id: [0, 0] for item_id in project_names}
+    for row in rows:
+        stage = str(row["ticket_stage"])
+        definition = registry.require(str(row["ticket_worker_type"]))
+        if stage == definition.dropped_stage.id:
+            continue
+        counts = counted[str(row["id"])]
+        counts[0] += 1 if stage == definition.completed_stage() else 0
+        counts[1] += 1
+    return [
+        BoardSprintItem(
+            id=item_id,
+            project=project_names[item_id],
+            done_ticket_count=done,
+            total_ticket_count=total,
+        )
+        for item_id, (done, total) in sorted(counted.items())
+    ]
 
 
 # --- Review --------------------------------------------------------------------

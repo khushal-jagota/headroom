@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildWorkspaceRail,
   hiddenWorkspaceCardCount,
-  workspaceCardNeedsUser,
-  workspaceItemIsOpen,
-  workspaceVisibleCards
+  workspaceCardGroupKey,
+  workspaceGroupsHaveShownCards,
+  workspaceItemGroups
 } from "../src/lib/workspaceRail";
 import type { BoardCard } from "../src/lib/types";
 
@@ -45,7 +45,7 @@ function card(id: string, values: Partial<BoardCard> = {}): BoardCard {
 }
 
 describe("Workspace rail", () => {
-  it("groups every Item, puts attention Items first, orders by Item priority, and leaves No Item last", () => {
+  it("groups every Item, puts Items the user owns work in first, then Item priority", () => {
     const rail = buildWorkspaceRail([
       card("quiet-p0", {
         sprint_item_id: "si_quiet",
@@ -72,17 +72,38 @@ describe("Workspace rail", () => {
       "si_attention",
       "si_quiet"
     ]);
-    expect(rail.noItemCards.map((item) => item.id)).toEqual(["loose"]);
+    expect(rail.noItemGroups.flatMap((group) => group.cards.map((value) => value.id))).toEqual([
+      "loose"
+    ]);
   });
 
-  it("shows only user-owned live rows by default and reveals one Item or the whole rail", () => {
+  it("names each card's group from the shared Ticket condition", () => {
+    expect(workspaceCardGroupKey(card("a", { ticket_status: "needs_user" }))).toBe("needs-me");
+    expect(workspaceCardGroupKey(card("b", { ticket_status: "user" }))).toBe("needs-me");
+    expect(workspaceCardGroupKey(card("c", { ticket_status: "awaiting_user_review" }))).toBe(
+      "current-awaiting-approval"
+    );
+    expect(workspaceCardGroupKey(card("d", { has_pending_proposal: true }))).toBe(
+      "current-awaiting-approval"
+    );
+    expect(workspaceCardGroupKey(card("e", { ticket_status: "paired" }))).toBe("current-paired");
+    expect(workspaceCardGroupKey(card("f", { ticket_status: "agent" }))).toBe("current-running");
+    expect(workspaceCardGroupKey(card("g", { ticket_status: "blocked" }))).toBe("errored");
+    // A link blocker is not a status, and it still lands the card in Blocked.
+    expect(workspaceCardGroupKey(card("h", { ticket_status: "user", blocked: true }))).toBe(
+      "errored"
+    );
+    expect(workspaceCardGroupKey(card("i"))).toBe("upcoming");
+    expect(workspaceCardGroupKey(card("j", { stage: "done", is_done: true }))).toBe("completed");
+  });
+
+  it("orders the groups, hides the quiet three, and reveals them on request", () => {
     const cards = [
       card("needs", { ticket_status: "needs_user" }),
       card("review", { ticket_status: "awaiting_user_review" }),
       card("paired", { ticket_status: "paired" }),
-      card("owned", { ticket_status: "user" }),
-      card("blocked-owned", { ticket_status: "user", blocked: true }),
       card("working", { ticket_status: "agent" }),
+      card("blocked", { ticket_status: "user", blocked: true }),
       card("resting"),
       card("done", { stage: "done", is_done: true })
     ];
@@ -95,27 +116,44 @@ describe("Workspace rail", () => {
       }))
     ).items[0];
 
-    expect(item.attentionCards.map((value) => value.id)).toEqual([
-      "needs",
-      "owned",
-      "paired",
-      "review"
+    expect(item.groups.map((group) => group.label)).toEqual([
+      "Needs user",
+      "Awaiting approval",
+      "Paired",
+      "Agent",
+      "Blocked",
+      "Empty",
+      "Done"
     ]);
-    expect(workspaceVisibleCards(item.cards, "attention").map((value) => value.id)).toEqual([
-      "needs",
-      "owned",
-      "paired",
-      "review"
+    expect(workspaceItemGroups(item.groups, false).map((group) => group.label)).toEqual([
+      "Needs user",
+      "Awaiting approval",
+      "Paired",
+      "Empty"
     ]);
-    expect(hiddenWorkspaceCardCount(item, "attention")).toBe(3);
-    expect(workspaceVisibleCards(item.cards, "attention", true)).toHaveLength(7);
-    expect(workspaceVisibleCards(item.cards, "all")).toHaveLength(7);
-    expect(workspaceVisibleCards(item.cards, "all").some((value) => value.id === "done")).toBe(false);
-    expect(workspaceCardNeedsUser(cards[4])).toBe(false);
+    expect(workspaceItemGroups(item.groups, true)).toHaveLength(7);
+    expect(hiddenWorkspaceCardCount(item.groups)).toBe(3);
+    expect(item.needsUser).toBe(true);
   });
 
-  it("keeps an Item with only done Tickets as a folded zero-count box", () => {
-    const rail = buildWorkspaceRail([
+  it("carries the Item's project and its progress across every Ticket", () => {
+    const rail = buildWorkspaceRail(
+      [
+        card("on-today", {
+          sprint_item_id: "si_one",
+          sprint_item_title: "One",
+          sprint_item_priority: "P1"
+        })
+      ],
+      [{ id: "si_one", project: "Panels", done_ticket_count: 3, total_ticket_count: 7 }]
+    );
+
+    expect(rail.items[0].project).toBe("Panels");
+    expect(rail.items[0].progress).toEqual({ done: 3, total: 7 });
+  });
+
+  it("keeps an Item whose Tickets are all quiet, with nothing shown until it is revealed", () => {
+    const item = buildWorkspaceRail([
       card("done", {
         stage: "done",
         is_done: true,
@@ -123,39 +161,12 @@ describe("Workspace rail", () => {
         sprint_item_title: "Finished outcome",
         sprint_item_priority: "P1"
       })
-    ]);
-
-    expect(rail.items).toHaveLength(1);
-    expect(rail.items[0].liveCards).toEqual([]);
-    expect(workspaceVisibleCards(rail.items[0].cards, "attention")).toEqual([]);
-    expect(workspaceItemIsOpen(rail.items[0], "attention")).toBe(false);
-    expect(workspaceItemIsOpen(rail.items[0], "all")).toBe(false);
-    expect(workspaceItemIsOpen(rail.items[0], "all", { opened: true })).toBe(false);
-    expect(workspaceItemIsOpen(rail.items[0], "all", { expanded: true })).toBe(false);
-  });
-
-  it("derives Item disclosure from live work, mode, attention, and explicit folds", () => {
-    const quiet = buildWorkspaceRail([
-      card("quiet", {
-        sprint_item_id: "si_quiet",
-        sprint_item_title: "Quiet",
-        sprint_item_priority: "P2"
-      })
-    ]).items[0];
-    const attention = buildWorkspaceRail([
-      card("attention", {
-        sprint_item_id: "si_attention",
-        sprint_item_title: "Attention",
-        sprint_item_priority: "P2",
-        ticket_status: "needs_user"
-      })
     ]).items[0];
 
-    expect(workspaceItemIsOpen(quiet, "attention")).toBe(false);
-    expect(workspaceItemIsOpen(quiet, "attention", { opened: true })).toBe(true);
-    expect(workspaceItemIsOpen(quiet, "attention", { expanded: true })).toBe(true);
-    expect(workspaceItemIsOpen(quiet, "all")).toBe(true);
-    expect(workspaceItemIsOpen(attention, "attention")).toBe(true);
-    expect(workspaceItemIsOpen(attention, "all", { folded: true })).toBe(false);
+    expect(item.needsUser).toBe(false);
+    expect(workspaceItemGroups(item.groups, false)).toEqual([]);
+    expect(workspaceGroupsHaveShownCards(item.groups)).toBe(false);
+    expect(hiddenWorkspaceCardCount(item.groups)).toBe(1);
+    expect(workspaceItemGroups(item.groups, true).map((group) => group.label)).toEqual(["Done"]);
   });
 });
