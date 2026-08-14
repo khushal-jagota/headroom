@@ -444,7 +444,7 @@ def test_due_occurrence_creates_and_places_one_ordinary_ticket(
     ticket = tickets_data.read_ticket(tmp_db, ticket_id)
     assert ticket.title == "Planned session"
     assert ticket.worker_type == "coding"
-    assert ticket.ticket_status is TicketStatus.awaiting_user_review
+    assert ticket.ticket_status is TicketStatus.awaiting_approval
     kickoff_proposal = fields_codec.get_slot(ticket.fields, "kickoff").proposal
     assert kickoff_proposal is not None
     assert kickoff_proposal.body == "Gather evidence first."
@@ -661,7 +661,7 @@ def test_seeded_checkpoint_creates_a_user_owned_personal_ticket_on_day_four(
     assert ticket.title == "Checkpoint"
     assert ticket.worker_type == "personal"
     assert ticket.stage == "needs_kickoff"
-    assert ticket.ticket_status is TicketStatus.awaiting_user_review
+    assert ticket.ticket_status is TicketStatus.awaiting_approval
     kickoff_proposal = fields_codec.get_slot(ticket.fields, "kickoff").proposal
     assert kickoff_proposal is not None
     assert kickoff_proposal.body == (

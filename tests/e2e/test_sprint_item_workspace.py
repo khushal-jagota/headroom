@@ -111,7 +111,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     api.direct_post(
         server,
         f"/api/tickets/{review_ticket['id']}/accept/kickoff",
-        {"next_ceiling": "needs_success", "at_cap": "agent_review"},
+        {"next_ceiling": "needs_success", "at_cap": "propose"},
     )
     proposed = httpx.post(
         f"{server.base}/api/tickets/{review_ticket['id']}/propose/success",

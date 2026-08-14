@@ -38,10 +38,10 @@ function workspace(): SprintItemWorkspace {
         title: "Review this",
         stage: "needs_implementation",
         priority: "P1",
-        ticket_status: "awaiting_agent_review",
+        ticket_status: "awaiting_approval",
         waiting_to_closeout: false,
         has_pending_proposal: true,
-        review_route: "agent_review",
+        review_route: "propose",
         worker_type: "coding",
         day_ids: ["day_2026-08-12"]
       },
@@ -82,34 +82,25 @@ describe("Sprint Item workspace presentation", () => {
       groups.map((group) => [group.label, group.tickets.map((ticket) => ticket.id)]);
     // A Ticket finished today stays under Today, in Today's own Done group.
     expect(shape(todayWorkspaceTicketGroups(value))).toEqual([
-      ["Agent review", ["t_review"]],
+      ["Awaiting approval", ["t_review"]],
       ["Done", ["t_done"]]
     ]);
     expect(shape(remainingWorkspaceTicketGroups(value))).toEqual([["Agent", ["t_later"]]]);
     expect(workspaceProgress(value)).toBe("1 of 3 done");
   });
 
-  it("splits Awaiting approval into User review and Agent review, both on Today by default", () => {
+  it("gathers every parked proposal into the one Awaiting approval group", () => {
     const value = workspace();
-    const userReview = {
-      ...value.tickets[0],
-      id: "t_user_review",
-      ticket_status: "awaiting_user_review",
-      proposal_review_route: "user_review" as const,
-      review_route: "user_review" as const
-    };
-    const agentReview = { ...value.tickets[0], id: "t_agent_review" };
+    const parked = { ...value.tickets[0], id: "t_parked_one" };
+    const alsoParked = { ...value.tickets[0], id: "t_parked_two" };
     const groups = todayWorkspaceTicketGroups({
       ...value,
-      today_ticket_ids: ["t_user_review", "t_agent_review"],
-      tickets: [userReview, agentReview]
+      today_ticket_ids: ["t_parked_one", "t_parked_two"],
+      tickets: [parked, alsoParked]
     });
     expect(
       groups.map((group) => [group.label, group.tickets.map((ticket) => ticket.id)])
-    ).toEqual([
-      ["User review", ["t_user_review"]],
-      ["Agent review", ["t_agent_review"]]
-    ]);
+    ).toEqual([["Awaiting approval", ["t_parked_one", "t_parked_two"]]]);
   });
 
   it("labels a not-yet-started Ticket with the word used everywhere else", () => {

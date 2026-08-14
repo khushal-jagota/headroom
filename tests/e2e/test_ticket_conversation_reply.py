@@ -181,7 +181,7 @@ def test_a_reply_in_the_pane_pairs_the_ticket_and_a_refusal_leaves_it_parked(
     api: ApiHelper,
 ) -> None:
     ticket_id = _parked_on_a_proposal(server, cli)
-    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_user_review"
+    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_approval"
     # Nothing is seeded: a Ticket nobody has spoken to has no conversation, and the first
     # message is what makes one.
 
@@ -222,7 +222,7 @@ def test_a_reply_in_the_pane_pairs_the_ticket_and_a_refusal_leaves_it_parked(
     )
     page.wait_for_selector(FATE, timeout=WAIT_MS)
     assert "not delivered" in page.inner_text(FATE)
-    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_user_review"
+    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_approval"
 
     # Now one the conversation holds for a busy agent. Held is reached, so this one is a
     # reply, and the screen says so as soon as the send comes back.

@@ -300,7 +300,7 @@ def test_record_reads_share_manifests_selection_and_identity(
     project_part = cli(server, "project", "show", "project_other", "summary")
 
     assert list(ticket_manifest["manifest"])[0] == "kickoff"
-    assert ticket_manifest["header"]["ticket_status"] == "awaiting_user_review"
+    assert ticket_manifest["header"]["ticket_status"] == "awaiting_approval"
     assert worker_manifest["header"]["worker"] == "panels-worker-coding"
     assert worker_manifest["header"]["id"] == ticket["id"]
     assert sprint_manifest["header"]["id"] == sprint["id"]
@@ -332,7 +332,7 @@ def test_record_reads_share_manifests_selection_and_identity(
         env={"PLAN_SERVER_URL": server.base},
     )
     assert human.exit_code == 0, human.output
-    assert "ticket_status: awaiting_user_review" in human.stdout
+    assert "ticket_status: awaiting_approval" in human.stdout
     assert "value: null" in human.stdout
     assert "proposal:" in human.stdout
 
@@ -773,14 +773,14 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "--ceiling",
         "none",
         "--at-cap",
-        "user_review",
+        "propose",
         "--kickoff-note-file",
         "-",
         stdin="updated intake",
     )
     assert accepted_kickoff["stage"] == "needs_success"
     assert accepted_kickoff["ceiling"] == "needs_success"
-    assert accepted_kickoff["at_cap"] == "user_review"
+    assert accepted_kickoff["at_cap"] == "propose"
     assert accepted_kickoff["fields"]["kickoff"]["value"] == "updated intake"
 
     cli(
@@ -793,7 +793,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         stdin="success body",
     )
     approved = cli(
-        server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "user_review"
+        server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose"
     )
     assert approved["stage"] == "needs_approach"
     assert approved["fields"]["success"]["value"] == "success body"
@@ -873,7 +873,7 @@ def test_worker_write_commands_take_text_on_stdin_only(
         "intake context",
     )["id"]
 
-    cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "user_review")
+    cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose")
 
     env = {"PLAN_SERVER_URL": server.base, "PLAN_TICKET_ID": tid}
 
@@ -923,7 +923,7 @@ def test_worker_write_commands_take_text_on_stdin_only(
         ticket_id=tid,
         stdin="success body from stdin",
     )
-    cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "user_review")
+    cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose")
     approved_detail = api.get(server, f"/api/tickets/{tid}")
     assert approved_detail["fields"]["success"]["value"] == "success body from stdin"
 

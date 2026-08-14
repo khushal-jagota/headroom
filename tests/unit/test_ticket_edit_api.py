@@ -87,7 +87,7 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
             actor="unattributed",
             now=1,
             next_ceiling=NO_FURTHER,
-            at_cap=AtCap.user_review,
+            at_cap=AtCap.propose,
         )
         return ticket.id
     finally:

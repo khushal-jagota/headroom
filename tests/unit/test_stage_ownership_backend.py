@@ -153,7 +153,7 @@ def test_ownership_override_set_clear_takeover_release_derives_resting_status(
         actor="human",
         now=2,
         next_ceiling="needs_success",
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
     )
     assert ticket.stage == "needs_success"
     assert ticket.ticket_status is TicketStatus.empty
@@ -214,7 +214,7 @@ def test_ticket_current_stage_default_is_captured_until_next_stage_entry(
         actor="human",
         now=2,
         next_ceiling="needs_success",
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
     )
     assert first.stage == "needs_success"
     assert first.default_stage_ownership_mode is StageOwnershipMode.worker
@@ -255,7 +255,7 @@ def test_ticket_current_stage_default_is_captured_until_next_stage_entry(
         actor="human",
         now=6,
         next_ceiling="needs_success",
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
     )
     assert second.default_stage_ownership_mode is StageOwnershipMode.user
     assert second.effective_stage_ownership_mode is StageOwnershipMode.user
@@ -280,7 +280,7 @@ def test_future_stage_ownership_override_leaves_the_current_stage_alone(
         actor="human",
         now=2,
         next_ceiling="needs_success",
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
     )
 
     updated = data.set_stage_ownership(
@@ -316,7 +316,7 @@ def test_current_stage_same_effective_explicit_override_persists_without_status_
         actor="human",
         now=2,
         next_ceiling="needs_understanding",
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
     )
     assert ticket.stage == "needs_understanding"
     assert ticket.effective_stage_ownership_mode is StageOwnershipMode.paired
@@ -367,7 +367,7 @@ def test_takeover_and_release_persist_explicit_user_override_when_default_is_use
             actor="human",
             now=2,
             next_ceiling=NEEDS_ALPHA,
-            at_cap=AtCap.user_review,
+            at_cap=AtCap.propose,
         )
         assert ticket.stage == NEEDS_ALPHA
         assert ticket.effective_stage_ownership_mode is StageOwnershipMode.user

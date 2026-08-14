@@ -112,19 +112,19 @@ def test_stored_decode_is_registry_free_and_declared_validation_is_explicit() ->
             machine.has_pending_gating_proposal,
             (ALPHA, TicketFields.empty(SYNTHETIC_WORKER_TYPE_DEFINITION.field_ids())),
         ),
-        (admission.check_agent_proposal, (ALPHA, BETA, AtCap.user_review, FIELD_ALPHA)),
+        (admission.check_agent_proposal, (ALPHA, BETA, AtCap.propose, FIELD_ALPHA)),
         (machine.has_pending_parked_proposal, (object(),)),
         (machine.effective_stage_ownership_mode, (ALPHA, {})),
         (resolution.decide_file_proposal, (object(), FIELD_ALPHA, "body", "agent", 0)),
         (
             resolution.decide_accept,
-            (object(), FIELD_ALPHA, "human", None, "none", AtCap.user_review),
+            (object(), FIELD_ALPHA, "human", None, "none", AtCap.propose),
         ),
         (resolution.decide_edit_value, (object(), FIELD_ALPHA, "body", "human")),
         (resolution.decide_return_for_revision, (object(), "human")),
         (
             resolution.decide_scope_change,
-            (object(), BETA, AtCap.user_review, "human"),
+            (object(), BETA, AtCap.propose, "human"),
         ),
         (external_work.decide_external_work, (object(), BETA, {})),
         (

@@ -64,13 +64,13 @@ def _ticket_with_pending_plan(
             actor="human",
             now=0,
             next_ceiling=NO_FURTHER,
-            at_cap=AtCap.user_review,
+            at_cap=AtCap.propose,
         )
         change_scope(
             conn,
             ticket.id,
             ceiling="needs_plan",
-            at_cap=AtCap.user_review,
+            at_cap=AtCap.propose,
             actor="human",
             now=0,
         )

@@ -102,7 +102,7 @@ def test_day_ticket_view_includes_board_status_and_conversation_signals(
     ticket = added.json()["tickets"][0]
     assert ticket["id"] == ticket_id
     assert ticket["stage"] == "needs_kickoff"
-    assert ticket["ticket_status"] in {"empty", "awaiting_user_review"}
+    assert ticket["ticket_status"] in {"empty", "awaiting_approval"}
     assert ticket["is_done"] is False
     assert ticket["waiting_to_closeout"] is False
     assert ticket["conversation_id"] is None

@@ -17,7 +17,7 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "drop_proposal_review_route"
+HEAD_REVISION = "one_approval_gate"
 
 
 def _table_columns(

@@ -23,11 +23,11 @@ from planner.cli.main import main
                 "--ceiling",
                 "done",
                 "--at-cap",
-                "agent_review",
+                "propose",
             ],
             "/api/items/si_one/supervisor/tickets/t_one/approve",
-            {"next_ceiling": "done", "at_cap": "agent_review"},
-            "t_one agent review approved",
+            {"next_ceiling": "done", "at_cap": "propose"},
+            "t_one proposal approved",
         ),
         (
             [
@@ -42,7 +42,7 @@ from planner.cli.main import main
             ],
             "/api/items/si_one/supervisor/tickets/t_one/reject",
             {"message": "Keep the proof focused."},
-            "t_one agent review rejected",
+            "t_one proposal rejected",
         ),
     ],
 )

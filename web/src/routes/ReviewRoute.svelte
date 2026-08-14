@@ -404,7 +404,6 @@
                       ticketStage={ticketDetail.stage}
                       ceiling={ticketDetail.ceiling}
                       suggestedNextCeiling={ticketDetail.suggested_next_ceiling}
-                      allowAgentReview={ticketDetail.sprint_item_id !== null}
                       stageState={fieldStageVisualStateFor(lc, ticketDetail, field)}
                       approvalDisabled={field === "kickoff" && priorityBusy}
                       onAccept={(payload) => accept(proposal, payload)}

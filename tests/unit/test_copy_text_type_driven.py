@@ -87,7 +87,7 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
         actor="human",
         now=3,
         next_ceiling="needs_success",
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
     )
     set_field_user_note(
         tmp_db, ticket.id, field="success", user_note="success note", actor="human", now=4

@@ -10,8 +10,7 @@ export type WorkspaceTicketGroup = {
 
 const groupOrder = [
   ["needs-me", "Needs user"],
-  ["awaiting-user-review", "User review"],
-  ["awaiting-agent-review", "Agent review"],
+  ["current-awaiting-approval", "Awaiting approval"],
   ["current-paired", "Paired"],
   ["current-running", "Agent"],
   ["errored", "Blocked"],
@@ -28,23 +27,13 @@ function ticketOrder(left: SprintItemWorkspaceTicket, right: SprintItemWorkspace
   );
 }
 
-// The shared awaiting-approval mark covers both review routes; split it by which one a
-// Ticket is actually parked on so each gets its own header.
-function ticketGroupKey(ticket: SprintItemWorkspaceTicket): string {
-  const mark = sprintTicketCondition(ticket).mark;
-  if (mark !== "current-awaiting-approval") return mark;
-  return ticket.ticket_status === "awaiting_agent_review"
-    ? "awaiting-agent-review"
-    : "awaiting-user-review";
-}
-
 // Today and Remaining are the same structure. The only thing the split says is whether
 // the Ticket is on the Day, so both sections group their own Tickets the same way and
 // both carry a Done group.
 function groupTickets(tickets: SprintItemWorkspaceTicket[]): WorkspaceTicketGroup[] {
   return groupOrder.flatMap(([key, label]) => {
     const grouped = tickets
-      .filter((ticket) => ticketGroupKey(ticket) === key)
+      .filter((ticket) => sprintTicketCondition(ticket).mark === key)
       .sort(ticketOrder);
     return grouped.length ? [{ key, label, tickets: grouped }] : [];
   });

@@ -18,15 +18,7 @@ TITLE_MAX_CHARS: Final = 200
 
 class AtCap(StrEnum):  # §4.3
     stop = "stop"
-    agent_review = "agent_review"
-    user_review = "user_review"
-
-
-class ProposalReviewRoute(StrEnum):
-    """The reviewer of a parked proposal, derived from the Ticket at decision time."""
-
-    agent_review = "agent_review"
-    user_review = "user_review"
+    propose = "propose"
 
 
 class StageOwnershipMode(StrEnum):
@@ -62,8 +54,7 @@ class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer 
     blocked = "blocked"  # empty's stand-in while a live blocker exists
     agent = "agent"
     paired = "paired"
-    awaiting_agent_review = "awaiting_agent_review"
-    awaiting_user_review = "awaiting_user_review"
+    awaiting_approval = "awaiting_approval"
     needs_user = "needs_user"
     user = "user"
     errored = "errored"
@@ -130,10 +121,9 @@ class TicketListFilters:
 
 @dataclass(frozen=True)
 class Proposal:  # §4.2 proposal slot
-    """A parked proposal.
+    """A parked proposal, waiting for the user to approve it.
 
-    It carries no reviewer. Who reviews it is derived from the Ticket's at_cap at the
-    moment of the decision, so a scope change moves a proposal already parked.
+    It carries no reviewer, because there is only one approval gate to carry.
     """
 
     body: str
@@ -210,8 +200,8 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     sprint_item_id: str | None
     blocked_by_ticket_ids: list[str]
     # Scope stated at creation by whoever has the authority to grant it. A creator that
-    # states scope creates the Ticket already scoped, so nothing parks that it cannot
-    # resolve. Omission keeps the default leash: the kickoff parks for user review.
+    # states scope creates the Ticket already scoped. Omission keeps the default leash:
+    # the kickoff parks for approval.
     ceiling: str | None
     at_cap: str | None
 
@@ -330,7 +320,7 @@ class Ticket:  # §3.3 — column names match exactly
     resolved_priority_anchors: ResolvedTicketPriorityAnchors
     recap: str  # writable only past the type's first worker Stage
     ceiling: str  # ceiling id; a member of the type's ceiling_range
-    at_cap: AtCap  # default user_review
+    at_cap: AtCap  # default propose
     ticket_status: TicketStatus  # durable state-of-control; transition functions write it
     # When ticket_status last actually changed. Claiming a Ticket for a worker step
     # captures it, and giving that claim back compares it, so a late release cannot erase

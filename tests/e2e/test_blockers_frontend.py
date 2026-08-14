@@ -77,7 +77,7 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
     )["id"]
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET stage = 'needs_plan', ticket_status = 'awaiting_user_review' "
+            "UPDATE tickets SET stage = 'needs_plan', ticket_status = 'awaiting_approval' "
             "WHERE id = ?",
             (later_dependent,),
         )
@@ -107,8 +107,8 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
     for card in (active_card, later_card, kickoff_card, shared_card):
         assert page.locator(f"{no_item} {card}").is_visible()
     assert page.get_attribute(active_card, "data-ticket-status") == "empty"
-    assert page.get_attribute(later_card, "data-ticket-status") == "awaiting_user_review"
-    assert page.get_attribute(kickoff_card, "data-ticket-status") == "awaiting_user_review"
+    assert page.get_attribute(later_card, "data-ticket-status") == "awaiting_approval"
+    assert page.get_attribute(kickoff_card, "data-ticket-status") == "awaiting_approval"
     assert page.get_attribute(shared_card, "data-ticket-status") == "blocked"
     assert page.get_attribute(later_card, "data-ticket-stage") == "needs_plan"
     assert page.get_attribute(
@@ -297,7 +297,7 @@ def test_kickoff_card_context_approves_while_blockers_stay_in_the_masthead(
 
     # Kickoff approval with an explicit ceiling/at-cap still works from the card.
     page.select_option(f"{card} [data-scope-ceiling]", "none")
-    page.select_option(f"{card} [data-scope-atcap] select", "user_review")
+    page.select_option(f"{card} [data-scope-atcap] select", "propose")
     page.click(f"{card} [data-accept]")
 
     # Kickoff approval does not move the ticket-level blocker line.
@@ -306,7 +306,7 @@ def test_kickoff_card_context_approves_while_blockers_stay_in_the_masthead(
     detail = _get_ticket(server, ticket)
     assert detail["stage"] == "needs_success"
     assert detail["ceiling"] == "needs_success"
-    assert detail["at_cap"] == "user_review"
+    assert detail["at_cap"] == "propose"
 
     # A later-stage approval card carries no context row; blockers stay standalone.
     cli(

@@ -162,7 +162,7 @@ def test_rollup_probe_child_via_read_item(
         actor="human",
         now=2,
         next_ceiling=NEEDS_BETA,
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
     )
     file_proposal(tmp_db, probe.id, field=FIELD_ALPHA, body="alpha", actor="agent", now=3)
 
@@ -193,7 +193,7 @@ def test_rollup_coding_child_via_read_item_unchanged(
         actor="human",
         now=2,
         next_ceiling="needs_approach",
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
     )
     file_proposal(tmp_db, child.id, field="success", body="s", actor="agent", now=3)
 

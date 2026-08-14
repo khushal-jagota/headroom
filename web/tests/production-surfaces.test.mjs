@@ -126,20 +126,16 @@ assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/human-reply/);
 assert.doesNotMatch(ticketRouteSource, /pristineKickoff|employeeBackendOptions|\/employee-backend/);
 assert.doesNotMatch(ticketRouteSource, /["'](?:hermes|codex|claude(?: code)?)["']/i);
 assert.doesNotMatch(ticketRouteSource, /<style>|settings|employee backend|ACP backend/i);
+// There is one approval gate. At the ceiling a Ticket either stops or proposes, so both
+// scope pickers offer exactly those two and nothing else. No option is conditional: a
+// Ticket having a Sprint Item no longer buys it a second, agent-owned review route.
 assert.match(ticketRouteSource, /value="stop">then stop/);
-assert.match(ticketRouteSource, /value="agent_review">then agent review/);
-assert.match(ticketRouteSource, /value="user_review">then user review/);
-assert.doesNotMatch(ticketRouteSource, /value="propose"|then continue/i);
+assert.match(ticketRouteSource, /value="propose">then propose/);
 assert.match(scopePairPickerSource, /value="stop">Stop/);
-assert.match(scopePairPickerSource, /value="agent_review">Agent review/);
-assert.match(scopePairPickerSource, /\{#if allowAgentReview\}<option value="agent_review"/);
-assert.match(ticketRouteSource, /allowAgentReview=\{detail\.sprint_item_id !== null\}/);
-assert.match(
-  ticketRouteSource,
-  /\{#if detail\.sprint_item_id !== null\}[\s\S]*?<option value="agent_review">then agent review/,
-);
-assert.match(scopePairPickerSource, /value="user_review">User review/);
-assert.doesNotMatch(scopePairPickerSource, /value="propose"|>Continue</);
+assert.match(scopePairPickerSource, /value="propose">Propose/);
+assert.doesNotMatch(ticketRouteSource, /agent_review|user_review|allowAgentReview/);
+assert.doesNotMatch(scopePairPickerSource, /agent_review|user_review|allowAgentReview/);
+assert.doesNotMatch(scopePairPickerSource, /sprint_item_id/);
 // Ticket placement edits the Project. The eyebrow states no Sprint, and its Sprint Item
 // fact is a link back to that Item on the Workspace rather than a reassignment control.
 assert.match(ticketRouteSource, /data-ticket-placement/);
@@ -241,12 +237,12 @@ assert.match(
 assert.doesNotMatch(boardRouteSource, /project-filter|projectMenu|selectedProject|rosterCards|All projects/);
 assert.doesNotMatch(appCssSource, /board-workspace-project-filter/);
 // The rail groups by the one shared Ticket condition, in one order, with the quiet
-// four hidden until the reader asks. There is no second organizing rule and no
+// three hidden until the reader asks. There is no second organizing rule and no
 // view mode.
 assert.match(workspaceRailSource, /import \{ sprintTicketCondition \}/);
 assert.match(
   workspaceRailSource,
-  /"needs-me"[\s\S]*"awaiting-user-review"[\s\S]*"awaiting-agent-review", label: "Agent review", hidden: true[\s\S]*"current-paired"[\s\S]*"current-running", label: "Agent", hidden: true[\s\S]*"errored", label: "Blocked", hidden: true[\s\S]*"upcoming"[\s\S]*"completed", label: "Done", hidden: true/,
+  /"needs-me"[\s\S]*"current-awaiting-approval", label: "Awaiting approval", hidden: false[\s\S]*"current-paired"[\s\S]*"current-running", label: "Agent", hidden: true[\s\S]*"errored", label: "Blocked", hidden: true[\s\S]*"upcoming"[\s\S]*"completed", label: "Done", hidden: true/,
 );
 assert.doesNotMatch(boardRouteSource, /data-workspace-view|railMode|WorkspaceRailMode/);
 assert.doesNotMatch(appCssSource, /board-workspace-view-control/);

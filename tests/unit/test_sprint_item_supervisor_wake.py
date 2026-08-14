@@ -202,7 +202,7 @@ def world(tmp_path: Path) -> _World:
 
 def test_a_wake_carries_no_ticket_id_and_no_fact(world: _World) -> None:
     item_id = world.item()
-    ticket_id = world.ticket(item_id, status=TicketStatus.awaiting_agent_review)
+    ticket_id = world.ticket(item_id, status=TicketStatus.awaiting_approval)
 
     assert world.wake(item_id) is True
 
@@ -220,12 +220,12 @@ def test_a_wake_carries_no_ticket_id_and_no_fact(world: _World) -> None:
 @pytest.mark.parametrize(
     "status",
     [
-        TicketStatus.awaiting_agent_review,
+        TicketStatus.awaiting_approval,
         TicketStatus.errored,
         TicketStatus.needs_user,
     ],
 )
-def test_a_ticket_the_supervisor_can_act_on_wakes_it(
+def test_a_ticket_wanting_attention_wakes_the_supervisor(
     world: _World, status: TicketStatus
 ) -> None:
     item_id = world.item()
@@ -258,21 +258,12 @@ def test_a_blocked_ticket_never_wakes_the_supervisor(world: _World) -> None:
     assert world.prompts_sent(item_id) == ()
 
 
-def test_a_review_belonging_to_the_user_does_not_wake_the_supervisor(
-    world: _World,
-) -> None:
-    item_id = world.item()
-    world.ticket(item_id, status=TicketStatus.awaiting_user_review)
-
-    assert world.wake(item_id) is False
-
-
 def test_the_supervisors_own_proposal_does_not_wake_it(world: _World) -> None:
     """A supervisor that parked its own proposal remembers doing it."""
     item_id = world.item()
     world.ticket(
         item_id,
-        status=TicketStatus.awaiting_agent_review,
+        status=TicketStatus.awaiting_approval,
         proposed_by=SPRINT_ITEM_SUPERVISOR_ACTOR,
     )
 
@@ -283,7 +274,7 @@ def test_the_supervisors_own_proposal_does_not_wake_it(world: _World) -> None:
 def test_a_worker_proposal_still_wakes_the_supervisor(world: _World) -> None:
     item_id = world.item()
     world.ticket(
-        item_id, status=TicketStatus.awaiting_agent_review, proposed_by="agent"
+        item_id, status=TicketStatus.awaiting_approval, proposed_by="agent"
     )
 
     assert world.wake(item_id) is True
@@ -300,7 +291,7 @@ def test_standing_state_alone_does_not_wake_the_supervisor_again(world: _World) 
     unrelated commit in Panels, for as long as it stood.
     """
     item_id = world.item()
-    world.ticket(item_id, status=TicketStatus.awaiting_agent_review, status_changed_at=100)
+    world.ticket(item_id, status=TicketStatus.awaiting_approval, status_changed_at=100)
 
     assert world.needs_supervisor(item_id) is True
     world.record_wake(item_id, at=200)
@@ -313,7 +304,7 @@ def test_standing_state_alone_does_not_wake_the_supervisor_again(world: _World) 
 
 def test_a_ticket_that_moves_after_the_wake_counts_again(world: _World) -> None:
     item_id = world.item()
-    ticket_id = world.ticket(item_id, status=TicketStatus.awaiting_agent_review)
+    ticket_id = world.ticket(item_id, status=TicketStatus.awaiting_approval)
     world.record_wake(item_id, at=200)
     assert world.needs_supervisor(item_id) is False
 
@@ -329,7 +320,7 @@ def test_a_ticket_that_moves_after_the_wake_counts_again(world: _World) -> None:
 
 def test_nothing_stacks_behind_a_wake_that_is_still_waiting(world: _World) -> None:
     item_id = world.item()
-    ticket_id = world.ticket(item_id, status=TicketStatus.awaiting_agent_review)
+    ticket_id = world.ticket(item_id, status=TicketStatus.awaiting_approval)
 
     assert world.wake(item_id) is True
     conversation_id = world.supervisor_conversation(item_id)
@@ -356,7 +347,7 @@ def test_nothing_stacks_behind_a_wake_that_is_still_waiting(world: _World) -> No
 
 def test_a_busy_supervisor_is_not_woken(world: _World) -> None:
     item_id = world.item()
-    ticket_id = world.ticket(item_id, status=TicketStatus.awaiting_agent_review)
+    ticket_id = world.ticket(item_id, status=TicketStatus.awaiting_approval)
 
     assert world.wake(item_id) is True
     conversation_id = world.supervisor_conversation(item_id)

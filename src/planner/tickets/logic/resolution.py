@@ -14,9 +14,7 @@ from planner.tickets.contracts import (
     FieldSlot,
     NextCeiling,
     Proposal,
-    ProposalReviewRoute,
     ScopePair,
-    StageOwnershipMode,
     Ticket,
     TicketStatus,
 )
@@ -131,8 +129,6 @@ def decide_file_proposal(
         ticket.stage_ownership_overrides,
         worker_type_definition=worker_type_definition,
         default_stage_ownership_mode=ticket.default_stage_ownership_mode,
-        ceiling=ticket.ceiling,
-        at_cap=ticket.at_cap,
     )
     if (
         ownership_mode is not None
@@ -183,26 +179,6 @@ def decide_file_proposal(
     return Decision(events=tuple(events), new_fields=new_fields)
 
 
-def _require_supervisor_reviewer(ticket: Ticket, field: str, actor: str) -> None:
-    """Refuse a supervisor decision on a proposal the user is reviewing.
-
-    The reviewer is read from the Ticket now, so a scope change since the proposal
-    parked decides who holds it.
-    """
-    if actor != admission.SPRINT_ITEM_SUPERVISOR_ACTOR:
-        return
-    route = machine.parked_proposal_review_route(
-        ticket.effective_stage_ownership_mode or StageOwnershipMode.user,
-        ticket.at_cap,
-    )
-    if route is not ProposalReviewRoute.agent_review:
-        raise PlannerError(
-            ErrorCode.agent_forbidden,
-            "the proposal is not routed to the Sprint Item supervisor",
-            {"ticket_id": ticket.id, "field": field},
-        )
-
-
 def decide_accept(
     ticket: Ticket,
     field: str,
@@ -229,7 +205,6 @@ def decide_accept(
             {"ticket_id": ticket.id, "field": str(field)},
         )
     supervisor_review = actor == admission.SPRINT_ITEM_SUPERVISOR_ACTOR
-    _require_supervisor_reviewer(ticket, str(field), actor)
     stored_body = edited_body if edited_body is not None else slot.proposal.body
     if field == worker_type_definition.gating_field(ticket.stage):
         new_stage = worker_type_definition.advance_target(ticket.stage)
@@ -355,7 +330,6 @@ def decide_return_for_revision(
             "no pending proposal to return",
             {"ticket_id": ticket.id, "field": str(field)},
         )
-    _require_supervisor_reviewer(ticket, str(field), actor)
     new_slot = FieldSlot(value=slot.value, proposal=None, user_note=slot.user_note)
     return Decision(
         events=(), new_fields=fields_codec.with_slot(ticket.fields, str(field), new_slot)

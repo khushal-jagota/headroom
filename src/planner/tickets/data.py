@@ -27,7 +27,6 @@ from planner.tickets.contracts import (
     NextCeiling,
     ProjectPriorityAnchor,
     Proposal,
-    ProposalReviewRoute,
     ResolvedTicketPriorityAnchors,
     SprintItemPriorityAnchor,
     StageOwnershipMode,
@@ -303,8 +302,6 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         overrides,
         worker_type_definition=worker_type_definition,
         default_stage_ownership_mode=default_ownership,
-        ceiling=str(row["ceiling"]),
-        at_cap=AtCap(str(row["at_cap"])),
     )
     return Ticket(
         id=row["id"],
@@ -406,16 +403,6 @@ def _load_ticket_for_write(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
     return ticket
 
 
-def _is_normal_sprint_item(conn: sqlite3.Connection, sprint_item_id: str | None) -> bool:
-    if sprint_item_id is None:
-        return False
-    row = conn.execute(
-        "SELECT 1 FROM sprint_items WHERE id = ? AND kind = 'normal'",
-        (sprint_item_id,),
-    ).fetchone()
-    return row is not None
-
-
 def _seed_kickoff(
     kickoff_note: str | None,
     actor: str,
@@ -423,15 +410,14 @@ def _seed_kickoff(
     *,
     stage: str,
     ceiling: str,
-    at_cap: AtCap,
     ownership_mode: StageOwnershipMode | None,
     worker_type_definition: WorkerTypeDefinition,
 ) -> tuple[str, TicketFields, TicketStatus]:
     """Seed the kickoff under the scope the creator stated.
 
     Scope stated at creation is the same scope an ordinary proposal is judged against, so
-    a kickoff settles, parks for its agent reviewer, or parks for the user by exactly the
-    rules a later proposal follows. Nothing parks that the creator cannot resolve.
+    a kickoff either settles or parks for approval by exactly the rules a later proposal
+    follows.
     """
     fields = TicketFields.empty(worker_type_definition.field_ids())
     if kickoff_note is None:
@@ -449,7 +435,6 @@ def _seed_kickoff(
             fields, "kickoff", FieldSlot(value=kickoff_note, proposal=None, user_note=None)
         )
         return settled_stage, fields, machine.resting_ticket_status(effective_ownership)
-    review_route = machine.parked_proposal_review_route(effective_ownership, at_cap)
     fields = fields_codec.with_slot(
         fields,
         "kickoff",
@@ -463,37 +448,7 @@ def _seed_kickoff(
             user_note=None,
         ),
     )
-    status = (
-        TicketStatus.awaiting_agent_review
-        if review_route is ProposalReviewRoute.agent_review
-        else TicketStatus.awaiting_user_review
-    )
-    return stage, fields, status
-
-
-def _require_agent_review_placement(
-    conn: sqlite3.Connection,
-    ticket: Ticket,
-    at_cap: AtCap | None,
-    sprint_item_id: str | None,
-) -> None:
-    """Keep agent review paired with the normal Sprint Item that owns its reviewer.
-
-    A parked proposal needs no separate check. Its reviewer is derived from at_cap, so a
-    Ticket outside agent review holds nothing an agent reviews.
-    """
-    if at_cap is not AtCap.agent_review:
-        return
-    row = conn.execute(
-        "SELECT 1 FROM sprint_items WHERE id = ? AND kind = 'normal'",
-        (sprint_item_id,),
-    ).fetchone()
-    if row is None:
-        raise PlannerError(
-            ErrorCode.scope_invalid,
-            "agent review requires placement under a normal Sprint Item",
-            {"ticket_id": ticket.id, "sprint_item_id": sprint_item_id},
-        )
+    return stage, fields, TicketStatus.awaiting_approval
 
 
 def _require_current_supervisor_parent(
@@ -725,8 +680,6 @@ def _resting_status_for_ticket(
         ticket.stage_ownership_overrides,
         worker_type_definition=worker_type_definition,
         default_stage_ownership_mode=ticket.default_stage_ownership_mode,
-        ceiling=ticket.ceiling,
-        at_cap=ticket.at_cap,
     )
     resting = (
         TicketStatus.empty
@@ -747,8 +700,6 @@ def _entered_stage_status_for_ticket(
         ticket.stage_ownership_overrides,
         worker_type_definition=worker_type_definition,
         default_stage_ownership_mode=ticket.default_stage_ownership_mode,
-        ceiling=ticket.ceiling,
-        at_cap=ticket.at_cap,
     )
     entered = TicketStatus.user if ownership_mode is StageOwnershipMode.user else TicketStatus.empty
     return _blocked_standin(conn, ticket.id, entered)
@@ -793,25 +744,6 @@ def _write_entered_stage_ticket_status(
     _write_ticket_status(conn, ticket.id, target_status, now)
 
 
-def _parked_proposal_field(
-    ticket: Ticket,
-    worker_type_definition: WorkerTypeDefinition,
-) -> str | None:
-    """The field whose parked proposal the Ticket status speaks for, if any.
-
-    The current Stage's gating field comes first, because that is the proposal a reviewer
-    is shown. A proposal on any other field parks too, and derives the same reviewer, so
-    it must not be left behind by a scope change.
-    """
-    gating_field = worker_type_definition.gating_field(ticket.stage)
-    if gating_field is not None and fields_codec.get_slot(ticket.fields, gating_field).proposal:
-        return gating_field
-    return next(
-        (fid for fid, slot in ticket.fields.slots.items() if slot.proposal is not None),
-        None,
-    )
-
-
 def _write_parked_proposal_status(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -822,16 +754,7 @@ def _write_parked_proposal_status(
     proposal = fields_codec.get_slot(ticket.fields, field).proposal
     if proposal is None:
         raise PlannerError(ErrorCode.validation, "ticket has no parked proposal")
-    route = machine.parked_proposal_review_route(
-        ticket.effective_stage_ownership_mode or StageOwnershipMode.user,
-        ticket.at_cap,
-    )
-    status = (
-        TicketStatus.awaiting_agent_review
-        if route is ProposalReviewRoute.agent_review
-        else TicketStatus.awaiting_user_review
-    )
-    _write_ticket_status(conn, ticket_id, status, now)
+    _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
 
 
 def write_ticket_conversation_start(
@@ -976,7 +899,7 @@ def employee_configuration_editable(ticket: Ticket) -> bool:
         ticket.stage == "needs_kickoff"
         and ticket.ticket_status
         in {
-            TicketStatus.awaiting_user_review,
+            TicketStatus.awaiting_approval,
             TicketStatus.paired,
             TicketStatus.empty,
             TicketStatus.blocked,
@@ -1071,7 +994,6 @@ def create_ticket(
     worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
     day_id: str | None = None,
-    supervisor_sprint_item_id: str | None = None,
     stated_ceiling: str | None = None,
     stated_at_cap: AtCap | None = None,
 ) -> Ticket:
@@ -1117,32 +1039,18 @@ def create_ticket(
             conn, project_id=project_id, sprint_item_id=sprint_item_id
         )
         stored_priority = _created_ticket_priority(priority, priority_anchors)
-        # A supervisor creating under its own Item reviews what it created.
-        supervised = (
-            actor == admission.SPRINT_ITEM_SUPERVISOR_ACTOR
-            and sprint_item_id is not None
-            and supervisor_sprint_item_id == sprint_item_id
-            and _is_normal_sprint_item(conn, sprint_item_id)
-        )
         ceiling = (
             default_ceiling
             if stated_ceiling is None
             else worker_type_definition.resolve_ceiling(stated_ceiling)
         )
-        at_cap = stated_at_cap or (AtCap.agent_review if supervised else AtCap.user_review)
-        if at_cap is AtCap.agent_review and not _is_normal_sprint_item(conn, sprint_item_id):
-            raise PlannerError(
-                ErrorCode.scope_invalid,
-                "agent review requires placement under a normal Sprint Item",
-                {"sprint_item_id": sprint_item_id},
-            )
+        at_cap = stated_at_cap or AtCap.propose
         stage, initial_fields, initial_ticket_status = _seed_kickoff(
             kickoff_note,
             actor,
             now,
             stage=initial_stage,
             ceiling=ceiling,
-            at_cap=at_cap,
             ownership_mode=default_stage_ownership_mode,
             worker_type_definition=worker_type_definition,
         )
@@ -1301,7 +1209,7 @@ def create_ticket_from_external_work(
                 sprint_id,
                 sprint_item_id,
                 first_worker,
-                AtCap.user_review.value,
+                AtCap.propose.value,
                 TicketStatus.empty.value,
                 "{}",
                 (
@@ -1528,8 +1436,6 @@ def claim_ticket_for_worker_step(
             ticket.stage_ownership_overrides,
             worker_type_definition=worker_type_definition,
             default_stage_ownership_mode=ticket.default_stage_ownership_mode,
-            ceiling=ticket.ceiling,
-            at_cap=ticket.at_cap,
         )
         if ownership_mode is None:
             raise PlannerError(
@@ -1711,7 +1617,6 @@ def accept_proposal(
             conn, ticket_id
         )
         _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id)
-        _require_agent_review_placement(conn, ticket, at_cap, ticket.sprint_item_id)
         decision = resolution.decide_accept(
             ticket,
             field,
@@ -1770,8 +1675,6 @@ def set_stage_ownership(
                 if stage == ticket.stage
                 else _default_stage_ownership_for_entry(conn, worker_type_definition, stage)
             ),
-            ceiling=ticket.ceiling,
-            at_cap=ticket.at_cap,
         )
         assert effective_before is not None
         overrides = dict(ticket.stage_ownership_overrides)
@@ -1788,8 +1691,6 @@ def set_stage_ownership(
                 if stage == ticket.stage
                 else _default_stage_ownership_for_entry(conn, worker_type_definition, stage)
             ),
-            ceiling=ticket.ceiling,
-            at_cap=ticket.at_cap,
         )
         if overrides == ticket.stage_ownership_overrides:
             return ticket
@@ -1805,8 +1706,7 @@ def set_stage_ownership(
             and updated.ticket_status
             not in (
                 TicketStatus.agent,
-                TicketStatus.awaiting_agent_review,
-                TicketStatus.awaiting_user_review,
+                TicketStatus.awaiting_approval,
                 TicketStatus.errored,
             )
         ):
@@ -1849,8 +1749,7 @@ def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> T
         updated = _load_ticket_for_write(conn, ticket_id)
         if effective_before is not StageOwnershipMode.user and updated.ticket_status not in (
             TicketStatus.agent,
-            TicketStatus.awaiting_agent_review,
-            TicketStatus.awaiting_user_review,
+            TicketStatus.awaiting_approval,
             TicketStatus.errored,
         ):
             _write_entered_stage_ticket_status(
@@ -1901,8 +1800,6 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
             overrides,
             worker_type_definition=worker_type_definition,
             default_stage_ownership_mode=ticket.default_stage_ownership_mode,
-            ceiling=ticket.ceiling,
-            at_cap=ticket.at_cap,
         )
         conn.execute(
             "UPDATE tickets SET stage_ownership_overrides = ?, updated_at = ? WHERE id = ?",
@@ -1911,8 +1808,7 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
         updated = _load_ticket_for_write(conn, ticket_id)
         if effective_before is not effective_after and updated.ticket_status not in (
             TicketStatus.agent,
-            TicketStatus.awaiting_agent_review,
-            TicketStatus.awaiting_user_review,
+            TicketStatus.awaiting_approval,
             TicketStatus.errored,
         ):
             _write_entered_stage_ticket_status(
@@ -1953,11 +1849,11 @@ def enter_paired_on_human_reply(conn: sqlite3.Connection, ticket_id: str, *, now
     """Flip a filed proposal to paired when a human replies with a typed message.
 
     Automatic consequence of message admission, not an actor-authored write, so no actor is
-    required. A no-op unless the Ticket is parked for user review.
+    required. A no-op unless the Ticket is parked for approval.
     """
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
-        if ticket.ticket_status is TicketStatus.awaiting_user_review:
+        if ticket.ticket_status is TicketStatus.awaiting_approval:
             _write_ticket_status(conn, ticket_id, TicketStatus.paired, now)
         return _load_ticket_for_write(conn, ticket_id)
 
@@ -2160,7 +2056,6 @@ def change_scope(
             conn, ticket_id
         )
         _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id)
-        _require_agent_review_placement(conn, ticket, at_cap, ticket.sprint_item_id)
         decision = resolution.decide_scope_change(
             ticket,
             ceiling,
@@ -2170,19 +2065,7 @@ def change_scope(
         )
         updated = _apply_decision(conn, ticket, decision, now)
         ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
-        parked_field = _parked_proposal_field(updated, worker_type_definition)
-        if (
-            ticket.ticket_status
-            in {
-                TicketStatus.awaiting_agent_review,
-                TicketStatus.awaiting_user_review,
-            }
-            and parked_field is not None
-        ):
-            # The proposal already in front of a reviewer follows the new scope. This is
-            # how a supervisor hands review to the user.
-            _write_parked_proposal_status(conn, ticket_id, updated, parked_field, now)
-        elif ticket.ticket_status in {
+        if ticket.ticket_status in {
             TicketStatus.empty,
             TicketStatus.blocked,
             TicketStatus.paired,
@@ -2346,7 +2229,6 @@ def edit_ticket(
         sprint_item_id = (
             edit["sprint_item_id"] if "sprint_item_id" in edit else ticket.sprint_item_id
         )
-        _require_agent_review_placement(conn, ticket, ticket.at_cap, sprint_item_id)
 
         # Validate the intended final Ticket before its first durable effect. Parent
         # restrictions use request-key presence: explicitly assigning the same/null
@@ -2419,7 +2301,6 @@ def move_ticket_to_sprint_item(
             )
         if ticket.sprint_item_id == sprint_item_id:
             return ticket
-        _require_agent_review_placement(conn, ticket, ticket.at_cap, sprint_item_id)
         conn.execute(
             "UPDATE tickets SET sprint_item_id = ?, project_id = ?, sprint_id = ?, "
             "updated_at = ? WHERE id = ?",
@@ -2456,7 +2337,6 @@ def move_ticket_to_backlog(
         # not detach that newer membership.
         if ticket.sprint_item_id != sprint_item_id:
             return ticket
-        _require_agent_review_placement(conn, ticket, ticket.at_cap, None)
         conn.execute(
             "UPDATE tickets SET sprint_item_id = NULL, sprint_id = NULL, project_id = ?, "
             "updated_at = ? WHERE id = ?",

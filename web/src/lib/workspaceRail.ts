@@ -1,12 +1,11 @@
 import { sprintTicketCondition } from "./sprintPresentation";
 import type { BoardCard, BoardSprintItem, Priority } from "./types";
 
-// One order of Ticket groups, with the quiet four hidden until the reader asks for
+// One order of Ticket groups, with the quiet three hidden until the reader asks for
 // them. The labels are the ones the Sprint screen and the Sprint Item page already use.
 const GROUP_ORDER = [
   { key: "needs-me", label: "Needs user", hidden: false },
-  { key: "awaiting-user-review", label: "User review", hidden: false },
-  { key: "awaiting-agent-review", label: "Agent review", hidden: true },
+  { key: "current-awaiting-approval", label: "Awaiting approval", hidden: false },
   { key: "current-paired", label: "Paired", hidden: false },
   { key: "current-running", label: "Agent", hidden: true },
   { key: "errored", label: "Blocked", hidden: true },
@@ -16,10 +15,9 @@ const GROUP_ORDER = [
 ] as const;
 
 // The groups that hold work the user owns. They decide which Items lead the rail.
-// Agent review is deliberately left out: it is the agent's own review, not the user's.
 const USER_GROUP_KEYS = new Set([
   "needs-me",
-  "awaiting-user-review",
+  "current-awaiting-approval",
   "current-paired"
 ]);
 
@@ -49,17 +47,12 @@ export type WorkspaceRail = {
 
 const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
 
-// A card's own two facts win first: it is finished, or a blocker holds it. Then the
-// shared awaiting-approval mark splits by which review route the card is parked on, so
-// User review and Agent review land in their own groups.
+// A card's own two facts win first: it is finished, or a blocker holds it. Everything
+// else is the shared Ticket condition.
 export function workspaceCardGroupKey(card: BoardCard): string {
   if (card.is_done) return "completed";
   if (card.blocked) return "errored";
-  const mark = sprintTicketCondition(card).mark;
-  if (mark !== "current-awaiting-approval") return mark;
-  return card.ticket_status === "awaiting_agent_review"
-    ? "awaiting-agent-review"
-    : "awaiting-user-review";
+  return sprintTicketCondition(card).mark;
 }
 
 export function workspaceItemGroups(

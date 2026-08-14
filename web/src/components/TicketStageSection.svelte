@@ -21,7 +21,6 @@
     ceiling,
     suggestedNextCeiling = null,
     lifecycle = null,
-    allowAgentReview = true,
     stageState = "upcoming",
     variant = "ticket",
     emptyText = "Not written yet.",
@@ -41,7 +40,6 @@
     ceiling: string;
     suggestedNextCeiling?: string | null;
     lifecycle?: Lifecycle | null;
-    allowAgentReview?: boolean;
     stageState?: FieldStageVisualState;
     variant?: "ticket" | "review";
     emptyText?: string;
@@ -101,7 +99,6 @@
       newStage={nextStage}
       suggestedNextCeiling={name === "kickoff" ? suggestedNextCeiling : null}
       {lifecycle}
-      {allowAgentReview}
       {contextRow}
       disabled={approvalDisabled}
       onApprove={onAccept}
@@ -116,7 +113,6 @@
         proposedBy={slot.proposal?.proposed_by || ""}
         newStage={nextStage}
         {lifecycle}
-        {allowAgentReview}
         onApprove={onAccept}
       />
       {#if hasValue}<MarkdownBlock text={slot.value} />{/if}

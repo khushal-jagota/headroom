@@ -33,14 +33,14 @@ One screen per part of the system:
   eyebrow, and the fold control beside it opens and closes the box.
 
   Inside a box the Tickets sit under plain status headings, in one order: Needs user,
-  User review, Agent review, Paired, Agent, Blocked, To do, Done. User review and Agent
-  review split the two proposal review routes apart, each under its own heading. The
-  headings are labels, not controls. Agent review, Agent, Blocked and Done are quiet:
+  Awaiting approval, Paired, Agent, Blocked, Waiting for closeout, To do, Done. Every
+  parked proposal sits under Awaiting approval, because there is one approval gate. The
+  headings are labels, not controls. Agent, Blocked and Done are quiet:
   they are not drawn until the reader asks. "+n more" counts what is put away, and
   pressing it again puts it back. A Ticket is in Blocked when its status says so or a
   live blocker holds it. The No Item tail groups and reveals the same way.
 
-  Items with work the user owns — Needs user, User review or Paired — come first,
+  Items with work the user owns — Needs user, Awaiting approval or Paired — come first,
   then Item priority orders the rest. Every heading, title and Ticket row starts at the
   same left edge. Every Ticket row is the shared Ticket row, so it carries its own
   priority tile beside its title and keeps the existing conversation mark.
@@ -105,7 +105,7 @@ One screen per part of the system:
   that spine, collapsed. The current Stage mark speaks without a second status pill.
   Its summary adds words only where the mark would otherwise be ambiguous:
   **you're on it** for user-owned or taken-over work, with **Release**, and
-  **awaiting agent review** or **awaiting user review** for a parked proposal. Running,
+  **awaiting approval** for a parked proposal. Running,
   completed, and upcoming marks need no
   extra label. Stage bodies, editing and approval behavior, and the worker conversation
   in serif along the bottom remain in place. **Copy** still produces a plain-text block

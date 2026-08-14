@@ -66,7 +66,7 @@ def _ticket(db_path: Path) -> str:
             actor="unattributed",
             now=0,
             next_ceiling=NO_FURTHER,
-            at_cap=AtCap.user_review,
+            at_cap=AtCap.propose,
         )
     finally:
         conn.close()

@@ -218,7 +218,7 @@ def _needs_kickoff_ticket(defn: WorkerTypeDefinition) -> Ticket:
         ),
         recap="",
         ceiling=defn.default_ceiling(),
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
         ticket_status=TicketStatus.empty,
         ticket_status_changed_at=0,
         ticket_status_revision=0,

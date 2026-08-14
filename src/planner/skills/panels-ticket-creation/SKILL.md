@@ -59,14 +59,14 @@ resolved. Do not use either as a second priority scale.
 
 ## Scope stated at creation
 
-By default a new Ticket parks its Kickoff for user review. That default is right for
-ordinary intake: the user wants to sense-check what work exists before it starts.
+By default a new Ticket parks its Kickoff for the user's approval. That default is right
+for ordinary intake: the user wants to sense-check what work exists before it starts.
 
 State the scope instead when the user gave you the scope to grant. `--ceiling` says how
-far the new Worker may go, and `--at-cap` says who reviews at that ceiling. Stating a
-ceiling past kickoff settles the Kickoff and starts the Ticket at its next Stage, so the
-work begins without a park that nobody present can resolve. `--at-cap agent_review`
-requires a normal Sprint Item parent, because that Item owns the reviewer.
+far the new Worker may go, and `--at-cap` says what happens there: `stop` prevents a
+proposal, and `propose` parks one for the user. Stating a ceiling past kickoff settles the
+Kickoff and starts the Ticket at its next Stage, so work the user has already authorized
+begins instead of waiting for a second approval.
 
 State only the scope you were actually given. Widening a Ticket beyond what the user
 authorized is not a creation detail.

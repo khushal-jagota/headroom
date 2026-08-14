@@ -546,7 +546,6 @@ async def create_ticket(
         boundary_hour=cfg.boundary_hour,
         sprint_item_id_explicit="sprint_item_id" in raw,
         sprint_id_explicit="sprint_id" in raw,
-        supervisor_sprint_item_id=ctx.sprint_item_id,
         stated_ceiling=body["ceiling"],
         stated_at_cap=_parse_scope_at_cap(body["at_cap"]),
     )

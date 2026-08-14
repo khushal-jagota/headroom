@@ -77,7 +77,9 @@ def test_upgrade_removes_the_proposal_review_route_and_keeps_the_proposal(
         ("t_stamped_route",),
     ).fetchone()
     assert row is not None
-    assert (row["at_cap"], row["ticket_status"]) == ("agent_review", "awaiting_agent_review")
+    # The later one-approval-gate revision collapses both routes, so the row arrives
+    # at the single gate with its proposal and control metadata untouched.
+    assert (row["at_cap"], row["ticket_status"]) == ("propose", "awaiting_approval")
     migrated_fields = json.loads(str(row["fields"]))
     assert migrated_fields["success"] == {
         "value": None,

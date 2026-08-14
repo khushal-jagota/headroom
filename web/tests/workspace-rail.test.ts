@@ -112,14 +112,11 @@ describe("Workspace rail", () => {
   it("names each card's group from the shared Ticket condition", () => {
     expect(workspaceCardGroupKey(card("a", { ticket_status: "needs_user" }))).toBe("needs-me");
     expect(workspaceCardGroupKey(card("b", { ticket_status: "user" }))).toBe("needs-me");
-    expect(workspaceCardGroupKey(card("c", { ticket_status: "awaiting_user_review" }))).toBe(
-      "awaiting-user-review"
-    );
-    expect(workspaceCardGroupKey(card("c2", { ticket_status: "awaiting_agent_review" }))).toBe(
-      "awaiting-agent-review"
+    expect(workspaceCardGroupKey(card("c", { ticket_status: "awaiting_approval" }))).toBe(
+      "current-awaiting-approval"
     );
     expect(workspaceCardGroupKey(card("d", { has_pending_proposal: true }))).toBe(
-      "awaiting-user-review"
+      "current-awaiting-approval"
     );
     expect(workspaceCardGroupKey(card("e", { ticket_status: "paired" }))).toBe("current-paired");
     expect(workspaceCardGroupKey(card("f", { ticket_status: "agent" }))).toBe("current-running");
@@ -142,18 +139,17 @@ describe("Workspace rail", () => {
     ]).items[0];
 
     expect(item.groups.map((group) => group.label)).toEqual(["Waiting for closeout", "To do"]);
-    // Not one of the quiet-four hidden groups: it shows without revealing.
+    // Not one of the quiet-three hidden groups: it shows without revealing.
     expect(workspaceItemGroups(item.groups, false).map((group) => group.label)).toEqual([
       "Waiting for closeout",
       "To do"
     ]);
   });
 
-  it("orders the groups, hides the quiet four, and reveals them on request", () => {
+  it("orders the groups, hides the quiet three, and reveals them on request", () => {
     const cards = [
       card("needs", { ticket_status: "needs_user" }),
-      card("review", { ticket_status: "awaiting_user_review" }),
-      card("agent-review", { ticket_status: "awaiting_agent_review" }),
+      card("review", { ticket_status: "awaiting_approval" }),
       card("paired", { ticket_status: "paired" }),
       card("working", { ticket_status: "agent" }),
       card("blocked", { ticket_status: "user", blocked: true }),
@@ -171,23 +167,21 @@ describe("Workspace rail", () => {
 
     expect(item.groups.map((group) => group.label)).toEqual([
       "Needs user",
-      "User review",
-      "Agent review",
+      "Awaiting approval",
       "Paired",
       "Agent",
       "Blocked",
       "To do",
       "Done"
     ]);
-    // Agent review is hidden by default, same as Agent, Blocked, and Done.
     expect(workspaceItemGroups(item.groups, false).map((group) => group.label)).toEqual([
       "Needs user",
-      "User review",
+      "Awaiting approval",
       "Paired",
       "To do"
     ]);
-    expect(workspaceItemGroups(item.groups, true)).toHaveLength(8);
-    expect(hiddenWorkspaceCardCount(item.groups)).toBe(4);
+    expect(workspaceItemGroups(item.groups, true)).toHaveLength(7);
+    expect(hiddenWorkspaceCardCount(item.groups)).toBe(3);
     expect(item.needsUser).toBe(true);
   });
 

@@ -22,12 +22,12 @@ from planner.tickets.logic.admission import SPRINT_ITEM_SUPERVISOR_ACTOR
 WAKE_TEXT: Final = "Your Sprint Item needs you. Read current context and act."
 WAKE_SENDER_LABEL: Final = "Panels"
 
-# What a supervisor can act on. A Ticket awaiting *user* review is not here, because
-# the supervisor cannot resolve a review that belongs to the user, and neither is a
-# blocked Ticket: blocking is ordinary planned state, and the supervisor reads blockers
-# from canonical state when it cares.
+# What a supervisor should look at. A parked proposal is here because the supervisor
+# reads it, weighs it, and can speak to its worker about it, whoever ends up approving
+# it. A blocked Ticket is not: blocking is ordinary planned state, and the supervisor
+# reads blockers from canonical state when it cares.
 _WAKING_STATUSES: Final = (
-    TicketStatus.awaiting_agent_review.value,
+    TicketStatus.awaiting_approval.value,
     TicketStatus.errored.value,
     TicketStatus.needs_user.value,
 )
@@ -115,7 +115,7 @@ def sprint_item_needs_supervisor(
         # would wake it again, and again.
         if int(row["ticket_status_changed_at"]) <= since:
             continue
-        if str(row["ticket_status"]) == TicketStatus.awaiting_agent_review.value and (
+        if str(row["ticket_status"]) == TicketStatus.awaiting_approval.value and (
             _proposed_by_the_supervisor(str(row["fields"]))
         ):
             continue

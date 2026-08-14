@@ -34,7 +34,7 @@ def _ticket(conn: Connection) -> Ticket:
         actor="human",
         now=2,
         next_ceiling="needs_success",
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
     )
 
 

@@ -145,7 +145,7 @@ def test_probe_proposal_parks_on_registry_selected_field(
         # with at_cap=propose so the next propose parks.
         client.post(
             f"/api/tickets/{tid}/accept/kickoff",
-            json={"next_ceiling": "needs_alpha", "at_cap": "user_review"},
+            json={"next_ceiling": "needs_alpha", "at_cap": "propose"},
         )
         # A position-relative propose parks on ALPHA — the field probe's needs_alpha gates.
         parked = client.post(
@@ -224,7 +224,7 @@ def test_probe_accepts_its_own_state_via_direct_state(app_db: AppDb, probe_insta
         tid = _create(client, "probe")
         client.post(
             f"/api/tickets/{tid}/accept/kickoff",
-            json={"next_ceiling": "done", "at_cap": "user_review"},
+            json={"next_ceiling": "done", "at_cap": "propose"},
         )
         jumped = client.post(
             f"/api/tickets/{tid}/stage", json={"to_stage": "needs_beta"}

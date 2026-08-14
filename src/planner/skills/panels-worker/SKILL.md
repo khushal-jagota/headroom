@@ -36,8 +36,8 @@ Ownership says who drives the current Stage. It is separate from Ticket scope.
 
 - **Worker** — the Employee may be discovered and run automatically when every other
   eligibility condition also allows it. Scope still decides whether a proposal is
-  accepted below the ceiling, parked through **Continue** at the ceiling, or prevented
-  by **Stop**.
+  accepted below the ceiling, parked for the user's approval through **Propose** at the
+  ceiling, or prevented by **Stop**.
 - **User** — the Ticket rests at `user` and is never dispatched automatically.
 - **Paired** — the Ticket gets one automatic opening turn for the current Stage, then
   rests at `paired` and is never started automatically again. Ordinary Ticket Chat is

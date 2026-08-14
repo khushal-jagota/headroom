@@ -100,7 +100,7 @@ def test_probe_ticket_drives_through_real_writers(
         actor="human",
         now=now,
         next_ceiling=NEEDS_BETA,
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
     )
     assert ticket.stage == NEEDS_ALPHA
     assert ticket.ticket_status is TicketStatus.user

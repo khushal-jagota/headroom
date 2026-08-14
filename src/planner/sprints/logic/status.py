@@ -24,8 +24,7 @@ _DONE_STAGE = "done"
 _IN_PROGRESS_TICKET_STATUSES = frozenset(
     {
         "agent",
-        "awaiting_agent_review",
-        "awaiting_user_review",
+        "awaiting_approval",
         "paired",
         "user",
     }

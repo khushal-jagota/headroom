@@ -104,7 +104,6 @@ def create_ticket(
     boundary_hour: int = 5,
     sprint_item_id_explicit: bool = False,
     sprint_id_explicit: bool = False,
-    supervisor_sprint_item_id: str | None = None,
     stated_ceiling: str | None = None,
     stated_at_cap: AtCap | None = None,
 ) -> Ticket:
@@ -140,7 +139,6 @@ def create_ticket(
         employee_backend=employee_backend,
         employee_launch_model=employee_launch_model,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
-        supervisor_sprint_item_id=supervisor_sprint_item_id,
         stated_ceiling=stated_ceiling,
         stated_at_cap=stated_at_cap,
     )

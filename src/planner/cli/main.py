@@ -1089,7 +1089,7 @@ def ticket() -> None:
     "at_cap",
     type=click.Choice([a.value for a in AtCap]),
     default=None,
-    help="Initial review route at the ceiling. Omit to park the kickoff for the user.",
+    help="Initial behaviour at the ceiling. Omit to park the kickoff for approval.",
 )
 @json_option
 def ticket_create(
@@ -1431,7 +1431,7 @@ def ticket_ownership(ticket_id: str, stage: str, mode: str, as_json: bool) -> No
     "--at-cap",
     default=None,
     type=click.Choice([a.value for a in AtCap]),
-    help="stop, agent_review, or user_review.",
+    help="stop or propose.",
 )
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @click.option("--kickoff-title", default=None, help="Edited Kickoff title.")
@@ -2227,7 +2227,7 @@ def sprint_item_supervisor_reset(item_id: str, as_json: bool) -> None:
     "--at-cap",
     required=True,
     type=click.Choice([a.value for a in AtCap]),
-    help="Review route at the next ceiling.",
+    help="Behaviour at the next ceiling: stop or propose.",
 )
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @json_option
@@ -2239,7 +2239,7 @@ def sprint_item_supervisor_approve(
     edit_file: str | None,
     as_json: bool,
 ) -> None:
-    """Approve one agent-review proposal for this Sprint Item."""
+    """Approve one parked proposal for this Sprint Item."""
     body: dict[str, Any] = {"next_ceiling": ceiling, "at_cap": at_cap}
     if edit_file is not None:
         body["edited_body"] = _read_source(edit_file, as_json)
@@ -2249,7 +2249,7 @@ def sprint_item_supervisor_approve(
         as_json=as_json,
         json_body=body,
     )
-    http.emit(data, as_json, f"{ticket_id} agent review approved")
+    http.emit(data, as_json, f"{ticket_id} proposal approved")
 
 
 @sprint_item_supervisor.command("reject")
@@ -2265,7 +2265,7 @@ def sprint_item_supervisor_reject(
     body_file: str | None,
     as_json: bool,
 ) -> None:
-    """Reject one agent-review proposal with focused guidance."""
+    """Reject one parked proposal with focused guidance."""
     if (message is None) == (body_file is None):
         http.fail_validation(
             "reject requires exactly one of --message or --body-file", as_json
@@ -2277,7 +2277,7 @@ def sprint_item_supervisor_reject(
         as_json=as_json,
         json_body={"message": text},
     )
-    http.emit(data, as_json, f"{ticket_id} agent review rejected")
+    http.emit(data, as_json, f"{ticket_id} proposal rejected")
 
 
 # --- chief --------------------------------------------------------------------

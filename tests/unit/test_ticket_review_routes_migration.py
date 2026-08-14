@@ -80,8 +80,8 @@ def test_upgrade_maps_legacy_review_state_without_losing_proposal_or_control_met
     assert tuple(row)[:7] == (
         "needs_success",
         "needs_success",
-        "user_review",
-        "awaiting_user_review",
+        "propose",
+        "awaiting_approval",
         '{"needs_success":"paired"}',
         "worker",
         "conv_legacy",

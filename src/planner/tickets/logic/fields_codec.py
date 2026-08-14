@@ -48,7 +48,6 @@ def _proposal_from_obj(obj: Any) -> Proposal | None:
     _require(isinstance(body, str))
     _require(isinstance(proposed_by, str))
     _require(isinstance(created_at, int) and not isinstance(created_at, bool))
-    # A stored review_route from before the reviewer became derived is ignored.
     return Proposal(
         body=body,
         proposed_by=proposed_by,

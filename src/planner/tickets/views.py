@@ -657,9 +657,7 @@ def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
                 }
             )
             continue
-        # Review contains user work only. A proposal stays with the owning Sprint Item
-        # supervisor until a scope change hands review back to the user.
-        if ticket_status != TicketStatus.awaiting_user_review.value:
+        if ticket_status != TicketStatus.awaiting_approval.value:
             continue
         worker_type_definition = registry.require(str(row["worker_type"]))
         stage = str(row["stage"])

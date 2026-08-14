@@ -89,7 +89,7 @@ Before running a `panels chief` command, export `PLAN_ACTOR=chief` so the CLI se
    a field belongs to a Worker type or that a prefix is valid from these examples; Panels'
    API response is authoritative.
    External intake moves the ceiling to that Stage and preserves an explicit Stop;
-   otherwise Continue remains. The entered Stage's effective ownership determines where
+   otherwise Propose remains. The entered Stage's effective ownership determines where
    the Ticket rests. The intake does not create proposals or imitate worker progress.
 5. Ordinary creation atomically puts a new external-work Ticket on today. For a
    reconciled existing Ticket, add it to today unless the user explicitly wants it off

@@ -128,9 +128,8 @@ product routes use. A write aimed at another Item, or at a Ticket that is not a 
 child, is refused.
 
 A supervisor creates its own child Tickets with the ordinary Ticket creation route. A
-Ticket it creates under its own Item rests at agent review, so the supervisor reviews
-the kickoff it wrote. A Ticket it creates anywhere else rests at user review, like any
-other Ticket.
+Ticket it creates is scoped like any other: the kickoff parks for the user's approval
+unless the supervisor states a wider scope it was given.
 
 Config edits the canonical Sprint Item supervisor role skill. Supported backends read
 that managed source for future conversations. A save does not rewrite an existing

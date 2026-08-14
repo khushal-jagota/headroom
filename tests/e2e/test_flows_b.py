@@ -78,9 +78,9 @@ def _scope_and_advance(
 ) -> JsonObject:
     # Unattributed direct scope; attributed worker agents are rejected.
     g = api.direct_post(
-        server, f"/api/tickets/{tid}/scope", {"ceiling": ceiling, "at_cap": "user_review"}
+        server, f"/api/tickets/{tid}/scope", {"ceiling": ceiling, "at_cap": "propose"}
     )
-    assert g["ceiling"] == ceiling and g["at_cap"] == "user_review", g
+    assert g["ceiling"] == ceiling and g["at_cap"] == "propose", g
     # Claimless CLI proposals auto-accept up the chain to needs_implementation (like flows_a e27).
     for field in ("success", "approach", "plan"):
         cli(
@@ -410,7 +410,7 @@ def test_e31_refresh_restores_state(
         "title": E31_TITLE,
         "tail": "NO ITEM",
         "nested": 1,
-        "status": "awaiting_user_review",
+        "status": "awaiting_approval",
         "marks": 1,
         "agent_working": "false",
     }

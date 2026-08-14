@@ -58,7 +58,7 @@ def _create_item(client: TestClient, title: str = "Supervised") -> dict[str, Any
     return cast(dict[str, Any], response.json())
 
 
-def _park_agent_review_ticket(client: TestClient, item_id: str) -> dict[str, Any]:
+def _park_a_proposal(client: TestClient, item_id: str) -> dict[str, Any]:
     created = client.post(
         "/api/tickets",
         json={
@@ -72,7 +72,7 @@ def _park_agent_review_ticket(client: TestClient, item_id: str) -> dict[str, Any
     ticket_id = str(created.json()["id"])
     kickoff = client.post(
         f"/api/tickets/{ticket_id}/accept/kickoff",
-        json={"next_ceiling": "needs_success", "at_cap": "agent_review"},
+        json={"next_ceiling": "needs_success", "at_cap": "propose"},
     )
     assert kickoff.status_code == 200, kickoff.text
     proposed = client.post(
@@ -81,7 +81,7 @@ def _park_agent_review_ticket(client: TestClient, item_id: str) -> dict[str, Any
         headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
     )
     assert proposed.status_code == 200, proposed.text
-    assert proposed.json()["ticket_status"] == "awaiting_agent_review"
+    assert proposed.json()["ticket_status"] == "awaiting_approval"
     return cast(dict[str, Any], proposed.json())
 
 
@@ -567,7 +567,7 @@ def test_supervisor_management_actions_use_current_child_scope(tmp_path: Path) -
         )
         scoped = client.post(
             f"/api/items/{item['id']}/supervisor/tickets/{first['id']}/scope",
-            json={"ceiling": "needs_approach", "at_cap": "agent_review"},
+            json={"ceiling": "needs_approach", "at_cap": "propose"},
             headers=headers,
         )
         day = client.post(
@@ -588,27 +588,27 @@ def test_supervisor_management_actions_use_current_child_scope(tmp_path: Path) -
     assert item_edit.json()["body"] == "Updated brief."
     assert ticket_edit.json()["priority"] == "P1"
     assert scoped.json()["ceiling"] == "needs_approach"
-    assert scoped.json()["at_cap"] == "agent_review"
+    assert scoped.json()["at_cap"] == "propose"
     assert day.json()["day_id"] == "day_2026-08-13"
     assert blocked.json()["kind"] == "blocks"
     assert cross.json()["error"]["code"] == "agent_forbidden"
 
 
-def test_supervisor_approves_only_an_exact_child_agent_review(tmp_path: Path) -> None:
+def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> None:
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:
         first = _create_item(client, "First")
         second = _create_item(client, "Second")
-        ticket = _park_agent_review_ticket(client, str(first["id"]))
+        ticket = _park_a_proposal(client, str(first["id"]))
         path = f"/api/items/{first['id']}/supervisor/tickets/{ticket['id']}/approve"
         cross = client.post(
             path,
-            json={"next_ceiling": "needs_approach", "at_cap": "agent_review"},
+            json={"next_ceiling": "needs_approach", "at_cap": "propose"},
             headers=_supervisor_headers(str(second["id"])),
         )
         approved = client.post(
             path,
-            json={"next_ceiling": "needs_approach", "at_cap": "agent_review"},
+            json={"next_ceiling": "needs_approach", "at_cap": "propose"},
             headers=_supervisor_headers(str(first["id"])),
         )
 
@@ -619,46 +619,49 @@ def test_supervisor_approves_only_an_exact_child_agent_review(tmp_path: Path) ->
     assert approved.json()["fields"]["success"]["value"] == "The result is verified."
 
 
-def test_scope_change_hands_the_waiting_proposal_to_the_user(tmp_path: Path) -> None:
-    """The supervisor hands review over by scope, and the proposal already parked moves."""
+def test_a_parked_proposal_is_in_the_review_queue_and_scope_leaves_it_there(
+    tmp_path: Path,
+) -> None:
+    """One gate means one queue. A parked proposal is in Review the moment it parks.
+
+    Scope used to decide who held it, so changing scope moved it in and out of this
+    queue. Now scope only says how far the Ticket may run, and the proposal stays put.
+    """
     app, db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _create_item(client)
-        ticket = _park_agent_review_ticket(client, str(item["id"]))
-        before_review = client.get("/api/review")
+        ticket = _park_a_proposal(client, str(item["id"]))
+        review_on_parking = client.get("/api/review")
         scoped = client.post(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/scope",
-            json={"ceiling": "needs_success", "at_cap": "user_review"},
+            json={"ceiling": "needs_success", "at_cap": "stop"},
             headers=_supervisor_headers(str(item["id"])),
         )
-        supervisor_approve_after_handover = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/approve",
-            json={"next_ceiling": "needs_approach", "at_cap": "user_review"},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        after_review = client.get("/api/review")
+        review_after_scope = client.get("/api/review")
 
-    assert before_review.json()["items"] == []
+    assert [row["ticket_id"] for row in review_on_parking.json()["items"]] == [ticket["id"]]
     assert scoped.status_code == 200, scoped.text
-    assert scoped.json()["at_cap"] == "user_review"
-    assert scoped.json()["ticket_status"] == "awaiting_user_review"
-    assert supervisor_approve_after_handover.status_code == 400
-    assert supervisor_approve_after_handover.json()["error"]["code"] == "agent_forbidden"
-    assert [row["ticket_id"] for row in after_review.json()["items"]] == [ticket["id"]]
+    assert scoped.json()["at_cap"] == "stop"
+    assert scoped.json()["ticket_status"] == "awaiting_approval"
+    assert [row["ticket_id"] for row in review_after_scope.json()["items"]] == [ticket["id"]]
     with connect(str(db_path)) as conn:
         stored = tickets_data.read_ticket(conn, str(ticket["id"]))
-    assert stored.at_cap.value == "user_review"
+    assert stored.at_cap.value == "stop"
 
 
-def test_handover_by_scope_survives_a_rejection_and_the_next_proposal(
+def test_a_supervisor_may_approve_the_revision_after_a_user_rejection(
     tmp_path: Path,
 ) -> None:
-    """The reported bug: a revision after a user rejection went back to the supervisor."""
+    """A supervisor is refused nothing on its own child by the shape of the review.
+
+    There is one gate, so a proposal the user sent back and the worker re-filed is the
+    same kind of thing it was before, and the supervisor may resolve it.
+    """
     app, db_path = _app(tmp_path)
     conversation_id = "conv-handover-revision"
     with TestClient(app) as client:
         item = _create_item(client)
-        ticket = _park_agent_review_ticket(client, str(item["id"]))
+        ticket = _park_a_proposal(client, str(item["id"]))
         ticket_id = str(ticket["id"])
         with connect(str(db_path)) as conn:
             conn.execute(
@@ -671,16 +674,6 @@ def test_handover_by_scope_survives_a_rejection_and_the_next_proposal(
                 ConversationStartRequest(conversation_id=conversation_id, model="test-model")
             )
         )
-        client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/scope",
-            json={"ceiling": "needs_success", "at_cap": "user_review"},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        supervisor_reject_after_handover = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/reject",
-            json={"message": "Not mine to send back."},
-            headers=_supervisor_headers(str(item["id"])),
-        )
         rejected = client.post(
             f"/api/tickets/{ticket_id}/return-for-revision",
             json={"message": "State the verification evidence."},
@@ -692,28 +685,28 @@ def test_handover_by_scope_survives_a_rejection_and_the_next_proposal(
         )
         supervisor_approve_the_revision = client.post(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/approve",
-            json={"next_ceiling": "needs_approach", "at_cap": "user_review"},
+            json={"next_ceiling": "needs_approach", "at_cap": "propose"},
             headers=_supervisor_headers(str(item["id"])),
         )
 
-    assert supervisor_reject_after_handover.status_code == 400
-    assert supervisor_reject_after_handover.json()["error"]["code"] == "agent_forbidden"
     assert rejected.status_code == 200, rejected.text
     assert rejected.json()["fields"]["success"]["proposal"] is None
     assert revised.status_code == 200, revised.text
-    assert revised.json()["ticket_status"] == "awaiting_user_review"
-    assert supervisor_approve_the_revision.status_code == 400
-    assert supervisor_approve_the_revision.json()["error"]["code"] == "agent_forbidden"
+    assert revised.json()["ticket_status"] == "awaiting_approval"
+    assert supervisor_approve_the_revision.status_code == 200, (
+        supervisor_approve_the_revision.text
+    )
+    assert supervisor_approve_the_revision.json()["stage"] == "needs_approach"
 
 
-def test_direct_user_can_approve_an_agent_review_proposal(tmp_path: Path) -> None:
+def test_direct_user_can_approve_a_parked_proposal(tmp_path: Path) -> None:
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _create_item(client)
-        ticket = _park_agent_review_ticket(client, str(item["id"]))
+        ticket = _park_a_proposal(client, str(item["id"]))
         approved = client.post(
             f"/api/tickets/{ticket['id']}/accept/success",
-            json={"next_ceiling": "needs_approach", "at_cap": "agent_review"},
+            json={"next_ceiling": "needs_approach", "at_cap": "propose"},
         )
 
     assert approved.status_code == 200, approved.text
@@ -725,7 +718,7 @@ def test_supervisor_rejection_delivers_before_it_mutates(tmp_path: Path) -> None
     conversation_id = "conv-supervisor-reject"
     with TestClient(app) as client:
         item = _create_item(client)
-        ticket = _park_agent_review_ticket(client, str(item["id"]))
+        ticket = _park_a_proposal(client, str(item["id"]))
         with connect(str(db_path)) as conn:
             conn.execute(
                 "UPDATE tickets SET conversation_id = ? WHERE id = ?",
@@ -752,7 +745,7 @@ def test_supervisor_rejection_delivers_before_it_mutates(tmp_path: Path) -> None
     assert rejected.json()["error"]["code"] == "gateway_offline"
     with connect(str(db_path)) as conn:
         unchanged = tickets_data.read_ticket(conn, str(ticket["id"]))
-    assert unchanged.ticket_status.value == "awaiting_agent_review"
+    assert unchanged.ticket_status.value == "awaiting_approval"
     assert unchanged.fields.slots["success"].proposal is not None
 
 
@@ -763,7 +756,7 @@ def test_supervisor_rejection_delivers_focused_guidance_then_returns_work(
     conversation_id = "conv-supervisor-reject-success"
     with TestClient(app) as client:
         item = _create_item(client)
-        ticket = _park_agent_review_ticket(client, str(item["id"]))
+        ticket = _park_a_proposal(client, str(item["id"]))
         with connect(str(db_path)) as conn:
             conn.execute(
                 "UPDATE tickets SET conversation_id = ? WHERE id = ?",
@@ -1056,8 +1049,12 @@ def test_migration_backfills_normal_items_without_starting_conversations(
         )
 
 
-def test_supervisor_creates_and_reviews_a_ticket_under_its_own_item(tmp_path: Path) -> None:
-    """The supervisor is the creating authority, so its own kickoff routes back to it."""
+def test_supervisor_creates_and_approves_a_ticket_under_its_own_item(tmp_path: Path) -> None:
+    """A supervisor-created Ticket gets the same scope as anyone else's.
+
+    Its kickoff parks for approval like every other kickoff, and the supervisor may
+    approve it because it is a current child of the supervisor's own Item.
+    """
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _create_item(client, "Owned")
@@ -1076,21 +1073,21 @@ def test_supervisor_creates_and_reviews_a_ticket_under_its_own_item(tmp_path: Pa
         ticket_id = str(created.json()["id"])
         approved = client.post(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/approve",
-            json={"next_ceiling": "needs_approach", "at_cap": "agent_review"},
+            json={"next_ceiling": "needs_approach", "at_cap": "propose"},
             headers=headers,
         )
 
-    assert created.json()["at_cap"] == "agent_review"
-    assert created.json()["ticket_status"] == "awaiting_agent_review"
+    assert created.json()["at_cap"] == "propose"
+    assert created.json()["ticket_status"] == "awaiting_approval"
     assert approved.status_code == 200, approved.text
     assert approved.json()["stage"] == "needs_success"
     assert approved.json()["fields"]["kickoff"]["value"] == "Do the work."
 
 
-def test_supervisor_created_ticket_outside_its_item_stays_user_reviewed(
+def test_supervisor_cannot_approve_a_ticket_outside_its_own_item(
     tmp_path: Path,
 ) -> None:
-    """The surviving rule is the only rule: a supervisor reviews inside its own Item."""
+    """The surviving rule is the only rule: a supervisor writes inside its own Item."""
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:
         first = _create_item(client, "First")
@@ -1108,12 +1105,12 @@ def test_supervisor_created_ticket_outside_its_item_stays_user_reviewed(
         assert created.status_code == 200, created.text
         refused = client.post(
             f"/api/items/{first['id']}/supervisor/tickets/{created.json()['id']}/approve",
-            json={"next_ceiling": "needs_approach", "at_cap": "agent_review"},
+            json={"next_ceiling": "needs_approach", "at_cap": "propose"},
             headers=_supervisor_headers(str(first["id"])),
         )
 
-    assert created.json()["at_cap"] == "user_review"
-    assert created.json()["ticket_status"] == "awaiting_user_review"
+    assert created.json()["at_cap"] == "propose"
+    assert created.json()["ticket_status"] == "awaiting_approval"
     assert refused.status_code == 400
     assert refused.json()["error"]["code"] == "agent_forbidden"
 
@@ -1122,15 +1119,15 @@ def test_a_ceiling_accepts_the_plain_stage_name(tmp_path: Path) -> None:
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _create_item(client, "Scoped")
-        ticket = _park_agent_review_ticket(client, str(item["id"]))
+        ticket = _park_a_proposal(client, str(item["id"]))
         scoped = client.post(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/scope",
-            json={"ceiling": "closeout", "at_cap": "agent_review"},
+            json={"ceiling": "closeout", "at_cap": "propose"},
             headers=_supervisor_headers(str(item["id"])),
         )
         unknown = client.post(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/scope",
-            json={"ceiling": "nonsense", "at_cap": "agent_review"},
+            json={"ceiling": "nonsense", "at_cap": "propose"},
             headers=_supervisor_headers(str(item["id"])),
         )
 
@@ -1152,7 +1149,7 @@ def test_scope_stated_at_creation_settles_the_kickoff(tmp_path: Path) -> None:
                 "kickoff_note": "Do the whole thing.",
                 "sprint_item_id": str(item["id"]),
                 "ceiling": "closeout",
-                "at_cap": "agent_review",
+                "at_cap": "propose",
             },
             headers=_supervisor_headers(str(item["id"])),
         )
@@ -1167,28 +1164,31 @@ def test_scope_stated_at_creation_settles_the_kickoff(tmp_path: Path) -> None:
 
     assert stated.status_code == 200, stated.text
     assert stated.json()["ceiling"] == "needs_closeout"
-    assert stated.json()["at_cap"] == "agent_review"
+    assert stated.json()["at_cap"] == "propose"
     assert stated.json()["stage"] == "needs_success"
     assert stated.json()["ticket_status"] == "empty"
     assert stated.json()["fields"]["kickoff"]["value"] == "Do the whole thing."
     assert stated.json()["fields"]["kickoff"]["proposal"] is None
     # No explicit scope keeps the default leash.
-    assert default.json()["at_cap"] == "user_review"
-    assert default.json()["ticket_status"] == "awaiting_user_review"
+    assert default.json()["at_cap"] == "propose"
+    assert default.json()["ticket_status"] == "awaiting_approval"
 
 
-def test_stated_agent_review_needs_a_normal_sprint_item(tmp_path: Path) -> None:
+def test_stated_scope_needs_no_sprint_item(tmp_path: Path) -> None:
+    """Nothing owns a reviewer, so scope no longer drags placement along with it."""
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:
-        refused = client.post(
+        created = client.post(
             "/api/tickets",
             json={
                 "worker_type": "coding",
-                "title": "Nowhere to review it",
+                "title": "Unplaced but scoped",
                 "kickoff_note": "Do the whole thing.",
                 "ceiling": "closeout",
-                "at_cap": "agent_review",
+                "at_cap": "propose",
             },
         )
 
-    assert refused.json()["error"]["code"] == "scope_invalid"
+    assert created.status_code == 200, created.text
+    assert created.json()["sprint_item_id"] is None
+    assert created.json()["at_cap"] == "propose"

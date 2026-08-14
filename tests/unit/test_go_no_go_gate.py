@@ -150,13 +150,13 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
         # advanced into with at_cap=propose, so the next stage's proposal PARKS.
         accept_kickoff = client.post(
             f"/api/tickets/{tid}/accept/kickoff",
-            json={"next_ceiling": "needs_alpha", "at_cap": "user_review"},
+            json={"next_ceiling": "needs_alpha", "at_cap": "propose"},
         )
         assert accept_kickoff.status_code == 200, accept_kickoff.json()
         k = accept_kickoff.json()
         assert k["stage"] == "needs_alpha"
         assert k["ceiling"] == "needs_alpha"
-        assert k["at_cap"] == "user_review"
+        assert k["at_cap"] == "propose"
         assert k["fields"]["kickoff"]["value"] == "kickoff body"
         assert k["fields"]["kickoff"]["proposal"] is None
 
@@ -168,7 +168,7 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
         ):
             # 2-3. Propose the current gating field with a non-empty recap; it PARKS on
             # exactly the field the registry gates for the current state.
-            at_cap = "user_review" if field == "alpha" else "stop"
+            at_cap = "propose" if field == "alpha" else "stop"
             proposed = client.post(
                 f"/api/tickets/{tid}/propose",
                 json={"body": f"{field} proposal", "recap": f"recap {field}"},

@@ -12,11 +12,10 @@ that system's doc.
 ## Interfaces and authority
 
 ```
-browser and direct CLI ───────────────► domain writers ───────► record
+browser and direct CLI ─────┐
+Sprint Item supervisor ─────┴──────────► domain writers ───────► record
                                                ▲
 Ticket Worker ──field proposal──► proposal resolver
-                                               ▲
-Sprint Item supervisor ──agent review──────────┘
 planning Worker ──guarded claim──► Day or Sprint writer
 Chief ──external-work intake─────► Ticket reconciliation writer
 ```
@@ -28,13 +27,15 @@ Ticket gated fields still have one door: a Worker files a proposal, and the prop
 resolver alone can settle its value or advance its Stage. Three planning Worker types
 also receive narrow authority to write their agreed Day or Sprint result at Closeout.
 The Chief can import reality established outside Panels through explicit reconciliation
-operations. Neither path is a general Ticket Stage setter.
+operations. Neither path is a general Ticket Stage setter. A Sprint Item supervisor has no
+private door: it writes through the same domain writers the direct surfaces use, limited
+to its own Item.
 
-Each Ticket ceiling uses Stop, Agent review, or User review. Agent review parks for the
-exact owning Sprint Item supervisor. User Review contains only user-review proposals and
-explicit Worker help requests. When a Sprint Item needs its supervisor, Panels wakes it
-with a single message that carries no facts at all, and the supervisor reads the current
-state of its Item and Tickets itself.
+At its ceiling a Ticket either stops or proposes, and there is one approval gate — a
+parked proposal waits for the user. Review holds today's parked proposals and explicit
+Worker help requests. When a Sprint Item needs its supervisor, Panels wakes it with a
+single message that carries no facts at all, and the supervisor reads the current state of
+its Item and Tickets itself.
 
 ## The systems
 
