@@ -92,6 +92,12 @@ All four write commands take their text on stdin only; there is no file-path opt
 
 ### Ticket-owned planning artifacts
 
-Ticket-owned artifacts are durable work products that make the work easier to understand; they are not a reason to bloat a gated field. Store them in the ticket's managed file tree and link them from the relevant proposal, note, implementation, or closeout using a served `/files/tickets/...` Markdown link. For example, create `data/files/tickets/<ticket-id>/artifacts/ui-plan.html` and link it as `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`.
+Ticket-owned artifacts are durable work products that make the work easier to understand; they are not a reason to bloat a gated field. Write the file wherever you are working, then hand it to Panels:
+
+```
+panels ticket file put <ticket-id> artifacts/ui-plan.html --from ./ui-plan.html
+```
+
+The command prints the link. Use it in the relevant proposal, note, implementation, or closeout, for example `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Never write an artifact straight into a managed file tree by path. Your worktree is deleted at Closeout, and an artifact written inside it goes with it.
 
 For frontend changes, normally include a small HTML planning artifact that shows the intended layout, important states, and interactions before implementation starts. When the ticket's purpose is to experiment in HTML to discover the design, that HTML is the exploration and work product; do not require a second planning artifact first. Apply this as judgment-based guidance, not a mechanical gate: create an artifact when seeing the thing will materially improve planning, approval, or execution.

@@ -138,6 +138,11 @@ record shapes. Direct `show` commands also keep their full record shapes.
   clear one Stage's ownership override. `default` clears the override so the Worker
   type's Stage default applies. Terminal and unknown Stages are rejected.
 - **`ticket copy`** — copy one ticket's plain-text packet.
+- **`ticket file put <ticket-id> <relative-path> --from <local-file>`** — store a file
+  the Ticket owns, and print its `/files/tickets/...` link. The bytes go to the server,
+  which decides where they land, so the artifact reaches the Ticket from any directory,
+  including a worktree that is later removed. A repeat put at the same relative path
+  replaces the file. An unknown Ticket or an unsafe relative path is rejected.
 - **`sprint create / list / show / set`** — plan sprints. `current` resolves through
   `/api/sprint/current`; `none` means the backlog where a list supports it.
 - **`sprint item create / list / show / set / move-ticket / move-ticket-to-backlog / block / unblock / delete`**
@@ -163,6 +168,17 @@ record shapes. Direct `show` commands also keep their full record shapes.
   conversation id and refuses stale ids.
 - **`sprint item supervisor set-item / set-ticket / scope / add-to-day / remove-from-day / block / unblock`**
   — use item-scoped canonical actions for the owning Item and its current child Tickets.
+  `scope` takes the ceiling as either the stage name or the plain name of the field that
+  stage needs. `--ceiling closeout` and `--ceiling needs_closeout` mean the same thing.
+- A supervisor creates a child Ticket with ordinary `ticket create --sprint-item-id`,
+  the same command every other actor uses. A Ticket a supervisor creates under its own
+  Item rests at agent review, so that supervisor reviews the kickoff it wrote.
+- **`ticket create --ceiling / --at-cap`** — state the new Ticket's scope at creation.
+  The creator that grants the scope states it, so nothing parks that the creator cannot
+  resolve. A stated ceiling past the kickoff settles the kickoff and starts the Ticket at
+  the next Stage. Omit both options to keep the default: the kickoff parks for user
+  review. `--at-cap agent_review` requires placement under a normal Sprint Item, because
+  that Item owns the reviewer.
 - **`sprint item supervisor artifact-list / artifact-write / artifact-delete`** — manage
   files under the owning Item's `artifacts/` directory.
 - **`worker propose / recap / note / trouble / request-user-help / my-ticket`** — worker actions.

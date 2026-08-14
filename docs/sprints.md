@@ -118,10 +118,16 @@ The supervisor conversation starts only after its first user or obligation messa
 kills current work and clears the agent link. Conversation records and message files
 remain as history. The Sprint Item body is the shared brief.
 
-A supervisor can read only its Sprint Item and the Tickets that currently belong to it.
-Its managed skill uses one item-scoped service for Item fields, child Ticket fields,
-Day membership, blocks, scope, proposal review, and Item artifacts. Each write delegates
-to the same domain action that direct product routes use.
+A supervisor acts within its own Sprint Item. It changes Item fields, child Ticket
+fields, Day membership, blocks, scope, proposal review, and Item artifacts through one
+item-scoped service, and every write delegates to the same domain action that direct
+product routes use. A write aimed at another Item, or at a Ticket that is not a current
+child, is refused.
+
+A supervisor creates its own child Tickets with the ordinary Ticket creation route. A
+Ticket it creates under its own Item rests at agent review, so the supervisor reviews
+the kickoff it wrote. A Ticket it creates anywhere else rests at user review, like any
+other Ticket.
 
 Config edits the canonical Sprint Item supervisor role skill. Supported backends read
 that managed source for future conversations. A save does not rewrite an existing

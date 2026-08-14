@@ -89,8 +89,6 @@ def test_e22_cli_create_live_board(
     page_b = open_page(ctx_b, server, "#/workspace", board)
 
     for page in (page_a, page_b):
-        page.click('[data-workspace-view="attention"]')
-        page.wait_for_selector('[data-workspace-view="all"]', timeout=WAIT_MS)
         count = page.eval_on_selector_all(
             '[data-card][data-ticket-stage="needs_success"]', "els => els.length"
         )
