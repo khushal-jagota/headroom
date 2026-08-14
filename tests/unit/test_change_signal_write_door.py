@@ -136,6 +136,37 @@ def test_statements_inside_a_transaction_wait_for_its_commit(
     assert signals.count == 1
 
 
+def test_a_committed_transaction_that_changed_no_rows_signals_nothing(
+    conn: sqlite3.Connection, signals: _SignalCounter
+) -> None:
+    """Background loops open a transaction every pass and are woken by this signal;
+    an empty commit that announced would busy-spin the loop that made it."""
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("SELECT COUNT(*) FROM door").fetchone()
+    conn.execute("UPDATE door SET note = 'nobody' WHERE note = 'no such row'")
+    conn.execute("COMMIT")
+
+    assert signals.count == 0
+
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("SELECT COUNT(*) FROM door").fetchone()
+    conn.commit()
+
+    assert signals.count == 0
+
+
+def test_a_writing_transaction_after_an_empty_one_still_signals(
+    conn: sqlite3.Connection, signals: _SignalCounter
+) -> None:
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("COMMIT")
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("INSERT INTO door (note) VALUES ('real work')")
+    conn.execute("COMMIT")
+
+    assert signals.count == 1
+
+
 def test_opening_a_transaction_signals_nothing(
     conn: sqlite3.Connection, signals: _SignalCounter
 ) -> None:
