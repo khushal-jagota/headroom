@@ -153,7 +153,7 @@ def test_workspace_read_joins_today_artifacts_and_supervisor_attention(tmp_path:
     assert body["today_ticket_ids"] == [ticket["id"]]
     assert body["tickets"][0]["worker_type"] == "coding"
     assert body["tickets"][0]["day_ids"] == [body["planning_day_id"]]
-    assert body["artifacts"] == ["proof.md"]
+    assert body["artifacts"] == ["artifacts/proof.md"]
     assert body["obligations"] == []
     assert body["conversation_history"] == []
 

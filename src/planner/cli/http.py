@@ -84,40 +84,6 @@ def send(
     _fail_response(resp, data, as_json)
 
 
-def send_bytes(
-    method: str,
-    path: str,
-    *,
-    as_json: bool,
-    content: bytes,
-    content_type: str,
-    request_actor: RequestActor = "worker",
-) -> Any:
-    """Execute one request whose body is raw bytes, under the same failure contract as
-    `send`. A file of any type goes through unchanged, with no encoding step."""
-    headers = _headers(request_actor)
-    headers["Content-Type"] = content_type
-    try:
-        resp = httpx.request(
-            method,
-            _url(path),
-            content=content,
-            headers=headers,
-            timeout=_TIMEOUT,
-        )
-    except httpx.TransportError as exc:
-        _fail_connection(exc, as_json)
-    try:
-        data: Any = resp.json()
-    except ValueError:
-        data = None
-    if resp.is_success:
-        if isinstance(data, dict) and "error" in data:
-            _fail_response(resp, data, as_json)
-        return data
-    _fail_response(resp, data, as_json)
-
-
 def send_text(
     method: str,
     path: str,
