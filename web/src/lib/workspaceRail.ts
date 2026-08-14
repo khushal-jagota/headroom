@@ -9,7 +9,7 @@ const GROUP_ORDER = [
   { key: "current-paired", label: "Paired", hidden: false },
   { key: "current-running", label: "Agent", hidden: true },
   { key: "errored", label: "Blocked", hidden: true },
-  { key: "upcoming", label: "Empty", hidden: false },
+  { key: "upcoming", label: "To do", hidden: false },
   { key: "completed", label: "Done", hidden: true }
 ] as const;
 

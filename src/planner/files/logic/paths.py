@@ -38,6 +38,35 @@ def resolve_ticket_file(db_path: str | Path, ticket_id: str, relative_path: str)
     return TicketFile(ticket_id=ticket_id, relative_path=relative_path, absolute_path=target)
 
 
+def resolve_ticket_file_destination(
+    db_path: str | Path, ticket_id: str, relative_path: str
+) -> Path:
+    """Where a ticket file the caller wants to write must go.
+
+    The read resolver requires the file to exist, so it cannot answer this question. The
+    checks are the same ones, in the same order, so the two doors cannot drift apart: the
+    id and the relative path go through the same validators, and the destination must
+    still sit inside this ticket's own folder inside the root. Resolution follows any
+    symlink already on the path, so a symlinked root or ticket folder lands outside the
+    root and fails that check. This function creates nothing — it answers where.
+    """
+    ticket_id = str(ticket_id)
+    relative_path = str(relative_path)
+    _validate_safe_id(ticket_id, "ticket")
+    _validate_relative_path(relative_path)
+    root = ticket_files_root(db_path).resolve()
+    entity_root = (root / ticket_id).resolve()
+    target = (entity_root / PurePosixPath(relative_path)).resolve()
+    try:
+        target.relative_to(entity_root)
+        entity_root.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("managed file escapes managed root") from exc
+    if target.exists() and not target.is_file():
+        raise ValueError("managed file destination is not a regular file")
+    return target
+
+
 def resolve_sprint_item_file(
     db_path: str | Path, sprint_item_id: str, relative_path: str
 ) -> SprintItemFile:

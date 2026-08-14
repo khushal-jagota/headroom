@@ -122,14 +122,14 @@ describe("Workspace rail", () => {
       "Paired",
       "Agent",
       "Blocked",
-      "Empty",
+      "To do",
       "Done"
     ]);
     expect(workspaceItemGroups(item.groups, false).map((group) => group.label)).toEqual([
       "Needs user",
       "Awaiting approval",
       "Paired",
-      "Empty"
+      "To do"
     ]);
     expect(workspaceItemGroups(item.groups, true)).toHaveLength(7);
     expect(hiddenWorkspaceCardCount(item.groups)).toBe(3);

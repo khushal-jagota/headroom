@@ -19,6 +19,7 @@
   import ResourceState from "../components/ResourceState.svelte";
   import SectionHeading from "../components/SectionHeading.svelte";
   import SprintItemWorkspace from "../components/SprintItemWorkspace.svelte";
+  import SprintTicketRow from "../components/SprintTicketRow.svelte";
   import StageMark from "../components/StageMark.svelte";
   import TicketRoute from "./TicketRoute.svelte";
   import chiefOfStaffProfile from "../assets/chief-of-staff-profile.webp";
@@ -134,27 +135,25 @@
 
 {#snippet ticketRow(card: BoardCard)}
   {@const presentation = cardPresentation(card)}
-  <button
-    type="button"
-    class="list-row list-row--board"
-    class:active={selectedCard?.id === card.id}
+  <SprintTicketRow
+    priority={card.priority}
+    title={card.title}
+    state={presentation.state}
+    ariaLabel={presentation.ariaLabel}
+    active={selectedCard?.id === card.id}
     onclick={() => selectCard(card.id)}
+    stageMarkClass="board-workspace-stage-mark"
+    stageMarkAttributes={{
+      "data-stage-state": presentation.state,
+      "data-needs-me": card.needs_me ? "true" : "false",
+      "data-agent-working": card.agent_working ? "true" : "false",
+      "data-latest-turn-ended": card.latest_turn_ended_sequence
+    }}
     data-card=""
     data-ticket-id={card.id}
     data-ticket-stage={card.stage}
     data-ticket-status={card.ticket_status}
-  >
-    <span class="list-row-title">{card.title}</span>
-    <StageMark
-      state={presentation.state}
-      class="board-workspace-stage-mark"
-      data-stage-state={presentation.state}
-      data-needs-me={card.needs_me ? "true" : "false"}
-      data-agent-working={card.agent_working ? "true" : "false"}
-      data-latest-turn-ended={card.latest_turn_ended_sequence}
-      aria-label={presentation.ariaLabel}
-    />
-  </button>
+  />
 {/snippet}
 
 {#snippet ticketGroups(groups: WorkspaceTicketGroup[])}

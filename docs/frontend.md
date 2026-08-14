@@ -33,7 +33,7 @@ One screen per part of the system:
   eyebrow, and the fold control beside it opens and closes the box.
 
   Inside a box the Tickets sit under plain status headings, in one order: Needs user,
-  Awaiting approval, Paired, Agent, Blocked, Empty, Done. The headings are labels, not
+  Awaiting approval, Paired, Agent, Blocked, To do, Done. The headings are labels, not
   controls. Agent, Blocked and Done are quiet: they are not drawn until the reader asks.
   "n more" counts what is put away, and pressing it again puts it back. A Ticket is in
   Blocked when its status says so or a live blocker holds it. The No Item tail groups
@@ -262,7 +262,9 @@ has no usage source.
   proposals, and results stay as database text. Standalone files for a ticket
   live beside the database under `files/tickets/<ticket_id>/`, so the default local
   path is `data/files/tickets/<ticket_id>/...`. The browser reads them through
-  `/files/tickets/<ticket_id>/<relative-path>`. The server sends `nosniff`; only
+  `/files/tickets/<ticket_id>/<relative-path>`. A `PUT` on that same address stores the
+  file, and `panels ticket file put` is how a worker uses it, so nothing has to work out
+  the path for itself. The server sends `nosniff`; only
   explicit image, audio, and video types are inline. Markdown, HTML, SVG, and
   unknown files are attachments when opened directly.
 - **Sprint Item files use an isolated sibling root.** Item artifacts live under

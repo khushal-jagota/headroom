@@ -125,7 +125,7 @@ def _snap_board(p: Page, mid: str) -> dict[str, Any]:
     )
     no_item = "[data-no-item]"
     return {
-        "title": p.inner_text(f"{card} .list-row-title"),
+        "title": p.inner_text(f"{card} .ticket-row-title"),
         "tail": p.inner_text(f"{no_item} h2"),
         "nested": p.eval_on_selector_all(f"{no_item} {card}", "e=>e.length"),
         "status": p.get_attribute(card, "data-ticket-status"),

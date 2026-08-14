@@ -132,13 +132,6 @@ function sortedTickets(tickets: SprintTicket[], blockedLast: boolean): SprintTic
   });
 }
 
-export function sprintTicketSections(
-  item: SprintItem,
-  todayTicketIds: ReadonlySet<string>
-): SprintTicketSections {
-  return sprintTicketSectionsForTickets(item.tickets || [], todayTicketIds);
-}
-
 export function sprintTicketSectionsForTickets(
   tickets: SprintTicket[],
   todayTicketIds: ReadonlySet<string>
