@@ -381,3 +381,15 @@ def test_ticket_file_put_accepts_a_ticket_backed_worker_and_refuses_a_bare_agent
     assert bare.status_code == 400, bare.text
     assert bare.json()["error"]["code"] == "agent_forbidden"
     assert not (_ticket_root(db_path) / "t_file123" / "other.md").exists()
+
+
+def test_ticket_file_put_rejects_a_destination_blocked_by_a_file(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    _insert_ticket(db_path, "t_file123")
+
+    with TestClient(app) as client:
+        client.put("/files/tickets/t_file123/notes.md", content=b"first")
+        blocked = client.put("/files/tickets/t_file123/notes.md/deeper.md", content=b"second")
+
+    assert blocked.status_code == 400, blocked.text
+    assert blocked.json()["error"]["code"] == "validation"

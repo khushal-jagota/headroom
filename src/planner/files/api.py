@@ -104,8 +104,17 @@ async def put_ticket_file(request: Request, ticket_id: str, file_path: str) -> d
     if not body:
         raise PlannerError(ErrorCode.validation, "ticket file body is empty")
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    _write_file_in_one_step(target, body)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _write_file_in_one_step(target, body)
+    except OSError as exc:
+        # A folder in the path can already exist as a file. That is a bad request about
+        # where the file goes, not a broken server.
+        raise PlannerError(
+            ErrorCode.validation,
+            "ticket file destination is not writable",
+            {"file_path": file_path},
+        ) from exc
     return {
         "ticket_id": ticket_id,
         "relative_path": file_path,
