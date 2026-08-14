@@ -135,6 +135,60 @@ describe("Workspace rail", () => {
     );
   });
 
+  it("names a kickoff-gated card by its gating field, whichever way it is parked", () => {
+    // Both parked review statuses and a pending proposal reach the same shared
+    // awaiting-approval condition, so the kickoff split reads the gating field.
+    expect(
+      workspaceCardGroupKey(
+        card("a", { ticket_status: "awaiting_user_review", gating_field: "kickoff" })
+      )
+    ).toBe("waiting-for-kickoff");
+    expect(
+      workspaceCardGroupKey(
+        card("b", { ticket_status: "awaiting_agent_review", gating_field: "kickoff" })
+      )
+    ).toBe("waiting-for-kickoff");
+    expect(
+      workspaceCardGroupKey(card("c", { has_pending_proposal: true, gating_field: "kickoff" }))
+    ).toBe("waiting-for-kickoff");
+    // The gating field only splits cards that are awaiting approval.
+    expect(
+      workspaceCardGroupKey(card("d", { ticket_status: "agent", gating_field: "kickoff" }))
+    ).toBe("current-running");
+  });
+
+  it("keeps a kickoff-gated card out of the generic review group and leads its Item", () => {
+    const item = buildWorkspaceRail([
+      card("kickoff", {
+        ticket_status: "awaiting_user_review",
+        gating_field: "kickoff",
+        sprint_item_id: "si_one"
+      }),
+      card("later", { ticket_status: "awaiting_user_review", sprint_item_id: "si_one" })
+    ]).items[0];
+
+    expect(item.groups.map((group) => group.label)).toEqual([
+      "Waiting for kickoff",
+      "User review"
+    ]);
+    expect(item.groups[0].cards.map((entry) => entry.id)).toEqual(["kickoff"]);
+    expect(item.groups[1].cards.map((entry) => entry.id)).toEqual(["later"]);
+    // Not one of the quiet-four hidden groups, and it still counts as the user's work.
+    expect(workspaceItemGroups(item.groups, false).map((group) => group.label)).toEqual([
+      "Waiting for kickoff",
+      "User review"
+    ]);
+    // An Item whose only work is a kickoff still leads the rail.
+    const kickoffOnly = buildWorkspaceRail([
+      card("kickoff", {
+        ticket_status: "awaiting_user_review",
+        gating_field: "kickoff",
+        sprint_item_id: "si_two"
+      })
+    ]).items[0];
+    expect(kickoffOnly.needsUser).toBe(true);
+  });
+
   it("shows a closeout-ready card as waiting for closeout, not lumped in with To do", () => {
     const item = buildWorkspaceRail([
       card("ready", { waiting_to_closeout: true, sprint_item_id: "si_one" }),
