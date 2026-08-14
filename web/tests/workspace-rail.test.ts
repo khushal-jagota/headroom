@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildWorkspaceRail,
   hiddenWorkspaceCardCount,
-  workspaceCardNeedsUser,
-  workspaceItemIsOpen,
-  workspaceVisibleCards
+  workspaceCardGroupKey,
+  workspaceGroupsHaveShownCards,
+  workspaceItemGroups
 } from "../src/lib/workspaceRail";
 import type { BoardCard } from "../src/lib/types";
 
@@ -45,44 +45,163 @@ function card(id: string, values: Partial<BoardCard> = {}): BoardCard {
 }
 
 describe("Workspace rail", () => {
-  it("groups every Item, puts attention Items first, orders by Item priority, and leaves No Item last", () => {
-    const rail = buildWorkspaceRail([
-      card("quiet-p0", {
-        sprint_item_id: "si_quiet",
-        sprint_item_title: "Quiet",
-        sprint_item_priority: "P0"
-      }),
-      card("attention-p2", {
-        sprint_item_id: "si_attention",
-        sprint_item_title: "Attention",
-        sprint_item_priority: "P2",
-        ticket_status: "needs_user"
-      }),
-      card("attention-p1", {
-        sprint_item_id: "si_first",
-        sprint_item_title: "First",
-        sprint_item_priority: "P1",
-        ticket_status: "paired"
-      }),
-      card("loose", { ticket_status: "user" })
-    ]);
+  it("groups every Item, orders by Item priority then a fixed creation-time tie-break", () => {
+    const rail = buildWorkspaceRail(
+      [
+        card("quiet-p0", {
+          sprint_item_id: "si_quiet",
+          sprint_item_title: "Quiet",
+          sprint_item_priority: "P0"
+        }),
+        card("older-p1", {
+          sprint_item_id: "si_older",
+          sprint_item_title: "Older",
+          sprint_item_priority: "P1",
+          ticket_status: "needs_user"
+        }),
+        card("newer-p1", {
+          sprint_item_id: "si_newer",
+          sprint_item_title: "Newer",
+          sprint_item_priority: "P1",
+          ticket_status: "paired"
+        }),
+        card("loose", { ticket_status: "user" })
+      ],
+      [
+        { id: "si_quiet", project: "Panels", created_at: 50, done_ticket_count: 0, total_ticket_count: 1 },
+        { id: "si_older", project: "Panels", created_at: 100, done_ticket_count: 0, total_ticket_count: 1 },
+        { id: "si_newer", project: "Panels", created_at: 200, done_ticket_count: 0, total_ticket_count: 1 }
+      ]
+    );
 
-    expect(rail.items.map((item) => item.id)).toEqual([
-      "si_first",
-      "si_attention",
-      "si_quiet"
+    expect(rail.items.map((item) => item.id)).toEqual(["si_quiet", "si_older", "si_newer"]);
+    expect(rail.noItemGroups.flatMap((group) => group.cards.map((value) => value.id))).toEqual([
+      "loose"
     ]);
-    expect(rail.noItemCards.map((item) => item.id)).toEqual(["loose"]);
   });
 
-  it("shows only user-owned live rows by default and reveals one Item or the whole rail", () => {
+  it("never moves an Item when a card's status or activity changes", () => {
+    const summaries = [
+      { id: "si_older", project: "Panels", created_at: 100, done_ticket_count: 0, total_ticket_count: 1 },
+      { id: "si_newer", project: "Panels", created_at: 200, done_ticket_count: 0, total_ticket_count: 1 }
+    ];
+    const quiet = buildWorkspaceRail(
+      [
+        card("older", { sprint_item_id: "si_older", sprint_item_priority: "P1" }),
+        card("newer", { sprint_item_id: "si_newer", sprint_item_priority: "P1" })
+      ],
+      summaries
+    );
+    const oneNeedsUser = buildWorkspaceRail(
+      [
+        card("older", {
+          sprint_item_id: "si_older",
+          sprint_item_priority: "P1",
+          ticket_status: "needs_user",
+          activity_at: 999
+        }),
+        card("newer", { sprint_item_id: "si_newer", sprint_item_priority: "P1" })
+      ],
+      summaries
+    );
+
+    expect(quiet.items.map((item) => item.id)).toEqual(["si_older", "si_newer"]);
+    expect(oneNeedsUser.items.map((item) => item.id)).toEqual(["si_older", "si_newer"]);
+  });
+
+  it("names each card's group from the shared Ticket condition", () => {
+    expect(workspaceCardGroupKey(card("a", { ticket_status: "needs_user" }))).toBe("needs-me");
+    expect(workspaceCardGroupKey(card("b", { ticket_status: "user" }))).toBe("needs-me");
+    expect(workspaceCardGroupKey(card("c", { ticket_status: "awaiting_approval" }))).toBe(
+      "current-awaiting-approval"
+    );
+    expect(workspaceCardGroupKey(card("d", { has_pending_proposal: true }))).toBe(
+      "current-awaiting-approval"
+    );
+    expect(workspaceCardGroupKey(card("e", { ticket_status: "paired" }))).toBe("current-paired");
+    expect(workspaceCardGroupKey(card("f", { ticket_status: "agent" }))).toBe("current-running");
+    expect(workspaceCardGroupKey(card("g", { ticket_status: "blocked" }))).toBe("errored");
+    // A link blocker is not a status, and it still lands the card in Blocked.
+    expect(workspaceCardGroupKey(card("h", { ticket_status: "user", blocked: true }))).toBe(
+      "errored"
+    );
+    expect(workspaceCardGroupKey(card("i"))).toBe("upcoming");
+    expect(workspaceCardGroupKey(card("j", { stage: "done", is_done: true }))).toBe("completed");
+    expect(workspaceCardGroupKey(card("k", { waiting_to_closeout: true }))).toBe(
+      "current-waiting"
+    );
+  });
+
+  it("names a kickoff-gated card by its gating field, whichever way it is parked", () => {
+    // A parked proposal and a pending one reach the same shared awaiting-approval
+    // condition, so the kickoff split reads the gating field.
+    expect(
+      workspaceCardGroupKey(
+        card("a", { ticket_status: "awaiting_approval", gating_field: "kickoff" })
+      )
+    ).toBe("waiting-for-kickoff");
+    expect(
+      workspaceCardGroupKey(card("c", { has_pending_proposal: true, gating_field: "kickoff" }))
+    ).toBe("waiting-for-kickoff");
+    // The gating field only splits cards that are awaiting approval.
+    expect(
+      workspaceCardGroupKey(card("d", { ticket_status: "agent", gating_field: "kickoff" }))
+    ).toBe("current-running");
+  });
+
+  it("keeps a kickoff-gated card out of the generic review group and leads its Item", () => {
+    const item = buildWorkspaceRail([
+      card("kickoff", {
+        ticket_status: "awaiting_approval",
+        gating_field: "kickoff",
+        sprint_item_id: "si_one"
+      }),
+      card("later", { ticket_status: "awaiting_approval", sprint_item_id: "si_one" })
+    ]).items[0];
+
+    expect(item.groups.map((group) => group.label)).toEqual([
+      "Waiting for kickoff",
+      "Awaiting approval"
+    ]);
+    expect(item.groups[0].cards.map((entry) => entry.id)).toEqual(["kickoff"]);
+    expect(item.groups[1].cards.map((entry) => entry.id)).toEqual(["later"]);
+    // Not one of the quiet-three hidden groups, and it still counts as the user's work.
+    expect(workspaceItemGroups(item.groups, false).map((group) => group.label)).toEqual([
+      "Waiting for kickoff",
+      "Awaiting approval"
+    ]);
+    // An Item whose only work is a kickoff still leads the rail.
+    const kickoffOnly = buildWorkspaceRail([
+      card("kickoff", {
+        ticket_status: "awaiting_approval",
+        gating_field: "kickoff",
+        sprint_item_id: "si_two"
+      })
+    ]).items[0];
+    expect(kickoffOnly.needsUser).toBe(true);
+  });
+
+  it("shows a closeout-ready card as waiting for closeout, not lumped in with To do", () => {
+    const item = buildWorkspaceRail([
+      card("ready", { waiting_to_closeout: true, sprint_item_id: "si_one" }),
+      card("idle", { sprint_item_id: "si_one" })
+    ]).items[0];
+
+    expect(item.groups.map((group) => group.label)).toEqual(["Waiting for closeout", "To do"]);
+    // Not one of the quiet-three hidden groups: it shows without revealing.
+    expect(workspaceItemGroups(item.groups, false).map((group) => group.label)).toEqual([
+      "Waiting for closeout",
+      "To do"
+    ]);
+  });
+
+  it("orders the groups, hides the quiet three, and reveals them on request", () => {
     const cards = [
       card("needs", { ticket_status: "needs_user" }),
-      card("review", { ticket_status: "awaiting_user_review" }),
+      card("review", { ticket_status: "awaiting_approval" }),
       card("paired", { ticket_status: "paired" }),
-      card("owned", { ticket_status: "user" }),
-      card("blocked-owned", { ticket_status: "user", blocked: true }),
       card("working", { ticket_status: "agent" }),
+      card("blocked", { ticket_status: "user", blocked: true }),
       card("resting"),
       card("done", { stage: "done", is_done: true })
     ];
@@ -95,27 +214,44 @@ describe("Workspace rail", () => {
       }))
     ).items[0];
 
-    expect(item.attentionCards.map((value) => value.id)).toEqual([
-      "needs",
-      "owned",
-      "paired",
-      "review"
+    expect(item.groups.map((group) => group.label)).toEqual([
+      "Needs user",
+      "Awaiting approval",
+      "Paired",
+      "Agent",
+      "Blocked",
+      "To do",
+      "Done"
     ]);
-    expect(workspaceVisibleCards(item.cards, "attention").map((value) => value.id)).toEqual([
-      "needs",
-      "owned",
-      "paired",
-      "review"
+    expect(workspaceItemGroups(item.groups, false).map((group) => group.label)).toEqual([
+      "Needs user",
+      "Awaiting approval",
+      "Paired",
+      "To do"
     ]);
-    expect(hiddenWorkspaceCardCount(item, "attention")).toBe(3);
-    expect(workspaceVisibleCards(item.cards, "attention", true)).toHaveLength(7);
-    expect(workspaceVisibleCards(item.cards, "all")).toHaveLength(7);
-    expect(workspaceVisibleCards(item.cards, "all").some((value) => value.id === "done")).toBe(false);
-    expect(workspaceCardNeedsUser(cards[4])).toBe(false);
+    expect(workspaceItemGroups(item.groups, true)).toHaveLength(7);
+    expect(hiddenWorkspaceCardCount(item.groups)).toBe(3);
+    expect(item.needsUser).toBe(true);
   });
 
-  it("keeps an Item with only done Tickets as a folded zero-count box", () => {
-    const rail = buildWorkspaceRail([
+  it("carries the Item's project and its progress across every Ticket", () => {
+    const rail = buildWorkspaceRail(
+      [
+        card("on-today", {
+          sprint_item_id: "si_one",
+          sprint_item_title: "One",
+          sprint_item_priority: "P1"
+        })
+      ],
+      [{ id: "si_one", project: "Panels", created_at: 0, done_ticket_count: 3, total_ticket_count: 7 }]
+    );
+
+    expect(rail.items[0].project).toBe("Panels");
+    expect(rail.items[0].progress).toEqual({ done: 3, total: 7 });
+  });
+
+  it("keeps an Item whose Tickets are all quiet, with nothing shown until it is revealed", () => {
+    const item = buildWorkspaceRail([
       card("done", {
         stage: "done",
         is_done: true,
@@ -123,39 +259,12 @@ describe("Workspace rail", () => {
         sprint_item_title: "Finished outcome",
         sprint_item_priority: "P1"
       })
-    ]);
-
-    expect(rail.items).toHaveLength(1);
-    expect(rail.items[0].liveCards).toEqual([]);
-    expect(workspaceVisibleCards(rail.items[0].cards, "attention")).toEqual([]);
-    expect(workspaceItemIsOpen(rail.items[0], "attention")).toBe(false);
-    expect(workspaceItemIsOpen(rail.items[0], "all")).toBe(false);
-    expect(workspaceItemIsOpen(rail.items[0], "all", { opened: true })).toBe(false);
-    expect(workspaceItemIsOpen(rail.items[0], "all", { expanded: true })).toBe(false);
-  });
-
-  it("derives Item disclosure from live work, mode, attention, and explicit folds", () => {
-    const quiet = buildWorkspaceRail([
-      card("quiet", {
-        sprint_item_id: "si_quiet",
-        sprint_item_title: "Quiet",
-        sprint_item_priority: "P2"
-      })
-    ]).items[0];
-    const attention = buildWorkspaceRail([
-      card("attention", {
-        sprint_item_id: "si_attention",
-        sprint_item_title: "Attention",
-        sprint_item_priority: "P2",
-        ticket_status: "needs_user"
-      })
     ]).items[0];
 
-    expect(workspaceItemIsOpen(quiet, "attention")).toBe(false);
-    expect(workspaceItemIsOpen(quiet, "attention", { opened: true })).toBe(true);
-    expect(workspaceItemIsOpen(quiet, "attention", { expanded: true })).toBe(true);
-    expect(workspaceItemIsOpen(quiet, "all")).toBe(true);
-    expect(workspaceItemIsOpen(attention, "attention")).toBe(true);
-    expect(workspaceItemIsOpen(attention, "all", { folded: true })).toBe(false);
+    expect(item.needsUser).toBe(false);
+    expect(workspaceItemGroups(item.groups, false)).toEqual([]);
+    expect(workspaceGroupsHaveShownCards(item.groups)).toBe(false);
+    expect(hiddenWorkspaceCardCount(item.groups)).toBe(1);
+    expect(workspaceItemGroups(item.groups, true).map((group) => group.label)).toEqual(["Done"]);
   });
 });

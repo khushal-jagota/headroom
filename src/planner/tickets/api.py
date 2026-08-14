@@ -320,6 +320,8 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         sprint_id=body_opt_str(raw, "sprint_id"),
         sprint_item_id=body_opt_str(raw, "sprint_item_id"),
         blocked_by_ticket_ids=body_str_list(raw, "blocked_by_ticket_ids"),
+        ceiling=body_opt_str(raw, "ceiling"),
+        at_cap=body_opt_str(raw, "at_cap"),
     )
     if "employee_backend" in raw:
         body["employee_backend"] = body_str(raw, "employee_backend")
@@ -482,11 +484,12 @@ def _parse_next_ceiling(
         return None
     if raw == NO_FURTHER:
         return NO_FURTHER
-    if raw not in worker_type_definition.ceiling_range():
+    try:
+        return worker_type_definition.resolve_ceiling(raw)
+    except PlannerError as exc:
         raise PlannerError(
             ErrorCode.scope_invalid, "unknown next_ceiling", {"next_ceiling": raw}
-        )
-    return raw
+        ) from exc
 
 
 def _parse_scope_at_cap(raw: str | None) -> AtCap | None:
@@ -543,6 +546,8 @@ async def create_ticket(
         boundary_hour=cfg.boundary_hour,
         sprint_item_id_explicit="sprint_item_id" in raw,
         sprint_id_explicit="sprint_id" in raw,
+        stated_ceiling=body["ceiling"],
+        stated_at_cap=_parse_scope_at_cap(body["at_cap"]),
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -945,14 +950,17 @@ async def delete_ticket(
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
+    force: Annotated[bool, Query()] = False,
 ) -> JsonDict:
     require_direct_write(ctx)
-    await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
+    if not force:
+        await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
     deleted = tickets_data.delete_ticket(
         conn,
         ticket_id,
         actor=ctx.actor,
         now=clk.now_unix(),
+        force=force,
     )
     return {
         "ok": True,
@@ -1465,13 +1473,6 @@ async def scope_ticket(
             ErrorCode.scope_missing,
             "scope requires ceiling and at_cap",
             {"missing": missing},
-        )
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
-        conn, ticket_id
-    )
-    if ceiling_raw not in worker_type_definition.ceiling_range():
-        raise PlannerError(
-            ErrorCode.scope_invalid, "unknown ceiling", {"ceiling": ceiling_raw}
         )
     try:
         at_cap = AtCap(at_cap_raw)

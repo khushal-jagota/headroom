@@ -12,6 +12,7 @@ from planner.runtime import conversation_start
 from planner.sprints import data as sprints_data
 from planner.sprints.contracts import ItemStatus, Sprint, SprintItem
 from planner.sprints.logic import DateRange, current_sprint_id
+from planner.tickets.contracts import AtCap, TicketStatus
 from planner.tickets.logic import fields_codec, machine
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -117,13 +118,14 @@ def item_rollup(conn: sqlite3.Connection, item_id: str) -> dict[str, int]:
 
 def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
     """Per-item ticket rows for the tracking-page disclosure: id/title/stage/priority
-    plus the two board-card signals the sprint ticket row colours off —
-    has_pending_proposal and ticket_status — ordered created_at, id (matching the
-    loose-ticket ordering). A light projection — not full ticket_json — since the
-    disclosure only lists rows that link to the ticket."""
+    plus the board-card signals the sprint ticket row colours off —
+    has_pending_proposal, ticket_status, and waiting_to_closeout — ordered
+    created_at, id (matching the loose-ticket ordering). A light projection —
+    not full ticket_json — since the disclosure only lists rows that link to
+    the ticket."""
     rows = conn.execute(
         "SELECT id, title, stage, priority, ticket_status, fields, worker_type, at_cap, "
-        "employee_backend FROM tickets "
+        "ceiling, employee_backend FROM tickets "
         "WHERE sprint_item_id = ? ORDER BY created_at, id",
         (item_id,),
     ).fetchall()
@@ -131,15 +133,23 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
     registry = configured_worker_type_registry()
     for r in rows:
         stage = str(r["stage"])
+        ticket_status = str(r["ticket_status"])
         worker_type_definition = registry.require(str(r["worker_type"]))
         fields = fields_codec.declared_fields_from_json(
             str(r["fields"]), worker_type_definition.field_ids()
         )
         gating_field = worker_type_definition.gating_field(stage)
-        proposal = (
-            None
-            if gating_field is None
-            else fields_codec.get_slot(fields, gating_field).proposal
+        stopped_at_current_stage = str(
+            r["at_cap"]
+        ) == AtCap.stop.value and machine.at_or_beyond_ceiling(
+            stage,
+            str(r["ceiling"]),
+            worker_type_definition=worker_type_definition,
+        )
+        waiting_to_closeout = (
+            gating_field == "closeout"
+            and ticket_status == TicketStatus.empty.value
+            and not stopped_at_current_stage
         )
         result.append(
             {
@@ -152,11 +162,9 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
                     fields,
                     worker_type_definition=worker_type_definition,
                 ),
-                "ticket_status": str(r["ticket_status"]),
+                "ticket_status": ticket_status,
+                "waiting_to_closeout": waiting_to_closeout,
                 "review_route": str(r["at_cap"]),
-                "proposal_review_route": (
-                    proposal.review_route.value if proposal is not None else None
-                ),
                 "employee_backend": str(r["employee_backend"]),
                 "worker_type": str(r["worker_type"]),
                 "day_ids": [

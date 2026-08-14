@@ -78,17 +78,15 @@ def _scope_and_advance(
 ) -> JsonObject:
     # Unattributed direct scope; attributed worker agents are rejected.
     g = api.direct_post(
-        server, f"/api/tickets/{tid}/scope", {"ceiling": ceiling, "at_cap": "user_review"}
+        server, f"/api/tickets/{tid}/scope", {"ceiling": ceiling, "at_cap": "propose"}
     )
-    assert g["ceiling"] == ceiling and g["at_cap"] == "user_review", g
+    assert g["ceiling"] == ceiling and g["at_cap"] == "propose", g
     # Claimless CLI proposals auto-accept up the chain to needs_implementation (like flows_a e27).
     for field in ("success", "approach", "plan"):
         cli(
             server,
             "worker",
             "propose",
-            "--body-file",
-            "-",
             "--recap",
             f"{field} ready.",
             ticket_id=tid,
@@ -125,7 +123,7 @@ def _snap_board(p: Page, mid: str) -> dict[str, Any]:
     )
     no_item = "[data-no-item]"
     return {
-        "title": p.inner_text(f"{card} .list-row-title"),
+        "title": p.inner_text(f"{card} .ticket-row-title"),
         "tail": p.inner_text(f"{no_item} h2"),
         "nested": p.eval_on_selector_all(f"{no_item} {card}", "e=>e.length"),
         "status": p.get_attribute(card, "data-ticket-status"),
@@ -240,7 +238,7 @@ def test_e30_review_approve_to_done(
     )
 
     ready = f'section[data-screen="ticket"][data-ticket-id="{mid}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{mid}", ready)
+    page = open_page(context_factory(), server, f"#/workspace/{mid}", ready)
     assert (
         page.get_attribute('section[data-screen="ticket"]', "data-stage")
         == "needs_implementation"
@@ -253,8 +251,6 @@ def test_e30_review_approve_to_done(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Implementation ready.",
         ticket_id=mid,
@@ -298,8 +294,6 @@ def test_e30_review_approve_to_done(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Closeout ready.",
         ticket_id=mid,
@@ -376,8 +370,6 @@ def test_e31_refresh_restores_state(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Implementation proposed.",
         ticket_id=mid,
@@ -389,7 +381,7 @@ def test_e31_refresh_restores_state(
     # Ticket surface.
     ready_t = f'section[data-screen="ticket"][data-ticket-id="{mid}"]'
     mid_t = '[data-approval-block][data-mode="gating-pending"]'
-    page_t = open_page(context_factory(), server, f"#/ticket/{mid}", ready_t)
+    page_t = open_page(context_factory(), server, f"#/workspace/{mid}", ready_t)
     page_t.wait_for_selector(mid_t, timeout=WAIT_MS)
     before_t = _snap_ticket(page_t)
     _reload_settle(page_t, ready_t)
@@ -418,7 +410,7 @@ def test_e31_refresh_restores_state(
         "title": E31_TITLE,
         "tail": "NO ITEM",
         "nested": 1,
-        "status": "awaiting_user_review",
+        "status": "awaiting_approval",
         "marks": 1,
         "agent_working": "false",
     }
@@ -514,14 +506,16 @@ def test_e32_sprint_live_status_and_view_only_other(
         assert "P1" in other_ticket_row.inner_text()
         assert p.locator('[data-sprint-other] [data-item-id]').count() == 0
 
-    # The Ticket page exposes the compound placement controls for direct Sprint changes.
+    # The Ticket eyebrow states no Sprint. This Ticket has no Sprint Item either, so it
+    # shows no Sprint Item fact.
     ticket_page = open_page(
         context_factory(),
         server,
-        f"#/ticket/{other_ticket_id}",
+        f"#/workspace/{other_ticket_id}",
         "[data-ticket-identity]",
     )
-    assert ticket_page.locator("[data-sprint-item-control]").count() == 1
+    assert ticket_page.locator("[data-sprint-control]").count() == 0
+    assert ticket_page.locator("[data-sprint-item-control]").count() == 0
     assert ticket_page.locator("[data-deadline-control]").count() == 0
 
     fa = pa.evaluate("window.__plannerDebug.flushes")

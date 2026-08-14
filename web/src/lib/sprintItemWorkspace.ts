@@ -1,9 +1,6 @@
+import { previewHashHref, sprintItemFileTarget } from "./filePreview";
 import { sprintTicketCondition } from "./sprintPresentation";
-import type {
-  SprintItemWorkspace,
-  SprintItemWorkspaceObligation,
-  SprintItemWorkspaceTicket
-} from "./types";
+import type { SprintItemWorkspace, SprintItemWorkspaceTicket } from "./types";
 
 export type WorkspaceTicketGroup = {
   key: string;
@@ -17,7 +14,9 @@ const groupOrder = [
   ["current-paired", "Paired"],
   ["current-running", "Agent"],
   ["errored", "Blocked"],
-  ["upcoming", "Empty"]
+  ["current-waiting", "Waiting for closeout"],
+  ["upcoming", "To do"],
+  ["completed", "Done"]
 ] as const;
 
 function ticketOrder(left: SprintItemWorkspaceTicket, right: SprintItemWorkspaceTicket): number {
@@ -28,11 +27,10 @@ function ticketOrder(left: SprintItemWorkspaceTicket, right: SprintItemWorkspace
   );
 }
 
-export function todayWorkspaceTicketGroups(workspace: SprintItemWorkspace): WorkspaceTicketGroup[] {
-  const today = new Set(workspace.today_ticket_ids);
-  const tickets = workspace.tickets.filter(
-    (ticket) => today.has(ticket.id) && ticket.stage !== "done" && ticket.stage !== "dropped"
-  );
+// Today and Remaining are the same structure. The only thing the split says is whether
+// the Ticket is on the Day, so both sections group their own Tickets the same way and
+// both carry a Done group.
+function groupTickets(tickets: SprintItemWorkspaceTicket[]): WorkspaceTicketGroup[] {
   return groupOrder.flatMap(([key, label]) => {
     const grouped = tickets
       .filter((ticket) => sprintTicketCondition(ticket).mark === key)
@@ -41,16 +39,20 @@ export function todayWorkspaceTicketGroups(workspace: SprintItemWorkspace): Work
   });
 }
 
-export function remainingWorkspaceTickets(
-  workspace: SprintItemWorkspace
-): SprintItemWorkspaceTicket[] {
+export function todayWorkspaceTicketGroups(workspace: SprintItemWorkspace): WorkspaceTicketGroup[] {
   const today = new Set(workspace.today_ticket_ids);
-  return workspace.tickets
-    .filter(
-      (ticket) =>
-        ticket.stage !== "dropped" && !(today.has(ticket.id) && ticket.stage !== "done")
-    )
-    .sort((left, right) => Number(left.stage === "done") - Number(right.stage === "done") || ticketOrder(left, right));
+  return groupTickets(
+    workspace.tickets.filter((ticket) => today.has(ticket.id) && ticket.stage !== "dropped")
+  );
+}
+
+export function remainingWorkspaceTicketGroups(
+  workspace: SprintItemWorkspace
+): WorkspaceTicketGroup[] {
+  const today = new Set(workspace.today_ticket_ids);
+  return groupTickets(
+    workspace.tickets.filter((ticket) => !today.has(ticket.id) && ticket.stage !== "dropped")
+  );
 }
 
 export function workspaceProgress(workspace: SprintItemWorkspace): string {
@@ -59,10 +61,24 @@ export function workspaceProgress(workspace: SprintItemWorkspace): string {
   return `${done} of ${tickets.length} done`;
 }
 
-export function failedWorkspaceDeliveries(
-  workspace: SprintItemWorkspace
-): SprintItemWorkspaceObligation[] {
-  return workspace.obligations.filter(
-    (obligation) => obligation.lifecycle === "failed" || obligation.last_error !== null
-  );
+export type WorkspaceArtifactRow = {
+  path: string;
+  label: string;
+  kind: string;
+  href: string | null;
+};
+
+// A row's href is null only when the path itself cannot resolve to a real managed file —
+// it must never be an empty string, which renders as a dead anchor.
+export function workspaceArtifactRows(workspace: SprintItemWorkspace): WorkspaceArtifactRow[] {
+  return workspace.artifacts.map((path) => {
+    const target = sprintItemFileTarget(workspace.id, path);
+    const dot = path.lastIndexOf(".");
+    return {
+      path,
+      label: path.split("/").at(-1) || path,
+      kind: dot < 0 ? "file" : path.slice(dot + 1),
+      href: target ? previewHashHref(target) : null
+    };
+  });
 }

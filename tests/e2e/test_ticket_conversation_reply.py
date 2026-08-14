@@ -165,8 +165,6 @@ def _parked_on_a_proposal(server: ServerHandle, cli: Callable[..., JsonObject]) 
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Success criteria proposed.",
         ticket_id=ticket_id,
@@ -183,7 +181,7 @@ def test_a_reply_in_the_pane_pairs_the_ticket_and_a_refusal_leaves_it_parked(
     api: ApiHelper,
 ) -> None:
     ticket_id = _parked_on_a_proposal(server, cli)
-    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_user_review"
+    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_approval"
     # Nothing is seeded: a Ticket nobody has spoken to has no conversation, and the first
     # message is what makes one.
 
@@ -192,7 +190,7 @@ def test_a_reply_in_the_pane_pairs_the_ticket_and_a_refusal_leaves_it_parked(
     page = open_page(
         context,
         server,
-        f"#/ticket/{ticket_id}",
+        f"#/workspace/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
 
@@ -224,7 +222,7 @@ def test_a_reply_in_the_pane_pairs_the_ticket_and_a_refusal_leaves_it_parked(
     )
     page.wait_for_selector(FATE, timeout=WAIT_MS)
     assert "not delivered" in page.inner_text(FATE)
-    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_user_review"
+    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_approval"
 
     # Now one the conversation holds for a busy agent. Held is reached, so this one is a
     # reply, and the screen says so as soon as the send comes back.
@@ -256,7 +254,7 @@ def test_ticket_images_cross_the_owner_api_become_managed_files_and_reload(
     with _browser_server_with_accepting_backend(tmp_path) as (base, ticket_id):
         context = context_factory()
         page = context.new_page()
-        page.goto(f"{base}/#/ticket/{ticket_id}")
+        page.goto(f"{base}/#/workspace/{ticket_id}")
         composer = f'{TICKET_SCREEN}[data-ticket-id="{ticket_id}"]'
         page.wait_for_selector(
             f"{composer} [data-conversation-input]:not([disabled])",

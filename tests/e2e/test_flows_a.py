@@ -89,8 +89,6 @@ def test_e22_cli_create_live_board(
     page_b = open_page(ctx_b, server, "#/workspace", board)
 
     for page in (page_a, page_b):
-        page.click('[data-workspace-view="attention"]')
-        page.wait_for_selector('[data-workspace-view="all"]', timeout=WAIT_MS)
         count = page.eval_on_selector_all(
             '[data-card][data-ticket-stage="needs_success"]', "els => els.length"
         )
@@ -145,8 +143,6 @@ def test_e23_env_pinned_propose(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Success criteria proposed.",
         ticket_id=tid,
@@ -154,7 +150,7 @@ def test_e23_env_pinned_propose(
     )
 
     ready = f'section[data-screen="ticket"][data-ticket-id="{tid}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{tid}", ready)
+    page = open_page(context_factory(), server, f"#/workspace/{tid}", ready)
 
     # Rendered: the proposal's markdown structure, with exact texts.
     b = "[data-approval-block] .approval-draft .markdown-block"
@@ -209,8 +205,6 @@ def test_e24_accept_in_review(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Success ready for review.",
         ticket_id=tid,
@@ -226,13 +220,13 @@ def test_e24_accept_in_review(
     page_b = open_page(
         context_factory(),
         server,
-        f"#/ticket/{tid}",
+        f"#/workspace/{tid}",
         'section[data-screen="ticket"][data-stage="needs_success"]',
     )
 
     # Scope defaults to the next stage and then propose.
     assert page_a.locator(f"{card} [data-scope-ceiling]").input_value() == "needs_approach"
-    assert page_a.locator(f"{card} [data-scope-atcap] select").input_value() == "user_review"
+    assert page_a.locator(f"{card} [data-scope-atcap] select").input_value() == "propose"
     _wait_enabled(page_a, f"{card} [data-accept]")
     page_a.click(f"{card} [data-accept]")
 
@@ -250,7 +244,7 @@ def test_e24_accept_in_review(
     d = api.get(server, f"/api/tickets/{tid}")
     assert d["stage"] == "needs_approach", d
     assert d["ceiling"] == "needs_approach", d  # default approval scope is next stage
-    assert d["at_cap"] == "user_review", d
+    assert d["at_cap"] == "propose", d
     assert d["fields"]["success"]["value"] == E24_BODY
     assert d["fields"]["success"]["proposal"] is None
 
@@ -275,8 +269,6 @@ def test_markdown_approval_focus_noop_keeps_raw_source(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Raw forms ready.",
         ticket_id=tid,
@@ -334,8 +326,6 @@ def test_e25_edit_accept_in_review(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Success draft for edit review.",
         ticket_id=tid,
@@ -363,7 +353,7 @@ def test_e25_edit_accept_in_review(
     page.keyboard.press("Escape")
     assert page.inner_text(f"{card} .approval-draft h1") == "Original proposal"
     page.select_option(f"{card} [data-scope-ceiling]", "needs_plan")
-    page.select_option(f"{card} [data-scope-atcap] select", "user_review")
+    page.select_option(f"{card} [data-scope-atcap] select", "propose")
     editor.focus()
     editor.locator("h1").evaluate(SELECT_NODE_CONTENTS)
     page.keyboard.type("Original proposal v2")
@@ -381,7 +371,7 @@ def test_e25_edit_accept_in_review(
     # Exact edited Markdown source was approved.
     assert d["fields"]["success"]["value"] == E25_EDIT, repr(d["fields"]["success"]["value"])
     assert d["ceiling"] == "needs_plan", d
-    assert d["at_cap"] == "user_review", d
+    assert d["at_cap"] == "propose", d
     assert d["stage"] == "needs_approach", d
     with sqlite3.connect(server.db_path) as conn:
         assert conn.execute(
@@ -393,7 +383,7 @@ def test_e25_edit_accept_in_review(
     ticket_page = open_page(
         context_factory(),
         server,
-        f"#/ticket/{tid}",
+        f"#/workspace/{tid}",
         'section[data-screen="ticket"][data-stage="needs_approach"]',
     )
     assert (
@@ -429,8 +419,6 @@ def test_review_keyboard_shortcuts(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Recap one.",
         ticket_id=first,
@@ -449,8 +437,6 @@ def test_review_keyboard_shortcuts(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Recap two.",
         ticket_id=second,
@@ -570,8 +556,6 @@ def test_needs_user_requests_share_the_review_walk(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Proposal recap.",
         ticket_id=proposal,
@@ -619,7 +603,7 @@ def test_needs_user_requests_share_the_review_walk(
     # Open uses the same global shortcut as a proposal item.
     open_page_for_shortcut.locator(".review-keys").click()
     open_page_for_shortcut.keyboard.press("o")
-    open_page_for_shortcut.wait_for_url(f"**/#/ticket/{first_help}", timeout=WAIT_MS)
+    open_page_for_shortcut.wait_for_url(f"**/#/workspace/{first_help}", timeout=WAIT_MS)
 
     # Skip advances within the same mixed queue without changing canonical state.
     walk_page.locator(".review-keys").click()
@@ -666,18 +650,16 @@ def test_e27_auto_accept_chain(
 
     # Unattributed direct scope: ceiling needs_plan, at_cap propose.
     g = api.direct_post(
-        server, f"/api/tickets/{tid}/scope", {"ceiling": "needs_plan", "at_cap": "user_review"}
+        server, f"/api/tickets/{tid}/scope", {"ceiling": "needs_plan", "at_cap": "propose"}
     )
     assert g["ceiling"] == "needs_plan", g
-    assert g["at_cap"] == "user_review", g
+    assert g["at_cap"] == "propose", g
 
     # Success + approach auto-accept and advance; the plan proposal parks at the ceiling.
     r1 = cli(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Success is ready.",
         ticket_id=tid,
@@ -688,8 +670,6 @@ def test_e27_auto_accept_chain(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Approach is ready.",
         ticket_id=tid,
@@ -700,8 +680,6 @@ def test_e27_auto_accept_chain(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Plan is ready.",
         ticket_id=tid,
@@ -713,7 +691,7 @@ def test_e27_auto_accept_chain(
     d = api.get(server, f"/api/tickets/{tid}")
     assert d["stage"] == "needs_plan", d
     assert d["ceiling"] == "needs_plan", d
-    assert d["at_cap"] == "user_review", d
+    assert d["at_cap"] == "propose", d
     assert d["fields"]["success"]["value"] == E27_SUCCESS
     assert d["fields"]["approach"]["value"] == E27_APPROACH
     assert d["fields"]["plan"]["value"] is None
@@ -752,7 +730,7 @@ def test_pending_kickoff_edits_and_approves_before_five_worker_stages(
     page = open_page(
         context_factory(),
         server,
-        f"#/ticket/{tid}",
+        f"#/workspace/{tid}",
         f'section[data-screen="ticket"][data-ticket-id="{tid}"][data-stage="needs_kickoff"]',
     )
     assert page.locator('details[data-field="kickoff"] [data-approval-block]').count() == 1
@@ -763,7 +741,7 @@ def test_pending_kickoff_edits_and_approves_before_five_worker_stages(
     )
     assert (
         page.locator('details[data-field="kickoff"] [data-scope-atcap] select').input_value()
-        == "user_review"
+        == "propose"
     )
 
     title_editor = page.locator(".ticket-title [role=textbox]").first
@@ -835,7 +813,7 @@ def test_kickoff_ceiling_suggestion_prefills_ticket_and_review_but_owner_choice_
     ticket_page = open_page(
         context_factory(),
         server,
-        f"#/ticket/{ticket_id}",
+        f"#/workspace/{ticket_id}",
         ticket_scope,
     )
     assert ticket_page.locator(ticket_scope).input_value() == "needs_plan"
@@ -887,7 +865,7 @@ def test_kickoff_ceiling_suggestion_prefills_ticket_and_review_but_owner_choice_
     review_page.wait_for_selector(review_card, state="detached", timeout=WAIT_MS)
     accepted_review = api.get(server, f"/api/tickets/{review_id}")
     assert accepted_review["ceiling"] == "needs_closeout"
-    assert accepted_review["at_cap"] == "user_review"
+    assert accepted_review["at_cap"] == "propose"
 
 
 def test_review_pending_kickoff_corrects_own_ticket_priority(
@@ -1000,7 +978,7 @@ def test_review_pending_kickoff_corrects_own_ticket_priority(
         page.click(f"{card} [data-accept]")
     assert approve_request.value.post_data_json == {
         "next_ceiling": "needs_success",
-        "at_cap": "user_review",
+        "at_cap": "propose",
     }
     page.wait_for_selector(card, state="detached", timeout=WAIT_MS)
     approved = api.get(server, f"/api/tickets/{tid}")
@@ -1011,8 +989,6 @@ def test_review_pending_kickoff_corrects_own_ticket_priority(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Success is ready.",
         ticket_id=tid,

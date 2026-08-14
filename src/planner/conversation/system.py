@@ -102,6 +102,10 @@ from planner.conversation.live_tail import ConversationLiveTail
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
 )
+from planner.conversation.logic.held_line import (
+    leading_run_that_can_share_a_turn,
+    one_prompt_from,
+)
 from planner.conversation.message_content import (
     MessageContent,
     prefix_message_content_text,
@@ -182,6 +186,20 @@ class _RunningTurn:
     ending_is_the_cores: bool = False
 
 
+@dataclass(slots=True)
+class _AdmittedSenderMessage:
+    """A send that is in flight, named by the id its sender minted.
+
+    A second call naming the same id is the same message, so it waits on ``settled`` and
+    then answers from what the first call actually did. Without the event it could only
+    guess, and what it used to guess was a place in a queue the message was not in.
+    """
+
+    content: MessageContent
+    sender_label: str
+    settled: asyncio.Event = field(default_factory=asyncio.Event)
+
+
 @dataclass(frozen=True, slots=True)
 class _HeldPrompt:
     """A message waiting for the agent to free up, with the change it carries.
@@ -229,7 +247,7 @@ class _ConversationState:
     phase: _ConversationPhase = _ConversationPhase.idle
     phase_settled: asyncio.Event = field(default_factory=asyncio.Event)
     held_prompts: deque[_HeldPrompt] = field(default_factory=deque)
-    admitted_sender_messages: dict[str, tuple[MessageContent, str]] = field(default_factory=dict)
+    admitted_sender_messages: dict[str, _AdmittedSenderMessage] = field(default_factory=dict)
     backend_event_queue: asyncio.Queue[_BackendEventHandler] = field(default_factory=asyncio.Queue)
     backend_event_pump: asyncio.Task[None] | None = None
     reserved_turn: _ReservedTurn | None = None
@@ -338,39 +356,55 @@ class SqliteProcessConversationSystem:
         state.last_touched_monotonic = self._monotonic_now()
 
         if sender_message_id is not None:
-            async with state.lock:
-                admitted = state.admitted_sender_messages.get(sender_message_id)
-                if admitted is not None:
-                    if admitted != (content, sender_label):
-                        raise ValueError("sender_message_id already names a different message")
-                    return PromptDeliveryQueued(queue_position=1)
-                for position, held in enumerate(state.held_prompts, start=1):
-                    if held.sender_message_id != sender_message_id:
-                        continue
-                    if held.content != content or held.sender_label != sender_label:
-                        raise ValueError("sender_message_id already names a different message")
-                    return PromptDeliveryQueued(queue_position=position)
-            outcome = await self._store.sender_message_outcome(conversation_id, sender_message_id)
-            if outcome is not None:
-                payload = outcome.payload
-                if (
-                    getattr(payload, "content", None) != content
-                    or getattr(payload, "sender_label", None) != sender_label
-                ):
-                    raise ValueError("sender_message_id already names a different message")
-                if isinstance(payload, PromptEventPayload):
-                    return PromptDeliveryStarted()
-                reason = getattr(
-                    payload, "refusal_reason", PromptDeliveryRefusalReason.write_to_backend_failed
+            while True:
+                settled: asyncio.Event | None = None
+                async with state.lock:
+                    admitted = state.admitted_sender_messages.get(sender_message_id)
+                    if admitted is not None:
+                        if (admitted.content, admitted.sender_label) != (content, sender_label):
+                            raise ValueError("sender_message_id already names a different message")
+                        settled = admitted.settled
+                    else:
+                        for position, held in enumerate(state.held_prompts, start=1):
+                            if held.sender_message_id != sender_message_id:
+                                continue
+                            if held.content != content or held.sender_label != sender_label:
+                                raise ValueError(
+                                    "sender_message_id already names a different message"
+                                )
+                            return PromptDeliveryQueued(queue_position=position)
+                if settled is not None:
+                    # The first send of this same message has not finished. Its fate is
+                    # this call's answer too, so this waits for it and then reads what it
+                    # actually did, rather than naming a place in a queue the message is
+                    # not in and may never join.
+                    await settled.wait()
+                    continue
+                outcome = await self._store.sender_message_outcome(
+                    conversation_id, sender_message_id
                 )
-                return PromptDeliveryRefused(refusal_reason=reason)
-            async with state.lock:
-                admitted = state.admitted_sender_messages.get(sender_message_id)
-                if admitted is not None:
-                    if admitted != (content, sender_label):
+                if outcome is not None:
+                    payload = outcome.payload
+                    if (
+                        getattr(payload, "content", None) != content
+                        or getattr(payload, "sender_label", None) != sender_label
+                    ):
                         raise ValueError("sender_message_id already names a different message")
-                    return PromptDeliveryQueued(queue_position=1)
-                state.admitted_sender_messages[sender_message_id] = (content, sender_label)
+                    if isinstance(payload, PromptEventPayload):
+                        return PromptDeliveryStarted()
+                    reason = getattr(
+                        payload,
+                        "refusal_reason",
+                        PromptDeliveryRefusalReason.write_to_backend_failed,
+                    )
+                    return PromptDeliveryRefused(refusal_reason=reason)
+                async with state.lock:
+                    if sender_message_id in state.admitted_sender_messages:
+                        continue
+                    state.admitted_sender_messages[sender_message_id] = _AdmittedSenderMessage(
+                        content=content, sender_label=sender_label
+                    )
+                break
 
         try:
             if mode is PromptDeliveryMode.steer:
@@ -399,7 +433,11 @@ class SqliteProcessConversationSystem:
         finally:
             if sender_message_id is not None:
                 async with state.lock:
-                    state.admitted_sender_messages.pop(sender_message_id, None)
+                    admitted = state.admitted_sender_messages.pop(sender_message_id, None)
+                if admitted is not None:
+                    # Whatever this send turned into, it is over. Anything holding the same
+                    # id can stop waiting and read the answer.
+                    admitted.settled.set()
 
     async def interrupt(self, conversation_id: str) -> None:
         state = await self._conversation_state(conversation_id)
@@ -910,19 +948,28 @@ class SqliteProcessConversationSystem:
     ) -> PromptDeliveryFate:
         await self._acquire_settled(state)
         try:
-            running = state.running_turn
-            if running is not None:
-                try:
-                    await self._cancel_and_end_running_turn(state, running)
-                except BaseException:
-                    # The incumbent's ending fell over, so this send never happens. The
-                    # conversation goes back to whichever phase is now true rather than
-                    # staying in an ending nobody is finishing.
-                    self._settle_phase(state)
-                    raise
-            reservation = self._reserve_turn(state)
-        finally:
-            state.lock.release()
+            try:
+                running = state.running_turn
+                if running is not None:
+                    try:
+                        await self._cancel_and_end_running_turn(state, running)
+                    except BaseException:
+                        # The incumbent's ending fell over, so this send never happens.
+                        # The conversation goes back to whichever phase is now true rather
+                        # than staying in an ending nobody is finishing.
+                        self._settle_phase(state)
+                        raise
+                reservation = self._reserve_turn(state)
+            finally:
+                state.lock.release()
+        except asyncio.CancelledError:
+            raise
+        except BaseException:
+            # The lock is let go above, so the line can be emptied here. The conversation
+            # is settled and free, and whatever was waiting is still owed its run — before
+            # this it was left behind with nothing coming back for it.
+            await self._drain_held_prompts(state)
+            raise
 
         return await self._deliver_and_finalize(
             state,
@@ -1009,6 +1056,18 @@ class SqliteProcessConversationSystem:
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
             )
+        except asyncio.CancelledError:
+            self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
+            raise
+        except BaseException:
+            # The text reached no backend and this send is over, so the conversation is
+            # free and whatever was waiting is owed its run. Without this the line was
+            # left behind with the conversation idle and no drain coming back for it.
+            self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
+            await self._drain_held_prompts(state)
+            raise
+
+        try:
             started = await self._finalize_delivery(
                 state,
                 reservation,
@@ -1024,6 +1083,8 @@ class SqliteProcessConversationSystem:
                 phase_when_not_started=_ConversationPhase.idle,
             )
         except BaseException:
+            # The text may already be on a live agent's wire, so the line is not emptied
+            # into a turn that could now be running.
             self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
             raise
         if started:
@@ -1158,6 +1219,7 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None,
         record_refusal: bool,
         phase_when_not_started: _ConversationPhase,
+        also_delivered: tuple[_HeldPrompt, ...] = (),
     ) -> bool:
         """Turn a delivery that has happened, or failed to, into the record and the state.
 
@@ -1178,6 +1240,19 @@ class SqliteProcessConversationSystem:
                                 sender_message_id=sender_message_id,
                             ),
                         )
+                        for message in also_delivered:
+                            # The others went to the same refused delivery, so each is
+                            # refused in its own right and its sender is told so.
+                            await self._append_event(
+                                state,
+                                PromptDeliveryRefusedEventPayload(
+                                    content=message.content,
+                                    sender_label=message.sender_label,
+                                    mode=mode,
+                                    refusal_reason=refusal,
+                                    sender_message_id=message.sender_message_id,
+                                ),
+                            )
                     self._set_phase(state, phase_when_not_started)
                     return False
 
@@ -1211,6 +1286,16 @@ class SqliteProcessConversationSystem:
                         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     ),
                     model_change=carried_change,
+                    extra_prompts=tuple(
+                        PromptEventPayload(
+                            content=message.content,
+                            sender_label=message.sender_label,
+                            mode=mode,
+                            sender_message_id=message.sender_message_id,
+                            sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+                        )
+                        for message in also_delivered
+                    ),
                 )
                 self._take_in_written_rows(state, written)
                 if carried_change is not None:
@@ -1250,7 +1335,12 @@ class SqliteProcessConversationSystem:
                 if not state.held_prompts:
                     self._set_phase(state, _ConversationPhase.idle)
                     return
-                held = state.held_prompts.popleft()
+                batch = leading_run_that_can_share_a_turn(state.held_prompts)
+                for _ in batch:
+                    state.held_prompts.popleft()
+                held = batch[0]
+                rest = batch[1:]
+                combined = one_prompt_from(batch)
                 self._publish_held_prompts_changed(state)
                 reservation = self._reserve_turn(state)
 
@@ -1258,12 +1348,39 @@ class SqliteProcessConversationSystem:
                 delivery = await self._deliver_prompt(
                     state,
                     reservation.token,
-                    content=held.content,
+                    content=combined,
                     sender_label=held.sender_label,
                     mode=PromptDeliveryMode.run_when_free,
                     model_change=held.model_change,
                     reasoning_effort_change=held.reasoning_effort_change,
                 )
+            except asyncio.CancelledError:
+                self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
+                raise
+            except Exception:
+                # Nothing named this failure and the text reached no backend, so this one
+                # message is written down as thrown away and the drain carries on. One
+                # message nobody can deliver must not take the line down with it: before
+                # this, the whole rest of the queue was left behind with the conversation
+                # marked idle and no drain left to come back for it.
+                LOGGER.exception(
+                    "conversation %s could not deliver a held message",
+                    state.record.conversation_id,
+                )
+                self._abandon_reserved_turn(state, reservation, _ConversationPhase.draining)
+                async with state.lock:
+                    for message in batch:
+                        await self._append_event(
+                            state,
+                            PromptDiscardedEventPayload(
+                                content=message.content,
+                                sender_label=message.sender_label,
+                                sender_message_id=message.sender_message_id,
+                            ),
+                        )
+                continue
+
+            try:
                 started = await self._finalize_delivery(
                     state,
                     reservation,
@@ -1277,10 +1394,12 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.draining,
+                    also_delivered=rest,
                 )
             except BaseException:
-                # The drain is over, so the conversation goes back to nobody owning it
-                # rather than staying in a drain that has stopped happening.
+                # The text is already on a live agent's wire and only the record fell
+                # over. The line stops here rather than sending a second message into a
+                # turn that is now running.
                 self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
                 raise
             if started:
@@ -1547,7 +1666,13 @@ class SqliteProcessConversationSystem:
             handle = await queue.get()
             try:
                 await handle()
-            except Exception:
+            except asyncio.CancelledError:
+                raise
+            except BaseException:
+                # Anything but this pump's own cancellation is survived. A pump that ends
+                # here stops the conversation ever hearing that a turn finished, and a
+                # conversation that never hears that never empties its held line again —
+                # nothing re-arms the pump while its child is alive.
                 LOGGER.exception(
                     "conversation %s could not take in a backend event",
                     state.record.conversation_id,

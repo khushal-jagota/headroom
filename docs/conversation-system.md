@@ -130,6 +130,22 @@ Send has no delivery knob. Every new message runs when the agent is free, and a
 busy agent holds it in a FIFO line. Enter and the send arrow use that same rule,
 including while a turn runs.
 
+When the agent frees, everything waiting goes to it as one prompt rather than one
+turn each. The messages keep their order and each keeps its sender's name in front
+of its own words, so an agent handed one run of text can still tell who said what.
+Nothing is summarised or reworded, and a single waiting message is sent exactly as
+it was. The record is not collapsed with the prompt: each message still gets its own
+row, because a row names one sender's message id and that id is how a sender
+recognises its own message when the record hands it back. A message that asks to run
+on a different model starts the next turn instead of joining this one, because a turn
+runs on one model and the messages in front of it never named that one.
+
+A waiting message that cannot be delivered at all is written down as discarded, and
+the line carries on to the next one. One message nobody can deliver does not take the
+rest of the line with it. If a message fails after its text already reached the agent,
+the line stops there instead: the agent is working now, and a second message would be
+sent into a turn that is already running.
+
 The composer shows the held line in one inset tray above its recessed input on desktop
 and phone. Messages stack inside that tray. Each row stays on one line and can discard
 the message or make it run next. A Hermes row can also steer its text into the running

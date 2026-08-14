@@ -17,7 +17,7 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "supervisor_obligations"
+HEAD_REVISION = "one_approval_gate"
 
 
 def _table_columns(

@@ -126,24 +126,25 @@ assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/human-reply/);
 assert.doesNotMatch(ticketRouteSource, /pristineKickoff|employeeBackendOptions|\/employee-backend/);
 assert.doesNotMatch(ticketRouteSource, /["'](?:hermes|codex|claude(?: code)?)["']/i);
 assert.doesNotMatch(ticketRouteSource, /<style>|settings|employee backend|ACP backend/i);
+// There is one approval gate. At the ceiling a Ticket either stops or proposes, so both
+// scope pickers offer exactly those two and nothing else. No option is conditional: a
+// Ticket having a Sprint Item no longer buys it a second, agent-owned review route.
 assert.match(ticketRouteSource, /value="stop">then stop/);
-assert.match(ticketRouteSource, /value="agent_review">then agent review/);
-assert.match(ticketRouteSource, /value="user_review">then user review/);
-assert.doesNotMatch(ticketRouteSource, /value="propose"|then continue/i);
+assert.match(ticketRouteSource, /value="propose">then propose/);
 assert.match(scopePairPickerSource, /value="stop">Stop/);
-assert.match(scopePairPickerSource, /value="agent_review">Agent review/);
-assert.match(scopePairPickerSource, /\{#if allowAgentReview\}<option value="agent_review"/);
-assert.match(ticketRouteSource, /allowAgentReview=\{detail\.sprint_item_id !== null\}/);
+assert.match(scopePairPickerSource, /value="propose">Propose/);
+assert.doesNotMatch(ticketRouteSource, /agent_review|user_review|allowAgentReview/);
+assert.doesNotMatch(scopePairPickerSource, /agent_review|user_review|allowAgentReview/);
+assert.doesNotMatch(scopePairPickerSource, /sprint_item_id/);
+// Ticket placement edits the Project. The eyebrow states no Sprint, and its Sprint Item
+// fact is a link back to that Item on the Workspace rather than a reassignment control.
+assert.match(ticketRouteSource, /data-ticket-placement/);
+assert.doesNotMatch(ticketRouteSource, /data-sprint-control/);
+assert.match(ticketRouteSource, /data-sprint-item-control/);
 assert.match(
   ticketRouteSource,
-  /\{#if detail\.sprint_item_id !== null\}[\s\S]*?<option value="agent_review">then agent review/,
+  /<a[\s\S]*?data-sprint-item-control[\s\S]*?workspaceAddress\(\{ kind: "item", id: detail\.sprint_item_id \}\)/,
 );
-assert.match(scopePairPickerSource, /value="user_review">User review/);
-assert.doesNotMatch(scopePairPickerSource, /value="propose"|>Continue</);
-// Ticket placement is one compound Project, Sprint, and optional Sprint Item edit.
-assert.match(ticketRouteSource, /data-ticket-placement/);
-assert.match(ticketRouteSource, /data-sprint-control/);
-assert.match(ticketRouteSource, /data-sprint-item-control/);
 assert.match(ticketRouteSource, /project_id: projectId, sprint_id: sprintId, sprint_item_id: sprintItemId/);
 
 // Sprint tracking joins the Sprint, Project, and Today resources in the browser. Its
@@ -176,14 +177,15 @@ assert.match(
   boardRouteSource,
   /<PriorityTile priority=\{item\.priority\} \/>[\s\S]*<span class="board-workspace-item-title">\{item\.title\}<\/span>/,
 );
-assert.doesNotMatch(
+// The rail row is the shared ticket row, so its priority tile comes from SprintTicketRow.
+assert.match(
   boardRouteSource.slice(
     boardRouteSource.indexOf("{#snippet ticketRow"),
     boardRouteSource.indexOf("{/snippet}", boardRouteSource.indexOf("{#snippet ticketRow")),
   ),
-  /<PriorityTile/,
+  /<SprintTicketRow[\s\S]*priority=\{card\.priority\}/,
 );
-assert.equal((sprintRouteSource.match(/<PriorityTile priority=/g) || []).length, 2);
+assert.equal((sprintRouteSource.match(/<PriorityTile priority=/g) || []).length, 1);
 assert.match(backlogRouteSource, /labelContent\(\)}<PriorityTile priority=\{p\} \/>/);
 assert.doesNotMatch(
   backlogRouteSource.slice(backlogRouteSource.indexOf("{#each groups[p] as item}")),
@@ -228,14 +230,33 @@ assert.doesNotMatch(
 
 // Workspace has one board projection. It does not keep a client-side project selector
 // or filter styles that can hide cards or restore the old top gap.
-assert.match(boardRouteSource, /let rail = \$derived\(buildWorkspaceRail\(allCards\)\);/);
+assert.match(
+  boardRouteSource,
+  /let rail = \$derived\(buildWorkspaceRail\(allCards, board\.data\?\.sprint_items \?\? \[\]\)\);/,
+);
 assert.doesNotMatch(boardRouteSource, /project-filter|projectMenu|selectedProject|rosterCards|All projects/);
 assert.doesNotMatch(appCssSource, /board-workspace-project-filter/);
-assert.match(workspaceRailSource, /"needs_user"[\s\S]*"awaiting_user_review"[\s\S]*"paired"[\s\S]*"user"/);
-assert.match(workspaceRailSource, /!card\.is_done && !card\.blocked/);
-assert.match(workspaceRailSource, /Number\(right\.attentionCards\.length > 0\)/);
-assert.match(boardRouteSource, /data-workspace-view=\{railMode\}/);
-assert.match(boardRouteSource, /\{hiddenCount\} more/);
+// The rail groups by the one shared Ticket condition, in one order, with the quiet
+// three hidden until the reader asks. There is no second organizing rule and no
+// view mode.
+assert.match(workspaceRailSource, /import \{ sprintTicketCondition \}/);
+assert.match(
+  workspaceRailSource,
+  /"needs-me"[\s\S]*"current-awaiting-approval", label: "Awaiting approval", hidden: false[\s\S]*"current-paired"[\s\S]*"current-running", label: "Agent", hidden: true[\s\S]*"errored", label: "Blocked", hidden: true[\s\S]*"upcoming"[\s\S]*"completed", label: "Done", hidden: true/,
+);
+assert.doesNotMatch(boardRouteSource, /data-workspace-view|railMode|WorkspaceRailMode/);
+assert.doesNotMatch(appCssSource, /board-workspace-view-control/);
+// The reveal is two-way: one control both shows and hides an Item's quiet groups.
+assert.match(boardRouteSource, /\+\$\{hiddenCount\} more/);
+assert.match(boardRouteSource, /onclick=\{\(\) => toggleReveal\(item\.id\)\}/);
+assert.match(boardRouteSource, /revealed \? "less"/);
+// The eyebrow carries the Item's identity and its progress across all its Tickets.
+assert.match(
+  boardRouteSource,
+  /<PriorityTile priority=\{item\.priority\} \/>[\s\S]*\{item\.progress\.done\} of \{item\.progress\.total\} done/,
+);
+// Titles and rows share one left edge: no gutter inset survives in the rail.
+assert.doesNotMatch(appCssSource, /board-workspace-item-priority/);
 assert.match(boardRouteSource, /data-no-item/);
 assert.match(boardRouteSource, /<SprintItemWorkspace itemId=\{selectedItem\.id\}/);
 

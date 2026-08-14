@@ -32,7 +32,8 @@ textarea {
 .chat-menu,
 .chat-image-previews,
 .board-workspace-left,
-.ticket-doc {
+.ticket-doc,
+.sprint-item-doc {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--border-color) transparent;
@@ -3240,6 +3241,13 @@ select {
   background: var(--surface-sunken);
 }
 
+/* The way back to the rail. Below 960px the rail is hidden, so the Ticket pane
+ * owns the whole screen and this is the only route back. Above 960px the rail is
+ * beside the pane already. */
+.board-workspace-back {
+  display: none;
+}
+
 .board-workspace-chief-conversation {
   display: flex;
   flex: 1;
@@ -3281,14 +3289,31 @@ select {
 
 .board-workspace-item-head {
   width: 100%;
+  min-width: 0;
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: var(--space-1);
   color: var(--text-strong);
 }
 
 .board-workspace-item--open > .board-workspace-item-head {
   margin-bottom: var(--space-3);
+}
+
+.board-workspace-item-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+}
+
+.board-workspace-item-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
 }
 
 .board-workspace-item-open {
@@ -3302,12 +3327,6 @@ select {
   color: inherit;
   text-align: left;
   cursor: pointer;
-}
-
-.board-workspace-item-priority {
-  display: flex;
-  align-items: center;
-  flex: 0 0 var(--space-6);
 }
 
 .board-workspace-item-title {
@@ -3326,9 +3345,11 @@ select {
 .board-workspace-item-fold {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-2);
   flex: 0 0 auto;
-  min-height: var(--space-5);
+  min-width: var(--space-7);
+  min-height: var(--space-7);
   padding: 0 0 0 var(--space-2);
   border: 0;
   background: transparent;
@@ -3346,19 +3367,24 @@ select {
   color: var(--text-strong);
 }
 
+/* The chevron is the fold state, so it is always drawn: it points right when the Item
+   is folded and down when it is open. A hover-only affordance never appears on touch. */
 .board-workspace-item-chevron {
   width: 0.5rem;
   height: 0.5rem;
   border-right: var(--border-strong) solid var(--text-faintest);
   border-bottom: var(--border-strong) solid var(--text-faintest);
+  transform: rotate(-45deg);
+  transition: transform var(--motion-fast) var(--motion-ease);
+}
+
+.board-workspace-item--open .board-workspace-item-chevron {
   transform: rotate(45deg);
-  opacity: 0;
-  transition: opacity var(--motion-fast) var(--motion-ease);
 }
 
 .board-workspace-item-fold:hover .board-workspace-item-chevron,
 .board-workspace-item-fold:focus-visible .board-workspace-item-chevron {
-  opacity: 1;
+  border-color: var(--text-strong);
 }
 
 .board-workspace-item-tickets,
@@ -3366,7 +3392,15 @@ select {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding-left: var(--space-6);
+}
+
+/* The status heading is a label for the rows under it, never a control. */
+.board-workspace-group-heading {
+  margin-top: var(--space-2);
+}
+
+.board-workspace-group-heading:first-child {
+  margin-top: 0;
 }
 
 .board-workspace-item-more {
@@ -3384,25 +3418,6 @@ select {
   color: var(--text-muted);
 }
 
-.board-workspace-view-control {
-  display: flex;
-  justify-content: flex-end;
-  margin: calc(-1 * var(--space-2)) var(--board-workspace-rail-pad-x) var(--space-3);
-}
-
-.board-workspace-view-control button {
-  padding: var(--space-1) 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
-  cursor: pointer;
-}
-
-.board-workspace-view-control button:hover {
-  color: var(--text-muted);
-}
-
 .board-workspace-no-item {
   margin-top: var(--space-5);
   padding-top: var(--space-4);
@@ -3411,7 +3426,7 @@ select {
 
 .board-workspace-no-item h2 {
   margin: 0;
-  padding: 0 calc(var(--space-4) + var(--space-6));
+  padding: 0 var(--space-4);
   color: var(--text-faintest);
   font-size: var(--type-xs);
   font-weight: 500;
@@ -3420,7 +3435,7 @@ select {
 }
 
 .board-workspace-no-item-tickets {
-  padding-left: calc(var(--space-4) + var(--space-6));
+  padding: 0 var(--space-4);
 }
 
 .board-workspace-quiet-line {
@@ -3429,12 +3444,12 @@ select {
   font-size: var(--type-sm);
 }
 
-/* Ticket rows begin at the Item title edge and retain their condition mark. */
-.list-row--board {
+/* One ticket row grammar — priority tile, title, condition mark — shared by the
+ * workspace rail and the Sprint Item detail sections (SprintTicketRow.svelte). */
+.ticket-row {
   width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-3);
   border: 0;
   border-radius: var(--radius-md);
@@ -3443,29 +3458,35 @@ select {
   cursor: pointer;
   padding: var(--space-2) 0;
   text-align: left;
+  text-decoration: none;
   font-size: var(--type-sm);
   line-height: 1.35;
   transition: color var(--motion-fast) var(--motion-ease),
     background var(--motion-fast) var(--motion-ease);
 }
 
-.list-row--board:hover,
-.list-row--board.active {
+.ticket-row:hover,
+.ticket-row--active {
   background: var(--surface-overlay);
   color: var(--text-strong);
 }
 
 /* Needs-you rows — an ask is waiting — read one text-step stronger at rest, keyed
  * off the existing status attribute (no new props). */
-.list-row--board[data-ticket-status="awaiting_approval"],
-.list-row--board[data-ticket-status="awaiting_user_review"],
-.list-row--board[data-ticket-status="needs_user"],
-.list-row--board[data-ticket-status="user"],
-.list-row--board[data-ticket-status="paired"] {
+.ticket-row[data-ticket-status="awaiting_approval"],
+.ticket-row[data-ticket-status="awaiting_user_review"],
+.ticket-row[data-ticket-status="needs_user"],
+.ticket-row[data-ticket-status="user"],
+.ticket-row[data-ticket-status="paired"],
+.ticket-row--attention {
   color: var(--text-default);
 }
 
-.list-row--board .list-row-title {
+.ticket-row--quiet {
+  color: var(--text-faintest);
+}
+
+.ticket-row-title {
   display: block;
   flex: 1;
   min-width: 0;
@@ -3475,7 +3496,7 @@ select {
 }
 
 @media (max-width: 720px) {
-  .list-row--board {
+  .ticket-row {
     gap: var(--space-2);
   }
 }
@@ -4437,11 +4458,13 @@ select {
   height: 100%;
 }
 
-/* A phone-width screen gives the conversation its gutters back: 48px a side would
- * spend a quarter of the width on margin. The header rows also learn to share —
- * the workspace path yields to an ellipsis instead of crushing the worker's name
- * into a one-letter-per-line column. */
-@media (max-width: 720px) {
+/* A narrow pane gives the conversation its gutters back: 48px a side would spend a
+ * quarter of the width on margin. The pane and not the window decides, because the
+ * Workspace right pane is narrow on a window that is not — and the Sprint Item beside
+ * this Ticket in that same slot has always measured its pane. Two rulers for one inset
+ * put a step between the two of them at every width where the pane and the window
+ * disagree. On the full-screen route the pane is the window, so nothing moves there. */
+@container ticket-pane (max-width: 720px) {
   .ticket-conversation-column {
     padding-inline: var(--page-gutter);
   }
@@ -4454,7 +4477,13 @@ select {
     margin-inline: calc(var(--surface-pad) * -1);
     padding-inline: var(--surface-pad);
   }
+}
 
+/* The chat header rows learn to share at a phone width: the workspace path yields to an
+ * ellipsis instead of crushing the worker's name into a one-letter-per-line column. These
+ * are the shared chat parts, used on screens with no pane around them, so the window is
+ * the right ruler here. */
+@media (max-width: 720px) {
   .chat-head-right {
     min-width: 0;
     flex: 0 1 auto;
@@ -4526,6 +4555,20 @@ select {
 }
 
 .ticket-identity-fact:focus-within {
+  color: var(--text-strong);
+  border-bottom-color: var(--accent-bright);
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: 2px;
+}
+
+/* The Sprint Item fact is a link back to that Item on the Workspace, not a control
+ * that changes the Ticket. It keeps the fact look and adds link behavior. */
+.ticket-identity-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.ticket-identity-link:focus-visible {
   color: var(--text-strong);
   border-bottom-color: var(--accent-bright);
   outline: var(--border-hairline) solid var(--accent-bright);
@@ -4812,11 +4855,15 @@ select {
 
 /* --- The page's one column ------------------------------------------------ */
 /* Header, body and conversation are the same column, so it is stated once here, after
- * all three, and they cannot drift apart again.
+ * all three, and they cannot drift apart again. The Sprint Item's two columns are the
+ * same column as well: an Item and a Ticket open in the same slot, one after the other,
+ * and a second formula for the same measure is what makes them step apart there.
  *
- * The column is measured against the ticket pane and never the window, because this
- * route also renders in the Workspace right pane, which is around 500px narrower than
- * the window around it. That is what `cqi` reads and what `.ticket-screen` declares.
+ * The column is measured against its pane and never the window, because both routes
+ * also render in the Workspace right pane, which is around 500px narrower than the
+ * window around it. That is what `cqi` reads and what `.ticket-screen` and
+ * `.sprint-item-page` declare. `cqi` takes the nearest container either way, so each
+ * selector measures against its own pane and this stays one rule.
  *
  * On a pane wide enough for them the column is the pane less a 192px gutter each side.
  * Below that it keeps the fixed measure it has today. The two arms cross at a 1152px
@@ -4825,7 +4872,9 @@ select {
  * the column is never wider than what draws it. */
 .ticket-head,
 .ticket-col,
-.ticket-conversation-column {
+.ticket-conversation-column,
+.sprint-item-column,
+.sprint-item-conversation-column {
   width: min(
     100%,
     max(
@@ -5066,6 +5115,10 @@ select {
     display: none;
   }
 
+  .board-workspace-shell--ticket .board-workspace-left {
+    display: none;
+  }
+
   .board-workspace-right.board-workspace-right--chief {
     display: flex;
     padding: var(--space-5);
@@ -5074,6 +5127,20 @@ select {
   .board-workspace-right.board-workspace-right--item {
     display: flex;
     padding: 0;
+  }
+
+  .board-workspace-right.board-workspace-right--ticket {
+    display: flex;
+    padding: 0;
+  }
+
+  .board-workspace-back {
+    display: block;
+    flex: none;
+    padding: var(--space-4) var(--page-gutter) 0;
+    color: var(--text-faintest);
+    font-size: var(--type-sm);
+    text-decoration: none;
   }
 
 }
@@ -5340,6 +5407,27 @@ select {
   color: var(--accent-done);
 }
 
+/* In the workspace host the rail is the way back, so the link is for narrow screens
+ * only — below 960px the rail is hidden and this is the only way out. */
+[data-screen="workspace"] .sprint-item-back {
+  display: none;
+}
+
+@media (max-width: 960px) {
+  [data-screen="workspace"] .sprint-item-back {
+    display: inline-block;
+    padding-top: var(--space-4);
+    color: var(--text-faintest);
+    font-size: var(--type-sm);
+    text-decoration: none;
+    transition: color var(--motion-fast) var(--motion-ease);
+  }
+
+  [data-screen="workspace"] .sprint-item-back:hover {
+    color: var(--text-default);
+  }
+}
+
 [data-screen="sprint"] .sprint-item-back {
   display: inline-block;
   padding-top: var(--space-6);
@@ -5351,62 +5439,6 @@ select {
 
 [data-screen="sprint"] .sprint-item-back:hover {
   color: var(--text-default);
-}
-
-[data-screen="sprint"] .sprint-item-head {
-  padding-top: var(--space-4);
-}
-
-[data-screen="sprint"] .sprint-item-project {
-  padding-bottom: var(--space-2);
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-}
-
-[data-screen="sprint"] .sprint-item-title {
-  margin: 0;
-  color: var(--text-strong);
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-hero);
-  font-weight: 500;
-  letter-spacing: var(--tracking-title);
-  line-height: 1.26;
-}
-
-[data-screen="sprint"] .sprint-item-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding-top: var(--space-4);
-  color: var(--text-faintest);
-  font-size: var(--type-sm);
-  font-variant-numeric: tabular-nums;
-}
-
-[data-screen="sprint"] .sprint-item-body {
-  margin-top: var(--space-6);
-}
-
-[data-screen="sprint"] .sprint-ticket-section-heading {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding-bottom: var(--space-2);
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-}
-
-[data-screen="sprint"] .sprint-ticket-section-heading .n {
-  margin-left: auto;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0;
 }
 
 [data-screen="sprint"] .sprint-ticket-row {
@@ -5441,42 +5473,8 @@ select {
   color: var(--text-faintest);
 }
 
-[data-screen="sprint"] .sprint-ticket-seam {
-  height: var(--border-hairline);
-  margin: var(--space-5) 0;
-  background: var(--border-color);
-}
-
-[data-screen="sprint"] .disclosure--sprint-done {
-  margin-top: var(--space-5);
-  border-top: var(--border-hairline) solid var(--border-color);
-}
-
-[data-screen="sprint"] .disclosure--sprint-done > .disclosure-summary {
-  gap: var(--space-2);
-  padding-top: var(--space-3);
-  color: var(--text-faintest);
-  font-size: var(--type-sm);
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-[data-screen="sprint"] .disclosure--sprint-done > .disclosure-summary:hover {
-  color: var(--text-default);
-}
-
-[data-screen="sprint"] .disclosure--sprint-done > .disclosure-body {
-  padding-top: var(--space-2);
-}
-
-[data-screen="sprint"] .sprint-empty-line {
-  padding: var(--space-2);
-  color: var(--text-faintest);
-  font-size: var(--type-sm);
-}
-
 @media (max-width: 600px) {
-  [data-screen="sprint"] .sprint-title,
-  [data-screen="sprint"] .sprint-item-title {
+  [data-screen="sprint"] .sprint-title {
     font-size: 24px;
   }
 
@@ -5532,38 +5530,53 @@ select {
   padding: 0;
 }
 
-.sprint-screen--workspace {
-  container-type: inline-size;
-  container-name: sprint-item-pane;
-}
-
+/* The page is the pane, so it is the size container, exactly as .ticket-screen is. It
+ * has to be this element and not the Sprint screen around it: the same component also
+ * renders from the Workspace route, which has no Sprint screen, and a rule that lives on
+ * one route is a rule that is dead on the other. Inline-size only, so the height chain
+ * from the shell down to the page is untouched. */
 .sprint-item-page {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-width: 0;
+  max-width: 100%;
   min-height: 0;
   overflow: hidden;
   padding-bottom: max(var(--space-6), env(safe-area-inset-bottom));
+  container-type: inline-size;
+  container-name: sprint-item-pane;
 }
 
 .sprint-item-doc {
   flex: 1;
   min-width: 0;
+  max-width: 100%;
   min-height: 0;
   overflow: auto;
 }
 
-.sprint-item-column,
-.sprint-item-conversation-column {
-  width: 100%;
-  max-width: calc(var(--ticket-column-measure) + var(--ticket-column-gutter));
-  margin: 0 auto;
-  padding-inline: var(--space-7);
-}
-
 .sprint-item-column {
   padding-bottom: var(--space-6);
+  padding-inline: var(--page-gutter);
+}
+
+/* The Item pane crosses over where the Ticket pane does, for the same two reasons: past
+ * it the column takes the conversation's inset so both read against one edge, and the
+ * document reserves its scrollbar on both edges so the two columns share a centre line.
+ *
+ * It is a second block and not a second selector list because the query names the pane it
+ * asks about, and an unnamed one would quietly re-point at the first container anyone put
+ * in between. It has to sit after the rule above: `@container` adds no specificity, so
+ * source order is all that decides between them. */
+@container sprint-item-pane (min-width: 1152px) {
+  .sprint-item-column {
+    padding-inline: var(--space-7);
+  }
+
+  .sprint-item-doc {
+    scrollbar-gutter: stable both-edges;
+  }
 }
 
 .sprint-workspace-head {
@@ -5597,7 +5610,6 @@ select {
 }
 
 .sprint-workspace-brief {
-  max-width: 62ch;
   margin-top: var(--space-2);
   color: var(--text-faint);
   font-family: var(--font-serif);
@@ -5610,26 +5622,11 @@ select {
   font-style: italic;
 }
 
-.sprint-workspace-attention {
-  margin-top: var(--space-5);
-  padding: var(--space-3) var(--space-4);
-  border: var(--border-hairline) solid color-mix(in srgb, var(--accent-error) 45%, transparent);
-  border-radius: var(--radius-md);
-  color: var(--text-muted);
-  font-size: var(--type-sm);
-}
-
-.sprint-workspace-attention strong {
-  color: var(--accent-error);
-  margin-right: var(--space-1);
-}
-
 .sprint-workspace-section {
   margin-top: var(--space-6);
 }
 
-.sprint-workspace-section > summary,
-.sprint-workspace-group > summary {
+.sprint-workspace-section > summary {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -5637,8 +5634,7 @@ select {
   cursor: pointer;
 }
 
-.sprint-workspace-section > summary::-webkit-details-marker,
-.sprint-workspace-group > summary::-webkit-details-marker {
+.sprint-workspace-section > summary::-webkit-details-marker {
   display: none;
 }
 
@@ -5692,11 +5688,11 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   margin-top: 0;
 }
 
-.sprint-workspace-group[open] > summary {
+.sprint-workspace-group-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   margin-bottom: var(--space-1);
-}
-
-.sprint-workspace-group > summary {
   color: var(--text-faintest);
   font-size: 10px;
   font-weight: 600;
@@ -5704,66 +5700,21 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   text-transform: uppercase;
 }
 
-.sprint-workspace-group .sprint-workspace-count {
+.sprint-workspace-group-label .sprint-workspace-count {
   font-size: var(--type-sm);
   font-weight: 400;
   letter-spacing: 0;
 }
 
-.sprint-workspace-ticket-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
+/* In the detail column the shared row pulls out to the column gutter. */
+.sprint-workspace-section .ticket-row {
   margin-inline: calc(var(--space-2) * -1);
   padding: var(--space-2);
-  border-radius: var(--radius-md);
-  color: var(--text-muted);
-  text-decoration: none;
-  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
 }
 
-.sprint-workspace-ticket-row:hover,
-.sprint-workspace-name-row:hover,
 .sprint-workspace-artifact:hover {
   background: var(--surface-overlay);
   color: var(--text-strong);
-}
-
-.sprint-workspace-ticket-row > :nth-child(2) {
-  flex: 1;
-  min-width: 0;
-}
-
-.sprint-workspace-name-row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  margin-inline: calc(var(--space-2) * -1);
-  padding: 6px var(--space-2);
-  border-radius: var(--radius-md);
-  color: var(--text-faint);
-  font-size: var(--type-sm);
-  text-decoration: none;
-}
-
-.sprint-workspace-name-row > :first-child {
-  flex: 1;
-  min-width: 0;
-}
-
-.sprint-workspace-name-row--attention {
-  color: var(--text-default);
-}
-
-.sprint-workspace-name-state {
-  flex: none;
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
-}
-
-.sprint-workspace-name-row--done {
-  color: var(--text-faintest);
 }
 
 .sprint-workspace-artifact {
@@ -5799,6 +5750,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  max-width: 100%;
   min-height: 0;
 }
 
@@ -5808,6 +5760,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  padding-inline: var(--space-7);
 }
 
 .sprint-item-conversation-layer [data-conversation-pane] {
@@ -5844,7 +5797,6 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 }
 
 @container sprint-item-pane (max-width: 720px) {
-  .sprint-item-column,
   .sprint-item-conversation-column {
     padding-inline: var(--page-gutter);
   }
@@ -5862,11 +5814,11 @@ details:not([open]) > summary > .sprint-workspace-chevron {
     font-size: 24px;
   }
 
-  .sprint-workspace-ticket-row {
+  .sprint-workspace-section .ticket-row {
     align-items: flex-start;
   }
 
-  .sprint-workspace-ticket-row > :nth-child(2) {
+  .sprint-workspace-section .ticket-row-title {
     display: -webkit-box;
     overflow: hidden;
     line-height: 1.35;

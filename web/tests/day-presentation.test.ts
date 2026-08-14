@@ -28,7 +28,7 @@ describe("Day presentation", () => {
       ticket("done", { stage: "done", is_done: true }),
       ticket("working", { ticket_status: "agent", agent_working: true }),
       ticket("paired", { ticket_status: "paired" }),
-      ticket("review", { ticket_status: "awaiting_user_review" }),
+      ticket("review", { ticket_status: "awaiting_approval" }),
       ticket("needs-you", { needs_me: true }),
       ticket("upcoming")
     ].map((item) => dayVisualTicket(item, {}));
@@ -56,7 +56,7 @@ describe("Day presentation", () => {
       ticket("done-1", { stage: "done", is_done: true }),
       ticket("working-1", { ticket_status: "agent", agent_working: true }),
       ticket("upcoming-1"),
-      ticket("review-1", { ticket_status: "awaiting_user_review" }),
+      ticket("review-1", { ticket_status: "awaiting_approval" }),
       ticket("needs-you-1", { needs_me: true }),
       ticket("paired-1", { ticket_status: "paired" }),
       ticket("done-2", { stage: "done", is_done: true }),

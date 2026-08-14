@@ -297,7 +297,7 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     ticket_page = open_page(
         context,
         server,
-        f"#/ticket/{ticket_id}",
+        f"#/workspace/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
     _open_ticket_field(ticket_page, "success")
@@ -461,7 +461,7 @@ def test_mobile_embedded_managed_files_use_preview_links(
     page = open_page(
         context,
         server,
-        f"#/ticket/{ticket_id}",
+        f"#/workspace/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
     page.set_viewport_size({"width": 390, "height": 844})
@@ -524,7 +524,7 @@ def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(
     ticket_page = open_page(
         context,
         server,
-        f"#/ticket/{ticket_id}",
+        f"#/workspace/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
     _open_ticket_field(ticket_page, "success")
@@ -593,7 +593,7 @@ def test_managed_html_preview_loads_sibling_stylesheets_and_images_in_both_surfa
     ticket_page = open_page(
         context,
         server,
-        f"#/ticket/{ticket_id}",
+        f"#/workspace/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
     _open_ticket_field(ticket_page, "success")
@@ -668,7 +668,7 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     page = open_page(
         context_factory(),
         server,
-        f"#/ticket/{ticket_id}",
+        f"#/workspace/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
 
@@ -860,7 +860,7 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
     page = open_page(
         context_factory(),
         server,
-        f"#/ticket/{ticket_id}",
+        f"#/workspace/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
     editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
@@ -951,8 +951,6 @@ def test_loaded_preview_proposal_approves_without_edited_body(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Preview proposal ready.",
         ticket_id=ticket_id,

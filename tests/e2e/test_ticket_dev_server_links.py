@@ -125,7 +125,7 @@ def test_agent_loopback_link_opens_the_ticket_server_through_panels(
         page = open_page(
             context_factory(),
             server,
-            f"#/ticket/{ticket_id}",
+            f"#/workspace/{ticket_id}",
             f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
         )
         page.click("[data-conversation-input]", timeout=WAIT_MS)

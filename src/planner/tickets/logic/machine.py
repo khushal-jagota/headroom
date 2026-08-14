@@ -10,7 +10,6 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     AtCap,
     NextCeiling,
-    ProposalReviewRoute,
     ScopePair,
     StageOwnershipMode,
     TicketFields,
@@ -132,8 +131,6 @@ def effective_stage_ownership_mode(
     *,
     worker_type_definition: WorkerTypeDefinition,
     default_stage_ownership_mode: StageOwnershipMode | None,
-    ceiling: str | None = None,
-    at_cap: AtCap = AtCap.user_review,
 ) -> StageOwnershipMode | None:
     if worker_type_definition.is_terminal(stage):
         return None
@@ -145,30 +142,7 @@ def effective_stage_ownership_mode(
             "non-terminal ticket has no captured stage ownership default",
             {"stage": stage},
         )
-    if (
-        default_stage_ownership_mode is StageOwnershipMode.paired
-        and at_cap is AtCap.agent_review
-        and ceiling is not None
-        and worker_type_definition.stage_index(stage) <= worker_type_definition.stage_index(ceiling)
-    ):
-        return StageOwnershipMode.worker
     return default_stage_ownership_mode
-
-
-def parked_proposal_review_route(
-    ownership_mode: StageOwnershipMode,
-    at_cap: AtCap,
-) -> ProposalReviewRoute:
-    """Snapshot the reviewer for a proposal which did not auto-accept.
-
-    A paired or user-owned proposal is user work even under agent-review scope. Explicit
-    ownership overrides therefore stay authoritative.
-    """
-    if ownership_mode is not StageOwnershipMode.worker:
-        return ProposalReviewRoute.user_review
-    if at_cap is AtCap.agent_review:
-        return ProposalReviewRoute.agent_review
-    return ProposalReviewRoute.user_review
 
 
 def resting_ticket_status(ownership_mode: StageOwnershipMode) -> TicketStatus:

@@ -293,7 +293,7 @@ def test_board_coding_card_keys_superset_and_columns_unchanged(
 @pytest.mark.parametrize(
     ("stage", "ticket_status", "ceiling", "at_cap", "expected"),
     [
-        ("needs_closeout", "empty", "needs_closeout", "user_review", True),
+        ("needs_closeout", "empty", "needs_closeout", "propose", True),
         ("needs_closeout", "empty", "needs_closeout", "stop", False),
         ("needs_closeout", "empty", "done", "stop", True),
         ("needs_success", "empty", "done", "stop", False),
@@ -342,7 +342,7 @@ def test_board_mixed_coding_probe_does_not_throw(
         actor="human",
         now=2,
         next_ceiling=NEEDS_BETA,
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
     )
 
     board = _board(tmp_db)
@@ -455,7 +455,7 @@ def test_board_cards_expose_active_incoming_blocking_without_changing_real_stage
         actor="human",
         now=4,
         next_ceiling="needs_success",
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
     )
     core_links.add_link(tmp_db, blocker, kickoff_dependent, LinkKind.blocks, 5)
     core_links.add_link(tmp_db, blocker, later_dependent, LinkKind.blocks, 5)
@@ -597,3 +597,45 @@ def test_completed_board_card_is_done_with_quiet_signals(tmp_db: Connection) -> 
     board = _board(tmp_db)
     card = next(card for column in board["columns"] for card in column["cards"])
     assert card["is_done"] is True
+
+
+def test_board_sprint_items_count_every_ticket_of_the_item(
+    tmp_db: Connection, fake_clock: TestClock
+) -> None:
+    item = create_item(
+        tmp_db,
+        title="Sidebar item",
+        project_id="project_vylo",
+        clock=fake_clock,
+    )
+    on_today = _ticket(tmp_db, "On today", 1, sprint_item_id=item.id)
+    finished = _ticket(tmp_db, "Finished", 2, sprint_item_id=item.id)
+    dropped = _ticket(tmp_db, "Dropped", 3, sprint_item_id=item.id)
+    _ticket(tmp_db, "Not on today", 4, sprint_item_id=item.id)
+    tmp_db.execute(
+        "UPDATE tickets SET stage = 'done', ticket_status = 'empty' WHERE id = ?",
+        (finished,),
+    )
+    tmp_db.execute("UPDATE tickets SET stage = 'dropped' WHERE id = ?", (dropped,))
+    add_day_ticket(tmp_db, "day_2026-07-04", on_today, 10)
+
+    board = board_view(tmp_db, day_id="day_2026-07-04")
+
+    # Three live Tickets belong to the Item; only one of them is on today.
+    assert board["sprint_items"] == [
+        {
+            "id": item.id,
+            "project": "Vylo",
+            "created_at": item.created_at,
+            "done_ticket_count": 1,
+            "total_ticket_count": 3,
+        }
+    ]
+
+
+def test_board_sprint_items_are_empty_when_no_card_has_an_item(
+    tmp_db: Connection,
+) -> None:
+    _ticket(tmp_db, "Unparented", 1)
+
+    assert _board(tmp_db)["sprint_items"] == []

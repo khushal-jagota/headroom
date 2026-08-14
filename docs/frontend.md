@@ -27,17 +27,23 @@ One screen per part of the system:
   appear. The Chief of Staff row leads one box for each Sprint Item with a Ticket on
   today. Tickets without an Item form a No Item tail.
 
-  Items with a user-owned Ticket come first. Priority orders Items within the active
-  and quiet runs. A user-owned Ticket is in `needs_user`, `awaiting_user_review`,
-  `paired`, or `user`, and a blocker removes it from that set. The default rail shows
-  only those Tickets. A quiet Item folds to one line and shows its live Ticket count.
-  The Item control reveals its other non-done Tickets. The rail control switches every
-  Item and No Item to all non-done Tickets on today. Done Tickets stay out of the rows,
-  but an Item with only done Tickets keeps its box.
+  Each Item box opens with an eyebrow — its priority tile, its project, and how many of
+  its Tickets are done. That count covers every Ticket of the Item, not only the ones on
+  today, so it reads the same as the Sprint Item page. The Item title sits under the
+  eyebrow, and the fold control beside it opens and closes the box.
 
-  The Item title carries the Item priority in a fixed gutter. Its Ticket titles begin
-  at the same edge, and Ticket rows carry no priority tile. Each row keeps the existing
-  conversation mark.
+  Inside a box the Tickets sit under plain status headings, in one order: Needs user,
+  Awaiting approval, Paired, Agent, Blocked, Waiting for closeout, To do, Done. Every
+  parked proposal sits under Awaiting approval, because there is one approval gate. The
+  headings are labels, not controls. Agent, Blocked and Done are quiet:
+  they are not drawn until the reader asks. "+n more" counts what is put away, and
+  pressing it again puts it back. A Ticket is in Blocked when its status says so or a
+  live blocker holds it. The No Item tail groups and reveals the same way.
+
+  Items with work the user owns — Needs user, Awaiting approval or Paired — come first,
+  then Item priority orders the rest. Every heading, title and Ticket row starts at the
+  same left edge. Every Ticket row is the shared Ticket row, so it carries its own
+  priority tile beside its title and keeps the existing conversation mark.
 
   The Chief of Staff row starts with its bundled portrait. The portrait is an agent
   identity on this row only; ticket rows and Worker types do not use it.
@@ -67,11 +73,19 @@ One screen per part of the system:
   On screens wider than 960px, the right side starts with a quiet invitation. An Item
   title opens the existing Sprint Item workspace at `#/workspace/item/<item-id>`.
   A Ticket opens the complete Ticket screen at `#/workspace/<ticket-id>`. Both
-  addresses survive refresh, sharing, and browser history. A stale selection returns
-  to the unselected Workspace. At 960px or less, an Item workspace replaces the rail.
-  A Ticket opens its standalone `#/ticket/<ticket-id>` page.
+  addresses survive refresh, sharing, and browser history. A stale Item selection
+  returns to the unselected Workspace. At 960px or less, an Item workspace or a Ticket
+  replaces the rail, and a link back to the Workspace appears above the Ticket.
+
+  A Ticket never opens as a full-screen page. Every Ticket link in the app, including
+  the ones on the Sprint page and in Review, uses the Workspace address. The old
+  `#/ticket/<ticket-id>` address redirects there, so shared links and stored
+  notifications still work. A Ticket opens this way even when it is not on today's
+  board, because the Ticket resource answers for it rather than the board card.
 - **Ticket** — the whole story of one piece of work. A quiet identity eyebrow puts
-  priority, effective project, and Worker above a serif title. Scope, takeover or
+  priority, effective project, Sprint Item, and Worker above a serif title. The Sprint
+  Item is a link back to that Item on the Workspace. The eyebrow states no Sprint, and
+  it does not reassign the Ticket to another Sprint or Sprint Item. Scope, takeover or
   release, and copy actions live in the Ticket details disclosure. Direct blockers get
   their own **Blocked by** line in the masthead, and the exact backend Worker failure
   reason remains visible when one exists. The inline-editable recap is always open on a
@@ -91,7 +105,7 @@ One screen per part of the system:
   that spine, collapsed. The current Stage mark speaks without a second status pill.
   Its summary adds words only where the mark would otherwise be ambiguous:
   **you're on it** for user-owned or taken-over work, with **Release**, and
-  **awaiting agent review** or **awaiting user review** for a parked proposal. Running,
+  **awaiting approval** for a parked proposal. Running,
   completed, and upcoming marks need no
   extra label. Stage bodies, editing and approval behavior, and the worker conversation
   in serif along the bottom remain in place. **Copy** still produces a plain-text block
@@ -257,9 +271,10 @@ has no usage source.
   proposals, and results stay as database text. Standalone files for a ticket
   live beside the database under `files/tickets/<ticket_id>/`, so the default local
   path is `data/files/tickets/<ticket_id>/...`. The browser reads them through
-  `/files/tickets/<ticket_id>/<relative-path>`. The server sends `nosniff`; only
-  explicit image, audio, and video types are inline. Markdown, HTML, SVG, and
-  unknown files are attachments when opened directly.
+  `/files/tickets/<ticket_id>/<relative-path>`. The contract is read-only: a worker
+  writes the file into that directory itself, and Panels serves it. The server sends
+  `nosniff`; only explicit image, audio, and video types are inline. Markdown, HTML,
+  SVG, and unknown files are attachments when opened directly.
 - **Sprint Item files use an isolated sibling root.** Item artifacts live under
   `files/sprint-items/<sprint_item_id>/` and use
   `/files/sprint-items/<sprint_item_id>/<relative-path>`. This contract is read-only and
@@ -335,7 +350,7 @@ hand-rolling the same shapes per screen. Each does one job:
 - **Pill** — a small static tag with an optional key label (dates, counts, due, sprint).
 - **Chip** — the coloured status/project tags, including "blocked by".
 - **PriorityTile** — the shared always-coloured P0–P3 square. It appears in the
-  Workspace Item's leading gutter, the editable Ticket and Review identity control,
+  Workspace Item's eyebrow, the editable Ticket and Review identity control,
   both Sprint priority positions, and once in each Backlog priority group heading.
   Priority never borrows the slate-blue attention accent or the status-mark colours.
 - **StageMark** — the single stage dot showing a field's progress.
@@ -432,4 +447,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-08-12._
+_Last verified: 2026-08-14._

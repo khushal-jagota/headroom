@@ -93,7 +93,7 @@ def test_ticket_history_opens_a_past_transcript_read_only_then_returns_to_curren
     page = open_page(
         context_factory(),
         server,
-        f"#/ticket/{ticket_id}",
+        f"#/workspace/{ticket_id}",
         f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
     selector = page.get_by_label("Ticket conversation")

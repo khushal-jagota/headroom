@@ -1,4 +1,4 @@
-import type { ReviewRoute, TicketDetail, TicketField } from "./types";
+import type { AtCap, TicketDetail, TicketField } from "./types";
 
 export const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const PRIORITY_ORDER = ["P0", "P1", "P2", "P3"];
@@ -19,11 +19,10 @@ export function stageLabel(value: string): string {
   return String(value).replace(/_/g, " ");
 }
 
-export function reviewRouteLabel(value: ReviewRoute): string {
-  const labels: Record<ReviewRoute, string> = {
+export function atCapLabel(value: AtCap): string {
+  const labels: Record<AtCap, string> = {
     stop: "stop",
-    agent_review: "agent review",
-    user_review: "user review"
+    propose: "propose"
   };
   return labels[value];
 }

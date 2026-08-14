@@ -5,7 +5,6 @@ import {
   sprintDayLabel,
   sprintProjectGroups,
   sprintTicketCondition,
-  sprintTicketSections,
   sprintTicketSectionsForTickets,
   type SprintItem,
   type SprintTicket
@@ -53,12 +52,12 @@ describe("Sprint ticket conditions", () => {
     [ticket({ ticket_status: "blocked" }), "errored", "blocked"],
     [ticket({ ticket_status: "errored" }), "errored", "blocked"],
     [ticket({ has_pending_proposal: true }), "current-awaiting-approval", "to review"],
-    [ticket({ ticket_status: "awaiting_agent_review" }), "current-awaiting-approval", "to review"],
-    [ticket({ ticket_status: "awaiting_user_review" }), "current-awaiting-approval", "to review"],
+    [ticket({ ticket_status: "awaiting_approval" }), "current-awaiting-approval", "to review"],
     [ticket({ ticket_status: "needs_user" }), "needs-me", "need you"],
     [ticket({ ticket_status: "user" }), "needs-me", "yours"],
     [ticket({ ticket_status: "agent" }), "current-running", "working"],
     [ticket({ ticket_status: "paired" }), "current-paired", "paired"],
+    [ticket({ waiting_to_closeout: true }), "current-waiting", "waiting for closeout"],
     [ticket(), "upcoming", "to do"]
   ])("maps %o to %s and %s", (input, mark, word) => {
     expect(sprintTicketCondition(input)).toEqual({ mark, word });
@@ -89,7 +88,11 @@ describe("Sprint Item presentation", () => {
   it("excludes dropped Tickets from sections and rollups", () => {
     const value = item({ tickets: [ticket({ stage: "done" }), ticket({ id: "t_drop", stage: "dropped" })] });
     expect(sprintItemRollup(value)).toBe("done");
-    expect(sprintTicketSections(value, new Set())).toEqual({ today: [], later: [], done: [value.tickets?.[0]] });
+    expect(sprintTicketSectionsForTickets(value.tickets || [], new Set())).toEqual({
+      today: [],
+      later: [],
+      done: [value.tickets?.[0]]
+    });
   });
 
   it("separates live, off-today, and done work with blocked live work last", () => {
@@ -98,7 +101,7 @@ describe("Sprint Item presentation", () => {
     const later = ticket({ id: "t_later", priority: "P1" });
     const done = ticket({ id: "t_done", stage: "done", priority: "P3" });
     expect(
-      sprintTicketSections(item({ tickets: [blocked, moving, later, done] }), new Set([blocked.id, moving.id]))
+      sprintTicketSectionsForTickets([blocked, moving, later, done], new Set([blocked.id, moving.id]))
     ).toEqual({ today: [moving, blocked], later: [later], done: [done] });
   });
 });

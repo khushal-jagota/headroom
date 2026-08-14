@@ -44,14 +44,12 @@ def _a_ticket_on_a_proposal(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Success criteria proposed.",
         ticket_id=ticket_id,
         stdin=PROPOSAL,
     )
-    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_user_review"
+    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_approval"
     return ticket_id
 
 
@@ -73,7 +71,7 @@ def _the_ticket_page(
     page = open_page(
         context,
         server,
-        f"#/ticket/{ticket_id}",
+        f"#/workspace/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
     page.wait_for_selector("[data-conversation-layer-host]", timeout=WAIT_MS)
@@ -108,14 +106,12 @@ def test_a_paired_visit_stays_open_when_status_changes_to_awaiting_approval(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Approach proposed.",
         ticket_id=ticket_id,
         stdin=APPROACH,
     )
-    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_user_review"
+    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_approval"
 
     _wait_for_ticket_refresh(server, api, page, ticket_id, "Still open after proposal")
     page.wait_for_selector(f'{PANE}[data-conversation-state="opened"]', timeout=WAIT_MS)

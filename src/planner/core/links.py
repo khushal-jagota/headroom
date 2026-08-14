@@ -200,7 +200,7 @@ def blocker_summary(conn: sqlite3.Connection, entity_id: str) -> BlockerSummary:
             title=str(row["title"]),
             stage=str(row["stage"]),
             active=str(row["stage"]) not in {"done", "dropped"},
-            href=f"#/ticket/{row['id']}",
+            href=f"#/workspace/{row['id']}",
         )
         for row in incoming_rows
     )
@@ -230,7 +230,7 @@ def blocker_summary(conn: sqlite3.Connection, entity_id: str) -> BlockerSummary:
         else:
             target_kind = "ticket"
             title = str(row["ticket_title"])
-            href = f"#/ticket/{target_id}"
+            href = f"#/workspace/{target_id}"
         blocks.append(
             BlocksTargetSummaryRow(
                 target_id=target_id,

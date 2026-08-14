@@ -130,11 +130,10 @@ export type TicketField = {
   proposal?: {
     body: string;
     proposed_by: string;
-    review_route?: ReviewRoute;
   } | null;
 };
 
-export type ReviewRoute = "stop" | "agent_review" | "user_review";
+export type AtCap = "stop" | "propose";
 
 export type BlockedByTicket = {
   ticket_id: string;
@@ -223,7 +222,7 @@ export type TicketDetail = {
   employee_configuration_editable: boolean;
   stage: string;
   ceiling: string;
-  at_cap: ReviewRoute;
+  at_cap: AtCap;
   suggested_next_ceiling: string;
   priority: string;
   deadline?: string | null;
@@ -294,21 +293,11 @@ export type SprintItemWorkspaceTicket = {
   stage: string;
   priority: Priority;
   ticket_status: string;
+  waiting_to_closeout: boolean;
   has_pending_proposal: boolean;
-  proposal_review_route: ReviewRoute | null;
-  review_route: ReviewRoute;
+  review_route: AtCap;
   worker_type: string;
   day_ids: string[];
-};
-
-export type SprintItemWorkspaceObligation = {
-  id: string;
-  ticket_id: string;
-  kind: string;
-  lifecycle: string;
-  attempt_count: number;
-  retry_at: number | null;
-  last_error: string | null;
 };
 
 export type SprintItemWorkspace = SprintItemSummary & {
@@ -326,7 +315,6 @@ export type SprintItemWorkspace = SprintItemSummary & {
   today_ticket_ids: string[];
   tickets: SprintItemWorkspaceTicket[];
   artifacts: string[];
-  obligations: SprintItemWorkspaceObligation[];
   conversation_history: TicketConversationHistoryEntry[];
 };
 
@@ -357,6 +345,17 @@ export type BoardResponse = {
     stage: string;
     cards: BoardCard[];
   }>;
+  sprint_items: BoardSprintItem[];
+};
+
+// A Sprint Item's own identity and progress. The cards are today's Tickets, so the
+// Item's done-of-total comes from the server, not from them.
+export type BoardSprintItem = {
+  id: string;
+  project: string;
+  created_at: number;
+  done_ticket_count: number;
+  total_ticket_count: number;
 };
 
 export type BoardCard = {

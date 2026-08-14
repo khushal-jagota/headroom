@@ -123,7 +123,7 @@ def assert_brand(browser, mobile):
             <button class="button button--primary" type="button">Approve</button>
           </div>
           <div class="markdown"><a href="#comparison">Open comparison</a></div>
-          <button class="list-row list-row--board active" type="button">Selected ticket</button>
+          <button class="ticket-row ticket-row--active" type="button">Selected ticket</button>
           <span class="stage-mark stage-mark--current-waiting"></span>
           <span class="stage-mark stage-mark--completed"></span>
           <span class="stage-mark stage-mark--errored"></span>
@@ -162,7 +162,7 @@ def assert_brand(browser, mobile):
         assert pending["backgroundColor"] == "rgb(34, 42, 56)"
         assert pending["color"] == "rgb(220, 230, 248)"
         assert pending["borderColor"] == "rgb(154, 173, 210)"
-        assert colors(page, ".list-row--board.active")["backgroundColor"] == "rgb(38, 34, 28)"
+        assert colors(page, ".ticket-row--active")["backgroundColor"] == "rgb(38, 34, 28)"
         assert colors(page, ".stage-mark--current-waiting")["borderColor"] == "rgb(154, 173, 210)"
         assert colors(page, ".stage-mark--completed")["backgroundColor"] == "rgb(127, 165, 100)"
         assert colors(page, ".stage-mark--errored")["backgroundColor"] == "rgb(216, 93, 93)"

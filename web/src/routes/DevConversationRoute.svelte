@@ -27,7 +27,7 @@
   } from "../lib/conversation/wire";
 
   const SENDER_LABEL = "owner";
-  const DEFAULT_WORKSPACE_FOLDER = "~/Coding";
+  const DEFAULT_WORKSPACE_FOLDER = "~/projects";
 
   let conversationId = $state(readIdFromAddress() ?? mintConversationId());
   /** What is on screen. It follows the id above; New is what parts them, until the next

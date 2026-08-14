@@ -95,11 +95,11 @@ def test_supervisor_skill_preserves_the_operating_contract() -> None:
     for required in (
         "The Sprint Item body is the shared brief.",
         "Routine progress needs no response.",
-        "If a required action or message fails, do not acknowledge the obligation.",
+        "A wake tells you nothing by itself.",
         "Supervise only current child Tickets.",
         "Approve only when the current record proves the accepted outcome.",
         "Ask the user before destructive, irreversible, security-sensitive, or",
-        "`awaiting_user_review` and `needs_user` as user-owned escalation states",
+        "`awaiting_approval` and `needs_user` as user-owned states",
         "The readiness system owns Worker starts.",
         "Re-read canonical context after a restart",
     ):

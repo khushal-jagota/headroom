@@ -7,6 +7,7 @@ export type SprintTicket = {
   stage: string;
   priority: Priority;
   ticket_status: string;
+  waiting_to_closeout?: boolean;
   has_pending_proposal?: boolean;
 };
 
@@ -33,6 +34,16 @@ export type SprintProjectGroup = {
 export type SprintTicketCondition = {
   mark: FieldStageVisualState;
   word: string;
+};
+
+// The three facts a Ticket's condition is read from. Sprint tickets, Sprint Item
+// workspace tickets and Workspace board cards all carry them, so all three screens
+// name a Ticket's condition the same way.
+export type TicketConditionFacts = {
+  stage: string;
+  ticket_status: string;
+  has_pending_proposal?: boolean;
+  waiting_to_closeout?: boolean;
 };
 
 export type SprintTicketSections = {
@@ -90,22 +101,19 @@ export function sprintItems(groups: Record<string, SprintItem[]>): SprintItem[] 
   return Object.values(groups || {}).flat();
 }
 
-export function sprintTicketCondition(ticket: SprintTicket): SprintTicketCondition {
+export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicketCondition {
   if (ticket.stage === "done") return { mark: "completed", word: "done" };
   if (ticket.ticket_status === "blocked" || ticket.ticket_status === "errored") {
     return { mark: "errored", word: "blocked" };
   }
-  if (
-    ticket.has_pending_proposal ||
-    ticket.ticket_status === "awaiting_agent_review" ||
-    ticket.ticket_status === "awaiting_user_review"
-  ) {
+  if (ticket.has_pending_proposal || ticket.ticket_status === "awaiting_approval") {
     return { mark: "current-awaiting-approval", word: "to review" };
   }
   if (ticket.ticket_status === "needs_user") return { mark: "needs-me", word: "need you" };
   if (ticket.ticket_status === "user") return { mark: "needs-me", word: "yours" };
   if (ticket.ticket_status === "agent") return { mark: "current-running", word: "working" };
   if (ticket.ticket_status === "paired") return { mark: "current-paired", word: "paired" };
+  if (ticket.waiting_to_closeout) return { mark: "current-waiting", word: "waiting for closeout" };
   return { mark: "upcoming", word: "to do" };
 }
 
@@ -121,13 +129,6 @@ function sortedTickets(tickets: SprintTicket[], blockedLast: boolean): SprintTic
       left.title.localeCompare(right.title, undefined, { sensitivity: "base" }) ||
       left.id.localeCompare(right.id);
   });
-}
-
-export function sprintTicketSections(
-  item: SprintItem,
-  todayTicketIds: ReadonlySet<string>
-): SprintTicketSections {
-  return sprintTicketSectionsForTickets(item.tickets || [], todayTicketIds);
 }
 
 export function sprintTicketSectionsForTickets(

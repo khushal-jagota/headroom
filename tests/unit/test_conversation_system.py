@@ -783,16 +783,20 @@ def test_run_when_free_holds_behind_a_busy_agent_at_ascending_positions(
         )
         assert harness.backend("c").written_texts() == ("incumbent",)
 
-        # held-a runs, so held-b is now first in line and the next one held is second.
+        # Both waiting messages run as one turn, so the line is empty and the next
+        # message held after it is first.
         await harness.complete_turn("c")
         assert await harness.system.send(
             "c",
             text_message_content("held-c"),
             sender_label="owner",
         ) == (
-            PromptDeliveryQueued(queue_position=2)
+            PromptDeliveryQueued(queue_position=1)
         )
-        assert harness.backend("c").written_texts() == ("incumbent", "held-a")
+        assert harness.backend("c").written_texts() == (
+            "incumbent",
+            "owner:\nheld-a\n\nowner:\nheld-b",
+        )
 
     _run(exercise)
 
@@ -835,14 +839,12 @@ def test_send_now_kills_the_incumbent_and_runs_ahead_of_everything_held(
         assert await harness.recorded_endings("c") == (ConversationTurnEnding.interrupted,)
         assert harness.backend("c").written_texts() == ("incumbent", "urgent")
 
-        await harness.complete_turn("c")
-        assert harness.backend("c").written_texts() == ("incumbent", "urgent", "held-a")
+        # The send-now went ahead of the line, and the line itself then runs as one turn.
         await harness.complete_turn("c")
         assert harness.backend("c").written_texts() == (
             "incumbent",
             "urgent",
-            "held-a",
-            "held-b",
+            "owner:\nheld-a\n\nowner:\nheld-b",
         )
 
     _run(exercise)
@@ -1160,10 +1162,13 @@ def test_a_message_that_arrived_later_never_runs_earlier(harness: _Harness) -> N
         )
         assert fates == [PromptDeliveryQueued(queue_position=position) for position in range(1, 11)]
 
-        for _ in range(10):
-            await harness.complete_turn("c")
-        assert harness.backend("c").written_texts() == ("incumbent",) + tuple(
-            f"held-{index}" for index in range(1, 11)
+        # Everything waiting goes in as one prompt when the agent frees, in the order it
+        # arrived, so one turn carries all ten and none of them runs earlier than it was
+        # sent.
+        await harness.complete_turn("c")
+        assert harness.backend("c").written_texts() == (
+            "incumbent",
+            "\n\n".join(f"owner:\nheld-{index}" for index in range(1, 11)),
         )
 
     _run(exercise)
@@ -2555,6 +2560,113 @@ def test_an_adapter_that_falls_over_in_a_way_it_never_named_leaves_the_conversat
     _run(exercise)
 
 
+def test_a_held_message_that_cannot_be_delivered_is_recorded_and_the_line_carries_on(
+    harness: _Harness,
+) -> None:
+    """One message nobody can deliver must not take the rest of the line with it.
+
+    The failing message is written down as thrown away rather than vanishing, and the
+    messages behind it still get their turn. Before this the drain gave up on the whole
+    line and left the conversation idle with nothing coming back for it.
+    """
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        await harness.system.send("c", text_message_content("doomed"), sender_label="owner")
+        harness.backend("c").writes_raise_something_unnamed = True
+
+        await harness.complete_turn("c")
+
+        assert await harness.system.held_prompts("c") == ()
+        discarded = [
+            message_content_text(event.payload.content)
+            for event in await harness.events("c")
+            if isinstance(event.payload, PromptDiscardedEventPayload)
+        ]
+        assert discarded == ["doomed"]
+
+        # The conversation is usable, and a message sent now runs rather than joining a
+        # line nothing is emptying.
+        harness.backend("c").writes_raise_something_unnamed = False
+        assert await harness.system.send(
+            "c",
+            text_message_content("after the fault"),
+            sender_label="owner",
+        ) == (
+            PromptDeliveryStarted()
+        )
+
+    _run(exercise)
+
+
+def test_everything_waiting_goes_in_as_one_turn_with_a_row_for_each_sender(
+    harness: _Harness,
+) -> None:
+    """The agent is given one prompt, and the record still names every sender."""
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        for index, label in enumerate(("owner", "loop", "owner"), start=1):
+            await harness.system.send(
+                "c",
+                text_message_content(f"waiting-{index}"),
+                sender_label=label,
+                sender_message_id=f"sender-{index}",
+            )
+
+        await harness.complete_turn("c")
+
+        assert harness.backend("c").written_texts() == (
+            "incumbent",
+            "owner:\nwaiting-1\n\nloop:\nwaiting-2\n\nowner:\nwaiting-3",
+        )
+        prompts = [
+            (event.payload.sender_message_id, message_content_text(event.payload.content))
+            for event in await harness.events("c")
+            if isinstance(event.payload, PromptEventPayload)
+        ]
+        assert prompts[1:] == [
+            ("sender-1", "waiting-1"),
+            ("sender-2", "waiting-2"),
+            ("sender-3", "waiting-3"),
+        ]
+
+    _run(exercise)
+
+
+def test_a_waiting_message_that_names_another_model_starts_its_own_turn(
+    harness: _Harness,
+) -> None:
+    """A turn runs on one model, so the run stops before a message that names another."""
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        await harness.system.send("c", text_message_content("plain"), sender_label="owner")
+        await harness.system.send(
+            "c",
+            text_message_content("on another model"),
+            sender_label="owner",
+            model_change="other-model",
+        )
+        await harness.system.send("c", text_message_content("after it"), sender_label="owner")
+
+        await harness.complete_turn("c")
+        assert harness.backend("c").written_texts() == ("incumbent", "plain")
+
+        await harness.complete_turn("c")
+        assert harness.backend("c").written_texts() == (
+            "incumbent",
+            "plain",
+            "owner:\non another model\n\nowner:\nafter it",
+        )
+        assert harness.backend("c").model == "other-model"
+
+    _run(exercise)
+
+
 def test_a_held_message_whose_adapter_falls_over_leaves_the_conversation_usable(
     harness: _Harness,
 ) -> None:
@@ -2969,11 +3081,12 @@ def test_promoted_send_now_claims_one_message_and_preserves_fifo(harness: _Harne
             "c", held[1].held_prompt_id, HeldPromptPromotionMode.send_now
         ) is None
 
+        # What is left of the line keeps its order and runs as one turn.
         await harness.complete_turn("c")
         assert harness.backend("c").written_texts() == (
             "incumbent",
             "selected",
-            "first",
+            "owner:\nfirst\n\nowner:\nlast",
         )
 
     _run(exercise)

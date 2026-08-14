@@ -16,7 +16,7 @@
     backendKey = $bindable("codex" as ConversationBackendKey),
     model = $bindable<string | null>(null),
     reasoningEffort = $bindable<string | null>(null),
-    workspaceFolder = $bindable("~/Coding")
+    workspaceFolder = $bindable("~/projects")
   }: {
     conversationId: string;
     backends?: readonly BackendSnapshot[];

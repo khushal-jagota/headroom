@@ -61,7 +61,7 @@ def test_item_tickets_probe_child_decodes(
         actor="human",
         now=2,
         next_ceiling=NEEDS_ALPHA,
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
     )
     file_proposal(tmp_db, probe.id, field=FIELD_ALPHA, body="alpha body", actor="agent", now=3)
 
@@ -73,9 +73,8 @@ def test_item_tickets_probe_child_decodes(
     assert row["id"] == probe.id
     assert row["stage"] == "needs_alpha"
     assert row["has_pending_proposal"] is True
-    assert row["ticket_status"] == "awaiting_user_review"
-    assert row["review_route"] == "user_review"
-    assert row["proposal_review_route"] == "user_review"
+    assert row["ticket_status"] == "awaiting_approval"
+    assert row["review_route"] == "propose"
 
 
 def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
@@ -102,7 +101,7 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
         actor="human",
         now=2,
         next_ceiling="needs_success",
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
     )
     file_proposal(tmp_db, child.id, field="success", body="s", actor="agent", now=3)
 
@@ -112,3 +111,46 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
     assert row["id"] == child.id
     assert row["stage"] == "needs_success"
     assert row["has_pending_proposal"] is True
+
+
+@pytest.mark.parametrize(
+    ("stage", "ticket_status", "ceiling", "at_cap", "expected"),
+    [
+        ("needs_closeout", "empty", "needs_closeout", "propose", True),
+        ("needs_closeout", "empty", "needs_closeout", "stop", False),
+        ("needs_closeout", "empty", "done", "stop", True),
+        ("needs_success", "empty", "done", "stop", False),
+        ("needs_closeout", "agent", "done", "stop", False),
+    ],
+)
+def test_item_tickets_identifies_only_runnable_empty_closeout_tickets(
+    tmp_db: Connection,
+    stage: str,
+    ticket_status: str,
+    ceiling: str,
+    at_cap: str,
+    expected: bool,
+) -> None:
+    # Same classification board_view's BoardCard uses (Seam 4 target file, same fact):
+    # a ticket is waiting_to_closeout only while its own claim/run can start.
+    clock = TestClock(datetime(2026, 7, 4, 12, 0, 0).astimezone())
+    item = create_item(tmp_db, title="Item", project_id="project_vylo", clock=clock)
+    child = create_ticket(
+        tmp_db,
+        worker_type="coding",
+        title="Closeout classification",
+        actor="human",
+        now=1,
+        title_max_chars=200,
+        sprint_item_id=item.id,
+    )
+    tmp_db.execute(
+        "UPDATE tickets SET stage = ?, ticket_status = ?, ceiling = ?, at_cap = ? "
+        "WHERE id = ?",
+        (stage, ticket_status, ceiling, at_cap, child.id),
+    )
+
+    rows = item_tickets(tmp_db, item.id)
+
+    assert len(rows) == 1
+    assert rows[0]["waiting_to_closeout"] is expected

@@ -53,7 +53,7 @@ def _create(
         actor="human",
         now=clock.now_unix(),
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
     )
 
 
@@ -81,7 +81,36 @@ def test_ticket_delete_cli_requires_yes_and_forwards_confirmed_delete(
         (
             "DELETE",
             "/api/tickets/t_delete",
-            {"as_json": True, "request_actor": "ordinary"},
+            {"as_json": True, "params": None, "request_actor": "ordinary"},
+        )
+    ]
+
+
+def test_ticket_delete_cli_force_still_requires_yes_and_carries_the_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def send(method: str, path: str, **kwargs: object) -> dict[str, object]:
+        calls.append((method, path, kwargs))
+        return {"ok": True, "ticket_id": "t_delete"}
+
+    monkeypatch.setattr(cli_http, "send", send)
+    runner = CliRunner()
+    refused = runner.invoke(cli_main, ["ticket", "delete", "t_delete", "--force", "--json"])
+    assert refused.exit_code == 1
+    assert "permanent deletion requires --yes" in refused.stderr
+    assert calls == []
+
+    forced = runner.invoke(
+        cli_main, ["ticket", "delete", "t_delete", "--yes", "--force", "--json"]
+    )
+    assert forced.exit_code == 0, forced.output
+    assert calls == [
+        (
+            "DELETE",
+            "/api/tickets/t_delete",
+            {"as_json": True, "params": {"force": True}, "request_actor": "ordinary"},
         )
     ]
 
@@ -178,6 +207,21 @@ def test_delete_ticket_rejects_agent_and_each_active_worker_invariant(
     assert controlled_exc.value.code is ErrorCode.already_running
     assert tickets_data.read_ticket(tmp_db, controlled.id).id == controlled.id
 
+    # Force skips the status guard only. An agent is still refused.
+    with pytest.raises(PlannerError) as forced_agent_exc:
+        tickets_data.delete_ticket(
+            tmp_db, controlled.id, actor="agent", now=now, force=True
+        )
+    assert forced_agent_exc.value.code is ErrorCode.agent_forbidden
+
+    deleted = tickets_data.delete_ticket(
+        tmp_db, controlled.id, actor="human", now=now, force=True
+    )
+    assert deleted.ticket_id == controlled.id
+    assert tmp_db.execute(
+        "SELECT 1 FROM tickets WHERE id = ?", (controlled.id,)
+    ).fetchone() is None
+
 
 def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "delete-api.db"
@@ -248,6 +292,57 @@ def test_delete_route_refuses_a_ticket_whose_conversation_is_running(tmp_path: P
         app.state.conversation_system.complete_running_turn("conv-live")
         deleted = client.delete(f"/api/tickets/{target.id}")
         assert deleted.status_code == 200, deleted.text
+
+
+def test_delete_route_force_deletes_a_stuck_ticket_that_still_looks_running(
+    tmp_path: Path,
+) -> None:
+    """The reported incident: status stranded at `agent` and a conversation that still
+    reports a running turn. Both guards refuse; force deletes it anyway."""
+    app, db_path = _make_app(tmp_path)
+    conn = connect(str(db_path))
+    target = tickets_data.create_ticket(
+        conn,
+        worker_type="coding",
+        title="Stuck worker",
+        actor="human",
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+    )
+    conn.execute(
+        "UPDATE tickets SET conversation_id = ?, ticket_status = ? WHERE id = ?",
+        ("conv-stuck", "agent", target.id),
+    )
+    conn.commit()
+    conn.close()
+
+    with TestClient(app) as client:
+        asyncio.run(
+            app.state.conversation_system.start_conversation(
+                ConversationStartRequest(conversation_id="conv-stuck", model="a-model")
+            )
+        )
+        asyncio.run(
+            app.state.conversation_system.send(
+                "conv-stuck",
+                text_message_content("working"),
+                sender_label="loop",
+            )
+        )
+        blocked = client.delete(f"/api/tickets/{target.id}")
+        assert blocked.status_code == 409
+        assert blocked.json()["error"]["code"] == "already_running"
+
+        # Force is still human-only.
+        forbidden = client.delete(
+            f"/api/tickets/{target.id}?force=true", headers={"X-Plan-Actor": "agent"}
+        )
+        assert forbidden.status_code == 400
+        assert forbidden.json()["error"]["code"] == "agent_forbidden"
+
+        forced = client.delete(f"/api/tickets/{target.id}?force=true")
+        assert forced.status_code == 200, forced.text
+        assert client.get(f"/api/tickets/{target.id}").status_code == 404
 
 
 def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path: Path) -> None:

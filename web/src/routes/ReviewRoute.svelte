@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
+  import { workspaceAddress } from "../lib/workspaceAddress";
   import { queries } from "../lib/queryCatalogue";
   import { fieldStageVisualStateFor, gatingFieldFor, lifecycleFor } from "../lib/lifecycle";
   import type {
@@ -156,7 +157,7 @@
   }
 
   function openTicket(item: ReviewItem): void {
-    window.location.hash = `#/ticket/${item.ticket_id}`;
+    window.location.hash = workspaceAddress({ kind: "ticket", id: item.ticket_id });
   }
 
   // Global review shortcuts (approved addition): s = skip, o = open ticket,
@@ -291,7 +292,7 @@
           >
             <div class="review-ticket-decision-line review-arrive review-arrive--1">
               <button data-skip="" onclick={() => skip(currentItem)}>Skip &rsaquo;</button>
-              <a data-open-ticket href={`#/ticket/${currentItem.ticket_id}`}>Open ticket &rsaquo;</a>
+              <a data-open-ticket href={workspaceAddress({ kind: "ticket", id: currentItem.ticket_id })}>Open ticket &rsaquo;</a>
             </div>
 
             <div class="review-ticket-title review-arrive review-arrive--2">
@@ -317,7 +318,7 @@
             <div class="quiet-line">{proposal.title}</div>
             <div class="review-card-actions">
               <Button variant="quiet" data-skip="" onclick={() => skip(proposal)}>Skip</Button>
-              <a data-open-ticket href={`#/ticket/${proposal.ticket_id}`}>open ticket</a>
+              <a data-open-ticket href={workspaceAddress({ kind: "ticket", id: proposal.ticket_id })}>open ticket</a>
             </div>
           </div>
         {:else if detail.isFetching && !detail.data}
@@ -330,7 +331,7 @@
             />
             <div class="review-card-actions">
               <Button variant="quiet" data-skip="" onclick={() => skip(proposal)}>Skip</Button>
-              <a data-open-ticket href={`#/ticket/${proposal.ticket_id}`}>open ticket</a>
+              <a data-open-ticket href={workspaceAddress({ kind: "ticket", id: proposal.ticket_id })}>open ticket</a>
             </div>
           </div>
         {:else if detail.data}
@@ -349,7 +350,7 @@
               >
                 <div class="review-ticket-decision-line review-arrive review-arrive--1">
                   <button data-skip="" onclick={() => skip(proposal)}>Skip &rsaquo;</button>
-                  <a data-open-ticket href={`#/ticket/${proposal.ticket_id}`}>Open ticket &rsaquo;</a>
+                  <a data-open-ticket href={workspaceAddress({ kind: "ticket", id: proposal.ticket_id })}>Open ticket &rsaquo;</a>
                 </div>
 
                 <div class="review-ticket-heading review-arrive review-arrive--2">
@@ -403,7 +404,6 @@
                       ticketStage={ticketDetail.stage}
                       ceiling={ticketDetail.ceiling}
                       suggestedNextCeiling={ticketDetail.suggested_next_ceiling}
-                      allowAgentReview={ticketDetail.sprint_item_id !== null}
                       stageState={fieldStageVisualStateFor(lc, ticketDetail, field)}
                       approvalDisabled={field === "kickoff" && priorityBusy}
                       onAccept={(payload) => accept(proposal, payload)}

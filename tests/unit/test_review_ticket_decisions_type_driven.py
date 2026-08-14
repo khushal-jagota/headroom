@@ -76,7 +76,7 @@ def _park_after_kickoff(
         actor="human",
         now=2,
         next_ceiling=next_ceiling,
-        at_cap=AtCap.user_review,
+        at_cap=AtCap.propose,
     )
     file_proposal(
         conn,
@@ -280,7 +280,7 @@ def test_review_membership_is_the_two_human_work_statuses_and_nothing_else(
     tmp_db: Connection,
 ) -> None:
     # Review is a pure filter on the status. The proposal stays on file throughout,
-    # so only awaiting_user_review and needs_user decide membership.
+    # so only awaiting_approval and needs_user decide membership.
     ticket_id = _park_after_kickoff(
         tmp_db,
         worker_type="coding",
@@ -297,7 +297,7 @@ def test_review_membership_is_the_two_human_work_statuses_and_nothing_else(
         )
         items = _review(tmp_db)["items"]
         expected_type = {
-            TicketStatus.awaiting_user_review: "proposal",
+            TicketStatus.awaiting_approval: "proposal",
             TicketStatus.needs_user: "needs_user",
         }.get(status)
         assert [row["ticket_id"] for row in items] == (
@@ -309,7 +309,7 @@ def test_review_membership_is_the_two_human_work_statuses_and_nothing_else(
 
 def test_a_terminal_ticket_never_reaches_review(tmp_db: Connection) -> None:
     # The is_terminal skip is gone; a completed Ticket stays out because completing it
-    # rests its status away from awaiting_user_review.
+    # rests its status away from awaiting_approval.
     ticket_id = _park_after_kickoff(
         tmp_db,
         worker_type="coding",

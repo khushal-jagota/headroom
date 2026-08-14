@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any
 
 import click
-from click.core import ParameterSource
 
 from planner.cli import http
 from planner.cli.record_projection import (
@@ -135,27 +134,18 @@ def _read_source(spec: str, as_json: bool) -> str:
         http.fail_validation(f"cannot read body file: {spec}", as_json)
 
 
-def _positional_is_stdin_marker(positional: str | None) -> bool:
-    if positional != "-":
-        return False
-    source = click.get_current_context().get_parameter_source("ticket_id")
-    return source == ParameterSource.COMMANDLINE
-
-
-def read_body(
-    positional_ticket_id: str | None, body_file: str | None, as_json: bool
-) -> str:
-    if body_file is not None:
-        text = _read_source(body_file, as_json)
-    elif _positional_is_stdin_marker(positional_ticket_id):
-        text = sys.stdin.read()
-    else:
-        http.fail_validation(
-            "body required: pass '-' for stdin or --body-file PATH", as_json
-        )
+def read_worker_stdin_body(as_json: bool, label: str = "body") -> str:
+    text = sys.stdin.read()
     if not text.strip():
-        http.fail_validation("empty body", as_json)
+        http.fail_validation(f"empty {label}", as_json)
     return text
+
+
+def refuse_worker_body_file(body_file: str | None, as_json: bool, stdin_form: str) -> None:
+    if body_file is not None:
+        http.fail_validation(
+            f"--body-file is no longer supported: {stdin_form}", as_json
+        )
 
 
 def read_optional_body(body_file: str | None, as_json: bool) -> str | None:
@@ -196,21 +186,15 @@ def read_value_or_file(
 
 
 def read_recap(recap: str | None, recap_file: str | None, as_json: bool) -> str:
-    if recap is not None and recap_file is not None:
-        http.fail_validation(
-            "recap accepts only one of --recap or --recap-file", as_json
-        )
     if recap_file is not None:
-        text = _read_source(recap_file, as_json)
-    elif recap is not None:
-        text = recap
-    else:
         http.fail_validation(
-            "recap required: pass --recap TEXT or --recap-file PATH", as_json
+            "--recap-file is no longer supported: pass --recap TEXT", as_json
         )
-    if not text.strip():
+    if recap is None:
+        http.fail_validation("recap required: pass --recap TEXT", as_json)
+    if not recap.strip():
         http.fail_validation("empty recap", as_json)
-    return text
+    return recap
 
 
 def resolve_ticket_id(positional: str | None, as_json: bool) -> str:
@@ -1095,6 +1079,18 @@ def ticket() -> None:
     default=None,
     help="Read proposed kickoff note from this file, or -.",
 )
+@click.option(
+    "--ceiling",
+    default=None,
+    help="Initial ceiling, as a stage name or the plain field name that stage needs.",
+)
+@click.option(
+    "--at-cap",
+    "at_cap",
+    type=click.Choice([a.value for a in AtCap]),
+    default=None,
+    help="Initial behaviour at the ceiling. Omit to park the kickoff for approval.",
+)
 @json_option
 def ticket_create(
     title: str,
@@ -1111,9 +1107,15 @@ def ticket_create(
     blocked_by_ticket_ids: tuple[str, ...],
     kickoff_note: str | None,
     kickoff_note_file: str | None,
+    ceiling: str | None,
+    at_cap: str | None,
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {"title": title, "worker_type": worker_type}
+    if ceiling is not None:
+        body["ceiling"] = ceiling
+    if at_cap is not None:
+        body["at_cap"] = at_cap
     if employee_backend is not None:
         body["employee_backend"] = employee_backend
     if employee_launch_model is not None:
@@ -1175,13 +1177,23 @@ def ticket_show(ticket_id: str | None, part_names: str | None, as_json: bool) ->
     default=False,
     help="Permanently delete the ticket and all of its working history.",
 )
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Delete even a ticket that still looks running, for a stuck ticket status.",
+)
 @json_option
-def ticket_delete(ticket_id: str | None, yes: bool, as_json: bool) -> None:
+def ticket_delete(ticket_id: str | None, yes: bool, force: bool, as_json: bool) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     if not yes:
         http.fail_validation("permanent deletion requires --yes", as_json)
     data = http.send(
-        "DELETE", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary"
+        "DELETE",
+        f"/api/tickets/{tid}",
+        as_json=as_json,
+        params={"force": True} if force else None,
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{tid} permanently deleted")
 
@@ -1429,7 +1441,7 @@ def ticket_ownership(ticket_id: str, stage: str, mode: str, as_json: bool) -> No
     "--at-cap",
     default=None,
     type=click.Choice([a.value for a in AtCap]),
-    help="stop, agent_review, or user_review.",
+    help="stop or propose.",
 )
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @click.option("--kickoff-title", default=None, help="Edited Kickoff title.")
@@ -1922,42 +1934,6 @@ def sprint_item_supervisor_context(item_id: str, as_json: bool) -> None:
     http.emit(data, as_json, f"{item_id} {len(data['tickets'])} current Tickets")
 
 
-@sprint_item_supervisor.command("obligations")
-@click.argument("item_id")
-@click.option("--limit", type=click.IntRange(1, 100), default=50, show_default=True)
-@click.option("--all", "open_only", flag_value=False, default=True)
-@json_option
-def sprint_item_supervisor_obligations(
-    item_id: str, limit: int, open_only: bool, as_json: bool
-) -> None:
-    data = http.send(
-        "GET", f"/api/items/{item_id}/supervisor/obligations", as_json=as_json,
-        params={"limit": limit, "open_only": str(open_only).lower()},
-    )
-    http.emit(
-        data,
-        as_json,
-        _lines(
-            data["obligations"],
-            lambda row: f"{row['id']} {row['kind']} {row['ticket_id']}",
-        ),
-    )
-
-
-@sprint_item_supervisor.command("acknowledge")
-@click.argument("item_id")
-@click.argument("obligation_ids", nargs=-1, required=True)
-@json_option
-def sprint_item_supervisor_acknowledge(
-    item_id: str, obligation_ids: tuple[str, ...], as_json: bool
-) -> None:
-    data = http.send(
-        "POST", f"/api/items/{item_id}/supervisor/obligations/acknowledge",
-        as_json=as_json, json_body={"obligation_ids": list(obligation_ids)},
-    )
-    http.emit(data, as_json, f"{data['acknowledged']} obligations acknowledged")
-
-
 @sprint_item_supervisor.command("ticket-context")
 @click.argument("item_id")
 @click.argument("ticket_id")
@@ -2261,7 +2237,7 @@ def sprint_item_supervisor_reset(item_id: str, as_json: bool) -> None:
     "--at-cap",
     required=True,
     type=click.Choice([a.value for a in AtCap]),
-    help="Review route at the next ceiling.",
+    help="Behaviour at the next ceiling: stop or propose.",
 )
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @json_option
@@ -2273,7 +2249,7 @@ def sprint_item_supervisor_approve(
     edit_file: str | None,
     as_json: bool,
 ) -> None:
-    """Approve one agent-review proposal for this Sprint Item."""
+    """Approve one parked proposal for this Sprint Item."""
     body: dict[str, Any] = {"next_ceiling": ceiling, "at_cap": at_cap}
     if edit_file is not None:
         body["edited_body"] = _read_source(edit_file, as_json)
@@ -2283,7 +2259,7 @@ def sprint_item_supervisor_approve(
         as_json=as_json,
         json_body=body,
     )
-    http.emit(data, as_json, f"{ticket_id} agent review approved")
+    http.emit(data, as_json, f"{ticket_id} proposal approved")
 
 
 @sprint_item_supervisor.command("reject")
@@ -2299,7 +2275,7 @@ def sprint_item_supervisor_reject(
     body_file: str | None,
     as_json: bool,
 ) -> None:
-    """Reject one agent-review proposal with focused guidance."""
+    """Reject one parked proposal with focused guidance."""
     if (message is None) == (body_file is None):
         http.fail_validation(
             "reject requires exactly one of --message or --body-file", as_json
@@ -2311,24 +2287,7 @@ def sprint_item_supervisor_reject(
         as_json=as_json,
         json_body={"message": text},
     )
-    http.emit(data, as_json, f"{ticket_id} agent review rejected")
-
-
-@sprint_item_supervisor.command("transfer-to-user-review")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@json_option
-def sprint_item_supervisor_transfer_to_user_review(
-    item_id: str, ticket_id: str, as_json: bool
-) -> None:
-    """Move one parked proposal to User Review without changing Ticket scope."""
-    data = http.send(
-        "POST",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/transfer-to-user-review",
-        as_json=as_json,
-        json_body={},
-    )
-    http.emit(data, as_json, f"{ticket_id} transferred to user review")
+    http.emit(data, as_json, f"{ticket_id} proposal rejected")
 
 
 # --- chief --------------------------------------------------------------------
@@ -2659,20 +2618,23 @@ def worker_my_ticket(part_names: str | None, as_json: bool) -> None:
 @worker.command("propose")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option(
-    "--body-file", required=True, help="Read proposal text from this file, or -."
+    "--body-file", default=None, help="Removed: pipe proposal text on stdin instead."
 )
 @click.option("--recap", default=None, help="Short recap for the proposal.")
-@click.option("--recap-file", default=None, help="Read recap from this file, or -.")
+@click.option(
+    "--recap-file", default=None, help="Removed: pass --recap TEXT instead."
+)
 @json_option
 def worker_propose(
     ticket_id: str | None,
-    body_file: str,
+    body_file: str | None,
     recap: str | None,
     recap_file: str | None,
     as_json: bool,
 ) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
-    body = read_required_option_body(body_file, as_json, "body")
+    refuse_worker_body_file(body_file, as_json, "pipe proposal text on stdin instead")
+    body = read_worker_stdin_body(as_json, "proposal body")
     recap_text = read_recap(recap, recap_file, as_json)
     data = http.send(
         "POST",
@@ -2694,13 +2656,16 @@ def worker_request_user_help(ticket_id: str | None, as_json: bool) -> None:
 
 @worker.command("trouble")
 @click.option(
-    "--body-file", required=True, help="Read the one-line trouble note from this file, or -."
+    "--body-file",
+    default=None,
+    help="Removed: pipe the one-line trouble note on stdin instead.",
 )
 @json_option
-def worker_trouble(body_file: str, as_json: bool) -> None:
+def worker_trouble(body_file: str | None, as_json: bool) -> None:
     """Record trouble on the current worker's Ticket."""
     tid = resolve_ticket_id(None, as_json)
-    body = read_required_option_body(body_file, as_json, "body")
+    refuse_worker_body_file(body_file, as_json, "pipe the trouble note on stdin instead")
+    body = read_worker_stdin_body(as_json, "trouble note")
     data = http.send(
         "POST",
         f"/api/tickets/{tid}/trouble-notes",
@@ -2713,10 +2678,13 @@ def worker_trouble(body_file: str, as_json: bool) -> None:
 
 @worker.command("recap")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--body-file", default=None, help="Read recap text from this file, or -.")
+@click.option(
+    "--body-file", default=None, help="Removed: pipe recap text on stdin instead."
+)
 @json_option
 def worker_recap(ticket_id: str | None, body_file: str | None, as_json: bool) -> None:
-    body = read_body(ticket_id, body_file, as_json)
+    refuse_worker_body_file(body_file, as_json, "pipe recap text on stdin instead")
+    body = read_worker_stdin_body(as_json, "recap")
     tid = resolve_ticket_id(ticket_id, as_json)
     data = http.send(
         "PUT", f"/api/tickets/{tid}/recap", as_json=as_json, json_body={"body": body}
@@ -2729,7 +2697,7 @@ def worker_recap(ticket_id: str | None, body_file: str | None, as_json: bool) ->
 @click.option(
     "--body-file",
     default=None,
-    help="Read field user guidance text from this file, or -.",
+    help="Removed: pipe field user guidance text on stdin instead.",
 )
 @click.option(
     "--append",
@@ -2788,7 +2756,8 @@ def worker_note(
             f"{', or ' if len(fields) > 1 else ''}{fields[-1] if fields else ''}",
             as_json,
         )
-    body = read_body(ticket_id, body_file, as_json)
+    refuse_worker_body_file(body_file, as_json, "pipe field user guidance text on stdin instead")
+    body = read_worker_stdin_body(as_json, "field user guidance")
     method = "POST" if append_note else "PUT"
     path = (
         f"/api/tickets/{tid}/notes/{field}/append"

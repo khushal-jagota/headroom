@@ -18,15 +18,7 @@ TITLE_MAX_CHARS: Final = 200
 
 class AtCap(StrEnum):  # §4.3
     stop = "stop"
-    agent_review = "agent_review"
-    user_review = "user_review"
-
-
-class ProposalReviewRoute(StrEnum):
-    """The reviewer selected when a proposal became parked."""
-
-    agent_review = "agent_review"
-    user_review = "user_review"
+    propose = "propose"
 
 
 class StageOwnershipMode(StrEnum):
@@ -62,8 +54,7 @@ class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer 
     blocked = "blocked"  # empty's stand-in while a live blocker exists
     agent = "agent"
     paired = "paired"
-    awaiting_agent_review = "awaiting_agent_review"
-    awaiting_user_review = "awaiting_user_review"
+    awaiting_approval = "awaiting_approval"
     needs_user = "needs_user"
     user = "user"
     errored = "errored"
@@ -103,6 +94,21 @@ class BoardCard(TypedDict):
     latest_turn_ended_sequence: NotRequired[int]
 
 
+class BoardSprintItem(TypedDict):
+    """A Sprint Item's own identity and progress, for the Workspace rail eyebrow.
+
+    The board's cards are today's Tickets, so they cannot say how far the whole Item
+    has got. These counts run over the Item's entire non-dropped Ticket set, which is
+    the rule the Sprint Item page already shows.
+    """
+
+    id: str
+    project: str
+    created_at: int
+    done_ticket_count: int
+    total_ticket_count: int
+
+
 @dataclass(frozen=True, slots=True)
 class TicketListFilters:
     stages: tuple[str, ...] = ()
@@ -115,12 +121,14 @@ class TicketListFilters:
 
 @dataclass(frozen=True)
 class Proposal:  # §4.2 proposal slot
+    """A parked proposal, waiting for the user to approve it.
+
+    It carries no reviewer, because there is only one approval gate to carry.
+    """
+
     body: str
     proposed_by: str  # actor string: "agent", run id context, or PLAN_ACTOR
     created_at: int
-    # A snapshot, not a view of current Ticket scope. A later scope change cannot move
-    # an already parked proposal between its agent and user reviewer.
-    review_route: ProposalReviewRoute = ProposalReviewRoute.user_review
 
 
 @dataclass
@@ -191,6 +199,11 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     sprint_id: str | None
     sprint_item_id: str | None
     blocked_by_ticket_ids: list[str]
+    # Scope stated at creation by whoever has the authority to grant it. A creator that
+    # states scope creates the Ticket already scoped. Omission keeps the default leash:
+    # the kickoff parks for approval.
+    ceiling: str | None
+    at_cap: str | None
 
 
 class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
@@ -307,7 +320,7 @@ class Ticket:  # §3.3 — column names match exactly
     resolved_priority_anchors: ResolvedTicketPriorityAnchors
     recap: str  # writable only past the type's first worker Stage
     ceiling: str  # ceiling id; a member of the type's ceiling_range
-    at_cap: AtCap  # default user_review
+    at_cap: AtCap  # default propose
     ticket_status: TicketStatus  # durable state-of-control; transition functions write it
     # When ticket_status last actually changed. Claiming a Ticket for a worker step
     # captures it, and giving that claim back compares it, so a late release cannot erase

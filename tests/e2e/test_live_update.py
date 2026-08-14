@@ -100,8 +100,6 @@ def test_a_change_reaches_the_open_board_without_a_reload(
     )["id"]
 
     page = open_page(context_factory(), server, "#/workspace", 'section[data-screen="workspace"]')
-    page.click('[data-workspace-view="attention"]')
-    page.wait_for_selector('[data-workspace-view="all"]', timeout=WAIT_MS)
     card = f'[data-card][data-ticket-id="{ticket_id}"]'
     page.wait_for_selector(card, timeout=WAIT_MS)
     assert "Board card before the change" in page.inner_text(card)
@@ -149,7 +147,7 @@ def test_composing_survives_a_change_to_the_same_ticket(
     page = open_page(
         context_factory(),
         server,
-        f"#/ticket/{ticket_id}",
+        f"#/workspace/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
     # A short window makes the ticket's own column scroll, so "the page did not jump"

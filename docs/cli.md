@@ -128,7 +128,10 @@ record shapes. Direct `show` commands also keep their full record shapes.
   `--sprint-item <id>` or `--clear-sprint-item`. Omitted dimensions keep their current
   values, and the server rejects an incoherent final combination.
   `ticket delete` is a permanent direct operation
-  and requires `--yes`.
+  and requires `--yes`. It normally refuses a Ticket that is running, either because its
+  status says a worker step is out or because its conversation is mid-turn. `--force`
+  deletes such a Ticket anyway, for a Ticket whose status is stuck with no worker
+  running. Force changes nothing else: the same cascade, and still only a person.
 - **`ticket employee-configuration <id> --backend <key> --model <id> [--reasoning-effort <e>]`**
   — set what this Ticket's worker launches on. All three go together, because a model id
   belongs to the backend that named it; leave `--reasoning-effort` out for a model that
@@ -153,27 +156,38 @@ record shapes. Direct `show` commands also keep their full record shapes.
 - **`sprint item supervisor show / context / send / reset`** — inspect the supervisor
   and launch configuration, read its scoped brief and current Tickets, send a direct
   user message, or reset its current conversation.
-- **`sprint item supervisor approve / reject / transfer-to-user-review`** — resolve an
-  agent-review proposal for the exact owning Sprint Item. Approval requires the next
-  ceiling and review route. Rejection requires focused revision guidance. Transfer moves
-  only the parked proposal to User Review and preserves future Ticket scope.
+- **`sprint item supervisor approve / reject`** — resolve a parked proposal on a current
+  child Ticket of the exact owning Sprint Item. Approval requires the next ceiling and
+  cap. Rejection requires focused revision guidance. A parked proposal waits for the
+  user, so a supervisor uses these only for a Ticket the user asked it to.
 - **`sprint item supervisor ticket-context / history / message-worker`** — read one
   current child Ticket, page through its current Worker conversation, or send attributed
   guidance to that exact existing conversation. `message-worker` requires the current
   conversation id and refuses stale ids.
 - **`sprint item supervisor set-item / set-ticket / scope / add-to-day / remove-from-day / block / unblock`**
   — use item-scoped canonical actions for the owning Item and its current child Tickets.
+  `scope` takes the ceiling as either the stage name or the plain name of the field that
+  stage needs. `--ceiling closeout` and `--ceiling needs_closeout` mean the same thing.
+- A supervisor creates a child Ticket with ordinary `ticket create --sprint-item`,
+  the same command every other actor uses, and that Ticket is scoped like any other.
+- **`ticket create --ceiling / --at-cap`** — state the new Ticket's scope at creation.
+  The creator that was given the scope states it, so authorized work does not sit waiting
+  for a second approval. A stated ceiling past the kickoff settles the kickoff and starts
+  the Ticket at the next Stage. Omit both options to keep the default: the kickoff parks
+  for the user's approval.
 - **`sprint item supervisor artifact-list / artifact-write / artifact-delete`** — manage
   files under the owning Item's `artifacts/` directory.
-- **`worker propose / recap / note / trouble / request-user-help / my-ticket`** — worker actions. `worker propose`
-  infers the current gating field from the Ticket Stage and requires a short recap
-  (`--recap` or `--recap-file`) in the same request. `worker note` replaces field
+- **`worker propose / recap / note / trouble / request-user-help / my-ticket`** — worker actions.
+  `propose`, `recap`, `note`, and `trouble` take their text on stdin only; there is no
+  file-path option, so no shared `/tmp` file can carry one Ticket's text onto another.
+  `worker propose` infers the current gating field from the Ticket Stage and requires a
+  short recap on `--recap TEXT` in the same request. `worker note` replaces field
   guidance by default and accepts `--append` for additive guidance without changing
   the field's value. `--replace` names the default operation when an explicit flag helps
   a caller. `worker my-ticket`
   reports the current Ticket, and names the **specialist skill** for its Worker type —
   the one the base worker loads to learn that Worker type's Stages (see
-  `worker-types.md`). `worker trouble --body-file PATH` appends one short trouble note
+  `worker-types.md`). `worker trouble` appends one short trouble note, read from stdin,
   to the current worker's Ticket during its active claimed worker step.
   `request-user-help` parks the Ticket for a user response after the
   Worker records its request in the conversation.
@@ -186,7 +200,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   new Ticket, and a different backend needs `--employee-launch-model` with it.
   Reconciliation refuses pending or active Ticket work; both
   operations move the ceiling to the imported Stage, preserve an explicit Stop
-  (otherwise User review remains), and apply that Stage's effective ownership.
+  (otherwise Propose remains), and apply that Stage's effective ownership.
 - **`serve`** — run the server and background worker runtime in the foreground.
   It keeps ownership while Panels restarts, so the same terminal continues to show the
   server logs.
@@ -263,4 +277,4 @@ one worker step at a time and writes the Ticket's status itself (see
 
 ---
 
-_Last verified: 2026-08-09._
+_Last verified: 2026-08-14._

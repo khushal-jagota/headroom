@@ -362,15 +362,15 @@ class ConversationContractConformanceSuite:
             ) == (
                 PromptDeliveryQueued(queue_position=2)
             )
-            # held-a leaves the queue and runs, so held-b is now first in line and the
-            # next message held is second — not third.
+            # Everything waiting leaves the queue and runs as one turn, so the next
+            # message held is first in line — not third.
             await subject.complete_running_turn("c")
             assert await subject.system.send(
                 "c",
                 text_message_content("held-c"),
                 sender_label="owner",
             ) == (
-                PromptDeliveryQueued(queue_position=2)
+                PromptDeliveryQueued(queue_position=1)
             )
 
         self._run(exercise)
@@ -445,18 +445,13 @@ class ConversationContractConformanceSuite:
                 mode=PromptDeliveryMode.send_now,
             ) == PromptDeliveryStarted()
             assert _written_texts(await subject.backend_writes("c")) == ("incumbent", "urgent")
+            # The send-now went ahead of the line. What is left of the line keeps its
+            # order and goes to the agent as one prompt.
             await subject.complete_running_turn("c")
             assert _written_texts(await subject.backend_writes("c")) == (
                 "incumbent",
                 "urgent",
-                "held-a",
-            )
-            await subject.complete_running_turn("c")
-            assert _written_texts(await subject.backend_writes("c")) == (
-                "incumbent",
-                "urgent",
-                "held-a",
-                "held-b",
+                "owner:\nheld-a\n\nowner:\nheld-b",
             )
 
         self._run(exercise)

@@ -172,9 +172,15 @@ class ConversationStore:
         *,
         prompt: PromptEventPayload,
         model_change: ModelChangedEventPayload | None,
+        extra_prompts: tuple[PromptEventPayload, ...] = (),
     ) -> tuple[StoredConversationEvent, ...]:
         """Write everything one delivery leaves behind, as one thing that either all
         happened or none of it did.
+
+        Several messages that went to the agent as one prompt are several rows here, one
+        each, written in the order they were sent. One row could not carry them: a row
+        names one sender message id, and that id is how each sender recognises its own
+        message when the record hands it back.
 
         A delivery that carried a change leaves three marks: the change is recorded, the
         conversation is moved onto the new values, and the prompt is recorded. They are one
@@ -186,7 +192,11 @@ class ConversationStore:
         Returns the rows in the order they were written.
         """
         return await asyncio.to_thread(
-            self._append_delivered_prompt_sync, conversation_id, prompt, model_change
+            self._append_delivered_prompt_sync,
+            conversation_id,
+            prompt,
+            model_change,
+            extra_prompts,
         )
 
     async def read_events_after(
@@ -332,9 +342,11 @@ class ConversationStore:
         conversation_id: str,
         prompt: PromptEventPayload,
         model_change: ModelChangedEventPayload | None,
+        extra_prompts: tuple[PromptEventPayload, ...] = (),
     ) -> tuple[StoredConversationEvent, ...]:
+        prompts: tuple[ConversationEventPayload, ...] = (prompt, *extra_prompts)
         payloads: tuple[ConversationEventPayload, ...] = (
-            (prompt,) if model_change is None else (model_change, prompt)
+            prompts if model_change is None else (model_change, *prompts)
         )
         conn = self._connect()
         try:

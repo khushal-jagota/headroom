@@ -40,7 +40,7 @@ def test_finished_ticket_verdict_round_trip_and_reopened_read_only(
     api.direct_post(server, f"/api/tickets/{ticket_id}/stage", {"to_stage": "done"})
 
     ready = f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{ticket_id}", ready)
+    page = open_page(context_factory(), server, f"#/workspace/{ticket_id}", ready)
     assert page.locator("[data-ticket-verdict][data-editable='true']").count() == 1
 
     page.click("[data-add-verdict]")

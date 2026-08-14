@@ -4,26 +4,24 @@
     preferredScopeCeilingFor,
     type Lifecycle
   } from "../lib/lifecycle";
-  import type { ReviewRoute } from "../lib/types";
+  import type { AtCap } from "../lib/types";
 
-  type ScopePair = { next_ceiling: string; at_cap: ReviewRoute };
+  type ScopePair = { next_ceiling: string; at_cap: AtCap };
 
   let {
     newStage,
     suggestedNextCeiling = null,
     lifecycle = null,
-    allowAgentReview = true,
     scope = $bindable<ScopePair | null>(null)
   }: {
     newStage: string | null;
     suggestedNextCeiling?: string | null;
     lifecycle?: Lifecycle | null;
-    allowAgentReview?: boolean;
     scope?: ScopePair | null;
   } = $props();
 
   let ceiling = $state("");
-  let atCap = $state<ReviewRoute | "">("");
+  let atCap = $state<AtCap | "">("");
 
   let options = $derived([
     { value: "none", label: "No further" },
@@ -39,7 +37,7 @@
       suggestedNextCeiling
     ) || "none";
     let nextCeiling = externalScope === null ? nextDefault : ceiling;
-    let nextAtCap: ReviewRoute | "" = externalScope === null ? "user_review" : atCap;
+    let nextAtCap: AtCap | "" = externalScope === null ? "propose" : atCap;
     if (externalScope && !nextCeiling) nextCeiling = externalScope.next_ceiling;
     if (externalScope && !nextAtCap) nextAtCap = externalScope.at_cap;
     if (!options.some((option) => option.value === nextCeiling)) {
@@ -48,14 +46,10 @@
     } else if (ceiling !== nextCeiling) {
       ceiling = nextCeiling;
     }
-    if (nextAtCap !== "stop" && nextAtCap !== "agent_review" && nextAtCap !== "user_review") {
+    if (nextAtCap !== "stop" && nextAtCap !== "propose") {
       nextAtCap = "stop";
       atCap = nextAtCap;
     } else if (atCap !== nextAtCap) {
-      atCap = nextAtCap;
-    }
-    if (!allowAgentReview && nextAtCap === "agent_review") {
-      nextAtCap = "user_review";
       atCap = nextAtCap;
     }
     const nextScope: ScopePair | null = nextCeiling && nextAtCap
@@ -82,8 +76,7 @@
     <label class="scope-select">
       <select bind:value={atCap} aria-label="At cap behavior">
         <option value="stop">Stop</option>
-        {#if allowAgentReview}<option value="agent_review">Agent review</option>{/if}
-        <option value="user_review">User review</option>
+        <option value="propose">Propose</option>
       </select>
     </label>
   </span>
