@@ -130,7 +130,6 @@ export type TicketField = {
   proposal?: {
     body: string;
     proposed_by: string;
-    review_route?: ReviewRoute;
   } | null;
 };
 
@@ -296,7 +295,6 @@ export type SprintItemWorkspaceTicket = {
   ticket_status: string;
   waiting_to_closeout: boolean;
   has_pending_proposal: boolean;
-  proposal_review_route: ReviewRoute | null;
   review_route: ReviewRoute;
   worker_type: string;
   day_ids: string[];
@@ -366,6 +364,7 @@ export type BoardResponse = {
 export type BoardSprintItem = {
   id: string;
   project: string;
+  created_at: number;
   done_ticket_count: number;
   total_ticket_count: number;
 };

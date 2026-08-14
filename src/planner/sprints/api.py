@@ -6,7 +6,7 @@ because the Idea shape lives in this domain's contracts. Sprint writers take a
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter
 
@@ -208,9 +208,13 @@ async def get_item_workspace(
     require_sprint_item_supervisor_read(conn, ctx, item_id)
     planning_day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
     result = sprints_views.item_workspace(conn, item_id, planning_day_id)
-    result["artifacts"] = supervisor_service.list_artifacts(
-        conn, ctx, item_id, cfg.db_path
-    )["artifacts"]
+    artifact_paths = cast(
+        "list[str]",
+        supervisor_service.list_artifacts(conn, ctx, item_id, cfg.db_path)["artifacts"],
+    )
+    result["artifacts"] = [
+        f"{supervisor_service.SUPERVISOR_ARTIFACTS_DIRECTORY}/{path}" for path in artifact_paths
+    ]
     result["obligations"] = [
         _obligation_json(obligation)
         for obligation in supervisor_obligations_data.list_for_item(
@@ -657,29 +661,6 @@ async def supervisor_reject_ticket(
         conn,
         ticket_id,
         message=message,
-        actor=ctx.actor,
-        now=now,
-        supervisor_sprint_item_id=item_id,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/transfer-to-user-review")
-async def supervisor_transfer_ticket_to_user_review(
-    item_id: str,
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, ticket_id)
-    if raw:
-        raise PlannerError(ErrorCode.validation, "transfer body must be empty", {})
-    now = clk.now_unix()
-    ticket = tickets_data.transfer_proposal_to_user_review(
-        conn,
-        ticket_id,
         actor=ctx.actor,
         now=now,
         supervisor_sprint_item_id=item_id,

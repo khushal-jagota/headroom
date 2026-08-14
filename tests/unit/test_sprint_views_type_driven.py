@@ -75,7 +75,6 @@ def test_item_tickets_probe_child_decodes(
     assert row["has_pending_proposal"] is True
     assert row["ticket_status"] == "awaiting_user_review"
     assert row["review_route"] == "user_review"
-    assert row["proposal_review_route"] == "user_review"
 
 
 def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:

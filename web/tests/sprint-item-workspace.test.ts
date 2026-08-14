@@ -3,6 +3,7 @@ import {
   failedWorkspaceDeliveries,
   remainingWorkspaceTicketGroups,
   todayWorkspaceTicketGroups,
+  workspaceArtifactRows,
   workspaceProgress
 } from "../src/lib/sprintItemWorkspace";
 import { previewHashHref, resolvePreview, sprintItemFileTarget } from "../src/lib/filePreview";
@@ -41,7 +42,6 @@ function workspace(): SprintItemWorkspace {
         ticket_status: "awaiting_agent_review",
         waiting_to_closeout: false,
         has_pending_proposal: true,
-        proposal_review_route: "agent_review",
         review_route: "agent_review",
         worker_type: "coding",
         day_ids: ["day_2026-08-12"]
@@ -54,7 +54,6 @@ function workspace(): SprintItemWorkspace {
         ticket_status: "empty",
         waiting_to_closeout: false,
         has_pending_proposal: false,
-        proposal_review_route: null,
         review_route: "stop",
         worker_type: "coding",
         day_ids: ["day_2026-08-12"]
@@ -67,7 +66,6 @@ function workspace(): SprintItemWorkspace {
         ticket_status: "agent",
         waiting_to_closeout: false,
         has_pending_proposal: false,
-        proposal_review_route: null,
         review_route: "stop",
         worker_type: "coding",
         day_ids: []
@@ -96,13 +94,36 @@ describe("Sprint Item workspace presentation", () => {
       groups.map((group) => [group.label, group.tickets.map((ticket) => ticket.id)]);
     // A Ticket finished today stays under Today, in Today's own Done group.
     expect(shape(todayWorkspaceTicketGroups(value))).toEqual([
-      ["Awaiting approval", ["t_review"]],
+      ["Agent review", ["t_review"]],
       ["Done", ["t_done"]]
     ]);
     expect(shape(remainingWorkspaceTicketGroups(value))).toEqual([["Agent", ["t_later"]]]);
     expect(workspaceProgress(value)).toBe("1 of 3 done");
     expect(failedWorkspaceDeliveries(value).map((obligation) => obligation.id)).toEqual([
       "so_failed"
+    ]);
+  });
+
+  it("splits Awaiting approval into User review and Agent review, both on Today by default", () => {
+    const value = workspace();
+    const userReview = {
+      ...value.tickets[0],
+      id: "t_user_review",
+      ticket_status: "awaiting_user_review",
+      proposal_review_route: "user_review" as const,
+      review_route: "user_review" as const
+    };
+    const agentReview = { ...value.tickets[0], id: "t_agent_review" };
+    const groups = todayWorkspaceTicketGroups({
+      ...value,
+      today_ticket_ids: ["t_user_review", "t_agent_review"],
+      tickets: [userReview, agentReview]
+    });
+    expect(
+      groups.map((group) => [group.label, group.tickets.map((ticket) => ticket.id)])
+    ).toEqual([
+      ["User review", ["t_user_review"]],
+      ["Agent review", ["t_agent_review"]]
     ]);
   });
 
@@ -160,5 +181,20 @@ describe("Sprint Item workspace presentation", () => {
     expect(previewHashHref(target!)).toBe(
       "#/preview?source=sprint-item&item=si_workspace&path=notes%2Fproof.md"
     );
+  });
+
+  it("gives a real artifact row a working href and a genuinely unresolvable one null, never empty", () => {
+    const value = { ...workspace(), artifacts: ["artifacts/proof.md", "../escape.md"] };
+    const rows = workspaceArtifactRows(value);
+    expect(rows).toEqual([
+      {
+        path: "artifacts/proof.md",
+        label: "proof.md",
+        kind: "md",
+        href: "#/preview?source=sprint-item&item=si_workspace&path=artifacts%2Fproof.md"
+      },
+      { path: "../escape.md", label: "escape.md", kind: "md", href: null }
+    ]);
+    expect(rows.every((row) => row.href !== "")).toBe(true);
   });
 });

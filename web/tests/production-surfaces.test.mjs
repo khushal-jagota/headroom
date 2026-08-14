@@ -241,12 +241,12 @@ assert.match(
 assert.doesNotMatch(boardRouteSource, /project-filter|projectMenu|selectedProject|rosterCards|All projects/);
 assert.doesNotMatch(appCssSource, /board-workspace-project-filter/);
 // The rail groups by the one shared Ticket condition, in one order, with the quiet
-// three hidden until the reader asks. There is no second organizing rule and no
+// four hidden until the reader asks. There is no second organizing rule and no
 // view mode.
 assert.match(workspaceRailSource, /import \{ sprintTicketCondition \}/);
 assert.match(
   workspaceRailSource,
-  /"needs-me"[\s\S]*"current-awaiting-approval"[\s\S]*"current-paired"[\s\S]*"current-running", label: "Agent", hidden: true[\s\S]*"errored", label: "Blocked", hidden: true[\s\S]*"upcoming"[\s\S]*"completed", label: "Done", hidden: true/,
+  /"needs-me"[\s\S]*"awaiting-user-review"[\s\S]*"awaiting-agent-review", label: "Agent review", hidden: true[\s\S]*"current-paired"[\s\S]*"current-running", label: "Agent", hidden: true[\s\S]*"errored", label: "Blocked", hidden: true[\s\S]*"upcoming"[\s\S]*"completed", label: "Done", hidden: true/,
 );
 assert.doesNotMatch(boardRouteSource, /data-workspace-view|railMode|WorkspaceRailMode/);
 assert.doesNotMatch(appCssSource, /board-workspace-view-control/);

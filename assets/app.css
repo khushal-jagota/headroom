@@ -32,7 +32,8 @@ textarea {
 .chat-menu,
 .chat-image-previews,
 .board-workspace-left,
-.ticket-doc {
+.ticket-doc,
+.sprint-item-doc {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--border-color) transparent;
@@ -4457,11 +4458,13 @@ select {
   height: 100%;
 }
 
-/* A phone-width screen gives the conversation its gutters back: 48px a side would
- * spend a quarter of the width on margin. The header rows also learn to share —
- * the workspace path yields to an ellipsis instead of crushing the worker's name
- * into a one-letter-per-line column. */
-@media (max-width: 720px) {
+/* A narrow pane gives the conversation its gutters back: 48px a side would spend a
+ * quarter of the width on margin. The pane and not the window decides, because the
+ * Workspace right pane is narrow on a window that is not — and the Sprint Item beside
+ * this Ticket in that same slot has always measured its pane. Two rulers for one inset
+ * put a step between the two of them at every width where the pane and the window
+ * disagree. On the full-screen route the pane is the window, so nothing moves there. */
+@container ticket-pane (max-width: 720px) {
   .ticket-conversation-column {
     padding-inline: var(--page-gutter);
   }
@@ -4474,7 +4477,13 @@ select {
     margin-inline: calc(var(--surface-pad) * -1);
     padding-inline: var(--surface-pad);
   }
+}
 
+/* The chat header rows learn to share at a phone width: the workspace path yields to an
+ * ellipsis instead of crushing the worker's name into a one-letter-per-line column. These
+ * are the shared chat parts, used on screens with no pane around them, so the window is
+ * the right ruler here. */
+@media (max-width: 720px) {
   .chat-head-right {
     min-width: 0;
     flex: 0 1 auto;
@@ -4846,11 +4855,15 @@ select {
 
 /* --- The page's one column ------------------------------------------------ */
 /* Header, body and conversation are the same column, so it is stated once here, after
- * all three, and they cannot drift apart again.
+ * all three, and they cannot drift apart again. The Sprint Item's two columns are the
+ * same column as well: an Item and a Ticket open in the same slot, one after the other,
+ * and a second formula for the same measure is what makes them step apart there.
  *
- * The column is measured against the ticket pane and never the window, because this
- * route also renders in the Workspace right pane, which is around 500px narrower than
- * the window around it. That is what `cqi` reads and what `.ticket-screen` declares.
+ * The column is measured against its pane and never the window, because both routes
+ * also render in the Workspace right pane, which is around 500px narrower than the
+ * window around it. That is what `cqi` reads and what `.ticket-screen` and
+ * `.sprint-item-page` declare. `cqi` takes the nearest container either way, so each
+ * selector measures against its own pane and this stays one rule.
  *
  * On a pane wide enough for them the column is the pane less a 192px gutter each side.
  * Below that it keeps the fixed measure it has today. The two arms cross at a 1152px
@@ -4859,7 +4872,9 @@ select {
  * the column is never wider than what draws it. */
 .ticket-head,
 .ticket-col,
-.ticket-conversation-column {
+.ticket-conversation-column,
+.sprint-item-column,
+.sprint-item-conversation-column {
   width: min(
     100%,
     max(
@@ -5515,38 +5530,53 @@ select {
   padding: 0;
 }
 
-.sprint-screen--workspace {
-  container-type: inline-size;
-  container-name: sprint-item-pane;
-}
-
+/* The page is the pane, so it is the size container, exactly as .ticket-screen is. It
+ * has to be this element and not the Sprint screen around it: the same component also
+ * renders from the Workspace route, which has no Sprint screen, and a rule that lives on
+ * one route is a rule that is dead on the other. Inline-size only, so the height chain
+ * from the shell down to the page is untouched. */
 .sprint-item-page {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-width: 0;
+  max-width: 100%;
   min-height: 0;
   overflow: hidden;
   padding-bottom: max(var(--space-6), env(safe-area-inset-bottom));
+  container-type: inline-size;
+  container-name: sprint-item-pane;
 }
 
 .sprint-item-doc {
   flex: 1;
   min-width: 0;
+  max-width: 100%;
   min-height: 0;
   overflow: auto;
 }
 
-.sprint-item-column,
-.sprint-item-conversation-column {
-  width: 100%;
-  max-width: calc(var(--ticket-column-measure) + var(--ticket-column-gutter));
-  margin: 0 auto;
-  padding-inline: var(--space-7);
-}
-
 .sprint-item-column {
   padding-bottom: var(--space-6);
+  padding-inline: var(--page-gutter);
+}
+
+/* The Item pane crosses over where the Ticket pane does, for the same two reasons: past
+ * it the column takes the conversation's inset so both read against one edge, and the
+ * document reserves its scrollbar on both edges so the two columns share a centre line.
+ *
+ * It is a second block and not a second selector list because the query names the pane it
+ * asks about, and an unnamed one would quietly re-point at the first container anyone put
+ * in between. It has to sit after the rule above: `@container` adds no specificity, so
+ * source order is all that decides between them. */
+@container sprint-item-pane (min-width: 1152px) {
+  .sprint-item-column {
+    padding-inline: var(--space-7);
+  }
+
+  .sprint-item-doc {
+    scrollbar-gutter: stable both-edges;
+  }
 }
 
 .sprint-workspace-head {
@@ -5734,6 +5764,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  max-width: 100%;
   min-height: 0;
 }
 
@@ -5743,6 +5774,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  padding-inline: var(--space-7);
 }
 
 .sprint-item-conversation-layer [data-conversation-pane] {
@@ -5779,7 +5811,6 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 }
 
 @container sprint-item-pane (max-width: 720px) {
-  .sprint-item-column,
   .sprint-item-conversation-column {
     padding-inline: var(--page-gutter);
   }

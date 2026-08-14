@@ -23,7 +23,7 @@ class AtCap(StrEnum):  # §4.3
 
 
 class ProposalReviewRoute(StrEnum):
-    """The reviewer selected when a proposal became parked."""
+    """The reviewer of a parked proposal, derived from the Ticket at decision time."""
 
     agent_review = "agent_review"
     user_review = "user_review"
@@ -113,6 +113,7 @@ class BoardSprintItem(TypedDict):
 
     id: str
     project: str
+    created_at: int
     done_ticket_count: int
     total_ticket_count: int
 
@@ -129,12 +130,15 @@ class TicketListFilters:
 
 @dataclass(frozen=True)
 class Proposal:  # §4.2 proposal slot
+    """A parked proposal.
+
+    It carries no reviewer. Who reviews it is derived from the Ticket's at_cap at the
+    moment of the decision, so a scope change moves a proposal already parked.
+    """
+
     body: str
     proposed_by: str  # actor string: "agent", run id context, or PLAN_ACTOR
     created_at: int
-    # A snapshot, not a view of current Ticket scope. A later scope change cannot move
-    # an already parked proposal between its agent and user reviewer.
-    review_route: ProposalReviewRoute = ProposalReviewRoute.user_review
 
 
 @dataclass

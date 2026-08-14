@@ -44,19 +44,6 @@ from planner.cli.main import main
             {"message": "Keep the proof focused."},
             "t_one agent review rejected",
         ),
-        (
-            [
-                "sprint",
-                "item",
-                "supervisor",
-                "transfer-to-user-review",
-                "si_one",
-                "t_one",
-            ],
-            "/api/items/si_one/supervisor/tickets/t_one/transfer-to-user-review",
-            {},
-            "t_one transferred to user review",
-        ),
     ],
 )
 def test_supervisor_review_commands_call_the_scoped_endpoint(

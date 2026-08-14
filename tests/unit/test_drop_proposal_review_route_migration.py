@@ -1,4 +1,4 @@
-"""The review-route migration preserves parked proposals and Ticket control state."""
+"""The upgrade strips the stamped reviewer and keeps everything else on the proposal."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from alembic import command
 from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 
-PREVIOUS_REVISION = "sprint_item_supervisors"
+PREVIOUS_REVISION = "supervisor_obligations"
 
 
 def _upgrade_to_previous_revision(path: Path) -> None:
@@ -21,10 +21,10 @@ def _upgrade_to_previous_revision(path: Path) -> None:
     engine.dispose()
 
 
-def test_upgrade_maps_legacy_review_state_without_losing_proposal_or_control_metadata(
+def test_upgrade_removes_the_proposal_review_route_and_keeps_the_proposal(
     tmp_path: Path,
 ) -> None:
-    db_path = tmp_path / "review-routes.db"
+    db_path = tmp_path / "drop-proposal-review-route.db"
     _upgrade_to_previous_revision(db_path)
     conn = connect(str(db_path))
     fields = {
@@ -34,10 +34,11 @@ def test_upgrade_maps_legacy_review_state_without_losing_proposal_or_control_met
                 "body": "Keep the exact proposal.",
                 "proposed_by": "worker-run",
                 "created_at": 123,
+                "review_route": "agent_review",
             },
             "user_note": "Keep the note.",
         },
-        "approach": {"value": None, "proposal": None, "user_note": None},
+        "kickoff": {"value": "Settled kickoff.", "proposal": None, "user_note": None},
     }
     conn.execute(
         "INSERT INTO tickets (id,title,worker_type,employee_backend,stage,priority,"
@@ -46,19 +47,19 @@ def test_upgrade_maps_legacy_review_state_without_losing_proposal_or_control_met
         "ticket_status_changed_at,ticket_status_revision) VALUES "
         "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
-            "t_legacy_review",
-            "Legacy review",
+            "t_stamped_route",
+            "Stamped route",
             "coding",
             "codex",
             "needs_success",
             "P2",
             "recap",
             "needs_success",
-            "propose",
-            "awaiting_approval",
-            '{"needs_success":"paired"}',
+            "agent_review",
+            "awaiting_agent_review",
+            "{}",
             "worker",
-            "conv_legacy",
+            "conv_stamped",
             json.dumps(fields),
             10,
             20,
@@ -71,21 +72,12 @@ def test_upgrade_maps_legacy_review_state_without_losing_proposal_or_control_met
     upgraded = connect(str(db_path))
     create_schema(upgraded)
     row = upgraded.execute(
-        "SELECT stage,ceiling,at_cap,ticket_status,stage_ownership_overrides,"
-        "default_stage_ownership_mode,conversation_id,fields,"
-        "ticket_status_changed_at,ticket_status_revision FROM tickets WHERE id=?",
-        ("t_legacy_review",),
+        "SELECT at_cap,ticket_status,fields,ticket_status_changed_at,"
+        "ticket_status_revision FROM tickets WHERE id=?",
+        ("t_stamped_route",),
     ).fetchone()
     assert row is not None
-    assert tuple(row)[:7] == (
-        "needs_success",
-        "needs_success",
-        "user_review",
-        "awaiting_user_review",
-        '{"needs_success":"paired"}',
-        "worker",
-        "conv_legacy",
-    )
+    assert (row["at_cap"], row["ticket_status"]) == ("agent_review", "awaiting_agent_review")
     migrated_fields = json.loads(str(row["fields"]))
     assert migrated_fields["success"] == {
         "value": None,
@@ -96,7 +88,11 @@ def test_upgrade_maps_legacy_review_state_without_losing_proposal_or_control_met
         },
         "user_note": "Keep the note.",
     }
-    assert migrated_fields["approach"]["proposal"] is None
+    assert migrated_fields["kickoff"] == {
+        "value": "Settled kickoff.",
+        "proposal": None,
+        "user_note": None,
+    }
     assert (row["ticket_status_changed_at"], row["ticket_status_revision"]) == (30, 7)
     assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
     upgraded.close()

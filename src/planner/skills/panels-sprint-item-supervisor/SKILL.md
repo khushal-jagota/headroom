@@ -57,8 +57,10 @@ Use these canonical actions when they match the decision:
 - `set-item` changes one plain Sprint Item field.
 - `set-ticket` changes one current child Ticket field.
 - `scope` changes the child Ticket ceiling and review route. The ceiling takes either
-  the stage name or the plain name of the field that stage needs.
-- `approve`, `reject`, and `transfer-to-user-review` resolve a parked proposal.
+  the stage name or the plain name of the field that stage needs. Setting the review
+  route to `user_review` hands review to the user, including a proposal already waiting
+  for you.
+- `approve` and `reject` resolve a parked proposal.
 - `add-to-day` and `remove-from-day` change Day membership.
 - `block` and `unblock` change blocker links inside the Item boundary.
 - `artifact-list`, `artifact-write`, and `artifact-delete` manage Item artifacts.
