@@ -71,12 +71,15 @@ def cli_app(
             params: dict[str, Any] | None = None,
             headers: dict[str, str] | None = None,
             timeout: float | None = None,
+            content: bytes | None = None,
         ) -> httpx.Response:
             del timeout
             path = httpx.URL(url).raw_path.decode()
             return cast(
                 httpx.Response,
-                client.request(method, path, json=json, params=params, headers=headers),
+                client.request(
+                    method, path, json=json, params=params, headers=headers, content=content
+                ),
             )
 
         monkeypatch.setattr(httpx, "request", request)
@@ -1012,3 +1015,63 @@ def test_ticket_creation_rejects_backlog_with_sprint(command: tuple[str, ...]) -
     )
     assert result.exit_code == 1
     assert "--backlog cannot be combined with --sprint or --sprint-item" in result.output
+
+
+def test_ticket_file_put_stores_the_file_and_prints_its_link(
+    tmp_path: Path,
+    server: ServerHandle,
+    cli: Callable[..., JsonObject],
+) -> None:
+    ticket_id = cli(
+        server, "ticket", "create", "--worker-type", "coding", "--title", "Artifacts"
+    )["id"]
+    source = tmp_path / "plan.html"
+    source.write_bytes(b"<h1>Plan</h1>")
+
+    stored = cli(
+        server,
+        "ticket",
+        "file",
+        "put",
+        ticket_id,
+        "artifacts/plan.html",
+        "--from",
+        str(source),
+    )
+
+    assert stored["url"] == f"/files/tickets/{ticket_id}/artifacts/plan.html"
+    landed = tmp_path / "files" / "tickets" / ticket_id / "artifacts" / "plan.html"
+    assert landed.read_bytes() == b"<h1>Plan</h1>"
+
+
+def test_ticket_file_put_reports_a_missing_local_file(
+    tmp_path: Path,
+    server: ServerHandle,
+) -> None:
+    result = CliRunner().invoke(
+        cli_main,
+        ["ticket", "file", "put", "t_missing", "plan.html", "--from", str(tmp_path / "gone.html")],
+        env={"PLAN_SERVER_URL": server.base},
+    )
+
+    assert result.exit_code == 1
+    assert "cannot read" in result.output
+
+
+@pytest.mark.parametrize("relative_path", ["../escape.html", "nested/../escape.html", "/abs.html"])
+def test_ticket_file_put_refuses_an_unsafe_relative_path_before_sending(
+    tmp_path: Path,
+    server: ServerHandle,
+    relative_path: str,
+) -> None:
+    source = tmp_path / "plan.html"
+    source.write_bytes(b"<h1>Plan</h1>")
+
+    result = CliRunner().invoke(
+        cli_main,
+        ["ticket", "file", "put", "t_file123", relative_path, "--from", str(source)],
+        env={"PLAN_SERVER_URL": server.base},
+    )
+
+    assert result.exit_code == 1
+    assert "unsafe ticket file path" in result.output
