@@ -162,9 +162,14 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     page.locator(f'[data-sprint-ticket-id="{today_ticket["id"]}"]').wait_for(
         timeout=WAIT_MS
     )
+    # Remaining Tickets starts collapsed, and its rows carry the shared row grammar:
+    # the condition is the stage mark's label, not a separate word.
+    remaining = page.locator('[data-workspace-section="remaining"]')
+    assert remaining.get_attribute("open") is None
+    remaining.locator("summary").click()
     off_today = page.locator(f'[data-sprint-ticket-id="{review_ticket["id"]}"]')
     assert off_today.get_attribute("data-ticket-state") == "current-awaiting-approval"
-    assert "to review" in off_today.inner_text()
+    off_today.get_by_label("to review").wait_for(timeout=WAIT_MS)
     page.get_by_text("proof.md", exact=True).wait_for(timeout=WAIT_MS)
 
     history = page.get_by_label("Sprint Item conversation")
