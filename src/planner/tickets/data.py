@@ -1958,18 +1958,27 @@ def drop_ticket(conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: in
 
 
 def delete_ticket(
-    conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: int
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    actor: str,
+    now: int,
+    force: bool = False,
 ) -> TicketDeletion:
     """Permanently remove a mistaken ticket and its product footprint in one transaction.
 
     Deletion is blocked while the Ticket's status says a worker step is out. Whether the
     Ticket's conversation is live is a question for the conversation system, so the route
     asks it before calling this writer; this writer stays a pure database transaction.
+
+    A status can be stranded at `agent` with no worker running, and then that guard keeps
+    a dead Ticket alive. `force` skips it. It skips nothing else: the actor check above
+    still runs, and the conversation guard remains the route's to skip.
     """
     admission.require_direct_actor(actor, "delete_ticket")
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
-        if ticket.ticket_status is TicketStatus.agent:
+        if not force and ticket.ticket_status is TicketStatus.agent:
             raise PlannerError(
                 ErrorCode.already_running,
                 "ticket activity is still running",

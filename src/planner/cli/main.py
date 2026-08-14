@@ -1177,13 +1177,23 @@ def ticket_show(ticket_id: str | None, part_names: str | None, as_json: bool) ->
     default=False,
     help="Permanently delete the ticket and all of its working history.",
 )
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Delete even a ticket that still looks running, for a stuck ticket status.",
+)
 @json_option
-def ticket_delete(ticket_id: str | None, yes: bool, as_json: bool) -> None:
+def ticket_delete(ticket_id: str | None, yes: bool, force: bool, as_json: bool) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     if not yes:
         http.fail_validation("permanent deletion requires --yes", as_json)
     data = http.send(
-        "DELETE", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary"
+        "DELETE",
+        f"/api/tickets/{tid}",
+        as_json=as_json,
+        params={"force": True} if force else None,
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{tid} permanently deleted")
 

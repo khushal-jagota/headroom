@@ -950,14 +950,17 @@ async def delete_ticket(
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
+    force: Annotated[bool, Query()] = False,
 ) -> JsonDict:
     require_direct_write(ctx)
-    await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
+    if not force:
+        await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
     deleted = tickets_data.delete_ticket(
         conn,
         ticket_id,
         actor=ctx.actor,
         now=clk.now_unix(),
+        force=force,
     )
     return {
         "ok": True,
