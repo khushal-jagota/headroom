@@ -595,7 +595,7 @@ def _board_sprint_items(
     *,
     registry: WorkerTypeRegistry,
     item_ids: list[str],
-) -> list[JsonDict]:
+) -> list[BoardSprintItem]:
     """Each Sprint Item's project and its done-of-total across all its Tickets."""
     if not item_ids:
         return []
