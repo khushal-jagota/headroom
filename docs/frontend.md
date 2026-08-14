@@ -35,14 +35,14 @@ One screen per part of the system:
   Inside a box the Tickets sit under plain status headings, in one order: Needs user,
   Awaiting approval, Paired, Agent, Blocked, To do, Done. The headings are labels, not
   controls. Agent, Blocked and Done are quiet: they are not drawn until the reader asks.
-  "n more" counts what is put away, and pressing it again puts it back. A Ticket is in
+  "+n more" counts what is put away, and pressing it again puts it back. A Ticket is in
   Blocked when its status says so or a live blocker holds it. The No Item tail groups
   and reveals the same way.
 
   Items with work the user owns — Needs user, Awaiting approval or Paired — come first,
   then Item priority orders the rest. Every heading, title and Ticket row starts at the
-  same left edge, and Ticket rows carry no priority tile. Each row keeps the existing
-  conversation mark.
+  same left edge. Every Ticket row is the shared Ticket row, so it carries its own
+  priority tile beside its title and keeps the existing conversation mark.
 
   The Chief of Staff row starts with its bundled portrait. The portrait is an agent
   identity on this row only; ticket rows and Worker types do not use it.
