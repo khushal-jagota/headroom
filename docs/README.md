@@ -32,8 +32,9 @@ operations. Neither path is a general Ticket Stage setter.
 
 Each Ticket ceiling uses Stop, Agent review, or User review. Agent review parks for the
 exact owning Sprint Item supervisor. User Review contains only user-review proposals and
-explicit Worker help requests. Durable obligation batches tell the owning supervisor about
-review, blockers, Worker failures, user needs, and completion.
+explicit Worker help requests. When a Sprint Item needs its supervisor, Panels wakes it
+with a single message that carries no facts at all, and the supervisor reads the current
+state of its Item and Tickets itself.
 
 ## The systems
 
@@ -95,5 +96,5 @@ review, blockers, Worker failures, user needs, and completion.
 
 ---
 
-_Last verified: 2026-08-12 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-08-14 · Covers the system landscape; each doc carries its own
 code paths._

@@ -5,7 +5,6 @@
   import { workspaceAddress } from "../lib/workspaceAddress";
   import { queries } from "../lib/queryCatalogue";
   import {
-    failedWorkspaceDeliveries,
     remainingWorkspaceTicketGroups,
     todayWorkspaceTicketGroups,
     workspaceArtifactRows,
@@ -45,10 +44,6 @@
   let remainingGroups = $derived(
     workspace.data ? remainingWorkspaceTicketGroups(workspace.data) : []
   );
-  let deliveryFailures = $derived(
-    workspace.data ? failedWorkspaceDeliveries(workspace.data) : []
-  );
-
   $effect(() => {
     if (workspace.data) conversationId = workspace.data.supervisor.conversation_id;
   });
@@ -218,15 +213,6 @@
               >{briefExpanded ? "Show less" : "Show more"}</button>
             {/if}
           </header>
-
-          {#if deliveryFailures.length}
-            <div class="sprint-workspace-attention" role="status" data-delivery-attention>
-              <strong>Delivery needs attention.</strong>
-              {deliveryFailures.length === 1
-                ? deliveryFailures[0].last_error || "The supervisor delivery failed."
-                : `${deliveryFailures.length} supervisor deliveries failed.`}
-            </div>
-          {/if}
 
           {#if todayGroups.length}
             {@render ticketSection("today", "Today", todayGroups, true)}

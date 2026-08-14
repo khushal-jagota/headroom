@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  failedWorkspaceDeliveries,
   remainingWorkspaceTicketGroups,
   todayWorkspaceTicketGroups,
   workspaceArtifactRows,
@@ -72,17 +71,6 @@ function workspace(): SprintItemWorkspace {
       }
     ],
     artifacts: ["proof.md"],
-    obligations: [
-      {
-        id: "so_failed",
-        ticket_id: "t_review",
-        kind: "agent_review",
-        lifecycle: "failed",
-        attempt_count: 2,
-        retry_at: null,
-        last_error: "offline"
-      }
-    ],
     conversation_history: []
   };
 }
@@ -99,9 +87,6 @@ describe("Sprint Item workspace presentation", () => {
     ]);
     expect(shape(remainingWorkspaceTicketGroups(value))).toEqual([["Agent", ["t_later"]]]);
     expect(workspaceProgress(value)).toBe("1 of 3 done");
-    expect(failedWorkspaceDeliveries(value).map((obligation) => obligation.id)).toEqual([
-      "so_failed"
-    ]);
   });
 
   it("splits Awaiting approval into User review and Agent review, both on Today by default", () => {

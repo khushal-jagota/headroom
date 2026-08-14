@@ -300,16 +300,6 @@ export type SprintItemWorkspaceTicket = {
   day_ids: string[];
 };
 
-export type SprintItemWorkspaceObligation = {
-  id: string;
-  ticket_id: string;
-  kind: string;
-  lifecycle: string;
-  attempt_count: number;
-  retry_at: number | null;
-  last_error: string | null;
-};
-
 export type SprintItemWorkspace = SprintItemSummary & {
   body: string;
   status: string;
@@ -325,7 +315,6 @@ export type SprintItemWorkspace = SprintItemSummary & {
   today_ticket_ids: string[];
   tickets: SprintItemWorkspaceTicket[];
   artifacts: string[];
-  obligations: SprintItemWorkspaceObligation[];
   conversation_history: TicketConversationHistoryEntry[];
 };
 

@@ -62,7 +62,7 @@ Remaining Tickets keeps off-today and done work visible without competing with T
 Ticket rows link to the canonical Ticket page for all review and resolution actions.
 
 The workspace also lists managed Item artifacts and opens them through the shared file
-preview. Delivery failures appear as attention above the work. The supervisor uses the
+preview. The supervisor uses the
 same live conversation, composer, model controls, transcript, reset, and change-stream
 behavior as Ticket conversations. Reset starts a new current conversation without hiding
 prior transcripts. The layout preserves the same document and conversation split on
@@ -116,9 +116,10 @@ its launch configuration with the item. Existing items received the same fixed
 configuration during migration. The Other section is a view of loose Tickets and owns
 no supervisor.
 
-The supervisor conversation starts only after its first user or obligation message. A reset
-kills current work and clears the agent link. Conversation records and message files
-remain as history. The Sprint Item body is the shared brief.
+The supervisor conversation starts only when it is first needed: a user message, or the
+first wake because the Item needs its supervisor. A reset kills current work and clears
+the agent link. Conversation records and message files remain as history. The Sprint Item
+body is the shared brief.
 
 A supervisor acts within its own Sprint Item. It changes Item fields, child Ticket
 fields, Day membership, blocks, scope, proposal review, and Item artifacts through one
@@ -144,12 +145,18 @@ the Sprint Item supervisor agent key as the sender. A missing, reset, stale, or 
 conversation is refused. This message path cannot create a conversation and does not
 change the Ticket Stage, scope, status, or Day membership.
 
-Supervisor obligations are durable and separate from Web Push notifications. Panels sends
-bounded ordered batches through the conversation runtime. The runtime starts or queues them.
-Acknowledgement records attention, while canonical Ticket state closes the obligation.
+Supervisor wakes are separate from Web Push notifications, and they store nothing. Panels
+asks one read-only question about each Sprint Item — does this Item need its supervisor
+right now — and it asks only when the change signal says something was written. When the
+answer is yes, and the supervisor's conversation is free with nothing already waiting for
+it, Panels sends one message that carries no facts: your Sprint Item needs you, read the
+current context and act. The supervisor then reads canonical state itself, and what it
+reads is current at the moment it reads it. There is nothing to identify, retry, or
+acknowledge; if the Item still needs its supervisor after the turn, the next answer is
+still yes.
 
 The workspace reads one coherent Item snapshot with child Ticket Day membership,
-artifacts, open obligations, supervisor state, and the current conversation link. It adds
+artifacts, supervisor state, and the current conversation link. It adds
 no second Ticket review or Worker-control route. Worker readiness remains the only
 automatic creator of a Worker step.
 
@@ -172,4 +179,4 @@ _Code paths:_ `src/planner/sprints/` (the sprint, its items, and workspace read)
 
 ---
 
-_Last verified: 2026-08-12._
+_Last verified: 2026-08-14._

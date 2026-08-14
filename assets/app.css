@@ -5622,20 +5622,6 @@ select {
   font-style: italic;
 }
 
-.sprint-workspace-attention {
-  margin-top: var(--space-5);
-  padding: var(--space-3) var(--space-4);
-  border: var(--border-hairline) solid color-mix(in srgb, var(--accent-error) 45%, transparent);
-  border-radius: var(--radius-md);
-  color: var(--text-muted);
-  font-size: var(--type-sm);
-}
-
-.sprint-workspace-attention strong {
-  color: var(--accent-error);
-  margin-right: var(--space-1);
-}
-
 .sprint-workspace-section {
   margin-top: var(--space-6);
 }

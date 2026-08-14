@@ -1924,42 +1924,6 @@ def sprint_item_supervisor_context(item_id: str, as_json: bool) -> None:
     http.emit(data, as_json, f"{item_id} {len(data['tickets'])} current Tickets")
 
 
-@sprint_item_supervisor.command("obligations")
-@click.argument("item_id")
-@click.option("--limit", type=click.IntRange(1, 100), default=50, show_default=True)
-@click.option("--all", "open_only", flag_value=False, default=True)
-@json_option
-def sprint_item_supervisor_obligations(
-    item_id: str, limit: int, open_only: bool, as_json: bool
-) -> None:
-    data = http.send(
-        "GET", f"/api/items/{item_id}/supervisor/obligations", as_json=as_json,
-        params={"limit": limit, "open_only": str(open_only).lower()},
-    )
-    http.emit(
-        data,
-        as_json,
-        _lines(
-            data["obligations"],
-            lambda row: f"{row['id']} {row['kind']} {row['ticket_id']}",
-        ),
-    )
-
-
-@sprint_item_supervisor.command("acknowledge")
-@click.argument("item_id")
-@click.argument("obligation_ids", nargs=-1, required=True)
-@json_option
-def sprint_item_supervisor_acknowledge(
-    item_id: str, obligation_ids: tuple[str, ...], as_json: bool
-) -> None:
-    data = http.send(
-        "POST", f"/api/items/{item_id}/supervisor/obligations/acknowledge",
-        as_json=as_json, json_body={"obligation_ids": list(obligation_ids)},
-    )
-    http.emit(data, as_json, f"{data['acknowledged']} obligations acknowledged")
-
-
 @sprint_item_supervisor.command("ticket-context")
 @click.argument("item_id")
 @click.argument("ticket_id")

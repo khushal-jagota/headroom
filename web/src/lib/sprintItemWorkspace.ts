@@ -1,10 +1,6 @@
 import { previewHashHref, sprintItemFileTarget } from "./filePreview";
 import { sprintTicketCondition } from "./sprintPresentation";
-import type {
-  SprintItemWorkspace,
-  SprintItemWorkspaceObligation,
-  SprintItemWorkspaceTicket
-} from "./types";
+import type { SprintItemWorkspace, SprintItemWorkspaceTicket } from "./types";
 
 export type WorkspaceTicketGroup = {
   key: string;
@@ -74,14 +70,6 @@ export function workspaceProgress(workspace: SprintItemWorkspace): string {
   const tickets = workspace.tickets.filter((ticket) => ticket.stage !== "dropped");
   const done = tickets.filter((ticket) => ticket.stage === "done").length;
   return `${done} of ${tickets.length} done`;
-}
-
-export function failedWorkspaceDeliveries(
-  workspace: SprintItemWorkspace
-): SprintItemWorkspaceObligation[] {
-  return workspace.obligations.filter(
-    (obligation) => obligation.lifecycle === "failed" || obligation.last_error !== null
-  );
 }
 
 export type WorkspaceArtifactRow = {

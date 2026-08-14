@@ -325,8 +325,11 @@ The database migration maps legacy `propose` scope to `user_review`. It maps leg
 proposals to `awaiting_user_review`. It preserves the proposal body, author, timestamp,
 Stage, ceiling, status time, and status revision.
 
-Panels creates a durable supervisor obligation for agent and user review. It sends bounded
-batches through the Sprint Item conversation. General Worker messages use the separate
+A proposal parked at agent review is one of the things that makes a Sprint Item need its
+supervisor, so it wakes that supervisor through the Sprint Item conversation with a
+message that names nothing: the supervisor reads the waiting proposal from current state
+itself. A proposal parked at user review waits for the user and wakes no supervisor.
+General Worker messages use the separate
 targeted message path and require an existing Worker conversation.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
@@ -378,4 +381,4 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 
 ---
 
-_Last verified: 2026-08-12._
+_Last verified: 2026-08-14._
