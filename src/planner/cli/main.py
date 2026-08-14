@@ -13,6 +13,7 @@ The command tree mirrors the product model:
 
 from __future__ import annotations
 
+import mimetypes
 import os
 import sys
 from collections.abc import Callable
@@ -1555,6 +1556,52 @@ def ticket_copy(ticket_id: str | None, as_json: bool) -> None:
         request_actor="ordinary",
     )
     http.emit({"text": text}, as_json, text)
+
+
+@ticket.group("file")
+def ticket_file() -> None:
+    """Store the files a Ticket owns."""
+
+
+@ticket_file.command("put")
+@click.argument("ticket_id")
+@click.argument("relative_path")
+@click.option(
+    "--from",
+    "local_path",
+    required=True,
+    help="Local file to store, for example ./plan.html.",
+)
+@json_option
+def ticket_file_put(
+    ticket_id: str, relative_path: str, local_path: str, as_json: bool
+) -> None:
+    """Store a local file as this Ticket's file at RELATIVE_PATH, and print its link."""
+    # An HTTP client rewrites "." and ".." inside a URL before the request leaves, so the
+    # server would answer a question nobody asked. Refuse those here, where the path is
+    # still the one the caller typed. The server checks the path again regardless.
+    if (
+        not relative_path
+        or relative_path.startswith("/")
+        or "\\" in relative_path
+        or any(part in ("", ".", "..") for part in relative_path.split("/"))
+    ):
+        http.fail_validation(f"unsafe ticket file path: {relative_path}", as_json)
+    source = Path(local_path)
+    try:
+        content = source.read_bytes()
+    except OSError as exc:
+        http.fail_validation(f"cannot read {local_path}: {exc}", as_json)
+    content_type = mimetypes.guess_type(source.name)[0] or "application/octet-stream"
+    data = http.send_bytes(
+        "PUT",
+        f"/files/tickets/{ticket_id}/{relative_path}",
+        as_json=as_json,
+        content=content,
+        content_type=content_type,
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, str(data.get("url", "")))
 
 
 # --- sprint -------------------------------------------------------------------

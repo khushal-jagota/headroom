@@ -21,6 +21,8 @@
     visited?: string[];
   } = $props();
 
+  const MEDIA_FETCH_FAILED = "file fetch failed";
+
   let text = $state<string | null>(null);
   let error = $state("");
   let htmlFrame = $state<HTMLIFrameElement | null>(null);
@@ -30,10 +32,15 @@
     (resolved.kind === "markdown" && expansion.expandable) || resolved.kind === "html"
   );
   let showsMedia = $derived(
-    resolved.kind === "image" || resolved.kind === "video" || resolved.kind === "audio"
+    (resolved.kind === "image" || resolved.kind === "video" || resolved.kind === "audio") &&
+      !error
   );
   let showsDocument = $derived(shouldFetchText && !error);
   let inline = $derived(!showsMedia && !showsDocument);
+
+  function onMediaError() {
+    error = MEDIA_FETCH_FAILED;
+  }
 
   $effect(() => {
     const current = resolved;
@@ -90,13 +97,31 @@
   {#if mode === "embedded" && resolved.kind !== "download" && resolved.target.kind !== "external-link" && resolved.previewHref}
     {@render mobilePreviewLink(resolved.previewHref)}
   {/if}
-  {#if resolved.kind === "image"}
-    <img class="file-preview-image" src={resolved.href} alt={resolved.label} loading="lazy" />
-  {:else if resolved.kind === "video"}
+  {#if showsMedia && resolved.kind === "image"}
+    <img
+      class="file-preview-image"
+      src={resolved.href}
+      alt={resolved.label}
+      loading="lazy"
+      onerror={onMediaError}
+    />
+  {:else if showsMedia && resolved.kind === "video"}
     <!-- svelte-ignore a11y_media_has_caption -->
-    <video class="file-preview-video" src={resolved.href} controls preload="metadata"></video>
-  {:else if resolved.kind === "audio"}
-    <audio class="file-preview-audio" src={resolved.href} controls preload="metadata"></audio>
+    <video
+      class="file-preview-video"
+      src={resolved.href}
+      controls
+      preload="metadata"
+      onerror={onMediaError}
+    ></video>
+  {:else if showsMedia && resolved.kind === "audio"}
+    <audio
+      class="file-preview-audio"
+      src={resolved.href}
+      controls
+      preload="metadata"
+      onerror={onMediaError}
+    ></audio>
   {:else if error}
     <span class="quiet-line">{error}</span>
   {:else if resolved.kind === "html"}

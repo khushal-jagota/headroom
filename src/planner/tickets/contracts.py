@@ -103,6 +103,20 @@ class BoardCard(TypedDict):
     latest_turn_ended_sequence: NotRequired[int]
 
 
+class BoardSprintItem(TypedDict):
+    """A Sprint Item's own identity and progress, for the Workspace rail eyebrow.
+
+    The board's cards are today's Tickets, so they cannot say how far the whole Item
+    has got. These counts run over the Item's entire non-dropped Ticket set, which is
+    the rule the Sprint Item page already shows.
+    """
+
+    id: str
+    project: str
+    done_ticket_count: int
+    total_ticket_count: int
+
+
 @dataclass(frozen=True, slots=True)
 class TicketListFilters:
     stages: tuple[str, ...] = ()

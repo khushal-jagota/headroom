@@ -138,6 +138,11 @@ record shapes. Direct `show` commands also keep their full record shapes.
   clear one Stage's ownership override. `default` clears the override so the Worker
   type's Stage default applies. Terminal and unknown Stages are rejected.
 - **`ticket copy`** — copy one ticket's plain-text packet.
+- **`ticket file put <ticket-id> <relative-path> --from <local-file>`** — store a file
+  the Ticket owns, and print its `/files/tickets/...` link. The bytes go to the server,
+  which decides where they land, so the artifact reaches the Ticket from any directory,
+  including a worktree that is later removed. A repeat put at the same relative path
+  replaces the file. An unknown Ticket or an unsafe relative path is rejected.
 - **`sprint create / list / show / set`** — plan sprints. `current` resolves through
   `/api/sprint/current`; `none` means the backlog where a list supports it.
 - **`sprint item create / list / show / set / move-ticket / move-ticket-to-backlog / block / unblock / delete`**

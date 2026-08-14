@@ -357,6 +357,16 @@ export type BoardResponse = {
     stage: string;
     cards: BoardCard[];
   }>;
+  sprint_items: BoardSprintItem[];
+};
+
+// A Sprint Item's own identity and progress. The cards are today's Tickets, so the
+// Item's done-of-total comes from the server, not from them.
+export type BoardSprintItem = {
+  id: string;
+  project: string;
+  done_ticket_count: number;
+  total_ticket_count: number;
 };
 
 export type BoardCard = {
