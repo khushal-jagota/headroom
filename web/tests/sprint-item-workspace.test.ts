@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   failedWorkspaceDeliveries,
-  remainingWorkspaceTickets,
+  remainingWorkspaceTicketGroups,
   todayWorkspaceTicketGroups,
   workspaceProgress
 } from "../src/lib/sprintItemWorkspace";
@@ -87,15 +87,16 @@ function workspace(): SprintItemWorkspace {
 }
 
 describe("Sprint Item workspace presentation", () => {
-  it("groups only active Today work and keeps done or off-day Tickets separate", () => {
+  it("splits sections on Day membership alone and groups both the same way", () => {
     const value = workspace();
-    expect(todayWorkspaceTicketGroups(value).map((group) => [group.label, group.tickets.map((ticket) => ticket.id)])).toEqual([
-      ["Awaiting approval", ["t_review"]]
+    const shape = (groups: ReturnType<typeof todayWorkspaceTicketGroups>) =>
+      groups.map((group) => [group.label, group.tickets.map((ticket) => ticket.id)]);
+    // A Ticket finished today stays under Today, in Today's own Done group.
+    expect(shape(todayWorkspaceTicketGroups(value))).toEqual([
+      ["Awaiting approval", ["t_review"]],
+      ["Done", ["t_done"]]
     ]);
-    expect(remainingWorkspaceTickets(value).map((ticket) => ticket.id)).toEqual([
-      "t_later",
-      "t_done"
-    ]);
+    expect(shape(remainingWorkspaceTicketGroups(value))).toEqual([["Agent", ["t_later"]]]);
     expect(workspaceProgress(value)).toBe("1 of 3 done");
     expect(failedWorkspaceDeliveries(value).map((obligation) => obligation.id)).toEqual([
       "so_failed"
@@ -105,12 +106,21 @@ describe("Sprint Item workspace presentation", () => {
   it("labels a not-yet-started Ticket with the word used everywhere else", () => {
     const value = workspace();
     const upcoming = { ...value.tickets[0], id: "t_upcoming", ticket_status: "empty", has_pending_proposal: false };
-    const groups = todayWorkspaceTicketGroups({
-      ...value,
-      today_ticket_ids: ["t_upcoming"],
-      tickets: [upcoming]
-    });
-    expect(groups.map((group) => group.label)).toEqual(["To do"]);
+    expect(
+      todayWorkspaceTicketGroups({
+        ...value,
+        today_ticket_ids: ["t_upcoming"],
+        tickets: [upcoming]
+      }).map((group) => group.label)
+    ).toEqual(["To do"]);
+    // The same Ticket off the Day reads identically in Remaining.
+    expect(
+      remainingWorkspaceTicketGroups({
+        ...value,
+        today_ticket_ids: [],
+        tickets: [upcoming]
+      }).map((group) => group.label)
+    ).toEqual(["To do"]);
   });
 
   it("routes Sprint Item artifacts through the shared managed preview", () => {

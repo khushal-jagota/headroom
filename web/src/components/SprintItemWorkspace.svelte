@@ -5,9 +5,10 @@
   import { queries } from "../lib/queryCatalogue";
   import {
     failedWorkspaceDeliveries,
-    remainingWorkspaceTickets,
+    remainingWorkspaceTicketGroups,
     todayWorkspaceTicketGroups,
-    workspaceProgress
+    workspaceProgress,
+    type WorkspaceTicketGroup
   } from "../lib/sprintItemWorkspace";
   import { sprintTicketCondition } from "../lib/sprintPresentation";
   import type { ConversationState } from "../lib/conversation/conversationState";
@@ -40,8 +41,8 @@
   let backends = $state<readonly BackendSnapshot[]>([]);
 
   let todayGroups = $derived(workspace.data ? todayWorkspaceTicketGroups(workspace.data) : []);
-  let remainingTickets = $derived(
-    workspace.data ? remainingWorkspaceTickets(workspace.data) : []
+  let remainingGroups = $derived(
+    workspace.data ? remainingWorkspaceTicketGroups(workspace.data) : []
   );
   let deliveryFailures = $derived(
     workspace.data ? failedWorkspaceDeliveries(workspace.data) : []
@@ -132,6 +133,46 @@
   }
 </script>
 
+{#snippet ticketSection(
+  name: string,
+  label: string,
+  groups: WorkspaceTicketGroup[],
+  open: boolean,
+  emptyText: string = ""
+)}
+  <details class="sprint-workspace-section" {open} data-workspace-section={name}>
+    <summary>
+      <span class="sprint-workspace-section-label">{label}</span>
+      <span class="sprint-workspace-count">{groups.reduce((sum, group) => sum + group.tickets.length, 0)}</span>
+      <span class="sprint-workspace-chevron" aria-hidden="true"></span>
+    </summary>
+    {#each groups as group (group.key)}
+      <div class="sprint-workspace-group" data-workspace-group={group.key}>
+        <div class="sprint-workspace-group-label">
+          <span>{group.label}</span>
+          <span class="sprint-workspace-count">{group.tickets.length}</span>
+        </div>
+        {#each group.tickets as ticket (ticket.id)}
+          {@const condition = sprintTicketCondition(ticket)}
+          <SprintTicketRow
+            priority={ticket.priority}
+            title={ticket.title}
+            state={condition.mark}
+            ariaLabel={condition.word}
+            href={`#/ticket/${ticket.id}`}
+            quiet={ticket.stage === "done"}
+            data-sprint-ticket-id={ticket.id}
+            data-ticket-state={condition.mark}
+          />
+        {/each}
+      </div>
+    {/each}
+    {#if !groups.length && emptyText}
+      <div class="sprint-workspace-empty">{emptyText}</div>
+    {/if}
+  </details>
+{/snippet}
+
 <div
   class="sprint-item-page"
   data-sprint-item-workspace={itemId}
@@ -199,33 +240,7 @@
           {/if}
 
           {#if todayGroups.length}
-            <details class="sprint-workspace-section" open data-workspace-section="today">
-              <summary>
-                <span class="sprint-workspace-section-label">Today</span>
-                <span class="sprint-workspace-count">{todayGroups.reduce((sum, group) => sum + group.tickets.length, 0)}</span>
-                <span class="sprint-workspace-chevron" aria-hidden="true"></span>
-              </summary>
-              {#each todayGroups as group (group.key)}
-                <div class="sprint-workspace-group" data-workspace-group={group.key}>
-                  <div class="sprint-workspace-group-label">
-                    <span>{group.label}</span>
-                    <span class="sprint-workspace-count">{group.tickets.length}</span>
-                  </div>
-                  {#each group.tickets as ticket (ticket.id)}
-                    {@const condition = sprintTicketCondition(ticket)}
-                    <SprintTicketRow
-                      priority={ticket.priority}
-                      title={ticket.title}
-                      state={condition.mark}
-                      ariaLabel={condition.word}
-                      href={`#/ticket/${ticket.id}`}
-                      data-sprint-ticket-id={ticket.id}
-                      data-ticket-state={condition.mark}
-                    />
-                  {/each}
-                </div>
-              {/each}
-            </details>
+            {@render ticketSection("today", "Today", todayGroups, true)}
           {/if}
 
           <details class="sprint-workspace-section" open data-workspace-section="artifacts">
@@ -245,30 +260,13 @@
             {/if}
           </details>
 
-          <details class="sprint-workspace-section" data-workspace-section="remaining">
-            <summary>
-              <span class="sprint-workspace-section-label">Remaining Tickets</span>
-              <span class="sprint-workspace-count">{remainingTickets.length}</span>
-              <span class="sprint-workspace-chevron" aria-hidden="true"></span>
-            </summary>
-            {#if remainingTickets.length}
-              {#each remainingTickets as ticket (ticket.id)}
-                {@const condition = sprintTicketCondition(ticket)}
-                <SprintTicketRow
-                  priority={ticket.priority}
-                  title={ticket.title}
-                  state={condition.mark}
-                  ariaLabel={condition.word}
-                  href={`#/ticket/${ticket.id}`}
-                  quiet={ticket.stage === "done"}
-                  data-sprint-ticket-id={ticket.id}
-                  data-ticket-state={condition.mark}
-                />
-              {/each}
-            {:else}
-              <div class="sprint-workspace-empty">Every Ticket on this outcome is on today.</div>
-            {/if}
-          </details>
+          {@render ticketSection(
+            "remaining",
+            "Remaining Tickets",
+            remainingGroups,
+            false,
+            "Every Ticket on this outcome is on today."
+          )}
         </div>
       {/if}
     </ResourceState>
