@@ -17,7 +17,7 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "conversation_held_prompts"
+HEAD_REVISION = "drop_proposal_review_route"
 
 
 def _table_columns(

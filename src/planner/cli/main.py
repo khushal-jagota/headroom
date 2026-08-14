@@ -2363,23 +2363,6 @@ def sprint_item_supervisor_reject(
     http.emit(data, as_json, f"{ticket_id} agent review rejected")
 
 
-@sprint_item_supervisor.command("transfer-to-user-review")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@json_option
-def sprint_item_supervisor_transfer_to_user_review(
-    item_id: str, ticket_id: str, as_json: bool
-) -> None:
-    """Move one parked proposal to User Review without changing Ticket scope."""
-    data = http.send(
-        "POST",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/transfer-to-user-review",
-        as_json=as_json,
-        json_body={},
-    )
-    http.emit(data, as_json, f"{ticket_id} transferred to user review")
-
-
 # --- chief --------------------------------------------------------------------
 
 _EXTERNAL_WORK_RECONCILE_FIXED_KEYS = frozenset({"stage", "kickoff_note", "recap"})

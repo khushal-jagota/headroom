@@ -623,18 +623,19 @@ def test_supervisor_approves_only_an_exact_child_agent_review(tmp_path: Path) ->
     assert approved.json()["fields"]["success"]["value"] == "The result is verified."
 
 
-def test_supervisor_transfer_changes_only_the_parked_review_route(tmp_path: Path) -> None:
+def test_scope_change_hands_the_waiting_proposal_to_the_user(tmp_path: Path) -> None:
+    """The supervisor hands review over by scope, and the proposal already parked moves."""
     app, db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _create_item(client)
         ticket = _park_agent_review_ticket(client, str(item["id"]))
         before_review = client.get("/api/review")
-        transferred = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/transfer-to-user-review",
-            json={},
+        scoped = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/scope",
+            json={"ceiling": "needs_success", "at_cap": "user_review"},
             headers=_supervisor_headers(str(item["id"])),
         )
-        supervisor_approve_after_transfer = client.post(
+        supervisor_approve_after_handover = client.post(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/approve",
             json={"next_ceiling": "needs_approach", "at_cap": "user_review"},
             headers=_supervisor_headers(str(item["id"])),
@@ -642,17 +643,71 @@ def test_supervisor_transfer_changes_only_the_parked_review_route(tmp_path: Path
         after_review = client.get("/api/review")
 
     assert before_review.json()["items"] == []
-    assert transferred.status_code == 200, transferred.text
-    assert transferred.json()["at_cap"] == "agent_review"
-    assert transferred.json()["ticket_status"] == "awaiting_user_review"
-    assert supervisor_approve_after_transfer.json()["error"]["code"] == "agent_forbidden"
-    assert supervisor_approve_after_transfer.status_code == 400
-    proposal = transferred.json()["fields"]["success"]["proposal"]
-    assert proposal["review_route"] == "user_review"
-    assert [item["ticket_id"] for item in after_review.json()["items"]] == [ticket["id"]]
+    assert scoped.status_code == 200, scoped.text
+    assert scoped.json()["at_cap"] == "user_review"
+    assert scoped.json()["ticket_status"] == "awaiting_user_review"
+    assert supervisor_approve_after_handover.status_code == 400
+    assert supervisor_approve_after_handover.json()["error"]["code"] == "agent_forbidden"
+    assert [row["ticket_id"] for row in after_review.json()["items"]] == [ticket["id"]]
     with connect(str(db_path)) as conn:
         stored = tickets_data.read_ticket(conn, str(ticket["id"]))
-    assert stored.at_cap.value == "agent_review"
+    assert stored.at_cap.value == "user_review"
+
+
+def test_handover_by_scope_survives_a_rejection_and_the_next_proposal(
+    tmp_path: Path,
+) -> None:
+    """The reported bug: a revision after a user rejection went back to the supervisor."""
+    app, db_path = _app(tmp_path)
+    conversation_id = "conv-handover-revision"
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket = _park_agent_review_ticket(client, str(item["id"]))
+        ticket_id = str(ticket["id"])
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+                (conversation_id, ticket_id),
+            )
+            conn.commit()
+        asyncio.run(
+            app.state.conversation_system.start_conversation(
+                ConversationStartRequest(conversation_id=conversation_id, model="test-model")
+            )
+        )
+        client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/scope",
+            json={"ceiling": "needs_success", "at_cap": "user_review"},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        supervisor_reject_after_handover = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/reject",
+            json={"message": "Not mine to send back."},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        rejected = client.post(
+            f"/api/tickets/{ticket_id}/return-for-revision",
+            json={"message": "State the verification evidence."},
+        )
+        revised = client.post(
+            f"/api/tickets/{ticket_id}/propose/success",
+            json={"body": "The result is verified against the log."},
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
+        )
+        supervisor_approve_the_revision = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/approve",
+            json={"next_ceiling": "needs_approach", "at_cap": "user_review"},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+
+    assert supervisor_reject_after_handover.status_code == 400
+    assert supervisor_reject_after_handover.json()["error"]["code"] == "agent_forbidden"
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["fields"]["success"]["proposal"] is None
+    assert revised.status_code == 200, revised.text
+    assert revised.json()["ticket_status"] == "awaiting_user_review"
+    assert supervisor_approve_the_revision.status_code == 400
+    assert supervisor_approve_the_revision.json()["error"]["code"] == "agent_forbidden"
 
 
 def test_direct_user_can_approve_an_agent_review_proposal(tmp_path: Path) -> None:

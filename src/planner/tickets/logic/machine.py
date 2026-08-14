@@ -159,10 +159,11 @@ def parked_proposal_review_route(
     ownership_mode: StageOwnershipMode,
     at_cap: AtCap,
 ) -> ProposalReviewRoute:
-    """Snapshot the reviewer for a proposal which did not auto-accept.
+    """Derive the reviewer for a proposal which did not auto-accept.
 
-    A paired or user-owned proposal is user work even under agent-review scope. Explicit
-    ownership overrides therefore stay authoritative.
+    Callers ask at the moment they decide, so a scope change since the proposal parked
+    moves it. A paired or user-owned proposal is user work even under agent-review scope.
+    Explicit ownership overrides therefore stay authoritative.
     """
     if ownership_mode is not StageOwnershipMode.worker:
         return ProposalReviewRoute.user_review

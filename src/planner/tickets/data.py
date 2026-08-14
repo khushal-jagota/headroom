@@ -459,7 +459,6 @@ def _seed_kickoff(
                 body=kickoff_note,
                 proposed_by=actor,
                 created_at=now,
-                review_route=review_route,
             ),
             user_note=None,
         ),
@@ -478,12 +477,12 @@ def _require_agent_review_placement(
     at_cap: AtCap | None,
     sprint_item_id: str | None,
 ) -> None:
-    """Keep agent review paired with the normal Sprint Item that owns its reviewer."""
-    has_agent_review_proposal = any(
-        slot.proposal is not None and slot.proposal.review_route is ProposalReviewRoute.agent_review
-        for slot in ticket.fields.slots.values()
-    )
-    if at_cap is not AtCap.agent_review and not has_agent_review_proposal:
+    """Keep agent review paired with the normal Sprint Item that owns its reviewer.
+
+    A parked proposal needs no separate check. Its reviewer is derived from at_cap, so a
+    Ticket outside agent review holds nothing an agent reviews.
+    """
+    if at_cap is not AtCap.agent_review:
         return
     row = conn.execute(
         "SELECT 1 FROM sprint_items WHERE id = ? AND kind = 'normal'",
@@ -809,9 +808,13 @@ def _write_parked_proposal_status(
     proposal = fields_codec.get_slot(ticket.fields, field).proposal
     if proposal is None:
         raise PlannerError(ErrorCode.validation, "ticket has no parked proposal")
+    route = machine.parked_proposal_review_route(
+        ticket.effective_stage_ownership_mode or StageOwnershipMode.user,
+        ticket.at_cap,
+    )
     status = (
         TicketStatus.awaiting_agent_review
-        if proposal.review_route is ProposalReviewRoute.agent_review
+        if route is ProposalReviewRoute.agent_review
         else TicketStatus.awaiting_user_review
     )
     _write_ticket_status(conn, ticket_id, status, now)
@@ -2153,7 +2156,18 @@ def change_scope(
         )
         updated = _apply_decision(conn, ticket, decision, now)
         ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
+        parked_field = worker_type_definition.gating_field(updated.stage)
         if ticket.ticket_status in {
+            TicketStatus.awaiting_agent_review,
+            TicketStatus.awaiting_user_review,
+        } and (
+            parked_field is not None
+            and fields_codec.get_slot(updated.fields, parked_field).proposal is not None
+        ):
+            # The proposal already in front of a reviewer follows the new scope. This is
+            # how a supervisor hands review to the user.
+            _write_parked_proposal_status(conn, ticket_id, updated, parked_field, now)
+        elif ticket.ticket_status in {
             TicketStatus.empty,
             TicketStatus.blocked,
             TicketStatus.paired,
@@ -2165,36 +2179,6 @@ def change_scope(
                 worker_type_definition=worker_type_definition,
                 now=now,
             )
-        return _load_ticket_for_write(conn, ticket_id)
-
-
-def transfer_proposal_to_user_review(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    actor: str,
-    now: int,
-    supervisor_sprint_item_id: str | None = None,
-) -> Ticket:
-    """Transfer one parked agent-review proposal without changing Ticket scope."""
-    admission.require_direct_or_supervisor_actor(actor, "transfer proposal to user review")
-    with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
-        )
-        _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id)
-        if ticket.ticket_status is not TicketStatus.awaiting_agent_review:
-            raise PlannerError(
-                ErrorCode.validation,
-                "ticket is not awaiting agent review",
-                {"ticket_id": ticket_id},
-            )
-        decision = resolution.decide_transfer_to_user_review(
-            ticket,
-            worker_type_definition=worker_type_definition,
-        )
-        _apply_decision(conn, ticket, decision, now)
-        _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_user_review, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 

@@ -139,11 +139,6 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
             str(r["fields"]), worker_type_definition.field_ids()
         )
         gating_field = worker_type_definition.gating_field(stage)
-        proposal = (
-            None
-            if gating_field is None
-            else fields_codec.get_slot(fields, gating_field).proposal
-        )
         stopped_at_current_stage = str(
             r["at_cap"]
         ) == AtCap.stop.value and machine.at_or_beyond_ceiling(
@@ -170,9 +165,6 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
                 "ticket_status": ticket_status,
                 "waiting_to_closeout": waiting_to_closeout,
                 "review_route": str(r["at_cap"]),
-                "proposal_review_route": (
-                    proposal.review_route.value if proposal is not None else None
-                ),
                 "employee_backend": str(r["employee_backend"]),
                 "worker_type": str(r["worker_type"]),
                 "day_ids": [

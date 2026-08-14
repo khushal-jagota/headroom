@@ -162,10 +162,6 @@ def decide_file_proposal(
             body=body,
             proposed_by=actor,
             created_at=now,
-            review_route=machine.parked_proposal_review_route(
-                ownership_mode or StageOwnershipMode.user,
-                ticket.at_cap,
-            ),
         ),
         user_note=slot.user_note,
     )
@@ -187,46 +183,24 @@ def decide_file_proposal(
     return Decision(events=tuple(events), new_fields=new_fields)
 
 
-def decide_transfer_to_user_review(
-    ticket: Ticket,
-    *,
-    worker_type_definition: WorkerTypeDefinition,
-) -> Decision:
-    """Move only the current parked proposal to user review.
+def _require_supervisor_reviewer(ticket: Ticket, field: str, actor: str) -> None:
+    """Refuse a supervisor decision on a proposal the user is reviewing.
 
-    Ticket scope is intentionally absent from the Decision. Future proposals still use
-    the Ticket's selected route.
+    The reviewer is read from the Ticket now, so a scope change since the proposal
+    parked decides who holds it.
     """
-    field = worker_type_definition.gating_field(ticket.stage)
-    if field is None:
-        raise PlannerError(ErrorCode.validation, "ticket has no review item")
-    slot = fields_codec.get_slot(ticket.fields, field)
-    if slot.proposal is None:
+    if actor != admission.SPRINT_ITEM_SUPERVISOR_ACTOR:
+        return
+    route = machine.parked_proposal_review_route(
+        ticket.effective_stage_ownership_mode or StageOwnershipMode.user,
+        ticket.at_cap,
+    )
+    if route is not ProposalReviewRoute.agent_review:
         raise PlannerError(
-            ErrorCode.not_found,
-            "no pending proposal to transfer",
+            ErrorCode.agent_forbidden,
+            "the proposal is not routed to the Sprint Item supervisor",
             {"ticket_id": ticket.id, "field": field},
         )
-    if slot.proposal.review_route is not ProposalReviewRoute.agent_review:
-        raise PlannerError(
-            ErrorCode.validation,
-            "proposal is not awaiting agent review",
-            {"ticket_id": ticket.id, "field": field},
-        )
-    proposal = Proposal(
-        body=slot.proposal.body,
-        proposed_by=slot.proposal.proposed_by,
-        created_at=slot.proposal.created_at,
-        review_route=ProposalReviewRoute.user_review,
-    )
-    return Decision(
-        events=(),
-        new_fields=fields_codec.with_slot(
-            ticket.fields,
-            field,
-            FieldSlot(value=slot.value, proposal=proposal, user_note=slot.user_note),
-        ),
-    )
 
 
 def decide_accept(
@@ -255,12 +229,7 @@ def decide_accept(
             {"ticket_id": ticket.id, "field": str(field)},
         )
     supervisor_review = actor == admission.SPRINT_ITEM_SUPERVISOR_ACTOR
-    if supervisor_review and (slot.proposal.review_route is not ProposalReviewRoute.agent_review):
-        raise PlannerError(
-            ErrorCode.agent_forbidden,
-            "the proposal is not routed to the Sprint Item supervisor",
-            {"ticket_id": ticket.id, "field": str(field)},
-        )
+    _require_supervisor_reviewer(ticket, str(field), actor)
     stored_body = edited_body if edited_body is not None else slot.proposal.body
     if field == worker_type_definition.gating_field(ticket.stage):
         new_stage = worker_type_definition.advance_target(ticket.stage)
@@ -386,15 +355,7 @@ def decide_return_for_revision(
             "no pending proposal to return",
             {"ticket_id": ticket.id, "field": str(field)},
         )
-    if (
-        actor == admission.SPRINT_ITEM_SUPERVISOR_ACTOR
-        and slot.proposal.review_route is not ProposalReviewRoute.agent_review
-    ):
-        raise PlannerError(
-            ErrorCode.agent_forbidden,
-            "the proposal is not routed to the Sprint Item supervisor",
-            {"ticket_id": ticket.id, "field": str(field)},
-        )
+    _require_supervisor_reviewer(ticket, str(field), actor)
     new_slot = FieldSlot(value=slot.value, proposal=None, user_note=slot.user_note)
     return Decision(
         events=(), new_fields=fields_codec.with_slot(ticket.fields, str(field), new_slot)

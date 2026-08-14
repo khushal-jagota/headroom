@@ -158,10 +158,11 @@ record shapes. Direct `show` commands also keep their full record shapes.
 - **`sprint item supervisor show / context / send / reset`** — inspect the supervisor
   and launch configuration, read its scoped brief and current Tickets, send a direct
   user message, or reset its current conversation.
-- **`sprint item supervisor approve / reject / transfer-to-user-review`** — resolve an
-  agent-review proposal for the exact owning Sprint Item. Approval requires the next
-  ceiling and review route. Rejection requires focused revision guidance. Transfer moves
-  only the parked proposal to User Review and preserves future Ticket scope.
+- **`sprint item supervisor approve / reject`** — resolve an agent-review proposal for
+  the exact owning Sprint Item. Approval requires the next ceiling and review route.
+  Rejection requires focused revision guidance. To hand a proposal to the user instead,
+  use `sprint item supervisor scope` with `--at-cap user_review`, which moves the
+  proposal already waiting as well as everything the Ticket proposes later.
 - **`sprint item supervisor ticket-context / history / message-worker`** — read one
   current child Ticket, page through its current Worker conversation, or send attributed
   guidance to that exact existing conversation. `message-worker` requires the current

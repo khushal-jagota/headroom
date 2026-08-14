@@ -111,7 +111,7 @@ def test_scope_route_change_reconciles_the_resting_status(
     assert restored.ticket_status is TicketStatus.paired
 
 
-def test_agent_review_proposal_snapshots_route_and_scope_change_does_not_redirect_it(
+def test_scope_change_moves_the_proposal_already_parked(
     tmp_db: Connection,
     fake_clock: TestClock,
 ) -> None:
@@ -124,31 +124,46 @@ def test_agent_review_proposal_snapshots_route_and_scope_change_does_not_redirec
         actor="worker-run",
         now=fake_clock.now_unix(),
     )
-    proposal = parked.fields.slots["success"].proposal
-    assert proposal is not None
-    assert proposal.review_route is ProposalReviewRoute.agent_review
     assert parked.ticket_status is TicketStatus.awaiting_agent_review
 
-    changed = data.change_scope(
+    handed_over = data.change_scope(
         tmp_db,
         ticket_id,
-        ceiling="needs_approach",
+        ceiling="needs_success",
         at_cap=AtCap.user_review,
         actor="human",
         now=fake_clock.now_unix(),
     )
-    unchanged_proposal = changed.fields.slots["success"].proposal
-    assert unchanged_proposal is not None
-    assert unchanged_proposal.review_route is ProposalReviewRoute.agent_review
-    assert changed.ticket_status is TicketStatus.awaiting_agent_review
+    assert handed_over.ticket_status is TicketStatus.awaiting_user_review
+    assert handed_over.fields.slots["success"].proposal is not None
+
+    taken_back = data.change_scope(
+        tmp_db,
+        ticket_id,
+        ceiling="needs_success",
+        at_cap=AtCap.agent_review,
+        actor="human",
+        now=fake_clock.now_unix(),
+    )
+    assert taken_back.ticket_status is TicketStatus.awaiting_agent_review
 
 
-def test_transfer_changes_only_parked_route_and_status(
+def test_handing_review_to_the_user_makes_a_paired_stage_paired_again(
     tmp_db: Connection,
     fake_clock: TestClock,
 ) -> None:
+    """The user who reviews the Stage is the user who works in it.
+
+    Under agent review a paired Stage collapses to worker-owned, because no user is in
+    the loop. Handing review back restores both the reviewer and the pairing.
+    """
     ticket_id = _agent_review_ticket(tmp_db, fake_clock)
-    before = data.file_proposal(
+    tmp_db.execute(
+        "UPDATE tickets SET default_stage_ownership_mode='paired' WHERE id=?",
+        (ticket_id,),
+    )
+    tmp_db.commit()
+    parked = data.file_proposal(
         tmp_db,
         ticket_id,
         field="success",
@@ -156,17 +171,19 @@ def test_transfer_changes_only_parked_route_and_status(
         actor="worker-run",
         now=fake_clock.now_unix(),
     )
-    transferred = data.transfer_proposal_to_user_review(
+    assert parked.effective_stage_ownership_mode is StageOwnershipMode.worker
+    assert parked.ticket_status is TicketStatus.awaiting_agent_review
+
+    handed_over = data.change_scope(
         tmp_db,
         ticket_id,
-        actor="sprint_item_supervisor",
+        ceiling="needs_success",
+        at_cap=AtCap.user_review,
+        actor="human",
         now=fake_clock.now_unix(),
     )
-    proposal = transferred.fields.slots["success"].proposal
-    assert proposal is not None
-    assert proposal.review_route is ProposalReviewRoute.user_review
-    assert transferred.ticket_status is TicketStatus.awaiting_user_review
-    assert (transferred.ceiling, transferred.at_cap) == (before.ceiling, before.at_cap)
+    assert handed_over.effective_stage_ownership_mode is StageOwnershipMode.paired
+    assert handed_over.ticket_status is TicketStatus.awaiting_user_review
 
 
 def test_revision_write_does_not_clear_a_proposal_that_changed_after_delivery_check(

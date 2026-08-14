@@ -664,29 +664,6 @@ async def supervisor_reject_ticket(
     return tickets_views.ticket_json(ticket, now)
 
 
-@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/transfer-to-user-review")
-async def supervisor_transfer_ticket_to_user_review(
-    item_id: str,
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, ticket_id)
-    if raw:
-        raise PlannerError(ErrorCode.validation, "transfer body must be empty", {})
-    now = clk.now_unix()
-    ticket = tickets_data.transfer_proposal_to_user_review(
-        conn,
-        ticket_id,
-        actor=ctx.actor,
-        now=now,
-        supervisor_sprint_item_id=item_id,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
 @router.post("/items/{item_id}/supervisor/conversation/send")
 async def send_to_item_supervisor(
     item_id: str,

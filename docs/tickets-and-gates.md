@@ -304,18 +304,26 @@ its control status is `agent`. The gated field can therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
 submits the revision.
 
-An agent-review proposal stores `agent_review` as its route snapshot and enters
-`awaiting_agent_review`. A later scope edit does not redirect it. The exact owning Sprint
-Item supervisor can approve it, reject it with focused revision guidance, or transfer it
-to User Review. Approval uses the canonical proposal resolver. Transfer changes only the
-parked proposal route and status. The user can still approve or reject either parked route
-through the direct Ticket controls. Agent review is available only while the Ticket belongs
-to a normal Sprint Item; placement edits cannot detach a Ticket whose scope or parked proposal
-still requires that supervisor.
+A proposal carries no reviewer of its own. Who reviews it is read from the Ticket's review
+route at the moment of the decision. A proposal made while the Ticket is at agent review
+enters `awaiting_agent_review`, and the exact owning Sprint Item supervisor can approve it
+or reject it with focused revision guidance. Approval uses the canonical proposal resolver.
+
+Because the reviewer is read and not stored, a scope edit moves the proposal already
+waiting. A supervisor hands review to the user by setting the review route to
+`user_review`: the waiting proposal becomes `awaiting_user_review`, and so does every
+proposal the Ticket makes afterwards, including the revision after a rejection. The user
+can approve or reject either parked route through the direct Ticket controls. Agent review
+is available only while the Ticket belongs to a normal Sprint Item; placement edits cannot
+detach a Ticket whose scope still requires that supervisor.
+
+On a Stage whose default ownership is paired, the review route also decides ownership, so
+handing review to the user makes that Stage paired again. The user who reviews the Stage
+is the user who works in it.
 
 The database migration maps legacy `propose` scope to `user_review`. It maps legacy parked
-proposals to `awaiting_user_review` and gives each one a `user_review` route snapshot. It
-preserves the proposal body, author, timestamp, Stage, ceiling, status time, and status revision.
+proposals to `awaiting_user_review`. It preserves the proposal body, author, timestamp,
+Stage, ceiling, status time, and status revision.
 
 Panels creates a durable supervisor obligation for agent and user review. It sends bounded
 batches through the Sprint Item conversation. General Worker messages use the separate
