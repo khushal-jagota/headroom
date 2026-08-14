@@ -81,10 +81,13 @@ describe("Workspace rail", () => {
     expect(workspaceCardGroupKey(card("a", { ticket_status: "needs_user" }))).toBe("needs-me");
     expect(workspaceCardGroupKey(card("b", { ticket_status: "user" }))).toBe("needs-me");
     expect(workspaceCardGroupKey(card("c", { ticket_status: "awaiting_user_review" }))).toBe(
-      "current-awaiting-approval"
+      "awaiting-user-review"
+    );
+    expect(workspaceCardGroupKey(card("c2", { ticket_status: "awaiting_agent_review" }))).toBe(
+      "awaiting-agent-review"
     );
     expect(workspaceCardGroupKey(card("d", { has_pending_proposal: true }))).toBe(
-      "current-awaiting-approval"
+      "awaiting-user-review"
     );
     expect(workspaceCardGroupKey(card("e", { ticket_status: "paired" }))).toBe("current-paired");
     expect(workspaceCardGroupKey(card("f", { ticket_status: "agent" }))).toBe("current-running");
@@ -114,10 +117,11 @@ describe("Workspace rail", () => {
     ]);
   });
 
-  it("orders the groups, hides the quiet three, and reveals them on request", () => {
+  it("orders the groups, hides the quiet four, and reveals them on request", () => {
     const cards = [
       card("needs", { ticket_status: "needs_user" }),
       card("review", { ticket_status: "awaiting_user_review" }),
+      card("agent-review", { ticket_status: "awaiting_agent_review" }),
       card("paired", { ticket_status: "paired" }),
       card("working", { ticket_status: "agent" }),
       card("blocked", { ticket_status: "user", blocked: true }),
@@ -135,21 +139,23 @@ describe("Workspace rail", () => {
 
     expect(item.groups.map((group) => group.label)).toEqual([
       "Needs user",
-      "Awaiting approval",
+      "User review",
+      "Agent review",
       "Paired",
       "Agent",
       "Blocked",
       "To do",
       "Done"
     ]);
+    // Agent review is hidden by default, same as Agent, Blocked, and Done.
     expect(workspaceItemGroups(item.groups, false).map((group) => group.label)).toEqual([
       "Needs user",
-      "Awaiting approval",
+      "User review",
       "Paired",
       "To do"
     ]);
-    expect(workspaceItemGroups(item.groups, true)).toHaveLength(7);
-    expect(hiddenWorkspaceCardCount(item.groups)).toBe(3);
+    expect(workspaceItemGroups(item.groups, true)).toHaveLength(8);
+    expect(hiddenWorkspaceCardCount(item.groups)).toBe(4);
     expect(item.needsUser).toBe(true);
   });
 

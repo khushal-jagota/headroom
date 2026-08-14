@@ -97,13 +97,36 @@ describe("Sprint Item workspace presentation", () => {
       groups.map((group) => [group.label, group.tickets.map((ticket) => ticket.id)]);
     // A Ticket finished today stays under Today, in Today's own Done group.
     expect(shape(todayWorkspaceTicketGroups(value))).toEqual([
-      ["Awaiting approval", ["t_review"]],
+      ["Agent review", ["t_review"]],
       ["Done", ["t_done"]]
     ]);
     expect(shape(remainingWorkspaceTicketGroups(value))).toEqual([["Agent", ["t_later"]]]);
     expect(workspaceProgress(value)).toBe("1 of 3 done");
     expect(failedWorkspaceDeliveries(value).map((obligation) => obligation.id)).toEqual([
       "so_failed"
+    ]);
+  });
+
+  it("splits Awaiting approval into User review and Agent review, both on Today by default", () => {
+    const value = workspace();
+    const userReview = {
+      ...value.tickets[0],
+      id: "t_user_review",
+      ticket_status: "awaiting_user_review",
+      proposal_review_route: "user_review" as const,
+      review_route: "user_review" as const
+    };
+    const agentReview = { ...value.tickets[0], id: "t_agent_review" };
+    const groups = todayWorkspaceTicketGroups({
+      ...value,
+      today_ticket_ids: ["t_user_review", "t_agent_review"],
+      tickets: [userReview, agentReview]
+    });
+    expect(
+      groups.map((group) => [group.label, group.tickets.map((ticket) => ticket.id)])
+    ).toEqual([
+      ["User review", ["t_user_review"]],
+      ["Agent review", ["t_agent_review"]]
     ]);
   });
 
