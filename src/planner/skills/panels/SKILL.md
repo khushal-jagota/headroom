@@ -44,7 +44,7 @@ for exactly what they are, avoid speculative machinery, and preserve direct user
 
 ## Ticket-owned artifacts
 
-A ticket can own durable work products such as HTML, images, Markdown documents, and other files. For this live Panels instance, write them to `/home/vps/Deployments/Panels/current/data/files/tickets/<ticket-id>/<relative-path>` and link them in ticket Markdown as `/files/tickets/<ticket-id>/<relative-path>`, for example `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Never write ticket artifacts under `/home/vps/Coding/Panels/data/...`, a ticket worktree's `data/...`, or another path inferred from the current directory. Use the served `/files/tickets/...` link rather than exposing a local filesystem path; Panels owns how the file is previewed or opened.
+A ticket can own durable work products such as HTML, images, Markdown documents, and other files. For this live Panels instance, write them to `/home/vps/Deployments/Panels/current/data/files/tickets/<ticket-id>/<relative-path>` and link them in ticket Markdown as `/files/tickets/<ticket-id>/<relative-path>`, for example `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Never write ticket artifacts under a source checkout's `data/...`, a ticket worktree's `data/...`, or another path inferred from the current directory. Use the served `/files/tickets/...` link rather than exposing a local filesystem path; Panels owns how the file is previewed or opened.
 
 Artifacts complement the ticket record. The Worker type's gated fields, recap, and notes
 remain concise canonical Markdown, with links to richer work when it helps.
