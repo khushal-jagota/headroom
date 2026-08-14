@@ -270,9 +270,9 @@ has no usage source.
   proposals, and results stay as database text. Standalone files for a ticket
   live beside the database under `files/tickets/<ticket_id>/`, so the default local
   path is `data/files/tickets/<ticket_id>/...`. The browser reads them through
-  `/files/tickets/<ticket_id>/<relative-path>`. A `PUT` on that same address stores the
-  file, and `panels ticket file put` is how a worker uses it, so nothing has to work out
-  the path for itself. The server sends `nosniff`; only
+  `/files/tickets/<ticket_id>/<relative-path>`. The contract is read-only: a worker
+  writes the file into that directory itself, and Panels serves it. The server sends
+  `nosniff`; only
   explicit image, audio, and video types are inline. Markdown, HTML, SVG, and
   unknown files are attachments when opened directly.
 - **Sprint Item files use an isolated sibling root.** Item artifacts live under
