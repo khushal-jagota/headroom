@@ -19,7 +19,7 @@ from planner.runtime.logic.worker_step_prompt import revision_guidance_prompt
 from planner.sprints import data as sprints_data
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import Proposal, Ticket
+from planner.tickets.contracts import AtCap, Proposal, Ticket
 from planner.tickets.logic import admission, fields_codec, resolution
 from planner.worker_context.contracts import WorkerContextService
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -104,6 +104,9 @@ def create_ticket(
     boundary_hour: int = 5,
     sprint_item_id_explicit: bool = False,
     sprint_id_explicit: bool = False,
+    supervisor_sprint_item_id: str | None = None,
+    stated_ceiling: str | None = None,
+    stated_at_cap: AtCap | None = None,
 ) -> Ticket:
     if planning_now is None:
         day_id = None
@@ -137,6 +140,9 @@ def create_ticket(
         employee_backend=employee_backend,
         employee_launch_model=employee_launch_model,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
+        supervisor_sprint_item_id=supervisor_sprint_item_id,
+        stated_ceiling=stated_ceiling,
+        stated_at_cap=stated_at_cap,
     )
 
 

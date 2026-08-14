@@ -109,7 +109,14 @@ def test_batch_membership_is_ordered_and_recoverable(tmp_path: Path) -> None:
     assert all(
         obligation.lifecycle.value == "pending" for obligation in data.list_for_item(conn, item.id)
     )
-    data.mark_queued_outcome_uncertain(conn, delivery.id, 22)
+    data.settle_delivery(
+        conn,
+        delivery.id,
+        state="failed",
+        now=22,
+        error="the backend refused it for the last time",
+        terminal=True,
+    )
     assert data.prepared_delivery(conn) is None
     failed = data.list_for_item(conn, item.id)[0]
     assert failed.lifecycle.value == "failed"

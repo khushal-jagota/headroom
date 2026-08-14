@@ -35,6 +35,15 @@ export type SprintTicketCondition = {
   word: string;
 };
 
+// The three facts a Ticket's condition is read from. Sprint tickets, Sprint Item
+// workspace tickets and Workspace board cards all carry them, so all three screens
+// name a Ticket's condition the same way.
+export type TicketConditionFacts = {
+  stage: string;
+  ticket_status: string;
+  has_pending_proposal?: boolean;
+};
+
 export type SprintTicketSections = {
   today: SprintTicket[];
   later: SprintTicket[];
@@ -90,7 +99,7 @@ export function sprintItems(groups: Record<string, SprintItem[]>): SprintItem[] 
   return Object.values(groups || {}).flat();
 }
 
-export function sprintTicketCondition(ticket: SprintTicket): SprintTicketCondition {
+export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicketCondition {
   if (ticket.stage === "done") return { mark: "completed", word: "done" };
   if (ticket.ticket_status === "blocked" || ticket.ticket_status === "errored") {
     return { mark: "errored", word: "blocked" };
@@ -121,13 +130,6 @@ function sortedTickets(tickets: SprintTicket[], blockedLast: boolean): SprintTic
       left.title.localeCompare(right.title, undefined, { sensitivity: "base" }) ||
       left.id.localeCompare(right.id);
   });
-}
-
-export function sprintTicketSections(
-  item: SprintItem,
-  todayTicketIds: ReadonlySet<string>
-): SprintTicketSections {
-  return sprintTicketSectionsForTickets(item.tickets || [], todayTicketIds);
 }
 
 export function sprintTicketSectionsForTickets(

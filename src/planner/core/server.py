@@ -28,7 +28,6 @@ from planner.core.db import connect
 from planner.core.dev_server_proxy import build_dev_server_proxy_router
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.path_observer import observe_path_changes
-from planner.core.sprint_item_supervisor_scope import SprintItemSupervisorScopeMiddleware
 from planner.core.sse import change_stream
 from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
@@ -170,6 +169,9 @@ def create_app(
             else conversation_system_for_test
         )
         await conversation.system.start_idle_child_janitor()
+        # Whatever was still waiting in a conversation when the last process ended is
+        # stored, and this is the process that runs it.
+        await conversation.system.start_held_prompt_drain()
 
         lifecycle_observer = asyncio.create_task(
             observe_path_changes(deployment_lifecycle_path, change_signal.emit)
@@ -203,7 +205,6 @@ def create_app(
                     await conversation.shutdown()
 
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
-    app.add_middleware(SprintItemSupervisorScopeMiddleware)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
     app.state.config = config
     app.state.clock = clock

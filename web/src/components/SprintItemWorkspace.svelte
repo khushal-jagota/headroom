@@ -6,9 +6,10 @@
   import { queries } from "../lib/queryCatalogue";
   import {
     failedWorkspaceDeliveries,
-    remainingWorkspaceTickets,
+    remainingWorkspaceTicketGroups,
     todayWorkspaceTicketGroups,
-    workspaceProgress
+    workspaceProgress,
+    type WorkspaceTicketGroup
   } from "../lib/sprintItemWorkspace";
   import { sprintTicketCondition } from "../lib/sprintPresentation";
   import type { ConversationState } from "../lib/conversation/conversationState";
@@ -21,10 +22,10 @@
   import { previewHashHref, sprintItemFileTarget } from "../lib/filePreview";
   import InlineEdit from "./InlineEdit.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
-  import PriorityTile from "./PriorityTile.svelte";
   import ResourceState from "./ResourceState.svelte";
-  import StageMark from "./StageMark.svelte";
+  import SprintTicketRow from "./SprintTicketRow.svelte";
   import TicketConversationHistory from "./TicketConversationHistory.svelte";
+  import TicketPriorityControl from "./TicketPriorityControl.svelte";
 
   let {
     itemId,
@@ -41,8 +42,8 @@
   let backends = $state<readonly BackendSnapshot[]>([]);
 
   let todayGroups = $derived(workspace.data ? todayWorkspaceTicketGroups(workspace.data) : []);
-  let remainingTickets = $derived(
-    workspace.data ? remainingWorkspaceTickets(workspace.data) : []
+  let remainingGroups = $derived(
+    workspace.data ? remainingWorkspaceTicketGroups(workspace.data) : []
   );
   let deliveryFailures = $derived(
     workspace.data ? failedWorkspaceDeliveries(workspace.data) : []
@@ -58,12 +59,37 @@
       .catch(() => undefined);
   });
 
-  function saveItem(field: "title" | "body", value: string): Promise<unknown> {
+  function saveItem(field: "title" | "body" | "priority", value: string): Promise<unknown> {
     return mutateJson(`/api/items/${encodeURIComponent(itemId)}`, {
       method: "PATCH",
       body: { [field]: value }
     });
   }
+
+  // The brief clamps to three lines. The control appears only when text is hidden,
+  // measured the same way the Ticket page measures its recap.
+  let briefElement = $state<HTMLElement | null>(null);
+  let briefExpanded = $state(false);
+  let briefCanExpand = $state(false);
+
+  $effect(() => {
+    const body = workspace.data?.body;
+    const node = briefElement;
+    if (!node) return;
+    void body;
+    const measure = () => {
+      const lineHeight = Number.parseFloat(getComputedStyle(node).lineHeight);
+      const maxHeight = Number.isFinite(lineHeight) ? lineHeight * 3 : node.clientHeight;
+      briefCanExpand = node.scrollHeight > maxHeight + 1;
+    };
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(node);
+    const frame = requestAnimationFrame(measure);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  });
 
   async function sendMessage(body: OwnerSendBody): Promise<DeliveredMessage> {
     const delivered = await mutateJson<DeliveredMessage>(
@@ -108,6 +134,46 @@
   }
 </script>
 
+{#snippet ticketSection(
+  name: string,
+  label: string,
+  groups: WorkspaceTicketGroup[],
+  open: boolean,
+  emptyText: string = ""
+)}
+  <details class="sprint-workspace-section" {open} data-workspace-section={name}>
+    <summary>
+      <span class="sprint-workspace-section-label">{label}</span>
+      <span class="sprint-workspace-count">{groups.reduce((sum, group) => sum + group.tickets.length, 0)}</span>
+      <span class="sprint-workspace-chevron" aria-hidden="true"></span>
+    </summary>
+    {#each groups as group (group.key)}
+      <div class="sprint-workspace-group" data-workspace-group={group.key}>
+        <div class="sprint-workspace-group-label">
+          <span>{group.label}</span>
+          <span class="sprint-workspace-count">{group.tickets.length}</span>
+        </div>
+        {#each group.tickets as ticket (ticket.id)}
+          {@const condition = sprintTicketCondition(ticket)}
+          <SprintTicketRow
+            priority={ticket.priority}
+            title={ticket.title}
+            state={condition.mark}
+            ariaLabel={condition.word}
+            href={workspaceAddress({ kind: "ticket", id: ticket.id })}
+            quiet={ticket.stage === "done"}
+            data-sprint-ticket-id={ticket.id}
+            data-ticket-state={condition.mark}
+          />
+        {/each}
+      </div>
+    {/each}
+    {#if !groups.length && emptyText}
+      <div class="sprint-workspace-empty">{emptyText}</div>
+    {/if}
+  </details>
+{/snippet}
+
 <div
   class="sprint-item-page"
   data-sprint-item-workspace={itemId}
@@ -126,7 +192,11 @@
           <a class="sprint-item-back" href={backHref}>‹ {sprintName}</a>
           <header class="sprint-workspace-head">
             <div class="sprint-workspace-identity">
-              <PriorityTile priority={item.priority} />
+              <TicketPriorityControl
+                priority={item.priority}
+                ariaLabel="Sprint Item priority"
+                onChange={(value) => void saveItem("priority", value)}
+              />
               <span>·</span><span>{item.project}</span>
               <span>·</span><span>{workspaceProgress(item)}</span>
             </div>
@@ -137,7 +207,12 @@
                 onSave={(value) => saveItem("title", value)}
               />
             </h1>
-            <div class="sprint-workspace-brief" data-sprint-item-brief>
+            <div
+              bind:this={briefElement}
+              class="sprint-workspace-brief ticket-recap"
+              class:ticket-recap--clamped={briefCanExpand && !briefExpanded}
+              data-sprint-item-brief
+            >
               <InlineEdit
                 value={item.body}
                 markdown
@@ -146,6 +221,14 @@
                 onSave={(value) => saveItem("body", value)}
               />
             </div>
+            {#if briefCanExpand}
+              <button
+                type="button"
+                class="ticket-recap-more"
+                data-sprint-item-brief-toggle
+                onclick={() => (briefExpanded = !briefExpanded)}
+              >{briefExpanded ? "Show less" : "Show more"}</button>
+            {/if}
           </header>
 
           {#if deliveryFailures.length}
@@ -158,64 +241,8 @@
           {/if}
 
           {#if todayGroups.length}
-            <details class="sprint-workspace-section" open data-workspace-section="today">
-              <summary>
-                <span class="sprint-workspace-section-label">Today</span>
-                <span class="sprint-workspace-count">{todayGroups.reduce((sum, group) => sum + group.tickets.length, 0)}</span>
-                <span class="sprint-workspace-chevron" aria-hidden="true"></span>
-              </summary>
-              {#each todayGroups as group (group.key)}
-                <details class="sprint-workspace-group" open data-workspace-group={group.key}>
-                  <summary>
-                    <span>{group.label}</span>
-                    <span class="sprint-workspace-count">{group.tickets.length}</span>
-                    <span class="sprint-workspace-chevron" aria-hidden="true"></span>
-                  </summary>
-                  {#each group.tickets as ticket (ticket.id)}
-                    {@const condition = sprintTicketCondition(ticket)}
-                    <a
-                      class="sprint-workspace-ticket-row"
-                      href={workspaceAddress({ kind: "ticket", id: ticket.id })}
-                      data-sprint-ticket-id={ticket.id}
-                      data-ticket-state={condition.mark}
-                    >
-                      <PriorityTile priority={ticket.priority} />
-                      <span>{ticket.title}</span>
-                      <StageMark state={condition.mark} aria-label={condition.word} />
-                    </a>
-                  {/each}
-                </details>
-              {/each}
-            </details>
+            {@render ticketSection("today", "Today", todayGroups, true)}
           {/if}
-
-          <details class="sprint-workspace-section" open data-workspace-section="remaining">
-            <summary>
-              <span class="sprint-workspace-section-label">Remaining Tickets</span>
-              <span class="sprint-workspace-count">{remainingTickets.length}</span>
-              <span class="sprint-workspace-chevron" aria-hidden="true"></span>
-            </summary>
-            {#if remainingTickets.length}
-              {#each remainingTickets as ticket (ticket.id)}
-                {@const condition = sprintTicketCondition(ticket)}
-                <a
-                  class="sprint-workspace-name-row"
-                  class:sprint-workspace-name-row--done={ticket.stage === "done"}
-                  class:sprint-workspace-name-row--attention={condition.word === "to review" || condition.word === "need you" || condition.word === "yours"}
-                  href={workspaceAddress({ kind: "ticket", id: ticket.id })}
-                  data-sprint-ticket-id={ticket.id}
-                  data-ticket-state={condition.mark}
-                >
-                  <span>{ticket.title}</span>
-                  {#if ticket.stage !== "done" && condition.word !== "to do"}
-                    <span class="sprint-workspace-name-state">{condition.word}</span>
-                  {/if}
-                </a>
-              {/each}
-            {:else}
-              <div class="sprint-workspace-empty">Every Ticket on this outcome is on today.</div>
-            {/if}
-          </details>
 
           <details class="sprint-workspace-section" open data-workspace-section="artifacts">
             <summary>
@@ -233,6 +260,14 @@
               <div class="sprint-workspace-empty">Nothing kept here yet.</div>
             {/if}
           </details>
+
+          {@render ticketSection(
+            "remaining",
+            "Remaining Tickets",
+            remainingGroups,
+            false,
+            "Every Ticket on this outcome is on today."
+          )}
         </div>
       {/if}
     </ResourceState>

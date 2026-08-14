@@ -92,17 +92,17 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
         context_factory(),
         server,
         "#/workspace",
-        '[data-workspace-view="attention"]',
+        'section[data-screen="workspace"]',
     )
-    page.click('[data-workspace-view="attention"]')
-    page.wait_for_selector('[data-workspace-view="all"]', timeout=WAIT_MS)
+    # Blocked Tickets sit in a quiet group, so the No Item tail has to be revealed.
+    page.click('[data-workspace-reveal="no-item"]')
     no_item = "[data-no-item]"
     active_card = f'[data-card][data-ticket-id="{blocker}"]'
     later_card = f'[data-card][data-ticket-id="{later_dependent}"]'
     kickoff_card = f'[data-card][data-ticket-id="{kickoff_dependent}"]'
     shared_card = f'[data-card][data-ticket-id="{shared_dependent}"]'
 
-    # Everything on today exposes quiet blocked and resting Tickets. Unclassified
+    # The reveal exposes the quiet blocked Tickets. Unclassified
     # Tickets share the No Item tail, while their own status and stage remain intact.
     for card in (active_card, later_card, kickoff_card, shared_card):
         assert page.locator(f"{no_item} {card}").is_visible()
@@ -125,7 +125,12 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
         timeout=WAIT_MS,
     )
 
+    # A finished Ticket joins the quiet Done group: it stays while the tail is
+    # revealed, and the same control puts it away again.
     _post_stage(server, blocker, "done")
+    page.wait_for_selector(f'{no_item} [data-workspace-group="completed"]', timeout=WAIT_MS)
+    assert page.locator(f"{no_item} {active_card}").is_visible()
+    page.click('[data-workspace-reveal="no-item"]')
     page.wait_for_selector(active_card, state="detached", timeout=WAIT_MS)
     assert page.locator(f"{no_item} {kickoff_card}").count() == 1
     assert page.locator(f"{no_item} {later_card}").count() == 1
@@ -308,8 +313,6 @@ def test_kickoff_card_context_approves_while_blockers_stay_in_the_masthead(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Success ready for review.",
         ticket_id=ticket,

@@ -50,9 +50,14 @@ work to resolve alone.
 
 Use these canonical actions when they match the decision:
 
+- `ticket create --sprint-item-id <your item>` creates a child Ticket under your Item.
+  Load and follow `panels-ticket-creation` first. A Ticket you create this way rests at
+  agent review, so you review the kickoff you wrote. Add `--ceiling` and `--at-cap` to
+  state how far the new Worker may go, when the user gave you that scope to grant.
 - `set-item` changes one plain Sprint Item field.
 - `set-ticket` changes one current child Ticket field.
-- `scope` changes the child Ticket ceiling and review route.
+- `scope` changes the child Ticket ceiling and review route. The ceiling takes either
+  the stage name or the plain name of the field that stage needs.
 - `approve`, `reject`, and `transfer-to-user-review` resolve a parked proposal.
 - `add-to-day` and `remove-from-day` change Day membership.
 - `block` and `unblock` change blocker links inside the Item boundary.

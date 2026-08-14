@@ -27,17 +27,22 @@ One screen per part of the system:
   appear. The Chief of Staff row leads one box for each Sprint Item with a Ticket on
   today. Tickets without an Item form a No Item tail.
 
-  Items with a user-owned Ticket come first. Priority orders Items within the active
-  and quiet runs. A user-owned Ticket is in `needs_user`, `awaiting_user_review`,
-  `paired`, or `user`, and a blocker removes it from that set. The default rail shows
-  only those Tickets. A quiet Item folds to one line and shows its live Ticket count.
-  The Item control reveals its other non-done Tickets. The rail control switches every
-  Item and No Item to all non-done Tickets on today. Done Tickets stay out of the rows,
-  but an Item with only done Tickets keeps its box.
+  Each Item box opens with an eyebrow — its priority tile, its project, and how many of
+  its Tickets are done. That count covers every Ticket of the Item, not only the ones on
+  today, so it reads the same as the Sprint Item page. The Item title sits under the
+  eyebrow, and the fold control beside it opens and closes the box.
 
-  The Item title carries the Item priority in a fixed gutter. Its Ticket titles begin
-  at the same edge, and Ticket rows carry no priority tile. Each row keeps the existing
-  conversation mark.
+  Inside a box the Tickets sit under plain status headings, in one order: Needs user,
+  Awaiting approval, Paired, Agent, Blocked, To do, Done. The headings are labels, not
+  controls. Agent, Blocked and Done are quiet: they are not drawn until the reader asks.
+  "+n more" counts what is put away, and pressing it again puts it back. A Ticket is in
+  Blocked when its status says so or a live blocker holds it. The No Item tail groups
+  and reveals the same way.
+
+  Items with work the user owns — Needs user, Awaiting approval or Paired — come first,
+  then Item priority orders the rest. Every heading, title and Ticket row starts at the
+  same left edge. Every Ticket row is the shared Ticket row, so it carries its own
+  priority tile beside its title and keeps the existing conversation mark.
 
   The Chief of Staff row starts with its bundled portrait. The portrait is an agent
   identity on this row only; ticket rows and Worker types do not use it.
@@ -265,7 +270,9 @@ has no usage source.
   proposals, and results stay as database text. Standalone files for a ticket
   live beside the database under `files/tickets/<ticket_id>/`, so the default local
   path is `data/files/tickets/<ticket_id>/...`. The browser reads them through
-  `/files/tickets/<ticket_id>/<relative-path>`. The server sends `nosniff`; only
+  `/files/tickets/<ticket_id>/<relative-path>`. A `PUT` on that same address stores the
+  file, and `panels ticket file put` is how a worker uses it, so nothing has to work out
+  the path for itself. The server sends `nosniff`; only
   explicit image, audio, and video types are inline. Markdown, HTML, SVG, and
   unknown files are attachments when opened directly.
 - **Sprint Item files use an isolated sibling root.** Item artifacts live under
@@ -343,7 +350,7 @@ hand-rolling the same shapes per screen. Each does one job:
 - **Pill** — a small static tag with an optional key label (dates, counts, due, sprint).
 - **Chip** — the coloured status/project tags, including "blocked by".
 - **PriorityTile** — the shared always-coloured P0–P3 square. It appears in the
-  Workspace Item's leading gutter, the editable Ticket and Review identity control,
+  Workspace Item's eyebrow, the editable Ticket and Review identity control,
   both Sprint priority positions, and once in each Backlog priority group heading.
   Priority never borrows the slate-blue attention accent or the status-mark colours.
 - **StageMark** — the single stage dot showing a field's progress.

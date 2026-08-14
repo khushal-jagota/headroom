@@ -12,7 +12,6 @@
     sprintDayLabel,
     sprintProjectGroups,
     sprintTicketCondition,
-    sprintTicketSections,
     sprintTicketSectionsForTickets,
     type SprintItem,
     type SprintTicket
@@ -65,12 +64,6 @@
   );
   let projectGroups = $derived(sprintProjectGroups(allItems, projects.data?.projects || []));
   let todayTicketIds = $derived(new Set((today.data?.tickets || []).map((ticket) => ticket.id)));
-  let selectedItem = $derived(
-    selectedItemId ? allItems.find((item) => item.id === selectedItemId) || null : null
-  );
-  let selectedSections = $derived(
-    selectedItem ? sprintTicketSections(selectedItem, todayTicketIds) : null
-  );
   let otherSections = $derived(
     sprintTicketSectionsForTickets(
       (current.data?.other_tickets || []) as SprintTicket[],
@@ -85,9 +78,7 @@
   let summaryExpanded = $state(false);
   let summaryCanExpand = $state(false);
   let measuredSummaryKey = "";
-  let summaryKey = $derived(
-    selectedItem ? `item:${selectedItem.id}:${selectedItem.body || ""}` : `sprint:${current.data?.sprint?.primary_bet || ""}`
-  );
+  let summaryKey = $derived(`sprint:${current.data?.sprint?.primary_bet || ""}`);
 
   $effect(() => {
     const key = summaryKey;
@@ -219,66 +210,6 @@
                 {/each}
               </Disclosure>
             {/each}
-          {:else if selectedItemId}
-            <a class="sprint-item-back" href="#/sprint">‹ {sprint.name}</a>
-            {#if selectedItem && selectedSections}
-              <header class="sprint-item-head" data-sprint-item-view={selectedItem.id}>
-                <div class="sprint-item-project">{selectedItem.project || "Other"}</div>
-                <h1 class="sprint-item-title">{selectedItem.title}</h1>
-                {#if String(selectedItem.body || "").trim()}
-                  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-                  <div
-                    bind:this={summaryElement}
-                    class="ticket-recap sprint-summary"
-                    class:ticket-recap--clamped={!summaryExpanded}
-                    class:sprint-summary--expandable={summaryCanExpand}
-                    role={summaryCanExpand ? "button" : undefined}
-                    tabindex={summaryCanExpand ? 0 : undefined}
-                    aria-expanded={summaryCanExpand ? summaryExpanded : undefined}
-                    onclick={toggleSummary}
-                    onkeydown={toggleSummaryFromKeyboard}
-                    data-sprint-item-body
-                  ><MarkdownBlock text={selectedItem.body} /></div>
-                {/if}
-                <div class="sprint-item-meta">
-                  <PriorityTile priority={selectedItem.priority} />
-                  <span class="sep">·</span>
-                  <span>{sprintItemRollup(selectedItem)}</span>
-                  {#if selectedItem.deadline}
-                    <span class="sep">·</span>
-                    <span>due {selectedItem.deadline}</span>
-                  {/if}
-                </div>
-              </header>
-
-              <div class="sprint-item-body">
-                {#if selectedSections.today.length + selectedSections.later.length + selectedSections.done.length === 0}
-                  <div class="sprint-empty-line">No Tickets on this Sprint Item yet.</div>
-                {:else}
-                  <div class="sprint-ticket-section-heading">
-                    <span>On today</span>
-                    <span class="n">{selectedSections.today.length}</span>
-                  </div>
-                  {#if selectedSections.today.length}
-                    {@render ticketRows(selectedSections.today)}
-                  {:else}
-                    <div class="sprint-empty-line">Nothing here.</div>
-                  {/if}
-                  {#if selectedSections.later.length}
-                    <div class="sprint-ticket-seam" aria-hidden="true"></div>
-                    {@render ticketRows(selectedSections.later)}
-                  {/if}
-                  {#if selectedSections.done.length}
-                    <Disclosure variant="sprint-done" chevron="leading" data-sprint-done>
-                      {#snippet summary()}<span>{selectedSections.done.length} done</span>{/snippet}
-                      {@render ticketRows(selectedSections.done)}
-                    </Disclosure>
-                  {/if}
-                {/if}
-              </div>
-            {:else}
-              <div class="sprint-empty-line" data-sprint-item-missing>Sprint Item not found.</div>
-            {/if}
           {:else}
             <header class="sprint-head">
               <h1 class="sprint-title">
