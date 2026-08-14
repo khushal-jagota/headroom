@@ -3429,12 +3429,12 @@ select {
   font-size: var(--type-sm);
 }
 
-/* Ticket rows begin at the Item title edge and retain their condition mark. */
-.list-row--board {
+/* One ticket row grammar — priority tile, title, condition mark — shared by the
+ * workspace rail and the Sprint Item detail sections (SprintTicketRow.svelte). */
+.ticket-row {
   width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-3);
   border: 0;
   border-radius: var(--radius-md);
@@ -3443,29 +3443,35 @@ select {
   cursor: pointer;
   padding: var(--space-2) 0;
   text-align: left;
+  text-decoration: none;
   font-size: var(--type-sm);
   line-height: 1.35;
   transition: color var(--motion-fast) var(--motion-ease),
     background var(--motion-fast) var(--motion-ease);
 }
 
-.list-row--board:hover,
-.list-row--board.active {
+.ticket-row:hover,
+.ticket-row--active {
   background: var(--surface-overlay);
   color: var(--text-strong);
 }
 
 /* Needs-you rows — an ask is waiting — read one text-step stronger at rest, keyed
  * off the existing status attribute (no new props). */
-.list-row--board[data-ticket-status="awaiting_approval"],
-.list-row--board[data-ticket-status="awaiting_user_review"],
-.list-row--board[data-ticket-status="needs_user"],
-.list-row--board[data-ticket-status="user"],
-.list-row--board[data-ticket-status="paired"] {
+.ticket-row[data-ticket-status="awaiting_approval"],
+.ticket-row[data-ticket-status="awaiting_user_review"],
+.ticket-row[data-ticket-status="needs_user"],
+.ticket-row[data-ticket-status="user"],
+.ticket-row[data-ticket-status="paired"],
+.ticket-row--attention {
   color: var(--text-default);
 }
 
-.list-row--board .list-row-title {
+.ticket-row--quiet {
+  color: var(--text-faintest);
+}
+
+.ticket-row-title {
   display: block;
   flex: 1;
   min-width: 0;
@@ -3475,7 +3481,7 @@ select {
 }
 
 @media (max-width: 720px) {
-  .list-row--board {
+  .ticket-row {
     gap: var(--space-2);
   }
 }
@@ -5340,6 +5346,27 @@ select {
   color: var(--accent-done);
 }
 
+/* In the workspace host the rail is the way back, so the link is for narrow screens
+ * only — below 960px the rail is hidden and this is the only way out. */
+[data-screen="workspace"] .sprint-item-back {
+  display: none;
+}
+
+@media (max-width: 960px) {
+  [data-screen="workspace"] .sprint-item-back {
+    display: inline-block;
+    padding-top: var(--space-4);
+    color: var(--text-faintest);
+    font-size: var(--type-sm);
+    text-decoration: none;
+    transition: color var(--motion-fast) var(--motion-ease);
+  }
+
+  [data-screen="workspace"] .sprint-item-back:hover {
+    color: var(--text-default);
+  }
+}
+
 [data-screen="sprint"] .sprint-item-back {
   display: inline-block;
   padding-top: var(--space-6);
@@ -5351,62 +5378,6 @@ select {
 
 [data-screen="sprint"] .sprint-item-back:hover {
   color: var(--text-default);
-}
-
-[data-screen="sprint"] .sprint-item-head {
-  padding-top: var(--space-4);
-}
-
-[data-screen="sprint"] .sprint-item-project {
-  padding-bottom: var(--space-2);
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-}
-
-[data-screen="sprint"] .sprint-item-title {
-  margin: 0;
-  color: var(--text-strong);
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-hero);
-  font-weight: 500;
-  letter-spacing: var(--tracking-title);
-  line-height: 1.26;
-}
-
-[data-screen="sprint"] .sprint-item-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding-top: var(--space-4);
-  color: var(--text-faintest);
-  font-size: var(--type-sm);
-  font-variant-numeric: tabular-nums;
-}
-
-[data-screen="sprint"] .sprint-item-body {
-  margin-top: var(--space-6);
-}
-
-[data-screen="sprint"] .sprint-ticket-section-heading {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding-bottom: var(--space-2);
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-}
-
-[data-screen="sprint"] .sprint-ticket-section-heading .n {
-  margin-left: auto;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0;
 }
 
 [data-screen="sprint"] .sprint-ticket-row {
@@ -5441,42 +5412,8 @@ select {
   color: var(--text-faintest);
 }
 
-[data-screen="sprint"] .sprint-ticket-seam {
-  height: var(--border-hairline);
-  margin: var(--space-5) 0;
-  background: var(--border-color);
-}
-
-[data-screen="sprint"] .disclosure--sprint-done {
-  margin-top: var(--space-5);
-  border-top: var(--border-hairline) solid var(--border-color);
-}
-
-[data-screen="sprint"] .disclosure--sprint-done > .disclosure-summary {
-  gap: var(--space-2);
-  padding-top: var(--space-3);
-  color: var(--text-faintest);
-  font-size: var(--type-sm);
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-[data-screen="sprint"] .disclosure--sprint-done > .disclosure-summary:hover {
-  color: var(--text-default);
-}
-
-[data-screen="sprint"] .disclosure--sprint-done > .disclosure-body {
-  padding-top: var(--space-2);
-}
-
-[data-screen="sprint"] .sprint-empty-line {
-  padding: var(--space-2);
-  color: var(--text-faintest);
-  font-size: var(--type-sm);
-}
-
 @media (max-width: 600px) {
-  [data-screen="sprint"] .sprint-title,
-  [data-screen="sprint"] .sprint-item-title {
+  [data-screen="sprint"] .sprint-title {
     font-size: 24px;
   }
 
@@ -5597,7 +5534,6 @@ select {
 }
 
 .sprint-workspace-brief {
-  max-width: 62ch;
   margin-top: var(--space-2);
   color: var(--text-faint);
   font-family: var(--font-serif);
@@ -5628,8 +5564,7 @@ select {
   margin-top: var(--space-6);
 }
 
-.sprint-workspace-section > summary,
-.sprint-workspace-group > summary {
+.sprint-workspace-section > summary {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -5637,8 +5572,7 @@ select {
   cursor: pointer;
 }
 
-.sprint-workspace-section > summary::-webkit-details-marker,
-.sprint-workspace-group > summary::-webkit-details-marker {
+.sprint-workspace-section > summary::-webkit-details-marker {
   display: none;
 }
 
@@ -5692,11 +5626,11 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   margin-top: 0;
 }
 
-.sprint-workspace-group[open] > summary {
+.sprint-workspace-group-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   margin-bottom: var(--space-1);
-}
-
-.sprint-workspace-group > summary {
   color: var(--text-faintest);
   font-size: 10px;
   font-weight: 600;
@@ -5704,66 +5638,21 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   text-transform: uppercase;
 }
 
-.sprint-workspace-group .sprint-workspace-count {
+.sprint-workspace-group-label .sprint-workspace-count {
   font-size: var(--type-sm);
   font-weight: 400;
   letter-spacing: 0;
 }
 
-.sprint-workspace-ticket-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
+/* In the detail column the shared row pulls out to the column gutter. */
+.sprint-workspace-section .ticket-row {
   margin-inline: calc(var(--space-2) * -1);
   padding: var(--space-2);
-  border-radius: var(--radius-md);
-  color: var(--text-muted);
-  text-decoration: none;
-  transition: background var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
 }
 
-.sprint-workspace-ticket-row:hover,
-.sprint-workspace-name-row:hover,
 .sprint-workspace-artifact:hover {
   background: var(--surface-overlay);
   color: var(--text-strong);
-}
-
-.sprint-workspace-ticket-row > :nth-child(2) {
-  flex: 1;
-  min-width: 0;
-}
-
-.sprint-workspace-name-row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  margin-inline: calc(var(--space-2) * -1);
-  padding: 6px var(--space-2);
-  border-radius: var(--radius-md);
-  color: var(--text-faint);
-  font-size: var(--type-sm);
-  text-decoration: none;
-}
-
-.sprint-workspace-name-row > :first-child {
-  flex: 1;
-  min-width: 0;
-}
-
-.sprint-workspace-name-row--attention {
-  color: var(--text-default);
-}
-
-.sprint-workspace-name-state {
-  flex: none;
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
-}
-
-.sprint-workspace-name-row--done {
-  color: var(--text-faintest);
 }
 
 .sprint-workspace-artifact {
@@ -5862,11 +5751,11 @@ details:not([open]) > summary > .sprint-workspace-chevron {
     font-size: 24px;
   }
 
-  .sprint-workspace-ticket-row {
+  .sprint-workspace-section .ticket-row {
     align-items: flex-start;
   }
 
-  .sprint-workspace-ticket-row > :nth-child(2) {
+  .sprint-workspace-section .ticket-row-title {
     display: -webkit-box;
     overflow: hidden;
     line-height: 1.35;
