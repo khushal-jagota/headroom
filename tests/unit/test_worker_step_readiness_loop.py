@@ -45,6 +45,7 @@ from planner.worker_context.contracts import (
 )
 from planner.worker_context.service import SqliteWorkerContextService
 from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.registry import WorkerTypeDefinition, WorkerTypeRegistry
 
 FIXED_NOW = datetime(2026, 7, 6, 12, 0, 0).astimezone()
 BOUNDARY_HOUR = 5
@@ -444,6 +445,34 @@ def test_a_failure_before_send_removes_bindings_and_releases_the_claim(
             conversation_system=cast(ConversationSystem, world.conversations),
             worker_context_service=cast(WorkerContextService, _PreparationFailure()),
             worker_type_registry=configured_worker_type_registry(),
+            planning_day_id_resolver=lambda: TODAY_DAY_ID,
+            now=world.clock.now_unix,
+        )
+    )
+
+    assert started is False
+    assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
+    assert world.skill_bindings() == []
+
+
+class _WorkerTypeLookupFailure:
+    """A registry that cannot answer what the Ticket's worker type is."""
+
+    def require(self, worker_type: str) -> WorkerTypeDefinition:
+        raise RuntimeError("the worker type could not be looked up")
+
+
+def test_a_failing_worker_type_lookup_releases_the_claim(world: _World) -> None:
+    ticket_id = world.ready_ticket(conversation_id="conv-lookup-failure")
+    world.start_conversation("conv-lookup-failure")
+
+    started = asyncio.run(
+        start_ready_worker_step(
+            ticket_id,
+            connect_database=world.connect,
+            conversation_system=cast(ConversationSystem, world.conversations),
+            worker_context_service=cast(WorkerContextService, world.context),
+            worker_type_registry=cast(WorkerTypeRegistry, _WorkerTypeLookupFailure()),
             planning_day_id_resolver=lambda: TODAY_DAY_ID,
             now=world.clock.now_unix,
         )

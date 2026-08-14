@@ -102,8 +102,6 @@ async def start_ready_worker_step(
         departure_status_changed_at = claimed.ticket_status_changed_at
         sender_message_id = f"worker_step_message_{uuid4().hex}"
 
-        worker_type_definition = worker_type_registry.require(claimed.worker_type)
-
         def give_the_claim_back() -> None:
             tickets_data.release_worker_step_claim(
                 conn,
@@ -117,6 +115,9 @@ async def start_ready_worker_step(
             delete_worker_step_skill_bindings(conn, sender_message_id)
 
         try:
+            # Inside the guard: a lookup that raises must give the claim back, or the
+            # Ticket sits out of `empty` with nothing running and nothing to re-claim it.
+            worker_type_definition = worker_type_registry.require(claimed.worker_type)
             bind_worker_step_skills(
                 conn,
                 database_parent,
