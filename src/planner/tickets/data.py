@@ -798,6 +798,25 @@ def _write_entered_stage_ticket_status(
     _write_ticket_status(conn, ticket.id, target_status, now)
 
 
+def _parked_proposal_field(
+    ticket: Ticket,
+    worker_type_definition: WorkerTypeDefinition,
+) -> str | None:
+    """The field whose parked proposal the Ticket status speaks for, if any.
+
+    The current Stage's gating field comes first, because that is the proposal a reviewer
+    is shown. A proposal on any other field parks too, and derives the same reviewer, so
+    it must not be left behind by a scope change.
+    """
+    gating_field = worker_type_definition.gating_field(ticket.stage)
+    if gating_field is not None and fields_codec.get_slot(ticket.fields, gating_field).proposal:
+        return gating_field
+    return next(
+        (fid for fid, slot in ticket.fields.slots.items() if slot.proposal is not None),
+        None,
+    )
+
+
 def _write_parked_proposal_status(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -2156,13 +2175,14 @@ def change_scope(
         )
         updated = _apply_decision(conn, ticket, decision, now)
         ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
-        parked_field = worker_type_definition.gating_field(updated.stage)
-        if ticket.ticket_status in {
-            TicketStatus.awaiting_agent_review,
-            TicketStatus.awaiting_user_review,
-        } and (
-            parked_field is not None
-            and fields_codec.get_slot(updated.fields, parked_field).proposal is not None
+        parked_field = _parked_proposal_field(updated, worker_type_definition)
+        if (
+            ticket.ticket_status
+            in {
+                TicketStatus.awaiting_agent_review,
+                TicketStatus.awaiting_user_review,
+            }
+            and parked_field is not None
         ):
             # The proposal already in front of a reviewer follows the new scope. This is
             # how a supervisor hands review to the user.

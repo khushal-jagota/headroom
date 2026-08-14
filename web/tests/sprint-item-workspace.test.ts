@@ -41,7 +41,6 @@ function workspace(): SprintItemWorkspace {
         ticket_status: "awaiting_agent_review",
         waiting_to_closeout: false,
         has_pending_proposal: true,
-        proposal_review_route: "agent_review",
         review_route: "agent_review",
         worker_type: "coding",
         day_ids: ["day_2026-08-12"]
@@ -54,7 +53,6 @@ function workspace(): SprintItemWorkspace {
         ticket_status: "empty",
         waiting_to_closeout: false,
         has_pending_proposal: false,
-        proposal_review_route: null,
         review_route: "stop",
         worker_type: "coding",
         day_ids: ["day_2026-08-12"]
@@ -67,7 +65,6 @@ function workspace(): SprintItemWorkspace {
         ticket_status: "agent",
         waiting_to_closeout: false,
         has_pending_proposal: false,
-        proposal_review_route: null,
         review_route: "stop",
         worker_type: "coding",
         day_ids: []

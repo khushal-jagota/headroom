@@ -148,6 +148,47 @@ def test_scope_change_moves_the_proposal_already_parked(
     assert taken_back.ticket_status is TicketStatus.awaiting_agent_review
 
 
+def test_scope_change_moves_a_proposal_parked_on_a_field_ahead_of_the_stage(
+    tmp_db: Connection,
+    fake_clock: TestClock,
+) -> None:
+    """A Worker below its ceiling can park a proposal on a field the Stage does not gate.
+
+    That proposal derives its reviewer the same way, so the handover must move it too.
+    Otherwise it waits for a supervisor the Ticket no longer routes to, and nobody can
+    resolve it.
+    """
+    ticket_id = _agent_review_ticket(tmp_db, fake_clock)
+    data.change_scope(
+        tmp_db,
+        ticket_id,
+        ceiling="needs_plan",
+        at_cap=AtCap.agent_review,
+        actor="human",
+        now=fake_clock.now_unix(),
+    )
+    parked = data.file_proposal(
+        tmp_db,
+        ticket_id,
+        field="approach",
+        body="The approach ahead of the Stage.",
+        actor="worker-run",
+        now=fake_clock.now_unix(),
+    )
+    assert parked.ticket_status is TicketStatus.awaiting_agent_review
+    assert parked.fields.slots["success"].proposal is None
+
+    handed_over = data.change_scope(
+        tmp_db,
+        ticket_id,
+        ceiling="needs_plan",
+        at_cap=AtCap.user_review,
+        actor="human",
+        now=fake_clock.now_unix(),
+    )
+    assert handed_over.ticket_status is TicketStatus.awaiting_user_review
+
+
 def test_handing_review_to_the_user_makes_a_paired_stage_paired_again(
     tmp_db: Connection,
     fake_clock: TestClock,
