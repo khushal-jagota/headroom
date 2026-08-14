@@ -142,7 +142,7 @@ describe("Workspace rail", () => {
     ]).items[0];
 
     expect(item.groups.map((group) => group.label)).toEqual(["Waiting for closeout", "To do"]);
-    // Not one of the quiet-three hidden groups: it shows without revealing.
+    // Not one of the quiet-four hidden groups: it shows without revealing.
     expect(workspaceItemGroups(item.groups, false).map((group) => group.label)).toEqual([
       "Waiting for closeout",
       "To do"
