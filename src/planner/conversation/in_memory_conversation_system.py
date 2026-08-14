@@ -13,6 +13,7 @@ treated as one.
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -35,6 +36,10 @@ from planner.conversation.contracts import (
 from planner.conversation.events import UserInputAnswer, UserInputQuestion
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
+)
+from planner.conversation.logic.held_line import (
+    leading_run_that_can_share_a_turn,
+    one_prompt_from,
 )
 from planner.conversation.message_content import (
     MessageContent,
@@ -659,6 +664,7 @@ class InMemoryConversationSystem:
         *,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        recorded_messages: Sequence[_HeldPrompt] = (),
     ) -> _InMemoryBackendSession | PromptDeliveryRefused:
         established = self._establish_backend_session(state)
         if isinstance(established, PromptDeliveryRefusalReason):
@@ -688,6 +694,22 @@ class InMemoryConversationSystem:
                 content=content, sender_label=sender_label, mode=mode
             )
         )
+        if recorded_messages:
+            # One prompt to the agent is still one record per message, each with its own
+            # words, so every sender recognises its own message when the record hands it
+            # back.
+            for message in recorded_messages:
+                state.observations.append(
+                    InMemoryConversationObservation(
+                        kind=InMemoryConversationObservationKind.prompt_delivered,
+                        content=message.content,
+                        sender_label=message.sender_label,
+                        mode=mode,
+                        sender_message_id=message.sender_message_id,
+                        sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+                    )
+                )
+            return established
         state.observations.append(
             InMemoryConversationObservation(
                 kind=InMemoryConversationObservationKind.prompt_delivered,
@@ -711,6 +733,7 @@ class InMemoryConversationSystem:
         *,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        recorded_messages: Sequence[_HeldPrompt] = (),
     ) -> PromptDeliveryStarted | PromptDeliveryRefused:
         written = self._write_to_backend(
             state,
@@ -721,6 +744,7 @@ class InMemoryConversationSystem:
             reasoning_effort_change,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            recorded_messages=recorded_messages,
         )
         if isinstance(written, PromptDeliveryRefused):
             return written
@@ -780,26 +804,31 @@ class InMemoryConversationSystem:
         nobody to tell.
         """
         while state.running_turn is None and state.held_prompts:
-            held = state.held_prompts.popleft()
+            run = leading_run_that_can_share_a_turn(state.held_prompts)
+            for _ in run:
+                state.held_prompts.popleft()
+            held = run[0]
             fate = self._start_turn(
                 state,
-                held.content,
+                one_prompt_from(run),
                 held.sender_label,
                 PromptDeliveryMode.run_when_free,
                 held.model_change,
                 held.reasoning_effort_change,
                 sender_message_id=held.sender_message_id,
                 sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                recorded_messages=run,
             )
             if isinstance(fate, PromptDeliveryRefused):
-                state.observations.append(
-                    InMemoryConversationObservation(
-                        kind=InMemoryConversationObservationKind.prompt_delivery_refused,
-                        content=held.content,
-                        sender_label=held.sender_label,
-                        mode=PromptDeliveryMode.run_when_free,
-                        refusal_reason=fate.refusal_reason,
-                        sender_message_id=held.sender_message_id,
-                        sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                for message in run:
+                    state.observations.append(
+                        InMemoryConversationObservation(
+                            kind=InMemoryConversationObservationKind.prompt_delivery_refused,
+                            content=message.content,
+                            sender_label=message.sender_label,
+                            mode=PromptDeliveryMode.run_when_free,
+                            refusal_reason=fate.refusal_reason,
+                            sender_message_id=message.sender_message_id,
+                            sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+                        )
                     )
-                )

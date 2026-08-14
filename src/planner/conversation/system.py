@@ -102,10 +102,12 @@ from planner.conversation.live_tail import ConversationLiveTail
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
 )
+from planner.conversation.logic.held_line import (
+    leading_run_that_can_share_a_turn,
+    one_prompt_from,
+)
 from planner.conversation.message_content import (
     MessageContent,
-    MessagePiece,
-    MessageText,
     prefix_message_content_text,
     require_message_content,
 )
@@ -182,51 +184,6 @@ class _RunningTurn:
     # of the two may be recorded, and it is the core's: the core is the side that knows
     # the turn was interrupted rather than merely over.
     ending_is_the_cores: bool = False
-
-
-def _leading_run_that_can_share_a_turn(held: deque[_HeldPrompt]) -> tuple[_HeldPrompt, ...]:
-    """The messages at the front of the line that can go to the agent as one prompt.
-
-    A turn runs on one model, so the run stops before a message that names a different
-    one from the run's. Nobody's stated choice is dropped: the message that disagrees
-    starts the next turn, carrying its own change.
-    """
-    run: list[_HeldPrompt] = []
-    for message in held:
-        carries_a_change = (
-            message.model_change is not None or message.reasoning_effort_change is not None
-        )
-        if carries_a_change and run:
-            # It asked to run on something else, so it starts the next turn and carries
-            # its change there. Taking it into this one would run the messages in front of
-            # it on a model their senders never named.
-            break
-        run.append(message)
-    return tuple(run)
-
-
-def _one_prompt_from(batch: tuple[_HeldPrompt, ...]) -> MessageContent:
-    """Several waiting messages as the single prompt the agent is given.
-
-    Each message keeps its own words and its sender's name, because an agent handed one
-    run of text still has to be able to tell who said what. Nothing is summarised or
-    reworded. One message alone is composed exactly as it was before there was a run.
-    """
-    if len(batch) == 1:
-        return batch[0].content
-    pieces: list[MessagePiece] = []
-    for message in batch:
-        first = message.content[0]
-        if isinstance(first, MessageText):
-            # The name is folded into the message's own first words rather than put beside
-            # them as a piece of its own. Every reader of a message already separates one
-            # piece from the next, so a piece of its own would be spaced twice.
-            pieces.append(MessageText(text=f"{message.sender_label}:\n{first.text}"))
-            pieces.extend(message.content[1:])
-            continue
-        pieces.append(MessageText(text=f"{message.sender_label}:"))
-        pieces.extend(message.content)
-    return tuple(pieces)
 
 
 @dataclass(slots=True)
@@ -1378,12 +1335,12 @@ class SqliteProcessConversationSystem:
                 if not state.held_prompts:
                     self._set_phase(state, _ConversationPhase.idle)
                     return
-                batch = _leading_run_that_can_share_a_turn(state.held_prompts)
+                batch = leading_run_that_can_share_a_turn(state.held_prompts)
                 for _ in batch:
                     state.held_prompts.popleft()
                 held = batch[0]
                 rest = batch[1:]
-                combined = _one_prompt_from(batch)
+                combined = one_prompt_from(batch)
                 self._publish_held_prompts_changed(state)
                 reservation = self._reserve_turn(state)
 

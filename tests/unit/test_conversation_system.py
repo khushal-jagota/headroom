@@ -2582,7 +2582,7 @@ def test_a_held_message_that_cannot_be_delivered_is_recorded_and_the_line_carrie
         discarded = [
             message_content_text(event.payload.content)
             for event in await harness.events("c")
-            if event.kind is ConversationEventKind.prompt_discarded
+            if isinstance(event.payload, PromptDiscardedEventPayload)
         ]
         assert discarded == ["doomed"]
 
@@ -2625,7 +2625,7 @@ def test_everything_waiting_goes_in_as_one_turn_with_a_row_for_each_sender(
         prompts = [
             (event.payload.sender_message_id, message_content_text(event.payload.content))
             for event in await harness.events("c")
-            if event.kind is ConversationEventKind.prompt
+            if isinstance(event.payload, PromptEventPayload)
         ]
         assert prompts[1:] == [
             ("sender-1", "waiting-1"),
