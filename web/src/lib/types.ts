@@ -364,6 +364,7 @@ export type BoardResponse = {
 export type BoardSprintItem = {
   id: string;
   project: string;
+  created_at: number;
   done_ticket_count: number;
   total_ticket_count: number;
 };

@@ -602,6 +602,7 @@ def _board_sprint_items(
     placeholders = ",".join("?" * len(item_ids))
     rows = conn.execute(
         "SELECT sprint_items.id AS id, projects.name AS project_name, "
+        "sprint_items.created_at AS created_at, "
         "tickets.stage AS ticket_stage, tickets.worker_type AS ticket_worker_type "
         "FROM sprint_items "
         "JOIN projects ON projects.id = sprint_items.project_id "
@@ -610,6 +611,7 @@ def _board_sprint_items(
         item_ids,
     ).fetchall()
     project_names = {str(row["id"]): str(row["project_name"]) for row in rows}
+    created_ats = {str(row["id"]): int(row["created_at"]) for row in rows}
     counted: dict[str, list[int]] = {item_id: [0, 0] for item_id in project_names}
     for row in rows:
         stage = str(row["ticket_stage"])
@@ -623,6 +625,7 @@ def _board_sprint_items(
         BoardSprintItem(
             id=item_id,
             project=project_names[item_id],
+            created_at=created_ats[item_id],
             done_ticket_count=done,
             total_ticket_count=total,
         )

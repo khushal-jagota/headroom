@@ -45,46 +45,81 @@ function card(id: string, values: Partial<BoardCard> = {}): BoardCard {
 }
 
 describe("Workspace rail", () => {
-  it("groups every Item, puts Items the user owns work in first, then Item priority", () => {
-    const rail = buildWorkspaceRail([
-      card("quiet-p0", {
-        sprint_item_id: "si_quiet",
-        sprint_item_title: "Quiet",
-        sprint_item_priority: "P0"
-      }),
-      card("attention-p2", {
-        sprint_item_id: "si_attention",
-        sprint_item_title: "Attention",
-        sprint_item_priority: "P2",
-        ticket_status: "needs_user"
-      }),
-      card("attention-p1", {
-        sprint_item_id: "si_first",
-        sprint_item_title: "First",
-        sprint_item_priority: "P1",
-        ticket_status: "paired"
-      }),
-      card("loose", { ticket_status: "user" })
-    ]);
+  it("groups every Item, orders by Item priority then a fixed creation-time tie-break", () => {
+    const rail = buildWorkspaceRail(
+      [
+        card("quiet-p0", {
+          sprint_item_id: "si_quiet",
+          sprint_item_title: "Quiet",
+          sprint_item_priority: "P0"
+        }),
+        card("older-p1", {
+          sprint_item_id: "si_older",
+          sprint_item_title: "Older",
+          sprint_item_priority: "P1",
+          ticket_status: "needs_user"
+        }),
+        card("newer-p1", {
+          sprint_item_id: "si_newer",
+          sprint_item_title: "Newer",
+          sprint_item_priority: "P1",
+          ticket_status: "paired"
+        }),
+        card("loose", { ticket_status: "user" })
+      ],
+      [
+        { id: "si_quiet", project: "Panels", created_at: 50, done_ticket_count: 0, total_ticket_count: 1 },
+        { id: "si_older", project: "Panels", created_at: 100, done_ticket_count: 0, total_ticket_count: 1 },
+        { id: "si_newer", project: "Panels", created_at: 200, done_ticket_count: 0, total_ticket_count: 1 }
+      ]
+    );
 
-    expect(rail.items.map((item) => item.id)).toEqual([
-      "si_first",
-      "si_attention",
-      "si_quiet"
-    ]);
+    expect(rail.items.map((item) => item.id)).toEqual(["si_quiet", "si_older", "si_newer"]);
     expect(rail.noItemGroups.flatMap((group) => group.cards.map((value) => value.id))).toEqual([
       "loose"
     ]);
+  });
+
+  it("never moves an Item when a card's status or activity changes", () => {
+    const summaries = [
+      { id: "si_older", project: "Panels", created_at: 100, done_ticket_count: 0, total_ticket_count: 1 },
+      { id: "si_newer", project: "Panels", created_at: 200, done_ticket_count: 0, total_ticket_count: 1 }
+    ];
+    const quiet = buildWorkspaceRail(
+      [
+        card("older", { sprint_item_id: "si_older", sprint_item_priority: "P1" }),
+        card("newer", { sprint_item_id: "si_newer", sprint_item_priority: "P1" })
+      ],
+      summaries
+    );
+    const oneNeedsUser = buildWorkspaceRail(
+      [
+        card("older", {
+          sprint_item_id: "si_older",
+          sprint_item_priority: "P1",
+          ticket_status: "needs_user",
+          activity_at: 999
+        }),
+        card("newer", { sprint_item_id: "si_newer", sprint_item_priority: "P1" })
+      ],
+      summaries
+    );
+
+    expect(quiet.items.map((item) => item.id)).toEqual(["si_older", "si_newer"]);
+    expect(oneNeedsUser.items.map((item) => item.id)).toEqual(["si_older", "si_newer"]);
   });
 
   it("names each card's group from the shared Ticket condition", () => {
     expect(workspaceCardGroupKey(card("a", { ticket_status: "needs_user" }))).toBe("needs-me");
     expect(workspaceCardGroupKey(card("b", { ticket_status: "user" }))).toBe("needs-me");
     expect(workspaceCardGroupKey(card("c", { ticket_status: "awaiting_user_review" }))).toBe(
-      "current-awaiting-approval"
+      "awaiting-user-review"
+    );
+    expect(workspaceCardGroupKey(card("c2", { ticket_status: "awaiting_agent_review" }))).toBe(
+      "awaiting-agent-review"
     );
     expect(workspaceCardGroupKey(card("d", { has_pending_proposal: true }))).toBe(
-      "current-awaiting-approval"
+      "awaiting-user-review"
     );
     expect(workspaceCardGroupKey(card("e", { ticket_status: "paired" }))).toBe("current-paired");
     expect(workspaceCardGroupKey(card("f", { ticket_status: "agent" }))).toBe("current-running");
@@ -107,17 +142,18 @@ describe("Workspace rail", () => {
     ]).items[0];
 
     expect(item.groups.map((group) => group.label)).toEqual(["Waiting for closeout", "To do"]);
-    // Not one of the quiet-three hidden groups: it shows without revealing.
+    // Not one of the quiet-four hidden groups: it shows without revealing.
     expect(workspaceItemGroups(item.groups, false).map((group) => group.label)).toEqual([
       "Waiting for closeout",
       "To do"
     ]);
   });
 
-  it("orders the groups, hides the quiet three, and reveals them on request", () => {
+  it("orders the groups, hides the quiet four, and reveals them on request", () => {
     const cards = [
       card("needs", { ticket_status: "needs_user" }),
       card("review", { ticket_status: "awaiting_user_review" }),
+      card("agent-review", { ticket_status: "awaiting_agent_review" }),
       card("paired", { ticket_status: "paired" }),
       card("working", { ticket_status: "agent" }),
       card("blocked", { ticket_status: "user", blocked: true }),
@@ -135,21 +171,23 @@ describe("Workspace rail", () => {
 
     expect(item.groups.map((group) => group.label)).toEqual([
       "Needs user",
-      "Awaiting approval",
+      "User review",
+      "Agent review",
       "Paired",
       "Agent",
       "Blocked",
       "To do",
       "Done"
     ]);
+    // Agent review is hidden by default, same as Agent, Blocked, and Done.
     expect(workspaceItemGroups(item.groups, false).map((group) => group.label)).toEqual([
       "Needs user",
-      "Awaiting approval",
+      "User review",
       "Paired",
       "To do"
     ]);
-    expect(workspaceItemGroups(item.groups, true)).toHaveLength(7);
-    expect(hiddenWorkspaceCardCount(item.groups)).toBe(3);
+    expect(workspaceItemGroups(item.groups, true)).toHaveLength(8);
+    expect(hiddenWorkspaceCardCount(item.groups)).toBe(4);
     expect(item.needsUser).toBe(true);
   });
 
@@ -162,7 +200,7 @@ describe("Workspace rail", () => {
           sprint_item_priority: "P1"
         })
       ],
-      [{ id: "si_one", project: "Panels", done_ticket_count: 3, total_ticket_count: 7 }]
+      [{ id: "si_one", project: "Panels", created_at: 0, done_ticket_count: 3, total_ticket_count: 7 }]
     );
 
     expect(rail.items[0].project).toBe("Panels");

@@ -33,13 +33,14 @@ One screen per part of the system:
   eyebrow, and the fold control beside it opens and closes the box.
 
   Inside a box the Tickets sit under plain status headings, in one order: Needs user,
-  Awaiting approval, Paired, Agent, Blocked, To do, Done. The headings are labels, not
-  controls. Agent, Blocked and Done are quiet: they are not drawn until the reader asks.
-  "+n more" counts what is put away, and pressing it again puts it back. A Ticket is in
-  Blocked when its status says so or a live blocker holds it. The No Item tail groups
-  and reveals the same way.
+  User review, Agent review, Paired, Agent, Blocked, To do, Done. User review and Agent
+  review split the two proposal review routes apart, each under its own heading. The
+  headings are labels, not controls. Agent review, Agent, Blocked and Done are quiet:
+  they are not drawn until the reader asks. "+n more" counts what is put away, and
+  pressing it again puts it back. A Ticket is in Blocked when its status says so or a
+  live blocker holds it. The No Item tail groups and reveals the same way.
 
-  Items with work the user owns — Needs user, Awaiting approval or Paired — come first,
+  Items with work the user owns — Needs user, User review or Paired — come first,
   then Item priority orders the rest. Every heading, title and Ticket row starts at the
   same left edge. Every Ticket row is the shared Ticket row, so it carries its own
   priority tile beside its title and keeps the existing conversation mark.
@@ -270,11 +271,10 @@ has no usage source.
   proposals, and results stay as database text. Standalone files for a ticket
   live beside the database under `files/tickets/<ticket_id>/`, so the default local
   path is `data/files/tickets/<ticket_id>/...`. The browser reads them through
-  `/files/tickets/<ticket_id>/<relative-path>`. A `PUT` on that same address stores the
-  file, and `panels ticket file put` is how a worker uses it, so nothing has to work out
-  the path for itself. The server sends `nosniff`; only
-  explicit image, audio, and video types are inline. Markdown, HTML, SVG, and
-  unknown files are attachments when opened directly.
+  `/files/tickets/<ticket_id>/<relative-path>`. The contract is read-only: a worker
+  writes the file into that directory itself, and Panels serves it. The server sends
+  `nosniff`; only explicit image, audio, and video types are inline. Markdown, HTML,
+  SVG, and unknown files are attachments when opened directly.
 - **Sprint Item files use an isolated sibling root.** Item artifacts live under
   `files/sprint-items/<sprint_item_id>/` and use
   `/files/sprint-items/<sprint_item_id>/<relative-path>`. This contract is read-only and
@@ -447,4 +447,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-08-12._
+_Last verified: 2026-08-14._

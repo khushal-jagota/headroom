@@ -1,11 +1,12 @@
 import { sprintTicketCondition } from "./sprintPresentation";
 import type { BoardCard, BoardSprintItem, Priority } from "./types";
 
-// One order of Ticket groups, with the quiet three hidden until the reader asks for
+// One order of Ticket groups, with the quiet four hidden until the reader asks for
 // them. The labels are the ones the Sprint screen and the Sprint Item page already use.
 const GROUP_ORDER = [
   { key: "needs-me", label: "Needs user", hidden: false },
-  { key: "current-awaiting-approval", label: "Awaiting approval", hidden: false },
+  { key: "awaiting-user-review", label: "User review", hidden: false },
+  { key: "awaiting-agent-review", label: "Agent review", hidden: true },
   { key: "current-paired", label: "Paired", hidden: false },
   { key: "current-running", label: "Agent", hidden: true },
   { key: "errored", label: "Blocked", hidden: true },
@@ -15,9 +16,10 @@ const GROUP_ORDER = [
 ] as const;
 
 // The groups that hold work the user owns. They decide which Items lead the rail.
+// Agent review is deliberately left out: it is the agent's own review, not the user's.
 const USER_GROUP_KEYS = new Set([
   "needs-me",
-  "current-awaiting-approval",
+  "awaiting-user-review",
   "current-paired"
 ]);
 
@@ -32,6 +34,7 @@ export type WorkspaceRailItem = {
   id: string;
   title: string;
   priority: Priority;
+  createdAt: number;
   project: string | null;
   progress: { done: number; total: number } | null;
   cards: BoardCard[];
@@ -46,12 +49,17 @@ export type WorkspaceRail = {
 
 const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
 
-// A card's own two facts win first: it is finished, or a blocker holds it. Everything
-// else is the shared Ticket condition.
+// A card's own two facts win first: it is finished, or a blocker holds it. Then the
+// shared awaiting-approval mark splits by which review route the card is parked on, so
+// User review and Agent review land in their own groups.
 export function workspaceCardGroupKey(card: BoardCard): string {
   if (card.is_done) return "completed";
   if (card.blocked) return "errored";
-  return sprintTicketCondition(card).mark;
+  const mark = sprintTicketCondition(card).mark;
+  if (mark !== "current-awaiting-approval") return mark;
+  return card.ticket_status === "awaiting_agent_review"
+    ? "awaiting-agent-review"
+    : "awaiting-user-review";
 }
 
 export function workspaceItemGroups(
@@ -122,6 +130,7 @@ export function buildWorkspaceRail(
       id,
       title: first.sprint_item_title ?? "Untitled Sprint Item",
       priority: first.sprint_item_priority ?? "P3",
+      createdAt: summary?.created_at ?? 0,
       project: summary?.project ?? null,
       progress: summary
         ? { done: summary.done_ticket_count, total: summary.total_ticket_count }
@@ -136,9 +145,8 @@ export function buildWorkspaceRail(
 
   items.sort(
     (left, right) =>
-      Number(right.needsUser) - Number(left.needsUser) ||
       priorityRank(left.priority) - priorityRank(right.priority) ||
-      left.title.localeCompare(right.title, undefined, { sensitivity: "base" }) ||
+      left.createdAt - right.createdAt ||
       left.id.localeCompare(right.id)
   );
 

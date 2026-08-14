@@ -113,6 +113,7 @@ class BoardSprintItem(TypedDict):
 
     id: str
     project: str
+    created_at: int
     done_ticket_count: int
     total_ticket_count: int
 
