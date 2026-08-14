@@ -19,7 +19,7 @@ _REASONS = {
 
 def _subject_route(fact: NotificationFact) -> str:
     if fact.subject_kind == "ticket":
-        return f"/#/ticket/{fact.subject_id}"
+        return f"/#/workspace/{fact.subject_id}"
     if fact.subject_kind == "agent":
         return f"/#/agents/{fact.subject_id.replace('_', '-')}"
     raise ValueError(f"unknown notification subject kind: {fact.subject_kind}")

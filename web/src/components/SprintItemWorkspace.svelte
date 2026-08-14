@@ -2,6 +2,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { onMount } from "svelte";
   import { mutateJson } from "../lib/mutate";
+  import { workspaceAddress } from "../lib/workspaceAddress";
   import { queries } from "../lib/queryCatalogue";
   import {
     failedWorkspaceDeliveries,
@@ -159,7 +160,7 @@
             title={ticket.title}
             state={condition.mark}
             ariaLabel={condition.word}
-            href={`#/ticket/${ticket.id}`}
+            href={workspaceAddress({ kind: "ticket", id: ticket.id })}
             quiet={ticket.stage === "done"}
             data-sprint-ticket-id={ticket.id}
             data-ticket-state={condition.mark}

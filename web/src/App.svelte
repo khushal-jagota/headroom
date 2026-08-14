@@ -3,7 +3,11 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "./lib/queryCatalogue";
   import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
-  import { parseWorkspaceAddress } from "./lib/workspaceAddress";
+  import {
+    parseWorkspaceAddress,
+    workspaceAddress,
+    workspaceSelectionKey
+  } from "./lib/workspaceAddress";
   import BacklogRoute from "./routes/BacklogRoute.svelte";
   import BackendsRoute from "./routes/BackendsRoute.svelte";
   import BoardRoute from "./routes/BoardRoute.svelte";
@@ -14,7 +18,6 @@
   import ReviewRoute from "./routes/ReviewRoute.svelte";
   import ScheduledTasksRoute from "./routes/ScheduledTasksRoute.svelte";
   import SprintRoute from "./routes/SprintRoute.svelte";
-  import TicketRoute from "./routes/TicketRoute.svelte";
   import ConfigRoute from "./routes/ConfigRoute.svelte";
   import DevConversationRoute from "./routes/DevConversationRoute.svelte";
   import DevFilePreviewGalleryRoute from "./routes/DevFilePreviewGalleryRoute.svelte";
@@ -64,7 +67,14 @@
       };
     }
     if (name === "ticket" && segments[1]) {
-      params.id = segments[1];
+      const id = decodeRouteSegment(segments[1]);
+      const address = workspaceAddress({ kind: "ticket", id });
+      window.location.replace(address);
+      return {
+        name: "workspace",
+        params: { id },
+        key: workspaceSelectionKey({ kind: "ticket", id })
+      };
     }
     if (name === "workspace") {
       const selection = parseWorkspaceAddress(hash);
@@ -171,7 +181,6 @@
   }
 
   function isKnownRoute(): boolean {
-    if (route.name === "ticket") return Boolean(route.params.id);
     if (route.name === "sprint") {
       return !route.params.sub || route.params.sub === "documents";
     }
@@ -202,7 +211,6 @@
   function screenTitle(): string {
     if (route.name === "board" || route.name === "workspace") return "Workspace";
     if (route.name === "day") return "Home";
-    if (route.name === "ticket") return "Ticket";
     return `${route.name.charAt(0).toUpperCase()}${route.name.slice(1)}`;
   }
 
@@ -339,8 +347,6 @@
             <ReviewRoute />
           {:else if route.name === "workspace" || route.name === "board"}
             <BoardRoute ticketId={route.params.id} itemId={route.params.item} />
-          {:else if route.name === "ticket"}
-            <TicketRoute id={route.params.id} />
           {:else if route.name === "sprint"}
             <SprintRoute sub={route.params.sub || "tracking"} selectedItemId={route.params.item || null} />
           {:else if route.name === "backlog"}

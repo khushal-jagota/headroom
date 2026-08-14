@@ -9,7 +9,14 @@ conversation's record has got to, insert the next row, move the conversation's m
 forward, commit. Two writers cannot both decide they own the same sequence number,
 because the second one waits for the first one's lock.
 
-Rows are written once. Nothing here updates or deletes a row it has written.
+Rows of a conversation's record are written once. Nothing here updates or deletes one.
+
+There is one exception, and it is not a record row: a message waiting in the line has a
+row of its own in ``conversation_held_prompts``, and that row is deleted in the same
+transaction that writes the record row saying what happened to it. The waiting line is
+what is still going to happen rather than an account of what did, so a message leaves it
+exactly when its outcome is written, and a process that dies part-way leaves the message
+waiting rather than gone.
 """
 
 from __future__ import annotations
@@ -42,6 +49,11 @@ from planner.conversation.events import (
     conversation_event_payload_from_canonical_json,
     conversation_event_payload_kind,
     conversation_event_payload_to_canonical_json,
+)
+from planner.conversation.message_content import (
+    MessageContent,
+    message_content_from_stored,
+    message_content_json_entries,
 )
 from planner.core.db import connect
 from planner.skill_versions import settle_worker_step_skill_bindings
@@ -139,6 +151,25 @@ class StoredConversationEvent:
     created_at: int
 
 
+@dataclass(frozen=True, slots=True)
+class StoredHeldPrompt:
+    """A message waiting for the agent to free up, with the change it carries.
+
+    The sender's own id and send instant wait here with it: a held message is delivered,
+    refused or discarded long after the caller has gone, and whichever row it becomes has
+    to carry the same id the sender minted.
+    """
+
+    held_prompt_id: str
+    content: MessageContent
+    sender_label: str
+    model_change: str | None
+    reasoning_effort_change: str | None
+    sender_message_id: str | None
+    sent_at_unix_milliseconds: int | None
+    snapshot_sent_at_unix_milliseconds: int
+
+
 class ConversationStore:
     """One short-lived connection per call, and one immediate transaction per append."""
 
@@ -161,10 +192,44 @@ class ConversationStore:
         return await asyncio.to_thread(self._read_conversation_sync, conversation_id)
 
     async def append_event(
-        self, conversation_id: str, payload: ConversationEventPayload
+        self,
+        conversation_id: str,
+        payload: ConversationEventPayload,
+        *,
+        settled_held_prompt_id: str | None = None,
     ) -> StoredConversationEvent:
-        """Write the next row of this conversation's record and return it as written."""
-        return await asyncio.to_thread(self._append_event_sync, conversation_id, payload)
+        """Write the next row of this conversation's record and return it as written.
+
+        ``settled_held_prompt_id`` names the waiting message this row is the outcome of. It
+        leaves the line in this transaction, so it is never both waiting and answered for,
+        and never neither.
+        """
+        return await asyncio.to_thread(
+            self._append_event_sync, conversation_id, payload, settled_held_prompt_id
+        )
+
+    async def append_held_prompt(
+        self,
+        conversation_id: str,
+        held: StoredHeldPrompt,
+    ) -> None:
+        """Put a message at the end of this conversation's waiting line.
+
+        Order is the row's own ``rowid``, so a message written after another runs after it.
+        """
+        await asyncio.to_thread(self._append_held_prompt_sync, conversation_id, held)
+
+    async def read_held_prompts(self, conversation_id: str) -> tuple[StoredHeldPrompt, ...]:
+        """This conversation's waiting line, in the order the messages arrived."""
+        return await asyncio.to_thread(self._read_held_prompts_sync, conversation_id)
+
+    async def conversation_ids_with_held_prompts(self) -> tuple[str, ...]:
+        """Every conversation that has somebody waiting in its line.
+
+        In the order the lines started waiting, so the conversation kept waiting longest
+        is the first one run again.
+        """
+        return await asyncio.to_thread(self._conversation_ids_with_held_prompts_sync)
 
     async def append_delivered_prompt(
         self,
@@ -172,6 +237,7 @@ class ConversationStore:
         *,
         prompt: PromptEventPayload,
         model_change: ModelChangedEventPayload | None,
+        settled_held_prompt_id: str | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Write everything one delivery leaves behind, as one thing that either all
         happened or none of it did.
@@ -184,9 +250,16 @@ class ConversationStore:
 
         The change is written before the prompt, because it is what the prompt ran under.
         Returns the rows in the order they were written.
+
+        ``settled_held_prompt_id`` names the waiting message this delivery is of, and that
+        message leaves the line here, in the same transaction as the rest of the fact.
         """
         return await asyncio.to_thread(
-            self._append_delivered_prompt_sync, conversation_id, prompt, model_change
+            self._append_delivered_prompt_sync,
+            conversation_id,
+            prompt,
+            model_change,
+            settled_held_prompt_id,
         )
 
     async def read_events_after(
@@ -312,12 +385,16 @@ class ConversationStore:
         return None if row is None else _conversation_record(row)
 
     def _append_event_sync(
-        self, conversation_id: str, payload: ConversationEventPayload
+        self,
+        conversation_id: str,
+        payload: ConversationEventPayload,
+        settled_held_prompt_id: str | None = None,
     ) -> StoredConversationEvent:
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
             written = self._insert_rows(conn, conversation_id, (payload,))
+            self._delete_held_prompt(conn, settled_held_prompt_id)
             conn.execute("COMMIT")
         except BaseException:
             if conn.in_transaction:
@@ -332,6 +409,7 @@ class ConversationStore:
         conversation_id: str,
         prompt: PromptEventPayload,
         model_change: ModelChangedEventPayload | None,
+        settled_held_prompt_id: str | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         payloads: tuple[ConversationEventPayload, ...] = (
             (prompt,) if model_change is None else (model_change, prompt)
@@ -340,6 +418,7 @@ class ConversationStore:
         try:
             conn.execute("BEGIN IMMEDIATE")
             written = self._insert_rows(conn, conversation_id, payloads)
+            self._delete_held_prompt(conn, settled_held_prompt_id)
             if model_change is not None:
                 conn.execute(
                     "UPDATE conversations SET model = ?, reasoning_effort = ? "
@@ -354,6 +433,74 @@ class ConversationStore:
         finally:
             conn.close()
         return written
+
+    def _append_held_prompt_sync(self, conversation_id: str, held: StoredHeldPrompt) -> None:
+        conn = self._connect()
+        try:
+            conn.execute(
+                "INSERT INTO conversation_held_prompts (held_prompt_id, conversation_id, "
+                "content, sender_label, sender_message_id, sent_at_unix_milliseconds, "
+                "snapshot_sent_at_unix_milliseconds, model_change, reasoning_effort_change, "
+                "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    held.held_prompt_id,
+                    conversation_id,
+                    json.dumps(
+                        message_content_json_entries(held.content),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    held.sender_label,
+                    held.sender_message_id,
+                    held.sent_at_unix_milliseconds,
+                    held.snapshot_sent_at_unix_milliseconds,
+                    held.model_change,
+                    held.reasoning_effort_change,
+                    self._integer_now(),
+                ),
+            )
+        finally:
+            conn.close()
+
+    def _read_held_prompts_sync(self, conversation_id: str) -> tuple[StoredHeldPrompt, ...]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT held_prompt_id, content, sender_label, sender_message_id, "
+                "sent_at_unix_milliseconds, snapshot_sent_at_unix_milliseconds, model_change, "
+                "reasoning_effort_change FROM conversation_held_prompts "
+                "WHERE conversation_id = ? ORDER BY rowid",
+                (conversation_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+        return tuple(_stored_held_prompt(row) for row in rows)
+
+    def _conversation_ids_with_held_prompts_sync(self) -> tuple[str, ...]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT conversation_id FROM conversation_held_prompts "
+                "GROUP BY conversation_id ORDER BY MIN(rowid)"
+            ).fetchall()
+        finally:
+            conn.close()
+        return tuple(str(row["conversation_id"]) for row in rows)
+
+    def _delete_held_prompt(
+        self, conn: sqlite3.Connection, held_prompt_id: str | None
+    ) -> None:
+        """Take a message out of the waiting line. A transaction must be open.
+
+        Deleting nothing is an ordinary answer. The row is gone only where this same
+        transaction already wrote the outcome, so a repeat cannot lose a second message.
+        """
+        if held_prompt_id is None:
+            return
+        conn.execute(
+            "DELETE FROM conversation_held_prompts WHERE held_prompt_id = ?",
+            (held_prompt_id,),
+        )
 
     def _insert_rows(
         self,
@@ -580,6 +727,26 @@ def _conversation_record(row: sqlite3.Row) -> ConversationRecord:
         composer_catalog=_composer_catalog_from_json(str(row["composer_catalog"])),
         latest_sequence=int(row["latest_sequence"]),
         created_at=int(row["created_at"]),
+    )
+
+
+def _stored_held_prompt(row: sqlite3.Row) -> StoredHeldPrompt:
+    sent_at = row["sent_at_unix_milliseconds"]
+    return StoredHeldPrompt(
+        held_prompt_id=str(row["held_prompt_id"]),
+        content=message_content_from_stored(json.loads(str(row["content"]))),
+        sender_label=str(row["sender_label"]),
+        model_change=None if row["model_change"] is None else str(row["model_change"]),
+        reasoning_effort_change=(
+            None
+            if row["reasoning_effort_change"] is None
+            else str(row["reasoning_effort_change"])
+        ),
+        sender_message_id=(
+            None if row["sender_message_id"] is None else str(row["sender_message_id"])
+        ),
+        sent_at_unix_milliseconds=None if sent_at is None else int(sent_at),
+        snapshot_sent_at_unix_milliseconds=int(row["snapshot_sent_at_unix_milliseconds"]),
     )
 
 

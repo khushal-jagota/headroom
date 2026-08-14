@@ -147,7 +147,7 @@ def test_composing_survives_a_change_to_the_same_ticket(
     page = open_page(
         context_factory(),
         server,
-        f"#/ticket/{ticket_id}",
+        f"#/workspace/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
     # A short window makes the ticket's own column scroll, so "the page did not jump"

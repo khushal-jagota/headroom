@@ -3240,6 +3240,13 @@ select {
   background: var(--surface-sunken);
 }
 
+/* The way back to the rail. Below 960px the rail is hidden, so the Ticket pane
+ * owns the whole screen and this is the only route back. Above 960px the rail is
+ * beside the pane already. */
+.board-workspace-back {
+  display: none;
+}
+
 .board-workspace-chief-conversation {
   display: flex;
   flex: 1;
@@ -4545,6 +4552,20 @@ select {
   outline-offset: 2px;
 }
 
+/* The Sprint Item fact is a link back to that Item on the Workspace, not a control
+ * that changes the Ticket. It keeps the fact look and adds link behavior. */
+.ticket-identity-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.ticket-identity-link:focus-visible {
+  color: var(--text-strong);
+  border-bottom-color: var(--accent-bright);
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: 2px;
+}
+
 .ticket-identity-priority {
   padding-bottom: 0;
   border-bottom: 0;
@@ -5079,6 +5100,10 @@ select {
     display: none;
   }
 
+  .board-workspace-shell--ticket .board-workspace-left {
+    display: none;
+  }
+
   .board-workspace-right.board-workspace-right--chief {
     display: flex;
     padding: var(--space-5);
@@ -5087,6 +5112,20 @@ select {
   .board-workspace-right.board-workspace-right--item {
     display: flex;
     padding: 0;
+  }
+
+  .board-workspace-right.board-workspace-right--ticket {
+    display: flex;
+    padding: 0;
+  }
+
+  .board-workspace-back {
+    display: block;
+    flex: none;
+    padding: var(--space-4) var(--page-gutter) 0;
+    color: var(--text-faintest);
+    font-size: var(--type-sm);
+    text-decoration: none;
   }
 
 }

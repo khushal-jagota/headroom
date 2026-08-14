@@ -44,8 +44,6 @@ def _a_ticket_on_a_proposal(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Success criteria proposed.",
         ticket_id=ticket_id,
@@ -73,7 +71,7 @@ def _the_ticket_page(
     page = open_page(
         context,
         server,
-        f"#/ticket/{ticket_id}",
+        f"#/workspace/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
     page.wait_for_selector("[data-conversation-layer-host]", timeout=WAIT_MS)
@@ -108,8 +106,6 @@ def test_a_paired_visit_stays_open_when_status_changes_to_awaiting_approval(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Approach proposed.",
         ticket_id=ticket_id,

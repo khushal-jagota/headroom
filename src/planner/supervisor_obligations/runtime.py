@@ -160,28 +160,13 @@ class SupervisorObligationLoop:
                 conn.close()
 
     def _recover_after_restart(self, conn: sqlite3.Connection) -> None:
-        """Recover only queues that belonged to the previous process."""
-        now = self._clock.now_unix()
-        data.reconcile_deliveries(conn, now)
-        rows = conn.execute(
-            "SELECT id,conversation_id,sender_message_id FROM "
-            "supervisor_obligation_deliveries WHERE state='queued'"
-        ).fetchall()
-        for row in rows:
-            conversation_id = (
-                None if row["conversation_id"] is None else str(row["conversation_id"])
-            )
-            held = (
-                ()
-                if conversation_id is None
-                else asyncio.run_coroutine_threadsafe(
-                    self._conversation_system.held_prompts(conversation_id), self._asyncio_loop
-                ).result()
-            )
-            if not any(
-                prompt.sender_message_id == str(row["sender_message_id"]) for prompt in held
-            ):
-                data.mark_queued_outcome_uncertain(conn, str(row["id"]), now)
+        """Settle what the previous process left part-way.
+
+        A delivery that was left queued needs nothing here. The conversation waiting line
+        is stored, so the message is still in it and still going to run, and
+        ``reconcile_deliveries`` settles it from the row that says what happened.
+        """
+        data.reconcile_deliveries(conn, self._clock.now_unix())
 
     async def _deliver(
         self, delivery: SupervisorDelivery, text: str

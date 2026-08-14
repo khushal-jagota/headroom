@@ -15,18 +15,28 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from time import monotonic, sleep
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
+from planner.conversation.backends.contracts import BackendEventSink, TurnToken
 from planner.conversation.contracts import (
+    ConversationBackendKey,
     ConversationStartRequest,
     ConversationSystem,
     PromptDeliveryFate,
     PromptDeliveryMode,
+    ResolvedConversationStart,
 )
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
-from planner.conversation.message_content import text_message_content
+from planner.conversation.message_content import (
+    MessageContent,
+    message_content_text,
+    text_message_content,
+)
+from planner.conversation.message_files import ConversationMessageFiles
+from planner.conversation.storage import ConversationStore
+from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import TestClock
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
@@ -841,3 +851,149 @@ def test_the_test_mode_route_runs_one_worker_step_against_the_composed_system(
         assert writes[0].sender_label == "loop"
 
     assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
+
+
+# --- an opener that had to wait is still delivered after a restart --------------------
+
+
+class _RecordingBackendChild:
+    """A backend that takes prompts, keeps them, and never ends a turn on its own."""
+
+    def __init__(self, conversation_id: str, written: list[tuple[str, str]]) -> None:
+        self._conversation_id = conversation_id
+        self._written = written
+
+    async def start(
+        self, resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
+    ) -> None:
+        return None
+
+    async def write_prompt(
+        self,
+        turn_token: TurnToken,
+        content: MessageContent,
+        *,
+        sender_content: MessageContent,
+        sender_label: str,
+        mode: PromptDeliveryMode,
+        model_change: str | None,
+        reasoning_effort_change: str | None,
+    ) -> None:
+        self._written.append((sender_label, message_content_text(content)))
+
+    async def steer(self, content: MessageContent, *, sender_label: str) -> None:
+        self._written.append((sender_label, message_content_text(content)))
+
+    async def cancel_running_turn(self) -> None:
+        return None
+
+    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+        return None
+
+    async def answer_user_input(self, request_id: str, answers: tuple[Any, ...]) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+
+def _sqlite_conversation_system(
+    db_path: str, written: list[tuple[str, str]]
+) -> SqliteProcessConversationSystem:
+    def make_child(
+        *,
+        resolved_start: ResolvedConversationStart,
+        event_sink: BackendEventSink,
+        message_files: ConversationMessageFiles,
+    ) -> _RecordingBackendChild:
+        return _RecordingBackendChild(resolved_start.conversation_id, written)
+
+    return SqliteProcessConversationSystem(
+        store=ConversationStore(db_path),
+        message_files=ConversationMessageFiles(db_path),
+        backend_child_factories={key: make_child for key in ConversationBackendKey},
+    )
+
+
+class _BusyByTheTimeTheSendArrives:
+    """Idle when the loop checks, mid-turn by the time the opener is sent."""
+
+    def __init__(
+        self, system: SqliteProcessConversationSystem, conversation_id: str
+    ) -> None:
+        self._system = system
+        self._conversation_id = conversation_id
+
+    async def is_running(self, conversation_id: str) -> bool:
+        return False
+
+    async def start_conversation(self, request: ConversationStartRequest) -> None:
+        await self._system.start_conversation(request)
+
+    async def send(
+        self, conversation_id: str, content: MessageContent, **rest: Any
+    ) -> PromptDeliveryFate:
+        if not await self._system.is_running(self._conversation_id):
+            await self._system.send(
+                self._conversation_id,
+                text_message_content("browser work"),
+                sender_label="browser",
+            )
+        return await self._system.send(conversation_id, content, **rest)
+
+    async def has_pending_permission_ask(self, conversation_id: str) -> bool:
+        return await self._system.has_pending_permission_ask(conversation_id)
+
+
+def test_a_step_opener_that_had_to_wait_is_delivered_by_the_next_process(
+    world: _World,
+) -> None:
+    """The claim the loop keeps and the context it acknowledges are backed by a promise.
+
+    The opener queues behind a turn the browser started. This process ends without ever
+    running it, and the next process delivers it — which is what makes a queued fate a
+    success rather than a message nobody will ever see.
+    """
+    ticket_id = world.ready_ticket(conversation_id="conv-restart")
+    world.add_pending_context(ticket_id, "ticket_changed", "The user renamed the ticket.")
+
+    first_written: list[tuple[str, str]] = []
+    first_system = _sqlite_conversation_system(world.db_path, first_written)
+
+    async def first_process() -> bool:
+        await first_system.start_conversation(
+            ConversationStartRequest(conversation_id="conv-restart", model="a-model")
+        )
+        # The browser starts a turn between the occupancy check and the send, so the
+        # step opener can only queue: exactly the collision the loop treats as success.
+        queueing = _BusyByTheTimeTheSendArrives(first_system, "conv-restart")
+        started = await start_ready_worker_step(
+            ticket_id,
+            connect_database=world.connect,
+            conversation_system=cast(ConversationSystem, queueing),
+            worker_context_service=cast(WorkerContextService, world.context),
+            worker_type_registry=configured_worker_type_registry(),
+            planning_day_id_resolver=lambda: TODAY_DAY_ID,
+            now=world.clock.now_unix,
+        )
+        await first_system.shutdown()
+        return started
+
+    assert asyncio.run(first_process()) is True
+    assert [label for label, _ in first_written] == ["browser"]
+    assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
+    assert world.pending_context_keys(ticket_id) == []
+
+    second_written: list[tuple[str, str]] = []
+    second_system = _sqlite_conversation_system(world.db_path, second_written)
+
+    async def second_process() -> None:
+        await second_system.start_held_prompt_drain()
+        await second_system.wait_until_quiescent()
+        await second_system.shutdown()
+
+    asyncio.run(second_process())
+
+    assert [label for label, _ in second_written] == ["loop"]
+    assert f"Work ticket {ticket_id}" in second_written[0][1]
+    assert "The user renamed the ticket." in second_written[0][1]

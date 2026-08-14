@@ -2,6 +2,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { shortMonthDayLabel } from "../lib/dates";
   import { mutateJson } from "../lib/mutate";
+  import { workspaceAddress } from "../lib/workspaceAddress";
   import { queries } from "../lib/queryCatalogue";
   import { resourceStateForQueries } from "../lib/resourceStateForQueries";
   import {
@@ -140,7 +141,7 @@
     <a
       class="list-row sprint-ticket-row"
       class:sprint-ticket-row--settled={ticket.stage === "done"}
-      href={`#/ticket/${ticket.id}`}
+      href={workspaceAddress({ kind: "ticket", id: ticket.id })}
       data-sprint-ticket-id={ticket.id}
       data-ticket-state={condition.mark}
     >

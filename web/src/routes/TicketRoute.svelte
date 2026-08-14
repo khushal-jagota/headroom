@@ -4,6 +4,7 @@
   import { fetchText } from "../lib/api";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
+  import { workspaceAddress } from "../lib/workspaceAddress";
   import { fieldSlot, labelize, reviewRouteLabel, stageLabel } from "../lib/ui";
   import {
     ceilingOptionsFor,
@@ -47,7 +48,6 @@
     queries.ticketConversationStartValues(stableId)
   );
   const projects = createQuery(() => queries.projects());
-  const sprints = createQuery(() => queries.sprintSummaries());
   const sprintItems = createQuery(() => queries.sprintItems());
   const manifest = createQuery(() => queries.workerTypeManifests());
 
@@ -127,18 +127,9 @@
     { value: "", label: "No project" },
     ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
   ]);
-  let sprintOptions = $derived([
-    { value: "", label: "Backlog" },
-    ...(sprints.data?.sprints || []).map((sprint) => ({ value: sprint.id, label: sprint.name }))
-  ]);
-  let placementItemOptions = $derived(
-    (sprintItems.data?.items || []).filter(
-      (item) =>
-        item.kind === "normal" &&
-        item.project_id === ticket.data?.project_id &&
-        item.sprint_id === ticket.data?.sprint_id
-    )
-  );
+  function sprintItemTitle(itemId: string): string {
+    return (sprintItems.data?.items || []).find((item) => item.id === itemId)?.title || "Sprint Item";
+  }
 
   $effect(() => {
     const recap = ticket.data?.recap;
@@ -460,43 +451,15 @@
                   {/each}
                 </select>
               </span>
-              <span class="ticket-identity-separator" aria-hidden="true">·</span>
-              <span class="ticket-identity-fact" data-sprint-control>
-                {sprintOptions.find((option) => option.value === (detail.sprint_id || ""))?.label || "Backlog"}
-                <select
-                  aria-label="Ticket sprint"
-                  value={detail.sprint_id || ""}
-                  onchange={(event) => void patchPlacement(detail, {
-                    sprint_id: event.currentTarget.value || null,
-                    sprint_item_id: null
-                  })}
-                >
-                  {#each sprintOptions as option}
-                    <option value={option.value}>{option.label}</option>
-                  {/each}
-                </select>
-              </span>
-              {#if detail.sprint_id}
+              {#if detail.sprint_item_id}
                 <span class="ticket-identity-separator" aria-hidden="true">·</span>
-                <span
-                  class="ticket-identity-fact"
-                  class:ticket-identity-add={!detail.sprint_item_id}
+                <a
+                  class="ticket-identity-fact ticket-identity-link"
                   data-sprint-item-control
+                  href={workspaceAddress({ kind: "item", id: detail.sprint_item_id })}
                 >
-                  {placementItemOptions.find((item) => item.id === detail.sprint_item_id)?.title || "Other"}
-                  <select
-                    aria-label="Ticket sprint item"
-                    value={detail.sprint_item_id || ""}
-                    onchange={(event) => void patchPlacement(detail, {
-                      sprint_item_id: event.currentTarget.value || null
-                    })}
-                  >
-                    <option value="">Other</option>
-                    {#each placementItemOptions as item}
-                      <option value={item.id}>{item.title}</option>
-                    {/each}
-                  </select>
-                </span>
+                  {sprintItemTitle(detail.sprint_item_id)}
+                </a>
               {/if}
             </span>
             {#if lc}

@@ -38,28 +38,25 @@
   let selectedCard = $derived(allCards.find((card) => card.id === ticketId) ?? null);
   let selectedItem = $derived(rail.items.find((item) => item.id === itemId) ?? null);
   let chiefSelected = $derived(ticketId === "chief-of-staff");
+  // A Ticket opens here from anywhere, including the Sprint page and Review, so the
+  // selection is not limited to the cards on today's board. The rail highlights a
+  // Ticket only when it holds a card for it, and TicketRoute answers for the Ticket
+  // itself, including one that does not exist.
+  let ticketSelected = $derived(Boolean(ticketId) && !chiefSelected);
   let nothingWaits = $derived(
     rail.items.every((item) => !workspaceGroupsHaveShownCards(item.groups)) &&
       !workspaceGroupsHaveShownCards(rail.noItemGroups)
   );
 
   $effect(() => {
-    const staleTicket = ticketId && !chiefSelected && !selectedCard;
     const staleItem = itemId && !selectedItem;
-    if (
-      (staleTicket || staleItem) &&
-      board.data &&
-      !board.isFetching &&
-      !board.isError
-    ) {
+    if (staleItem && board.data && !board.isFetching && !board.isError) {
       window.location.replace(workspaceAddress({ kind: "none" }));
     }
   });
 
   function selectCard(id: string): void {
-    window.location.hash = window.matchMedia("(max-width: 960px)").matches
-      ? `#/ticket/${encodeURIComponent(id)}`
-      : workspaceAddress({ kind: "ticket", id });
+    window.location.hash = workspaceAddress({ kind: "ticket", id });
   }
 
   function selectItem(id: string): void {
@@ -181,6 +178,7 @@
         class="board-workspace-shell"
         class:board-workspace-shell--chief={chiefSelected}
         class:board-workspace-shell--item={Boolean(selectedItem)}
+        class:board-workspace-shell--ticket={ticketSelected}
       >
         <section class="board-workspace-left" aria-label="Workspace tickets by Sprint Item">
           {#if workers.data}
@@ -305,7 +303,7 @@
         </section>
 
         <section
-          class:board-workspace-right--ticket={Boolean(selectedCard)}
+          class:board-workspace-right--ticket={ticketSelected}
           class:board-workspace-right--chief={chiefSelected}
           class:board-workspace-right--item={Boolean(selectedItem)}
           class="board-workspace-right"
@@ -315,9 +313,10 @@
             <div class="board-workspace-chief-conversation">
               <ChiefConversation />
             </div>
-          {:else if selectedCard}
-            {#key selectedCard.id}
-              <TicketRoute id={selectedCard.id} />
+          {:else if ticketSelected && ticketId}
+            <a class="board-workspace-back" href={workspaceAddress({ kind: "none" })}>&lsaquo; Workspace</a>
+            {#key ticketId}
+              <TicketRoute id={ticketId} />
             {/key}
           {:else if selectedItem}
             {#key selectedItem.id}

@@ -31,7 +31,9 @@ Ticket status. Each saved choice uses its subject and notification type as one k
 Chief choice never changes the matching Ticket choice.
 
 The notification contains no transcript, prompt, permission detail, or worker output.
-Opening a Ticket notification goes to `/#/ticket/<ticket-id>`. A Chief notification
+Opening a Ticket notification goes to `/#/workspace/<ticket-id>`. A notification stored
+before Tickets moved to the Workspace still carries the old `/#/ticket/<ticket-id>`
+address, which the app redirects. A Chief notification
 uses the retained `/#/agents/chief-of-staff` address, which the app redirects to
 `/#/workspace/chief-of-staff`. The service worker accepts only those subject links. A
 malformed payload or an unsupported link opens the safe Workspace fallback. All

@@ -143,8 +143,6 @@ def test_e23_env_pinned_propose(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Success criteria proposed.",
         ticket_id=tid,
@@ -152,7 +150,7 @@ def test_e23_env_pinned_propose(
     )
 
     ready = f'section[data-screen="ticket"][data-ticket-id="{tid}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{tid}", ready)
+    page = open_page(context_factory(), server, f"#/workspace/{tid}", ready)
 
     # Rendered: the proposal's markdown structure, with exact texts.
     b = "[data-approval-block] .approval-draft .markdown-block"
@@ -207,8 +205,6 @@ def test_e24_accept_in_review(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Success ready for review.",
         ticket_id=tid,
@@ -224,7 +220,7 @@ def test_e24_accept_in_review(
     page_b = open_page(
         context_factory(),
         server,
-        f"#/ticket/{tid}",
+        f"#/workspace/{tid}",
         'section[data-screen="ticket"][data-stage="needs_success"]',
     )
 
@@ -273,8 +269,6 @@ def test_markdown_approval_focus_noop_keeps_raw_source(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Raw forms ready.",
         ticket_id=tid,
@@ -332,8 +326,6 @@ def test_e25_edit_accept_in_review(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Success draft for edit review.",
         ticket_id=tid,
@@ -391,7 +383,7 @@ def test_e25_edit_accept_in_review(
     ticket_page = open_page(
         context_factory(),
         server,
-        f"#/ticket/{tid}",
+        f"#/workspace/{tid}",
         'section[data-screen="ticket"][data-stage="needs_approach"]',
     )
     assert (
@@ -427,8 +419,6 @@ def test_review_keyboard_shortcuts(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Recap one.",
         ticket_id=first,
@@ -447,8 +437,6 @@ def test_review_keyboard_shortcuts(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Recap two.",
         ticket_id=second,
@@ -568,8 +556,6 @@ def test_needs_user_requests_share_the_review_walk(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Proposal recap.",
         ticket_id=proposal,
@@ -617,7 +603,7 @@ def test_needs_user_requests_share_the_review_walk(
     # Open uses the same global shortcut as a proposal item.
     open_page_for_shortcut.locator(".review-keys").click()
     open_page_for_shortcut.keyboard.press("o")
-    open_page_for_shortcut.wait_for_url(f"**/#/ticket/{first_help}", timeout=WAIT_MS)
+    open_page_for_shortcut.wait_for_url(f"**/#/workspace/{first_help}", timeout=WAIT_MS)
 
     # Skip advances within the same mixed queue without changing canonical state.
     walk_page.locator(".review-keys").click()
@@ -674,8 +660,6 @@ def test_e27_auto_accept_chain(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Success is ready.",
         ticket_id=tid,
@@ -686,8 +670,6 @@ def test_e27_auto_accept_chain(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Approach is ready.",
         ticket_id=tid,
@@ -698,8 +680,6 @@ def test_e27_auto_accept_chain(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Plan is ready.",
         ticket_id=tid,
@@ -750,7 +730,7 @@ def test_pending_kickoff_edits_and_approves_before_five_worker_stages(
     page = open_page(
         context_factory(),
         server,
-        f"#/ticket/{tid}",
+        f"#/workspace/{tid}",
         f'section[data-screen="ticket"][data-ticket-id="{tid}"][data-stage="needs_kickoff"]',
     )
     assert page.locator('details[data-field="kickoff"] [data-approval-block]').count() == 1
@@ -833,7 +813,7 @@ def test_kickoff_ceiling_suggestion_prefills_ticket_and_review_but_owner_choice_
     ticket_page = open_page(
         context_factory(),
         server,
-        f"#/ticket/{ticket_id}",
+        f"#/workspace/{ticket_id}",
         ticket_scope,
     )
     assert ticket_page.locator(ticket_scope).input_value() == "needs_plan"
@@ -1009,8 +989,6 @@ def test_review_pending_kickoff_corrects_own_ticket_priority(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Success is ready.",
         ticket_id=tid,

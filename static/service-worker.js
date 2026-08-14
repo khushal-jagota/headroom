@@ -4,8 +4,14 @@ const FALLBACK_ROUTE = "/#/workspace";
 const CHIEF_ROUTE = "/#/agents/chief-of-staff";
 const ICON = "/static/icon-192.png";
 
+// A Ticket now opens on the Workspace. Notifications stored before that change still
+// carry the old Ticket route, and the app redirects it, so both stay supported.
 function isSupportedRoute(route) {
-  return route.startsWith("/#/ticket/") || route === CHIEF_ROUTE;
+  return (
+    route.startsWith("/#/workspace/") ||
+    route.startsWith("/#/ticket/") ||
+    route === CHIEF_ROUTE
+  );
 }
 
 function notificationPayload(event) {

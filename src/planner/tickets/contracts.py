@@ -205,6 +205,11 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     sprint_id: str | None
     sprint_item_id: str | None
     blocked_by_ticket_ids: list[str]
+    # Scope stated at creation by whoever has the authority to grant it. A creator that
+    # states scope creates the Ticket already scoped, so nothing parks that it cannot
+    # resolve. Omission keeps the default leash: the kickoff parks for user review.
+    ceiling: str | None
+    at_cap: str | None
 
 
 class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values

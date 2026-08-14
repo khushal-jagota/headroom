@@ -26,7 +26,7 @@ def test_ticket_takeover_is_quiet_and_current_stage_explains_user_ownership(
         "Stage owner controls",
     )["id"]
     ready = f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{ticket_id}", ready)
+    page = open_page(context_factory(), server, f"#/workspace/{ticket_id}", ready)
 
     assert page.locator(".ticket-operating [data-execution-route]").count() == 0
     assert page.locator(".ticket-operating [data-stage-owner]").count() == 0
@@ -64,7 +64,7 @@ def test_release_from_a_default_user_stage_creates_a_worker_override(
         "Default user ownership",
     )["id"]
     ready = f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{ticket_id}", ready)
+    page = open_page(context_factory(), server, f"#/workspace/{ticket_id}", ready)
 
     detail = api.get(server, f"/api/tickets/{ticket_id}")
     assert detail["stage_ownership_overrides"] == {}

@@ -123,14 +123,14 @@ def test_blocker_summary_resolves_active_and_cleared_ticket_and_item_rows(
                 title="Active blocker",
                 stage="needs_plan",
                 active=True,
-                href="#/ticket/t_active_blocker",
+                href="#/workspace/t_active_blocker",
             ),
             BlockedBySummaryRow(
                 ticket_id="t_done_blocker",
                 title="Done blocker",
                 stage="done",
                 active=False,
-                href="#/ticket/t_done_blocker",
+                href="#/workspace/t_done_blocker",
             ),
         ),
         blocks=(),
@@ -151,7 +151,7 @@ def test_blocker_summary_resolves_active_and_cleared_ticket_and_item_rows(
                 target_kind="ticket",
                 title="Outgoing target",
                 active=True,
-                href="#/ticket/t_outgoing_target",
+                href="#/workspace/t_outgoing_target",
             ),
         ),
     )
@@ -178,7 +178,7 @@ def test_ticket_detail_and_copy_text_use_resolved_blocker_summary(
                 "ticket_id": "t_active_blocker",
                 "title": "Active blocker",
                 "stage": "needs_plan",
-                "href": "#/ticket/t_active_blocker",
+                "href": "#/workspace/t_active_blocker",
             }
         ]
     }
