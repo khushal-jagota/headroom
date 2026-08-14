@@ -223,8 +223,6 @@ _Code paths:_ `src/planner/environments/`, `src/planner/notifications/`,
 
 - **Errored Ticket recovery.** An errored Ticket has no retry or clear path. Trigger: a
   product decision defines safe retry semantics.
-- **Held-message durability.** A server restart loses messages still held in memory.
-  Trigger: restart loss becomes important enough to persist the queue.
 - **Missed schedule occurrences.** Exact-minute schedules do not backfill downtime.
   Trigger: the product adopts a recovery policy.
 - **General Worker on Hermes.** The Hermes skill allowlist omits

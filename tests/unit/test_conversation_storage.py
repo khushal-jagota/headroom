@@ -61,6 +61,7 @@ from planner.conversation.storage import (
     ConversationRecordMissing,
     ConversationRecordNamesNoModel,
     ConversationStore,
+    StoredHeldPrompt,
 )
 from planner.core.db import connect, create_schema
 
@@ -670,6 +671,141 @@ def test_a_written_row_is_never_touched_again(store: ConversationStore, tmp_path
         assert str(rows[0]["payload"]) == conversation_event_payload_to_canonical_json(
             A_PROMPT
         )
+
+    asyncio.run(exercise())
+
+
+# --- the waiting line --------------------------------------------------------------------
+
+
+def _held(held_prompt_id: str, text: str = "waiting") -> StoredHeldPrompt:
+    return StoredHeldPrompt(
+        held_prompt_id=held_prompt_id,
+        content=text_message_content(text),
+        sender_label="owner",
+        model_change=None,
+        reasoning_effort_change=None,
+        sender_message_id=f"sender_{held_prompt_id}",
+        sent_at_unix_milliseconds=1_700_000_000_000,
+        snapshot_sent_at_unix_milliseconds=1_700_000_000_000,
+    )
+
+
+def test_the_waiting_line_reads_back_whole_and_in_the_order_it_was_written(
+    store: ConversationStore,
+) -> None:
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        await store.append_held_prompt("c", _held("held_1", "first"))
+        await store.append_held_prompt("c", _held("held_2", "second"))
+        await store.append_held_prompt("c", _held("held_3", "third"))
+
+        line = await store.read_held_prompts("c")
+
+        assert [held.held_prompt_id for held in line] == ["held_1", "held_2", "held_3"]
+        assert line[0] == _held("held_1", "first")
+
+    asyncio.run(exercise())
+
+
+def test_a_waiting_message_carries_everything_the_row_it_becomes_needs(
+    store: ConversationStore,
+) -> None:
+    """A picture, a model change and the sender's own id all wait with the message."""
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        held = StoredHeldPrompt(
+            held_prompt_id="held_rich",
+            content=A_MESSAGE_WITH_MORE_THAN_WORDS.content,
+            sender_label="automatic-loop",
+            model_change="another-model",
+            reasoning_effort_change="high",
+            sender_message_id=None,
+            sent_at_unix_milliseconds=None,
+            snapshot_sent_at_unix_milliseconds=1_700_000_000_123,
+        )
+        await store.append_held_prompt("c", held)
+
+        assert await store.read_held_prompts("c") == (held,)
+
+    asyncio.run(exercise())
+
+
+def test_one_conversations_waiting_line_never_shows_up_in_anothers(
+    store: ConversationStore,
+) -> None:
+    async def exercise() -> None:
+        await store.create_conversation(_resolved("first"))
+        await store.create_conversation(_resolved("second"))
+        await store.append_held_prompt("first", _held("held_1"))
+        await store.append_held_prompt("second", _held("held_2"))
+
+        assert [held.held_prompt_id for held in await store.read_held_prompts("first")] == [
+            "held_1"
+        ]
+        assert set(await store.conversation_ids_with_held_prompts()) == {"first", "second"}
+
+    asyncio.run(exercise())
+
+
+def test_a_waiting_message_leaves_the_line_in_the_write_that_says_what_happened_to_it(
+    store: ConversationStore,
+) -> None:
+    """Each of the three outcomes takes its message out of the line."""
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        for held_prompt_id in ("held_1", "held_2", "held_3"):
+            await store.append_held_prompt("c", _held(held_prompt_id))
+
+        await store.append_delivered_prompt(
+            "c", prompt=A_PROMPT, model_change=None, settled_held_prompt_id="held_1"
+        )
+        await store.append_event("c", A_REFUSED_DELIVERY, settled_held_prompt_id="held_2")
+        await store.append_event(
+            "c",
+            PromptDiscardedEventPayload(
+                content=text_message_content("waiting"), sender_label="owner"
+            ),
+            settled_held_prompt_id="held_3",
+        )
+
+        assert await store.read_held_prompts("c") == ()
+        assert await store.conversation_ids_with_held_prompts() == ()
+        assert [str(event.kind) for event in await store.read_events_after("c", 0)] == [
+            "prompt",
+            "prompt_delivery_refused",
+            "prompt_discarded",
+        ]
+
+    asyncio.run(exercise())
+
+
+def test_a_waiting_message_stays_in_the_line_when_its_outcome_is_not_written(
+    store: ConversationStore,
+) -> None:
+    """One transaction, so a failed write leaves the message waiting rather than gone."""
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        await store.append_held_prompt("c", _held("held_1"))
+
+        # The conversation this row would join is not there, so the append falls over
+        # after the point where the message would have left the line.
+        with pytest.raises(ConversationRecordMissing):
+            await store.append_event(
+                "never-started", A_REFUSED_DELIVERY, settled_held_prompt_id="held_1"
+            )
+        with pytest.raises(ConversationRecordMissing):
+            await store.append_delivered_prompt(
+                "never-started",
+                prompt=A_PROMPT,
+                model_change=None,
+                settled_held_prompt_id="held_1",
+            )
+
+        assert [held.held_prompt_id for held in await store.read_held_prompts("c")] == ["held_1"]
 
     asyncio.run(exercise())
 

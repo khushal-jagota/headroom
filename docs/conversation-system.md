@@ -303,8 +303,13 @@ update command and the card refresh have both finished. The reservation is made
 before spawn, so a send and an update cannot both see an empty gap and race into
 it.
 
-Held messages live in memory only: a server restart loses whatever was still
-waiting in line (the notebook keeps what was delivered or discarded). Kill is
+The waiting line is stored, so it outlives the server. A message is written down
+before its sender is told it is queued, and it leaves the line only in the same
+write that records what happened to it: delivered, refused, or discarded. A new
+server reads each conversation's line back in the order the messages arrived, and
+runs what was still waiting when the old one ended. So a restart delays a held
+message instead of losing it, and several agents can start work shortly after a
+restart. Kill is
 the loud version of stopping: it ends the running turn and throws away the
 waiting line, writing a discard row for each thrown-away message, because text
 someone handed over must never vanish without a trace. Pressing New in the pane
@@ -431,9 +436,7 @@ child process runs. A conversation with no report yet offers nothing.
 
 ## Deferred
 
-- **Held-line durability**: if losing the in-memory waiting line on a restart
-  ever bites, the line can be made durable without changing the contract.
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-08-10._
+_Last verified: 2026-08-14._

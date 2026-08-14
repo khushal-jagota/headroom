@@ -113,6 +113,7 @@ from planner.conversation.storage import (
     ConversationRecordNamesNoModel,
     ConversationStore,
     StoredConversationEvent,
+    StoredHeldPrompt,
 )
 
 LOGGER = logging.getLogger("planner.conversation")
@@ -183,25 +184,6 @@ class _RunningTurn:
 
 
 @dataclass(frozen=True, slots=True)
-class _HeldPrompt:
-    """A message waiting for the agent to free up, with the change it carries.
-
-    The sender's own id and send instant wait here with it: a held message is delivered,
-    refused or discarded long after the caller has gone, and whichever row it becomes has
-    to carry the same id the sender minted.
-    """
-
-    held_prompt_id: str
-    content: MessageContent
-    sender_label: str
-    model_change: str | None
-    reasoning_effort_change: str | None
-    sender_message_id: str | None
-    sent_at_unix_milliseconds: int | None
-    snapshot_sent_at_unix_milliseconds: int
-
-
-@dataclass(frozen=True, slots=True)
 class _PromptDeliveryAttempt:
     """The wire result and whether a refusal must remain after its caller leaves.
 
@@ -228,7 +210,7 @@ class _ConversationState:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     phase: _ConversationPhase = _ConversationPhase.idle
     phase_settled: asyncio.Event = field(default_factory=asyncio.Event)
-    held_prompts: deque[_HeldPrompt] = field(default_factory=deque)
+    held_prompts: deque[StoredHeldPrompt] = field(default_factory=deque)
     admitted_sender_messages: dict[str, tuple[MessageContent, str]] = field(default_factory=dict)
     backend_event_queue: asyncio.Queue[_BackendEventHandler] = field(default_factory=asyncio.Queue)
     backend_event_pump: asyncio.Task[None] | None = None
@@ -284,6 +266,7 @@ class SqliteProcessConversationSystem:
         self._conversations: dict[str, _ConversationState] = {}
         self._conversations_lock = asyncio.Lock()
         self._idle_child_janitor: asyncio.Task[None] | None = None
+        self._held_prompt_drain: asyncio.Task[None] | None = None
 
     # --- the contract -------------------------------------------------------------------
 
@@ -529,7 +512,7 @@ class SqliteProcessConversationSystem:
         state.last_touched_monotonic = self._monotonic_now()
 
         await self._acquire_settled(state)
-        held: _HeldPrompt | None = None
+        held: StoredHeldPrompt | None = None
         reservation: _ReservedTurn | None = None
         steer_child: BackendChild | None = None
         immediate_refusal: PromptDeliveryRefusalReason | None = None
@@ -603,8 +586,11 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.idle,
+                    settled_held_prompt_id=held.held_prompt_id,
                 )
             except BaseException:
+                # Nothing was written about this message, so its stored row still says it
+                # is waiting. See the drain for why it is left there rather than put back.
                 self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
                 raise
             if started:
@@ -638,6 +624,7 @@ class SqliteProcessConversationSystem:
                     sender_message_id=held.sender_message_id,
                     sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
                 ),
+                settled_held_prompt_id=held.held_prompt_id,
             )
         return PromptDeliveryInjected()
 
@@ -664,8 +651,8 @@ class SqliteProcessConversationSystem:
             for position, held in enumerate(state.held_prompts):
                 if held.held_prompt_id != held_prompt_id:
                     continue
-                # Out of the queue before its row is written, so a write that falls over
-                # leaves the message discarded rather than delivered.
+                # Out of this process's line straight away, so nothing delivers it while
+                # its discard row is written. The stored row leaves in that same write.
                 del state.held_prompts[position]
                 self._publish_held_prompts_changed(state)
                 await self._append_event(
@@ -675,6 +662,7 @@ class SqliteProcessConversationSystem:
                         sender_label=held.sender_label,
                         sender_message_id=held.sender_message_id,
                     ),
+                    settled_held_prompt_id=held.held_prompt_id,
                 )
                 return True
         return False
@@ -800,14 +788,59 @@ class SqliteProcessConversationSystem:
         if self._idle_child_janitor is None:
             self._idle_child_janitor = asyncio.create_task(self._sweep_idle_children_forever())
 
+    async def start_held_prompt_drain(self) -> None:
+        """Run what was left waiting when the last process ended.
+
+        A restart is the ordinary reason a message is still in a line. Nothing is running
+        in a conversation this process has just picked up, so every stored line is drained.
+        The work happens in its own task, because draining starts backend children and
+        starting the server must not wait for them.
+        """
+        if self._held_prompt_drain is None:
+            self._held_prompt_drain = asyncio.create_task(self._drain_stored_held_prompts())
+
+    async def _drain_stored_held_prompts(self) -> None:
+        """Drain each conversation that has a stored waiting line, one after another.
+
+        One conversation's trouble is not another's, so a failure is logged and the next
+        line is still run.
+        """
+        try:
+            conversation_ids = await self._store.conversation_ids_with_held_prompts()
+        except Exception:
+            LOGGER.exception("reading the stored conversation waiting lines failed")
+            return
+        for conversation_id in conversation_ids:
+            try:
+                state = await self._conversation_state(conversation_id)
+                if state is not None:
+                    await self._drain_held_prompts(state)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                LOGGER.exception(
+                    "draining the waiting line of conversation %s failed", conversation_id
+                )
+
     async def shutdown(self) -> None:
-        """Stop the janitor, stop taking backend news, and stop every child."""
+        """Stop the janitor and the startup drain, stop taking backend news, stop every
+        child.
+
+        A drain that is still going is cancelled rather than waited for. Whatever it had
+        not reached is still stored, and the next process drains it.
+        """
         janitor = self._idle_child_janitor
         self._idle_child_janitor = None
         if janitor is not None:
             janitor.cancel()
             with suppress(asyncio.CancelledError):
                 await janitor
+        drain = self._held_prompt_drain
+        self._held_prompt_drain = None
+        if drain is not None:
+            drain.cancel()
+            with suppress(asyncio.CancelledError):
+                await drain
         async with self._conversations_lock:
             states = list(self._conversations.values())
         for state in states:
@@ -828,7 +861,13 @@ class SqliteProcessConversationSystem:
         Backend news is worked through on a queue per conversation, and a turn ending on
         that queue can set off a whole drain of held messages. This waits for all of it,
         which is what lets a test assert consequences instead of sleeping for them.
+
+        The drain of stored lines at startup is part of that: it is the first thing this
+        process does on its own.
         """
+        drain = self._held_prompt_drain
+        if drain is not None:
+            await drain
         while True:
             async with self._conversations_lock:
                 states = list(self._conversations.values())
@@ -866,22 +905,24 @@ class SqliteProcessConversationSystem:
             # Held if anything at all is going on, and held if anything is already
             # waiting: a message that arrived later never runs earlier.
             if state.phase is not _ConversationPhase.idle or state.held_prompts:
-                state.held_prompts.append(
-                    _HeldPrompt(
-                        held_prompt_id=f"held_{uuid4().hex}",
-                        content=content,
-                        sender_label=sender_label,
-                        model_change=model_change,
-                        reasoning_effort_change=reasoning_effort_change,
-                        sender_message_id=sender_message_id,
-                        sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                        snapshot_sent_at_unix_milliseconds=(
-                            sent_at_unix_milliseconds
-                            if sent_at_unix_milliseconds is not None
-                            else int(time.time() * 1000)
-                        ),
-                    )
+                held = StoredHeldPrompt(
+                    held_prompt_id=f"held_{uuid4().hex}",
+                    content=content,
+                    sender_label=sender_label,
+                    model_change=model_change,
+                    reasoning_effort_change=reasoning_effort_change,
+                    sender_message_id=sender_message_id,
+                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    snapshot_sent_at_unix_milliseconds=(
+                        sent_at_unix_milliseconds
+                        if sent_at_unix_milliseconds is not None
+                        else int(time.time() * 1000)
+                    ),
                 )
+                # The row is written before the caller is told "queued", so a message
+                # somebody was promised would run is never only in this process's memory.
+                await self._store.append_held_prompt(state.record.conversation_id, held)
+                state.held_prompts.append(held)
                 self._publish_held_prompts_changed(state)
                 return PromptDeliveryQueued(queue_position=len(state.held_prompts))
             reservation = self._reserve_turn(state)
@@ -1158,11 +1199,16 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None,
         record_refusal: bool,
         phase_when_not_started: _ConversationPhase,
+        settled_held_prompt_id: str | None = None,
     ) -> bool:
         """Turn a delivery that has happened, or failed to, into the record and the state.
 
         The rows are written before the turn is admitted, so nothing the backend says about
         this turn can be recorded ahead of the prompt that started it.
+
+        ``settled_held_prompt_id`` is set when this delivery is of a message that was
+        waiting in the line. Whichever row is written takes that message out of the line
+        with it, in the one transaction.
         """
         async with state.lock:
             try:
@@ -1177,6 +1223,7 @@ class SqliteProcessConversationSystem:
                                 refusal_reason=refusal,
                                 sender_message_id=sender_message_id,
                             ),
+                            settled_held_prompt_id=settled_held_prompt_id,
                         )
                     self._set_phase(state, phase_when_not_started)
                     return False
@@ -1211,6 +1258,7 @@ class SqliteProcessConversationSystem:
                         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     ),
                     model_change=carried_change,
+                    settled_held_prompt_id=settled_held_prompt_id,
                 )
                 self._take_in_written_rows(state, written)
                 if carried_change is not None:
@@ -1239,6 +1287,11 @@ class SqliteProcessConversationSystem:
         second caller finding it idle a moment later does not start draining beside this
         one. A held message that cannot be delivered has its own refusal recorded — the
         caller that sent it is long gone — and the next one is tried.
+
+        A message being delivered leaves this process's line straight away, so nothing
+        picks it up twice, and its stored row stays until the row saying what happened is
+        written. So a delivery that falls over unexpectedly loses nothing: the message is
+        still stored, and the drain at the next start is what runs it.
         """
         async with state.lock:
             if state.phase is not _ConversationPhase.idle or not state.held_prompts:
@@ -1277,10 +1330,15 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.draining,
+                    settled_held_prompt_id=held.held_prompt_id,
                 )
             except BaseException:
                 # The drain is over, so the conversation goes back to nobody owning it
-                # rather than staying in a drain that has stopped happening.
+                # rather than staying in a drain that has stopped happening. Nothing was
+                # written about this message, so its stored row still says it is waiting
+                # and the drain at the next start runs it. It is not put back into this
+                # process's line: nothing would come along to drain it there, and every
+                # later message would queue behind one that is never going to move.
                 self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
                 raise
             if started:
@@ -1289,8 +1347,9 @@ class SqliteProcessConversationSystem:
     async def _discard_held_prompts(self, state: _ConversationState) -> None:
         """Throw away everything waiting, writing each one down. The lock must be held.
 
-        Each message leaves the queue before its row is written, so a write that falls
-        over part-way leaves the rest of the queue discarded rather than delivered.
+        Each message leaves the line in the transaction that writes its discard row, so a
+        write that falls over part-way leaves the rest of the line waiting rather than
+        thrown away with nothing to show for it.
         """
         while state.held_prompts:
             discarded = state.held_prompts.popleft()
@@ -1302,12 +1361,13 @@ class SqliteProcessConversationSystem:
                     sender_label=discarded.sender_label,
                     sender_message_id=discarded.sender_message_id,
                 ),
+                settled_held_prompt_id=discarded.held_prompt_id,
             )
 
     async def _record_promoted_refusal(
         self,
         state: _ConversationState,
-        held: _HeldPrompt,
+        held: StoredHeldPrompt,
         mode: PromptDeliveryMode,
         refusal: PromptDeliveryRefusalReason,
     ) -> None:
@@ -1321,6 +1381,7 @@ class SqliteProcessConversationSystem:
                 refusal_reason=refusal,
                 sender_message_id=held.sender_message_id,
             ),
+            settled_held_prompt_id=held.held_prompt_id,
         )
 
     # --- turns --------------------------------------------------------------------------
@@ -1874,11 +1935,15 @@ class SqliteProcessConversationSystem:
     # --- shared internals ---------------------------------------------------------------
 
     async def _conversation_state(self, conversation_id: str) -> _ConversationState | None:
-        """This process's state for a conversation, read from its row the first time.
+        """This process's state for a conversation, read from its rows the first time.
 
         A conversation started before this process was is picked up here with no child and
         nothing running, which is the honest answer after a restart: the record is all
         there, and the next message resumes the session.
+
+        Its waiting line comes with it. The messages are stored, so a new process has the
+        line the old one had, in the same order, for the screen that shows it, the drain
+        that runs it, and the sender asking whether its message is already in it.
         """
         async with self._conversations_lock:
             state = self._conversations.get(conversation_id)
@@ -1888,13 +1953,20 @@ class SqliteProcessConversationSystem:
             if record is None:
                 return None
             state = _ConversationState(record=record)
+            state.held_prompts.extend(await self._store.read_held_prompts(conversation_id))
             self._conversations[conversation_id] = state
             return state
 
     async def _append_event(
-        self, state: _ConversationState, payload: ConversationEventPayload
+        self,
+        state: _ConversationState,
+        payload: ConversationEventPayload,
+        *,
+        settled_held_prompt_id: str | None = None,
     ) -> StoredConversationEvent:
-        stored = await self._store.append_event(state.record.conversation_id, payload)
+        stored = await self._store.append_event(
+            state.record.conversation_id, payload, settled_held_prompt_id=settled_held_prompt_id
+        )
         self._take_in_written_rows(state, (stored,))
         return stored
 
