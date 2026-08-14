@@ -570,13 +570,9 @@ def test_starting_a_conversation_writes_its_record_and_touches_nothing_else(
         written_calls.append("create_conversation")
         return await real_create(resolved)
 
-    async def recording_append(  # type: ignore[no-untyped-def]
-        conversation_id: str, payload, *, settled_held_prompt_id: str | None = None
-    ):
+    async def recording_append(conversation_id: str, payload):  # type: ignore[no-untyped-def]
         written_calls.append("append_event")
-        return await real_append(
-            conversation_id, payload, settled_held_prompt_id=settled_held_prompt_id
-        )
+        return await real_append(conversation_id, payload)
 
     harness.store.create_conversation = recording_create  # type: ignore[method-assign]
     harness.store.append_event = recording_append  # type: ignore[method-assign]
@@ -2792,14 +2788,10 @@ def test_a_failed_turn_whose_ending_cannot_be_written_still_says_so_in_the_log(
 
         real_append = harness.store.append_event
 
-        async def append_that_cannot_write_an_ending(  # type: ignore[no-untyped-def]
-            conversation_id: str, payload, *, settled_held_prompt_id: str | None = None
-        ):
+        async def append_that_cannot_write_an_ending(conversation_id: str, payload):  # type: ignore[no-untyped-def]
             if isinstance(payload, TurnEndedEventPayload):
                 raise sqlite3.OperationalError("database is locked")
-            return await real_append(
-                conversation_id, payload, settled_held_prompt_id=settled_held_prompt_id
-            )
+            return await real_append(conversation_id, payload)
 
         harness.store.append_event = append_that_cannot_write_an_ending  # type: ignore[method-assign]
 
@@ -3099,191 +3091,5 @@ def test_each_held_queue_mutation_publishes_an_empty_live_frame(harness: _Harnes
             held = (await harness.system.held_prompts("c"))[0]
             await harness.system.discard_held_prompt("c", held.held_prompt_id)
             assert isinstance(await watching.next_item(), HeldPromptsChangedFrame)
-
-    _run(exercise)
-
-
-# --- the waiting line outlives the process ------------------------------------------------
-
-
-def _restarted(db_path: Path) -> _Harness:
-    """A second system over the same database: what a restart leaves the next process."""
-    return _Harness(db_path)
-
-
-def test_a_message_is_stored_before_its_sender_is_told_it_is_queued(
-    harness: _Harness, tmp_path: Path
-) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
-
-        assert await harness.system.send(
-            "c", text_message_content("held"), sender_label="owner"
-        ) == PromptDeliveryQueued(queue_position=1)
-
-        stored = await harness.store.read_held_prompts("c")
-        assert [message_content_text(held.content) for held in stored] == ["held"]
-
-    _run(exercise)
-
-
-def test_a_new_process_has_the_line_the_old_one_had_in_the_same_order(
-    harness: _Harness, tmp_path: Path
-) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
-        for text in ("held-a", "held-b", "held-c"):
-            await harness.system.send("c", text_message_content(text), sender_label="owner")
-        before = await harness.system.held_prompts("c")
-
-        restarted = _restarted(tmp_path / "conversations.db")
-        try:
-            after = await restarted.system.held_prompts("c")
-        finally:
-            await restarted.system.shutdown()
-
-        assert [message_content_text(held.content) for held in after] == [
-            "held-a",
-            "held-b",
-            "held-c",
-        ]
-        assert after == before
-
-    _run(exercise)
-
-
-def test_a_new_process_runs_what_was_left_waiting(harness: _Harness, tmp_path: Path) -> None:
-    """The whole point: a restart delivers the messages instead of losing them."""
-
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
-        await harness.system.send("c", text_message_content("held-a"), sender_label="owner")
-        await harness.system.send("c", text_message_content("held-b"), sender_label="owner")
-
-        restarted = _restarted(tmp_path / "conversations.db")
-        try:
-            await restarted.system.start_held_prompt_drain()
-            await restarted.settle()
-
-            # The first message in line is running in the new process, so the second is
-            # still waiting behind it, exactly as it was.
-            assert restarted.backend("c").written_texts() == ("held-a",)
-            assert [
-                message_content_text(held.content)
-                for held in await restarted.system.held_prompts("c")
-            ] == ["held-b"]
-            assert await restarted.store.read_held_prompts("c") != ()
-
-            await restarted.complete_turn("c")
-            assert restarted.backend("c").written_texts() == ("held-a", "held-b")
-            assert await restarted.store.read_held_prompts("c") == ()
-        finally:
-            await restarted.system.shutdown()
-
-    _run(exercise)
-
-
-def test_a_delivered_message_leaves_the_line_with_the_row_that_records_it(
-    harness: _Harness,
-) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
-        await harness.system.send("c", text_message_content("held"), sender_label="owner")
-        assert await harness.store.read_held_prompts("c") != ()
-
-        await harness.complete_turn("c")
-
-        assert harness.backend("c").written_texts() == ("incumbent", "held")
-        assert await harness.store.read_held_prompts("c") == ()
-
-    _run(exercise)
-
-
-def test_a_refused_message_leaves_the_line_with_its_refusal(harness: _Harness) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
-        await harness.system.send("c", text_message_content("held"), sender_label="owner")
-        harness.backend("c").write_fails = True
-
-        await harness.complete_turn("c")
-
-        assert await harness.recorded_kinds("c") == (
-            ConversationEventKind.prompt,
-            ConversationEventKind.turn_ended,
-            ConversationEventKind.prompt_delivery_refused,
-        )
-        assert await harness.store.read_held_prompts("c") == ()
-
-    _run(exercise)
-
-
-def test_discarding_one_message_takes_it_out_of_storage_too(harness: _Harness) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
-        await harness.system.send("c", text_message_content("held"), sender_label="owner")
-        held = (await harness.system.held_prompts("c"))[0]
-
-        assert await harness.system.discard_held_prompt("c", held.held_prompt_id) is True
-
-        assert await harness.store.read_held_prompts("c") == ()
-        assert ConversationEventKind.prompt_discarded in await harness.recorded_kinds("c")
-
-    _run(exercise)
-
-
-def test_kill_takes_the_whole_stored_line_with_it(harness: _Harness, tmp_path: Path) -> None:
-    """A killed line is gone for the next process too, discard rows and all."""
-
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
-        await harness.system.send("c", text_message_content("held one"), sender_label="owner")
-        await harness.system.send("c", text_message_content("held two"), sender_label="owner")
-
-        await harness.system.kill("c")
-        await harness.settle()
-
-        assert await harness.store.read_held_prompts("c") == ()
-        restarted = _restarted(tmp_path / "conversations.db")
-        try:
-            await restarted.system.start_held_prompt_drain()
-            await restarted.settle()
-            assert restarted.backend("c").written_texts() == ()
-        finally:
-            await restarted.system.shutdown()
-
-    _run(exercise)
-
-
-def test_a_message_lost_to_an_unexpected_error_is_still_waiting_for_the_next_process(
-    harness: _Harness, tmp_path: Path
-) -> None:
-    """Nothing was written about it, so its row still says it is waiting."""
-
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
-        await harness.system.send("c", text_message_content("held"), sender_label="owner")
-        harness.backend("c").writes_raise_something_unnamed = True
-
-        await harness.complete_turn("c")
-
-        # This process dropped it, and said nothing about it either way.
-        assert await harness.system.held_prompts("c") == ()
-        assert ConversationEventKind.prompt_discarded not in await harness.recorded_kinds("c")
-
-        restarted = _restarted(tmp_path / "conversations.db")
-        try:
-            await restarted.system.start_held_prompt_drain()
-            await restarted.settle()
-            assert restarted.backend("c").written_texts() == ("held",)
-        finally:
-            await restarted.system.shutdown()
 
     _run(exercise)

@@ -169,9 +169,6 @@ def create_app(
             else conversation_system_for_test
         )
         await conversation.system.start_idle_child_janitor()
-        # Whatever was still waiting in a conversation when the last process ended is
-        # stored, and this is the process that runs it.
-        await conversation.system.start_held_prompt_drain()
 
         lifecycle_observer = asyncio.create_task(
             observe_path_changes(deployment_lifecycle_path, change_signal.emit)

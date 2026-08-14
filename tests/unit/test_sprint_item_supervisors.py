@@ -6,7 +6,7 @@ import asyncio
 import json
 import threading
 from pathlib import Path
-from time import monotonic, sleep
+from time import monotonic
 from typing import Any, cast
 
 import pytest
@@ -900,19 +900,19 @@ def test_supervision_system_scenario_preserves_retry_restart_and_canonical_resol
             asyncio_loop=restarted_asyncio_loop,
         )
         restarted_runtime.start(60)
-        # The message is queued in a conversation waiting line, and that line is stored.
-        # So the restart settles nothing here: the delivery is still going to run, and
-        # the row the conversation writes for it is what settles it.
-        sleep(0.2)
+        deadline = monotonic() + 2
+        while monotonic() < deadline:
+            with connect(str(db_path)) as conn:
+                recovered = supervisor_obligations_data.list_for_item(
+                    conn, str(item["id"])
+                )
+            if recovered and recovered[0].lifecycle.value == "failed":
+                break
         restarted_runtime.stop(deadline=monotonic() + 2)
-        with connect(str(db_path)) as conn:
-            recovered = supervisor_obligations_data.list_for_item(conn, str(item["id"]))
-            still_queued = conn.execute(
-                "SELECT state FROM supervisor_obligation_deliveries WHERE id=?",
-                (recovered[0].delivery_id,),
-            ).fetchone()
-        assert recovered[0].lifecycle.value == "pending"
-        assert still_queued["state"] == "queued"
+        assert recovered[0].lifecycle.value == "failed"
+        assert recovered[0].last_error == (
+            "queued delivery left memory without a durable outcome"
+        )
 
         resolved = restarted_client.post(
             f"/api/tickets/{ticket_id}/accept/wireframe",

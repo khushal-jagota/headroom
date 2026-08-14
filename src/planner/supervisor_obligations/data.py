@@ -237,6 +237,17 @@ def prepared_delivery(
     )
 
 
+def mark_queued_outcome_uncertain(conn: sqlite3.Connection, delivery_id: str, now: int) -> None:
+    settle_delivery(
+        conn,
+        delivery_id,
+        state="uncertain",
+        now=now,
+        error="queued delivery left memory without a durable outcome",
+        terminal=True,
+    )
+
+
 def reconcile_deliveries(conn: sqlite3.Connection, now: int) -> None:
     """Settle durable batches from conversation outcomes after sends or restarts."""
     rows = conn.execute(

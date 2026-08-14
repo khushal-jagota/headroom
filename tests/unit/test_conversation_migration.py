@@ -17,7 +17,7 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "conversation_held_prompts"
+HEAD_REVISION = "supervisor_obligations"
 
 
 def _table_columns(
@@ -91,30 +91,6 @@ def test_a_row_of_a_conversations_record_is_keyed_by_its_place_in_that_conversat
         )
 
 
-def test_the_waiting_line_is_keyed_by_the_message_and_belongs_to_a_conversation(
-    upgraded: sqlite3.Connection,
-) -> None:
-    assert _table_columns(upgraded, "conversation_held_prompts") == [
-        ("held_prompt_id", "TEXT", 0, 1),
-        ("conversation_id", "TEXT", 1, 0),
-        ("content", "TEXT", 1, 0),
-        ("sender_label", "TEXT", 1, 0),
-        ("sender_message_id", "TEXT", 0, 0),
-        ("sent_at_unix_milliseconds", "INTEGER", 0, 0),
-        ("snapshot_sent_at_unix_milliseconds", "INTEGER", 1, 0),
-        ("model_change", "TEXT", 0, 0),
-        ("reasoning_effort_change", "TEXT", 0, 0),
-        ("created_at", "INTEGER", 1, 0),
-    ]
-
-    with pytest.raises(sqlite3.IntegrityError):
-        upgraded.execute(
-            "INSERT INTO conversation_held_prompts (held_prompt_id, conversation_id, content, "
-            "sender_label, snapshot_sent_at_unix_milliseconds, created_at) "
-            "VALUES ('held_1', 'never-started', '{}', 'owner', 1, 1)"
-        )
-
-
 def test_a_conversation_starts_with_no_environment_and_no_record(
     upgraded: sqlite3.Connection,
 ) -> None:
@@ -141,22 +117,18 @@ def test_a_row_cannot_belong_to_a_conversation_that_is_not_there(
         )
 
 
-def test_no_revision_here_has_a_way_back(upgraded: sqlite3.Connection) -> None:
-    """Each would throw away rows nothing could put back, so each refuses to.
+def test_neither_revision_has_a_way_back(upgraded: sqlite3.Connection) -> None:
+    """Both would throw away rows nothing could put back, so both refuse to.
 
-    Dropping the conversation tables would throw away every conversation. Dropping the
-    waiting line would throw away messages that are still going to run. Undoing the last
-    would have to refill five tables whose writers no longer exist.
+    Dropping the conversation tables would throw away every conversation. Undoing the
+    other would have to refill five tables whose writers no longer exist.
     """
     del upgraded
     from planner.core.migrations.versions import (
-        conversation_held_prompts,
         conversation_system_tables,
         one_conversation_system,
     )
 
-    with pytest.raises(NotImplementedError):
-        conversation_held_prompts.downgrade()
     with pytest.raises(NotImplementedError):
         conversation_system_tables.downgrade()
     with pytest.raises(NotImplementedError):
