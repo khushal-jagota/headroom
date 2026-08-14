@@ -103,27 +103,45 @@ class ChangeSignallingConnection(sqlite3.Connection):
 
     The announcement happens after the statement returns, when the write lock is
     already released and the new rows are readable. A rollback, or a commit that
-    fails, announces nothing.
+    fails, announces nothing. A committed transaction that changed no rows — a
+    reconciliation pass that found nothing to do — also announces nothing: several
+    background loops open a transaction on every pass and are themselves woken by
+    this signal, so an empty commit that announced would wake the loop that made it
+    and the tick would collapse into a busy-spin.
     """
+
+    # Rows changed when the currently open transaction began; None when no
+    # transaction is open or it was opened outside this method (then a commit
+    # announces, conservatively).
+    _rows_changed_at_transaction_start: int | None = None
 
     def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
         had_open_transaction = self.in_transaction
         rows_changed_before = self.total_changes
         cursor = super().execute(sql, parameters)
         if self.in_transaction:
+            if not had_open_transaction:
+                self._rows_changed_at_transaction_start = rows_changed_before
             return cursor
         if had_open_transaction:
-            if _statement_commits(sql):
+            if _statement_commits(sql) and self._open_transaction_wrote():
                 change_signal.emit()
+            self._rows_changed_at_transaction_start = None
         elif self.total_changes != rows_changed_before:
             change_signal.emit()
         return cursor
 
     def commit(self) -> None:
         had_open_transaction = self.in_transaction
+        wrote = self._open_transaction_wrote()
         super().commit()
-        if had_open_transaction:
+        self._rows_changed_at_transaction_start = None
+        if had_open_transaction and wrote:
             change_signal.emit()
+
+    def _open_transaction_wrote(self) -> bool:
+        baseline = self._rows_changed_at_transaction_start
+        return baseline is None or self.total_changes != baseline
 
 
 def connect(db_path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
