@@ -5,6 +5,7 @@ import type { BoardCard, BoardSprintItem, Priority } from "./types";
 // them. The labels are the ones the Sprint screen and the Sprint Item page already use.
 const GROUP_ORDER = [
   { key: "needs-me", label: "Needs user", hidden: false },
+  { key: "waiting-for-kickoff", label: "Waiting for kickoff", hidden: false },
   { key: "current-awaiting-approval", label: "Awaiting approval", hidden: false },
   { key: "current-paired", label: "Paired", hidden: false },
   { key: "current-running", label: "Agent", hidden: true },
@@ -17,6 +18,7 @@ const GROUP_ORDER = [
 // The groups that hold work the user owns. They decide which Items lead the rail.
 const USER_GROUP_KEYS = new Set([
   "needs-me",
+  "waiting-for-kickoff",
   "current-awaiting-approval",
   "current-paired"
 ]);
@@ -47,12 +49,15 @@ export type WorkspaceRail = {
 
 const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
 
-// A card's own two facts win first: it is finished, or a blocker holds it. Everything
-// else is the shared Ticket condition.
+// A card's own two facts win first: it is finished, or a blocker holds it. Then the
+// shared awaiting-approval mark splits once: a Ticket still gated on its kickoff is the
+// one worth naming on its own. Everything else waiting is simply awaiting approval.
 export function workspaceCardGroupKey(card: BoardCard): string {
   if (card.is_done) return "completed";
   if (card.blocked) return "errored";
-  return sprintTicketCondition(card).mark;
+  const mark = sprintTicketCondition(card).mark;
+  if (mark !== "current-awaiting-approval") return mark;
+  return card.gating_field === "kickoff" ? "waiting-for-kickoff" : mark;
 }
 
 export function workspaceItemGroups(

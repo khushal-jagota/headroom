@@ -68,7 +68,7 @@ record proves the accepted outcome.
 
 Use these canonical actions when they match the decision:
 
-- `ticket create --sprint-item-id <your item>` creates a child Ticket under your Item.
+- `ticket create --sprint-item <your item>` creates a child Ticket under your Item.
   Load and follow `panels-ticket-creation` first. A Ticket you create is scoped like any
   other: its kickoff parks for the user. Add `--ceiling` and `--at-cap` to state how far
   the new Worker may go, when the user gave you that scope to grant.
