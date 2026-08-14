@@ -124,6 +124,17 @@ class WorkerTypeDefinition:
     def ceiling_range(self) -> tuple[str, ...]:
         return self.stage_ids()
 
+    def resolve_ceiling(self, raw: str) -> str:
+        """Accept a stage id or the plain name of the field that stage gates."""
+        if raw in self.ceiling_range():
+            return raw
+        try:
+            return self.stage_gated_by(raw)
+        except PlannerError as exc:
+            raise PlannerError(
+                ErrorCode.scope_invalid, "unknown ceiling", {"ceiling": raw}
+            ) from exc
+
     def default_ceiling(self) -> str:
         return self.ceiling_range()[0]
 

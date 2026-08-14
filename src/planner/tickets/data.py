@@ -406,6 +406,72 @@ def _load_ticket_for_write(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
     return ticket
 
 
+def _is_normal_sprint_item(conn: sqlite3.Connection, sprint_item_id: str | None) -> bool:
+    if sprint_item_id is None:
+        return False
+    row = conn.execute(
+        "SELECT 1 FROM sprint_items WHERE id = ? AND kind = 'normal'",
+        (sprint_item_id,),
+    ).fetchone()
+    return row is not None
+
+
+def _seed_kickoff(
+    kickoff_note: str | None,
+    actor: str,
+    now: int,
+    *,
+    stage: str,
+    ceiling: str,
+    at_cap: AtCap,
+    ownership_mode: StageOwnershipMode | None,
+    worker_type_definition: WorkerTypeDefinition,
+) -> tuple[str, TicketFields, TicketStatus]:
+    """Seed the kickoff under the scope the creator stated.
+
+    Scope stated at creation is the same scope an ordinary proposal is judged against, so
+    a kickoff settles, parks for its agent reviewer, or parks for the user by exactly the
+    rules a later proposal follows. Nothing parks that the creator cannot resolve.
+    """
+    fields = TicketFields.empty(worker_type_definition.field_ids())
+    if kickoff_note is None:
+        return stage, fields, TicketStatus.empty
+    effective_ownership = ownership_mode or StageOwnershipMode.worker
+    settled_stage = (
+        machine.auto_accept_target(
+            stage, ceiling, "kickoff", worker_type_definition=worker_type_definition
+        )
+        if effective_ownership is StageOwnershipMode.worker
+        else None
+    )
+    if settled_stage is not None:
+        fields = fields_codec.with_slot(
+            fields, "kickoff", FieldSlot(value=kickoff_note, proposal=None, user_note=None)
+        )
+        return settled_stage, fields, machine.resting_ticket_status(effective_ownership)
+    review_route = machine.parked_proposal_review_route(effective_ownership, at_cap)
+    fields = fields_codec.with_slot(
+        fields,
+        "kickoff",
+        FieldSlot(
+            value=None,
+            proposal=Proposal(
+                body=kickoff_note,
+                proposed_by=actor,
+                created_at=now,
+                review_route=review_route,
+            ),
+            user_note=None,
+        ),
+    )
+    status = (
+        TicketStatus.awaiting_agent_review
+        if review_route is ProposalReviewRoute.agent_review
+        else TicketStatus.awaiting_user_review
+    )
+    return stage, fields, status
+
+
 def _require_agent_review_placement(
     conn: sqlite3.Connection,
     ticket: Ticket,
@@ -988,6 +1054,9 @@ def create_ticket(
     worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
     day_id: str | None = None,
+    supervisor_sprint_item_id: str | None = None,
+    stated_ceiling: str | None = None,
+    stated_at_cap: AtCap | None = None,
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
@@ -1011,18 +1080,6 @@ def create_ticket(
         conn, worker_type_definition, initial_stage
     )
     ticket_id = new_id(ID_PREFIXES["ticket"])
-    initial_fields = TicketFields.empty(worker_type_definition.field_ids())
-    if kickoff_note is not None:
-        initial_fields = fields_codec.with_slot(
-            initial_fields,
-            "kickoff",
-            FieldSlot(
-                value=None,
-                proposal=Proposal(body=kickoff_note, proposed_by=actor, created_at=now),
-                user_note=None,
-            ),
-        )
-    fields_json = fields_codec.fields_to_json(initial_fields)
     with _txn(conn):
         if sprint_item_id is not None and project_id is None and sprint_id is None:
             item = conn.execute(
@@ -1043,6 +1100,36 @@ def create_ticket(
             conn, project_id=project_id, sprint_item_id=sprint_item_id
         )
         stored_priority = _created_ticket_priority(priority, priority_anchors)
+        # A supervisor creating under its own Item reviews what it created.
+        supervised = (
+            actor == admission.SPRINT_ITEM_SUPERVISOR_ACTOR
+            and sprint_item_id is not None
+            and supervisor_sprint_item_id == sprint_item_id
+            and _is_normal_sprint_item(conn, sprint_item_id)
+        )
+        ceiling = (
+            default_ceiling
+            if stated_ceiling is None
+            else worker_type_definition.resolve_ceiling(stated_ceiling)
+        )
+        at_cap = stated_at_cap or (AtCap.agent_review if supervised else AtCap.user_review)
+        if at_cap is AtCap.agent_review and not _is_normal_sprint_item(conn, sprint_item_id):
+            raise PlannerError(
+                ErrorCode.scope_invalid,
+                "agent review requires placement under a normal Sprint Item",
+                {"sprint_item_id": sprint_item_id},
+            )
+        stage, initial_fields, initial_ticket_status = _seed_kickoff(
+            kickoff_note,
+            actor,
+            now,
+            stage=initial_stage,
+            ceiling=ceiling,
+            at_cap=at_cap,
+            ownership_mode=default_stage_ownership_mode,
+            worker_type_definition=worker_type_definition,
+        )
+        fields_json = fields_codec.fields_to_json(initial_fields)
         conn.execute(
             "INSERT INTO tickets ("
             "id, title, worker_type, employee_backend, employee_launch_model, "
@@ -1061,19 +1148,15 @@ def create_ticket(
                 launch_configuration.employee_backend,
                 launch_configuration.employee_launch_model,
                 launch_configuration.employee_launch_reasoning_effort,
-                initial_stage,
+                stage,
                 stored_priority.value,
                 deadline,
                 project_id,
                 sprint_id,
                 sprint_item_id,
-                default_ceiling,
-                AtCap.user_review.value,
-                (
-                    TicketStatus.awaiting_user_review.value
-                    if kickoff_note is not None
-                    else TicketStatus.empty.value
-                ),
+                ceiling,
+                at_cap.value,
+                initial_ticket_status.value,
                 "{}",
                 (
                     default_stage_ownership_mode.value

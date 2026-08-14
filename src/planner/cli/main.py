@@ -1095,6 +1095,18 @@ def ticket() -> None:
     default=None,
     help="Read proposed kickoff note from this file, or -.",
 )
+@click.option(
+    "--ceiling",
+    default=None,
+    help="Initial ceiling, as a stage name or the plain field name that stage needs.",
+)
+@click.option(
+    "--at-cap",
+    "at_cap",
+    type=click.Choice([a.value for a in AtCap]),
+    default=None,
+    help="Initial review route at the ceiling. Omit to park the kickoff for the user.",
+)
 @json_option
 def ticket_create(
     title: str,
@@ -1111,9 +1123,15 @@ def ticket_create(
     blocked_by_ticket_ids: tuple[str, ...],
     kickoff_note: str | None,
     kickoff_note_file: str | None,
+    ceiling: str | None,
+    at_cap: str | None,
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {"title": title, "worker_type": worker_type}
+    if ceiling is not None:
+        body["ceiling"] = ceiling
+    if at_cap is not None:
+        body["at_cap"] = at_cap
     if employee_backend is not None:
         body["employee_backend"] = employee_backend
     if employee_launch_model is not None:

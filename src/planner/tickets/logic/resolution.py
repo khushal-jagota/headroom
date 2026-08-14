@@ -443,12 +443,7 @@ def decide_scope_change(
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
     admission.require_direct_or_supervisor_actor(actor, "change_scope")
-    if ceiling not in worker_type_definition.ceiling_range():
-        raise PlannerError(
-            ErrorCode.scope_invalid,
-            "ceiling must be a linear stage",
-            {"ceiling": ceiling},
-        )
+    ceiling = worker_type_definition.resolve_ceiling(ceiling)
     events = (
         EventSpec(
             EventKind.scope_changed,
