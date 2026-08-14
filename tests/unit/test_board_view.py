@@ -626,6 +626,7 @@ def test_board_sprint_items_count_every_ticket_of_the_item(
         {
             "id": item.id,
             "project": "Vylo",
+            "created_at": item.created_at,
             "done_ticket_count": 1,
             "total_ticket_count": 3,
         }
