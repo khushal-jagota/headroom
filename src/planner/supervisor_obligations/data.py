@@ -308,8 +308,12 @@ def acknowledge(conn: sqlite3.Connection, sprint_item_id: str, ids: Sequence[str
     placeholders = ",".join("?" for _ in ids)
     with conn:
         cursor = conn.execute(
-            f"UPDATE supervisor_obligations SET lifecycle=CASE WHEN kind='completed' "
-            f"THEN 'resolved' ELSE 'acknowledged' END,acknowledged_at=?,"
+            # Acknowledged obligations must stay inside the open-lifecycle dedup
+            # index while their source fact is still live; only reconcile moves a
+            # fact whose source ended to 'resolved'. Jumping straight to
+            # 'resolved' re-opens the (kind,source_identity) slot and reconcile
+            # re-raises the same fact every tick.
+            f"UPDATE supervisor_obligations SET lifecycle='acknowledged',acknowledged_at=?,"
             f"updated_at=? WHERE sprint_item_id=? AND id IN ({placeholders}) "
             "AND lifecycle IN ('pending','delivered','failed')",
             (now, now, sprint_item_id, *ids),
