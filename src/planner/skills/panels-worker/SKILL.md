@@ -60,14 +60,16 @@ Everything runs through the `panels` command — `panels --help` for full usage.
   manifest, or expand only the named fields.
 - **`panels ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** —
   set or clear a Stage ownership override when the user directly instructs that change.
-- **`panels worker propose <id> --body-file - --recap "…"`** — propose the ticket's current gated field; body arrives on stdin or via `--body-file`, and every proposal must also set a recap.
-- **`panels worker recap <id> --body-file -`** — update the running recap outside a proposal.
-- **`panels worker trouble --body-file -`** — record one short trouble note on your
+- **`panels worker propose <id> --recap "…"`**, piping the proposal text on stdin — propose the ticket's current gated field; the body arrives on stdin only, and every proposal must also set a recap with `--recap TEXT`.
+- **`panels worker recap <id>`**, piping the recap text on stdin — update the running recap outside a proposal.
+- **`panels worker trouble`**, piping the note on stdin — record one short trouble note on your
   current Ticket during the active claimed worker step. Use it for a harness, tool, or
   Ticket problem that did not go well. Record only trouble that you encountered. Do not
   grade yourself or record what went well.
 - **`panels worker request-user-help [ticket-id]`** — use this only when you cannot responsibly continue without important user input. Put the free-form request in your ordinary Ticket Chat response, then call this no-payload command. The Ticket enters `needs_user`: automatic work stays paused and Chat remains available until the user explicitly releases it. Do not use this for ordinary discussion, proposals or approvals, permission prompts, Stop, or confirmed Worker errors.
-- **`panels worker note <id> <field> --body-file -`** — replace user guidance next to a field without touching its value. Add `--append` to preserve the existing guidance and add new text.
+- **`panels worker note <id> <field>`**, piping the guidance text on stdin — replace user guidance next to a field without touching its value. Add `--append` to preserve the existing guidance and add new text.
+
+All four write commands take their text on stdin only; there is no file-path option, since it once let two Workers sharing one `/tmp` overwrite each other's text before it reached the ticket. Pipe or redirect text in, for example `echo "…" | panels worker propose <id> --recap "…"` or a heredoc into stdin.
 - **`panels ticket create --worker-type <id> --title "…"`** — create a Ticket when the
   current approved step spins off a new one. Before creating it, load and follow
   `panels-ticket-creation`; this Worker skill still owns the current Stage's authority

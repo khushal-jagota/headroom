@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any
 
 import click
-from click.core import ParameterSource
 
 from planner.cli import http
 from planner.cli.record_projection import (
@@ -135,27 +134,18 @@ def _read_source(spec: str, as_json: bool) -> str:
         http.fail_validation(f"cannot read body file: {spec}", as_json)
 
 
-def _positional_is_stdin_marker(positional: str | None) -> bool:
-    if positional != "-":
-        return False
-    source = click.get_current_context().get_parameter_source("ticket_id")
-    return source == ParameterSource.COMMANDLINE
-
-
-def read_body(
-    positional_ticket_id: str | None, body_file: str | None, as_json: bool
-) -> str:
-    if body_file is not None:
-        text = _read_source(body_file, as_json)
-    elif _positional_is_stdin_marker(positional_ticket_id):
-        text = sys.stdin.read()
-    else:
-        http.fail_validation(
-            "body required: pass '-' for stdin or --body-file PATH", as_json
-        )
+def read_worker_stdin_body(as_json: bool, label: str = "body") -> str:
+    text = sys.stdin.read()
     if not text.strip():
-        http.fail_validation("empty body", as_json)
+        http.fail_validation(f"empty {label}", as_json)
     return text
+
+
+def refuse_worker_body_file(body_file: str | None, as_json: bool, stdin_form: str) -> None:
+    if body_file is not None:
+        http.fail_validation(
+            f"--body-file is no longer supported: {stdin_form}", as_json
+        )
 
 
 def read_optional_body(body_file: str | None, as_json: bool) -> str | None:
@@ -196,21 +186,15 @@ def read_value_or_file(
 
 
 def read_recap(recap: str | None, recap_file: str | None, as_json: bool) -> str:
-    if recap is not None and recap_file is not None:
-        http.fail_validation(
-            "recap accepts only one of --recap or --recap-file", as_json
-        )
     if recap_file is not None:
-        text = _read_source(recap_file, as_json)
-    elif recap is not None:
-        text = recap
-    else:
         http.fail_validation(
-            "recap required: pass --recap TEXT or --recap-file PATH", as_json
+            "--recap-file is no longer supported: pass --recap TEXT", as_json
         )
-    if not text.strip():
+    if recap is None:
+        http.fail_validation("recap required: pass --recap TEXT", as_json)
+    if not recap.strip():
         http.fail_validation("empty recap", as_json)
-    return text
+    return recap
 
 
 def resolve_ticket_id(positional: str | None, as_json: bool) -> str:
@@ -2659,20 +2643,23 @@ def worker_my_ticket(part_names: str | None, as_json: bool) -> None:
 @worker.command("propose")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option(
-    "--body-file", required=True, help="Read proposal text from this file, or -."
+    "--body-file", default=None, help="Removed: pipe proposal text on stdin instead."
 )
 @click.option("--recap", default=None, help="Short recap for the proposal.")
-@click.option("--recap-file", default=None, help="Read recap from this file, or -.")
+@click.option(
+    "--recap-file", default=None, help="Removed: pass --recap TEXT instead."
+)
 @json_option
 def worker_propose(
     ticket_id: str | None,
-    body_file: str,
+    body_file: str | None,
     recap: str | None,
     recap_file: str | None,
     as_json: bool,
 ) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
-    body = read_required_option_body(body_file, as_json, "body")
+    refuse_worker_body_file(body_file, as_json, "pipe proposal text on stdin instead")
+    body = read_worker_stdin_body(as_json, "proposal body")
     recap_text = read_recap(recap, recap_file, as_json)
     data = http.send(
         "POST",
@@ -2694,13 +2681,16 @@ def worker_request_user_help(ticket_id: str | None, as_json: bool) -> None:
 
 @worker.command("trouble")
 @click.option(
-    "--body-file", required=True, help="Read the one-line trouble note from this file, or -."
+    "--body-file",
+    default=None,
+    help="Removed: pipe the one-line trouble note on stdin instead.",
 )
 @json_option
-def worker_trouble(body_file: str, as_json: bool) -> None:
+def worker_trouble(body_file: str | None, as_json: bool) -> None:
     """Record trouble on the current worker's Ticket."""
     tid = resolve_ticket_id(None, as_json)
-    body = read_required_option_body(body_file, as_json, "body")
+    refuse_worker_body_file(body_file, as_json, "pipe the trouble note on stdin instead")
+    body = read_worker_stdin_body(as_json, "trouble note")
     data = http.send(
         "POST",
         f"/api/tickets/{tid}/trouble-notes",
@@ -2713,10 +2703,13 @@ def worker_trouble(body_file: str, as_json: bool) -> None:
 
 @worker.command("recap")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--body-file", default=None, help="Read recap text from this file, or -.")
+@click.option(
+    "--body-file", default=None, help="Removed: pipe recap text on stdin instead."
+)
 @json_option
 def worker_recap(ticket_id: str | None, body_file: str | None, as_json: bool) -> None:
-    body = read_body(ticket_id, body_file, as_json)
+    refuse_worker_body_file(body_file, as_json, "pipe recap text on stdin instead")
+    body = read_worker_stdin_body(as_json, "recap")
     tid = resolve_ticket_id(ticket_id, as_json)
     data = http.send(
         "PUT", f"/api/tickets/{tid}/recap", as_json=as_json, json_body={"body": body}
@@ -2729,7 +2722,7 @@ def worker_recap(ticket_id: str | None, body_file: str | None, as_json: bool) ->
 @click.option(
     "--body-file",
     default=None,
-    help="Read field user guidance text from this file, or -.",
+    help="Removed: pipe field user guidance text on stdin instead.",
 )
 @click.option(
     "--append",
@@ -2788,7 +2781,8 @@ def worker_note(
             f"{', or ' if len(fields) > 1 else ''}{fields[-1] if fields else ''}",
             as_json,
         )
-    body = read_body(ticket_id, body_file, as_json)
+    refuse_worker_body_file(body_file, as_json, "pipe field user guidance text on stdin instead")
+    body = read_worker_stdin_body(as_json, "field user guidance")
     method = "POST" if append_note else "PUT"
     path = (
         f"/api/tickets/{tid}/notes/{field}/append"

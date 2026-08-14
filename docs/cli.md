@@ -165,15 +165,17 @@ record shapes. Direct `show` commands also keep their full record shapes.
   — use item-scoped canonical actions for the owning Item and its current child Tickets.
 - **`sprint item supervisor artifact-list / artifact-write / artifact-delete`** — manage
   files under the owning Item's `artifacts/` directory.
-- **`worker propose / recap / note / trouble / request-user-help / my-ticket`** — worker actions. `worker propose`
-  infers the current gating field from the Ticket Stage and requires a short recap
-  (`--recap` or `--recap-file`) in the same request. `worker note` replaces field
+- **`worker propose / recap / note / trouble / request-user-help / my-ticket`** — worker actions.
+  `propose`, `recap`, `note`, and `trouble` take their text on stdin only; there is no
+  file-path option, so no shared `/tmp` file can carry one Ticket's text onto another.
+  `worker propose` infers the current gating field from the Ticket Stage and requires a
+  short recap on `--recap TEXT` in the same request. `worker note` replaces field
   guidance by default and accepts `--append` for additive guidance without changing
   the field's value. `--replace` names the default operation when an explicit flag helps
   a caller. `worker my-ticket`
   reports the current Ticket, and names the **specialist skill** for its Worker type —
   the one the base worker loads to learn that Worker type's Stages (see
-  `worker-types.md`). `worker trouble --body-file PATH` appends one short trouble note
+  `worker-types.md`). `worker trouble` appends one short trouble note, read from stdin,
   to the current worker's Ticket during its active claimed worker step.
   `request-user-help` parks the Ticket for a user response after the
   Worker records its request in the conversation.

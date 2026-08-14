@@ -308,8 +308,6 @@ def test_kickoff_card_context_approves_while_blockers_stay_in_the_masthead(
         server,
         "worker",
         "propose",
-        "--body-file",
-        "-",
         "--recap",
         "Success ready for review.",
         ticket_id=ticket,

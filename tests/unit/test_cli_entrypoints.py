@@ -127,11 +127,8 @@ def test_worker_request_user_help_is_a_no_payload_worker_command(
 
 def test_worker_trouble_uses_only_current_ticket_identity(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> None:
     calls: list[tuple[str, str, dict[str, Any]]] = []
-    body_file = tmp_path / "trouble.txt"
-    body_file.write_text("Harness returned no output.\n", encoding="utf-8")
 
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         calls.append((method, path, kwargs))
@@ -146,7 +143,8 @@ def test_worker_trouble_uses_only_current_ticket_identity(
     monkeypatch.setattr(http, "send", fake_send)
     result = CliRunner().invoke(
         cli_main.main,
-        ["worker", "trouble", "--body-file", str(body_file)],
+        ["worker", "trouble"],
+        input="Harness returned no output.\n",
         env={"PLAN_TICKET_ID": "t_current"},
     )
 
@@ -166,18 +164,15 @@ def test_worker_trouble_uses_only_current_ticket_identity(
 
 def test_worker_trouble_rejects_missing_identity_before_http(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> None:
-    body_file = tmp_path / "trouble.txt"
-    body_file.write_text("Harness returned no output.", encoding="utf-8")
-
     def explode(*_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("no HTTP request expected")
 
     monkeypatch.setattr(http, "send", explode)
     result = CliRunner().invoke(
         cli_main.main,
-        ["worker", "trouble", "--body-file", str(body_file)],
+        ["worker", "trouble"],
+        input="Harness returned no output.",
         env={"PLAN_TICKET_ID": ""},
     )
 
