@@ -3,6 +3,7 @@ import {
   failedWorkspaceDeliveries,
   remainingWorkspaceTicketGroups,
   todayWorkspaceTicketGroups,
+  workspaceArtifactRows,
   workspaceProgress
 } from "../src/lib/sprintItemWorkspace";
 import { previewHashHref, resolvePreview, sprintItemFileTarget } from "../src/lib/filePreview";
@@ -160,5 +161,20 @@ describe("Sprint Item workspace presentation", () => {
     expect(previewHashHref(target!)).toBe(
       "#/preview?source=sprint-item&item=si_workspace&path=notes%2Fproof.md"
     );
+  });
+
+  it("gives a real artifact row a working href and a genuinely unresolvable one null, never empty", () => {
+    const value = { ...workspace(), artifacts: ["artifacts/proof.md", "../escape.md"] };
+    const rows = workspaceArtifactRows(value);
+    expect(rows).toEqual([
+      {
+        path: "artifacts/proof.md",
+        label: "proof.md",
+        kind: "md",
+        href: "#/preview?source=sprint-item&item=si_workspace&path=artifacts%2Fproof.md"
+      },
+      { path: "../escape.md", label: "escape.md", kind: "md", href: null }
+    ]);
+    expect(rows.every((row) => row.href !== "")).toBe(true);
   });
 });

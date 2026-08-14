@@ -8,6 +8,7 @@
     failedWorkspaceDeliveries,
     remainingWorkspaceTicketGroups,
     todayWorkspaceTicketGroups,
+    workspaceArtifactRows,
     workspaceProgress,
     type WorkspaceTicketGroup
   } from "../lib/sprintItemWorkspace";
@@ -19,7 +20,6 @@
     type DeliveredMessage,
     type OwnerSendBody
   } from "../lib/conversation/wire";
-  import { previewHashHref, sprintItemFileTarget } from "../lib/filePreview";
   import InlineEdit from "./InlineEdit.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import ResourceState from "./ResourceState.svelte";
@@ -119,19 +119,7 @@
     conversationState = "rest";
   }
 
-  function artifactHref(path: string): string {
-    const target = sprintItemFileTarget(itemId, path);
-    return target ? previewHashHref(target) : "";
-  }
-
-  function artifactKind(path: string): string {
-    const dot = path.lastIndexOf(".");
-    return dot < 0 ? "file" : path.slice(dot + 1);
-  }
-
-  function artifactLabel(path: string): string {
-    return path.split("/").at(-1) || path;
-  }
+  let artifactRows = $derived(workspace.data ? workspaceArtifactRows(workspace.data) : []);
 </script>
 
 {#snippet ticketSection(
@@ -247,14 +235,23 @@
           <details class="sprint-workspace-section" open data-workspace-section="artifacts">
             <summary>
               <span class="sprint-workspace-section-label">Artifacts</span>
-              <span class="sprint-workspace-count">{item.artifacts.length}</span>
+              <span class="sprint-workspace-count">{artifactRows.length}</span>
               <span class="sprint-workspace-chevron" aria-hidden="true"></span>
             </summary>
-            {#if item.artifacts.length}
-              {#each item.artifacts as path (path)}
-                <a class="sprint-workspace-artifact" href={artifactHref(path)}>
-                  <span>{artifactLabel(path)}</span><small>{artifactKind(path)}</small>
-                </a>
+            {#if artifactRows.length}
+              {#each artifactRows as row (row.path)}
+                {#if row.href}
+                  <a class="sprint-workspace-artifact" href={row.href}>
+                    <span>{row.label}</span><small>{row.kind}</small>
+                  </a>
+                {:else}
+                  <span
+                    class="sprint-workspace-artifact quiet-line"
+                    data-artifact-unavailable
+                  >
+                    <span>{row.label}</span><small>unavailable</small>
+                  </span>
+                {/if}
               {/each}
             {:else}
               <div class="sprint-workspace-empty">Nothing kept here yet.</div>
