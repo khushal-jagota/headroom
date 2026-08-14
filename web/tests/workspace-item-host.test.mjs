@@ -13,17 +13,20 @@ assert.match(app, /if \(selection\.kind === "item"\) params\.item = selection\.i
 assert.match(app, /<BoardRoute ticketId=\{route\.params\.id\} itemId=\{route\.params\.item\} \/>/);
 
 // The host resolves the Item from the board, opens the existing Item workspace, and
-// replaces a settled stale address only after a successful board read.
+// replaces a settled stale address only after a successful board read. A Ticket is not
+// resolved from the board, because a Ticket opens here from anywhere.
 assert.match(route, /rail\.items\.find\(\(item\) => item\.id === itemId\)/);
 assert.match(route, /<SprintItemWorkspace itemId=\{selectedItem\.id\}/);
 assert.match(route, /const staleItem = itemId && !selectedItem/);
+assert.doesNotMatch(route, /staleTicket/);
 assert.match(
   route,
-  /\(staleTicket \|\| staleItem\)[\s\S]*board\.data[\s\S]*!board\.isFetching[\s\S]*!board\.isError[\s\S]*window\.location\.replace\(workspaceAddress\(\{ kind: "none" \}\)\)/,
+  /staleItem && board\.data && !board\.isFetching && !board\.isError[\s\S]*window\.location\.replace\(workspaceAddress\(\{ kind: "none" \}\)\)/,
 );
+assert.match(route, /<TicketRoute id=\{ticketId\} \/>/);
 
-// Item selection keeps its Workspace address at every width. The narrow host hides
-// the rail and shows the Item pane, unlike narrow Ticket selection.
+// Item selection keeps its Workspace address at every width. The narrow host hides the
+// rail and shows the Item pane, and narrow Ticket selection now does the same.
 assert.match(route, /function selectItem\(id: string\)[\s\S]*workspaceAddress\(\{ kind: "item", id \}\)/);
 assert.doesNotMatch(
   route.slice(route.indexOf("function selectItem"), route.indexOf("function toggleRailMode")),

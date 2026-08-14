@@ -415,7 +415,7 @@ def test_worker_selection_persists_from_kickoff_card_context_row(
         "**/api/conversation/backends**",
         lambda route: route.fulfill(json=PICKER_BACKENDS),
     )
-    page = open_page(context, server, f"#/ticket/{ticket}", ready)
+    page = open_page(context, server, f"#/workspace/{ticket}", ready)
 
     # The unified picker lives inside the Kickoff approval card's context row.
     row = '[data-approval-block][data-field="kickoff"] [data-approval-context-row]'

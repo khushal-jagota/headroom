@@ -68,7 +68,7 @@ def test_policy_is_the_one_privacy_safe_fact_to_intent_door() -> None:
     assert decide_notification(fact, enabled=False) is None
     intent = decide_notification(fact, enabled=True)
     assert intent is not None
-    assert intent.route == "/#/ticket/t_example"
+    assert intent.route == "/#/workspace/t_example"
     assert intent.tag == "panels-ticket-t_example"
     assert "transcript" not in intent.body.lower()
 

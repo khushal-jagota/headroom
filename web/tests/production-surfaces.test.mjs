@@ -140,10 +140,15 @@ assert.match(
 );
 assert.match(scopePairPickerSource, /value="user_review">User review/);
 assert.doesNotMatch(scopePairPickerSource, /value="propose"|>Continue</);
-// Ticket placement is one compound Project, Sprint, and optional Sprint Item edit.
+// Ticket placement edits the Project. The eyebrow states no Sprint, and its Sprint Item
+// fact is a link back to that Item on the Workspace rather than a reassignment control.
 assert.match(ticketRouteSource, /data-ticket-placement/);
-assert.match(ticketRouteSource, /data-sprint-control/);
+assert.doesNotMatch(ticketRouteSource, /data-sprint-control/);
 assert.match(ticketRouteSource, /data-sprint-item-control/);
+assert.match(
+  ticketRouteSource,
+  /<a[\s\S]*?data-sprint-item-control[\s\S]*?workspaceAddress\(\{ kind: "item", id: detail\.sprint_item_id \}\)/,
+);
 assert.match(ticketRouteSource, /project_id: projectId, sprint_id: sprintId, sprint_item_id: sprintItemId/);
 
 // Sprint tracking joins the Sprint, Project, and Today resources in the browser. Its

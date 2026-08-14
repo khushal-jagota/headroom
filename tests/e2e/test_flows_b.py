@@ -240,7 +240,7 @@ def test_e30_review_approve_to_done(
     )
 
     ready = f'section[data-screen="ticket"][data-ticket-id="{mid}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{mid}", ready)
+    page = open_page(context_factory(), server, f"#/workspace/{mid}", ready)
     assert (
         page.get_attribute('section[data-screen="ticket"]', "data-stage")
         == "needs_implementation"
@@ -389,7 +389,7 @@ def test_e31_refresh_restores_state(
     # Ticket surface.
     ready_t = f'section[data-screen="ticket"][data-ticket-id="{mid}"]'
     mid_t = '[data-approval-block][data-mode="gating-pending"]'
-    page_t = open_page(context_factory(), server, f"#/ticket/{mid}", ready_t)
+    page_t = open_page(context_factory(), server, f"#/workspace/{mid}", ready_t)
     page_t.wait_for_selector(mid_t, timeout=WAIT_MS)
     before_t = _snap_ticket(page_t)
     _reload_settle(page_t, ready_t)
@@ -514,14 +514,16 @@ def test_e32_sprint_live_status_and_view_only_other(
         assert "P1" in other_ticket_row.inner_text()
         assert p.locator('[data-sprint-other] [data-item-id]').count() == 0
 
-    # The Ticket page exposes the compound placement controls for direct Sprint changes.
+    # The Ticket eyebrow states no Sprint. This Ticket has no Sprint Item either, so it
+    # shows no Sprint Item fact.
     ticket_page = open_page(
         context_factory(),
         server,
-        f"#/ticket/{other_ticket_id}",
+        f"#/workspace/{other_ticket_id}",
         "[data-ticket-identity]",
     )
-    assert ticket_page.locator("[data-sprint-item-control]").count() == 1
+    assert ticket_page.locator("[data-sprint-control]").count() == 0
+    assert ticket_page.locator("[data-sprint-item-control]").count() == 0
     assert ticket_page.locator("[data-deadline-control]").count() == 0
 
     fa = pa.evaluate("window.__plannerDebug.flushes")

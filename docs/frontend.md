@@ -67,11 +67,19 @@ One screen per part of the system:
   On screens wider than 960px, the right side starts with a quiet invitation. An Item
   title opens the existing Sprint Item workspace at `#/workspace/item/<item-id>`.
   A Ticket opens the complete Ticket screen at `#/workspace/<ticket-id>`. Both
-  addresses survive refresh, sharing, and browser history. A stale selection returns
-  to the unselected Workspace. At 960px or less, an Item workspace replaces the rail.
-  A Ticket opens its standalone `#/ticket/<ticket-id>` page.
+  addresses survive refresh, sharing, and browser history. A stale Item selection
+  returns to the unselected Workspace. At 960px or less, an Item workspace or a Ticket
+  replaces the rail, and a link back to the Workspace appears above the Ticket.
+
+  A Ticket never opens as a full-screen page. Every Ticket link in the app, including
+  the ones on the Sprint page and in Review, uses the Workspace address. The old
+  `#/ticket/<ticket-id>` address redirects there, so shared links and stored
+  notifications still work. A Ticket opens this way even when it is not on today's
+  board, because the Ticket resource answers for it rather than the board card.
 - **Ticket** — the whole story of one piece of work. A quiet identity eyebrow puts
-  priority, effective project, and Worker above a serif title. Scope, takeover or
+  priority, effective project, Sprint Item, and Worker above a serif title. The Sprint
+  Item is a link back to that Item on the Workspace. The eyebrow states no Sprint, and
+  it does not reassign the Ticket to another Sprint or Sprint Item. Scope, takeover or
   release, and copy actions live in the Ticket details disclosure. Direct blockers get
   their own **Blocked by** line in the masthead, and the exact backend Worker failure
   reason remains visible when one exists. The inline-editable recap is always open on a

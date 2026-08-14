@@ -66,7 +66,7 @@ def test_blocked_change_stream_says_reconnecting_and_catches_up_once_it_returns(
 
     page = context_factory().new_page()
     page.route("**/api/changes", change_stream)
-    page.goto(server.base + f"/#/ticket/{ticket_id}")
+    page.goto(server.base + f"/#/workspace/{ticket_id}")
     page.wait_for_selector(
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
     )

@@ -187,7 +187,7 @@ def test_ticket_detail_shows_only_active_direct_blockers_and_removes_each_link(
     _post_stage(server, cleared_blocker, "done")
 
     ready = f'section[data-screen="ticket"][data-ticket-id="{blocked_ticket}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{blocked_ticket}", ready)
+    page = open_page(context_factory(), server, f"#/workspace/{blocked_ticket}", ready)
 
     # Direct blockers belong to the whole Ticket, so they stay in one masthead
     # line even while Kickoff is awaiting approval.
@@ -197,7 +197,7 @@ def test_ticket_detail_shows_only_active_direct_blockers_and_removes_each_link(
     assert "Cleared blocker" not in row.inner_text()
     active_chip = row.locator(f'[data-blocker-chip="{active_blocker}"]')
     assert "Active blocker" in active_chip.inner_text()
-    assert active_chip.locator(f'a[href="#/ticket/{active_blocker}"]').count() == 1
+    assert active_chip.locator(f'a[href="#/workspace/{active_blocker}"]').count() == 1
     assert row.locator(
         f'[data-remove-blocker="{active_blocker}"]'
     ).get_attribute("aria-label") == "Remove blocker Active blocker"
@@ -243,7 +243,7 @@ def test_ticket_detail_shows_only_active_direct_blockers_and_removes_each_link(
     )["id"]
     with sqlite3.connect(server.db_path) as conn:
         conn.execute("UPDATE tickets SET stage = 'needs_plan' WHERE id = ?", (later_ticket,))
-    page.goto(f"{server.base}/#/ticket/{later_ticket}")
+    page.goto(f"{server.base}/#/workspace/{later_ticket}")
     page.wait_for_selector(
         f'section[data-screen="ticket"][data-ticket-id="{later_ticket}"] '
         f'[data-remove-blocker="{later_blocker}"]',
@@ -277,7 +277,7 @@ def test_kickoff_card_context_approves_while_blockers_stay_in_the_masthead(
         blocker,
     )["id"]
     ready = f'section[data-screen="ticket"][data-ticket-id="{ticket}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{ticket}", ready)
+    page = open_page(context_factory(), server, f"#/workspace/{ticket}", ready)
 
     # Worker setup stays in the approval card; blockers stay on the Ticket itself.
     card = '[data-approval-block][data-mode="gating-pending"][data-field="kickoff"]'
@@ -297,7 +297,7 @@ def test_kickoff_card_context_approves_while_blockers_stay_in_the_masthead(
 
     # Kickoff approval does not move the ticket-level blocker line.
     page.wait_for_selector("[data-approval-context-row]", state="detached", timeout=WAIT_MS)
-    assert page.locator(f'[data-blocker-summary] a[href="#/ticket/{blocker}"]').count() == 1
+    assert page.locator(f'[data-blocker-summary] a[href="#/workspace/{blocker}"]').count() == 1
     detail = _get_ticket(server, ticket)
     assert detail["stage"] == "needs_success"
     assert detail["ceiling"] == "needs_success"

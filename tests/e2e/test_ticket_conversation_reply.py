@@ -192,7 +192,7 @@ def test_a_reply_in_the_pane_pairs_the_ticket_and_a_refusal_leaves_it_parked(
     page = open_page(
         context,
         server,
-        f"#/ticket/{ticket_id}",
+        f"#/workspace/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
 
@@ -256,7 +256,7 @@ def test_ticket_images_cross_the_owner_api_become_managed_files_and_reload(
     with _browser_server_with_accepting_backend(tmp_path) as (base, ticket_id):
         context = context_factory()
         page = context.new_page()
-        page.goto(f"{base}/#/ticket/{ticket_id}")
+        page.goto(f"{base}/#/workspace/{ticket_id}")
         composer = f'{TICKET_SCREEN}[data-ticket-id="{ticket_id}"]'
         page.wait_for_selector(
             f"{composer} [data-conversation-input]:not([disabled])",

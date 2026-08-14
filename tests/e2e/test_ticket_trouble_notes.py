@@ -47,7 +47,7 @@ def test_worker_cli_trouble_notes_refresh_open_ticket_in_order(
     )["id"]
     _claim_worker_step(server, ticket_id)
     ready = f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{ticket_id}", ready)
+    page = open_page(context_factory(), server, f"#/workspace/{ticket_id}", ready)
     assert page.locator("[data-ticket-trouble-notes]").count() == 0
 
     cli(

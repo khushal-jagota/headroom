@@ -2,6 +2,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { onMount } from "svelte";
   import { mutateJson } from "../lib/mutate";
+  import { workspaceAddress } from "../lib/workspaceAddress";
   import { queries } from "../lib/queryCatalogue";
   import {
     failedWorkspaceDeliveries,
@@ -174,7 +175,7 @@
                     {@const condition = sprintTicketCondition(ticket)}
                     <a
                       class="sprint-workspace-ticket-row"
-                      href={`#/ticket/${ticket.id}`}
+                      href={workspaceAddress({ kind: "ticket", id: ticket.id })}
                       data-sprint-ticket-id={ticket.id}
                       data-ticket-state={condition.mark}
                     >
@@ -201,7 +202,7 @@
                   class="sprint-workspace-name-row"
                   class:sprint-workspace-name-row--done={ticket.stage === "done"}
                   class:sprint-workspace-name-row--attention={condition.word === "to review" || condition.word === "need you" || condition.word === "yours"}
-                  href={`#/ticket/${ticket.id}`}
+                  href={workspaceAddress({ kind: "ticket", id: ticket.id })}
                   data-sprint-ticket-id={ticket.id}
                   data-ticket-state={condition.mark}
                 >

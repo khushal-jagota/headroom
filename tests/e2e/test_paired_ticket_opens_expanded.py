@@ -73,7 +73,7 @@ def _the_ticket_page(
     page = open_page(
         context,
         server,
-        f"#/ticket/{ticket_id}",
+        f"#/workspace/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
     page.wait_for_selector("[data-conversation-layer-host]", timeout=WAIT_MS)
