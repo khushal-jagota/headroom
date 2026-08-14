@@ -69,6 +69,28 @@ def test_status_projection_is_idempotent_and_ack_does_not_resolve(tmp_path: Path
     assert data.list_for_item(conn, item.id) == ()
 
 
+def test_acknowledged_completed_obligation_is_not_re_raised(tmp_path: Path) -> None:
+    """A done Ticket's fact is permanent; ack must not re-open its dedup slot."""
+    conn = _database(tmp_path)
+    item = _item(conn)
+    ticket = _ticket(conn, item.id)
+    tickets_data._write_ticket_status(conn, ticket.id, TicketStatus.empty, 3)
+    with conn:
+        conn.execute("UPDATE tickets SET stage='done' WHERE id=?", (ticket.id,))
+    data.reconcile(conn, 4)
+    obligations = data.list_for_item(conn, item.id)
+    assert len(obligations) == 1
+    assert obligations[0].kind.value == "completed"
+    assert data.acknowledge(conn, item.id, [obligations[0].id], 5) == 1
+    data.reconcile(conn, 6)
+    data.reconcile(conn, 7)
+    rows = conn.execute(
+        "SELECT lifecycle, count(*) FROM supervisor_obligations GROUP BY lifecycle"
+    ).fetchall()
+    assert {str(row[0]): int(row[1]) for row in rows} == {"acknowledged": 1}
+    assert data.claim_batch(conn, 8) is None
+
+
 def test_batch_membership_is_ordered_and_recoverable(tmp_path: Path) -> None:
     conn = _database(tmp_path)
     item = _item(conn)
