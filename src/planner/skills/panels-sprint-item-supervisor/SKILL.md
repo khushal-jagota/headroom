@@ -54,7 +54,7 @@ work to resolve alone.
 
 Use these canonical actions when they match the decision:
 
-- `ticket create --sprint-item-id <your item>` creates a child Ticket under your Item.
+- `ticket create --sprint-item <your item>` creates a child Ticket under your Item.
   Load and follow `panels-ticket-creation` first. A Ticket you create this way rests at
   agent review, so you review the kickoff you wrote. Add `--ceiling` and `--at-cap` to
   state how far the new Worker may go, when the user gave you that scope to grant.
