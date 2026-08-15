@@ -3335,8 +3335,14 @@ select {
   color: var(--text-strong);
 }
 
+/* PROXIMITY. A header belongs to the rows under it, so it must sit closer to them than
+ * they sit to each other, and far closer than one group sits to the next. The row's own
+ * top padding is the whole bind — the header adds no margin of its own. Read these gaps
+ * as painted text, not as margin values: a row carries --space-2 above its title, so a
+ * --space-3 margin here measured 20px against a 16px row-to-row gap, and the header
+ * drifted away from the rows it names while the stylesheet looked correct. */
 .disclosure--workspace-bucket[open] > .disclosure-summary {
-  margin-bottom: var(--space-3);
+  margin-bottom: 0;
 }
 
 .board-workspace-bucket-label {
@@ -3401,8 +3407,11 @@ select {
   border-radius: 0;
 }
 
+/* A nested bucket has no box to separate it from the next one, so this margin is the
+ * only thing that says "different group". It is therefore the largest gap in the Item:
+ * bigger than row-to-row, and much bigger than a header to its own rows. */
 .disclosure--workspace-bucket--nested + .disclosure--workspace-bucket--nested {
-  margin-top: var(--space-3);
+  margin-top: var(--space-5);
 }
 
 .disclosure--workspace-bucket--nested .board-workspace-bucket-label {
@@ -5738,8 +5747,10 @@ select {
   color: var(--text-faint);
 }
 
+/* The same proximity rule as the rail's buckets: the row's own top padding binds the
+ * body to the header above it, and the section carries no margin of its own. */
 .sprint-workspace-section-body {
-  margin-top: var(--space-3);
+  margin-top: 0;
 }
 
 /* A status group. Native <details>, like the sections it sits above. Size carries the
@@ -5777,7 +5788,7 @@ select {
 }
 
 .sprint-workspace-status-body {
-  margin-top: var(--space-3);
+  margin-top: 0;
 }
 
 /* The count and the chevron are one slot: a summary shows the count while it is shut

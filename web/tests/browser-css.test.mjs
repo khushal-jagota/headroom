@@ -573,12 +573,146 @@ def assert_row_states(browser):
         context.close()
 
 
+def bucket_markup(key, label, nested, rows):
+    classes = "disclosure disclosure--workspace-bucket"
+    if nested:
+        classes += " disclosure--workspace-bucket--nested"
+    row_markup = "".join(
+        f'<a class="ticket-row" href="#"><span class="ticket-row-title">{title}</span></a>'
+        for title in rows
+    )
+    return f"""
+      <details class="{classes}" open data-bucket-key="{key}">
+        <summary class="disclosure-summary">
+          <span class="board-workspace-bucket-label">{label}</span>
+          <span class="board-workspace-bucket-count">{len(rows)}</span>
+          <span class="disclosure-chev"></span>
+        </summary>
+        <div class="disclosure-body">
+          <div class="board-workspace-bucket-tickets">{row_markup}</div>
+        </div>
+      </details>
+    """
+
+
+# The gap between painted text, which is what a reader sees. A ticket row carries its
+# own vertical padding, so a margin read from the stylesheet is not the gap on screen:
+# a header once sat 12px below its own rows by margin and 20px by measurement, further
+# than the 16px between the rows it named. Measure the paint, not the rule.
+PAINTED_GAPS = """
+(selectors) => {
+  const gap = (a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().bottom;
+  const groups = [...document.querySelectorAll(selectors.group)];
+  const firstLabel = groups[0].querySelector(selectors.label);
+  const firstRows = [...groups[0].querySelectorAll('.ticket-row .ticket-row-title')];
+  const secondLabel = groups[1].querySelector(selectors.label);
+  return {
+    headerToRow: gap(firstLabel, firstRows[0]),
+    rowToRow: gap(firstRows[0], firstRows[1]),
+    groupToGroup: gap(firstRows[firstRows.length - 1], secondLabel),
+    headerLeft: firstLabel.getBoundingClientRect().left,
+    rowTitleLeft: firstRows[0].getBoundingClientRect().left,
+  };
+}
+"""
+
+
+def assert_group_proximity(browser):
+    """A header binds to its own rows, and one group separates cleanly from the next.
+
+    One scale, three steps, wherever the group grammar renders: a header sits closest to
+    the rows it names, rows sit further apart than that, and the largest gap in the
+    structure is the one between groups. Header text and row titles share one left edge.
+    """
+    context = browser.new_context(viewport={"width": 420, "height": 900})
+    try:
+        page = context.new_page()
+
+        places = {
+            "nested groups inside an open Sprint Item": (
+                f"""
+                  <div class="board-workspace-left">
+                    <section class="board-workspace-item board-workspace-item--selected">
+                      <button class="board-workspace-item-head">
+                        <span class="board-workspace-item-title">Sprint Item</span>
+                      </button>
+                      <div class="board-workspace-item-groups">
+                        {bucket_markup("needs_user", "Needs you", True, ["First", "Second"])}
+                        {bucket_markup("agent", "Agent", True, ["Third", "Fourth"])}
+                      </div>
+                    </section>
+                  </div>
+                """,
+                {
+                    "group": ".disclosure--workspace-bucket--nested",
+                    "label": ".board-workspace-bucket-label",
+                },
+            ),
+            "boxed top-level groups in the Tickets view": (
+                f"""
+                  <div class="board-workspace-left">
+                    {bucket_markup("needs_user", "Needs you", False, ["First", "Second"])}
+                    {bucket_markup("agent", "Agent", False, ["Third", "Fourth"])}
+                  </div>
+                """,
+                {
+                    "group": ".disclosure--workspace-bucket",
+                    "label": ".board-workspace-bucket-label",
+                },
+            ),
+            "status sections on the Sprint Item page": (
+                """
+                  <div class="sprint-item-page"><div class="sprint-item-column">
+                    <div class="sprint-workspace-work">
+                      <details class="sprint-workspace-status" open>
+                        <summary>
+                          <span class="sprint-workspace-status-label">Needs you</span>
+                          <span class="sprint-workspace-chevron"></span>
+                        </summary>
+                        <div class="sprint-workspace-status-body">
+                          <a class="ticket-row" href="#"><span class="ticket-row-title">First</span></a>
+                          <a class="ticket-row" href="#"><span class="ticket-row-title">Second</span></a>
+                        </div>
+                      </details>
+                      <details class="sprint-workspace-status" open>
+                        <summary>
+                          <span class="sprint-workspace-status-label">Agent</span>
+                          <span class="sprint-workspace-chevron"></span>
+                        </summary>
+                        <div class="sprint-workspace-status-body">
+                          <a class="ticket-row" href="#"><span class="ticket-row-title">Third</span></a>
+                          <a class="ticket-row" href="#"><span class="ticket-row-title">Fourth</span></a>
+                        </div>
+                      </details>
+                    </div>
+                  </div></div>
+                """,
+                {
+                    "group": ".sprint-workspace-status",
+                    "label": ".sprint-workspace-status-label",
+                },
+            ),
+        }
+
+        for place, (body, selectors) in places.items():
+            mount(page, body)
+            measured = page.evaluate(PAINTED_GAPS, selectors)
+            assert measured["headerToRow"] < measured["rowToRow"], (place, measured)
+            assert measured["rowToRow"] < measured["groupToGroup"], (place, measured)
+            # One container owns the horizontal padding, so a header names rows that
+            # start where it does.
+            assert measured["headerLeft"] == measured["rowTitleLeft"], (place, measured)
+    finally:
+        context.close()
+
+
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
     try:
         assert_brand(browser, False)
         assert_brand(browser, True)
         assert_row_states(browser)
+        assert_group_proximity(browser)
         assert_scrollbars(browser)
         assert_document_boundaries(browser)
         assert_mobile_content_containment(browser)
