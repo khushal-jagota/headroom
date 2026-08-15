@@ -11,10 +11,17 @@
   const review = createQuery(() => queries.review());
   let selectedBuildingId = $state<string | null>(null);
   let mapElement = $state<HTMLDivElement | null>(null);
-  let world = $derived(
-    projects.data && board.data && workers.data && review.data
-      ? atlasWorld({ projects: projects.data.projects, board: board.data, workers: workers.data, review: review.data })
-      : null
+  let world = $derived.by(() => {
+    const projectsData = projects.data;
+    const boardData = board.data;
+    const workersData = workers.data;
+    const reviewData = review.data;
+    return projectsData && boardData && workersData && reviewData
+      ? atlasWorld({ projects: projectsData.projects, board: boardData, workers: workersData, review: reviewData })
+      : null;
+  });
+  let loading = $derived(
+    [projects.isFetching, board.isFetching, workers.isFetching, review.isFetching].some(Boolean)
   );
   let selectedBuilding = $derived(world?.buildings.find((building) => building.id === selectedBuildingId) ?? null);
 
@@ -36,7 +43,7 @@
 <section class="atlas-screen" data-screen="atlas">
   <ResourceState
     error={projects.error || board.error || workers.error || review.error}
-    loading={projects.isFetching || board.isFetching || workers.isFetching || review.isFetching}
+    {loading}
     hasData={Boolean(world)}
     loadingText="Surveying the atlas..."
   >
