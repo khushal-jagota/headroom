@@ -185,7 +185,7 @@
     <Disclosure
       variant="workspace-bucket"
       chevron="trailing"
-      defaultOpen
+      defaultOpen={!group.defaultCollapsed}
       class={insideItemId ? "disclosure--workspace-bucket--nested" : ""}
       data-bucket-section=""
       data-bucket-key={group.key}
