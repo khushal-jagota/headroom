@@ -66,9 +66,12 @@ sections arrive shut.
 
 Every status is its own dropdown. Needs you, User, Waiting for kickoff, Awaiting
 approval, Paired and Agent arrive open — work running right now is what the reader came
-for. Blocked, Waiting for closeout, Empty and Done arrive shut, still named and counted,
-and those four are exactly the groups the Workspace rail leaves out: a group you have to
-open here is a group the rail does not carry. Open shows a chevron, shut shows the
+for. Blocked, Waiting for closeout, Empty and Done arrive shut, still named and counted, and
+they are broadly what the Workspace rail leaves out: a group you have to open here is
+usually a group the rail does not carry. The one crossing is a Ticket whose own run
+errored. It reads as Blocked here, alongside a Ticket waiting on another Ticket, but the
+rail carries it as Errored, because a broken run wants you now and waiting on someone
+else does not. Open shows a chevron, shut shows the
 count, on statuses and sections alike, and the two measure the same, so opening one
 moves nothing else on the page. A Ticket waiting on you and a Ticket that is yours to do
 are two groups, here and in the Workspace rail both.

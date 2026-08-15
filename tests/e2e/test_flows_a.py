@@ -90,11 +90,14 @@ def test_e22_cli_create_live_board(
 
     for page in (page_a, page_b):
         count = page.eval_on_selector_all(
-            '[data-card][data-ticket-stage="needs_success"]', "els => els.length"
+            '[data-card][data-ticket-stage="needs_kickoff"]', "els => els.length"
         )
         assert count == 0, count
     flushes_b = page_b.evaluate("window.__plannerDebug.flushes")
 
+    # The rail holds the groups that want the reader, so the new Ticket is created the
+    # way a Ticket that wants one is: parked on its kickoff, in Waiting for Kickoff. What
+    # this test proves is the arrival, not the group.
     created = cli(
         server,
         "ticket",
@@ -104,11 +107,13 @@ def test_e22_cli_create_live_board(
         "--backlog",
         "--title",
         "T18 board ticket",
+        "--kickoff-note",
+        "Waiting on the kickoff",
     )
     tid = created["id"]
-    assert created["stage"] == "needs_success", created
+    assert created["stage"] == "needs_kickoff", created
 
-    card = f'[data-card][data-ticket-stage="needs_success"][data-ticket-id="{tid}"]'
+    card = f'[data-card][data-ticket-stage="needs_kickoff"][data-ticket-id="{tid}"]'
     # No reload, no goto: the today's-roster card arrives via a change-stream
     # refetch of the open pages.
     _wait_present(page_b, card)

@@ -31,10 +31,16 @@ One screen per part of the system:
   User, Paired, Agent, Awaiting approval, Waiting for Kickoff. Every parked proposal
   sits under Awaiting approval, because there is one approval gate; a proposal still
   gated on its kickoff splits out into its own group. The quiet states — Waiting to
-  Closeout, Empty, Blocked and Done — are not in the rail at all, in either view: they
-  are read on the Sprint Item page, which still lists every group. Every group the rail
-  draws arrives open, and nothing hides behind a "+n more". Rows inside a group are
-  ordered by activity, newest first.
+  Closeout, Empty, Done, and a ticket waiting on another ticket — are not in the rail at
+  all, in either view: they are read on the Sprint Item page, which still lists every
+  group. A ticket whose own run errored is not quiet and does reach the rail, as Errored;
+  the Sprint Item page files it under Blocked with the tickets that are waiting on
+  something. Every group the rail draws arrives open, and nothing hides behind a "+n
+  more". Rows inside a group are ordered by activity, newest first.
+
+  A consequence worth stating plainly: a ticket you have just made, and have not started,
+  is in none of those groups, so the Workspace does not show it. The Sprint Item page,
+  the sprint, and the ticket's own address all still do.
 
   The Tickets view is every ticket on today that sits in one of those groups, in a box
   per group.
