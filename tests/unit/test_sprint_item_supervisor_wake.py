@@ -144,7 +144,7 @@ class _World:
         """
         conversation_id = self.supervisor_conversation(item_id) or "conv_test"
         payload = PromptEventPayload(
-            content=text_message_content(sprint_item_supervisor_wake.WAKE_LEAD_TEXT),
+            content=text_message_content("t_earlier entered a paired stage"),
             sender_label=sprint_item_supervisor_wake.WAKE_SENDER_LABEL,
             mode=PromptDeliveryMode.run_when_free,
         )
@@ -193,7 +193,7 @@ class _World:
 
 def _wake(ticket_id: str, line: str) -> str:
     """The whole message a wake about one Ticket carries."""
-    return f"{sprint_item_supervisor_wake.WAKE_LEAD_TEXT}\n{ticket_id} {line}"
+    return f"{ticket_id} {line}"
 
 
 def _waited_for(predicate: Callable[[], bool], timeout: float = 5.0) -> bool:
