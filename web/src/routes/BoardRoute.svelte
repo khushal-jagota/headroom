@@ -36,6 +36,8 @@
   let view = $derived(chosenView ?? (itemId ? "items" : "tickets"));
   // Which Item the rail holds open. It follows the address, until a Ticket opened from
   // inside an Item takes the pane: the Item the reader is working in stays open.
+  // Held open is not selected. The address alone says what is selected, so exactly one
+  // row in the rail carries the selected mark, whatever is still open around it.
   let openedItemId = $state<string | null>(null);
   let railItemId = $derived(openedItemId ?? itemId ?? null);
   let allCards = $derived((board.data?.columns ?? []).flatMap((column) => column.cards));
@@ -52,6 +54,14 @@
     view === "tickets" ? rail.groups.length === 0 : rail.items.length === 0
   );
 
+  // An Item in the address is the open Item, however the reader arrived at it, so a
+  // Ticket opened from inside it afterwards still finds its Item open.
+  $effect(() => {
+    if (itemId) {
+      openedItemId = itemId;
+    }
+  });
+
   $effect(() => {
     const staleItem = itemId && !selectedItem;
     if (staleItem && board.data && !board.isFetching && !board.isError) {
@@ -63,15 +73,13 @@
     window.location.hash = workspaceAddress({ kind: "ticket", id });
   }
 
-  // The whole box is the target: a click selects the Item, a second click shuts it.
-  // Reaching for an Item is choosing this view, so shutting it stays here.
+  // The whole box is the target, and the click has one meaning: open this Item and
+  // show its supervisor. No click on an Item shuts it, including a click on the Item
+  // already in the pane. Reaching for an Item is choosing this view.
   function selectItem(id: string): void {
     chosenView = "items";
-    const shutting = railItemId === id;
-    openedItemId = shutting ? null : id;
-    window.location.hash = workspaceAddress(
-      shutting ? { kind: "none" } : { kind: "item", id }
-    );
+    openedItemId = id;
+    window.location.hash = workspaceAddress({ kind: "item", id });
   }
 
   let howFarThisBrowserHasRead = $state<Record<string, number>>({});
@@ -157,7 +165,7 @@
     <Disclosure
       variant="workspace-bucket"
       chevron="trailing"
-      defaultOpen={!group.defaultCollapsed}
+      defaultOpen
       class={nested ? "disclosure--workspace-bucket--nested" : ""}
       data-bucket-section=""
       data-bucket-key={group.key}
@@ -182,13 +190,14 @@
 
 {#snippet sprintItem(item: WorkspaceRailItem)}
   {@const open = railItemId === item.id}
+  {@const selected = itemId === item.id}
   {@const presentation = conversationSignalPresentation(
     item.signals,
     howFarThisBrowserHasRead
   )}
   <section
     class="board-workspace-item"
-    class:board-workspace-item--selected={open}
+    class:board-workspace-item--selected={selected}
     data-sprint-item={item.id}
     onclick={() => selectItem(item.id)}
     role="presentation"
@@ -201,7 +210,7 @@
         selectItem(item.id);
       }}
       aria-expanded={open}
-      aria-current={selectedItem?.id === item.id ? "page" : undefined}
+      aria-current={selected ? "page" : undefined}
     >
       <span class="board-workspace-item-title">{item.title}</span>
       <StageMark
@@ -223,7 +232,7 @@
       >
         {@render ticketGroups(item.groups, false, true)}
       </div>
-    {:else}
+    {:else if item.groups.length}
       <div class="board-workspace-item-line">
         {#each item.groups as group, index (group.key)}
           {#if index > 0}<span>·</span>{/if}

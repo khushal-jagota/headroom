@@ -6,41 +6,7 @@ import {
   workspaceGroups
 } from "../src/lib/workspaceRail";
 import type { BoardCard, BoardSprintItem } from "../src/lib/types";
-
-function card(id: string, values: Partial<BoardCard> = {}): BoardCard {
-  return {
-    id,
-    title: id,
-    priority: "P3",
-    deadline: null,
-    project_id: null,
-    project: null,
-    group_project_id: null,
-    group_project: null,
-    activity_at: 0,
-    has_pending_proposal: false,
-    ticket_status: "empty",
-    backend_error: null,
-    worker_type: "coding",
-    employee_backend: "codex",
-    stage: "needs_implementation",
-    stage_label: "Implementation",
-    gating_field: "implementation",
-    gating_field_label: "Implementation",
-    is_done: false,
-    is_dropped: false,
-    blocked: false,
-    conversation_id: null,
-    waiting_to_closeout: false,
-    sprint_item_id: null,
-    sprint_item_title: null,
-    sprint_item_priority: null,
-    agent_working: false,
-    needs_me: false,
-    latest_turn_ended_sequence: 0,
-    ...values
-  };
-}
+import { boardCard as card } from "./boardCardFixture";
 
 function item(id: string, values: Partial<BoardSprintItem> = {}): BoardSprintItem {
   return {
@@ -87,7 +53,7 @@ describe("Workspace rail", () => {
     ).toBe("agent");
   });
 
-  it("orders the groups, labels them, and starts the quiet three shut", () => {
+  it("orders and labels the groups the rail holds, and leaves out the quiet ones", () => {
     const groups = workspaceGroups([
       card("done", { stage: "done", is_done: true }),
       card("resting"),
@@ -108,17 +74,15 @@ describe("Workspace rail", () => {
       "User",
       "Paired",
       "Agent",
-      "Waiting to Closeout",
       "Awaiting approval",
-      "Waiting for Kickoff",
-      "Empty",
-      "Blocked",
-      "Done"
+      "Waiting for Kickoff"
     ]);
-    // Every group is its own group. Nothing hides behind a count.
-    expect(
-      groups.filter((group) => group.defaultCollapsed).map((group) => group.key)
-    ).toEqual(["waiting_for_kickoff", "blocked", "done"]);
+    // The quiet states are not drawn shut here. They are not in the rail at all, and
+    // the Sprint Item page is where they are read.
+    expect(groups.map((group) => group.key)).not.toContain("done");
+    expect(groups.map((group) => group.key)).not.toContain("blocked");
+    expect(groups.map((group) => group.key)).not.toContain("waiting_to_closeout");
+    expect(groups.map((group) => group.key)).not.toContain("empty");
   });
 
   it("sorts rows by activity, newest first", () => {
@@ -247,7 +211,9 @@ describe("Workspace rail", () => {
       [item("si_done")]
     );
 
+    // The Item is still the door to its page, so it keeps its box. Done is not a rail
+    // group, so the box has nothing to count and says nothing.
     expect(rail.items[0].title).toBe("Finished outcome");
-    expect(rail.items[0].groups.map((group) => group.label)).toEqual(["Done"]);
+    expect(rail.items[0].groups).toEqual([]);
   });
 });

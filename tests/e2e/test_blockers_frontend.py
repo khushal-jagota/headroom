@@ -30,13 +30,21 @@ def _get_ticket(server: ServerHandle, ticket_id: str) -> JsonObject:
     return body
 
 
-def test_workspace_places_every_dependent_in_its_own_status_group(
+def test_workspace_holds_the_groups_that_want_the_reader_and_leaves_the_rest_out(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     cli: Callable[..., JsonObject],
     api: ApiHelper,
 ) -> None:
+    """The rail is what wants you now, and a blocking link decides which side a row is on.
+
+    A Ticket waiting on its kickoff and a Ticket waiting on a later approval are two
+    groups, and both are in the rail. A Ticket that is blocked, resting, or done is not
+    in the rail at all — those are read on the Sprint Item page, which still lists every
+    group. The point of doing this in a browser is that a live blocker moves a row
+    between those two sides without a reload.
+    """
     blocker = cli(
         server, "ticket", "create", "--worker-type", "coding", "--title", "Prerequisite"
     )["id"]
@@ -99,50 +107,55 @@ def test_workspace_places_every_dependent_in_its_own_status_group(
     kickoff_card = f'[data-card][data-ticket-id="{kickoff_dependent}"]'
     shared_card = f'[data-card][data-ticket-id="{shared_dependent}"]'
 
-    # Each Ticket sits in the group its own status names. Kickoff and Blocked start
-    # shut, so the reader opens them; nothing hides behind a count.
-    for key in ("waiting_for_kickoff", "blocked"):
-        page.click(f'[data-bucket-key="{key}"] .disclosure-summary')
-    assert page.locator(f'[data-bucket-key="empty"] {active_card}').is_visible()
-    assert page.locator(f'[data-bucket-key="awaiting_approval"] {later_card}').is_visible()
+    # The two Tickets that want the reader sit in their own groups, each already open:
+    # a kickoff approval and a later approval are not the same waiting.
+    page.wait_for_selector(
+        f'[data-bucket-key="waiting_for_kickoff"] {kickoff_card}', timeout=WAIT_MS
+    )
     assert page.locator(
         f'[data-bucket-key="waiting_for_kickoff"] {kickoff_card}'
     ).is_visible()
-    assert page.locator(f'[data-bucket-key="blocked"] {shared_card}').is_visible()
+    assert page.locator(f'[data-bucket-key="awaiting_approval"] {later_card}').is_visible()
 
-    # Their own status and stage remain intact.
-    assert page.get_attribute(active_card, "data-ticket-status") == "empty"
+    # Nothing quiet is in the rail, and nothing is folded away pretending to be there:
+    # the resting blocker and the blocked dependent have no card in either view.
+    assert page.locator(active_card).count() == 0
+    assert page.locator(shared_card).count() == 0
+    assert page.locator('[data-bucket-key="empty"]').count() == 0
+    assert page.locator('[data-bucket-key="blocked"]').count() == 0
+
+    # Their own status and stage remain intact behind the rail's choice.
     assert page.get_attribute(later_card, "data-ticket-status") == "awaiting_approval"
     assert page.get_attribute(kickoff_card, "data-ticket-status") == "awaiting_approval"
-    assert page.get_attribute(shared_card, "data-ticket-status") == "blocked"
     assert page.get_attribute(later_card, "data-ticket-stage") == "needs_plan"
     assert page.get_attribute(
         f"{later_card} .board-workspace-stage-mark", "data-agent-working"
     ) == "false"
-    assert page.get_attribute(shared_card, "data-ticket-stage") == "needs_approach"
+    assert _get_ticket(server, shared_dependent)["ticket_status"] == "blocked"
+    assert _get_ticket(server, shared_dependent)["stage"] == "needs_approach"
 
-    # Removing the last live blocker settles the same row back to empty.
+    # Removing the last live blocker settles that row back to empty, which is still not
+    # a group the rail carries — so the row stays out, without a reload.
     cli(server, "ticket", "unblock", shared_dependent, "--by", blocker)
     page.wait_for_function(
-        "selector => document.querySelector(selector)?.getAttribute('data-ticket-status') "
-        "=== 'empty'",
+        "selector => document.querySelectorAll(selector).length === 0",
         arg=shared_card,
         timeout=WAIT_MS,
     )
+    assert _get_ticket(server, shared_dependent)["ticket_status"] == "empty"
 
-    # A finished Ticket joins the Done group, which starts shut. The group is the whole
-    # way in and the whole way out: it is put away, not hidden behind a count.
+    # A finished Ticket is not put away behind a count here; it is not in the rail.
     _post_stage(server, blocker, "done")
-    page.wait_for_selector(
-        f'[data-bucket-key="done"] {active_card}', state="attached", timeout=WAIT_MS
+    page.wait_for_function(
+        "selector => document.querySelectorAll(selector).length === 0",
+        arg=active_card,
+        timeout=WAIT_MS,
     )
-    assert not page.locator(f'[data-bucket-key="done"] {active_card}').is_visible()
-    page.click('[data-bucket-key="done"] .disclosure-summary')
-    assert page.locator(f'[data-bucket-key="done"] {active_card}').is_visible()
+    assert page.locator('[data-bucket-key="done"]').count() == 0
+    # The Tickets that do want the reader are untouched by all of it.
     assert page.locator(kickoff_card).count() == 1
     assert page.locator(later_card).count() == 1
     assert _get_ticket(server, later_dependent)["stage"] == "needs_plan"
-    assert _get_ticket(server, shared_dependent)["stage"] == "needs_approach"
 
 
 def test_ticket_detail_shows_only_active_direct_blockers_and_removes_each_link(
