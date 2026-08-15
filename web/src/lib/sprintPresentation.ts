@@ -103,9 +103,10 @@ export function sprintItems(groups: Record<string, SprintItem[]>): SprintItem[] 
 
 export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicketCondition {
   if (ticket.stage === "done") return { mark: "completed", word: "done" };
-  if (ticket.ticket_status === "blocked" || ticket.ticket_status === "errored") {
-    return { mark: "errored", word: "blocked" };
-  }
+  // Two states, one mark, two words. Errored is a worker that broke; blocked is a
+  // Ticket another Ticket holds. They read the same red, and never the same word.
+  if (ticket.ticket_status === "errored") return { mark: "errored", word: "errored" };
+  if (ticket.ticket_status === "blocked") return { mark: "errored", word: "blocked" };
   if (ticket.has_pending_proposal || ticket.ticket_status === "awaiting_approval") {
     return { mark: "current-awaiting-approval", word: "to review" };
   }
@@ -120,9 +121,11 @@ export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicke
 function sortedTickets(tickets: SprintTicket[], blockedLast: boolean): SprintTicket[] {
   return [...tickets].sort((left, right) => {
     if (blockedLast) {
+      // The mark, not the word: errored and blocked read as different words and both
+      // belong at the end of the section.
       const blockedDifference =
-        Number(sprintTicketCondition(left).word === "blocked") -
-        Number(sprintTicketCondition(right).word === "blocked");
+        Number(sprintTicketCondition(left).mark === "errored") -
+        Number(sprintTicketCondition(right).mark === "errored");
       if (blockedDifference !== 0) return blockedDifference;
     }
     return rankPriority(left.priority) - rankPriority(right.priority) ||

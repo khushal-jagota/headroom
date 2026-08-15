@@ -12,29 +12,37 @@ function ticket(values: Partial<TicketStatusGroupFacts> = {}): TicketStatusGroup
     ticket_status: "empty",
     has_pending_proposal: false,
     waiting_to_closeout: false,
-    blocked: false,
     gating_field: "implementation",
     ...values
   };
 }
 
 describe("Ticket status groups", () => {
-  it("holds one order, and names the four groups that arrive open", () => {
+  it("holds one order, and names the groups that arrive open", () => {
+    // Errored leads and Blocked sits late, as they do in the rail.
     expect(TICKET_STATUS_GROUPS.map((group) => group.label)).toEqual([
+      "Errored",
       "Needs you",
       "User",
       "Waiting for kickoff",
       "Awaiting approval",
       "Paired",
       "Agent",
-      "Blocked",
       "Waiting for closeout",
       "Empty",
+      "Blocked",
       "Done"
     ]);
     expect(
       TICKET_STATUS_GROUPS.filter((group) => !group.quiet).map((group) => group.label)
-    ).toEqual(["Needs you", "User", "Waiting for kickoff", "Awaiting approval", "Paired"]);
+    ).toEqual([
+      "Errored",
+      "Needs you",
+      "User",
+      "Waiting for kickoff",
+      "Awaiting approval",
+      "Paired"
+    ]);
   });
 
   it("names each Ticket's group from the shared condition", () => {
@@ -49,9 +57,9 @@ describe("Ticket status groups", () => {
     );
     expect(ticketStatusGroupKey(ticket({ ticket_status: "paired" }))).toBe("current-paired");
     expect(ticketStatusGroupKey(ticket({ ticket_status: "agent" }))).toBe("current-running");
-    expect(ticketStatusGroupKey(ticket({ ticket_status: "blocked" }))).toBe("errored");
-    // A link blocker is not a status, and it still lands the Ticket in Blocked.
-    expect(ticketStatusGroupKey(ticket({ ticket_status: "user", blocked: true }))).toBe("errored");
+    // Errored and blocked are two states, and each names its own group.
+    expect(ticketStatusGroupKey(ticket({ ticket_status: "errored" }))).toBe("errored");
+    expect(ticketStatusGroupKey(ticket({ ticket_status: "blocked" }))).toBe("blocked");
     expect(ticketStatusGroupKey(ticket())).toBe("upcoming");
     expect(ticketStatusGroupKey(ticket({ stage: "done" }))).toBe("completed");
     expect(ticketStatusGroupKey(ticket({ waiting_to_closeout: true }))).toBe("current-waiting");
@@ -73,7 +81,7 @@ describe("Ticket status groups", () => {
   });
 
   it("reads a group from facts a screen may not carry", () => {
-    // A row that knows nothing about blockers or gating still lands somewhere sane.
+    // A row that knows nothing about gating still lands somewhere sane.
     expect(ticketStatusGroupKey({ stage: "needs_plan", ticket_status: "agent" })).toBe(
       "current-running"
     );

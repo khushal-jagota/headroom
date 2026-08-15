@@ -171,16 +171,34 @@ describe("Sprint Item workspace presentation", () => {
     ).toEqual(["Waiting for kickoff", "Awaiting approval"]);
   });
 
-  it("reads Blocked from an open blocker link, not only from the status", () => {
+  it("reads Errored and Blocked apart, each from the Ticket's own status", () => {
     const value = workspace();
-    const held = { ...value.tickets[0], id: "t_held", blocked: true };
+    const errored = { ...value.tickets[2], id: "t_errored", ticket_status: "errored" };
+    const blocked = { ...value.tickets[2], id: "t_blocked", ticket_status: "blocked" };
+    expect(
+      todayWorkspaceTicketGroups({
+        ...value,
+        today_ticket_ids: ["t_errored", "t_blocked"],
+        tickets: [errored, blocked]
+      }).map((group) => [group.label, group.tickets.map((ticket) => ticket.id)])
+    ).toEqual([
+      ["Errored", ["t_errored"]],
+      ["Blocked", ["t_blocked"]]
+    ]);
+  });
+
+  it("lets an active Ticket keep its own group while a blocker link is open", () => {
+    // The server writes status `blocked` only for a resting Ticket. A Ticket that is
+    // doing something owns its status, and the rail reads it the same way.
+    const value = workspace();
+    const held = { ...value.tickets[2], id: "t_held", blocked: true };
     expect(
       todayWorkspaceTicketGroups({
         ...value,
         today_ticket_ids: ["t_held"],
         tickets: [held]
       }).map((group) => group.label)
-    ).toEqual(["Blocked"]);
+    ).toEqual(["Agent"]);
   });
 
   it("carries the quiet flag each group is opened or collapsed by", () => {
