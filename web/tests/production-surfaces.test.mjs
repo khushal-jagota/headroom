@@ -253,11 +253,13 @@ assert.doesNotMatch(boardRouteSource, /project-filter|projectMenu|selectedProjec
 assert.doesNotMatch(appCssSource, /board-workspace-project-filter/);
 
 // The Sprint Item page keeps its own order of status groups, named and defaulted by its
-// approved design. It is not the rail's list: the rail groups by raw ticket_status.
+// approved design. It is not the rail's list: the rail groups by raw ticket_status. Errored
+// and Blocked are the exception — they carry the rail's keys, order and emphasis, because
+// two screens must not name one state two ways.
 assert.match(ticketStatusGroupsSource, /import \{ sprintTicketCondition/);
 assert.match(
   ticketStatusGroupsSource,
-  /"needs-me", label: "Needs you", quiet: false[\s\S]*"user", label: "User", quiet: false[\s\S]*"waiting-for-kickoff", label: "Waiting for kickoff", quiet: false[\s\S]*"current-awaiting-approval", label: "Awaiting approval", quiet: false[\s\S]*"current-paired", label: "Paired", quiet: false[\s\S]*"current-running", label: "Agent", quiet: false[\s\S]*"errored", label: "Blocked", quiet: true[\s\S]*"current-waiting", label: "Waiting for closeout", quiet: true[\s\S]*"upcoming", label: "Empty", quiet: true[\s\S]*"completed", label: "Done", quiet: true/,
+  /"errored", label: "Errored", quiet: false[\s\S]*"needs-me", label: "Needs you", quiet: false[\s\S]*"user", label: "User", quiet: false[\s\S]*"waiting-for-kickoff", label: "Waiting for kickoff", quiet: false[\s\S]*"current-awaiting-approval", label: "Awaiting approval", quiet: false[\s\S]*"current-paired", label: "Paired", quiet: false[\s\S]*"current-running", label: "Agent", quiet: false[\s\S]*"current-waiting", label: "Waiting for closeout", quiet: true[\s\S]*"upcoming", label: "Empty", quiet: true[\s\S]*"blocked", label: "Blocked", quiet: true[\s\S]*"completed", label: "Done", quiet: true/,
 );
 assert.doesNotMatch(sprintItemWorkspaceSource, /workspaceRail/);
 

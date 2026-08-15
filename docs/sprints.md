@@ -64,17 +64,16 @@ Tickets, named only by their status. Then the index: Artifacts, then Remaining T
 which keeps off-today and done work visible without competing with today. Both index
 sections arrive shut.
 
-Every status is its own dropdown. Needs you, User, Waiting for kickoff, Awaiting
-approval, Paired and Agent arrive open — work running right now is what the reader came
-for. Blocked, Waiting for closeout, Empty and Done arrive shut, still named and counted, and
-they are broadly what the Workspace rail leaves out: a group you have to open here is
-usually a group the rail does not carry. The one crossing is a Ticket whose own run
-errored. It reads as Blocked here, alongside a Ticket waiting on another Ticket, but the
-rail carries it as Errored, because a broken run wants you now and waiting on someone
-else does not. Open shows a chevron, shut shows the
-count, on statuses and sections alike, and the two measure the same, so opening one
-moves nothing else on the page. A Ticket waiting on you and a Ticket that is yours to do
-are two groups, here and in the Workspace rail both.
+Every status is its own dropdown. Errored, Needs you, User, Waiting for kickoff,
+Awaiting approval, Paired and Agent arrive open — a broken run and work running right
+now are what the reader came for. Waiting for closeout, Empty, Blocked and Done arrive
+shut, still named and counted, and they are exactly what the Workspace rail leaves out:
+a group you have to open here is a group the rail does not carry. Open shows a chevron,
+shut shows the count, on statuses and sections alike, and the two measure the same, so
+opening one moves nothing else on the page. A Ticket waiting on you and a Ticket that is
+yours to do are two groups, here and in the Workspace rail both. So are a Ticket whose
+own run errored and a Ticket waiting on another Ticket: a broken run wants you now and
+waiting on someone else does not, so Errored leads and Blocked sits late.
 
 This page splits a Ticket by its condition and the rail splits it by its raw status, so
 the two screens do not always draw the same set of groups. They do use the same words: a

@@ -12,6 +12,11 @@ import { sprintTicketCondition, type TicketConditionFacts } from "./sprintPresen
 // same thing by the same name: a group here and a group there that hold the same
 // Tickets carry one label, and `GROUP_LABELS` in the rail is where the other half of
 // each pair lives. A label changed on one side is changed on both.
+//
+// `errored` and `blocked` go further than a shared label: they carry the rail's own
+// keys. A worker that broke wants the reader now, so Errored leads, arrives open, and
+// the rail carries it. Work another Ticket holds does not, so Blocked sits late,
+// arrives shut, and stays off the rail. Neither state is ever named as the other.
 export type TicketStatusGroupDefinition = {
   key: string;
   label: string;
@@ -19,34 +24,37 @@ export type TicketStatusGroupDefinition = {
 };
 
 export const TICKET_STATUS_GROUPS: readonly TicketStatusGroupDefinition[] = [
+  { key: "errored", label: "Errored", quiet: false },
   { key: "needs-me", label: "Needs you", quiet: false },
   { key: "user", label: "User", quiet: false },
   { key: "waiting-for-kickoff", label: "Waiting for kickoff", quiet: false },
   { key: "current-awaiting-approval", label: "Awaiting approval", quiet: false },
   { key: "current-paired", label: "Paired", quiet: false },
   { key: "current-running", label: "Agent", quiet: false },
-  { key: "errored", label: "Blocked", quiet: true },
   { key: "current-waiting", label: "Waiting for closeout", quiet: true },
   { key: "upcoming", label: "Empty", quiet: true },
+  { key: "blocked", label: "Blocked", quiet: true },
   { key: "completed", label: "Done", quiet: true }
 ] as const;
 
-// The facts a group is read from: the Ticket's condition, plus the two the condition
-// cannot see — an open blocker link, and the field the Ticket is gated on. A Ticket is
-// finished at stage `done`, which the registry requires every Worker type to end on.
+// The facts a group is read from: the Ticket's condition, plus the one the condition
+// cannot see — the field the Ticket is gated on. A Ticket is finished at stage `done`,
+// which the registry requires every Worker type to end on.
 export type TicketStatusGroupFacts = TicketConditionFacts & {
-  blocked?: boolean;
   gating_field?: string | null;
 };
 
-// A Ticket's own two facts win first: it is finished, or a blocker holds it. Then two
-// marks split, each because the rail splits them and the two screens name the same
-// Tickets the same way: a Ticket waiting on the user is not a Ticket that is the user's
-// own to do, and a Ticket gated on its kickoff is worth naming apart from later
-// approvals.
+// The Ticket is finished, or one of the two red states holds it. Errored and blocked
+// are read from the status, which is the fact the rail reads: the server writes
+// `blocked` only while a resting Ticket has a live blocker, and a Ticket doing
+// something owns its own status. Then two marks split, each because the rail splits
+// them and the two screens name the same Tickets the same way: a Ticket waiting on the
+// user is not a Ticket that is the user's own to do, and a Ticket gated on its kickoff
+// is worth naming apart from later approvals.
 export function ticketStatusGroupKey(ticket: TicketStatusGroupFacts): string {
   if (ticket.stage === "done") return "completed";
-  if (ticket.blocked) return "errored";
+  if (ticket.ticket_status === "errored") return "errored";
+  if (ticket.ticket_status === "blocked") return "blocked";
   const mark = sprintTicketCondition(ticket).mark;
   if (mark === "needs-me") return ticket.ticket_status === "user" ? "user" : "needs-me";
   if (mark !== "current-awaiting-approval") return mark;

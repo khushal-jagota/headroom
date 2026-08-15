@@ -38,11 +38,12 @@ export type SprintTicketCondition = {
 
 // The three facts a Ticket's condition is read from. Sprint tickets, Sprint Item
 // workspace tickets and Workspace board cards all carry them, so all three screens
-// name a Ticket's condition the same way.
+// name a Ticket's condition the same way. A filed proposal is not one of them: a
+// Ticket the user has messaged is paired while its proposal stays filed, so the
+// Ticket's own status is the fact.
 export type TicketConditionFacts = {
   stage: string;
   ticket_status: string;
-  has_pending_proposal?: boolean;
   waiting_to_closeout?: boolean;
 };
 
@@ -103,10 +104,11 @@ export function sprintItems(groups: Record<string, SprintItem[]>): SprintItem[] 
 
 export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicketCondition {
   if (ticket.stage === "done") return { mark: "completed", word: "done" };
-  if (ticket.ticket_status === "blocked" || ticket.ticket_status === "errored") {
-    return { mark: "errored", word: "blocked" };
-  }
-  if (ticket.has_pending_proposal || ticket.ticket_status === "awaiting_approval") {
+  // Two states, one mark, two words. Errored is a worker that broke; blocked is a
+  // Ticket another Ticket holds. They read the same red, and never the same word.
+  if (ticket.ticket_status === "errored") return { mark: "errored", word: "errored" };
+  if (ticket.ticket_status === "blocked") return { mark: "errored", word: "blocked" };
+  if (ticket.ticket_status === "awaiting_approval") {
     return { mark: "current-awaiting-approval", word: "to review" };
   }
   if (ticket.ticket_status === "needs_user") return { mark: "needs-me", word: "need you" };
@@ -120,9 +122,11 @@ export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicke
 function sortedTickets(tickets: SprintTicket[], blockedLast: boolean): SprintTicket[] {
   return [...tickets].sort((left, right) => {
     if (blockedLast) {
+      // The mark, not the word: errored and blocked read as different words and both
+      // belong at the end of the section.
       const blockedDifference =
-        Number(sprintTicketCondition(left).word === "blocked") -
-        Number(sprintTicketCondition(right).word === "blocked");
+        Number(sprintTicketCondition(left).mark === "errored") -
+        Number(sprintTicketCondition(right).mark === "errored");
       if (blockedDifference !== 0) return blockedDifference;
     }
     return rankPriority(left.priority) - rankPriority(right.priority) ||

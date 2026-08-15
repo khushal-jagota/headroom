@@ -50,8 +50,10 @@ describe("Sprint ticket conditions", () => {
   it.each([
     [ticket({ stage: "done", ticket_status: "errored" }), "completed", "done"],
     [ticket({ ticket_status: "blocked" }), "errored", "blocked"],
-    [ticket({ ticket_status: "errored" }), "errored", "blocked"],
-    [ticket({ has_pending_proposal: true }), "current-awaiting-approval", "to review"],
+    [ticket({ ticket_status: "errored" }), "errored", "errored"],
+    // Messaging a Ticket that was awaiting approval pairs it and leaves the proposal
+    // filed. The status is the fact, so it reads paired.
+    [ticket({ ticket_status: "paired", has_pending_proposal: true }), "current-paired", "paired"],
     [ticket({ ticket_status: "awaiting_approval" }), "current-awaiting-approval", "to review"],
     [ticket({ ticket_status: "needs_user" }), "needs-me", "need you"],
     [ticket({ ticket_status: "user" }), "needs-me", "yours"],
@@ -96,13 +98,18 @@ describe("Sprint Item presentation", () => {
   });
 
   it("separates live, off-today, and done work with blocked live work last", () => {
+    // Errored and blocked read as different words. Both still sink to the end.
     const blocked = ticket({ id: "t_blocked", priority: "P0", ticket_status: "blocked" });
+    const errored = ticket({ id: "t_errored", priority: "P0", ticket_status: "errored" });
     const moving = ticket({ id: "t_moving", priority: "P2", ticket_status: "agent" });
     const later = ticket({ id: "t_later", priority: "P1" });
     const done = ticket({ id: "t_done", stage: "done", priority: "P3" });
     expect(
-      sprintTicketSectionsForTickets([blocked, moving, later, done], new Set([blocked.id, moving.id]))
-    ).toEqual({ today: [moving, blocked], later: [later], done: [done] });
+      sprintTicketSectionsForTickets(
+        [blocked, errored, moving, later, done],
+        new Set([blocked.id, errored.id, moving.id])
+      )
+    ).toEqual({ today: [moving, blocked, errored], later: [later], done: [done] });
   });
 });
 
