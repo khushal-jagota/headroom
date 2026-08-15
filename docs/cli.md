@@ -164,6 +164,19 @@ record shapes. Direct `show` commands also keep their full record shapes.
   current child Ticket, page through its current Worker conversation, or send attributed
   guidance to that exact existing conversation. `message-worker` requires the current
   conversation id and refuses stale ids.
+- **`sprint item supervisor restart-worker`** — start a current child Ticket's worker
+  step again, when its Worker is dead. A dead Worker leaves the Ticket looking claimed,
+  because the claim is the Ticket's status, so clearing the conversation on its own would
+  leave it stuck. This does both: it clears the conversation and gives the claim back, and
+  then starts the step. It answers with whether a Worker started, and names the reason
+  when none did. `--backend` and `--model` restart the Ticket on a different agent, and
+  they go together, because a model belongs to the backend that named it. Add
+  `--reasoning-effort` for a model that takes one. A named configuration is what the
+  Ticket launches on from then on, so a Worker that died on its backend does not come
+  back on the same one. Leave the options out to restart on what the Ticket already has.
+  A worker step gets its first five minutes before it may be restarted, so a Worker that
+  is merely slow is left alone. Only a Worker-owned Stage can be restarted: a paired
+  conversation belongs to the user.
 - **`sprint item supervisor set-item / set-ticket / scope / add-to-day / remove-from-day / block / unblock`**
   — use item-scoped canonical actions for the owning Item and its current child Tickets.
   `scope` takes the ceiling as either the stage name or the plain name of the field that

@@ -88,8 +88,41 @@ Use these canonical actions when they match the decision:
 - `add-to-day` and `remove-from-day` change Day membership.
 - `block` and `unblock` change blocker links inside the Item boundary.
 - `artifact-list`, `artifact-write`, and `artifact-delete` manage Item artifacts.
+- `restart-worker` starts a child Ticket's worker step again, when its Worker is dead.
+  See **Restarting a dead Worker**.
 
 These actions own lifecycle facts. Do not simulate one with a message.
+
+## Restarting a dead Worker
+
+A Worker can die without stopping cleanly. Its Ticket then sits at `agent` and looks
+claimed, and nothing starts it again. `restart-worker <item> <ticket>` is the recovery.
+It clears the dead conversation, gives the claim back, and starts the step again.
+
+Panels cannot tell a dead Worker from a live one, so this is your judgment. Make it on
+evidence:
+
+1. Read `ticket-context` and `history`. Look at what the Worker did last, and when.
+2. Send `message-worker` first. A live Worker answers. A dead one does not.
+3. Restart only after that.
+
+A restart kills the current turn and everything the conversation held. The Ticket keeps
+its fields, its files, and its branch, and the killed conversation stays readable, so
+what a wrong restart costs is one turn's working context.
+
+Add `--backend` and `--model` to restart the Ticket on a different agent, and
+`--reasoning-effort` for a model that takes one. Use them when the backend is what
+failed, because a plain restart brings the Worker back on the same one. The named
+configuration is what the Ticket launches on from then on, not for one turn.
+
+Three rules bound the action, and the server enforces all three. The Ticket must be a
+current child of your Item. Its Stage must be Worker-owned, because a paired
+conversation belongs to the user. The worker step must have had five minutes, so a
+Worker that is merely slow is left alone.
+
+The answer says whether a Worker started, and names the reason when none did. A common
+reason is that the Ticket is not on today's Day, which `add-to-day` fixes. Read
+`ticket-context` afterwards to see the new conversation.
 
 ## Worker guidance
 
@@ -99,7 +132,8 @@ conversation. Read `ticket-context` first. Pass its exact `conversation_id` to
 
 A Worker message never changes the Ticket Stage, scope, status, or Day membership. Use
 the named canonical action when one of those facts must change. Do not use a Worker
-message to claim or start work. The readiness system owns Worker starts.
+message to claim or start work. The readiness system owns Worker starts. `restart-worker`
+is the one way you ask it for another, and it is for a Worker that is dead.
 
 Panels wakes you in this conversation. Five things bring a wake: a Ticket proposed
 something, a Ticket entered a paired Stage, a Worker asked for human help, a Worker's

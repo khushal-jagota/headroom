@@ -5,10 +5,12 @@ because the Idea shape lives in this domain's contracts. Sprint writers take a
 
 from __future__ import annotations
 
+import sqlite3
+from collections.abc import Callable
 from datetime import date
 from typing import Any, cast
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from planner.conversation.api import OwnerSendBody, conversation_message_content, delivery_fate_json
 from planner.conversation.contracts import PromptDeliveryStarted, require_conversation_backend_key
@@ -21,6 +23,7 @@ from planner.core.authctx import (
     require_ticket_worker_write,
 )
 from planner.core.contracts import JsonDict, LinkKind, Priority
+from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import actions as days_actions
 from planner.days.logic.dates import planning_date, resolve_day_id
@@ -29,6 +32,7 @@ from planner.list_reads.contracts import ListPageRequest
 from planner.projects import data as projects_data
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
+from planner.runtime.worker_step_readiness_loop import start_ready_worker_step
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
 from planner.sprints import supervisor_service
@@ -61,6 +65,8 @@ from planner.tickets.api import (
     body_opt_str,
     body_str,
     parse_enum,
+    resolve_employee_configuration,
+    write_resolved_employee_configuration,
 )
 from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap, TicketEdit
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -315,6 +321,81 @@ async def supervisor_message_worker(
         ticket_id,
         conversation_id=body_str(raw, "conversation_id"),
         message=body_str(raw, "message"),
+        now=clk.now_unix(),
+    )
+
+
+@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/restart-worker")
+async def supervisor_restart_worker(
+    item_id: str,
+    ticket_id: str,
+    raw: dict[str, Any],
+    request: Request,
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+    conversations: Conversations,
+    worker_context: WorkerContext,
+) -> JsonDict:
+    """Start this child Ticket's worker step again, optionally on a named configuration.
+
+    The configuration is resolved before the service is called, so a backend or model
+    this Ticket cannot launch on is a plain refusal rather than a killed conversation.
+    Item scope is proved before even that: resolving asks the backends what they offer,
+    and no caller reaches a question about a Ticket that is not its own.
+    """
+    supervisor_service.require_current_child(conn, ctx, item_id, ticket_id)
+    backend = body_opt_str(raw, "employee_backend")
+    model = body_opt_str(raw, "employee_launch_model")
+    if (backend is None) != (model is None):
+        raise PlannerError(
+            ErrorCode.validation,
+            "a launch configuration needs both a backend and a model",
+            {},
+        )
+    write_configuration: Callable[[sqlite3.Connection], None] | None = None
+    if backend is not None and model is not None:
+        resolved = await resolve_employee_configuration(
+            request,
+            conn,
+            ticket_id,
+            employee_backend=backend,
+            employee_launch_model=model,
+            employee_launch_reasoning_effort=body_opt_str(
+                raw, "employee_launch_reasoning_effort"
+            ),
+        )
+
+        def write_the_resolved_configuration(open_conn: sqlite3.Connection) -> None:
+            write_resolved_employee_configuration(
+                open_conn, ticket_id, resolved, now=clk.now_unix()
+            )
+
+        write_configuration = write_the_resolved_configuration
+
+    planning_day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
+
+    async def start_worker_step() -> bool:
+        return await start_ready_worker_step(
+            ticket_id,
+            connect_database=lambda: connect(cfg.db_path, cfg.db_busy_timeout_ms),
+            conversation_system=conversations,
+            worker_context_service=worker_context,
+            worker_type_registry=configured_worker_type_registry(),
+            planning_day_id_resolver=lambda: planning_day_id,
+            now=clk.now_unix,
+        )
+
+    return await supervisor_service.restart_worker(
+        conversations,
+        conn,
+        ctx,
+        item_id,
+        ticket_id,
+        write_employee_configuration=write_configuration,
+        start_worker_step=start_worker_step,
+        planning_day_id=planning_day_id,
         now=clk.now_unix(),
     )
 

@@ -2007,6 +2007,62 @@ def sprint_item_supervisor_message_worker(
     http.emit(data, as_json, f"Worker message {data['fate']}")
 
 
+@sprint_item_supervisor.command("restart-worker")
+@click.argument("item_id")
+@click.argument("ticket_id")
+@click.option("--backend", default=None, help="Registered employee backend to restart on.")
+@click.option("--model", default=None, help="Model that backend runs this Ticket's worker on.")
+@click.option(
+    "--reasoning-effort",
+    default=None,
+    help="Reasoning effort for that model; leave it out for a model that takes none.",
+)
+@json_option
+def sprint_item_supervisor_restart_worker(
+    item_id: str,
+    ticket_id: str,
+    backend: str | None,
+    model: str | None,
+    reasoning_effort: str | None,
+    as_json: bool,
+) -> None:
+    """Start a current child Ticket's worker step again, on a dead Worker.
+
+    Leave the options out to restart on what the Ticket already launches. Naming a
+    configuration changes what this Ticket launches on from now on, so a Worker that died
+    on its backend does not come back on the same one. Backend and model go together,
+    because a model id belongs to the backend that named it.
+    """
+    if (backend is None) != (model is None):
+        http.fail_validation(
+            "restart-worker needs --backend and --model together, or neither", as_json
+        )
+    body: dict[str, Any] = {}
+    if backend is not None:
+        body = {
+            "employee_backend": backend,
+            "employee_launch_model": model,
+            "employee_launch_reasoning_effort": reasoning_effort,
+        }
+    data = http.send(
+        "POST",
+        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/restart-worker",
+        as_json=as_json,
+        json_body=body,
+    )
+    configuration = data["employee_configuration"]
+    launch = (
+        f"{configuration['employee_backend']} {configuration['employee_launch_model']}"
+    )
+    http.emit(
+        data,
+        as_json,
+        f"{ticket_id} restarted on {launch}"
+        if data["started"]
+        else f"{ticket_id} did not start: {data['not_started_because']}",
+    )
+
+
 @sprint_item_supervisor.command("set-item")
 @click.argument("item_id")
 @click.argument("field", type=click.Choice(sorted(_SUPERVISOR_ITEM_FIELDS)))
