@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  isTicketDevServerHref,
   markdownExpansionFor,
   prepareManagedHtmlPreviewDocument,
   previewHashHref,
@@ -212,6 +213,57 @@ describe("managed-file targets and preview addresses", () => {
     expect(previewHashHref(ticketMarkdown)).toBe(
       "#/preview?source=ticket&ticket=t_file123&path=notes%2Fspace%20name.md"
     );
+  });
+});
+
+describe("Ticket dev-server addresses", () => {
+  const stubPanelsOrigin = () => {
+    vi.stubGlobal("window", {
+      location: { origin: "https://panels.test", href: "https://panels.test/workspace" }
+    });
+  };
+
+  it.each([
+    "/dev/tickets/t_file123/8791/",
+    "/dev/tickets/t_file123/8791",
+    "/dev/tickets/t_file123/4173/nested/page?theme=dark#result",
+    "/dev/tickets/t_file123/1/",
+    "/dev/tickets/t_file123/65535/",
+    "https://panels.test/dev/tickets/t_file123/8791/"
+  ])("recognizes %s", (href) => {
+    stubPanelsOrigin();
+    expect(isTicketDevServerHref(href)).toBe(true);
+  });
+
+  it.each([
+    "/dev/tickets/t_file123/",
+    "/dev/tickets/t_file123/0/",
+    "/dev/tickets/t_file123/65536/",
+    "/dev/tickets/t_file123/80x/",
+    "/dev/tickets/not-a-ticket/8791/",
+    "/dev/tickets/t_file123/8791x/page",
+    "/dev/sprint-items/t_file123/8791/",
+    "/files/tickets/t_file123/8791/",
+    "https://example.com/dev/tickets/t_file123/8791/"
+  ])("rejects %s", (href) => {
+    stubPanelsOrigin();
+    expect(isTicketDevServerHref(href)).toBe(false);
+  });
+
+  it("stays an external-link target, so the preview component is unchanged", () => {
+    stubPanelsOrigin();
+    const href = "/dev/tickets/t_file123/8791/";
+
+    expect(targetFromHref(href, "take one")).toEqual({
+      kind: "external-link",
+      href,
+      label: "take one"
+    });
+    expect(resolvePreview(targetFromHref(href, "take one"))).toMatchObject({
+      kind: "external",
+      href,
+      label: "take one"
+    });
   });
 });
 

@@ -286,7 +286,8 @@ has no usage source.
   in a Ticket conversation whose address is `http://localhost:<port>/...` or
   `http://127.0.0.1:<port>/...` is rendered as
   `/dev/tickets/<ticket-id>/<port>/...`. The link keeps its path, query, and fragment;
-  the port stays in the link rather than becoming Ticket state. This context belongs
+  the port stays in the link rather than becoming Ticket state. The rewritten address is
+  a preview like any other one written that way. This context belongs
   only to the Ticket conversation, so the same Markdown on another surface remains an
   ordinary loopback link. The first proxy contract carries pages and relative resource
   or navigation paths under that prefix. Applications that hard-code root-origin URLs
@@ -312,10 +313,12 @@ has no usage source.
   applies the same safe-path, symlink, media-type, and `nosniff` response policy.
 - **File previews use one contract.** Markdown turns a link that names a managed file,
   such as `/files/tickets/t_123/notes/plan.md`, into the shared file preview component,
-  and every image into that same component wherever the image is hosted. Any other link
-  stays an ordinary link: a same-page anchor is still an anchor, one of this app's own
-  routes still navigates inside the app, and an off-site address still goes off-site. An
-  image sitting inside such a link is left alone with it.
+  and every image into that same component wherever the image is hosted. A link to a
+  Ticket's dev server, `/dev/tickets/t_123/8791/`, joins them: it is a Panels address the
+  user can open, so it gets the same treatment and reads as "Open" plus the link's own
+  text. Any other link stays an ordinary link: a same-page anchor is still an anchor, one
+  of this app's own routes still navigates inside the app, and an off-site address still
+  goes off-site. An image sitting inside such a link is left alone with it.
   A preview shows the thing itself, softly rounded, with nothing drawn around it. An image
   is an image, SVG among them; a video is its own player; audio is its own control. None of
   the three carries a title, a caption, or anything to click.

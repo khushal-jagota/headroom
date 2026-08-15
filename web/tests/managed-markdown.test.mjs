@@ -406,7 +406,9 @@ globalThis.__managedMarkdownFilePreview = {
     if (/\.(png|jpg|gif|webp|svg)$/i.test(name)) return { kind: "image" };
     if (/\.md$/i.test(name)) return { kind: "markdown" };
     return { kind: "external" };
-  }
+  },
+  // The address shape only; the real recognizer owns origin and range checks.
+  isTicketDevServerHref: (href) => /^\/dev\/tickets\/t_[a-z0-9]+\/[0-9]{1,5}(?:[/?#]|$)/.test(href)
 };
 
 function text(value) {
@@ -469,6 +471,33 @@ function renderedMarkdown(source) {
         element("a", [text("elsewhere")], {
           href: "https://example.com/page",
           "data-markdown-source-token": "[elsewhere](https://example.com/page)"
+        })
+      ])
+    );
+  } else if (source.includes("[take one]")) {
+    rendered.appendChild(
+      element("p", [text("Look at "), element("a", [text("take one")], {
+        href: "/dev/tickets/t_demo/8791/",
+        "data-markdown-source-token": "[take one](/dev/tickets/t_demo/8791/)"
+      })])
+    );
+  } else if (source.includes("[no port]")) {
+    rendered.appendChild(
+      element("p", [
+        element("a", [text("no port")], {
+          href: "/dev/tickets/t_demo/",
+          "data-markdown-source-token": "[no port](/dev/tickets/t_demo/)"
+        }),
+        text(" and "),
+        element("a", [text("bad port")], {
+          href: "/dev/tickets/t_demo/80x/",
+          "data-markdown-source-token": "[bad port](/dev/tickets/t_demo/80x/)"
+        }),
+        text(" and "),
+        element("a", [text("off site")], {
+          href: "https://example.com/dev/tickets/t_demo/8791/",
+          "data-markdown-source-token":
+            "[off site](https://example.com/dev/tickets/t_demo/8791/)"
         })
       ])
     );
@@ -622,8 +651,8 @@ const executableSource = ownerSource
     "const FilePreview = globalThis.__managedMarkdownSvelte.FilePreview;"
   )
   .replace(
-    'import { resolvePreview, targetFromHref } from "./filePreview";',
-    "const { resolvePreview, targetFromHref } = globalThis.__managedMarkdownFilePreview;"
+    'import { isTicketDevServerHref, resolvePreview, targetFromHref } from "./filePreview";',
+    "const { isTicketDevServerHref, resolvePreview, targetFromHref } = globalThis.__managedMarkdownFilePreview;"
   )
   .replace(
     'import { renderMarkdownToElement, serializeMarkdownDomToSource } from "./markdownPipeline";',
@@ -677,8 +706,11 @@ assert.equal(
   "http://localhost:4173/nested/page?theme=dark#result"
 );
 
+// A loopback link with a Ticket id becomes the ingress address, and the preview then
+// claims it like any other preview-server link: the anchor becomes a preview slot.
 const ticketLinkHost = host();
 const ticketLinks = createManagedMarkdownSurface(ticketLinkHost, { mode: "read-only" });
+const ticketLinkMountCount = mountCalls.length;
 ticketLinks.update({
   source: "[Dev](http://localhost:4173/nested/page?theme=dark#result)",
   emptyText: "",
@@ -686,10 +718,54 @@ ticketLinks.update({
   visited: [],
   ticketId: "t_demo"
 });
-assert.equal(
-  ticketLinkHost.querySelector("a[href]").getAttribute("href"),
-  "/dev/tickets/t_demo/4173/nested/page?theme=dark#result"
+assert.equal(ticketLinkHost.querySelector("a[href]"), null);
+assert.equal(mountCalls.length, ticketLinkMountCount + 1);
+assert.equal(mountCalls.at(-1).options.target.className, "file-preview-slot");
+assert.deepEqual(mountCalls.at(-1).options.props.target, {
+  kind: "external-link",
+  href: "/dev/tickets/t_demo/4173/nested/page?theme=dark#result",
+  label: "Dev"
+});
+
+// A preview-server link written directly into the Markdown is claimed on any surface,
+// with no Ticket id passed in.
+const previewServerHost = host();
+const previewServerLinks = createManagedMarkdownSurface(previewServerHost, {
+  mode: "read-only"
+});
+const previewServerMountCount = mountCalls.length;
+previewServerLinks.update({
+  source: "Look at [take one](/dev/tickets/t_demo/8791/)",
+  emptyText: "",
+  depth: 0,
+  visited: []
+});
+assert.equal(previewServerHost.querySelector("a[href]"), null);
+assert.equal(mountCalls.length, previewServerMountCount + 1);
+assert.deepEqual(mountCalls.at(-1).options.props.target, {
+  kind: "external-link",
+  href: "/dev/tickets/t_demo/8791/",
+  label: "take one"
+});
+previewServerLinks.destroy();
+
+// Addresses that only resemble a preview-server link stay ordinary anchors.
+const nearMissHost = host();
+const nearMissLinks = createManagedMarkdownSurface(nearMissHost, { mode: "read-only" });
+const nearMissMountCount = mountCalls.length;
+nearMissLinks.update({
+  source:
+    "[no port](/dev/tickets/t_demo/) and [bad port](/dev/tickets/t_demo/80x/) and [off site](https://example.com/dev/tickets/t_demo/8791/)",
+  emptyText: "",
+  depth: 0,
+  visited: []
+});
+assert.equal(mountCalls.length, nearMissMountCount);
+assert.deepEqual(
+  nearMissHost.querySelectorAll("a[href]").map((anchor) => anchor.getAttribute("href")),
+  ["/dev/tickets/t_demo/", "/dev/tickets/t_demo/80x/", "https://example.com/dev/tickets/t_demo/8791/"]
 );
+nearMissLinks.destroy();
 
 readOnly.update({
   source: "[Doc](ignored)",
