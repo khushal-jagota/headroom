@@ -64,6 +64,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "stage": str(ticket.stage),
         "priority": ticket.priority.value,
         "deadline": ticket.deadline,
+        "wakes_supervisor": ticket.wakes_supervisor,
         "project_id": ticket.project_id,
         "project": ticket.project_name,
         "sprint_id": ticket.sprint_id,

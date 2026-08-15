@@ -206,12 +206,16 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     # the kickoff parks for approval.
     ceiling: str | None
     at_cap: str | None
+    # Whether this Ticket's movement wakes its Sprint Item supervisor. Whoever creates
+    # the Ticket says so; omission means no.
+    wakes_supervisor: bool
 
 
 class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     title: str
     priority: Priority
     deadline: str | None
+    wakes_supervisor: bool
     project_id: str | None
     sprint_id: str | None
     sprint_item_id: str | None
@@ -323,6 +327,9 @@ class Ticket:  # §3.3 — column names match exactly
     recap: str  # writable only past the type's first worker Stage
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     at_cap: AtCap  # default propose
+    # Whether this Ticket's movement wakes its Sprint Item supervisor. Default false: a
+    # supervisor is woken only by the Tickets somebody marked when creating them.
+    wakes_supervisor: bool
     ticket_status: TicketStatus  # durable state-of-control; transition functions write it
     # When ticket_status last actually changed. Claiming a Ticket for a worker step
     # captures it, and giving that claim back compares it, so a late release cannot erase

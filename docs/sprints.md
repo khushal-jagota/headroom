@@ -140,7 +140,7 @@ configuration during migration. The Other section is a view of loose Tickets and
 no supervisor.
 
 The supervisor conversation starts only when it is first needed: a user message, or the
-first wake because the Item needs its supervisor. A reset kills current work and clears
+first wake because a watched Ticket on the Item needs its supervisor. A reset kills current work and clears
 the agent link. Conversation records and message files remain as history. The Sprint Item
 body is the shared brief.
 
@@ -176,7 +176,14 @@ change the Ticket Stage, scope, status, or Day membership.
 Supervisor wakes are separate from Web Push notifications, and they store nothing. Panels
 asks one read-only question about each Sprint Item — does this Item need its supervisor
 right now, and what should it be told — and it asks only when the change signal says
-something was written. Five things put a Ticket in the answer: it proposed something, it
+something was written.
+
+Only a watched Ticket is in the answer. Whoever creates a Ticket says whether its
+movement wakes the supervisor, and the default is no, so a supervisor hears about the
+Tickets somebody marked and checks the rest itself when asked. The user or the
+supervisor can turn the watch on or off later on a Ticket that is already running.
+
+For a watched Ticket, five things put it in the answer: it proposed something, it
 entered a paired stage, its Worker asked for human help, its Worker's backend failed, or
 it finished. A Ticket only counts once, when it moves.
 

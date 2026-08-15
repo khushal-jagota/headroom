@@ -61,6 +61,7 @@ def _ticket(stage: str, fields: TicketFields, *, ceiling: str = "done") -> Ticke
         recap="",
         ceiling=ceiling,
         at_cap=AtCap.propose,
+        wakes_supervisor=False,
         ticket_status=TicketStatus.empty,
         ticket_status_changed_at=0,
         ticket_status_revision=0,

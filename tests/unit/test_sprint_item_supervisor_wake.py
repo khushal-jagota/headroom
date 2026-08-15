@@ -73,11 +73,15 @@ class _World:
         stage: str | None = None,
         status_changed_at: int = 100,
         proposals: tuple[tuple[str, str, int], ...] = (),
+        wakes_supervisor: bool = True,
     ) -> str:
         """A child Ticket of this Item, put directly into the state under test.
 
         It is created with no kickoff, so it carries no proposal of its own. Each entry
         in ``proposals`` is one parked proposal: its field, who proposed it, and when.
+
+        These Tickets are watched unless a test says otherwise, because the rest of this
+        file is about what a wake says once a Ticket is in the answer at all.
         """
         with self.connect() as conn:
             ticket = tickets_data.create_ticket(
@@ -88,6 +92,7 @@ class _World:
                 now=0,
                 title_max_chars=200,
                 kickoff_note=None,
+                wakes_supervisor=wakes_supervisor,
             )
             conn.execute(
                 "UPDATE tickets SET sprint_item_id = ?, ticket_status = ?, "
@@ -319,6 +324,55 @@ def test_a_finished_ticket_wakes_the_supervisor(world: _World) -> None:
     world.ticket(item_id, status=TicketStatus.empty, stage="done")
 
     assert world.wake(item_id) is True
+
+
+@pytest.mark.parametrize(
+    ("status", "stage"),
+    [
+        (TicketStatus.awaiting_approval, None),
+        (TicketStatus.errored, None),
+        (TicketStatus.needs_user, None),
+        (TicketStatus.paired, None),
+        (TicketStatus.empty, "done"),
+    ],
+)
+def test_an_unwatched_ticket_never_wakes_the_supervisor(
+    world: _World, status: TicketStatus, stage: str | None
+) -> None:
+    """Watching is one switch, and off is the default. No trigger gets past it."""
+    item_id = world.item()
+    world.ticket(item_id, status=status, stage=stage, wakes_supervisor=False)
+
+    assert world.wake(item_id) is False
+    assert world.prompts_sent(item_id) == ()
+    with world.connect() as conn:
+        assert sprint_item_supervisor_wake.sprint_item_ids_to_consider(conn) == ()
+
+
+def test_an_unwatched_ticket_does_not_take_a_watched_ones_line(world: _World) -> None:
+    """One Item, both kinds. The message names the watched Ticket and nothing else."""
+    item_id = world.item()
+    world.ticket(item_id, status=TicketStatus.errored, wakes_supervisor=False)
+    watched_id = world.ticket(item_id, status=TicketStatus.needs_user)
+
+    assert world.wake(item_id) is True
+    assert world.prompts_sent(item_id) == (_wake(watched_id, "asked for human help"),)
+
+
+def test_a_ticket_starts_unwatched(world: _World) -> None:
+    """The default is no, and it is the created Ticket that carries it."""
+    with world.connect() as conn:
+        ticket = tickets_data.create_ticket(
+            conn,
+            worker_type="coding",
+            title="A Ticket",
+            actor="human",
+            now=0,
+            title_max_chars=200,
+            kickoff_note=None,
+        )
+        conn.commit()
+    assert ticket.wakes_supervisor is False
 
 
 def test_an_item_needing_nothing_sends_nothing(world: _World) -> None:

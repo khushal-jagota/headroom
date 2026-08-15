@@ -45,11 +45,22 @@ _DAY_FIELDS = {
     "notes": "notes",
 }
 
+def _wakes_supervisor_value(raw: str | None, as_json: bool) -> bool:
+    """Read the watch switch off the command line. It is a yes or a no, and nothing else."""
+    if raw is not None and raw.lower() in {"true", "yes", "on"}:
+        return True
+    if raw is not None and raw.lower() in {"false", "no", "off"}:
+        return False
+    http.fail_validation("wakes-supervisor must be true or false", as_json)
+    raise AssertionError("unreachable")
+
+
 _TICKET_SET_FIELDS = {
     "title": "title",
     "kickoff-note": "kickoff",
     "priority": "priority",
     "deadline": "deadline",
+    "wakes-supervisor": "wakes_supervisor",
     "project": "project",
     "project-id": "project_id",
 }
@@ -93,6 +104,7 @@ _SUPERVISOR_TICKET_FIELDS = {
     "title": "title",
     "priority": "priority",
     "deadline": "deadline",
+    "wakes-supervisor": "wakes_supervisor",
 }
 
 _PROJECT_FIELDS = {
@@ -1091,6 +1103,13 @@ def ticket() -> None:
     default=None,
     help="Initial behaviour at the ceiling. Omit to park the kickoff for approval.",
 )
+@click.option(
+    "--wakes-supervisor",
+    "wakes_supervisor",
+    is_flag=True,
+    default=False,
+    help="Movement on this Ticket wakes its Sprint Item supervisor. Off by default.",
+)
 @json_option
 def ticket_create(
     title: str,
@@ -1109,9 +1128,12 @@ def ticket_create(
     kickoff_note_file: str | None,
     ceiling: str | None,
     at_cap: str | None,
+    wakes_supervisor: bool,
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {"title": title, "worker_type": worker_type}
+    if wakes_supervisor:
+        body["wakes_supervisor"] = True
     if ceiling is not None:
         body["ceiling"] = ceiling
     if at_cap is not None:
@@ -1295,6 +1317,16 @@ def ticket_set(
 ) -> None:
     api_field = _TICKET_SET_FIELDS[field]
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
+    if field == "wakes-supervisor":
+        data = http.send(
+            "PATCH",
+            f"/api/tickets/{ticket_id}",
+            as_json=as_json,
+            json_body={api_field: _wakes_supervisor_value(new_value, as_json)},
+            request_actor="ordinary",
+        )
+        http.emit(data, as_json, f"{data['id']} {field} set")
+        return
     if field in {"title", "priority"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
     if field == "priority" and new_value not in _PRIORITIES:
@@ -2054,11 +2086,14 @@ def sprint_item_supervisor_set_ticket(
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
     if field in {"title", "priority"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
+    body_value: str | bool | None = new_value
+    if field == "wakes-supervisor":
+        body_value = _wakes_supervisor_value(new_value, as_json)
     data = http.send(
         "PATCH",
         f"/api/items/{item_id}/supervisor/tickets/{ticket_id}",
         as_json=as_json,
-        json_body={_SUPERVISOR_TICKET_FIELDS[field]: new_value},
+        json_body={_SUPERVISOR_TICKET_FIELDS[field]: body_value},
     )
     http.emit(data, as_json, f"{ticket_id} {field} set")
 

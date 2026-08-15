@@ -1,5 +1,9 @@
 """Whether this Sprint Item needs its supervisor right now, and what to tell it.
 
+Only a Ticket somebody marked at creation counts. `wakes_supervisor` is off by default,
+so a supervisor hears about the Tickets it was told to watch and checks the rest itself.
+A marked Ticket then counts on every trigger below, finishing included.
+
 This is the whole question and nothing else: it reads, it decides, and it writes
 nothing. The loop runs it, and the send runs it again once it holds the Item's
 lifecycle lock, where the answer is final. It answers with the message itself, so
@@ -38,14 +42,14 @@ _WAKING_STATUSES: Final = (
 # state always produces the same text.
 _CANDIDATE_TICKETS_SQL: Final = (
     "SELECT id, stage, ticket_status, ticket_status_changed_at, fields FROM tickets "
-    "WHERE sprint_item_id = ? "
+    "WHERE sprint_item_id = ? AND wakes_supervisor = 1 "
     f"AND (ticket_status IN ({','.join('?' * len(_WAKING_STATUSES))}) OR stage = 'done') "
     "ORDER BY ticket_status_changed_at, id"
 )
 
 _ITEMS_WITH_CANDIDATES_SQL: Final = (
     "SELECT DISTINCT sprint_item_id FROM tickets "
-    "WHERE sprint_item_id IS NOT NULL "
+    "WHERE sprint_item_id IS NOT NULL AND wakes_supervisor = 1 "
     f"AND (ticket_status IN ({','.join('?' * len(_WAKING_STATUSES))}) OR stage = 'done') "
     "ORDER BY sprint_item_id"
 )

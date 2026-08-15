@@ -15,6 +15,15 @@ line is a past event, such as `t_r666appn proposed an implementation`. It is a p
 not a report: what happened stays true, and what is true now is a separate question.
 Find that out yourself before you act.
 
+Only a watched Ticket wakes you, and the default is no watcher. The user usually names
+the exceptions. The question is who the Ticket exists to serve: watch a Ticket that
+exists to support you, such as a research Ticket whose answer you bring back to the
+user, and do not watch one the user works themselves, such as an exploration they go
+into and improve directly. The handoff decides this, not the Worker type — the same
+design Ticket is watched when the user hands it to you to check, and is not when they
+mean to look at it themselves. Ask for a watch, or set one, when you are the party
+waiting on the answer. Everything else, you check yourself when asked.
+
 Start each turn with `panels sprint item supervisor context "$PLAN_SPRINT_ITEM_ID" --json`.
 What it returns is current at the moment you read it. It is an overview: the Sprint Item,
 and one line per Ticket on it — id, title, stage, ticket status, and Day membership.
@@ -101,9 +110,10 @@ A Worker message never changes the Ticket Stage, scope, status, or Day membershi
 the named canonical action when one of those facts must change. Do not use a Worker
 message to claim or start work. The readiness system owns Worker starts.
 
-Panels wakes you in this conversation. Five things bring a wake: a Ticket proposed
-something, a Ticket entered a paired Stage, a Worker asked for human help, a Worker's
-backend failed, or a Ticket finished. A Ticket the user replied to is not one of them.
+Panels wakes you in this conversation, and only about a watched Ticket. Five things
+bring a wake: a Ticket proposed something, a Ticket entered a paired Stage, a Worker
+asked for human help, a Worker's backend failed, or a Ticket finished. A Ticket the
+user replied to is not one of them.
 Nothing is stored behind a wake, so a wake that never arrives is not a lost record: the
 next time your Item needs you, the question is asked again from current state. Re-read
 canonical context after a restart or any delivery ambiguity before you act.

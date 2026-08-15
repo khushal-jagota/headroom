@@ -257,6 +257,13 @@ def body_opt_str(body: JsonDict, key: str) -> str | None:
     return raw
 
 
+def body_bool(body: JsonDict, key: str, default: bool = False) -> bool:
+    raw = body.get(key, default)
+    if not isinstance(raw, bool):
+        raise PlannerError(ErrorCode.validation, f"invalid {key}", {key: raw})
+    return raw
+
+
 def body_str_list(body: JsonDict, key: str) -> list[str]:
     raw = body.get(key, [])
     if not isinstance(raw, list) or any(not isinstance(value, str) for value in raw):
@@ -322,6 +329,7 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         blocked_by_ticket_ids=body_str_list(raw, "blocked_by_ticket_ids"),
         ceiling=body_opt_str(raw, "ceiling"),
         at_cap=body_opt_str(raw, "at_cap"),
+        wakes_supervisor=body_bool(raw, "wakes_supervisor"),
     )
     if "employee_backend" in raw:
         body["employee_backend"] = body_str(raw, "employee_backend")
@@ -548,6 +556,7 @@ async def create_ticket(
         sprint_id_explicit="sprint_id" in raw,
         stated_ceiling=body["ceiling"],
         stated_at_cap=_parse_scope_at_cap(body["at_cap"]),
+        wakes_supervisor=body["wakes_supervisor"],
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -981,6 +990,7 @@ async def patch_ticket(
         "title",
         "priority",
         "deadline",
+        "wakes_supervisor",
         "project",
         "project_id",
         "sprint_id",
@@ -1002,6 +1012,8 @@ async def patch_ticket(
         edit["priority"] = parse_enum(Priority, body_str(body, "priority"), "priority")
     if "deadline" in body:
         edit["deadline"] = body_opt_str(body, "deadline")
+    if "wakes_supervisor" in body:
+        edit["wakes_supervisor"] = body_bool(body, "wakes_supervisor")
 
     if "project" in body or "project_id" in body:
         project_raw = body_opt_str(body, "project")

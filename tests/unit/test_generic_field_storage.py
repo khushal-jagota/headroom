@@ -643,6 +643,7 @@ def test_decide_drop_and_jump_bookends_pure_str_stage() -> None:
             recap="",
             ceiling="needs_alpha",
             at_cap=AtCap.propose,
+            wakes_supervisor=False,
             ticket_status=TicketStatus.empty,
             ticket_status_changed_at=0,
             ticket_status_revision=0,

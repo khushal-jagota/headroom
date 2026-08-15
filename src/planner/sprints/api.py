@@ -58,6 +58,7 @@ from planner.tickets.api import (
     _marshal_accept,
     _parse_next_ceiling,
     _parse_scope_at_cap,
+    body_bool,
     body_opt_str,
     body_str,
     parse_enum,
@@ -367,6 +368,8 @@ async def supervisor_update_ticket(
         edit["priority"] = parse_enum(Priority, body_str(raw, field), field)
     elif field == "deadline":
         edit["deadline"] = body_opt_str(raw, field)
+    elif field == "wakes_supervisor":
+        edit["wakes_supervisor"] = body_bool(raw, field)
     else:
         raise PlannerError(ErrorCode.validation, "unknown Ticket field", {"field": field})
     ticket = tickets_data.edit_ticket(
