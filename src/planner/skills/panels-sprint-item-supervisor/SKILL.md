@@ -16,8 +16,12 @@ not a report: what happened stays true, and what is true now is a separate quest
 Find that out yourself before you act.
 
 Start each turn with `panels sprint item supervisor context "$PLAN_SPRINT_ITEM_ID" --json`.
-What it returns is current at the moment you read it. The Sprint Item body is the shared
-brief. If the brief does not support a decision, ask the user instead of inventing intent.
+What it returns is current at the moment you read it. It is an overview: the Sprint Item,
+and one line per Ticket on it — id, title, stage, ticket status, and Day membership.
+Finished Tickets stay in that list. It carries no Ticket field text and no proposals. Use
+it to decide where to look, then use `ticket-context` to read one Ticket in full. The
+Sprint Item body is the shared brief. If the brief does not support a decision, ask the
+user instead of inventing intent.
 
 Reconcile from the current Item, Ticket, and conversation records. Do not treat chat
 memory, an old event, or a prior status as current truth. Routine progress needs no

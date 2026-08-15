@@ -154,6 +154,42 @@ def test_workspace_read_joins_today_artifacts_and_supervisor_attention(tmp_path:
     assert body["conversation_history"] == []
 
 
+def test_supervisor_item_context_answers_with_an_overview(tmp_path: Path) -> None:
+    """The own-Item read is one line per Ticket. Full Ticket text belongs to the
+    per-Ticket drill-in, so no field or proposal text may reach this payload."""
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client, "Overview outcome")
+        headers = _supervisor_headers(str(item["id"]))
+        parked = _park_a_proposal(client, str(item["id"]))
+        placed = client.post(
+            f"/api/items/{item['id']}/supervisor/days/today/tickets/{parked['id']}",
+            headers=headers,
+        )
+        context = client.get(f"/api/items/{item['id']}/supervisor/context", headers=headers)
+        workspace = client.get(f"/api/items/{item['id']}/workspace").json()
+        planning_day_id = str(workspace["planning_day_id"])
+
+    assert placed.status_code == 200, placed.text
+    assert context.status_code == 200, context.text
+    body = context.json()
+    assert body["sprint_item"]["title"] == "Overview outcome"
+    assert body["sprint_item"]["priority"] == "P3"
+    assert body["tickets"] == [
+        {
+            "id": parked["id"],
+            "title": "Supervisor review",
+            "stage": "needs_success",
+            "ticket_status": "awaiting_approval",
+            "day_ids": [planning_day_id],
+        }
+    ]
+    # The kickoff note and the parked proposal exist on that Ticket. Neither may appear
+    # anywhere in the answer, under this key set or any later one.
+    assert "Start here." not in context.text
+    assert "The result is verified." not in context.text
+
+
 def test_supervisor_item_routes_refuse_a_cross_item_actor(tmp_path: Path) -> None:
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:
