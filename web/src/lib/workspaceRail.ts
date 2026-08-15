@@ -54,6 +54,10 @@ export type WorkspaceRailItem = {
   createdAt: number;
   signals: ConversationSignals;
   groups: WorkspaceTicketGroup[];
+  // Every one of the Item's Tickets on today is done. Computed from all of the
+  // Item's Tickets, not just the ones RAIL_GROUPS draws, so a Blocked, Empty, or
+  // Waiting to Closeout Ticket keeps the Item awake.
+  rested: boolean;
 };
 
 // The two views over one board: every Ticket in its status group, and every Sprint
@@ -140,7 +144,8 @@ export function buildWorkspaceRail(
         agent_working: summary?.agent_working ?? false,
         latest_turn_ended_sequence: summary?.latest_turn_ended_sequence ?? 0
       },
-      groups: workspaceGroups(groupedCards)
+      groups: workspaceGroups(groupedCards),
+      rested: groupedCards.every((groupedCard) => groupedCard.is_done)
     } satisfies WorkspaceRailItem;
   });
 

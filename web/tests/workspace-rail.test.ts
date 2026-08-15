@@ -215,5 +215,31 @@ describe("Workspace rail", () => {
     // group, so the box has nothing to count and says nothing.
     expect(rail.items[0].title).toBe("Finished outcome");
     expect(rail.items[0].groups).toEqual([]);
+    expect(rail.items[0].rested).toBe(true);
+  });
+
+  it("marks an Item rested only when every one of its Tickets is done", () => {
+    const oneTicket = buildWorkspaceRail(
+      [card("done", { is_done: true, sprint_item_id: "si_one" })],
+      [item("si_one")]
+    );
+    expect(oneTicket.items[0].rested).toBe(true);
+
+    const mixed = buildWorkspaceRail(
+      [
+        card("done", { is_done: true, sprint_item_id: "si_two" }),
+        card("live", { ticket_status: "agent", sprint_item_id: "si_two" })
+      ],
+      [item("si_two")]
+    );
+    expect(mixed.items[0].rested).toBe(false);
+
+    // A Blocked Ticket is not done, so it keeps the Item awake even though it draws
+    // no group of its own in the rail.
+    const blocked = buildWorkspaceRail(
+      [card("blocked", { ticket_status: "blocked", sprint_item_id: "si_three" })],
+      [item("si_three")]
+    );
+    expect(blocked.items[0].rested).toBe(false);
   });
 });

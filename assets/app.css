@@ -3485,6 +3485,12 @@ select {
   color: var(--text-strong);
 }
 
+/* Rested: every Ticket on this Item is done and quiet. Same box, only the title dims. */
+.board-workspace-item-title--rested {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
 /* The line under a shut Item: what it holds, in the label grammar. */
 .board-workspace-item-line {
   display: flex;
