@@ -48,7 +48,8 @@ One screen per part of the system:
   The Sprint Items view is one box per Sprint Item with a ticket on today. A shut Item
   shows a line of counts — how many tickets it has in each group; an Item with nothing
   in those groups shows no line. Clicking anywhere in the box selects the Item and opens
-  its workspace beside the rail; clicking the Item already in the workspace shuts it. An
+  its workspace beside the rail. That is all a click on an Item ever does: no click shuts
+  an Item, so a reader inside one of its tickets clicks the Item to come back to it. An
   open Item shows the same status groups nested inside it, without their own boxes.
   Folding one of those groups, or opening a ticket, leaves the Item open. Items are
   ordered by priority and then by age, so an Item holds its place while its tickets move

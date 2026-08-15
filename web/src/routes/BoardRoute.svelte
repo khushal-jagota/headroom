@@ -73,17 +73,13 @@
     window.location.hash = workspaceAddress({ kind: "ticket", id });
   }
 
-  // The whole box is the target: a click selects the Item, a second click shuts it.
-  // Reaching for an Item is choosing this view, so shutting it stays here. Only the
-  // Item already in the pane shuts; an Item merely held open behind a Ticket is
-  // selected by the same click, like any other row.
+  // The whole box is the target, and the click has one meaning: open this Item and
+  // show its supervisor. No click on an Item shuts it, including a click on the Item
+  // already in the pane. Reaching for an Item is choosing this view.
   function selectItem(id: string): void {
     chosenView = "items";
-    const shutting = itemId === id;
-    openedItemId = shutting ? null : id;
-    window.location.hash = workspaceAddress(
-      shutting ? { kind: "none" } : { kind: "item", id }
-    );
+    openedItemId = id;
+    window.location.hash = workspaceAddress({ kind: "item", id });
   }
 
   let howFarThisBrowserHasRead = $state<Record<string, number>>({});

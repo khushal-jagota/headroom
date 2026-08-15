@@ -240,7 +240,9 @@ async def get_item_supervisor(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
 
 
 @router.get("/items/{item_id}/supervisor/context")
-async def get_item_supervisor_context(item_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+async def get_item_supervisor_context(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
+    """The Item overview: the Item, its supervisor, and one line per child Ticket. The
+    supervisor drills into a Ticket through its own ticket-context route."""
     require_sprint_item_supervisor_read(conn, ctx, item_id)
     item = sprints_data.read_item(conn, item_id).item
     return {
@@ -248,14 +250,12 @@ async def get_item_supervisor_context(item_id: str, conn: DbConn, ctx: Ctx, clk:
             "id": item.id,
             "title": item.title,
             "body": item.body,
+            "priority": item.priority.value,
             "project_id": item.project_id,
             "sprint_id": item.sprint_id,
         },
         "supervisor": _supervisor_json(conn, item_id),
-        "tickets": [
-            tickets_views.ticket_detail(conn, str(ticket["id"]), clk.now_unix())
-            for ticket in sprints_views.item_tickets(conn, item_id)
-        ],
+        "tickets": sprints_views.item_ticket_overview(conn, item_id),
     }
 
 

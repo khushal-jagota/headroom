@@ -158,9 +158,15 @@ Config edits the canonical Sprint Item supervisor role skill. Supported backends
 that managed source for future conversations. A save does not rewrite an existing
 conversation, its role record, or its history.
 
-Ticket context includes current Ticket facts, Day membership, the current Worker
-conversation, and the exact triggering Worker message when its sequence is supplied.
-The supervisor can read bounded pages from that current conversation.
+A supervisor asking about its own Item gets an overview: the Item itself, and one line
+for each Ticket on it — what the Ticket is called, where it has got to, and which days
+it sits on. Finished Tickets stay in that list. The overview is what a supervisor reads
+to decide where to look, so it never carries a Ticket's written work.
+
+Ticket context is where that written work lives. It includes current Ticket facts, Day
+membership, the current Worker conversation, and the exact triggering Worker message when
+its sequence is supplied. The supervisor can read bounded pages from that current
+conversation.
 
 A targeted Worker message requires the exact current child conversation. Panels records
 the Sprint Item supervisor agent key as the sender. A missing, reset, stale, or unrelated
@@ -169,13 +175,25 @@ change the Ticket Stage, scope, status, or Day membership.
 
 Supervisor wakes are separate from Web Push notifications, and they store nothing. Panels
 asks one read-only question about each Sprint Item — does this Item need its supervisor
-right now — and it asks only when the change signal says something was written. When the
-answer is yes, and the supervisor's conversation is free with nothing already waiting for
-it, Panels sends one message that carries no facts: your Sprint Item needs you, read the
-current context and act. The supervisor then reads canonical state itself, and what it
-reads is current at the moment it reads it. There is nothing to identify, retry, or
-acknowledge; if the Item still needs its supervisor after the turn, the next answer is
-still yes.
+right now, and what should it be told — and it asks only when the change signal says
+something was written. Five things put a Ticket in the answer: it proposed something, it
+entered a paired stage, its Worker asked for human help, its Worker's backend failed, or
+it finished. A Ticket only counts once, when it moves.
+
+When the answer is yes, and the supervisor's conversation is free with nothing already
+waiting for it, Panels sends one message. It opens with the same sentence every time —
+your Sprint Item needs you, read the current context and act — and then names each Ticket
+that moved and what happened to it, one line each, such as "t_r666appn proposed an
+implementation". Every line is something that happened, never a claim about now, because
+what happened stays true however long the message waits. The supervisor still reads
+canonical state itself before it acts, and what it reads is current at the moment it reads
+it. There is nothing to identify, retry, or acknowledge; if the Item still needs its
+supervisor after the turn, the next answer is still yes.
+
+One case looks like a paired stage and is not. A Ticket also goes to paired when the user
+replies to a proposal parked on it, and that proposal stays where it was. Panels tells the
+two apart by looking: paired with a proposal still parked is the user's conversation, and
+it wakes nobody.
 
 The workspace reads one coherent Item snapshot with child Ticket Day membership,
 artifacts, supervisor state, and the current conversation link. It adds
@@ -201,4 +219,4 @@ _Code paths:_ `src/planner/sprints/` (the sprint, its items, and workspace read)
 
 ---
 
-_Last verified: 2026-08-14._
+_Last verified: 2026-08-15._
