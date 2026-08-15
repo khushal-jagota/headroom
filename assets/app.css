@@ -3503,8 +3503,12 @@ select {
   color: var(--text-faint);
 }
 
+/* The Item title owns every group under it, not just the first, so it must not bind to
+ * the first one. It sits off its groups by the same painted gap that separates one group
+ * from the next. That is one step larger than the between-group margin, because the
+ * between-group gap also carries the last row's bottom padding and this one does not. */
 .board-workspace-item-groups {
-  margin-top: var(--space-2);
+  margin-top: var(--space-6);
 }
 
 .board-workspace-quiet-line {

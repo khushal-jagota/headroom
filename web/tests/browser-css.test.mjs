@@ -606,10 +606,12 @@ PAINTED_GAPS = """
   const firstLabel = groups[0].querySelector(selectors.label);
   const firstRows = [...groups[0].querySelectorAll('.ticket-row .ticket-row-title')];
   const secondLabel = groups[1].querySelector(selectors.label);
+  const itemTitle = document.querySelector('.board-workspace-item-title');
   return {
     headerToRow: gap(firstLabel, firstRows[0]),
     rowToRow: gap(firstRows[0], firstRows[1]),
     groupToGroup: gap(firstRows[firstRows.length - 1], secondLabel),
+    titleToFirstHeader: itemTitle ? gap(itemTitle, firstLabel) : null,
     headerLeft: firstLabel.getBoundingClientRect().left,
     rowTitleLeft: firstRows[0].getBoundingClientRect().left,
   };
@@ -702,6 +704,13 @@ def assert_group_proximity(browser):
             # One container owns the horizontal padding, so a header names rows that
             # start where it does.
             assert measured["headerLeft"] == measured["rowTitleLeft"], (place, measured)
+            # A Sprint Item title owns every group under it, so it binds to none of
+            # them: it sits off its first group by the gap that separates two groups.
+            if measured["titleToFirstHeader"] is not None:
+                assert measured["titleToFirstHeader"] == measured["groupToGroup"], (
+                    place,
+                    measured,
+                )
     finally:
         context.close()
 
