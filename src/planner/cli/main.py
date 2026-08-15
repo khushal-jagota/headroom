@@ -2007,6 +2007,15 @@ def sprint_item_supervisor_message_worker(
     http.emit(data, as_json, f"Worker message {data['fate']}")
 
 
+@sprint_item_supervisor.command("ping")
+@click.argument("item_id")
+@json_option
+def sprint_item_supervisor_ping(item_id: str, as_json: bool) -> None:
+    """Say that this Item wants the user. It carries no text."""
+    data = http.send("POST", f"/api/items/{item_id}/supervisor/ping", as_json=as_json)
+    http.emit(data, as_json, f"{item_id} pinged")
+
+
 @sprint_item_supervisor.command("set-item")
 @click.argument("item_id")
 @click.argument("field", type=click.Choice(sorted(_SUPERVISOR_ITEM_FIELDS)))

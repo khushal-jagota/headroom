@@ -594,18 +594,23 @@ def _board_sprint_items(
     *,
     item_ids: list[str],
 ) -> list[BoardSprintItem]:
-    """Each Sprint Item's creation stamp and its supervisor's current conversation.
+    """Each Sprint Item's creation stamp, its supervisor's conversation, and its ping.
 
     The supervisor is an ordinary non-Ticket agent, so its conversation is the one the
     ``agents`` roster holds under the Item's ``supervisor_agent_key``. An Item nobody
     has spoken to has none, and reads as ``None``.
+
+    ``latest_ping_sequence`` is where that supervisor last asked for the user. It is the
+    Item's half of the row mark, and unlike a card it is not a turn end: a supervisor
+    finishes hundreds of turns a day and almost none of them want anybody. An Item that
+    has never been pinged reads 0, which is before every real position.
     """
     if not item_ids:
         return []
     placeholders = ",".join("?" * len(item_ids))
     rows = conn.execute(
-        "SELECT id, created_at, supervisor_agent_key FROM sprint_items "
-        f"WHERE id IN ({placeholders})",
+        "SELECT id, created_at, supervisor_agent_key, supervisor_ping_sequence "
+        f"FROM sprint_items WHERE id IN ({placeholders})",
         item_ids,
     ).fetchall()
     conversations = conversation_start.read_agent_conversations(
@@ -616,6 +621,11 @@ def _board_sprint_items(
             id=str(row["id"]),
             created_at=int(row["created_at"]),
             conversation_id=conversations.get(str(row["supervisor_agent_key"])),
+            latest_ping_sequence=(
+                int(row["supervisor_ping_sequence"])
+                if row["supervisor_ping_sequence"] is not None
+                else 0
+            ),
         )
         for row in sorted(rows, key=lambda row: str(row["id"]))
     ]

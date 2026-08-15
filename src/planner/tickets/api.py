@@ -1679,21 +1679,24 @@ async def add_conversation_row_signals(
     conversation_system: ConversationSystem,
     conversation_record: ConversationStore,
 ) -> JsonDict:
-    """Add the three conversation-owned row signals to every row on the board.
+    """Add the live conversation-owned row signals to every row on the board.
 
-    A row is a card or a Sprint Item. Both carry a ``conversation_id`` and both are
-    marked the same way in the rail, so both are asked the same three questions here.
-    A card's conversation belongs to its Ticket's worker, and an Item's belongs to its
-    own supervisor.
+    A row is a card or a Sprint Item, and both carry a ``conversation_id``. A card's
+    conversation belongs to its Ticket's worker, and an Item's belongs to its own
+    supervisor.
 
-    ``agent_working`` is whether the Ticket's conversation has a turn running right now,
-    and ``needs_me`` is whether that turn is waiting on a permission decision or answers
-    only the owner can give. ``latest_turn_ended_sequence`` is where that conversation
-    last had a turn end — the row's half of the reply mark, which the browser compares
-    against how far the reader has got. None of the three is a tickets-domain fact and
-    all are awaited, so ``board_view`` cannot answer them and they are added here instead.
-    A Ticket with no conversation has no conversation to ask about: the first two read false and the
-    third reads 0, which is before every real position.
+    ``agent_working`` is whether that conversation has a turn running right now, and
+    ``needs_me`` is whether that turn is waiting on a permission decision or answers only
+    the owner can give. Both are asked for every row.
+
+    ``latest_turn_ended_sequence`` is asked for cards alone. It is where the conversation
+    last had a turn end, and it is a card's half of the unread-reply mark. A supervisor
+    ends hundreds of turns a day, almost none of which want anybody, so an Item is marked
+    by its last ping instead, which is a database fact that ``board_view`` already read.
+
+    None of these signals is a tickets-domain fact and all are awaited, so ``board_view``
+    cannot answer them. A row with no conversation has no conversation to ask about, so
+    the first two read false and the third reads 0, which is before every real position.
 
     The record is asked once for the whole board rather than once per row: it is one
     question about a list, and a list is what the board is.
@@ -1701,23 +1704,23 @@ async def add_conversation_row_signals(
     This reads and writes nothing but the payload it was handed — no transaction, no
     connection of its own.
     """
-    rows = [card for column in board["columns"] for card in column["cards"]]
-    rows.extend(board["sprint_items"])
+    cards = [card for column in board["columns"] for card in column["cards"]]
+    rows = [*cards, *board["sprint_items"]]
     latest_turn_ended = await conversation_record.latest_turn_ended_sequences(
         [
             card["conversation_id"]
-            for card in rows
+            for card in cards
             if card["conversation_id"] is not None
         ]
     )
-    for card in rows:
-        conversation_id = card["conversation_id"]
-        card["agent_working"] = (
+    for row in rows:
+        conversation_id = row["conversation_id"]
+        row["agent_working"] = (
             await conversation_system.is_running(conversation_id)
             if conversation_id is not None
             else False
         )
-        card["needs_me"] = (
+        row["needs_me"] = (
             (
                 await conversation_system.has_pending_permission_ask(conversation_id)
                 or await conversation_system.has_pending_user_input(conversation_id)
@@ -1725,6 +1728,8 @@ async def add_conversation_row_signals(
             if conversation_id is not None
             else False
         )
+    for card in cards:
+        conversation_id = card["conversation_id"]
         card["latest_turn_ended_sequence"] = (
             latest_turn_ended.get(conversation_id, 0)
             if conversation_id is not None

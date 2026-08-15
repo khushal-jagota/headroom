@@ -73,8 +73,10 @@ One screen per part of the system:
   leaves that Item open around it — the address names the Item as well as the ticket —
   and the mark moves to the ticket, because being open carries no mark of its own.
 
-  The Item title carries a mark for the Item's own supervisor conversation, read exactly
-  as a ticket row's mark is read. A ticket without a Sprint Item appears in the Tickets
+  The Item title carries a mark for the Item's own supervisor, read the way a ticket
+  row's mark is read but fed by a different fact: a ping, not a reply. A supervisor takes
+  hundreds of turns a day and almost none of them want anybody, so only its ping lights
+  the Item. A ticket without a Sprint Item appears in the Tickets
   view like any other. Every Ticket row is the shared Ticket row and keeps the existing
   conversation mark; it carries its priority tile in the Tickets view and drops it inside
   a Sprint Item, where the Item is the thing being read.
@@ -93,9 +95,11 @@ One screen per part of the system:
 
   All three come from the conversation the row is linked to — the ticket's worker for a
   ticket row, the Item's supervisor for an Item. The first two are asked
-  of the conversation system directly. The third is a comparison: the row carries where
-  its conversation last had a turn end, and this browser keeps how far the reader has
-  got in that conversation. A reply is waiting when the ending is past the reading.
+  of the conversation system directly. The third is a comparison: the row carries a
+  position in its conversation, and this browser keeps how far the reader has got in that
+  conversation. Something is waiting when the position is past the reading. A ticket row
+  carries where its worker's last turn ended. An Item carries where its supervisor last
+  pinged, so opening the Item is what puts an Item's mark out.
 
   How far somebody has read is about that person at that screen, not about the ticket,
   so it is kept in their own browser and the server is never told. Nothing is written

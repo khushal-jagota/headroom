@@ -137,12 +137,13 @@ export function buildWorkspaceRail(
       title: first.sprint_item_title ?? "Untitled Sprint Item",
       priority: first.sprint_item_priority ?? "P3",
       createdAt: summary?.created_at ?? 0,
-      // The Item's own supervisor, marked the way every other row is marked.
+      // The Item's own supervisor. An Item is lit by a ping, not by a reply: its
+      // supervisor talks all day, and the ping is the one act that wants the reader.
       signals: {
         conversation_id: summary?.conversation_id ?? null,
         needs_me: summary?.needs_me ?? false,
         agent_working: summary?.agent_working ?? false,
-        latest_turn_ended_sequence: summary?.latest_turn_ended_sequence ?? 0
+        unread_position: summary?.latest_ping_sequence ?? 0
       },
       groups: workspaceGroups(groupedCards),
       rested: groupedCards.every((groupedCard) => groupedCard.is_done)

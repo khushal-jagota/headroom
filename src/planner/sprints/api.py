@@ -319,6 +319,16 @@ async def supervisor_message_worker(
     )
 
 
+@router.post("/items/{item_id}/supervisor/ping")
+async def supervisor_ping(item_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+    """The supervisor says that this Item wants the user.
+
+    It lights the Item's Workspace row and sends one push. It carries no text, because
+    the supervisor has already written what it wants in its own conversation.
+    """
+    return supervisor_service.ping(conn, ctx, item_id, clock=clk)
+
+
 @router.patch("/items/{item_id}/supervisor/item")
 async def supervisor_update_item(
     item_id: str,

@@ -9,6 +9,7 @@ import {
   parseWorkspaceAddress,
   whatTheAddressOpens
 } from "../src/lib/workspaceAddress";
+import { conversationSignalPresentation } from "../src/lib/conversationSignalPresentation";
 import type { BoardCard, BoardSprintItem } from "../src/lib/types";
 import { boardCard as card } from "./boardCardFixture";
 
@@ -19,7 +20,7 @@ function item(id: string, values: Partial<BoardSprintItem> = {}): BoardSprintIte
     conversation_id: null,
     agent_working: false,
     needs_me: false,
-    latest_turn_ended_sequence: 0,
+    latest_ping_sequence: 0,
     ...values
   };
 }
@@ -191,8 +192,36 @@ describe("Workspace rail", () => {
       conversation_id: "conv-supervisor",
       needs_me: true,
       agent_working: false,
-      latest_turn_ended_sequence: 0
+      unread_position: 0
     });
+  });
+
+  it("takes an Item's unread position from its last ping", () => {
+    const rail = buildWorkspaceRail(
+      [card("its-ticket", { sprint_item_id: "si_one" })],
+      [item("si_one", { conversation_id: "conv-supervisor", latest_ping_sequence: 12 })]
+    );
+
+    expect(rail.items[0].signals.unread_position).toBe(12);
+    expect(
+      conversationSignalPresentation(rail.items[0].signals, { "conv-supervisor": 11 }).state
+    ).toBe("current-awaiting-approval");
+    // The supervisor keeps talking after the ping, and none of that lights the row.
+    // Only opening the Item, which carries the reader past the ping, puts it out.
+    expect(
+      conversationSignalPresentation(rail.items[0].signals, { "conv-supervisor": 40 }).state
+    ).toBe("reply-seen");
+  });
+
+  it("leaves an Item that has never been pinged unlit", () => {
+    const rail = buildWorkspaceRail(
+      [card("its-ticket", { sprint_item_id: "si_one" })],
+      [item("si_one", { conversation_id: "conv-supervisor" })]
+    );
+
+    expect(
+      conversationSignalPresentation(rail.items[0].signals, {}).state
+    ).toBe("upcoming");
   });
 
   it("says nothing about an Item the board has no summary for", () => {

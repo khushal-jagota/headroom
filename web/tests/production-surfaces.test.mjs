@@ -218,15 +218,16 @@ assert.match(
   conversationSignalPresentationSource,
   /state: "reply-seen", ariaLabel: "Agent reply seen"/,
 );
-// The mark is drawn from the record's last turn ending and this browser's own watermark.
-// Nothing on the card says whether a reply was seen, because seen is not a fact about the
-// Ticket.
+// The mark is drawn from a position the caller supplies and this browser's own
+// watermark. A card supplies its worker's last turn ending and an Item supplies its
+// supervisor's last ping. Nothing on the row says whether it was seen, because seen is
+// not a fact about the Ticket or the Item.
 assert.match(boardRouteSource, /conversationSignalPresentation/);
 assert.match(
   conversationSignalPresentationSource,
   /replyWatermarks\[signals\.conversation_id\]/,
 );
-assert.match(conversationSignalPresentationSource, /latest_turn_ended_sequence/);
+assert.match(conversationSignalPresentationSource, /unread_position/);
 assert.doesNotMatch(boardRouteSource, /agent_reply_state/);
 // How far this browser has read is held in state and the mark reads it from there.
 // Reading a conversation writes nothing a server can announce, so no refetch is coming

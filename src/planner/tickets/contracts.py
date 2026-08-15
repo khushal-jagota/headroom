@@ -95,20 +95,21 @@ class BoardCard(TypedDict):
 
 
 class BoardSprintItem(TypedDict):
-    """A Sprint Item's own identity and its supervisor's conversation, for the rail.
+    """A Sprint Item's own identity, its supervisor's conversation, and its last ping.
 
-    The rail marks an Item's title from its own supervisor's conversation, in the same
-    shape a card carries, so ``created_at`` and the conversation signals are all the
-    Item view needs. The three signals arrive later than this read, exactly as a card's
-    do, so they are not required here.
+    The rail marks an Item's title from its own supervisor, but not from the same fact a
+    card uses. A card is marked by an unread reply; an Item is marked by a ping, the one
+    deliberate act a supervisor takes when it wants the user. ``latest_ping_sequence`` is
+    a database fact and is read here. The two live conversation signals arrive later than
+    this read, exactly as a card's do, so they are not required here.
     """
 
     id: str
     created_at: int
     conversation_id: str | None
+    latest_ping_sequence: int
     agent_working: NotRequired[bool]
     needs_me: NotRequired[bool]
-    latest_turn_ended_sequence: NotRequired[int]
 
 
 @dataclass(frozen=True, slots=True)

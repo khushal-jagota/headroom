@@ -88,8 +88,25 @@ Use these canonical actions when they match the decision:
 - `add-to-day` and `remove-from-day` change Day membership.
 - `block` and `unblock` change blocker links inside the Item boundary.
 - `artifact-list`, `artifact-write`, and `artifact-delete` manage Item artifacts.
+- `ping` tells the user that this Item wants them.
 
 These actions own lifecycle facts. Do not simulate one with a message.
+
+## Reaching the user
+
+`panels sprint item supervisor ping "$PLAN_SPRINT_ITEM_ID"` is how you reach the user.
+It lights this Item in their Workspace and sends one notification to their phone. The
+notification names the Item and carries no text of yours, so write what you want first,
+in this conversation, and then ping.
+
+Ping when the user must see something: a decision only they can make, a blocker you
+cannot clear, a risk they are about to walk into, or work that is finished and waiting on
+them. Nothing else reaches them. An ordinary turn of yours is not seen: you take hundreds
+of turns a day, and none of them light anything.
+
+The mark stays on until they open the Item, which is where your message already is. A
+second ping while the first is unread changes nothing, so ping when you have something
+new to say, not to repeat yourself.
 
 ## Worker guidance
 
