@@ -187,6 +187,40 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
     return result
 
 
+def item_ticket_overview(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
+    """One line per Ticket on the Item, for the Sprint Item supervisor's own-Item read:
+    id, title, stage, ticket_status, and Day membership. Finished Tickets included,
+    ordered created_at, id.
+
+    This is not item_tickets. That projection carries the board-card signals the Sprint
+    Item page colours its rows off; the supervisor reads its answer in full and drills
+    into one Ticket at a time through ticket-context, so anything more per Ticket is
+    weight it pays for and does not use."""
+    rows = conn.execute(
+        "SELECT id, title, stage, ticket_status FROM tickets "
+        "WHERE sprint_item_id = ? ORDER BY created_at, id",
+        (item_id,),
+    ).fetchall()
+    day_ids_by_ticket: dict[str, list[str]] = {}
+    for day_row in conn.execute(
+        "SELECT day_tickets.ticket_id AS ticket_id, day_tickets.day_id AS day_id "
+        "FROM day_tickets JOIN tickets ON tickets.id = day_tickets.ticket_id "
+        "WHERE tickets.sprint_item_id = ? ORDER BY day_tickets.day_id",
+        (item_id,),
+    ).fetchall():
+        day_ids_by_ticket.setdefault(str(day_row["ticket_id"]), []).append(str(day_row["day_id"]))
+    return [
+        {
+            "id": str(row["id"]),
+            "title": str(row["title"]),
+            "stage": str(row["stage"]),
+            "ticket_status": str(row["ticket_status"]),
+            "day_ids": day_ids_by_ticket.get(str(row["id"]), []),
+        }
+        for row in rows
+    ]
+
+
 def unclassified_sprint_tickets(conn: sqlite3.Connection, sprint_id: str) -> list[JsonDict]:
     rows = conn.execute(
         "SELECT id, title, stage, priority, ticket_status, fields, worker_type, "

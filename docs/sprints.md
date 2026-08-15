@@ -158,9 +158,15 @@ Config edits the canonical Sprint Item supervisor role skill. Supported backends
 that managed source for future conversations. A save does not rewrite an existing
 conversation, its role record, or its history.
 
-Ticket context includes current Ticket facts, Day membership, the current Worker
-conversation, and the exact triggering Worker message when its sequence is supplied.
-The supervisor can read bounded pages from that current conversation.
+A supervisor asking about its own Item gets an overview: the Item itself, and one line
+for each Ticket on it — what the Ticket is called, where it has got to, and which days
+it sits on. Finished Tickets stay in that list. The overview is what a supervisor reads
+to decide where to look, so it never carries a Ticket's written work.
+
+Ticket context is where that written work lives. It includes current Ticket facts, Day
+membership, the current Worker conversation, and the exact triggering Worker message when
+its sequence is supplied. The supervisor can read bounded pages from that current
+conversation.
 
 A targeted Worker message requires the exact current child conversation. Panels records
 the Sprint Item supervisor agent key as the sender. A missing, reset, stale, or unrelated
@@ -201,4 +207,4 @@ _Code paths:_ `src/planner/sprints/` (the sprint, its items, and workspace read)
 
 ---
 
-_Last verified: 2026-08-14._
+_Last verified: 2026-08-15._
