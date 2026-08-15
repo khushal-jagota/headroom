@@ -44,9 +44,11 @@ def test_manifest_and_push_only_worker_are_live_from_the_served_app(
         }"""
     )
 
-    assert page.locator("[data-notification-cell]").count() == 9
+    assert page.locator("[data-notification-cell]").count() == 11
     assert page.locator('[data-notification-subject="tickets"] input').count() == 5
     assert page.locator('[data-notification-subject="chief_of_staff"] input').count() == 4
+    # One shared subject for every Sprint Item supervisor, offering the ping and failures.
+    assert page.locator('[data-notification-subject="sprint_item_supervisors"] input').count() == 2
 
     chief_failed = page.locator('[data-notification-cell="chief_of_staff:worker_failed"] input')
     assert chief_failed.is_checked()

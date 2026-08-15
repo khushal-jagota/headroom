@@ -15,8 +15,8 @@ from planner.conversation.in_memory_conversation_system import InMemoryConversat
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
-from planner.core.server import create_app
 from planner.core.errors import PlannerError
+from planner.core.server import create_app
 from planner.notifications import data as notifications_data
 from planner.sprints import data as sprints_data
 from planner.tickets import views as tickets_views
