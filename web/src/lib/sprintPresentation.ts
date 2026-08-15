@@ -38,11 +38,12 @@ export type SprintTicketCondition = {
 
 // The three facts a Ticket's condition is read from. Sprint tickets, Sprint Item
 // workspace tickets and Workspace board cards all carry them, so all three screens
-// name a Ticket's condition the same way.
+// name a Ticket's condition the same way. A filed proposal is not one of them: a
+// Ticket the user has messaged is paired while its proposal stays filed, so the
+// Ticket's own status is the fact.
 export type TicketConditionFacts = {
   stage: string;
   ticket_status: string;
-  has_pending_proposal?: boolean;
   waiting_to_closeout?: boolean;
 };
 
@@ -106,7 +107,7 @@ export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicke
   if (ticket.ticket_status === "blocked" || ticket.ticket_status === "errored") {
     return { mark: "errored", word: "blocked" };
   }
-  if (ticket.has_pending_proposal || ticket.ticket_status === "awaiting_approval") {
+  if (ticket.ticket_status === "awaiting_approval") {
     return { mark: "current-awaiting-approval", word: "to review" };
   }
   if (ticket.ticket_status === "needs_user") return { mark: "needs-me", word: "need you" };

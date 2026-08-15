@@ -51,7 +51,9 @@ describe("Sprint ticket conditions", () => {
     [ticket({ stage: "done", ticket_status: "errored" }), "completed", "done"],
     [ticket({ ticket_status: "blocked" }), "errored", "blocked"],
     [ticket({ ticket_status: "errored" }), "errored", "blocked"],
-    [ticket({ has_pending_proposal: true }), "current-awaiting-approval", "to review"],
+    // Messaging a Ticket that was awaiting approval pairs it and leaves the proposal
+    // filed. The status is the fact, so it reads paired.
+    [ticket({ ticket_status: "paired", has_pending_proposal: true }), "current-paired", "paired"],
     [ticket({ ticket_status: "awaiting_approval" }), "current-awaiting-approval", "to review"],
     [ticket({ ticket_status: "needs_user" }), "needs-me", "need you"],
     [ticket({ ticket_status: "user" }), "needs-me", "yours"],
