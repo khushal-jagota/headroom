@@ -134,6 +134,23 @@
       howFarThisBrowserHasRead
     );
   }
+
+  // Awake beats rested: a done Item that needs the user, is mid-turn, or holds a
+  // reply this browser has not seen yet stays with the live Items.
+  function itemIsAwake(item: WorkspaceRailItem): boolean {
+    const state = conversationSignalPresentation(item.signals, howFarThisBrowserHasRead).state;
+    return state === "needs-me" || state === "current-running" || state === "current-awaiting-approval";
+  }
+
+  // A stable partition, not a re-sort: live-or-awake Items keep rail.items's
+  // priority-then-age order, then rested-and-quiet Items follow in that same order.
+  function partitionByRest(items: readonly WorkspaceRailItem[]): WorkspaceRailItem[] {
+    const live = items.filter((item) => !item.rested || itemIsAwake(item));
+    const rested = items.filter((item) => item.rested && !itemIsAwake(item));
+    return [...live, ...rested];
+  }
+
+  let orderedItems = $derived(partitionByRest(rail.items));
 </script>
 
 {#snippet ticketRow(card: BoardCard, withPriority: boolean, insideItemId: string | null)}
@@ -215,7 +232,10 @@
       aria-expanded={open}
       aria-current={selected ? "page" : undefined}
     >
-      <span class="board-workspace-item-title">{item.title}</span>
+      <span
+        class="board-workspace-item-title"
+        class:board-workspace-item-title--rested={item.rested && !itemIsAwake(item)}
+      >{item.title}</span>
       <StageMark
         state={presentation.state}
         class="board-workspace-stage-mark"
@@ -307,7 +327,7 @@
           {#if opening.view === "tickets"}
             {@render ticketGroups(rail.groups, true, null)}
           {:else}
-            {#each rail.items as item (item.id)}
+            {#each orderedItems as item (item.id)}
               {@render sprintItem(item)}
             {/each}
           {/if}
