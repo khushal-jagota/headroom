@@ -22,7 +22,7 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 
-PREVIOUS_REVISION = "one_approval_gate"
+PREVIOUS_REVISION = "sprint_item_supervisor_ping"
 
 _INSERT_TICKET = (
     "INSERT INTO tickets (id,title,worker_type,employee_backend,stage,priority,"

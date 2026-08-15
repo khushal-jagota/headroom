@@ -5,7 +5,7 @@ user marked when the Ticket was created. The default is no, and there is no back
 every Ticket that already exists is unwatched, and the user marks the ones that earn it.
 
 Revision ID: ticket_wakes_supervisor
-Revises: one_approval_gate
+Revises: sprint_item_supervisor_ping
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "ticket_wakes_supervisor"
-down_revision = "one_approval_gate"
+down_revision = "sprint_item_supervisor_ping"
 branch_labels = None
 depends_on = None
 

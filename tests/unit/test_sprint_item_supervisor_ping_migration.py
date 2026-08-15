@@ -11,7 +11,7 @@ from planner.core.db import connect
 from planner.notifications import data as notifications_data
 
 PREVIOUS_REVISION = "one_approval_gate"
-HEAD_REVISION = "sprint_item_supervisor_ping"
+HEAD_REVISION = "ticket_wakes_supervisor"
 
 
 def _upgrade_to(path: Path, revision: str) -> None:

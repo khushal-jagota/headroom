@@ -39,7 +39,7 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "sprint_item_supervisor_ping"
+HEAD_REVISION = "ticket_wakes_supervisor"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
 CURRENT_SCHEMA_OBJECT_COUNT = 50
@@ -91,6 +91,9 @@ def _table_structure(conn: sqlite3.Connection, table: str) -> dict[str, object]:
 # default, primary-key position, in PRAGMA table_info's shape.
 STATUS_CHANGED_AT_COLUMN = ("ticket_status_changed_at", "INTEGER", 1, "0", 0)
 STATUS_REVISION_COLUMN = ("ticket_status_revision", "INTEGER", 1, "0", 0)
+# The supervisor watch switch, added after the ladder ended. Like the columns above it
+# is not part of what adoption promises, so it comes off before the comparison.
+WAKES_SUPERVISOR_COLUMN = ("wakes_supervisor", "INTEGER", 1, "0", 0)
 
 
 def _table_structure_before_status_changed_at(
@@ -98,6 +101,7 @@ def _table_structure_before_status_changed_at(
 ) -> dict[str, object]:
     """The tickets structure before its status-tracking columns were added."""
     columns = list(structure["columns"])  # type: ignore[call-overload]
+    assert columns.pop() == WAKES_SUPERVISOR_COLUMN
     sprint_column = columns.pop()
     assert sprint_column[:2] == ("sprint_id", "TEXT")
     assert columns[-2:] == [STATUS_CHANGED_AT_COLUMN, STATUS_REVISION_COLUMN]
