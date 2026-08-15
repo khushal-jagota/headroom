@@ -26,15 +26,15 @@ offers five choices for Tickets:
 - a worker turn fails or a Ticket errors.
 
 Chief of Staff has four separate choices: needs input, permission request, worker
-completed, and worker failed.
+completed, and worker failed. Needs approval is Ticket-only because it comes from a
+Ticket status. Each saved choice uses its subject and notification type as one key, so a
+Chief choice never changes the matching Ticket choice.
 
 Sprint Item supervisors share one subject between all of them, because a sprint holds
 twenty or thirty Items and they are replaced each sprint. It offers two choices: a Sprint
 Item wants you, which is a supervisor's ping, and worker failed. It offers no completed
 turn, because supervisors complete a few thousand turns a day and almost none of them
-want anybody. Failures arrive switched off. Needs approval is Ticket-only because it comes from a
-Ticket status. Each saved choice uses its subject and notification type as one key, so a
-Chief choice never changes the matching Ticket choice.
+want anybody. Failures arrive switched off.
 
 The notification contains no transcript, prompt, permission detail, or worker output.
 Opening a Ticket notification goes to `/#/workspace/<ticket-id>`, and opening a Sprint

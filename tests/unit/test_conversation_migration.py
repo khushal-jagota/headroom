@@ -17,7 +17,7 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "one_approval_gate"
+HEAD_REVISION = "sprint_item_supervisor_ping"
 
 
 def _table_columns(
