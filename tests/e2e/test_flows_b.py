@@ -565,6 +565,11 @@ def test_e32_sprint_live_status_and_view_only_other(
         f"#/sprint?item={iid}",
         f'[data-sprint-item-view="{iid}"]',
     )
+    # The child has not started, so its status group arrives shut. Opening it is how a
+    # reader reaches the row.
+    not_started = item_page.locator('[data-workspace-group="upcoming"]')
+    assert not_started.get_attribute("open") is None
+    not_started.locator("> summary").click()
     child_row_on_item = item_page.locator(f'[data-sprint-ticket-id="{child}"]')
     assert child_row_on_item.count() == 1
     assert f"{E32_ITEM_TITLE} child" in child_row_on_item.inner_text()

@@ -32,18 +32,26 @@ One screen per part of the system:
   today, so it reads the same as the Sprint Item page. The Item title sits under the
   eyebrow, and the fold control beside it opens and closes the box.
 
-  Inside a box the Tickets sit under plain status headings, in one order: Needs user,
-  Awaiting approval, Paired, Agent, Blocked, Waiting for closeout, To do, Done. Every
-  parked proposal sits under Awaiting approval, because there is one approval gate. The
-  headings are labels, not controls. Agent, Blocked and Done are quiet:
-  they are not drawn until the reader asks. "+n more" counts what is put away, and
-  pressing it again puts it back. A Ticket is in Blocked when its status says so or a
-  live blocker holds it. The No Item tail groups and reveals the same way.
+  Inside a box the Tickets sit under plain status headings, in one order: Needs you,
+  Waiting for kickoff, Awaiting approval, Paired, Agent, Blocked, Waiting for closeout,
+  Not started, Done. That order, those labels, and which groups are quiet are one shared
+  rule, in `web/src/lib/ticketStatusGroups.ts`; the Sprint Item page reads the same one.
+  Every parked proposal sits under Awaiting approval, because there is one approval
+  gate, except one still gated on its kickoff, which is named on its own. The headings
+  are labels, not controls. Agent, Blocked, Waiting for closeout, Not started and Done
+  are quiet: they are not drawn until the reader asks. "+n more" counts what is put
+  away, and pressing it again puts it back. A Ticket is in Blocked when its status says
+  so or a live blocker holds it. The No Item tail groups and reveals the same way.
 
-  Items with work the user owns — Needs user, Awaiting approval or Paired — come first,
-  then Item priority orders the rest. Every heading, title and Ticket row starts at the
-  same left edge. Every Ticket row is the shared Ticket row, so it carries its own
-  priority tile beside its title and keeps the existing conversation mark.
+  A quiet group means the same fact on both screens and is drawn differently on each.
+  The rail puts it away behind "+n more". The Sprint Item page names and counts it, and
+  arrives with it shut.
+
+  Items with work the user owns — Needs you, Waiting for kickoff, Awaiting approval or
+  Paired — come first, then Item priority orders the rest. Every heading, title and
+  Ticket row starts at the same left edge. In the rail every Ticket row is the shared
+  Ticket row, so it carries its own priority tile beside its title and keeps the
+  existing conversation mark.
 
   The Chief of Staff row starts with its bundled portrait. The portrait is an agent
   identity on this row only; ticket rows and Worker types do not use it.

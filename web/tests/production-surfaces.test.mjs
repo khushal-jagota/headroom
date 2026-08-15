@@ -31,6 +31,10 @@ const workspaceRailSource = await readFile(
   new URL("../src/lib/workspaceRail.ts", import.meta.url),
   "utf8",
 );
+const ticketStatusGroupsSource = await readFile(
+  new URL("../src/lib/ticketStatusGroups.ts", import.meta.url),
+  "utf8",
+);
 const sprintRouteSource = await readFile(
   new URL("../src/routes/SprintRoute.svelte", import.meta.url),
   "utf8",
@@ -161,6 +165,18 @@ assert.match(sprintRouteSource, /data-item-status=\{item\.status\}/);
 assert.match(sprintRouteSource, /#\/sprint\?item=\$\{encodeURIComponent\(item\.id\)\}/);
 assert.match(sprintItemWorkspaceSource, /data-sprint-item-view=\{itemId\}/);
 assert.match(sprintItemWorkspaceSource, /data-sprint-ticket-id=\{ticket\.id\}/);
+// The page is three blocks: head, then today's work, then the index — Artifacts before
+// Remaining Tickets, both arriving shut.
+assert.match(
+  sprintItemWorkspaceSource,
+  /class="sprint-workspace-head"[\s\S]*class="sprint-workspace-work"[\s\S]*data-workspace-section="artifacts"[\s\S]*data-workspace-section="remaining"/,
+);
+assert.doesNotMatch(sprintItemWorkspaceSource, /class="sprint-workspace-section" open/);
+// Every status is its own disclosure, opened by the one shared rule.
+assert.match(sprintItemWorkspaceSource, /class="sprint-workspace-status"\n\s+open=\{!group\.quiet\}/);
+// The mark leads the row and the priority tile is gone; priority reads once, in the eyebrow.
+assert.match(sprintItemWorkspaceSource, /<StageMark state=\{condition\.mark\}[\s\S]*ticket-row-title/);
+assert.doesNotMatch(sprintItemWorkspaceSource, /PriorityTile|SprintTicketRow/);
 assert.match(sprintRouteSource, /<StageMark state=\{condition\.mark\}/);
 assert.match(sprintPresentationSource, /todayTicketIds\.has\(ticket\.id\)/);
 assert.match(sprintRouteSource, /data-sprint-other/);
@@ -236,18 +252,19 @@ assert.match(
 );
 assert.doesNotMatch(boardRouteSource, /project-filter|projectMenu|selectedProject|rosterCards|All projects/);
 assert.doesNotMatch(appCssSource, /board-workspace-project-filter/);
-// The rail groups by the one shared Ticket condition, in one order, with the quiet
-// three hidden until the reader asks. There is no second organizing rule and no
-// view mode.
-assert.match(workspaceRailSource, /import \{ sprintTicketCondition \}/);
+// One order of status groups, in one module, read by every screen that lists Tickets
+// by status. The rail holds no second list and no view mode.
+assert.match(ticketStatusGroupsSource, /import \{ sprintTicketCondition/);
 assert.match(
-  workspaceRailSource,
-  /"needs-me"[\s\S]*"current-awaiting-approval", label: "Awaiting approval", hidden: false[\s\S]*"current-paired"[\s\S]*"current-running", label: "Agent", hidden: true[\s\S]*"errored", label: "Blocked", hidden: true[\s\S]*"upcoming"[\s\S]*"completed", label: "Done", hidden: true/,
+  ticketStatusGroupsSource,
+  /"needs-me", label: "Needs you", quiet: false[\s\S]*"waiting-for-kickoff", label: "Waiting for kickoff", quiet: false[\s\S]*"current-awaiting-approval", label: "Awaiting approval", quiet: false[\s\S]*"current-paired", label: "Paired", quiet: false[\s\S]*"current-running", label: "Agent", quiet: true[\s\S]*"errored", label: "Blocked", quiet: true[\s\S]*"current-waiting", label: "Waiting for closeout", quiet: true[\s\S]*"upcoming", label: "Not started", quiet: true[\s\S]*"completed", label: "Done", quiet: true/,
 );
+assert.match(workspaceRailSource, /import \{\n  TICKET_STATUS_GROUPS,\n  ticketStatusGroupKey,/);
+assert.doesNotMatch(workspaceRailSource, /GROUP_ORDER|label: "/);
 assert.doesNotMatch(boardRouteSource, /data-workspace-view|railMode|WorkspaceRailMode/);
 assert.doesNotMatch(appCssSource, /board-workspace-view-control/);
 // The reveal is two-way: one control both shows and hides an Item's quiet groups.
-assert.match(boardRouteSource, /\+\$\{hiddenCount\} more/);
+assert.match(boardRouteSource, /\+\$\{quietCount\} more/);
 assert.match(boardRouteSource, /onclick=\{\(\) => toggleReveal\(item\.id\)\}/);
 assert.match(boardRouteSource, /revealed \? "less"/);
 // The eyebrow carries the Item's identity and its progress across all its Tickets.

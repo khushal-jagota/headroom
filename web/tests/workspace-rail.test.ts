@@ -2,8 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildWorkspaceRail,
-  hiddenWorkspaceCardCount,
-  workspaceCardGroupKey,
+  quietWorkspaceCardCount,
   workspaceGroupsHaveShownCards,
   workspaceItemGroups
 } from "../src/lib/workspaceRail";
@@ -109,46 +108,6 @@ describe("Workspace rail", () => {
     expect(oneNeedsUser.items.map((item) => item.id)).toEqual(["si_older", "si_newer"]);
   });
 
-  it("names each card's group from the shared Ticket condition", () => {
-    expect(workspaceCardGroupKey(card("a", { ticket_status: "needs_user" }))).toBe("needs-me");
-    expect(workspaceCardGroupKey(card("b", { ticket_status: "user" }))).toBe("needs-me");
-    expect(workspaceCardGroupKey(card("c", { ticket_status: "awaiting_approval" }))).toBe(
-      "current-awaiting-approval"
-    );
-    expect(workspaceCardGroupKey(card("d", { has_pending_proposal: true }))).toBe(
-      "current-awaiting-approval"
-    );
-    expect(workspaceCardGroupKey(card("e", { ticket_status: "paired" }))).toBe("current-paired");
-    expect(workspaceCardGroupKey(card("f", { ticket_status: "agent" }))).toBe("current-running");
-    expect(workspaceCardGroupKey(card("g", { ticket_status: "blocked" }))).toBe("errored");
-    // A link blocker is not a status, and it still lands the card in Blocked.
-    expect(workspaceCardGroupKey(card("h", { ticket_status: "user", blocked: true }))).toBe(
-      "errored"
-    );
-    expect(workspaceCardGroupKey(card("i"))).toBe("upcoming");
-    expect(workspaceCardGroupKey(card("j", { stage: "done", is_done: true }))).toBe("completed");
-    expect(workspaceCardGroupKey(card("k", { waiting_to_closeout: true }))).toBe(
-      "current-waiting"
-    );
-  });
-
-  it("names a kickoff-gated card by its gating field, whichever way it is parked", () => {
-    // A parked proposal and a pending one reach the same shared awaiting-approval
-    // condition, so the kickoff split reads the gating field.
-    expect(
-      workspaceCardGroupKey(
-        card("a", { ticket_status: "awaiting_approval", gating_field: "kickoff" })
-      )
-    ).toBe("waiting-for-kickoff");
-    expect(
-      workspaceCardGroupKey(card("c", { has_pending_proposal: true, gating_field: "kickoff" }))
-    ).toBe("waiting-for-kickoff");
-    // The gating field only splits cards that are awaiting approval.
-    expect(
-      workspaceCardGroupKey(card("d", { ticket_status: "agent", gating_field: "kickoff" }))
-    ).toBe("current-running");
-  });
-
   it("keeps a kickoff-gated card out of the generic review group and leads its Item", () => {
     const item = buildWorkspaceRail([
       card("kickoff", {
@@ -165,7 +124,7 @@ describe("Workspace rail", () => {
     ]);
     expect(item.groups[0].cards.map((entry) => entry.id)).toEqual(["kickoff"]);
     expect(item.groups[1].cards.map((entry) => entry.id)).toEqual(["later"]);
-    // Not one of the quiet-three hidden groups, and it still counts as the user's work.
+    // Not a quiet group, and it still counts as the user's work.
     expect(workspaceItemGroups(item.groups, false).map((group) => group.label)).toEqual([
       "Waiting for kickoff",
       "Awaiting approval"
@@ -181,21 +140,22 @@ describe("Workspace rail", () => {
     expect(kickoffOnly.needsUser).toBe(true);
   });
 
-  it("shows a closeout-ready card as waiting for closeout, not lumped in with To do", () => {
+  it("shows a closeout-ready card as waiting for closeout, not lumped in with Not started", () => {
     const item = buildWorkspaceRail([
       card("ready", { waiting_to_closeout: true, sprint_item_id: "si_one" }),
       card("idle", { sprint_item_id: "si_one" })
     ]).items[0];
 
-    expect(item.groups.map((group) => group.label)).toEqual(["Waiting for closeout", "To do"]);
-    // Not one of the quiet-three hidden groups: it shows without revealing.
-    expect(workspaceItemGroups(item.groups, false).map((group) => group.label)).toEqual([
+    expect(item.groups.map((group) => group.label)).toEqual(["Waiting for closeout", "Not started"]);
+    // Both are quiet, so the rail holds them behind the reveal rather than merging them.
+    expect(workspaceItemGroups(item.groups, false)).toEqual([]);
+    expect(workspaceItemGroups(item.groups, true).map((group) => group.label)).toEqual([
       "Waiting for closeout",
-      "To do"
+      "Not started"
     ]);
   });
 
-  it("orders the groups, hides the quiet three, and reveals them on request", () => {
+  it("orders the groups, hides the quiet ones, and reveals them on request", () => {
     const cards = [
       card("needs", { ticket_status: "needs_user" }),
       card("review", { ticket_status: "awaiting_approval" }),
@@ -215,22 +175,21 @@ describe("Workspace rail", () => {
     ).items[0];
 
     expect(item.groups.map((group) => group.label)).toEqual([
-      "Needs user",
+      "Needs you",
       "Awaiting approval",
       "Paired",
       "Agent",
       "Blocked",
-      "To do",
+      "Not started",
       "Done"
     ]);
     expect(workspaceItemGroups(item.groups, false).map((group) => group.label)).toEqual([
-      "Needs user",
+      "Needs you",
       "Awaiting approval",
-      "Paired",
-      "To do"
+      "Paired"
     ]);
     expect(workspaceItemGroups(item.groups, true)).toHaveLength(7);
-    expect(hiddenWorkspaceCardCount(item.groups)).toBe(3);
+    expect(quietWorkspaceCardCount(item.groups)).toBe(4);
     expect(item.needsUser).toBe(true);
   });
 
@@ -264,7 +223,7 @@ describe("Workspace rail", () => {
     expect(item.needsUser).toBe(false);
     expect(workspaceItemGroups(item.groups, false)).toEqual([]);
     expect(workspaceGroupsHaveShownCards(item.groups)).toBe(false);
-    expect(hiddenWorkspaceCardCount(item.groups)).toBe(1);
+    expect(quietWorkspaceCardCount(item.groups)).toBe(1);
     expect(workspaceItemGroups(item.groups, true).map((group) => group.label)).toEqual(["Done"]);
   });
 });

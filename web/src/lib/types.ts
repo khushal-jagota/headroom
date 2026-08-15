@@ -295,6 +295,8 @@ export type SprintItemWorkspaceTicket = {
   ticket_status: string;
   waiting_to_closeout: boolean;
   has_pending_proposal: boolean;
+  gating_field: string | null;
+  blocked: boolean;
   review_route: AtCap;
   worker_type: string;
   day_ids: string[];

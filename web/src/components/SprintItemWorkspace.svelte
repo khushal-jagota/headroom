@@ -22,7 +22,7 @@
   import InlineEdit from "./InlineEdit.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import ResourceState from "./ResourceState.svelte";
-  import SprintTicketRow from "./SprintTicketRow.svelte";
+  import StageMark from "./StageMark.svelte";
   import TicketConversationHistory from "./TicketConversationHistory.svelte";
   import TicketPriorityControl from "./TicketPriorityControl.svelte";
 
@@ -117,44 +117,38 @@
   let artifactRows = $derived(workspace.data ? workspaceArtifactRows(workspace.data) : []);
 </script>
 
-{#snippet ticketSection(
-  name: string,
-  label: string,
-  groups: WorkspaceTicketGroup[],
-  open: boolean,
-  emptyText: string = ""
-)}
-  <details class="sprint-workspace-section" {open} data-workspace-section={name}>
-    <summary>
-      <span class="sprint-workspace-section-label">{label}</span>
-      <span class="sprint-workspace-count">{groups.reduce((sum, group) => sum + group.tickets.length, 0)}</span>
-      <span class="sprint-workspace-chevron" aria-hidden="true"></span>
-    </summary>
-    {#each groups as group (group.key)}
-      <div class="sprint-workspace-group" data-workspace-group={group.key}>
-        <div class="sprint-workspace-group-label">
-          <span>{group.label}</span>
-          <span class="sprint-workspace-count">{group.tickets.length}</span>
-        </div>
+{#snippet statusGroups(groups: WorkspaceTicketGroup[], emptyText: string)}
+  {#each groups as group (group.key)}
+    <details
+      class="sprint-workspace-status"
+      open={!group.quiet}
+      data-workspace-group={group.key}
+    >
+      <summary>
+        <span class="sprint-workspace-status-label">{group.label}</span>
+        <span class="sprint-workspace-count">{group.tickets.length}</span>
+        <span class="sprint-workspace-chevron" aria-hidden="true"></span>
+      </summary>
+      <div class="sprint-workspace-status-body">
         {#each group.tickets as ticket (ticket.id)}
           {@const condition = sprintTicketCondition(ticket)}
-          <SprintTicketRow
-            priority={ticket.priority}
-            title={ticket.title}
-            state={condition.mark}
-            ariaLabel={condition.word}
+          <a
+            class="ticket-row"
+            class:ticket-row--quiet={ticket.stage === "done"}
             href={workspaceAddress({ kind: "ticket", id: ticket.id })}
-            quiet={ticket.stage === "done"}
             data-sprint-ticket-id={ticket.id}
             data-ticket-state={condition.mark}
-          />
+          >
+            <StageMark state={condition.mark} aria-label={condition.word} />
+            <span class="ticket-row-title">{ticket.title}</span>
+          </a>
         {/each}
       </div>
-    {/each}
-    {#if !groups.length && emptyText}
-      <div class="sprint-workspace-empty">{emptyText}</div>
-    {/if}
-  </details>
+    </details>
+  {/each}
+  {#if !groups.length}
+    <div class="sprint-workspace-empty">{emptyText}</div>
+  {/if}
 {/snippet}
 
 <div
@@ -214,43 +208,50 @@
             {/if}
           </header>
 
-          {#if todayGroups.length}
-            {@render ticketSection("today", "Today", todayGroups, true)}
-          {/if}
+          <div class="sprint-workspace-work" data-workspace-section="today">
+            {@render statusGroups(todayGroups, "Nothing from this outcome is on today.")}
+          </div>
 
-          <details class="sprint-workspace-section" open data-workspace-section="artifacts">
+          <details class="sprint-workspace-section" data-workspace-section="artifacts">
             <summary>
               <span class="sprint-workspace-section-label">Artifacts</span>
               <span class="sprint-workspace-count">{artifactRows.length}</span>
               <span class="sprint-workspace-chevron" aria-hidden="true"></span>
             </summary>
-            {#if artifactRows.length}
-              {#each artifactRows as row (row.path)}
-                {#if row.href}
-                  <a class="sprint-workspace-artifact" href={row.href}>
-                    <span>{row.label}</span><small>{row.kind}</small>
-                  </a>
-                {:else}
-                  <span
-                    class="sprint-workspace-artifact quiet-line"
-                    data-artifact-unavailable
-                  >
-                    <span>{row.label}</span><small>unavailable</small>
-                  </span>
-                {/if}
-              {/each}
-            {:else}
-              <div class="sprint-workspace-empty">Nothing kept here yet.</div>
-            {/if}
+            <div class="sprint-workspace-section-body">
+              {#if artifactRows.length}
+                {#each artifactRows as row (row.path)}
+                  {#if row.href}
+                    <a class="sprint-workspace-artifact" href={row.href}>
+                      <span>{row.label}</span><small>{row.kind}</small>
+                    </a>
+                  {:else}
+                    <span
+                      class="sprint-workspace-artifact quiet-line"
+                      data-artifact-unavailable
+                    >
+                      <span>{row.label}</span><small>unavailable</small>
+                    </span>
+                  {/if}
+                {/each}
+              {:else}
+                <div class="sprint-workspace-empty">Nothing kept here yet.</div>
+              {/if}
+            </div>
           </details>
 
-          {@render ticketSection(
-            "remaining",
-            "Remaining Tickets",
-            remainingGroups,
-            false,
-            "Every Ticket on this outcome is on today."
-          )}
+          <details class="sprint-workspace-section" data-workspace-section="remaining">
+            <summary>
+              <span class="sprint-workspace-section-label">Remaining Tickets</span>
+              <span class="sprint-workspace-count">
+                {remainingGroups.reduce((sum, group) => sum + group.tickets.length, 0)}
+              </span>
+              <span class="sprint-workspace-chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="sprint-workspace-section-body">
+              {@render statusGroups(remainingGroups, "Every Ticket on this outcome is on today.")}
+            </div>
+          </details>
         </div>
       {/if}
     </ResourceState>

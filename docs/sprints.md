@@ -8,10 +8,10 @@ separate documents page holds the sprint's written record.
 ```
    Sprint tracking                 Sprint Item
    ───────────────────────────     ───────────────────────────
-   Project                          Today · live state groups
-    └ Sprint Item · progress        Remaining Tickets
-   Other · unclassified Tickets     ▸ done Tickets
-                                    Artifacts
+   Project                          identity · title · brief
+    └ Sprint Item · progress        today's Tickets, by status
+   Other · unclassified Tickets     ▸ Artifacts
+                                    ▸ Remaining Tickets
                                     Supervisor conversation
 
    Sprint documents
@@ -56,10 +56,23 @@ Each Item row shows its priority, title, and Ticket completion. It says `to do` 
 any Ticket is done, a fraction during progress, and `done` when all non-dropped Tickets
 are done. Selecting the row opens the dedicated Item address.
 
-The Item workspace shows its identity, editable title, and editable shared brief. Today
-Tickets use live state groups. Each group and section shows its count only while folded.
-Remaining Tickets keeps off-today and done work visible without competing with Today.
-Ticket rows link to the canonical Ticket page for all review and resolution actions.
+The Item workspace shows its identity, editable title, and editable shared brief. The
+brief runs the full width of the column and clamps to three lines, with Show more.
+
+Under the brief the page is two more blocks, each behind a hairline. First today's
+Tickets, named only by their status. Then the index: Artifacts, then Remaining Tickets,
+which keeps off-today and done work visible without competing with today. Both index
+sections arrive shut.
+
+Every status is its own dropdown. The order, the labels, and which ones arrive open are
+the one rule the workspace rail also reads, so the two screens never disagree. Needs
+you, Waiting for kickoff, Awaiting approval and Paired arrive open. Agent, Blocked,
+Waiting for closeout, Not started and Done arrive shut, still named and counted. Open
+shows a chevron, shut shows the count, on statuses and sections alike.
+
+A Ticket row is its condition mark and its title. Priority is stated once, in the
+identity above, not on every row. Ticket rows link to the canonical Ticket page for all
+review and resolution actions.
 
 The workspace also lists managed Item artifacts and opens them through the shared file
 preview. The supervisor uses the

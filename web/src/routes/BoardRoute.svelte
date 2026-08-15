@@ -6,7 +6,7 @@
   import { onReplyWatermarkMoved, readReplyWatermark } from "../lib/replyWatermark";
   import {
     buildWorkspaceRail,
-    hiddenWorkspaceCardCount,
+    quietWorkspaceCardCount,
     workspaceGroupsHaveShownCards,
     workspaceItemGroups,
     type WorkspaceRailItem,
@@ -214,7 +214,7 @@
           {#each rail.items as item (item.id)}
             {@const revealed = itemRevealed(item)}
             {@const shownGroups = workspaceItemGroups(item.groups, revealed)}
-            {@const hiddenCount = hiddenWorkspaceCardCount(item.groups)}
+            {@const quietCount = quietWorkspaceCardCount(item.groups)}
             {@const shownCount = shownGroups.reduce((total, group) => total + group.cards.length, 0)}
             {@const open = itemOpen(item)}
             <section
@@ -263,14 +263,14 @@
               {#if open}
                 <div class="board-workspace-item-tickets">
                   {@render ticketGroups(shownGroups)}
-                  {#if hiddenCount > 0}
+                  {#if quietCount > 0}
                     <button
                       type="button"
                       class="board-workspace-item-more"
                       onclick={() => toggleReveal(item.id)}
                       aria-expanded={revealed}
                       data-workspace-reveal={item.id}
-                    >{revealed ? "less" : `+${hiddenCount} more`}</button>
+                    >{revealed ? "less" : `+${quietCount} more`}</button>
                   {/if}
                 </div>
               {/if}
@@ -279,19 +279,19 @@
 
           {#if rail.noItemGroups.length}
             {@const revealed = revealedItemIds.has(NO_ITEM_KEY)}
-            {@const hiddenCount = hiddenWorkspaceCardCount(rail.noItemGroups)}
+            {@const quietCount = quietWorkspaceCardCount(rail.noItemGroups)}
             <section class="board-workspace-no-item" data-no-item>
               <h2>No Item</h2>
               <div class="board-workspace-no-item-tickets">
                 {@render ticketGroups(workspaceItemGroups(rail.noItemGroups, revealed))}
-                {#if hiddenCount > 0}
+                {#if quietCount > 0}
                   <button
                     type="button"
                     class="board-workspace-item-more"
                     onclick={() => toggleReveal(NO_ITEM_KEY)}
                     aria-expanded={revealed}
                     data-workspace-reveal={NO_ITEM_KEY}
-                  >{revealed ? "less" : `+${hiddenCount} more`}</button>
+                  >{revealed ? "less" : `+${quietCount} more`}</button>
                 {/if}
               </div>
             </section>

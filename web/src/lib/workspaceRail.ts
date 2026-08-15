@@ -1,19 +1,9 @@
-import { sprintTicketCondition } from "./sprintPresentation";
+import {
+  TICKET_STATUS_GROUPS,
+  ticketStatusGroupKey,
+  type TicketStatusGroupDefinition
+} from "./ticketStatusGroups";
 import type { BoardCard, BoardSprintItem, Priority } from "./types";
-
-// One order of Ticket groups, with the quiet three hidden until the reader asks for
-// them. The labels are the ones the Sprint screen and the Sprint Item page already use.
-const GROUP_ORDER = [
-  { key: "needs-me", label: "Needs user", hidden: false },
-  { key: "waiting-for-kickoff", label: "Waiting for kickoff", hidden: false },
-  { key: "current-awaiting-approval", label: "Awaiting approval", hidden: false },
-  { key: "current-paired", label: "Paired", hidden: false },
-  { key: "current-running", label: "Agent", hidden: true },
-  { key: "errored", label: "Blocked", hidden: true },
-  { key: "current-waiting", label: "Waiting for closeout", hidden: false },
-  { key: "upcoming", label: "To do", hidden: false },
-  { key: "completed", label: "Done", hidden: true }
-] as const;
 
 // The groups that hold work the user owns. They decide which Items lead the rail.
 const USER_GROUP_KEYS = new Set([
@@ -23,10 +13,7 @@ const USER_GROUP_KEYS = new Set([
   "current-paired"
 ]);
 
-export type WorkspaceTicketGroup = {
-  key: string;
-  label: string;
-  hidden: boolean;
+export type WorkspaceTicketGroup = TicketStatusGroupDefinition & {
   cards: BoardCard[];
 };
 
@@ -49,35 +36,21 @@ export type WorkspaceRail = {
 
 const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
 
-// A card's own two facts win first: it is finished, or a blocker holds it. Then the
-// shared awaiting-approval mark splits once: a Ticket still gated on its kickoff is the
-// one worth naming on its own. Everything else waiting is simply awaiting approval.
-export function workspaceCardGroupKey(card: BoardCard): string {
-  if (card.is_done) return "completed";
-  if (card.blocked) return "errored";
-  const mark = sprintTicketCondition(card).mark;
-  if (mark !== "current-awaiting-approval") return mark;
-  return card.gating_field === "kickoff" ? "waiting-for-kickoff" : mark;
-}
-
 export function workspaceItemGroups(
   groups: readonly WorkspaceTicketGroup[],
   revealed: boolean
 ): WorkspaceTicketGroup[] {
-  return groups.filter((group) => revealed || !group.hidden);
+  return groups.filter((group) => revealed || !group.quiet);
 }
 
-export function hiddenWorkspaceCardCount(groups: readonly WorkspaceTicketGroup[]): number {
-  return groups.reduce(
-    (total, group) => total + (group.hidden ? group.cards.length : 0),
-    0
-  );
+export function quietWorkspaceCardCount(groups: readonly WorkspaceTicketGroup[]): number {
+  return groups.reduce((total, group) => total + (group.quiet ? group.cards.length : 0), 0);
 }
 
 export function workspaceGroupsHaveShownCards(
   groups: readonly WorkspaceTicketGroup[]
 ): boolean {
-  return groups.some((group) => !group.hidden && group.cards.length > 0);
+  return groups.some((group) => !group.quiet && group.cards.length > 0);
 }
 
 function priorityRank(priority: Priority): number {
@@ -93,9 +66,9 @@ function cardOrder(left: BoardCard, right: BoardCard): number {
 }
 
 function groupCards(cards: readonly BoardCard[]): WorkspaceTicketGroup[] {
-  return GROUP_ORDER.flatMap((group) => {
+  return TICKET_STATUS_GROUPS.flatMap((group) => {
     const grouped = cards
-      .filter((card) => workspaceCardGroupKey(card) === group.key)
+      .filter((card) => ticketStatusGroupKey(card) === group.key)
       .sort(cardOrder);
     return grouped.length ? [{ ...group, cards: grouped }] : [];
   });

@@ -20,7 +20,9 @@ from tests.support.probe import (
     uninstall_probe_registry,
 )
 
+from planner.core import links as core_links
 from planner.core.clock import TestClock
+from planner.core.contracts import LinkKind
 from planner.sprints.data import create_item
 from planner.sprints.views import item_tickets
 from planner.tickets.contracts import AtCap
@@ -111,6 +113,42 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
     assert row["id"] == child.id
     assert row["stage"] == "needs_success"
     assert row["has_pending_proposal"] is True
+
+
+def test_item_tickets_carries_the_two_facts_the_status_group_rule_needs(
+    tmp_db: Connection,
+) -> None:
+    # The Sprint Item page and the workspace rail group Tickets by one rule. It reads
+    # the gating field to name a kickoff on its own, and an open blocker link to name
+    # Blocked. Neither is visible in the Ticket's own status.
+    clock = TestClock(datetime(2026, 7, 4, 12, 0, 0).astimezone())
+    item = create_item(tmp_db, title="Item", project_id="project_vylo", clock=clock)
+    child = create_ticket(
+        tmp_db,
+        worker_type="coding",
+        title="Coding child",
+        actor="human",
+        now=1,
+        title_max_chars=200,
+        sprint_item_id=item.id,
+    )
+    blocker = create_ticket(
+        tmp_db,
+        worker_type="coding",
+        title="Blocker",
+        actor="human",
+        now=1,
+        title_max_chars=200,
+    )
+
+    row = item_tickets(tmp_db, item.id)[0]
+    assert row["gating_field"] == "kickoff"
+    assert row["blocked"] is False
+
+    core_links.add_link(tmp_db, blocker.id, child.id, LinkKind.blocks, 2)
+
+    row = item_tickets(tmp_db, item.id)[0]
+    assert row["blocked"] is True
 
 
 @pytest.mark.parametrize(

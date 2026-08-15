@@ -5609,7 +5609,10 @@ select {
   padding: 0;
 }
 
+/* The brief keeps the Ticket recap's voice and its clamp, and drops the 62ch measure,
+   which is the one thing that made it narrower than the list under it. */
 .sprint-workspace-brief {
+  max-width: none;
   margin-top: var(--space-2);
   color: var(--text-faint);
   font-family: var(--font-serif);
@@ -5622,14 +5625,25 @@ select {
   font-style: italic;
 }
 
+/* The page is three blocks — head, work, index. One seam and one gap between them. */
+.sprint-workspace-work,
 .sprint-workspace-section {
   margin-top: var(--space-6);
+  padding-top: var(--space-6);
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+.sprint-workspace-section + .sprint-workspace-section {
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
 }
 
 .sprint-workspace-section > summary {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  margin-inline: calc(var(--space-2) * -1);
+  padding-inline: var(--space-2);
   list-style: none;
   cursor: pointer;
 }
@@ -5638,17 +5652,59 @@ select {
   display: none;
 }
 
-.sprint-workspace-section[open] > summary {
-  margin-bottom: var(--space-3);
+/* Section labels keep the small uppercase voice, so a section and a status are never
+   mistaken for each other. */
+.sprint-workspace-section-label {
+  flex: 1;
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  line-height: 1.3;
+  text-transform: uppercase;
+  color: var(--text-faint);
 }
 
-.sprint-workspace-section-label {
-  color: var(--text-strong);
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-xl);
-  font-weight: 500;
-  letter-spacing: var(--tracking-title);
-  line-height: 1.2;
+.sprint-workspace-section-body {
+  margin-top: var(--space-3);
+}
+
+/* A status group. Native <details>, like the sections it sits above. Size carries the
+   hierarchy: 20px in the faint ink, larger than the Ticket under it and greyer than it. */
+.sprint-workspace-status + .sprint-workspace-status {
+  margin-top: var(--space-5);
+}
+
+.sprint-workspace-status > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-inline: calc(var(--space-2) * -1);
+  padding-inline: var(--space-2);
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: var(--type-lg);
+  font-weight: 600;
+  line-height: 1.3;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.sprint-workspace-status > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sprint-workspace-status > summary:hover {
+  color: var(--text-muted);
+}
+
+.sprint-workspace-status-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.sprint-workspace-status-body {
+  margin-top: var(--space-3);
 }
 
 .sprint-workspace-count {
@@ -5656,6 +5712,15 @@ select {
   margin-left: auto;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
+}
+
+/* A shut status or section still names and counts itself, but the count is a whisper —
+   it must not read at the heading's size. */
+.sprint-workspace-status > summary > .sprint-workspace-count,
+.sprint-workspace-section > summary > .sprint-workspace-count {
+  font-size: var(--type-sm);
+  font-weight: 400;
+  color: var(--text-faintest);
 }
 
 .sprint-workspace-chevron {
@@ -5680,36 +5745,13 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   display: none;
 }
 
-.sprint-workspace-group {
-  margin-top: var(--space-4);
-}
-
-.sprint-workspace-group:first-of-type {
-  margin-top: 0;
-}
-
-.sprint-workspace-group-label {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-bottom: var(--space-1);
-  color: var(--text-faintest);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-}
-
-.sprint-workspace-group-label .sprint-workspace-count {
-  font-size: var(--type-sm);
-  font-weight: 400;
-  letter-spacing: 0;
-}
-
-/* In the detail column the shared row pulls out to the column gutter. */
-.sprint-workspace-section .ticket-row {
+/* The Ticket line. One size up from the shared row, and a shade whiter than the status
+   above it, so the two levels never read as one. In the detail column the row pulls out
+   to the column gutter. */
+.sprint-item-column .ticket-row {
   margin-inline: calc(var(--space-2) * -1);
   padding: var(--space-2);
+  font-size: var(--type-md);
 }
 
 .sprint-workspace-artifact:hover {
@@ -5717,20 +5759,22 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   color: var(--text-strong);
 }
 
+/* Artifact rows share the Ticket row's rhythm. */
 .sprint-workspace-artifact {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
   margin-inline: calc(var(--space-2) * -1);
-  padding: 6px var(--space-2);
+  padding: var(--space-2);
   border-radius: var(--radius-md);
-  color: var(--accent-bright);
-  font-size: var(--type-sm);
-  font-weight: 600;
+  color: var(--text-muted);
+  font-size: var(--type-md);
+  font-weight: 400;
   text-decoration: none;
 }
 
 .sprint-workspace-artifact small {
+  margin-left: auto;
   color: var(--text-faintest);
   font-size: var(--type-xs);
   font-weight: 400;
@@ -5814,11 +5858,11 @@ details:not([open]) > summary > .sprint-workspace-chevron {
     font-size: 24px;
   }
 
-  .sprint-workspace-section .ticket-row {
+  .sprint-item-column .ticket-row {
     align-items: flex-start;
   }
 
-  .sprint-workspace-section .ticket-row-title {
+  .sprint-item-column .ticket-row-title {
     display: -webkit-box;
     overflow: hidden;
     line-height: 1.35;
