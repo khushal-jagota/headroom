@@ -25,13 +25,26 @@ assert.match(
 );
 assert.match(route, /<TicketRoute id=\{ticketId\} \/>/);
 
-// Item selection keeps its Workspace address at every width. The narrow host hides the
-// rail and shows the Item pane, and narrow Ticket selection now does the same.
-assert.match(route, /function selectItem\(id: string\)[\s\S]*workspaceAddress\(\{ kind: "item", id \}\)/);
+// Item selection keeps its Workspace address at every width, and a second click on the
+// open Item shuts it. The narrow host hides the rail and shows the Item pane, and
+// narrow Ticket selection now does the same.
+assert.match(
+  route,
+  /function selectItem\(id: string\)[\s\S]*shutting \? \{ kind: "none" \} : \{ kind: "item", id \}/,
+);
 assert.doesNotMatch(
-  route.slice(route.indexOf("function selectItem"), route.indexOf("function toggleRailMode")),
+  route.slice(
+    route.indexOf("function selectItem"),
+    route.indexOf("let howFarThisBrowserHasRead"),
+  ),
   /matchMedia|#\/ticket/,
 );
+
+// A Ticket opened from inside an Item takes the pane and leaves the Item open, so what
+// the rail holds open is its own state and only falls back to the address.
+assert.match(route, /let railItemId = \$derived\(openedItemId \?\? itemId \?\? null\)/);
+assert.match(route, /\{@const open = railItemId === item\.id\}/);
+assert.match(route, /const shutting = railItemId === id;[\s\S]*openedItemId = shutting \? null : id/);
 assert.match(
   css,
   /@media \(max-width: 960px\)[\s\S]*\.board-workspace-shell--item \.board-workspace-left\s*\{[^}]*display: none[\s\S]*\.board-workspace-right\.board-workspace-right--item\s*\{[^}]*display: flex/,

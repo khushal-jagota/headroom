@@ -64,11 +64,15 @@ Tickets, named only by their status. Then the index: Artifacts, then Remaining T
 which keeps off-today and done work visible without competing with today. Both index
 sections arrive shut.
 
-Every status is its own dropdown. The order, the labels, and which ones arrive open are
-the one rule the workspace rail also reads, so the two screens never disagree. Needs
-you, Waiting for kickoff, Awaiting approval and Paired arrive open. Agent, Blocked,
-Waiting for closeout, Not started and Done arrive shut, still named and counted. Open
-shows a chevron, shut shows the count, on statuses and sections alike.
+Every status is its own dropdown. Needs you, Waiting for kickoff, Awaiting approval and
+Paired arrive open. Agent, Blocked, Waiting for closeout, Not started and Done arrive
+shut, still named and counted. Open shows a chevron, shut shows the count, on statuses
+and sections alike.
+
+This page names a Ticket by its condition. The Workspace rail names it by its raw
+status, in its own order. So the two screens use different words for neighbouring
+groups — this page says Not started where the rail says Empty. Each follows its own
+approved design, and unifying them means changing one of those designs.
 
 A Ticket row is its condition mark and its title. Priority is stated once, in the
 identity above, not on every row. Ticket rows link to the canonical Ticket page for all

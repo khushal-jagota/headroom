@@ -1,9 +1,14 @@
 import { sprintTicketCondition, type TicketConditionFacts } from "./sprintPresentation";
 
-// One order of Ticket status groups, for every screen that lists Tickets by status.
-// `quiet` is the single fact that a group is not what the reader came for. Each screen
-// renders that fact its own way: the Sprint Item page arrives collapsed but still named
-// and counted, and the workspace rail holds the group behind "+n more".
+// The Sprint Item page's order of Ticket status groups, and which of them arrive shut.
+// `quiet` is the single fact that a group is not what the reader came for: the page
+// names and counts it, and arrives with it collapsed.
+//
+// The workspace rail groups by raw `ticket_status` and holds its own order in
+// `workspaceRail.ts`. These were meant to be one rule. They are not, because the two
+// screens were designed apart and each design was approved on its own terms: this page
+// reads a Ticket's condition, the rail reads its status. Anyone unifying them is
+// changing an approved design on one screen or the other, so do it deliberately.
 export type TicketStatusGroupDefinition = {
   key: string;
   label: string;

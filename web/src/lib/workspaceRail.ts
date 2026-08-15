@@ -1,19 +1,41 @@
-import {
-  TICKET_STATUS_GROUPS,
-  ticketStatusGroupKey,
-  type TicketStatusGroupDefinition
-} from "./ticketStatusGroups";
+import type { ConversationSignals } from "./conversationSignalPresentation";
+import { labelize } from "./ui";
 import type { BoardCard, BoardSprintItem, Priority } from "./types";
 
-// The groups that hold work the user owns. They decide which Items lead the rail.
-const USER_GROUP_KEYS = new Set([
-  "needs-me",
-  "waiting-for-kickoff",
-  "current-awaiting-approval",
-  "current-paired"
+// Presentation only: the top-to-bottom order of the status groups. A group with no
+// Tickets is not drawn, and a status not named here appends as its own group after
+// these, in the order first seen.
+const GROUP_ORDER: readonly string[] = [
+  "errored",
+  "needs_user",
+  "user",
+  "paired",
+  "agent",
+  "waiting_to_closeout",
+  "awaiting_approval",
+  "waiting_for_kickoff",
+  "empty",
+  "blocked",
+  "done"
+];
+
+// The three the reader opens for themselves. They are still their own group: nothing
+// hides behind a count.
+const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set([
+  "waiting_for_kickoff",
+  "blocked",
+  "done"
 ]);
 
-export type WorkspaceTicketGroup = TicketStatusGroupDefinition & {
+const GROUP_LABELS: Readonly<Record<string, string>> = {
+  waiting_to_closeout: "Waiting to Closeout",
+  waiting_for_kickoff: "Waiting for Kickoff"
+};
+
+export type WorkspaceTicketGroup = {
+  key: string;
+  label: string;
+  defaultCollapsed: boolean;
   cards: BoardCard[];
 };
 
@@ -22,56 +44,63 @@ export type WorkspaceRailItem = {
   title: string;
   priority: Priority;
   createdAt: number;
-  project: string | null;
-  progress: { done: number; total: number } | null;
-  cards: BoardCard[];
+  signals: ConversationSignals;
   groups: WorkspaceTicketGroup[];
-  needsUser: boolean;
 };
 
+// The two views over one board: every Ticket in its status group, and every Sprint
+// Item with the same groups over its own Tickets.
 export type WorkspaceRail = {
+  groups: WorkspaceTicketGroup[];
   items: WorkspaceRailItem[];
-  noItemGroups: WorkspaceTicketGroup[];
 };
 
 const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
 
-export function workspaceItemGroups(
-  groups: readonly WorkspaceTicketGroup[],
-  revealed: boolean
-): WorkspaceTicketGroup[] {
-  return groups.filter((group) => revealed || !group.quiet);
-}
-
-export function quietWorkspaceCardCount(groups: readonly WorkspaceTicketGroup[]): number {
-  return groups.reduce((total, group) => total + (group.quiet ? group.cards.length : 0), 0);
-}
-
-export function workspaceGroupsHaveShownCards(
-  groups: readonly WorkspaceTicketGroup[]
-): boolean {
-  return groups.some((group) => !group.quiet && group.cards.length > 0);
+// Every Ticket sits in exactly one group: Done wins, a resting Closeout Ticket that the
+// server says is runnable gets its server-projected semantic exception, and a Kickoff
+// approval uses the existing gating field to split from later approvals. Every other
+// Ticket uses its own status.
+export function workspaceCardGroupKey(card: BoardCard): string {
+  if (card.is_done) return "done";
+  if (card.waiting_to_closeout) return "waiting_to_closeout";
+  if (card.ticket_status === "awaiting_approval" && card.gating_field === "kickoff") {
+    return "waiting_for_kickoff";
+  }
+  return String(card.ticket_status);
 }
 
 function priorityRank(priority: Priority): number {
   return PRIORITY_ORDER.indexOf(priority);
 }
 
+// Newest activity first. The rail answers "what moved", so nothing else orders a row.
 function cardOrder(left: BoardCard, right: BoardCard): number {
-  return (
-    priorityRank(left.priority) - priorityRank(right.priority) ||
-    right.activity_at - left.activity_at ||
-    left.id.localeCompare(right.id)
-  );
+  return right.activity_at - left.activity_at || left.id.localeCompare(right.id);
 }
 
-function groupCards(cards: readonly BoardCard[]): WorkspaceTicketGroup[] {
-  return TICKET_STATUS_GROUPS.flatMap((group) => {
-    const grouped = cards
-      .filter((card) => ticketStatusGroupKey(card) === group.key)
-      .sort(cardOrder);
-    return grouped.length ? [{ ...group, cards: grouped }] : [];
-  });
+export function workspaceGroups(
+  cards: readonly BoardCard[]
+): WorkspaceTicketGroup[] {
+  const byGroup = new Map<string, BoardCard[]>();
+  const firstSeen: string[] = [];
+  for (const card of cards) {
+    const key = workspaceCardGroupKey(card);
+    if (!byGroup.has(key)) {
+      byGroup.set(key, []);
+      firstSeen.push(key);
+    }
+    byGroup.get(key)?.push(card);
+  }
+  const orderedKeys = GROUP_ORDER.filter((key) => byGroup.has(key)).concat(
+    firstSeen.filter((key) => !GROUP_ORDER.includes(key))
+  );
+  return orderedKeys.map((key) => ({
+    key,
+    label: GROUP_LABELS[key] ?? labelize(key),
+    defaultCollapsed: DEFAULT_COLLAPSED_GROUPS.has(key),
+    cards: [...(byGroup.get(key) ?? [])].sort(cardOrder)
+  }));
 }
 
 export function buildWorkspaceRail(
@@ -79,41 +108,35 @@ export function buildWorkspaceRail(
   sprintItems: readonly BoardSprintItem[] = []
 ): WorkspaceRail {
   const itemCards = new Map<string, BoardCard[]>();
-  const noItemCards: BoardCard[] = [];
   const summaries = new Map(sprintItems.map((item) => [item.id, item]));
 
   for (const card of cards) {
-    if (!card.sprint_item_id) {
-      noItemCards.push(card);
-      continue;
-    }
+    if (!card.sprint_item_id) continue;
     const grouped = itemCards.get(card.sprint_item_id) ?? [];
     grouped.push(card);
     itemCards.set(card.sprint_item_id, grouped);
   }
 
   const items = [...itemCards.entries()].map(([id, groupedCards]) => {
-    const cardsInOrder = [...groupedCards].sort(cardOrder);
-    const first = cardsInOrder[0];
+    const first = groupedCards[0];
     const summary = summaries.get(id);
-    const groups = groupCards(cardsInOrder);
     return {
       id,
       title: first.sprint_item_title ?? "Untitled Sprint Item",
       priority: first.sprint_item_priority ?? "P3",
       createdAt: summary?.created_at ?? 0,
-      project: summary?.project ?? null,
-      progress: summary
-        ? { done: summary.done_ticket_count, total: summary.total_ticket_count }
-        : null,
-      cards: cardsInOrder,
-      groups,
-      needsUser: groups.some(
-        (group) => USER_GROUP_KEYS.has(group.key) && group.cards.length > 0
-      )
+      // The Item's own supervisor, marked the way every other row is marked.
+      signals: {
+        conversation_id: summary?.conversation_id ?? null,
+        needs_me: summary?.needs_me ?? false,
+        agent_working: summary?.agent_working ?? false,
+        latest_turn_ended_sequence: summary?.latest_turn_ended_sequence ?? 0
+      },
+      groups: workspaceGroups(groupedCards)
     } satisfies WorkspaceRailItem;
   });
 
+  // Priority, then age. An Item holds its place while its Tickets move under it.
   items.sort(
     (left, right) =>
       priorityRank(left.priority) - priorityRank(right.priority) ||
@@ -121,5 +144,5 @@ export function buildWorkspaceRail(
       left.id.localeCompare(right.id)
   );
 
-  return { items, noItemGroups: groupCards(noItemCards) };
+  return { groups: workspaceGroups(cards), items };
 }

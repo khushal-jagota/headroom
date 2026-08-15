@@ -1679,7 +1679,12 @@ async def add_conversation_row_signals(
     conversation_system: ConversationSystem,
     conversation_record: ConversationStore,
 ) -> JsonDict:
-    """Add the three conversation-owned row signals to every card on the board.
+    """Add the three conversation-owned row signals to every row on the board.
+
+    A row is a card or a Sprint Item. Both carry a ``conversation_id`` and both are
+    marked the same way in the rail, so both are asked the same three questions here.
+    A card's conversation belongs to its Ticket's worker, and an Item's belongs to its
+    own supervisor.
 
     ``agent_working`` is whether the Ticket's conversation has a turn running right now,
     and ``needs_me`` is whether that turn is waiting on a permission decision or answers
@@ -1696,15 +1701,16 @@ async def add_conversation_row_signals(
     This reads and writes nothing but the payload it was handed — no transaction, no
     connection of its own.
     """
-    cards = [card for column in board["columns"] for card in column["cards"]]
+    rows = [card for column in board["columns"] for card in column["cards"]]
+    rows.extend(board["sprint_items"])
     latest_turn_ended = await conversation_record.latest_turn_ended_sequences(
         [
             card["conversation_id"]
-            for card in cards
+            for card in rows
             if card["conversation_id"] is not None
         ]
     )
-    for card in cards:
+    for card in rows:
         conversation_id = card["conversation_id"]
         card["agent_working"] = (
             await conversation_system.is_running(conversation_id)

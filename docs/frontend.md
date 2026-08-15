@@ -24,34 +24,31 @@ One screen per part of the system:
   go next" has been answered, both halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
   follows the same 5am planning-day boundary as the Day screen; dropped tickets never
-  appear. The Chief of Staff row leads one box for each Sprint Item with a Ticket on
-  today. Tickets without an Item form a No Item tail.
+  appear. The Chief of Staff row leads, and under it a selector chooses one of two views
+  over the same tickets: **Tickets** or **Sprint Items**.
 
-  Each Item box opens with an eyebrow — its priority tile, its project, and how many of
-  its Tickets are done. That count covers every Ticket of the Item, not only the ones on
-  today, so it reads the same as the Sprint Item page. The Item title sits under the
-  eyebrow, and the fold control beside it opens and closes the box.
+  The Tickets view is every ticket on today, in a box per status group, in one order:
+  Errored, Needs user, User, Paired, Agent, Waiting to Closeout, Awaiting approval,
+  Waiting for Kickoff, Empty, Blocked, Done. Every parked proposal sits under Awaiting
+  approval, because there is one approval gate; a proposal still gated on its kickoff
+  splits out into its own group. A shut box shows how many tickets it holds. Waiting for
+  Kickoff, Blocked and Done start shut, and the reader opens them. Nothing hides behind
+  a "+n more": every group is reachable as itself. Rows inside a group are ordered by
+  activity, newest first.
 
-  Inside a box the Tickets sit under plain status headings, in one order: Needs you,
-  Waiting for kickoff, Awaiting approval, Paired, Agent, Blocked, Waiting for closeout,
-  Not started, Done. That order, those labels, and which groups are quiet are one shared
-  rule, in `web/src/lib/ticketStatusGroups.ts`; the Sprint Item page reads the same one.
-  Every parked proposal sits under Awaiting approval, because there is one approval
-  gate, except one still gated on its kickoff, which is named on its own. The headings
-  are labels, not controls. Agent, Blocked, Waiting for closeout, Not started and Done
-  are quiet: they are not drawn until the reader asks. "+n more" counts what is put
-  away, and pressing it again puts it back. A Ticket is in Blocked when its status says
-  so or a live blocker holds it. The No Item tail groups and reveals the same way.
+  The Sprint Items view is one box per Sprint Item with a ticket on today. A shut Item
+  shows a line of counts — how many tickets it has in each group. Clicking anywhere in
+  the box selects the Item and opens its workspace beside the rail; clicking it again
+  shuts it. A selected Item shows the same status groups nested inside it, without their
+  own boxes. Folding one of those groups, or opening a ticket, leaves the Item open.
+  Items are ordered by priority and then by age, so an Item holds its place while its
+  tickets move under it.
 
-  A quiet group means the same fact on both screens and is drawn differently on each.
-  The rail puts it away behind "+n more". The Sprint Item page names and counts it, and
-  arrives with it shut.
-
-  Items with work the user owns — Needs you, Waiting for kickoff, Awaiting approval or
-  Paired — come first, then Item priority orders the rest. Every heading, title and
-  Ticket row starts at the same left edge. In the rail every Ticket row is the shared
-  Ticket row, so it carries its own priority tile beside its title and keeps the
-  existing conversation mark.
+  The Item title carries a mark for the Item's own supervisor conversation, read exactly
+  as a ticket row's mark is read. A ticket without a Sprint Item appears in the Tickets
+  view like any other. Every Ticket row is the shared Ticket row and keeps the existing
+  conversation mark; it carries its priority tile in the Tickets view and drops it inside
+  a Sprint Item, where the Item is the thing being read.
 
   The Chief of Staff row starts with its bundled portrait. The portrait is an agent
   identity on this row only; ticket rows and Worker types do not use it.
@@ -65,7 +62,8 @@ One screen per part of the system:
   user has not seen, the same dot greyed once the user has opened the ticket since
   that reply, and a faint ring when nothing is waiting.
 
-  All three come from the conversation the ticket is linked to. The first two are asked
+  All three come from the conversation the row is linked to — the ticket's worker for a
+  ticket row, the Item's supervisor for an Item. The first two are asked
   of the conversation system directly. The third is a comparison: the row carries where
   its conversation last had a turn end, and this browser keeps how far the reader has
   got in that conversation. A reply is waiting when the ending is past the reading.
@@ -455,4 +453,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-08-14._
+_Last verified: 2026-08-15._

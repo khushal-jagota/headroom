@@ -18,7 +18,9 @@
     stageMarkAttributes = {},
     ...rest
   }: {
-    priority: Priority;
+    // No priority when the row's own container already answers for it: inside a
+    // Sprint Item the tile is repeated noise.
+    priority: Priority | null;
     title: string;
     state: FieldStageVisualState;
     ariaLabel: string;
@@ -34,7 +36,7 @@
 </script>
 
 {#snippet content()}
-  <PriorityTile {priority} />
+  {#if priority}<PriorityTile {priority} />{/if}
   <span class="ticket-row-title">{title}</span>
   <StageMark
     {state}

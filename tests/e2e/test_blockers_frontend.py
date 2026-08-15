@@ -30,7 +30,7 @@ def _get_ticket(server: ServerHandle, ticket_id: str) -> JsonObject:
     return body
 
 
-def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
+def test_workspace_places_every_dependent_in_its_own_status_group(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
@@ -94,18 +94,23 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
         "#/workspace",
         'section[data-screen="workspace"]',
     )
-    # Blocked Tickets sit in a quiet group, so the No Item tail has to be revealed.
-    page.click('[data-workspace-reveal="no-item"]')
-    no_item = "[data-no-item]"
     active_card = f'[data-card][data-ticket-id="{blocker}"]'
     later_card = f'[data-card][data-ticket-id="{later_dependent}"]'
     kickoff_card = f'[data-card][data-ticket-id="{kickoff_dependent}"]'
     shared_card = f'[data-card][data-ticket-id="{shared_dependent}"]'
 
-    # The reveal exposes the quiet blocked Tickets. Unclassified
-    # Tickets share the No Item tail, while their own status and stage remain intact.
-    for card in (active_card, later_card, kickoff_card, shared_card):
-        assert page.locator(f"{no_item} {card}").is_visible()
+    # Each Ticket sits in the group its own status names. Kickoff and Blocked start
+    # shut, so the reader opens them; nothing hides behind a count.
+    for key in ("waiting_for_kickoff", "blocked"):
+        page.click(f'[data-bucket-key="{key}"] .disclosure-summary')
+    assert page.locator(f'[data-bucket-key="empty"] {active_card}').is_visible()
+    assert page.locator(f'[data-bucket-key="awaiting_approval"] {later_card}').is_visible()
+    assert page.locator(
+        f'[data-bucket-key="waiting_for_kickoff"] {kickoff_card}'
+    ).is_visible()
+    assert page.locator(f'[data-bucket-key="blocked"] {shared_card}').is_visible()
+
+    # Their own status and stage remain intact.
     assert page.get_attribute(active_card, "data-ticket-status") == "empty"
     assert page.get_attribute(later_card, "data-ticket-status") == "awaiting_approval"
     assert page.get_attribute(kickoff_card, "data-ticket-status") == "awaiting_approval"
@@ -125,15 +130,17 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
         timeout=WAIT_MS,
     )
 
-    # A finished Ticket joins the quiet Done group: it stays while the tail is
-    # revealed, and the same control puts it away again.
+    # A finished Ticket joins the Done group, which starts shut. The group is the whole
+    # way in and the whole way out: it is put away, not hidden behind a count.
     _post_stage(server, blocker, "done")
-    page.wait_for_selector(f'{no_item} [data-workspace-group="completed"]', timeout=WAIT_MS)
-    assert page.locator(f"{no_item} {active_card}").is_visible()
-    page.click('[data-workspace-reveal="no-item"]')
-    page.wait_for_selector(active_card, state="detached", timeout=WAIT_MS)
-    assert page.locator(f"{no_item} {kickoff_card}").count() == 1
-    assert page.locator(f"{no_item} {later_card}").count() == 1
+    page.wait_for_selector(
+        f'[data-bucket-key="done"] {active_card}', state="attached", timeout=WAIT_MS
+    )
+    assert not page.locator(f'[data-bucket-key="done"] {active_card}').is_visible()
+    page.click('[data-bucket-key="done"] .disclosure-summary')
+    assert page.locator(f'[data-bucket-key="done"] {active_card}').is_visible()
+    assert page.locator(kickoff_card).count() == 1
+    assert page.locator(later_card).count() == 1
     assert _get_ticket(server, later_dependent)["stage"] == "needs_plan"
     assert _get_ticket(server, shared_dependent)["stage"] == "needs_approach"
 

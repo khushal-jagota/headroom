@@ -121,11 +121,14 @@ def _snap_board(p: Page, mid: str) -> dict[str, Any]:
     card = (
         f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
     )
-    no_item = "[data-no-item]"
     return {
         "title": p.inner_text(f"{card} .ticket-row-title"),
-        "tail": p.inner_text(f"{no_item} h2"),
-        "nested": p.eval_on_selector_all(f"{no_item} {card}", "e=>e.length"),
+        "group": p.inner_text(
+            '[data-bucket-key="awaiting_approval"] .board-workspace-bucket-label'
+        ),
+        "nested": p.eval_on_selector_all(
+            f'[data-bucket-key="awaiting_approval"] {card}', "e=>e.length"
+        ),
         "status": p.get_attribute(card, "data-ticket-status"),
         "marks": p.eval_on_selector_all(
             f"{card} .board-workspace-stage-mark", "e=>e.length"
@@ -408,7 +411,7 @@ def test_e31_refresh_restores_state(
     after_b = _snap_board(page_b, mid)
     expected_b = {
         "title": E31_TITLE,
-        "tail": "NO ITEM",
+        "group": "Awaiting approval",
         "nested": 1,
         "status": "awaiting_approval",
         "marks": 1,
