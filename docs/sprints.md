@@ -65,9 +65,12 @@ which keeps off-today and done work visible without competing with today. Both i
 sections arrive shut.
 
 Every status is its own dropdown. Needs you, User, Waiting for kickoff, Awaiting
-approval and Paired arrive open. Agent, Blocked, Waiting for closeout, Empty and Done
-arrive shut, still named and counted. Open shows a chevron, shut shows the count, on
-statuses and sections alike. A Ticket waiting on you and a Ticket that is yours to do
+approval, Paired and Agent arrive open — work running right now is what the reader came
+for. Blocked, Waiting for closeout, Empty and Done arrive shut, still named and counted,
+and those four are exactly the groups the Workspace rail leaves out: a group you have to
+open here is a group the rail does not carry. Open shows a chevron, shut shows the
+count, on statuses and sections alike, and the two measure the same, so opening one
+moves nothing else on the page. A Ticket waiting on you and a Ticket that is yours to do
 are two groups, here and in the Workspace rail both.
 
 This page splits a Ticket by its condition and the rail splits it by its raw status, so

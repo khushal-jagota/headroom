@@ -2,7 +2,10 @@ import { sprintTicketCondition, type TicketConditionFacts } from "./sprintPresen
 
 // The Sprint Item page's order of Ticket status groups, and which of them arrive shut.
 // `quiet` is the single fact that a group is not what the reader came for: the page
-// names and counts it, and arrives with it collapsed.
+// names and counts it, and arrives with it collapsed. The same fact decides the rail:
+// the four quiet groups are exactly the ones `RAIL_GROUPS` in `workspaceRail.ts`
+// leaves out, so a group the reader has to open here is a group the rail does not
+// carry at all.
 //
 // The workspace rail groups by raw `ticket_status` and holds its own order in
 // `workspaceRail.ts`. The two screens split a Ticket up differently, but they call the
@@ -21,7 +24,7 @@ export const TICKET_STATUS_GROUPS: readonly TicketStatusGroupDefinition[] = [
   { key: "waiting-for-kickoff", label: "Waiting for kickoff", quiet: false },
   { key: "current-awaiting-approval", label: "Awaiting approval", quiet: false },
   { key: "current-paired", label: "Paired", quiet: false },
-  { key: "current-running", label: "Agent", quiet: true },
+  { key: "current-running", label: "Agent", quiet: false },
   { key: "errored", label: "Blocked", quiet: true },
   { key: "current-waiting", label: "Waiting for closeout", quiet: true },
   { key: "upcoming", label: "Empty", quiet: true },

@@ -87,7 +87,7 @@ describe("Workspace rail", () => {
     ).toBe("agent");
   });
 
-  it("orders the groups, labels them, and starts the quiet three shut", () => {
+  it("orders and labels the groups the rail holds, and leaves out the quiet ones", () => {
     const groups = workspaceGroups([
       card("done", { stage: "done", is_done: true }),
       card("resting"),
@@ -108,17 +108,15 @@ describe("Workspace rail", () => {
       "User",
       "Paired",
       "Agent",
-      "Waiting to Closeout",
       "Awaiting approval",
-      "Waiting for Kickoff",
-      "Empty",
-      "Blocked",
-      "Done"
+      "Waiting for Kickoff"
     ]);
-    // Every group is its own group. Nothing hides behind a count.
-    expect(
-      groups.filter((group) => group.defaultCollapsed).map((group) => group.key)
-    ).toEqual(["waiting_for_kickoff", "blocked", "done"]);
+    // The quiet states are not drawn shut here. They are not in the rail at all, and
+    // the Sprint Item page is where they are read.
+    expect(groups.map((group) => group.key)).not.toContain("done");
+    expect(groups.map((group) => group.key)).not.toContain("blocked");
+    expect(groups.map((group) => group.key)).not.toContain("waiting_to_closeout");
+    expect(groups.map((group) => group.key)).not.toContain("empty");
   });
 
   it("sorts rows by activity, newest first", () => {
@@ -247,7 +245,9 @@ describe("Workspace rail", () => {
       [item("si_done")]
     );
 
+    // The Item is still the door to its page, so it keeps its box. Done is not a rail
+    // group, so the box has nothing to count and says nothing.
     expect(rail.items[0].title).toBe("Finished outcome");
-    expect(rail.items[0].groups.map((group) => group.label)).toEqual(["Done"]);
+    expect(rail.items[0].groups).toEqual([]);
   });
 });

@@ -162,7 +162,7 @@ def assert_brand(browser, mobile):
         assert pending["backgroundColor"] == "rgb(34, 42, 56)"
         assert pending["color"] == "rgb(220, 230, 248)"
         assert pending["borderColor"] == "rgb(154, 173, 210)"
-        assert colors(page, ".ticket-row--active")["backgroundColor"] == "rgb(38, 34, 28)"
+        assert colors(page, ".ticket-row--active")["backgroundColor"] == "rgb(36, 33, 27)"
         assert colors(page, ".stage-mark--current-waiting")["borderColor"] == "rgb(154, 173, 210)"
         assert colors(page, ".stage-mark--completed")["backgroundColor"] == "rgb(127, 165, 100)"
         assert colors(page, ".stage-mark--errored")["backgroundColor"] == "rgb(216, 93, 93)"
@@ -445,11 +445,94 @@ def assert_mobile_content_containment(browser):
         context.close()
 
 
+def assert_row_states(browser):
+    """Hover is a background. Selection is a mark. Opening something moves nothing."""
+    context = browser.new_context(viewport={"width": 1280, "height": 800})
+    try:
+        page = context.new_page()
+        mount(page, """
+          <section class="board-workspace-left">
+            <button class="ticket-row" id="resting" type="button">
+              <span class="ticket-row-title">Resting ticket</span>
+            </button>
+            <button class="ticket-row" id="hovered" type="button">
+              <span class="ticket-row-title">Hovered ticket</span>
+            </button>
+            <button class="ticket-row ticket-row--active" id="picked" type="button">
+              <span class="ticket-row-title">Selected ticket</span>
+            </button>
+            <section class="board-workspace-item" id="box">
+              <span class="board-workspace-item-title">Sprint Item</span>
+            </section>
+          </section>
+          <details class="sprint-workspace-section" id="section">
+            <summary>
+              <span class="sprint-workspace-section-label">Artifacts</span>
+              <span class="sprint-workspace-count">2</span>
+              <span class="sprint-workspace-chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="sprint-workspace-section-body">body</div>
+          </details>
+        """)
+
+        resting = colors(page, "#resting")
+        target = page.locator("#hovered").bounding_box()
+        page.mouse.move(
+            target["x"] + target["width"] / 2, target["y"] + target["height"] / 2
+        )
+        page.wait_for_function("() => document.querySelector('#hovered:hover') !== null")
+        # The row transitions its background, so read it once the transition is done.
+        page.wait_for_timeout(300)
+        hovered = colors(page, "#hovered")
+        picked = colors(page, "#picked")
+        edge = page.eval_on_selector(
+            "#picked", "el => getComputedStyle(el).boxShadow"
+        )
+        resting_edge = page.eval_on_selector(
+            "#resting", "el => getComputedStyle(el).boxShadow"
+        )
+        # A hovered row lifts its background only, and a selected row is neither the
+        # resting row nor the hovered one.
+        assert hovered["backgroundColor"] == "rgb(38, 34, 28)", hovered
+        assert picked["backgroundColor"] == "rgb(36, 33, 27)", picked
+        assert picked["backgroundColor"] != hovered["backgroundColor"]
+        assert picked["color"] == "rgb(244, 241, 234)", picked
+        assert "rgb(244, 241, 234) 2px 0px 0px 0px inset" == edge, edge
+        assert "rgba(0, 0, 0, 0) 2px 0px 0px 0px inset" == resting_edge, resting_edge
+        assert resting["backgroundColor"] == "rgba(0, 0, 0, 0)", resting
+
+        # The Sprint Item box: hover changes the background and never the border, and
+        # the title does not change colour under the pointer.
+        box_rest = colors(page, "#box")
+        title_rest = colors(page, "#box .board-workspace-item-title")
+        box = page.locator("#box").bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.wait_for_function("() => document.querySelector('#box:hover') !== null")
+        page.wait_for_timeout(300)
+        box_hover = colors(page, "#box")
+        title_hover = colors(page, "#box .board-workspace-item-title")
+        assert box_hover["borderColor"] == box_rest["borderColor"], (box_rest, box_hover)
+        assert box_hover["backgroundColor"] != box_rest["backgroundColor"]
+        assert title_hover["color"] == title_rest["color"], (title_rest, title_hover)
+
+        # Opening a section swaps the count for the chevron. The summary must measure
+        # the same either way, or every open and shut moves the rest of the page.
+        summary_height = "() => document.querySelector('#section > summary')" \
+            ".getBoundingClientRect().height"
+        shut = page.evaluate(summary_height)
+        page.evaluate("() => document.querySelector('#section').open = true")
+        opened = page.evaluate(summary_height)
+        assert shut == opened, (shut, opened)
+    finally:
+        context.close()
+
+
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
     try:
         assert_brand(browser, False)
         assert_brand(browser, True)
+        assert_row_states(browser)
         assert_scrollbars(browser)
         assert_document_boundaries(browser)
         assert_mobile_content_containment(browser)
