@@ -39,9 +39,18 @@ describe("Ticket status groups", () => {
       "Empty",
       "Done"
     ]);
+    // The groups that arrive open here are the groups the rail holds. Agent is one of
+    // them: work running right now is what the reader came for.
     expect(
       TICKET_STATUS_GROUPS.filter((group) => !group.quiet).map((group) => group.label)
-    ).toEqual(["Needs you", "User", "Waiting for kickoff", "Awaiting approval", "Paired"]);
+    ).toEqual([
+      "Needs you",
+      "User",
+      "Waiting for kickoff",
+      "Awaiting approval",
+      "Paired",
+      "Agent"
+    ]);
   });
 
   it("names each Ticket's group from the shared condition", () => {
