@@ -89,6 +89,9 @@ def test_a_change_reaches_the_open_board_without_a_reload(
     cli: Callable[..., JsonObject],
     api: ApiHelper,
 ) -> None:
+    # The Workspace rail holds the groups that want the reader, so a Ticket has to be in
+    # one of them to have a card at all. A kickoff note parks the Ticket for approval,
+    # which is Waiting for Kickoff — the live update itself is what this test is about.
     ticket_id = cli(
         server,
         "ticket",
@@ -97,6 +100,8 @@ def test_a_change_reaches_the_open_board_without_a_reload(
         "coding",
         "--title",
         "Board card before the change",
+        "--kickoff-note",
+        "Waiting on the kickoff",
     )["id"]
 
     page = open_page(context_factory(), server, "#/workspace", 'section[data-screen="workspace"]')

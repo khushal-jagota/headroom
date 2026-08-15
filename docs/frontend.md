@@ -27,22 +27,46 @@ One screen per part of the system:
   appear. The Chief of Staff row leads, and under it a selector chooses one of two views
   over the same tickets: **Tickets** or **Sprint Items**.
 
-  The Tickets view is every ticket on today, in a box per status group, in one order:
-  Errored, Needs you, User, Paired, Agent, Waiting to Closeout, Awaiting approval,
-  Waiting for Kickoff, Empty, Blocked, Done. Every parked proposal sits under Awaiting
-  approval, because there is one approval gate; a proposal still gated on its kickoff
-  splits out into its own group. A shut box shows how many tickets it holds. Waiting for
-  Kickoff, Blocked and Done start shut, and the reader opens them. Nothing hides behind
-  a "+n more": every group is reachable as itself. Rows inside a group are ordered by
-  activity, newest first.
+  The rail holds the groups that want the reader, in one order: Errored, Needs you,
+  User, Paired, Agent, Awaiting approval, Waiting for Kickoff. Every parked proposal
+  sits under Awaiting approval, because there is one approval gate; a proposal still
+  gated on its kickoff splits out into its own group. The quiet states — Waiting to
+  Closeout, Empty, Done, and a ticket waiting on another ticket — are not in the rail at
+  all, in either view: they are read on the Sprint Item page, which still lists every
+  group. A ticket whose own run errored is not quiet and does reach the rail, as Errored;
+  the Sprint Item page files it under Blocked with the tickets that are waiting on
+  something. Every group the rail draws arrives open, and nothing hides behind a "+n
+  more". Rows inside a group are ordered by activity, newest first.
+
+  A consequence worth stating plainly: a ticket you have just made, and have not started,
+  is in none of those groups, so the Workspace does not show it. The Sprint Item page,
+  the sprint, and the ticket's own address all still do.
+
+  The Tickets view is every ticket on today that sits in one of those groups, in a box
+  per group.
 
   The Sprint Items view is one box per Sprint Item with a ticket on today. A shut Item
-  shows a line of counts — how many tickets it has in each group. Clicking anywhere in
-  the box selects the Item and opens its workspace beside the rail; clicking it again
-  shuts it. A selected Item shows the same status groups nested inside it, without their
-  own boxes. Folding one of those groups, or opening a ticket, leaves the Item open.
-  Items are ordered by priority and then by age, so an Item holds its place while its
-  tickets move under it.
+  shows a line of counts — how many tickets it has in each group; an Item with nothing
+  in those groups shows no line. Clicking anywhere in the box selects the Item and opens
+  its workspace beside the rail; clicking the Item already in the workspace shuts it. An
+  open Item shows the same status groups nested inside it, without their own boxes.
+  Folding one of those groups, or opening a ticket, leaves the Item open. Items are
+  ordered by priority and then by age, so an Item holds its place while its tickets move
+  under it.
+
+  Hovering a row or an Item box changes its background and nothing else. Selection is a
+  background too — the same language the rest of the app uses for a selected thing — and
+  it moves the other way: hover lifts a row off the rail, selection sinks it into one, so
+  the two never read as more and less of the same state. A selected Item is a lifted
+  surface and nothing more; its edge is the same hairline it always had. A selected
+  ticket takes the larger step of the two, so a selected row inside a selected Item is
+  still the strongest thing in the rail. Nothing but colour changes, so selecting
+  anything moves nothing on the screen.
+
+  Selection in the rail is exclusive: what the workspace beside it is showing is the one
+  thing that looks selected, and nothing else does. Opening a ticket from inside an Item,
+  or going to the Chief of Staff, takes the mark off the Item at that moment — an Item
+  left open behind them is open, not selected, and being open carries no mark of its own.
 
   The Item title carries a mark for the Item's own supervisor conversation, read exactly
   as a ticket row's mark is read. A ticket without a Sprint Item appears in the Tickets

@@ -2,7 +2,10 @@ import { sprintTicketCondition, type TicketConditionFacts } from "./sprintPresen
 
 // The Sprint Item page's order of Ticket status groups, and which of them arrive shut.
 // `quiet` is the single fact that a group is not what the reader came for: the page
-// names and counts it, and arrives with it collapsed.
+// names and counts it, and arrives with it collapsed. The same fact decides the rail:
+// the four quiet groups are exactly the ones `RAIL_GROUPS` in `workspaceRail.ts`
+// leaves out, so a group the reader has to open here is a group the rail does not
+// carry at all.
 //
 // The workspace rail groups by raw `ticket_status` and holds its own order in
 // `workspaceRail.ts`. The two screens split a Ticket up differently, but they call the
@@ -11,9 +14,9 @@ import { sprintTicketCondition, type TicketConditionFacts } from "./sprintPresen
 // each pair lives. A label changed on one side is changed on both.
 //
 // `errored` and `blocked` go further than a shared label: they carry the rail's own
-// keys, and they take the emphasis the rail gives them. Errored is a worker that broke,
-// so it leads and arrives open. Blocked is work another Ticket holds, so it sits late
-// and arrives shut.
+// keys. A worker that broke wants the reader now, so Errored leads, arrives open, and
+// the rail carries it. Work another Ticket holds does not, so Blocked sits late,
+// arrives shut, and stays off the rail. Neither state is ever named as the other.
 export type TicketStatusGroupDefinition = {
   key: string;
   label: string;
@@ -27,7 +30,7 @@ export const TICKET_STATUS_GROUPS: readonly TicketStatusGroupDefinition[] = [
   { key: "waiting-for-kickoff", label: "Waiting for kickoff", quiet: false },
   { key: "current-awaiting-approval", label: "Awaiting approval", quiet: false },
   { key: "current-paired", label: "Paired", quiet: false },
-  { key: "current-running", label: "Agent", quiet: true },
+  { key: "current-running", label: "Agent", quiet: false },
   { key: "current-waiting", label: "Waiting for closeout", quiet: true },
   { key: "upcoming", label: "Empty", quiet: true },
   { key: "blocked", label: "Blocked", quiet: true },

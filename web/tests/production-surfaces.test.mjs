@@ -259,7 +259,7 @@ assert.doesNotMatch(appCssSource, /board-workspace-project-filter/);
 assert.match(ticketStatusGroupsSource, /import \{ sprintTicketCondition/);
 assert.match(
   ticketStatusGroupsSource,
-  /"errored", label: "Errored", quiet: false[\s\S]*"needs-me", label: "Needs you", quiet: false[\s\S]*"user", label: "User", quiet: false[\s\S]*"waiting-for-kickoff", label: "Waiting for kickoff", quiet: false[\s\S]*"current-awaiting-approval", label: "Awaiting approval", quiet: false[\s\S]*"current-paired", label: "Paired", quiet: false[\s\S]*"current-running", label: "Agent", quiet: true[\s\S]*"current-waiting", label: "Waiting for closeout", quiet: true[\s\S]*"upcoming", label: "Empty", quiet: true[\s\S]*"blocked", label: "Blocked", quiet: true[\s\S]*"completed", label: "Done", quiet: true/,
+  /"errored", label: "Errored", quiet: false[\s\S]*"needs-me", label: "Needs you", quiet: false[\s\S]*"user", label: "User", quiet: false[\s\S]*"waiting-for-kickoff", label: "Waiting for kickoff", quiet: false[\s\S]*"current-awaiting-approval", label: "Awaiting approval", quiet: false[\s\S]*"current-paired", label: "Paired", quiet: false[\s\S]*"current-running", label: "Agent", quiet: false[\s\S]*"current-waiting", label: "Waiting for closeout", quiet: true[\s\S]*"upcoming", label: "Empty", quiet: true[\s\S]*"blocked", label: "Blocked", quiet: true[\s\S]*"completed", label: "Done", quiet: true/,
 );
 assert.doesNotMatch(sprintItemWorkspaceSource, /workspaceRail/);
 
@@ -299,21 +299,27 @@ assert.deepEqual(groupOrder, [
   "done",
 ]);
 
-const defaultCollapsedGroupsMatch = workspaceRailSource.match(
-  /const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set\(\[([\s\S]*?)\n\]\);/,
+// The rail holds the groups that want the reader. The quiet states are not drawn shut
+// here — they are not in the rail at all, in either view, and the Sprint Item page is
+// where they are read. Everything the rail draws arrives open.
+const railGroupsMatch = workspaceRailSource.match(
+  /const RAIL_GROUPS: ReadonlySet<string> = new Set\(\[([\s\S]*?)\n\]\);/,
 );
-assert.ok(
-  defaultCollapsedGroupsMatch,
-  "Workspace declares one canonical default-collapsed group set",
+assert.ok(railGroupsMatch, "Workspace declares one canonical set of rail groups");
+const railGroups = [...railGroupsMatch[1].matchAll(/"([^"]+)"/g)].map(
+  (match) => match[1],
 );
-const defaultCollapsedGroups = [
-  ...defaultCollapsedGroupsMatch[1].matchAll(/"([^"]+)"/g),
-].map((match) => match[1]);
-assert.deepEqual(defaultCollapsedGroups, [
+assert.deepEqual(railGroups, [
+  "errored",
+  "needs_user",
+  "user",
+  "paired",
+  "agent",
+  "awaiting_approval",
   "waiting_for_kickoff",
-  "blocked",
-  "done",
 ]);
+assert.doesNotMatch(workspaceRailSource, /defaultCollapsed/);
+assert.match(boardRouteSource, /chevron="trailing"\n\s+defaultOpen\n/);
 
 // Nothing hides behind a count: every group is reachable as itself, in both views.
 assert.doesNotMatch(boardRouteSource, /more|toggleReveal|hiddenWorkspaceCardCount/);
@@ -322,6 +328,17 @@ assert.doesNotMatch(workspaceRailSource, /hidden|workspaceItemGroups/);
 assert.match(boardRouteSource, /\{@render ticketGroups\(rail\.groups, true, false\)\}/);
 assert.match(boardRouteSource, /\{@render ticketGroups\(item\.groups, false, true\)\}/);
 assert.match(boardRouteSource, /data-workspace-view=\{option\.key\}/);
+// Selection in the rail is exclusive: the address alone says what is selected, so an
+// Item held open behind a Ticket, or behind the Chief of Staff, is not lit as well.
+assert.match(boardRouteSource, /\{@const selected = itemId === item\.id\}/);
+assert.match(
+  boardRouteSource,
+  /class:board-workspace-item--selected=\{selected\}/,
+);
+assert.doesNotMatch(
+  boardRouteSource,
+  /class:board-workspace-item--selected=\{open\}/,
+);
 // An Item's mark is its own supervisor's conversation, carried by the board.
 assert.match(workspaceRailSource, /conversation_id: summary\?\.conversation_id \?\? null/);
 assert.match(boardRouteSource, /conversationSignalPresentation\(\s*item\.signals/);

@@ -3422,8 +3422,9 @@ select {
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-md);
   background: transparent;
-  transition: background var(--motion-fast) var(--motion-ease),
-    border-color var(--motion-fast) var(--motion-ease);
+  /* Hover moves the background and nothing else. The hairline is the box's own edge,
+   * not a state, so it never changes — not on hover and not on selection. */
+  transition: background var(--motion-fast) var(--motion-ease);
 }
 
 .board-workspace-item + .board-workspace-item {
@@ -3434,10 +3435,13 @@ select {
   background: var(--surface-overlay);
 }
 
+/* A selected Item is a background and nothing else — the same language as every other
+ * selected thing in the app. Its hairline never changes, so no edge appears or moves
+ * under a pointer that is only passing over. Hover would otherwise sit one step above
+ * selection, so a selected Item holds its own surface while hovered. */
 .board-workspace-item--selected,
 .board-workspace-item--selected:hover {
   background: var(--surface-raised);
-  border-color: var(--text-faintest);
 }
 
 /* The head is still a real button, so the box stays reachable from the keyboard. */
@@ -3470,11 +3474,6 @@ select {
   letter-spacing: var(--tracking-title);
   line-height: 1.2;
   color: var(--text-strong);
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-.board-workspace-item:hover .board-workspace-item-title {
-  color: var(--accent-text);
 }
 
 /* The line under a shut Item: what it holds, in the label grammar. */
@@ -3517,7 +3516,11 @@ select {
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  padding: var(--space-2) 0;
+  /* The row's background reaches one step past its title on the left and the row pulls
+   * back by the same step, so a hovered or selected row is a shape around the title
+   * rather than a stripe starting at it, and the title sits where it always did. */
+  padding: var(--space-2) 0 var(--space-2) var(--space-2);
+  margin-left: calc(var(--space-2) * -1);
   text-align: left;
   text-decoration: none;
   font-size: var(--type-sm);
@@ -3526,11 +3529,11 @@ select {
     background var(--motion-fast) var(--motion-ease);
 }
 
-.ticket-row:hover,
-.ticket-row--active {
+.ticket-row:hover {
   background: var(--surface-overlay);
   color: var(--text-strong);
 }
+
 
 /* Needs-you rows — an ask is waiting — read one text-step stronger at rest, keyed
  * off the existing status attribute (no new props). */
@@ -3545,6 +3548,19 @@ select {
 
 .ticket-row--quiet {
   color: var(--text-faintest);
+}
+
+/* Selection is a background, like every other selected thing in the app, and it is the
+ * larger move: hover lifts the row off the rail, selection sinks it into one. They read
+ * as different states rather than as more and less of the same one, and inside a
+ * selected Item — which is itself lifted — the sunken row is the strongest step on the
+ * screen. Nothing but the colour changes, so picking a row moves nothing. It sits after
+ * the status colours, because a selected row reads as selected whatever its status. The
+ * one accent stays reserved for "needs the human". */
+.ticket-row--active,
+.ticket-row--active:hover {
+  background: var(--surface-sunken);
+  color: var(--text-strong);
 }
 
 .ticket-row-title {
@@ -5686,17 +5702,13 @@ select {
   font-style: italic;
 }
 
-/* The page is three blocks — head, work, index. One seam and one gap between them. */
+/* The page is three blocks — head, work, index. One seam between them, stated once:
+ * the same step above the rule as below it, and the same step at every seam. */
 .sprint-workspace-work,
 .sprint-workspace-section {
-  margin-top: var(--space-6);
-  padding-top: var(--space-6);
-  border-top: var(--border-hairline) solid var(--border-color);
-}
-
-.sprint-workspace-section + .sprint-workspace-section {
   margin-top: var(--space-5);
   padding-top: var(--space-5);
+  border-top: var(--border-hairline) solid var(--border-color);
 }
 
 .sprint-workspace-section > summary {
@@ -5768,11 +5780,20 @@ select {
   margin-top: var(--space-3);
 }
 
-.sprint-workspace-count {
+/* The count and the chevron are one slot: a summary shows the count while it is shut
+ * and the chevron while it is open. They therefore have to measure the same, or every
+ * open and shut would move the rest of the page by the difference. */
+.sprint-workspace-count,
+.sprint-workspace-chevron {
   flex: none;
+  min-width: var(--space-4);
   margin-left: auto;
   color: var(--text-faint);
+  font-size: var(--type-sm);
+  font-weight: 400;
+  line-height: 1.3;
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* A shut status or section still names and counts itself, but the count is a whisper —
@@ -5782,11 +5803,6 @@ select {
   font-size: var(--type-sm);
   font-weight: 400;
   color: var(--text-faintest);
-}
-
-.sprint-workspace-chevron {
-  flex: none;
-  margin-left: auto;
 }
 
 .sprint-workspace-chevron::before {

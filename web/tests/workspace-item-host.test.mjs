@@ -41,10 +41,13 @@ assert.doesNotMatch(
 );
 
 // A Ticket opened from inside an Item takes the pane and leaves the Item open, so what
-// the rail holds open is its own state and only falls back to the address.
+// the rail holds open is its own state and only falls back to the address. An Item in
+// the address is recorded as the open one, so a Ticket opened after a reload still finds
+// its Item open. Held open is not selected, and only the Item in the pane shuts.
 assert.match(route, /let railItemId = \$derived\(openedItemId \?\? itemId \?\? null\)/);
+assert.match(route, /\$effect\(\(\) => \{\s*if \(itemId\) \{\s*openedItemId = itemId;/);
 assert.match(route, /\{@const open = railItemId === item\.id\}/);
-assert.match(route, /const shutting = railItemId === id;[\s\S]*openedItemId = shutting \? null : id/);
+assert.match(route, /const shutting = itemId === id;[\s\S]*openedItemId = shutting \? null : id/);
 assert.match(
   css,
   /@media \(max-width: 960px\)[\s\S]*\.board-workspace-shell--item \.board-workspace-left\s*\{[^}]*display: none[\s\S]*\.board-workspace-right\.board-workspace-right--item\s*\{[^}]*display: flex/,

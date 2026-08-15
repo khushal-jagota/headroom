@@ -64,13 +64,16 @@ Tickets, named only by their status. Then the index: Artifacts, then Remaining T
 which keeps off-today and done work visible without competing with today. Both index
 sections arrive shut.
 
-Every status is its own dropdown. Errored leads, then Needs you, User, Waiting for
-kickoff, Awaiting approval and Paired, and all of them arrive open. Agent, Waiting for
-closeout, Empty, Blocked and Done arrive shut, still named and counted. Open shows a
-chevron, shut shows the count, on statuses and sections alike. A Ticket waiting on you
-and a Ticket that is yours to do are two groups, here and in the Workspace rail both.
-So are a Ticket whose worker broke and a Ticket another Ticket holds: Errored leads
-because it needs you, and Blocked sits late because it waits on other work.
+Every status is its own dropdown. Errored, Needs you, User, Waiting for kickoff,
+Awaiting approval, Paired and Agent arrive open — a broken run and work running right
+now are what the reader came for. Waiting for closeout, Empty, Blocked and Done arrive
+shut, still named and counted, and they are exactly what the Workspace rail leaves out:
+a group you have to open here is a group the rail does not carry. Open shows a chevron,
+shut shows the count, on statuses and sections alike, and the two measure the same, so
+opening one moves nothing else on the page. A Ticket waiting on you and a Ticket that is
+yours to do are two groups, here and in the Workspace rail both. So are a Ticket whose
+own run errored and a Ticket waiting on another Ticket: a broken run wants you now and
+waiting on someone else does not, so Errored leads and Blocked sits late.
 
 This page splits a Ticket by its condition and the rail splits it by its raw status, so
 the two screens do not always draw the same set of groups. They do use the same words: a
