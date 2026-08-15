@@ -31,6 +31,10 @@ const workspaceRailSource = await readFile(
   new URL("../src/lib/workspaceRail.ts", import.meta.url),
   "utf8",
 );
+const ticketStatusGroupsSource = await readFile(
+  new URL("../src/lib/ticketStatusGroups.ts", import.meta.url),
+  "utf8",
+);
 const sprintRouteSource = await readFile(
   new URL("../src/routes/SprintRoute.svelte", import.meta.url),
   "utf8",
@@ -161,6 +165,18 @@ assert.match(sprintRouteSource, /data-item-status=\{item\.status\}/);
 assert.match(sprintRouteSource, /#\/sprint\?item=\$\{encodeURIComponent\(item\.id\)\}/);
 assert.match(sprintItemWorkspaceSource, /data-sprint-item-view=\{itemId\}/);
 assert.match(sprintItemWorkspaceSource, /data-sprint-ticket-id=\{ticket\.id\}/);
+// The page is three blocks: head, then today's work, then the index — Artifacts before
+// Remaining Tickets, both arriving shut.
+assert.match(
+  sprintItemWorkspaceSource,
+  /class="sprint-workspace-head"[\s\S]*class="sprint-workspace-work"[\s\S]*data-workspace-section="artifacts"[\s\S]*data-workspace-section="remaining"/,
+);
+assert.doesNotMatch(sprintItemWorkspaceSource, /class="sprint-workspace-section" open/);
+// Every status is its own disclosure, opened by the one shared rule.
+assert.match(sprintItemWorkspaceSource, /class="sprint-workspace-status"\n\s+open=\{!group\.quiet\}/);
+// The mark leads the row and the priority tile is gone; priority reads once, in the eyebrow.
+assert.match(sprintItemWorkspaceSource, /<StageMark state=\{condition\.mark\}[\s\S]*ticket-row-title/);
+assert.doesNotMatch(sprintItemWorkspaceSource, /PriorityTile|SprintTicketRow/);
 assert.match(sprintRouteSource, /<StageMark state=\{condition\.mark\}/);
 assert.match(sprintPresentationSource, /todayTicketIds\.has\(ticket\.id\)/);
 assert.match(sprintRouteSource, /data-sprint-other/);
@@ -173,17 +189,16 @@ assert.doesNotMatch(sprintRouteSource, /<Chip/);
 
 assert.match(priorityTileSource, /aria-label=\{decorative \? undefined : `Priority \$\{priority\}`\}/);
 assert.match(ticketPriorityControlSource, /<PriorityTile \{priority\} decorative \/>[\s\S]*<select/);
-assert.match(
-  boardRouteSource,
-  /<PriorityTile priority=\{item\.priority\} \/>[\s\S]*<span class="board-workspace-item-title">\{item\.title\}<\/span>/,
-);
+// A Sprint Item box carries no tile of its own: its title and its line are all it says.
+assert.doesNotMatch(boardRouteSource, /<PriorityTile/);
 // The rail row is the shared ticket row, so its priority tile comes from SprintTicketRow.
+// Inside an Item the tile is dropped, because the Item is the thing being read.
 assert.match(
   boardRouteSource.slice(
     boardRouteSource.indexOf("{#snippet ticketRow"),
     boardRouteSource.indexOf("{/snippet}", boardRouteSource.indexOf("{#snippet ticketRow")),
   ),
-  /<SprintTicketRow[\s\S]*priority=\{card\.priority\}/,
+  /<SprintTicketRow[\s\S]*priority=\{withPriority \? card\.priority : null\}/,
 );
 assert.equal((sprintRouteSource.match(/<PriorityTile priority=/g) || []).length, 1);
 assert.match(backlogRouteSource, /labelContent\(\)}<PriorityTile priority=\{p\} \/>/);
@@ -236,28 +251,78 @@ assert.match(
 );
 assert.doesNotMatch(boardRouteSource, /project-filter|projectMenu|selectedProject|rosterCards|All projects/);
 assert.doesNotMatch(appCssSource, /board-workspace-project-filter/);
-// The rail groups by the one shared Ticket condition, in one order, with the quiet
-// three hidden until the reader asks. There is no second organizing rule and no
-// view mode.
-assert.match(workspaceRailSource, /import \{ sprintTicketCondition \}/);
+
+// The Sprint Item page keeps its own order of status groups, named and defaulted by its
+// approved design. It is not the rail's list: the rail groups by raw ticket_status.
+assert.match(ticketStatusGroupsSource, /import \{ sprintTicketCondition/);
 assert.match(
-  workspaceRailSource,
-  /"needs-me"[\s\S]*"current-awaiting-approval", label: "Awaiting approval", hidden: false[\s\S]*"current-paired"[\s\S]*"current-running", label: "Agent", hidden: true[\s\S]*"errored", label: "Blocked", hidden: true[\s\S]*"upcoming"[\s\S]*"completed", label: "Done", hidden: true/,
+  ticketStatusGroupsSource,
+  /"needs-me", label: "Needs you", quiet: false[\s\S]*"user", label: "User", quiet: false[\s\S]*"waiting-for-kickoff", label: "Waiting for kickoff", quiet: false[\s\S]*"current-awaiting-approval", label: "Awaiting approval", quiet: false[\s\S]*"current-paired", label: "Paired", quiet: false[\s\S]*"current-running", label: "Agent", quiet: true[\s\S]*"errored", label: "Blocked", quiet: true[\s\S]*"current-waiting", label: "Waiting for closeout", quiet: true[\s\S]*"upcoming", label: "Empty", quiet: true[\s\S]*"completed", label: "Done", quiet: true/,
 );
-assert.doesNotMatch(boardRouteSource, /data-workspace-view|railMode|WorkspaceRailMode/);
-assert.doesNotMatch(appCssSource, /board-workspace-view-control/);
-// The reveal is two-way: one control both shows and hides an Item's quiet groups.
-assert.match(boardRouteSource, /\+\$\{hiddenCount\} more/);
-assert.match(boardRouteSource, /onclick=\{\(\) => toggleReveal\(item\.id\)\}/);
-assert.match(boardRouteSource, /revealed \? "less"/);
-// The eyebrow carries the Item's identity and its progress across all its Tickets.
+assert.doesNotMatch(sprintItemWorkspaceSource, /workspaceRail/);
+
+
+// Kickoff approval is the one approval subtype Workspace can classify entirely from the
+// existing board card. Done and the server-projected Closeout exception keep precedence,
+// then this predicate separates Kickoff from every later approval.
+const groupKeySource = workspaceRailSource.slice(
+  workspaceRailSource.indexOf("export function workspaceCardGroupKey"),
+  workspaceRailSource.indexOf("function priorityRank"),
+);
+
 assert.match(
-  boardRouteSource,
-  /<PriorityTile priority=\{item\.priority\} \/>[\s\S]*\{item\.progress\.done\} of \{item\.progress\.total\} done/,
+  groupKeySource,
+  /if \(card\.is_done\) return "done";[\s\S]*if \(card\.waiting_to_closeout\) return "waiting_to_closeout";[\s\S]*card\.ticket_status === "awaiting_approval"[\s\S]*card\.gating_field === "kickoff"[\s\S]*return "waiting_for_kickoff";/,
 );
-// Titles and rows share one left edge: no gutter inset survives in the rail.
-assert.doesNotMatch(appCssSource, /board-workspace-item-priority/);
-assert.match(boardRouteSource, /data-no-item/);
+assert.match(workspaceRailSource, /waiting_for_kickoff: "Waiting for Kickoff"/);
+
+const groupOrderMatch = workspaceRailSource.match(
+  /const GROUP_ORDER: readonly string\[\] = \[([\s\S]*?)\n\];/,
+);
+assert.ok(groupOrderMatch, "Workspace declares one canonical group order");
+const groupOrder = [...groupOrderMatch[1].matchAll(/"([^"]+)"/g)].map(
+  (match) => match[1],
+);
+assert.deepEqual(groupOrder, [
+  "errored",
+  "needs_user",
+  "user",
+  "paired",
+  "agent",
+  "waiting_to_closeout",
+  "awaiting_approval",
+  "waiting_for_kickoff",
+  "empty",
+  "blocked",
+  "done",
+]);
+
+const defaultCollapsedGroupsMatch = workspaceRailSource.match(
+  /const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set\(\[([\s\S]*?)\n\]\);/,
+);
+assert.ok(
+  defaultCollapsedGroupsMatch,
+  "Workspace declares one canonical default-collapsed group set",
+);
+const defaultCollapsedGroups = [
+  ...defaultCollapsedGroupsMatch[1].matchAll(/"([^"]+)"/g),
+].map((match) => match[1]);
+assert.deepEqual(defaultCollapsedGroups, [
+  "waiting_for_kickoff",
+  "blocked",
+  "done",
+]);
+
+// Nothing hides behind a count: every group is reachable as itself, in both views.
+assert.doesNotMatch(boardRouteSource, /more|toggleReveal|hiddenWorkspaceCardCount/);
+assert.doesNotMatch(workspaceRailSource, /hidden|workspaceItemGroups/);
+// The two views read the same groups, and the selector is one control over both.
+assert.match(boardRouteSource, /\{@render ticketGroups\(rail\.groups, true, false\)\}/);
+assert.match(boardRouteSource, /\{@render ticketGroups\(item\.groups, false, true\)\}/);
+assert.match(boardRouteSource, /data-workspace-view=\{option\.key\}/);
+// An Item's mark is its own supervisor's conversation, carried by the board.
+assert.match(workspaceRailSource, /conversation_id: summary\?\.conversation_id \?\? null/);
+assert.match(boardRouteSource, /conversationSignalPresentation\(\s*item\.signals/);
 assert.match(boardRouteSource, /<SprintItemWorkspace itemId=\{selectedItem\.id\}/);
 
 console.log("production-surfaces.test.mjs: all assertions passed");

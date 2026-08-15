@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from planner.core import links as core_links
 from planner.core.contracts import JsonDict
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.runtime import conversation_start
@@ -119,10 +120,14 @@ def item_rollup(conn: sqlite3.Connection, item_id: str) -> dict[str, int]:
 def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
     """Per-item ticket rows for the tracking-page disclosure: id/title/stage/priority
     plus the board-card signals the sprint ticket row colours off —
-    has_pending_proposal, ticket_status, and waiting_to_closeout — ordered
-    created_at, id (matching the loose-ticket ordering). A light projection —
-    not full ticket_json — since the disclosure only lists rows that link to
-    the ticket."""
+    has_pending_proposal, ticket_status, waiting_to_closeout, gating_field, and
+    blocked — ordered created_at, id (matching the loose-ticket ordering). A light
+    projection — not full ticket_json — since the disclosure only lists rows that link
+    to the ticket.
+
+    gating_field and blocked are the two facts the shared status-group rule needs and
+    the condition alone cannot see. Without them the Sprint Item page and the workspace
+    rail would sort the same Ticket into different groups."""
     rows = conn.execute(
         "SELECT id, title, stage, priority, ticket_status, fields, worker_type, at_cap, "
         "ceiling, employee_backend FROM tickets "
@@ -131,6 +136,7 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
     ).fetchall()
     result: list[JsonDict] = []
     registry = configured_worker_type_registry()
+    blocked_target_ids = core_links.blocked_target_ids(conn)
     for r in rows:
         stage = str(r["stage"])
         ticket_status = str(r["ticket_status"])
@@ -164,6 +170,8 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
                 ),
                 "ticket_status": ticket_status,
                 "waiting_to_closeout": waiting_to_closeout,
+                "gating_field": gating_field,
+                "blocked": str(r["id"]) in blocked_target_ids,
                 "review_route": str(r["at_cap"]),
                 "employee_backend": str(r["employee_backend"]),
                 "worker_type": str(r["worker_type"]),

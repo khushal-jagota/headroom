@@ -41,6 +41,8 @@ function workspace(): SprintItemWorkspace {
         ticket_status: "awaiting_approval",
         waiting_to_closeout: false,
         has_pending_proposal: true,
+        gating_field: "implementation",
+        blocked: false,
         review_route: "propose",
         worker_type: "coding",
         day_ids: ["day_2026-08-12"]
@@ -53,6 +55,8 @@ function workspace(): SprintItemWorkspace {
         ticket_status: "empty",
         waiting_to_closeout: false,
         has_pending_proposal: false,
+        gating_field: null,
+        blocked: false,
         review_route: "stop",
         worker_type: "coding",
         day_ids: ["day_2026-08-12"]
@@ -65,6 +69,8 @@ function workspace(): SprintItemWorkspace {
         ticket_status: "agent",
         waiting_to_closeout: false,
         has_pending_proposal: false,
+        gating_field: null,
+        blocked: false,
         review_route: "stop",
         worker_type: "coding",
         day_ids: []
@@ -103,7 +109,7 @@ describe("Sprint Item workspace presentation", () => {
     ).toEqual([["Awaiting approval", ["t_parked_one", "t_parked_two"]]]);
   });
 
-  it("labels a not-yet-started Ticket with the word used everywhere else", () => {
+  it("labels a resting Ticket with the word the rail uses", () => {
     const value = workspace();
     const upcoming = { ...value.tickets[0], id: "t_upcoming", ticket_status: "empty", has_pending_proposal: false };
     expect(
@@ -112,7 +118,7 @@ describe("Sprint Item workspace presentation", () => {
         today_ticket_ids: ["t_upcoming"],
         tickets: [upcoming]
       }).map((group) => group.label)
-    ).toEqual(["To do"]);
+    ).toEqual(["Empty"]);
     // The same Ticket off the Day reads identically in Remaining.
     expect(
       remainingWorkspaceTicketGroups({
@@ -120,10 +126,10 @@ describe("Sprint Item workspace presentation", () => {
         today_ticket_ids: [],
         tickets: [upcoming]
       }).map((group) => group.label)
-    ).toEqual(["To do"]);
+    ).toEqual(["Empty"]);
   });
 
-  it("labels a closeout-ready Ticket as waiting for closeout, not To do", () => {
+  it("labels a closeout-ready Ticket as waiting for closeout, not Empty", () => {
     const value = workspace();
     const readyForCloseout = {
       ...value.tickets[0],
@@ -146,6 +152,45 @@ describe("Sprint Item workspace presentation", () => {
         tickets: [readyForCloseout]
       }).map((group) => group.label)
     ).toEqual(["Waiting for closeout"]);
+  });
+
+  it("names a kickoff-gated Ticket on its own, as the rail does", () => {
+    const value = workspace();
+    const kickoff = {
+      ...value.tickets[0],
+      id: "t_kickoff",
+      stage: "waiting_for_kickoff",
+      gating_field: "kickoff"
+    };
+    expect(
+      todayWorkspaceTicketGroups({
+        ...value,
+        today_ticket_ids: ["t_kickoff", "t_review"],
+        tickets: [kickoff, value.tickets[0]]
+      }).map((group) => group.label)
+    ).toEqual(["Waiting for kickoff", "Awaiting approval"]);
+  });
+
+  it("reads Blocked from an open blocker link, not only from the status", () => {
+    const value = workspace();
+    const held = { ...value.tickets[0], id: "t_held", blocked: true };
+    expect(
+      todayWorkspaceTicketGroups({
+        ...value,
+        today_ticket_ids: ["t_held"],
+        tickets: [held]
+      }).map((group) => group.label)
+    ).toEqual(["Blocked"]);
+  });
+
+  it("carries the quiet flag each group is opened or collapsed by", () => {
+    const value = workspace();
+    expect(
+      todayWorkspaceTicketGroups(value).map((group) => [group.label, group.quiet])
+    ).toEqual([
+      ["Awaiting approval", false],
+      ["Done", true]
+    ]);
   });
 
   it("routes Sprint Item artifacts through the shared managed preview", () => {

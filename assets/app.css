@@ -3269,9 +3269,51 @@ select {
   font-size: var(--type-sm);
 }
 
-/* One box represents one Sprint Item. The fixed priority gutter and the row inset
- * form one shared left rule from the Item title through its Tickets. */
-.board-workspace-item {
+/* THE VIEW SELECTOR — the one new control. The app has no underline pattern, so it
+ * borrows .nav-link's size and colour ladder and marks the selected view with a rule
+ * in --text-strong. Not the accent: the accent means "needs the human". */
+.board-workspace-views {
+  display: flex;
+  gap: var(--space-5);
+  margin-bottom: var(--space-4);
+  padding: 0 var(--board-workspace-rail-pad-x);
+  border-bottom: var(--border-hairline) solid var(--border-color);
+}
+
+.board-workspace-view {
+  position: relative;
+  padding: 0 0 var(--space-2);
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--type-sm);
+  color: var(--text-faint);
+  transition: color var(--motion-base) var(--motion-ease);
+}
+
+.board-workspace-view:hover {
+  color: var(--text-default);
+}
+
+.board-workspace-view[aria-selected="true"] {
+  color: var(--text-strong);
+  font-weight: 500;
+}
+
+.board-workspace-view[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--border-hairline) * -1);
+  height: var(--border-strong);
+  background: var(--text-strong);
+}
+
+/* THE STATUS BUCKET — one box per status group. The count is what a shut group says;
+ * the chevron appears on hover, so a resting rail carries no affordance clutter. */
+.disclosure--workspace-bucket {
   min-width: 0;
   padding: var(--space-4);
   border: var(--border-hairline) solid var(--border-color);
@@ -3279,57 +3321,25 @@ select {
   background: transparent;
 }
 
-.board-workspace-item + .board-workspace-item {
+.disclosure--workspace-bucket + .disclosure--workspace-bucket {
   margin-top: var(--space-4);
 }
 
-.board-workspace-item.active {
-  border-color: var(--text-faintest);
-}
-
-.board-workspace-item-head {
+.disclosure--workspace-bucket > .disclosure-summary {
   width: 100%;
-  min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  align-items: center;
+  gap: var(--space-2);
+  text-align: left;
+  margin: 0;
   color: var(--text-strong);
 }
 
-.board-workspace-item--open > .board-workspace-item-head {
+.disclosure--workspace-bucket[open] > .disclosure-summary {
   margin-bottom: var(--space-3);
 }
 
-.board-workspace-item-eyebrow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
-}
-
-.board-workspace-item-line {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.board-workspace-item-open {
-  display: flex;
-  align-items: center;
-  flex: 1;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.board-workspace-item-title {
+.board-workspace-bucket-label {
   min-width: 0;
   font-family: var(--font-serif);
   font-size: var(--type-serif-xl);
@@ -3338,104 +3348,155 @@ select {
   line-height: 1.2;
 }
 
-.board-workspace-item--quiet .board-workspace-item-title {
-  color: var(--text-muted);
-}
-
-.board-workspace-item-fold {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
+.board-workspace-bucket-count {
   flex: 0 0 auto;
-  min-width: var(--space-7);
-  min-height: var(--space-7);
-  padding: 0 0 0 var(--space-2);
-  border: 0;
-  background: transparent;
-  color: var(--text-faint);
-  cursor: pointer;
-}
-
-.board-workspace-item-count {
+  margin-left: auto;
   font-size: var(--type-md);
   font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
-.board-workspace-item-fold:hover .board-workspace-item-count {
+.disclosure--workspace-bucket[open] > .disclosure-summary > .board-workspace-bucket-count {
+  display: none;
+}
+
+.disclosure--workspace-bucket:not([open]) > .disclosure-summary > .disclosure-chev {
+  display: none;
+}
+
+.disclosure--workspace-bucket > .disclosure-summary > .disclosure-chev {
+  flex: 0 0 auto;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--motion-ease);
+}
+
+.disclosure--workspace-bucket > .disclosure-summary:hover > .disclosure-chev,
+.disclosure--workspace-bucket > .disclosure-summary:focus-visible > .disclosure-chev {
+  opacity: 1;
+}
+
+.disclosure--workspace-bucket > .disclosure-summary:hover > .board-workspace-bucket-count,
+.disclosure--workspace-bucket > .disclosure-summary:focus-visible > .board-workspace-bucket-count {
   color: var(--text-strong);
 }
 
-/* The chevron is the fold state, so it is always drawn: it points right when the Item
-   is folded and down when it is open. A hover-only affordance never appears on touch. */
-.board-workspace-item-chevron {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-right: var(--border-strong) solid var(--text-faintest);
-  border-bottom: var(--border-strong) solid var(--text-faintest);
-  transform: rotate(-45deg);
-  transition: transform var(--motion-fast) var(--motion-ease);
+/* A blocked Ticket is the one group that reads as a fault. */
+.disclosure--workspace-bucket[data-bucket-key="errored"] .board-workspace-bucket-label {
+  color: var(--accent-error);
 }
 
-.board-workspace-item--open .board-workspace-item-chevron {
-  transform: rotate(45deg);
-}
-
-.board-workspace-item-fold:hover .board-workspace-item-chevron,
-.board-workspace-item-fold:focus-visible .board-workspace-item-chevron {
-  border-color: var(--text-strong);
-}
-
-.board-workspace-item-tickets,
-.board-workspace-no-item-tickets {
+.board-workspace-bucket-tickets {
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 
-/* The status heading is a label for the rows under it, never a control. */
-.board-workspace-group-heading {
-  margin-top: var(--space-2);
+/* A box inside a box reads as noise, so a bucket nested in a Sprint Item drops the box
+ * and steps its label under the Item title. Everything else about it is the bucket. */
+.disclosure--workspace-bucket--nested {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
 }
 
-.board-workspace-group-heading:first-child {
-  margin-top: 0;
+.disclosure--workspace-bucket--nested + .disclosure--workspace-bucket--nested {
+  margin-top: var(--space-3);
 }
 
-.board-workspace-item-more {
-  align-self: flex-start;
-  margin-top: var(--space-1);
-  padding: var(--space-1) 0;
+.disclosure--workspace-bucket--nested .board-workspace-bucket-label {
+  font-size: var(--type-serif-md);
+}
+
+.disclosure--workspace-bucket--nested .board-workspace-bucket-count {
+  font-size: var(--type-sm);
+}
+
+/* THE SPRINT ITEM — the bucket's box, reused. It is not a Disclosure: selection opens
+ * it, not a chevron. */
+.board-workspace-item {
+  min-width: 0;
+  padding: var(--space-4);
+  cursor: pointer;
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: transparent;
+  transition: background var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease);
+}
+
+.board-workspace-item + .board-workspace-item {
+  margin-top: var(--space-4);
+}
+
+.board-workspace-item:hover {
+  background: var(--surface-overlay);
+}
+
+.board-workspace-item--selected,
+.board-workspace-item--selected:hover {
+  background: var(--surface-raised);
+  border-color: var(--text-faintest);
+}
+
+/* The head is still a real button, so the box stays reachable from the keyboard. */
+.board-workspace-item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 0;
   border: 0;
   background: transparent;
-  color: var(--text-faintest);
-  font-size: var(--type-sm);
+  color: inherit;
+  text-align: left;
   cursor: pointer;
+  font: inherit;
 }
 
-.board-workspace-item-more:hover {
-  color: var(--text-muted);
+.board-workspace-item-head:focus-visible {
+  outline: var(--border-strong) solid var(--accent-bright);
+  outline-offset: var(--space-1);
+  border-radius: var(--radius-sm);
 }
 
-.board-workspace-no-item {
-  margin-top: var(--space-5);
-  padding-top: var(--space-4);
-  border-top: var(--border-hairline) solid var(--border-color);
-}
-
-.board-workspace-no-item h2 {
-  margin: 0;
-  padding: 0 var(--space-4);
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
+.board-workspace-item-title {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-xl);
   font-weight: 500;
+  letter-spacing: var(--tracking-title);
+  line-height: 1.2;
+  color: var(--text-strong);
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.board-workspace-item:hover .board-workspace-item-title {
+  color: var(--accent-text);
+}
+
+/* The line under a shut Item: what it holds, in the label grammar. */
+.board-workspace-item-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-size: var(--type-xs);
+  font-weight: 600;
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
+  color: var(--text-faintest);
 }
 
-.board-workspace-no-item-tickets {
-  padding: 0 var(--space-4);
+.board-workspace-item-line b {
+  font-weight: 600;
+  color: var(--text-faint);
+}
+
+.board-workspace-item-groups {
+  margin-top: var(--space-2);
 }
 
 .board-workspace-quiet-line {
@@ -5609,7 +5670,10 @@ select {
   padding: 0;
 }
 
+/* The brief keeps the Ticket recap's voice and its clamp, and drops the 62ch measure,
+   which is the one thing that made it narrower than the list under it. */
 .sprint-workspace-brief {
+  max-width: none;
   margin-top: var(--space-2);
   color: var(--text-faint);
   font-family: var(--font-serif);
@@ -5622,14 +5686,25 @@ select {
   font-style: italic;
 }
 
+/* The page is three blocks — head, work, index. One seam and one gap between them. */
+.sprint-workspace-work,
 .sprint-workspace-section {
   margin-top: var(--space-6);
+  padding-top: var(--space-6);
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+.sprint-workspace-section + .sprint-workspace-section {
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
 }
 
 .sprint-workspace-section > summary {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  margin-inline: calc(var(--space-2) * -1);
+  padding-inline: var(--space-2);
   list-style: none;
   cursor: pointer;
 }
@@ -5638,17 +5713,59 @@ select {
   display: none;
 }
 
-.sprint-workspace-section[open] > summary {
-  margin-bottom: var(--space-3);
+/* Section labels keep the small uppercase voice, so a section and a status are never
+   mistaken for each other. */
+.sprint-workspace-section-label {
+  flex: 1;
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  line-height: 1.3;
+  text-transform: uppercase;
+  color: var(--text-faint);
 }
 
-.sprint-workspace-section-label {
-  color: var(--text-strong);
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-xl);
-  font-weight: 500;
-  letter-spacing: var(--tracking-title);
-  line-height: 1.2;
+.sprint-workspace-section-body {
+  margin-top: var(--space-3);
+}
+
+/* A status group. Native <details>, like the sections it sits above. Size carries the
+   hierarchy: 20px in the faint ink, larger than the Ticket under it and greyer than it. */
+.sprint-workspace-status + .sprint-workspace-status {
+  margin-top: var(--space-5);
+}
+
+.sprint-workspace-status > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-inline: calc(var(--space-2) * -1);
+  padding-inline: var(--space-2);
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: var(--type-lg);
+  font-weight: 600;
+  line-height: 1.3;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.sprint-workspace-status > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sprint-workspace-status > summary:hover {
+  color: var(--text-muted);
+}
+
+.sprint-workspace-status-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.sprint-workspace-status-body {
+  margin-top: var(--space-3);
 }
 
 .sprint-workspace-count {
@@ -5656,6 +5773,15 @@ select {
   margin-left: auto;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
+}
+
+/* A shut status or section still names and counts itself, but the count is a whisper —
+   it must not read at the heading's size. */
+.sprint-workspace-status > summary > .sprint-workspace-count,
+.sprint-workspace-section > summary > .sprint-workspace-count {
+  font-size: var(--type-sm);
+  font-weight: 400;
+  color: var(--text-faintest);
 }
 
 .sprint-workspace-chevron {
@@ -5680,36 +5806,13 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   display: none;
 }
 
-.sprint-workspace-group {
-  margin-top: var(--space-4);
-}
-
-.sprint-workspace-group:first-of-type {
-  margin-top: 0;
-}
-
-.sprint-workspace-group-label {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-bottom: var(--space-1);
-  color: var(--text-faintest);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-}
-
-.sprint-workspace-group-label .sprint-workspace-count {
-  font-size: var(--type-sm);
-  font-weight: 400;
-  letter-spacing: 0;
-}
-
-/* In the detail column the shared row pulls out to the column gutter. */
-.sprint-workspace-section .ticket-row {
+/* The Ticket line. One size up from the shared row, and a shade whiter than the status
+   above it, so the two levels never read as one. In the detail column the row pulls out
+   to the column gutter. */
+.sprint-item-column .ticket-row {
   margin-inline: calc(var(--space-2) * -1);
   padding: var(--space-2);
+  font-size: var(--type-md);
 }
 
 .sprint-workspace-artifact:hover {
@@ -5717,20 +5820,22 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   color: var(--text-strong);
 }
 
+/* Artifact rows share the Ticket row's rhythm. */
 .sprint-workspace-artifact {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
   margin-inline: calc(var(--space-2) * -1);
-  padding: 6px var(--space-2);
+  padding: var(--space-2);
   border-radius: var(--radius-md);
-  color: var(--accent-bright);
-  font-size: var(--type-sm);
-  font-weight: 600;
+  color: var(--text-muted);
+  font-size: var(--type-md);
+  font-weight: 400;
   text-decoration: none;
 }
 
 .sprint-workspace-artifact small {
+  margin-left: auto;
   color: var(--text-faintest);
   font-size: var(--type-xs);
   font-weight: 400;
@@ -5814,11 +5919,11 @@ details:not([open]) > summary > .sprint-workspace-chevron {
     font-size: 24px;
   }
 
-  .sprint-workspace-section .ticket-row {
+  .sprint-item-column .ticket-row {
     align-items: flex-start;
   }
 
-  .sprint-workspace-section .ticket-row-title {
+  .sprint-item-column .ticket-row-title {
     display: -webkit-box;
     overflow: hidden;
     line-height: 1.35;

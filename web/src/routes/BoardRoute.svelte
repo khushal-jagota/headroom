@@ -6,18 +6,14 @@
   import { onReplyWatermarkMoved, readReplyWatermark } from "../lib/replyWatermark";
   import {
     buildWorkspaceRail,
-    hiddenWorkspaceCardCount,
-    workspaceGroupsHaveShownCards,
-    workspaceItemGroups,
     type WorkspaceRailItem,
     type WorkspaceTicketGroup
   } from "../lib/workspaceRail";
   import { workspaceAddress } from "../lib/workspaceAddress";
   import type { BoardCard } from "../lib/types";
   import ChiefConversation from "../components/ChiefConversation.svelte";
-  import PriorityTile from "../components/PriorityTile.svelte";
+  import Disclosure from "../components/Disclosure.svelte";
   import ResourceState from "../components/ResourceState.svelte";
-  import SectionHeading from "../components/SectionHeading.svelte";
   import SprintItemWorkspace from "../components/SprintItemWorkspace.svelte";
   import SprintTicketRow from "../components/SprintTicketRow.svelte";
   import StageMark from "../components/StageMark.svelte";
@@ -26,13 +22,22 @@
 
   let { ticketId, itemId }: { ticketId?: string; itemId?: string } = $props();
 
-  // The No Item tail reveals its own quiet groups, so it needs a reveal key of its own.
-  const NO_ITEM_KEY = "no-item";
+  const VIEWS = [
+    { key: "tickets", label: "Tickets" },
+    { key: "items", label: "Sprint Items" }
+  ] as const;
 
   const board = createQuery(() => queries.board());
   const workers = createQuery(() => queries.workers());
-  let revealedItemIds = $state<Set<string>>(new Set());
-  let foldedItemIds = $state<Set<string>>(new Set());
+  // Two views over one board. Until the reader picks one, an Item in the address
+  // decides, so a reloaded Item selection is visible in the rail it belongs to.
+  // Otherwise Tickets leads: it shows every Ticket without a selection.
+  let chosenView = $state<"tickets" | "items" | null>(null);
+  let view = $derived(chosenView ?? (itemId ? "items" : "tickets"));
+  // Which Item the rail holds open. It follows the address, until a Ticket opened from
+  // inside an Item takes the pane: the Item the reader is working in stays open.
+  let openedItemId = $state<string | null>(null);
+  let railItemId = $derived(openedItemId ?? itemId ?? null);
   let allCards = $derived((board.data?.columns ?? []).flatMap((column) => column.cards));
   let rail = $derived(buildWorkspaceRail(allCards, board.data?.sprint_items ?? []));
   let selectedCard = $derived(allCards.find((card) => card.id === ticketId) ?? null);
@@ -44,8 +49,7 @@
   // itself, including one that does not exist.
   let ticketSelected = $derived(Boolean(ticketId) && !chiefSelected);
   let nothingWaits = $derived(
-    rail.items.every((item) => !workspaceGroupsHaveShownCards(item.groups)) &&
-      !workspaceGroupsHaveShownCards(rail.noItemGroups)
+    view === "tickets" ? rail.groups.length === 0 : rail.items.length === 0
   );
 
   $effect(() => {
@@ -59,30 +63,15 @@
     window.location.hash = workspaceAddress({ kind: "ticket", id });
   }
 
+  // The whole box is the target: a click selects the Item, a second click shuts it.
+  // Reaching for an Item is choosing this view, so shutting it stays here.
   function selectItem(id: string): void {
-    window.location.hash = workspaceAddress({ kind: "item", id });
-  }
-
-  function itemOpen(item: WorkspaceRailItem): boolean {
-    return !foldedItemIds.has(item.id);
-  }
-
-  function toggleItemFold(item: WorkspaceRailItem): void {
-    const next = new Set(foldedItemIds);
-    if (next.has(item.id)) next.delete(item.id);
-    else next.add(item.id);
-    foldedItemIds = next;
-  }
-
-  function itemRevealed(item: WorkspaceRailItem): boolean {
-    return revealedItemIds.has(item.id);
-  }
-
-  function toggleReveal(key: string): void {
-    const next = new Set(revealedItemIds);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    revealedItemIds = next;
+    chosenView = "items";
+    const shutting = railItemId === id;
+    openedItemId = shutting ? null : id;
+    window.location.hash = workspaceAddress(
+      shutting ? { kind: "none" } : { kind: "item", id }
+    );
   }
 
   let howFarThisBrowserHasRead = $state<Record<string, number>>({});
@@ -92,6 +81,12 @@
     for (const card of allCards) {
       if (card.conversation_id) {
         positions[card.conversation_id] = readReplyWatermark(card.conversation_id);
+      }
+    }
+    for (const item of rail.items) {
+      const conversationId = item.signals.conversation_id;
+      if (conversationId) {
+        positions[conversationId] = readReplyWatermark(conversationId);
       }
     }
     const chiefConversationId = workers.data?.chief_of_staff.conversation_id;
@@ -130,10 +125,10 @@
   }
 </script>
 
-{#snippet ticketRow(card: BoardCard)}
+{#snippet ticketRow(card: BoardCard, withPriority: boolean)}
   {@const presentation = cardPresentation(card)}
   <SprintTicketRow
-    priority={card.priority}
+    priority={withPriority ? card.priority : null}
     title={card.title}
     state={presentation.state}
     ariaLabel={presentation.ariaLabel}
@@ -153,17 +148,90 @@
   />
 {/snippet}
 
-{#snippet ticketGroups(groups: WorkspaceTicketGroup[])}
+{#snippet ticketGroups(
+  groups: WorkspaceTicketGroup[],
+  withPriority: boolean,
+  nested: boolean
+)}
   {#each groups as group (group.key)}
-    <SectionHeading
-      label={group.label}
-      class="board-workspace-group-heading"
-      data-workspace-group={group.key}
-    />
-    {#each group.cards as card (card.id)}
-      {@render ticketRow(card)}
-    {/each}
+    <Disclosure
+      variant="workspace-bucket"
+      chevron="trailing"
+      defaultOpen={!group.defaultCollapsed}
+      class={nested ? "disclosure--workspace-bucket--nested" : ""}
+      data-bucket-section=""
+      data-bucket-key={group.key}
+    >
+      {#snippet summary()}
+        <span class="board-workspace-bucket-label">{group.label}</span>
+        <span
+          class="board-workspace-bucket-count"
+          role="img"
+          aria-label={`${group.cards.length} ${group.cards.length === 1 ? "Ticket" : "Tickets"}`}
+        >{group.cards.length}</span>
+      {/snippet}
+
+      <div class="board-workspace-bucket-tickets">
+        {#each group.cards as card (card.id)}
+          {@render ticketRow(card, withPriority)}
+        {/each}
+      </div>
+    </Disclosure>
   {/each}
+{/snippet}
+
+{#snippet sprintItem(item: WorkspaceRailItem)}
+  {@const open = railItemId === item.id}
+  {@const presentation = conversationSignalPresentation(
+    item.signals,
+    howFarThisBrowserHasRead
+  )}
+  <section
+    class="board-workspace-item"
+    class:board-workspace-item--selected={open}
+    data-sprint-item={item.id}
+    onclick={() => selectItem(item.id)}
+    role="presentation"
+  >
+    <button
+      type="button"
+      class="board-workspace-item-head"
+      onclick={(event) => {
+        event.stopPropagation();
+        selectItem(item.id);
+      }}
+      aria-expanded={open}
+      aria-current={selectedItem?.id === item.id ? "page" : undefined}
+    >
+      <span class="board-workspace-item-title">{item.title}</span>
+      <StageMark
+        state={presentation.state}
+        class="board-workspace-stage-mark"
+        data-stage-state={presentation.state}
+        data-needs-me={item.signals.needs_me ? "true" : "false"}
+        data-agent-working={item.signals.agent_working ? "true" : "false"}
+        data-latest-turn-ended={item.signals.latest_turn_ended_sequence}
+        aria-label={presentation.ariaLabel}
+      />
+    </button>
+    {#if open}
+      <!-- A fold or a Ticket inside the Item is not a click on the Item. -->
+      <div
+        class="board-workspace-item-groups"
+        onclick={(event) => event.stopPropagation()}
+        role="presentation"
+      >
+        {@render ticketGroups(item.groups, false, true)}
+      </div>
+    {:else}
+      <div class="board-workspace-item-line">
+        {#each item.groups as group, index (group.key)}
+          {#if index > 0}<span>·</span>{/if}
+          <span><b>{group.cards.length}</b> {group.label}</span>
+        {/each}
+      </div>
+    {/if}
+  </section>
 {/snippet}
 
 <section class="board-screen" data-screen="workspace">
@@ -180,7 +248,7 @@
         class:board-workspace-shell--item={Boolean(selectedItem)}
         class:board-workspace-shell--ticket={ticketSelected}
       >
-        <section class="board-workspace-left" aria-label="Workspace tickets by Sprint Item">
+        <section class="board-workspace-left" aria-label="Workspace">
           {#if workers.data}
             <a
               class="board-workspace-chief-row"
@@ -211,90 +279,25 @@
             </a>
           {/if}
 
-          {#each rail.items as item (item.id)}
-            {@const revealed = itemRevealed(item)}
-            {@const shownGroups = workspaceItemGroups(item.groups, revealed)}
-            {@const hiddenCount = hiddenWorkspaceCardCount(item.groups)}
-            {@const shownCount = shownGroups.reduce((total, group) => total + group.cards.length, 0)}
-            {@const open = itemOpen(item)}
-            <section
-              class="board-workspace-item"
-              class:board-workspace-item--open={open}
-              class:board-workspace-item--quiet={!item.needsUser}
-              class:active={selectedItem?.id === item.id}
-              data-sprint-item={item.id}
-              data-sprint-item-priority={item.priority}
-            >
-              <div class="board-workspace-item-head">
-                <div class="board-workspace-item-eyebrow" data-sprint-item-eyebrow>
-                  <PriorityTile priority={item.priority} />
-                  {#if item.project}<span>·</span><span>{item.project}</span>{/if}
-                  {#if item.progress}
-                    <span>·</span>
-                    <span data-sprint-item-progress>
-                      {item.progress.done} of {item.progress.total} done
-                    </span>
-                  {/if}
-                </div>
-                <div class="board-workspace-item-line">
-                  <button
-                    type="button"
-                    class="board-workspace-item-open"
-                    onclick={() => selectItem(item.id)}
-                    aria-current={selectedItem?.id === item.id ? "page" : undefined}
-                  >
-                    <span class="board-workspace-item-title">{item.title}</span>
-                  </button>
-                  <button
-                    type="button"
-                    class="board-workspace-item-fold"
-                    onclick={() => toggleItemFold(item)}
-                    aria-label={`${open ? "Fold" : "Open"} ${item.title}`}
-                    aria-expanded={open}
-                  >
-                    {#if !open && shownCount}
-                      <span class="board-workspace-item-count">{shownCount}</span>
-                    {/if}
-                    <span class="board-workspace-item-chevron" aria-hidden="true"></span>
-                  </button>
-                </div>
-              </div>
+          <div class="board-workspace-views" role="tablist" aria-label="Workspace view">
+            {#each VIEWS as option (option.key)}
+              <button
+                type="button"
+                class="board-workspace-view"
+                role="tab"
+                aria-selected={view === option.key}
+                data-workspace-view={option.key}
+                onclick={() => (chosenView = option.key)}
+              >{option.label}</button>
+            {/each}
+          </div>
 
-              {#if open}
-                <div class="board-workspace-item-tickets">
-                  {@render ticketGroups(shownGroups)}
-                  {#if hiddenCount > 0}
-                    <button
-                      type="button"
-                      class="board-workspace-item-more"
-                      onclick={() => toggleReveal(item.id)}
-                      aria-expanded={revealed}
-                      data-workspace-reveal={item.id}
-                    >{revealed ? "less" : `+${hiddenCount} more`}</button>
-                  {/if}
-                </div>
-              {/if}
-            </section>
-          {/each}
-
-          {#if rail.noItemGroups.length}
-            {@const revealed = revealedItemIds.has(NO_ITEM_KEY)}
-            {@const hiddenCount = hiddenWorkspaceCardCount(rail.noItemGroups)}
-            <section class="board-workspace-no-item" data-no-item>
-              <h2>No Item</h2>
-              <div class="board-workspace-no-item-tickets">
-                {@render ticketGroups(workspaceItemGroups(rail.noItemGroups, revealed))}
-                {#if hiddenCount > 0}
-                  <button
-                    type="button"
-                    class="board-workspace-item-more"
-                    onclick={() => toggleReveal(NO_ITEM_KEY)}
-                    aria-expanded={revealed}
-                    data-workspace-reveal={NO_ITEM_KEY}
-                  >{revealed ? "less" : `+${hiddenCount} more`}</button>
-                {/if}
-              </div>
-            </section>
+          {#if view === "tickets"}
+            {@render ticketGroups(rail.groups, true, false)}
+          {:else}
+            {#each rail.items as item (item.id)}
+              {@render sprintItem(item)}
+            {/each}
           {/if}
 
           {#if nothingWaits}

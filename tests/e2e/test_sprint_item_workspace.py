@@ -166,10 +166,14 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     # the condition is the stage mark's label, not a separate word.
     remaining = page.locator('[data-workspace-section="remaining"]')
     assert remaining.get_attribute("open") is None
-    remaining.locator("summary").click()
+    remaining.locator("> summary").click()
     off_today = page.locator(f'[data-sprint-ticket-id="{review_ticket["id"]}"]')
     assert off_today.get_attribute("data-ticket-state") == "current-awaiting-approval"
     off_today.get_by_label("to review").wait_for(timeout=WAIT_MS)
+    # Artifacts arrives shut too, so the index is opened the same way.
+    artifacts = page.locator('[data-workspace-section="artifacts"]')
+    assert artifacts.get_attribute("open") is None
+    artifacts.locator("> summary").click()
     page.get_by_text("proof.md", exact=True).wait_for(timeout=WAIT_MS)
 
     history = page.get_by_label("Sprint Item conversation")

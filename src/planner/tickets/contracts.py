@@ -95,18 +95,20 @@ class BoardCard(TypedDict):
 
 
 class BoardSprintItem(TypedDict):
-    """A Sprint Item's own identity and progress, for the Workspace rail eyebrow.
+    """A Sprint Item's own identity and its supervisor's conversation, for the rail.
 
-    The board's cards are today's Tickets, so they cannot say how far the whole Item
-    has got. These counts run over the Item's entire non-dropped Ticket set, which is
-    the rule the Sprint Item page already shows.
+    The rail marks an Item's title from its own supervisor's conversation, in the same
+    shape a card carries, so ``created_at`` and the conversation signals are all the
+    Item view needs. The three signals arrive later than this read, exactly as a card's
+    do, so they are not required here.
     """
 
     id: str
-    project: str
     created_at: int
-    done_ticket_count: int
-    total_ticket_count: int
+    conversation_id: str | None
+    agent_working: NotRequired[bool]
+    needs_me: NotRequired[bool]
+    latest_turn_ended_sequence: NotRequired[int]
 
 
 @dataclass(frozen=True, slots=True)

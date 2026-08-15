@@ -1,23 +1,14 @@
 import { previewHashHref, sprintItemFileTarget } from "./filePreview";
-import { sprintTicketCondition } from "./sprintPresentation";
+import {
+  TICKET_STATUS_GROUPS,
+  ticketStatusGroupKey,
+  type TicketStatusGroupDefinition
+} from "./ticketStatusGroups";
 import type { SprintItemWorkspace, SprintItemWorkspaceTicket } from "./types";
 
-export type WorkspaceTicketGroup = {
-  key: string;
-  label: string;
+export type WorkspaceTicketGroup = TicketStatusGroupDefinition & {
   tickets: SprintItemWorkspaceTicket[];
 };
-
-const groupOrder = [
-  ["needs-me", "Needs user"],
-  ["current-awaiting-approval", "Awaiting approval"],
-  ["current-paired", "Paired"],
-  ["current-running", "Agent"],
-  ["errored", "Blocked"],
-  ["current-waiting", "Waiting for closeout"],
-  ["upcoming", "To do"],
-  ["completed", "Done"]
-] as const;
 
 function ticketOrder(left: SprintItemWorkspaceTicket, right: SprintItemWorkspaceTicket): number {
   return (
@@ -28,14 +19,14 @@ function ticketOrder(left: SprintItemWorkspaceTicket, right: SprintItemWorkspace
 }
 
 // Today and Remaining are the same structure. The only thing the split says is whether
-// the Ticket is on the Day, so both sections group their own Tickets the same way and
+// the Ticket is on the Day, so both blocks group their own Tickets the same way and
 // both carry a Done group.
 function groupTickets(tickets: SprintItemWorkspaceTicket[]): WorkspaceTicketGroup[] {
-  return groupOrder.flatMap(([key, label]) => {
+  return TICKET_STATUS_GROUPS.flatMap((group) => {
     const grouped = tickets
-      .filter((ticket) => sprintTicketCondition(ticket).mark === key)
+      .filter((ticket) => ticketStatusGroupKey(ticket) === group.key)
       .sort(ticketOrder);
-    return grouped.length ? [{ key, label, tickets: grouped }] : [];
+    return grouped.length ? [{ ...group, tickets: grouped }] : [];
   });
 }
 

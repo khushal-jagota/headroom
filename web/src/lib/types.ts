@@ -295,6 +295,8 @@ export type SprintItemWorkspaceTicket = {
   ticket_status: string;
   waiting_to_closeout: boolean;
   has_pending_proposal: boolean;
+  gating_field: string | null;
+  blocked: boolean;
   review_route: AtCap;
   worker_type: string;
   day_ids: string[];
@@ -348,14 +350,15 @@ export type BoardResponse = {
   sprint_items: BoardSprintItem[];
 };
 
-// A Sprint Item's own identity and progress. The cards are today's Tickets, so the
-// Item's done-of-total comes from the server, not from them.
+// A Sprint Item's own identity and its supervisor's conversation. No card answers for
+// the Item's own worker, so the mark on an Item title comes from here.
 export type BoardSprintItem = {
   id: string;
-  project: string;
   created_at: number;
-  done_ticket_count: number;
-  total_ticket_count: number;
+  conversation_id: string | null;
+  agent_working: boolean;
+  needs_me: boolean;
+  latest_turn_ended_sequence: number;
 };
 
 export type BoardCard = {
