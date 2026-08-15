@@ -61,14 +61,6 @@ def _wait_present(page: Page, selector: str) -> None:
     )
 
 
-def _reveal_quiet_rail_groups(page: Page) -> None:
-    """Draw the rail's quiet groups. A Ticket nobody has started yet is quiet, so its
-    card is not drawn until the reader asks for it."""
-    reveal = page.locator("[data-workspace-reveal]").first
-    reveal.wait_for(timeout=WAIT_MS)
-    reveal.click()
-
-
 def _add_to_today(api: ApiHelper, server: ServerHandle, *ticket_ids: str) -> None:
     for ticket_id in ticket_ids:
         api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
@@ -118,14 +110,11 @@ def test_e22_cli_create_live_board(
 
     card = f'[data-card][data-ticket-stage="needs_success"][data-ticket-id="{tid}"]'
     # No reload, no goto: the today's-roster card arrives via a change-stream
-    # refetch of the open pages. It arrives Not started, which is quiet, so the
-    # reveal appearing is itself the live delivery.
-    _reveal_quiet_rail_groups(page_b)
+    # refetch of the open pages.
     _wait_present(page_b, card)
     assert "T18 board ticket" in page_b.inner_text(card)
     assert page_b.evaluate("window.__plannerDebug.flushes") > flushes_b
 
-    _reveal_quiet_rail_groups(page_a)
     _wait_present(page_a, card)
     assert "T18 board ticket" in page_a.inner_text(card)
 

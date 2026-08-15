@@ -101,10 +101,6 @@ def test_a_change_reaches_the_open_board_without_a_reload(
 
     page = open_page(context_factory(), server, "#/workspace", 'section[data-screen="workspace"]')
     card = f'[data-card][data-ticket-id="{ticket_id}"]'
-    # The Ticket has not started, and the rail keeps that group quiet until asked.
-    reveal = page.locator("[data-workspace-reveal]").first
-    reveal.wait_for(timeout=WAIT_MS)
-    reveal.click()
     page.wait_for_selector(card, timeout=WAIT_MS)
     assert "Board card before the change" in page.inner_text(card)
 
