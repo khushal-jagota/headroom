@@ -657,6 +657,12 @@ def test_employee_configuration_noop_after_freeze_emits_nothing(
 ) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _create_ticket(db_path, worker_type="probe")
+    conn = connect(str(db_path))
+    conn.execute(
+        "UPDATE tickets SET conversation_id = 'session-existing' WHERE id = ?",
+        (ticket_id,),
+    )
+    conn.close()
     before = _snapshot(db_path, ticket_id)
 
     with TestClient(app) as client:
@@ -675,19 +681,21 @@ def test_employee_configuration_noop_after_freeze_emits_nothing(
 @pytest.mark.parametrize(
     ("mutation_sql", "mutation_parameters"),
     (
-        ("UPDATE tickets SET stage = 'needs_alpha' WHERE id = ?", ()),
         ("UPDATE tickets SET ticket_status = 'agent' WHERE id = ?", ()),
-        ("UPDATE tickets SET ticket_status = 'user' WHERE id = ?", ()),
-        ("UPDATE tickets SET ticket_status = 'errored' WHERE id = ?", ()),
         ("UPDATE tickets SET conversation_id = 'session-existing' WHERE id = ?", ()),
     ),
 )
-def test_employee_configuration_change_rejects_every_pristine_freeze_boundary(
+def test_employee_configuration_change_rejects_every_freeze_boundary(
     tmp_path: Path,
     probe_runtime: None,
     mutation_sql: str,
     mutation_parameters: tuple[object, ...],
 ) -> None:
+    """Two things freeze the launch values, and these are both of them.
+
+    A Ticket that names a conversation was started on those values. A Ticket at `agent`
+    is about to be: its worker step is out, and the claim is the status.
+    """
     app, db_path = _make_app(tmp_path)
     ticket_id = _create_pristine_ticket(db_path)
     conn = connect(str(db_path))
@@ -703,6 +711,45 @@ def test_employee_configuration_change_rejects_every_pristine_freeze_boundary(
 
     assert response.status_code == 409
     assert _snapshot(db_path, ticket_id) == before
+
+
+@pytest.mark.parametrize(
+    "mutation_sql",
+    (
+        "UPDATE tickets SET stage = 'needs_alpha' WHERE id = ?",
+        "UPDATE tickets SET ticket_status = 'user' WHERE id = ?",
+        "UPDATE tickets SET ticket_status = 'errored' WHERE id = ?",
+    ),
+)
+def test_employee_configuration_is_editable_past_kickoff_while_no_conversation_is_named(
+    tmp_path: Path,
+    probe_runtime: None,
+    mutation_sql: str,
+) -> None:
+    """The Stage stopped mattering, because the conversation was always the real reason.
+
+    This is what a Ticket looks like after its conversation is reset: past Kickoff,
+    naming nothing, waiting to be started again. Choosing what it starts on next is the
+    whole point of restarting it.
+    """
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _create_pristine_ticket(db_path)
+    conn = connect(str(db_path))
+    conn.execute(mutation_sql, (ticket_id,))
+    conn.close()
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("claude", "claude-model"),
+        )
+
+    assert response.status_code == 200, response.text
+    assert _snapshot(db_path, ticket_id)["values"][5:8] == (
+        "claude",
+        "claude-model",
+        None,
+    )
 
 
 def test_employee_configuration_endpoint_requires_the_exact_complete_body(

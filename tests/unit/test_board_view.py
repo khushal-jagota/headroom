@@ -635,11 +635,13 @@ def test_board_sprint_items_carry_the_supervisors_own_conversation(
             "id": spoken_to.id,
             "created_at": spoken_to.created_at,
             "conversation_id": "conv-supervisor",
+            "latest_ping_sequence": 0,
         },
         {
             "id": silent.id,
             "created_at": silent.created_at,
             "conversation_id": None,
+            "latest_ping_sequence": 0,
         },
     ]
     assert board["sprint_items"] == sorted(expected, key=lambda entry: str(entry["id"]))
@@ -673,15 +675,17 @@ def test_board_route_marks_a_sprint_item_from_its_supervisor_conversation(
 
     board = _enriched_board(tmp_db, conversations)
 
-    # An Item is a row like a card: the same three signals, read the same way.
+    # An Item is a row like a card, but its mark is not a card's. It carries the two
+    # live signals and its last ping, and no turn end: a supervisor ends hundreds of
+    # turns a day and almost none of them want anybody.
     assert board["sprint_items"] == [
         {
             "id": item.id,
             "created_at": item.created_at,
             "conversation_id": "conv-supervisor",
+            "latest_ping_sequence": 0,
             "agent_working": True,
             "needs_me": False,
-            "latest_turn_ended_sequence": 0,
         }
     ]
 

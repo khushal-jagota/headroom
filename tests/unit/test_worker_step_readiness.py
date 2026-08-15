@@ -17,6 +17,7 @@ from planner.projects import data as projects_data
 from planner.runtime.worker_step_readiness import (
     closeout_lane_identity,
     is_ready_for_worker_step,
+    worker_step_blocker,
 )
 from planner.sprints import data as sprints_data
 from planner.tickets import actions as tickets_actions
@@ -81,6 +82,23 @@ def _ready(
     definition: WorkerTypeDefinition | None = None,
 ) -> bool:
     return is_ready_for_worker_step(
+        conn,
+        tickets_data.read_ticket(conn, ticket.id),
+        planning_day_id=planning_day_id,
+        worker_type_definition=(
+            definition or configured_worker_type_registry().require(ticket.worker_type)
+        ),
+    )
+
+
+def _blocker(
+    conn: sqlite3.Connection,
+    ticket: Ticket,
+    *,
+    planning_day_id: str = PLANNING_DAY_ID,
+    definition: WorkerTypeDefinition | None = None,
+) -> str | None:
+    return worker_step_blocker(
         conn,
         tickets_data.read_ticket(conn, ticket.id),
         planning_day_id=planning_day_id,
@@ -480,6 +498,36 @@ def test_all_conditions_true_then_one_at_a_time_false(
             _block(conn, blocker_id=blocker.id, target_id=ticket.id, now=5)
 
         assert not _ready(conn, ticket, definition=definition)
+        # The blocker is the decision itself, and readiness is that answer read as a yes
+        # or a no. Every refusal has to name itself, or a caller that asked for a start
+        # and got none is told nothing.
+        assert (
+            _blocker(conn, ticket, definition=definition)
+            == _EXPECTED_BLOCKERS[break_one_condition]
+        )
+    finally:
+        conn.close()
+
+
+_EXPECTED_BLOCKERS = {
+    "membership": "the Ticket is not on today's Day",
+    "status": "the Ticket is at user, so no worker step is due",
+    "terminal": "the Stage done is terminal",
+    "next_gate": "the Stage needs_success has no field for a worker to fill",
+    # Filing a proposal parks it and writes `awaiting_approval` in the same breath, and
+    # the status is asked about first. The Ticket is refused either way.
+    "proposal": "the Ticket is at awaiting_approval, so no worker step is due",
+    "scope": "the Ticket is at its ceiling and the cap is stop",
+    "blocker": "the Ticket is at blocked, so no worker step is due",
+}
+
+
+def test_a_ready_ticket_names_no_blocker(tmp_path: Path) -> None:
+    conn = _db(tmp_path)
+    try:
+        ticket = _ticket(conn, ceiling="needs_success", at_cap=AtCap.propose)
+        assert _blocker(conn, ticket) is None
+        assert _ready(conn, ticket)
     finally:
         conn.close()
 

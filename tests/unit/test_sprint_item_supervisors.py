@@ -6,6 +6,7 @@ import asyncio
 import json
 import threading
 from pathlib import Path
+from time import time
 from typing import Any, cast
 
 import pytest
@@ -1228,3 +1229,306 @@ def test_stated_scope_needs_no_sprint_item(tmp_path: Path) -> None:
     assert created.status_code == 200, created.text
     assert created.json()["sprint_item_id"] is None
     assert created.json()["at_cap"] == "propose"
+
+
+# --- restarting a dead Worker -------------------------------------------------
+
+
+def _stranded_child(
+    client: TestClient,
+    db_path: Path,
+    item_id: str,
+    *,
+    conversation_id: str = "conv-dead-worker",
+    ticket_status_changed_at: int = 1,
+) -> str:
+    """A child Ticket exactly as a dead Worker leaves one: at `agent`, holding nothing.
+
+    The claim is the status, so this is what the incident looked like — a Ticket that
+    reads as claimed, pointing at a conversation nobody is coming back to.
+    """
+    ticket = client.post(
+        "/api/tickets",
+        json={
+            "worker_type": "coding",
+            "title": "Stranded child",
+            "kickoff_note": "Start here.",
+            "sprint_item_id": item_id,
+        },
+    ).json()
+    accepted = client.post(
+        f"/api/tickets/{ticket['id']}/accept/kickoff",
+        json={"next_ceiling": "needs_success", "at_cap": "propose"},
+    )
+    assert accepted.status_code == 200, accepted.text
+    with connect(str(db_path)) as conn:
+        conn.execute(
+            "INSERT INTO conversations(conversation_id,backend_key,model,"
+            "workspace_folder,access,latest_sequence,created_at) "
+            "VALUES (?, 'codex', 'test', '/tmp', 'full', 1, 1)",
+            (conversation_id,),
+        )
+        conn.execute(
+            "UPDATE tickets SET conversation_id = ?, ticket_status = 'agent', "
+            "ticket_status_changed_at = ? WHERE id = ?",
+            (conversation_id, ticket_status_changed_at, ticket["id"]),
+        )
+        conn.commit()
+    return str(ticket["id"])
+
+
+def test_restart_gives_the_claim_back_and_starts_a_new_conversation(
+    tmp_path: Path,
+) -> None:
+    """The whole point: a reset alone would leave this Ticket claimed and unreachable."""
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket_id = _stranded_child(client, db_path, str(item["id"]))
+        response = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            json={},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["started"] is True
+    assert body["not_started_because"] is None
+    assert body["killed_conversation_id"] == "conv-dead-worker"
+    assert body["ticket_status"] == "agent"
+    assert body["conversation_id"] is not None
+    assert body["conversation_id"] != "conv-dead-worker"
+    assert body["employee_configuration"]["employee_backend"] == "codex"
+
+
+def test_restart_refuses_a_cross_item_actor_and_a_ticket_that_is_not_a_child(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        other = _create_item(client, "Other item")
+        ticket_id = _stranded_child(client, db_path, str(item["id"]))
+        cross_item = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            json={},
+            headers=_supervisor_headers(str(other["id"])),
+        )
+        not_a_child = client.post(
+            f"/api/items/{other['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            json={},
+            headers=_supervisor_headers(str(other["id"])),
+        )
+        # Scope is proved before the body is read, so a foreign supervisor cannot reach
+        # the backend catalog by naming a configuration on somebody else's Ticket.
+        carrying_a_configuration = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            json={
+                "employee_backend": "hermes",
+                "employee_launch_model": "hermes-model",
+                "employee_launch_reasoning_effort": None,
+            },
+            headers=_supervisor_headers(str(other["id"])),
+        )
+        after = client.get(f"/api/tickets/{ticket_id}")
+
+    assert cross_item.status_code == 400, cross_item.text
+    assert cross_item.json()["error"]["code"] == "agent_forbidden"
+    assert not_a_child.status_code == 400, not_a_child.text
+    assert carrying_a_configuration.json()["error"]["code"] == "agent_forbidden"
+    assert after.json()["conversation_id"] == "conv-dead-worker"
+    assert after.json()["ticket_status"] == "agent"
+
+
+def test_restart_refuses_a_worker_step_that_is_still_inside_its_first_minutes(
+    tmp_path: Path,
+) -> None:
+    """The one bound on a restart loop, and it kills nothing on the way out."""
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket_id = _stranded_child(
+            client,
+            db_path,
+            str(item["id"]),
+            ticket_status_changed_at=int(time()) - 10,
+        )
+        response = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            json={},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        after = client.get(f"/api/tickets/{ticket_id}")
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["message"] == (
+        "this worker step is too young to restart"
+    )
+    assert response.json()["error"]["detail"]["floor_seconds"] == 300
+    assert after.json()["conversation_id"] == "conv-dead-worker"
+    assert after.json()["ticket_status"] == "agent"
+
+
+def test_restart_refuses_a_stage_the_worker_does_not_own(tmp_path: Path) -> None:
+    """A Paired Stage rests where it departs, so a restart there kills a live discussion."""
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket_id = _stranded_child(client, db_path, str(item["id"]))
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET stage_ownership_overrides = ? WHERE id = ?",
+                (json.dumps({"needs_success": "paired"}), ticket_id),
+            )
+            conn.commit()
+        response = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            json={},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        after = client.get(f"/api/tickets/{ticket_id}")
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["message"] == (
+        "only a Worker-owned Stage has a worker step to restart"
+    )
+    assert after.json()["conversation_id"] == "conv-dead-worker"
+
+
+def test_restart_refuses_a_ticket_with_no_worker_step_out(tmp_path: Path) -> None:
+    """`errored` is one of these: nothing writes it today, and it is not a claim."""
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket_id = _stranded_child(client, db_path, str(item["id"]))
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET ticket_status = 'errored' WHERE id = ?",
+                (ticket_id,),
+            )
+            conn.commit()
+        response = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            json={},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["message"] == (
+        "the Ticket has no worker step out to restart"
+    )
+    assert response.json()["error"]["detail"]["ticket_status"] == "errored"
+
+
+def test_restart_on_a_named_configuration_keeps_it_for_the_ticket(tmp_path: Path) -> None:
+    """A Worker that died on its backend must not come back on the same one."""
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket_id = _stranded_child(client, db_path, str(item["id"]))
+        response = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            json={
+                "employee_backend": "hermes",
+                "employee_launch_model": "hermes-model",
+                "employee_launch_reasoning_effort": None,
+            },
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        after = client.get(f"/api/tickets/{ticket_id}")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["started"] is True
+    assert response.json()["employee_configuration"] == {
+        "employee_backend": "hermes",
+        "employee_launch_model": "hermes-model",
+        "employee_launch_reasoning_effort": None,
+    }
+    # Kept for the Ticket, not spent on one turn: the columns are what every later step
+    # launches on.
+    assert after.json()["employee_backend"] == "hermes"
+    assert after.json()["employee_launch_model"] == "hermes-model"
+
+
+def test_restart_refuses_a_bad_configuration_before_it_kills_anything(
+    tmp_path: Path,
+) -> None:
+    """A bad argument must cost the Ticket nothing. It still has its Worker's remains."""
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket_id = _stranded_child(client, db_path, str(item["id"]))
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "INSERT INTO backend_model_enablement(backend_key, model_id, enabled) "
+                "VALUES ('hermes', 'retired-model', 0)"
+            )
+            conn.commit()
+        disabled_model = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            json={
+                "employee_backend": "hermes",
+                "employee_launch_model": "retired-model",
+                "employee_launch_reasoning_effort": None,
+            },
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        unregistered_backend = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            json={
+                "employee_backend": "invented",
+                "employee_launch_model": "whatever",
+                "employee_launch_reasoning_effort": None,
+            },
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        half_a_configuration = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            json={"employee_backend": "hermes"},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        after = client.get(f"/api/tickets/{ticket_id}")
+
+    assert disabled_model.status_code == 400, disabled_model.text
+    assert disabled_model.json()["error"]["message"] == "Employee model is disabled"
+    assert unregistered_backend.status_code == 400, unregistered_backend.text
+    assert half_a_configuration.status_code == 400, half_a_configuration.text
+    assert half_a_configuration.json()["error"]["message"] == (
+        "a launch configuration needs both a backend and a model"
+    )
+    assert after.json()["conversation_id"] == "conv-dead-worker"
+    assert after.json()["ticket_status"] == "agent"
+    assert after.json()["employee_backend"] == "codex"
+
+
+def test_restart_says_why_nothing_started_and_leaves_the_claim_given_back(
+    tmp_path: Path,
+) -> None:
+    """A restart that silently does nothing would be useless, so readiness says why."""
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket_id = _stranded_child(client, db_path, str(item["id"]))
+        with connect(str(db_path)) as conn:
+            conn.execute("DELETE FROM day_tickets WHERE ticket_id = ?", (ticket_id,))
+            conn.commit()
+        response = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            json={},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        again = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            json={},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["started"] is False
+    assert response.json()["not_started_because"] == "the Ticket is not on today's Day"
+    assert response.json()["ticket_status"] == "empty"
+    assert response.json()["conversation_id"] is None
+    # A Ticket left naming no conversation stays restartable, which is how a supervisor
+    # corrects the configuration it named the first time.
+    assert again.status_code == 200, again.text

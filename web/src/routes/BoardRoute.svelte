@@ -110,7 +110,12 @@
   let chiefPresentation = $derived(
     workers.data
       ? conversationSignalPresentation(
-          workers.data.chief_of_staff,
+          {
+            conversation_id: workers.data.chief_of_staff.conversation_id,
+            needs_me: workers.data.chief_of_staff.needs_me,
+            agent_working: workers.data.chief_of_staff.agent_working,
+            unread_position: workers.data.chief_of_staff.latest_turn_ended_sequence
+          },
           howFarThisBrowserHasRead
         )
       : null
@@ -129,7 +134,7 @@
         conversation_id: card.conversation_id,
         needs_me: card.needs_me,
         agent_working: card.agent_working,
-        latest_turn_ended_sequence: card.latest_turn_ended_sequence
+        unread_position: card.latest_turn_ended_sequence
       },
       howFarThisBrowserHasRead
     );
@@ -185,7 +190,7 @@
     <Disclosure
       variant="workspace-bucket"
       chevron="trailing"
-      defaultOpen
+      defaultOpen={!group.defaultCollapsed}
       class={insideItemId ? "disclosure--workspace-bucket--nested" : ""}
       data-bucket-section=""
       data-bucket-key={group.key}
@@ -242,7 +247,7 @@
         data-stage-state={presentation.state}
         data-needs-me={item.signals.needs_me ? "true" : "false"}
         data-agent-working={item.signals.agent_working ? "true" : "false"}
-        data-latest-turn-ended={item.signals.latest_turn_ended_sequence}
+        data-latest-ping={item.signals.unread_position}
         aria-label={presentation.ariaLabel}
       />
     </button>

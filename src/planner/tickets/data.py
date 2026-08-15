@@ -893,20 +893,19 @@ def employee_configuration_editable(ticket: Ticket) -> bool:
     """Whether this Ticket's launch values may still be changed.
 
     A Ticket that names a conversation is frozen: those values are what that conversation
-    was started on, and there is no changing them after the fact. Everything else is a
-    question about the Ticket in hand, so this asks the database nothing.
+    was started on, and there is no changing them after the fact. A Ticket with a worker
+    step out is frozen too, because the values are about to be what a conversation was
+    started on. Everything else is a question about the Ticket in hand, so this asks the
+    database nothing.
+
+    There is no test on the Stage. There used to be one, and it said `needs_kickoff`,
+    which read as "only a Ticket nobody has started yet". The conversation was always the
+    real reason, and a Ticket keeps one conversation across its worker steps, so naming
+    no conversation already means pristine — or reset, which is the case this widening is
+    for. A reset Ticket is exactly one whose next conversation has not been started, and
+    choosing what that one runs on is the point of restarting it.
     """
-    return (
-        ticket.stage == "needs_kickoff"
-        and ticket.ticket_status
-        in {
-            TicketStatus.awaiting_approval,
-            TicketStatus.paired,
-            TicketStatus.empty,
-            TicketStatus.blocked,
-        }
-        and ticket.conversation_id is None
-    )
+    return ticket.conversation_id is None and ticket.ticket_status is not TicketStatus.agent
 
 
 def write_employee_configuration(
@@ -958,7 +957,7 @@ def write_employee_configuration(
         if not employee_configuration_editable(ticket):
             raise PlannerError(
                 ErrorCode.already_running,
-                "Employee configuration is frozen after Kickoff or the first worker session",
+                "Employee configuration is frozen while a conversation or a worker step holds it",
                 {"ticket_id": ticket_id},
             )
         conn.execute(

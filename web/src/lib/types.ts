@@ -350,15 +350,16 @@ export type BoardResponse = {
   sprint_items: BoardSprintItem[];
 };
 
-// A Sprint Item's own identity and its supervisor's conversation. No card answers for
-// the Item's own worker, so the mark on an Item title comes from here.
+// A Sprint Item's own identity, its supervisor's conversation, and its last ping. No
+// card answers for the Item's own worker, so the mark on an Item title comes from here.
 export type BoardSprintItem = {
   id: string;
   created_at: number;
   conversation_id: string | null;
   agent_working: boolean;
   needs_me: boolean;
-  latest_turn_ended_sequence: number;
+  // Where the supervisor last pinged. A ping is what lights an Item row.
+  latest_ping_sequence: number;
 };
 
 export type BoardCard = {

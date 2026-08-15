@@ -25,7 +25,7 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 PREVIOUS_REVISION = "ticket_status_reshape"
 # The database is brought all the way up, so it comes to rest at the current head rather
 # than at the revision this module is about.
-HEAD_REVISION = "one_approval_gate"
+HEAD_REVISION = "sprint_item_supervisor_ping"
 
 _EMPTY_CODING_FIELDS = json.dumps(
     {

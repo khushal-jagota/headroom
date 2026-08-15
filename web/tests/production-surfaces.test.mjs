@@ -218,15 +218,16 @@ assert.match(
   conversationSignalPresentationSource,
   /state: "reply-seen", ariaLabel: "Agent reply seen"/,
 );
-// The mark is drawn from the record's last turn ending and this browser's own watermark.
-// Nothing on the card says whether a reply was seen, because seen is not a fact about the
-// Ticket.
+// The mark is drawn from a position the caller supplies and this browser's own
+// watermark. A card supplies its worker's last turn ending and an Item supplies its
+// supervisor's last ping. Nothing on the row says whether it was seen, because seen is
+// not a fact about the Ticket or the Item.
 assert.match(boardRouteSource, /conversationSignalPresentation/);
 assert.match(
   conversationSignalPresentationSource,
   /replyWatermarks\[signals\.conversation_id\]/,
 );
-assert.match(conversationSignalPresentationSource, /latest_turn_ended_sequence/);
+assert.match(conversationSignalPresentationSource, /unread_position/);
 assert.doesNotMatch(boardRouteSource, /agent_reply_state/);
 // How far this browser has read is held in state and the mark reads it from there.
 // Reading a conversation writes nothing a server can announce, so no refetch is coming
@@ -299,27 +300,31 @@ assert.deepEqual(groupOrder, [
   "done",
 ]);
 
-// The rail holds the groups that want the reader. The quiet states are not drawn shut
-// here — they are not in the rail at all, in either view, and the Sprint Item page is
-// where they are read. Everything the rail draws arrives open.
-const railGroupsMatch = workspaceRailSource.match(
-  /const RAIL_GROUPS: ReadonlySet<string> = new Set\(\[([\s\S]*?)\n\]\);/,
+// The rail holds every group a Ticket lands in. A quiet group is drawn shut, not left
+// out: no status is filtered out of the rail, in either view or in the count line under
+// a shut Sprint Item. Three groups arrive shut, and the reader opens them.
+const defaultCollapsedMatch = workspaceRailSource.match(
+  /const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set\(\[([\s\S]*?)\n\]\);/,
 );
-assert.ok(railGroupsMatch, "Workspace declares one canonical set of rail groups");
-const railGroups = [...railGroupsMatch[1].matchAll(/"([^"]+)"/g)].map(
-  (match) => match[1],
+assert.ok(
+  defaultCollapsedMatch,
+  "Workspace declares one canonical set of collapsed groups",
 );
-assert.deepEqual(railGroups, [
-  "errored",
-  "needs_user",
-  "user",
-  "paired",
-  "agent",
-  "awaiting_approval",
+const defaultCollapsedGroups = [
+  ...defaultCollapsedMatch[1].matchAll(/"([^"]+)"/g),
+].map((match) => match[1]);
+assert.deepEqual(defaultCollapsedGroups, [
   "waiting_for_kickoff",
+  "blocked",
+  "done",
 ]);
-assert.doesNotMatch(workspaceRailSource, /defaultCollapsed/);
-assert.match(boardRouteSource, /chevron="trailing"\n\s+defaultOpen\n/);
+// No whitelist decides what the rail carries. A group is drawn or shut, never dropped.
+assert.doesNotMatch(workspaceRailSource, /RAIL_GROUPS/);
+assert.match(workspaceRailSource, /defaultCollapsed: DEFAULT_COLLAPSED_GROUPS\.has\(key\)/);
+assert.match(
+  boardRouteSource,
+  /chevron="trailing"\n\s+defaultOpen=\{!group\.defaultCollapsed\}\n/,
+);
 
 // Nothing hides behind a count: every group is reachable as itself, in both views.
 assert.doesNotMatch(boardRouteSource, /more|toggleReveal|hiddenWorkspaceCardCount/);
