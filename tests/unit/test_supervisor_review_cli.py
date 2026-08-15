@@ -162,3 +162,92 @@ def test_supervisor_history_requests_one_bounded_page(
             },
         )
     ]
+
+
+def test_supervisor_restart_worker_sends_the_whole_launch_configuration_or_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_send(method: str, request_path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, request_path, kwargs))
+        return {
+            "started": True,
+            "not_started_because": None,
+            "employee_configuration": {
+                "employee_backend": "claude",
+                "employee_launch_model": "opus",
+                "employee_launch_reasoning_effort": None,
+            },
+        }
+
+    monkeypatch.setattr(http, "send", fake_send)
+    plain = CliRunner().invoke(
+        main,
+        ["sprint", "item", "supervisor", "restart-worker", "si_one", "t_one"],
+    )
+    configured = CliRunner().invoke(
+        main,
+        [
+            "sprint",
+            "item",
+            "supervisor",
+            "restart-worker",
+            "si_one",
+            "t_one",
+            "--backend",
+            "claude",
+            "--model",
+            "opus",
+        ],
+    )
+
+    assert plain.exit_code == 0, plain.output
+    assert configured.exit_code == 0, configured.output
+    assert "t_one restarted on claude opus" in configured.output
+    assert calls == [
+        (
+            "POST",
+            "/api/items/si_one/supervisor/tickets/t_one/restart-worker",
+            {"as_json": False, "json_body": {}},
+        ),
+        (
+            "POST",
+            "/api/items/si_one/supervisor/tickets/t_one/restart-worker",
+            {
+                "as_json": False,
+                "json_body": {
+                    "employee_backend": "claude",
+                    "employee_launch_model": "opus",
+                    "employee_launch_reasoning_effort": None,
+                },
+            },
+        ),
+    ]
+
+
+def test_supervisor_restart_worker_refuses_half_a_launch_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model id belongs to the backend that named it, so neither travels alone."""
+
+    def explode(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("no HTTP request expected")
+
+    monkeypatch.setattr(http, "send", explode)
+    result = CliRunner().invoke(
+        main,
+        [
+            "sprint",
+            "item",
+            "supervisor",
+            "restart-worker",
+            "si_one",
+            "t_one",
+            "--backend",
+            "claude",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "needs --backend and --model together" in result.output

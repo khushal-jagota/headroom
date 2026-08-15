@@ -27,28 +27,25 @@ One screen per part of the system:
   appear. The Chief of Staff row leads, and under it a selector chooses one of two views
   over the same tickets: **Tickets** or **Sprint Items**.
 
-  The rail holds the groups that want the reader, in one order: Errored, Needs you,
-  User, Paired, Agent, Awaiting approval, Waiting for Kickoff. Every parked proposal
-  sits under Awaiting approval, because there is one approval gate; a proposal still
-  gated on its kickoff splits out into its own group. The quiet states — Waiting to
-  Closeout, Empty, Done, and a ticket waiting on another ticket — are not in the rail at
-  all, in either view: they are read on the Sprint Item page, which still lists every
-  group. A ticket whose own run errored is not quiet and does reach the rail, as Errored;
-  the Sprint Item page files it under Blocked with the tickets that are waiting on
-  something. Every group the rail draws arrives open, and nothing hides behind a "+n
-  more". Rows inside a group are ordered by activity, newest first.
+  The rail holds every status group, in one order: Errored, Needs you, User, Paired,
+  Agent, Waiting to Closeout, Awaiting approval, Waiting for Kickoff, Empty, Blocked,
+  Done. Every parked proposal sits under Awaiting approval, because there is one
+  approval gate; a proposal still gated on its kickoff splits out into its own group. A
+  ticket whose own run errored reaches the rail as Errored; the Sprint Item page files
+  it under Blocked with the tickets that are waiting on something. A group with no
+  tickets is not drawn.
 
-  A consequence worth stating plainly: a ticket you have just made, and have not started,
-  is in none of those groups, so the Workspace does not show it. The Sprint Item page,
-  the sprint, and the ticket's own address all still do.
+  Three groups arrive shut: Waiting for Kickoff, Blocked and Done. Every other group
+  arrives open. A shut group is still its own group, with its own name and count, and
+  the reader opens it — nothing hides behind a "+n more", and no status is missing from
+  the rail. Rows inside a group are ordered by activity, newest first.
 
-  The Tickets view is every ticket on today that sits in one of those groups, in a box
-  per group.
+  The Tickets view is every ticket on today, in a box per group.
 
   The Sprint Items view is one box per Sprint Item with a ticket on today. A shut Item
-  shows a line of counts — how many tickets it has in each group; an Item with nothing
-  in those groups shows no line. Clicking anywhere in the box selects the Item and opens
-  its workspace beside the rail. That is all a click on an Item ever does: no click shuts
+  shows a line of counts — how many tickets it has in each group, quiet groups included;
+  an Item with no tickets on today shows no line. Clicking anywhere in the box selects
+  the Item and opens its workspace beside the rail. That is all a click on an Item ever does: no click shuts
   an Item, so a reader inside one of its tickets clicks the Item to come back to it. An
   open Item shows the same status groups nested inside it, without their own boxes.
   Folding one of those groups, or opening a ticket, leaves the Item open. Items are

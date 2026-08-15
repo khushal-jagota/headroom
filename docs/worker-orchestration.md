@@ -129,6 +129,20 @@ recovery sweep at startup, no stranded-run cleanup, no correctness table to reco
 The owner sees a Ticket that is not moving and picks it up. This is a deliberate choice
 in favour of one true answer over a second bookkeeping system that can itself be wrong.
 
+Picking it up is a real action rather than a repair. `sprint item supervisor
+restart-worker` clears the dead conversation, gives the claim back, and starts the step
+again, so a Sprint Item supervisor can recover its own child Ticket without the user.
+Both halves happen together because either one alone leaves the Ticket stuck: a Ticket
+with no conversation still reads as claimed, and a Ticket at `empty` still pointing at a
+dead conversation would talk into it.
+
+Nothing there asks whether the old Worker was alive, because nothing can answer. A
+Worker that dies without ending its turn goes on looking like one that is running, so a
+check on that would refuse exactly the Tickets that need recovering. The supervisor
+reads the conversation and decides, and the rules around the action bound what that
+decision can reach: its own Item, a Worker-owned Stage, and a worker step that has
+already had five minutes.
+
 ## Sending a proposal back
 
 When the owner returns a proposal for revision, the guidance goes to the worker as a
@@ -177,6 +191,12 @@ The Ticket's stored backend, model, and reasoning effort are its **last-chosen**
 values, kept up to date with what its conversation actually runs on, so a fresh
 conversation starts from where the last one ended. Managed Worker and Chief settings
 own the defaults a Ticket starts from, and the Workers screen edits them.
+
+Those three values can be changed while the Ticket names no conversation and has no
+worker step out. That is a Ticket nobody has started yet, or one whose conversation was
+just cleared. At any other moment they are frozen, because they are what a live
+conversation was started on. Changing them is one act, never one value on its own: a
+model name belongs to the backend that named it.
 
 Panels keeps every distinct byte sequence for each managed skill in SQLite. A SHA-256
 content hash reuses an existing version when an edit returns to the same content. Startup

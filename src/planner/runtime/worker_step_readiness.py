@@ -66,22 +66,29 @@ def _closeout_lane_is_occupied(
     )
 
 
-def is_ready_for_worker_step(
+def worker_step_blocker(
     conn: sqlite3.Connection,
     ticket: Ticket,
     *,
     planning_day_id: str,
     worker_type_definition: WorkerTypeDefinition,
-) -> bool:
-    """Whether Panels may automatically start this Ticket's next worker step now."""
+) -> str | None:
+    """Why Panels may not start this Ticket's next worker step, or nothing when it may.
+
+    This is the readiness decision itself, and ``is_ready_for_worker_step`` is this
+    answer read as a yes or a no. The sentence exists because a caller that asked for a
+    start and got none has to be told what to do about it — a supervisor restart is the
+    first such caller. The first refusal wins, so the order below is the order of the
+    checks, not a ranking.
+    """
     membership = conn.execute(
         "SELECT 1 FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
         (planning_day_id, ticket.id),
     ).fetchone()
     if membership is None:
-        return False
+        return "the Ticket is not on today's Day"
     if worker_type_definition.is_terminal(ticket.stage):
-        return False
+        return f"the Stage {ticket.stage} is terminal"
     ownership_mode = machine.effective_stage_ownership_mode(
         ticket.stage,
         ticket.stage_ownership_overrides,
@@ -89,18 +96,18 @@ def is_ready_for_worker_step(
         default_stage_ownership_mode=ticket.default_stage_ownership_mode,
     )
     if ownership_mode is StageOwnershipMode.user:
-        return False
+        return "the Stage belongs to the user"
     # `empty` is the only startable status. It covers blocked, needs_user, paired,
     # awaiting_approval, agent, user, and errored in one gate.
     if ticket.ticket_status is not TicketStatus.empty:
-        return False
+        return f"the Ticket is at {ticket.ticket_status.value}, so no worker step is due"
     if worker_type_definition.gating_field(ticket.stage) is None:
-        return False
+        return f"the Stage {ticket.stage} has no field for a worker to fill"
     if machine.has_pending_parked_proposal(
         ticket,
         worker_type_definition=worker_type_definition,
     ):
-        return False
+        return "a proposal is parked for the user"
     if (
         machine.at_or_beyond_ceiling(
             ticket.stage,
@@ -109,11 +116,30 @@ def is_ready_for_worker_step(
         )
         and ticket.at_cap is AtCap.stop
     ):
-        return False
+        return "the Ticket is at its ceiling and the cap is stop"
     if _closeout_lane_is_occupied(
         conn,
         ticket,
         worker_type_definition=worker_type_definition,
     ):
-        return False
-    return True
+        return "another Closeout Ticket holds this lane"
+    return None
+
+
+def is_ready_for_worker_step(
+    conn: sqlite3.Connection,
+    ticket: Ticket,
+    *,
+    planning_day_id: str,
+    worker_type_definition: WorkerTypeDefinition,
+) -> bool:
+    """Whether Panels may automatically start this Ticket's next worker step now."""
+    return (
+        worker_step_blocker(
+            conn,
+            ticket,
+            planning_day_id=planning_day_id,
+            worker_type_definition=worker_type_definition,
+        )
+        is None
+    )

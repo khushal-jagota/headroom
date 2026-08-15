@@ -300,27 +300,31 @@ assert.deepEqual(groupOrder, [
   "done",
 ]);
 
-// The rail holds the groups that want the reader. The quiet states are not drawn shut
-// here — they are not in the rail at all, in either view, and the Sprint Item page is
-// where they are read. Everything the rail draws arrives open.
-const railGroupsMatch = workspaceRailSource.match(
-  /const RAIL_GROUPS: ReadonlySet<string> = new Set\(\[([\s\S]*?)\n\]\);/,
+// The rail holds every group a Ticket lands in. A quiet group is drawn shut, not left
+// out: no status is filtered out of the rail, in either view or in the count line under
+// a shut Sprint Item. Three groups arrive shut, and the reader opens them.
+const defaultCollapsedMatch = workspaceRailSource.match(
+  /const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set\(\[([\s\S]*?)\n\]\);/,
 );
-assert.ok(railGroupsMatch, "Workspace declares one canonical set of rail groups");
-const railGroups = [...railGroupsMatch[1].matchAll(/"([^"]+)"/g)].map(
-  (match) => match[1],
+assert.ok(
+  defaultCollapsedMatch,
+  "Workspace declares one canonical set of collapsed groups",
 );
-assert.deepEqual(railGroups, [
-  "errored",
-  "needs_user",
-  "user",
-  "paired",
-  "agent",
-  "awaiting_approval",
+const defaultCollapsedGroups = [
+  ...defaultCollapsedMatch[1].matchAll(/"([^"]+)"/g),
+].map((match) => match[1]);
+assert.deepEqual(defaultCollapsedGroups, [
   "waiting_for_kickoff",
+  "blocked",
+  "done",
 ]);
-assert.doesNotMatch(workspaceRailSource, /defaultCollapsed/);
-assert.match(boardRouteSource, /chevron="trailing"\n\s+defaultOpen\n/);
+// No whitelist decides what the rail carries. A group is drawn or shut, never dropped.
+assert.doesNotMatch(workspaceRailSource, /RAIL_GROUPS/);
+assert.match(workspaceRailSource, /defaultCollapsed: DEFAULT_COLLAPSED_GROUPS\.has\(key\)/);
+assert.match(
+  boardRouteSource,
+  /chevron="trailing"\n\s+defaultOpen=\{!group\.defaultCollapsed\}\n/,
+);
 
 // Nothing hides behind a count: every group is reachable as itself, in both views.
 assert.doesNotMatch(boardRouteSource, /more|toggleReveal|hiddenWorkspaceCardCount/);

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
@@ -21,14 +21,18 @@ from planner.core.authctx import RequestContext, require_sprint_item_supervisor_
 from planner.core.clock import Clock
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files.logic.paths import sprint_item_files_root
-from planner.runtime import conversation_start
+from planner.runtime import conversation_start, worker_step_readiness
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
-from planner.tickets.contracts import Ticket
+from planner.tickets.contracts import StageOwnershipMode, Ticket, TicketStatus
+from planner.tickets.logic import machine
+from planner.worker_types.configuration import configured_worker_type_registry
 
 MAXIMUM_HISTORY_EVENTS = 100
 SUPERVISOR_ARTIFACTS_DIRECTORY = "artifacts"
+# A worker step gets this long to prove it is alive before anyone may restart it.
+WORKER_STEP_RESTART_FLOOR_SECONDS = 300
 
 
 def require_current_child(
@@ -155,6 +159,153 @@ def _coherent_read(conn: sqlite3.Connection) -> Iterator[None]:
     finally:
         if owns_transaction and conn.in_transaction:
             conn.execute("ROLLBACK")
+
+
+def require_restartable_child(
+    conn: sqlite3.Connection,
+    ctx: RequestContext,
+    sprint_item_id: str,
+    ticket_id: str,
+    *,
+    now: int,
+) -> Ticket:
+    """Return the child, once every reason not to restart it has been ruled out.
+
+    Nothing is asked about whether the worker is alive, because nothing can answer it.
+    ``is_running`` reads in-process bookkeeping that nothing clears when a backend dies,
+    so a dead worker looks like a running one forever, and a guard on it would refuse the
+    exact state a restart is for. The supervisor decides that its worker is dead, from
+    the conversation history it can already read, and the checks here bound what that
+    decision can reach.
+    """
+    ticket = require_current_child(conn, ctx, sprint_item_id, ticket_id)
+    worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
+    ownership_mode = machine.effective_stage_ownership_mode(
+        ticket.stage,
+        ticket.stage_ownership_overrides,
+        worker_type_definition=worker_type_definition,
+        default_stage_ownership_mode=ticket.default_stage_ownership_mode,
+    )
+    if ownership_mode is not StageOwnershipMode.worker:
+        # A Paired Stage rests where it departs, so no code can tell a dead paired worker
+        # from a discussion waiting on the user, and a restart there would kill a
+        # conversation the user is in.
+        raise PlannerError(
+            ErrorCode.validation,
+            "only a Worker-owned Stage has a worker step to restart",
+            {"ticket_id": ticket_id, "stage": ticket.stage},
+        )
+    if ticket.ticket_status is TicketStatus.agent:
+        age = now - ticket.ticket_status_changed_at
+        if age < WORKER_STEP_RESTART_FLOOR_SECONDS:
+            # The one bound on a restart loop: each restart resets this clock, so a
+            # supervisor that keeps restarting has to wait out the floor every time.
+            raise PlannerError(
+                ErrorCode.validation,
+                "this worker step is too young to restart",
+                {
+                    "ticket_id": ticket_id,
+                    "age_seconds": age,
+                    "floor_seconds": WORKER_STEP_RESTART_FLOOR_SECONDS,
+                },
+            )
+        return ticket
+    if ticket.conversation_id is None:
+        # A restart whose start was refused lands here. Restarting again is how a
+        # supervisor corrects the launch configuration it named the first time.
+        return ticket
+    raise PlannerError(
+        ErrorCode.validation,
+        "the Ticket has no worker step out to restart",
+        {"ticket_id": ticket_id, "ticket_status": ticket.ticket_status.value},
+    )
+
+
+async def restart_worker(
+    conversations: ConversationSystem,
+    conn: sqlite3.Connection,
+    ctx: RequestContext,
+    sprint_item_id: str,
+    ticket_id: str,
+    *,
+    write_employee_configuration: Callable[[sqlite3.Connection], None] | None,
+    start_worker_step: Callable[[], Awaitable[bool]],
+    planning_day_id: str,
+    now: int,
+) -> dict[str, object]:
+    """Kill this child Ticket's dead conversation, give the claim back, and start again.
+
+    The claim is the status, so a reset on its own would leave the Ticket at ``agent``
+    with no conversation and nothing that ever picks it up. Both halves happen here, and
+    the supervisor sees one action.
+
+    ``write_employee_configuration`` is already validated when it arrives: the caller
+    resolved it against the backend registry and catalog before anything was killed, so a
+    bad argument costs the Ticket nothing. It runs in the same transaction as the claim,
+    after it, because the launch values unfreeze only once the Ticket is out of ``agent``.
+    """
+    ticket = require_restartable_child(conn, ctx, sprint_item_id, ticket_id, now=now)
+    killed_conversation_id = ticket.conversation_id
+    killed_conversation_looked_running = (
+        await conversations.is_running(killed_conversation_id)
+        if killed_conversation_id is not None
+        else False
+    )
+    if killed_conversation_id is not None:
+        await conversation_start.reset_ticket_conversation(
+            conversations, conn, ticket_id, now=now
+        )
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if ticket.ticket_status is TicketStatus.agent:
+            given_back = tickets_data.release_worker_step_claim(
+                conn,
+                ticket_id,
+                expected_status=ticket.ticket_status,
+                expected_status_changed_at=ticket.ticket_status_changed_at,
+                now=now,
+            )
+            if not given_back:
+                raise PlannerError(
+                    ErrorCode.already_running,
+                    "the Ticket moved while it was being restarted",
+                    {"ticket_id": ticket_id},
+                )
+        if write_employee_configuration is not None:
+            write_employee_configuration(conn)
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    started = await start_worker_step()
+    restarted = tickets_data.read_ticket(conn, ticket_id)
+    return {
+        "sprint_item_id": sprint_item_id,
+        "ticket_id": ticket_id,
+        "killed_conversation_id": killed_conversation_id,
+        "killed_conversation_looked_running": killed_conversation_looked_running,
+        "employee_configuration": {
+            "employee_backend": restarted.employee_backend,
+            "employee_launch_model": restarted.employee_launch_model,
+            "employee_launch_reasoning_effort": restarted.employee_launch_reasoning_effort,
+        },
+        "ticket_status": restarted.ticket_status.value,
+        "conversation_id": restarted.conversation_id,
+        "started": started,
+        "not_started_because": (
+            None
+            if started
+            else worker_step_readiness.worker_step_blocker(
+                conn,
+                restarted,
+                planning_day_id=planning_day_id,
+                worker_type_definition=configured_worker_type_registry().require(
+                    restarted.worker_type
+                ),
+            )
+        ),
+    }
 
 
 async def message_current_worker(

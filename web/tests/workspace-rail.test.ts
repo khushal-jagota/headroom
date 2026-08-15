@@ -58,7 +58,7 @@ describe("Workspace rail", () => {
     ).toBe("agent");
   });
 
-  it("orders and labels the groups the rail holds, and leaves out the quiet ones", () => {
+  it("orders and labels every group, and collapses the three quiet ones", () => {
     const groups = workspaceGroups([
       card("done", { stage: "done", is_done: true }),
       card("resting"),
@@ -79,15 +79,35 @@ describe("Workspace rail", () => {
       "User",
       "Paired",
       "Agent",
+      "Waiting to Closeout",
       "Awaiting approval",
-      "Waiting for Kickoff"
+      "Waiting for Kickoff",
+      "Empty",
+      "Blocked",
+      "Done"
     ]);
-    // The quiet states are not drawn shut here. They are not in the rail at all, and
-    // the Sprint Item page is where they are read.
-    expect(groups.map((group) => group.key)).not.toContain("done");
-    expect(groups.map((group) => group.key)).not.toContain("blocked");
-    expect(groups.map((group) => group.key)).not.toContain("waiting_to_closeout");
-    expect(groups.map((group) => group.key)).not.toContain("empty");
+    // A quiet group arrives shut, with its own count for the reader to open. It is
+    // never absent: no status is filtered out of the rail.
+    expect(
+      groups.filter((group) => group.defaultCollapsed).map((group) => group.key)
+    ).toEqual(["waiting_for_kickoff", "blocked", "done"]);
+  });
+
+  it("draws a board of only quiet Tickets rather than nothing", () => {
+    const groups = workspaceGroups([
+      card("done", { stage: "done", is_done: true }),
+      card("blocked", { ticket_status: "blocked" }),
+      card("closeout", { waiting_to_closeout: true }),
+      card("resting")
+    ]);
+
+    expect(groups.map((group) => group.key)).toEqual([
+      "waiting_to_closeout",
+      "empty",
+      "blocked",
+      "done"
+    ]);
+    expect(groups.map((group) => group.cards.length)).toEqual([1, 1, 1, 1]);
   });
 
   it("sorts rows by activity, newest first", () => {
@@ -108,6 +128,7 @@ describe("Workspace rail", () => {
     const rail = buildWorkspaceRail(
       [
         card("owned", { ticket_status: "paired", sprint_item_id: "si_one" }),
+        card("shut", { ticket_status: "blocked", sprint_item_id: "si_one" }),
         card("loose", { ticket_status: "user" })
       ],
       [item("si_one")]
@@ -116,9 +137,18 @@ describe("Workspace rail", () => {
     // The Tickets view holds every card, including one with no Sprint Item.
     expect(rail.groups.flatMap((group) => group.cards.map((entry) => entry.id))).toEqual([
       "loose",
-      "owned"
+      "owned",
+      "shut"
     ]);
-    expect(rail.items[0].groups.map((group) => group.label)).toEqual(["Paired"]);
+    // An Item's own groups are the same groups, shut the same way.
+    expect(rail.items[0].groups.map((group) => group.label)).toEqual([
+      "Paired",
+      "Blocked"
+    ]);
+    expect(rail.items[0].groups.map((group) => group.defaultCollapsed)).toEqual([
+      false,
+      true
+    ]);
   });
 
   it("orders Items by priority then a fixed creation-time tie-break", () => {
@@ -244,10 +274,11 @@ describe("Workspace rail", () => {
       [item("si_done")]
     );
 
-    // The Item is still the door to its page, so it keeps its box. Done is not a rail
-    // group, so the box has nothing to count and says nothing.
+    // The Item keeps its box, and its Done group with it. A rested Item counts and
+    // names its finished work, shut.
     expect(rail.items[0].title).toBe("Finished outcome");
-    expect(rail.items[0].groups).toEqual([]);
+    expect(rail.items[0].groups.map((group) => group.label)).toEqual(["Done"]);
+    expect(rail.items[0].groups[0].defaultCollapsed).toBe(true);
     expect(rail.items[0].rested).toBe(true);
   });
 

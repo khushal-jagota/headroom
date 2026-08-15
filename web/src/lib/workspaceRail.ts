@@ -19,20 +19,13 @@ const GROUP_ORDER: readonly string[] = [
   "done"
 ];
 
-// The groups the rail holds: the ones that want the reader, live or waiting on them.
-// A group outside this set is not drawn shut in the rail — it is not in the rail at
-// all, in either view and in the count line under a shut Sprint Item. The quiet
-// states (Waiting to Closeout, Empty, Blocked, Done) are read on the Sprint Item
-// page, which still lists every group. Everything the rail draws arrives open, so
-// nothing hides behind a count.
-const RAIL_GROUPS: ReadonlySet<string> = new Set([
-  "errored",
-  "needs_user",
-  "user",
-  "paired",
-  "agent",
-  "awaiting_approval",
-  "waiting_for_kickoff"
+// The three the reader opens for themselves. They are still their own group: nothing
+// hides behind a count. The rail carries every group a Ticket lands in — a quiet group
+// arrives shut, never absent — so no status is ever unreachable from the rail.
+const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set([
+  "waiting_for_kickoff",
+  "blocked",
+  "done"
 ]);
 
 const GROUP_LABELS: Readonly<Record<string, string>> = {
@@ -44,6 +37,7 @@ const GROUP_LABELS: Readonly<Record<string, string>> = {
 export type WorkspaceTicketGroup = {
   key: string;
   label: string;
+  defaultCollapsed: boolean;
   cards: BoardCard[];
 };
 
@@ -54,9 +48,8 @@ export type WorkspaceRailItem = {
   createdAt: number;
   signals: ConversationSignals;
   groups: WorkspaceTicketGroup[];
-  // Every one of the Item's Tickets on today is done. Computed from all of the
-  // Item's Tickets, not just the ones RAIL_GROUPS draws, so a Blocked, Empty, or
-  // Waiting to Closeout Ticket keeps the Item awake.
+  // Every one of the Item's Tickets on today is done. Read from all of the Item's
+  // Tickets, so a Blocked, Empty, or Waiting to Closeout Ticket keeps the Item awake.
   rested: boolean;
 };
 
@@ -98,7 +91,6 @@ export function workspaceGroups(
   const firstSeen: string[] = [];
   for (const card of cards) {
     const key = workspaceCardGroupKey(card);
-    if (!RAIL_GROUPS.has(key)) continue;
     if (!byGroup.has(key)) {
       byGroup.set(key, []);
       firstSeen.push(key);
@@ -111,6 +103,7 @@ export function workspaceGroups(
   return orderedKeys.map((key) => ({
     key,
     label: GROUP_LABELS[key] ?? labelize(key),
+    defaultCollapsed: DEFAULT_COLLAPSED_GROUPS.has(key),
     cards: [...(byGroup.get(key) ?? [])].sort(cardOrder)
   }));
 }
