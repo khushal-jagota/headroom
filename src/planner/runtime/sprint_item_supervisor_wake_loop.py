@@ -51,21 +51,24 @@ async def send_supervisor_wake(
             if current is not None:
                 # A supervisor that is working, or that already has something waiting for
                 # it, will read current state anyway when it gets there. A second wake
-                # behind the first would tell it nothing the first does not.
+                # behind the first would only queue a hint it is about to outrun. Nothing
+                # is lost: no wake is recorded, so the move still counts on the next change.
                 if await conversation_system.is_running(current):
                     return False
                 if await conversation_system.held_prompts(current):
                     return False
-            # Asked again under the lock, where the answer is final.
-            if not sprint_item_supervisor_wake.sprint_item_needs_supervisor(
+            # Asked again under the lock, where the answer is final. The message sent is
+            # the one this answer carries, so it names what was true here and nowhere else.
+            message = sprint_item_supervisor_wake.sprint_item_wake_message(
                 conn, sprint_item_id, conversation_id=current
-            ):
+            )
+            if message is None:
                 return False
             delivered = await conversation_start.send_to_agent_conversation(
                 conversation_system,
                 conn,
                 item.supervisor_agent_key,
-                text_message_content(sprint_item_supervisor_wake.WAKE_TEXT),
+                text_message_content(message),
                 conversation_start.sprint_item_supervisor_resolve(item),
                 conversation_id=current,
                 created_conversation_id=current or conversation_start.new_conversation_id(),
@@ -121,8 +124,11 @@ class SprintItemSupervisorWakeLoop:
                 conversation_id = conversation_start.read_agent_conversation(
                     conn, sprints_data.supervisor_agent_key(item_id)
                 )
-                if sprint_item_supervisor_wake.sprint_item_needs_supervisor(
-                    conn, item_id, conversation_id=conversation_id
+                if (
+                    sprint_item_supervisor_wake.sprint_item_wake_message(
+                        conn, item_id, conversation_id=conversation_id
+                    )
+                    is not None
                 ):
                     needing.append(item_id)
             return needing

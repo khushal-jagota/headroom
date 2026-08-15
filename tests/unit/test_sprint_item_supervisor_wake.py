@@ -4,8 +4,8 @@ Everything here runs against a real temporary SQLite file and the in-memory
 conversation system. The per-Item send is a plain async function, so most of these
 drive it directly with ``asyncio.run`` and no threads at all.
 
-The one thing every test is really about: a wake says nothing. It is only ever sent
-because something moved, never because something stands.
+The one thing every test is really about: a wake is only ever sent because something
+moved, never because something stands, and it says what moved in the past tense.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from planner.runtime.sprint_item_supervisor_wake_loop import (
 )
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import Proposal, TicketStatus
+from planner.tickets.contracts import FieldSlot, Proposal, TicketStatus
 from planner.tickets.logic import fields_codec
 from planner.tickets.logic.admission import SPRINT_ITEM_SUPERVISOR_ACTOR
 
@@ -72,9 +72,13 @@ class _World:
         status: TicketStatus = TicketStatus.empty,
         stage: str | None = None,
         status_changed_at: int = 100,
-        proposed_by: str | None = None,
+        proposals: tuple[tuple[str, str, int], ...] = (),
     ) -> str:
-        """A child Ticket of this Item, put directly into the state under test."""
+        """A child Ticket of this Item, put directly into the state under test.
+
+        It is created with no kickoff, so it carries no proposal of its own. Each entry
+        in ``proposals`` is one parked proposal: its field, who proposed it, and when.
+        """
         with self.connect() as conn:
             ticket = tickets_data.create_ticket(
                 conn,
@@ -83,6 +87,7 @@ class _World:
                 actor="human",
                 now=0,
                 title_max_chars=200,
+                kickoff_note=None,
             )
             conn.execute(
                 "UPDATE tickets SET sprint_item_id = ?, ticket_status = ?, "
@@ -93,16 +98,20 @@ class _World:
                 conn.execute(
                     "UPDATE tickets SET stage = ? WHERE id = ?", (stage, ticket.id)
                 )
-            if proposed_by is not None:
+            fields = ticket.fields
+            for field, proposed_by, created_at in proposals:
                 fields = fields_codec.with_slot(
-                    ticket.fields,
-                    "kickoff",
-                    fields_codec.get_slot(ticket.fields, "kickoff").__class__(
+                    fields,
+                    field,
+                    FieldSlot(
                         value=None,
-                        proposal=_proposal(proposed_by),
+                        proposal=Proposal(
+                            body="a body", proposed_by=proposed_by, created_at=created_at
+                        ),
                         user_note=None,
                     ),
                 )
+            if proposals:
                 conn.execute(
                     "UPDATE tickets SET fields = ? WHERE id = ?",
                     (fields_codec.fields_to_json(fields), ticket.id),
@@ -135,7 +144,7 @@ class _World:
         """
         conversation_id = self.supervisor_conversation(item_id) or "conv_test"
         payload = PromptEventPayload(
-            content=text_message_content(sprint_item_supervisor_wake.WAKE_TEXT),
+            content=text_message_content(sprint_item_supervisor_wake.WAKE_LEAD_TEXT),
             sender_label=sprint_item_supervisor_wake.WAKE_SENDER_LABEL,
             mode=PromptDeliveryMode.run_when_free,
         )
@@ -163,11 +172,14 @@ class _World:
             conn.commit()
         return conversation_id
 
-    def needs_supervisor(self, item_id: str) -> bool:
+    def wake_message(self, item_id: str) -> str | None:
         with self.connect() as conn:
-            return sprint_item_supervisor_wake.sprint_item_needs_supervisor(
+            return sprint_item_supervisor_wake.sprint_item_wake_message(
                 conn, item_id, conversation_id=self.supervisor_conversation(item_id)
             )
+
+    def needs_supervisor(self, item_id: str) -> bool:
+        return self.wake_message(item_id) is not None
 
     def prompts_sent(self, item_id: str) -> tuple[str, ...]:
         conversation_id = self.supervisor_conversation(item_id)
@@ -179,8 +191,9 @@ class _World:
         )
 
 
-def _proposal(actor: str) -> Proposal:
-    return Proposal(body="a kickoff", proposed_by=actor, created_at=0)
+def _wake(ticket_id: str, line: str) -> str:
+    """The whole message a wake about one Ticket carries."""
+    return f"{sprint_item_supervisor_wake.WAKE_LEAD_TEXT}\n{ticket_id} {line}"
 
 
 def _waited_for(predicate: Callable[[], bool], timeout: float = 5.0) -> bool:
@@ -200,18 +213,85 @@ def world(tmp_path: Path) -> _World:
 # --- what a wake says ----------------------------------------------------------
 
 
-def test_a_wake_carries_no_ticket_id_and_no_fact(world: _World) -> None:
+def test_a_wake_names_the_ticket_and_what_happened(world: _World) -> None:
     item_id = world.item()
-    ticket_id = world.ticket(item_id, status=TicketStatus.awaiting_approval)
+    ticket_id = world.ticket(
+        item_id,
+        status=TicketStatus.awaiting_approval,
+        proposals=(("implementation", "agent", 50),),
+    )
 
     assert world.wake(item_id) is True
 
-    sent = world.prompts_sent(item_id)
-    assert sent == (sprint_item_supervisor_wake.WAKE_TEXT,)
-    assert ticket_id not in sent[0]
-    assert item_id not in sent[0]
-    for word in ("review", "errored", "blocked", "done", "obligation"):
-        assert word not in sent[0].lower()
+    assert world.prompts_sent(item_id) == (
+        _wake(ticket_id, "proposed an implementation"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "stage", "proposals", "expected"),
+    [
+        (
+            TicketStatus.awaiting_approval,
+            None,
+            (("plan", "agent", 50),),
+            "proposed a plan",
+        ),
+        (TicketStatus.paired, None, (), "entered a paired stage"),
+        (TicketStatus.needs_user, None, (), "asked for human help"),
+        (TicketStatus.errored, None, (), "hit a backend failure"),
+        (TicketStatus.empty, "done", (), "finished"),
+    ],
+)
+def test_every_trigger_says_what_happened(
+    world: _World,
+    status: TicketStatus,
+    stage: str | None,
+    proposals: tuple[tuple[str, str, int], ...],
+    expected: str,
+) -> None:
+    """One line per trigger, and every one of them is a past event."""
+    item_id = world.item()
+    ticket_id = world.ticket(item_id, status=status, stage=stage, proposals=proposals)
+
+    assert world.wake_message(item_id) == _wake(ticket_id, expected)
+
+
+def test_a_line_names_the_most_recent_parked_proposal(world: _World) -> None:
+    """Below its ceiling a Worker can park a proposal on a field already passed."""
+    item_id = world.item()
+    ticket_id = world.ticket(
+        item_id,
+        status=TicketStatus.awaiting_approval,
+        proposals=(("approach", "agent", 40), ("plan", "agent", 90)),
+    )
+
+    assert world.wake_message(item_id) == _wake(ticket_id, "proposed a plan")
+
+
+def test_a_proposal_that_cannot_be_read_still_wakes_the_supervisor(
+    world: _World,
+) -> None:
+    """Waiting for approval with nothing readable parked. Say less, not nothing.
+
+    Approval status is written when a proposal is filed, so this pair of facts does not
+    occur in ordinary work. If it ever does, a vague line reaches the supervisor and
+    silence does not.
+    """
+    item_id = world.item()
+    ticket_id = world.ticket(item_id, status=TicketStatus.awaiting_approval)
+
+    assert world.wake_message(item_id) == _wake(ticket_id, "proposed something")
+
+
+def test_every_ticket_that_moved_gets_a_line_oldest_first(world: _World) -> None:
+    item_id = world.item()
+    first = world.ticket(item_id, status=TicketStatus.errored, status_changed_at=100)
+    second = world.ticket(item_id, status=TicketStatus.needs_user, status_changed_at=200)
+
+    assert world.wake_message(item_id) == (
+        f"{_wake(first, 'hit a backend failure')}\n{second} asked for human help"
+    )
 
 
 # --- what makes an Item need its supervisor ------------------------------------
@@ -264,7 +344,7 @@ def test_the_supervisors_own_proposal_does_not_wake_it(world: _World) -> None:
     world.ticket(
         item_id,
         status=TicketStatus.awaiting_approval,
-        proposed_by=SPRINT_ITEM_SUPERVISOR_ACTOR,
+        proposals=(("plan", SPRINT_ITEM_SUPERVISOR_ACTOR, 50),),
     )
 
     assert world.wake(item_id) is False
@@ -274,10 +354,45 @@ def test_the_supervisors_own_proposal_does_not_wake_it(world: _World) -> None:
 def test_a_worker_proposal_still_wakes_the_supervisor(world: _World) -> None:
     item_id = world.item()
     world.ticket(
-        item_id, status=TicketStatus.awaiting_approval, proposed_by="agent"
+        item_id,
+        status=TicketStatus.awaiting_approval,
+        proposals=(("plan", "agent", 50),),
     )
 
     assert world.wake(item_id) is True
+
+
+def test_a_reply_to_a_parked_proposal_does_not_wake_the_supervisor(
+    world: _World,
+) -> None:
+    """`paired` with a proposal still parked means the user replied to that proposal.
+
+    Filing a proposal writes approval status first, and resolving one clears the
+    proposal off the field. So this pair of facts has one cause, and it is the user's
+    business rather than the supervisor's.
+    """
+    item_id = world.item()
+    world.ticket(
+        item_id,
+        status=TicketStatus.paired,
+        proposals=(("plan", "agent", 50),),
+    )
+
+    assert world.wake(item_id) is False
+    assert world.prompts_sent(item_id) == ()
+
+
+def test_a_quiet_ticket_does_not_take_the_others_line_away(world: _World) -> None:
+    item_id = world.item()
+    world.ticket(
+        item_id,
+        status=TicketStatus.paired,
+        proposals=(("plan", "agent", 50),),
+        status_changed_at=100,
+    )
+    moved = world.ticket(item_id, status=TicketStatus.errored, status_changed_at=200)
+
+    assert world.wake_message(item_id) == _wake(moved, "hit a backend failure")
 
 
 # --- what stops a second wake --------------------------------------------------
@@ -320,7 +435,11 @@ def test_a_ticket_that_moves_after_the_wake_counts_again(world: _World) -> None:
 
 def test_nothing_stacks_behind_a_wake_that_is_still_waiting(world: _World) -> None:
     item_id = world.item()
-    ticket_id = world.ticket(item_id, status=TicketStatus.awaiting_approval)
+    ticket_id = world.ticket(
+        item_id,
+        status=TicketStatus.awaiting_approval,
+        proposals=(("plan", "agent", 50),),
+    )
 
     assert world.wake(item_id) is True
     conversation_id = world.supervisor_conversation(item_id)
@@ -342,7 +461,7 @@ def test_nothing_stacks_behind_a_wake_that_is_still_waiting(world: _World) -> No
         conn.commit()
 
     assert world.wake(item_id) is False
-    assert world.prompts_sent(item_id) == (sprint_item_supervisor_wake.WAKE_TEXT,)
+    assert world.prompts_sent(item_id) == (_wake(ticket_id, "proposed a plan"),)
 
 
 def test_a_busy_supervisor_is_not_woken(world: _World) -> None:
@@ -384,7 +503,7 @@ def test_the_loop_sends_nothing_until_the_change_signal_wakes_it(
 ) -> None:
     """It has no timer. Standing state is not a reason, and time passing is not one."""
     item_id = world.item()
-    world.ticket(item_id, status=TicketStatus.errored)
+    ticket_id = world.ticket(item_id, status=TicketStatus.errored)
 
     asyncio_loop = asyncio.new_event_loop()
     thread = threading.Thread(target=asyncio_loop.run_forever, daemon=True)
@@ -402,7 +521,9 @@ def test_the_loop_sends_nothing_until_the_change_signal_wakes_it(
 
         wake_loop.wake()
         assert _waited_for(lambda: world.prompts_sent(item_id) != ())
-        assert world.prompts_sent(item_id) == (sprint_item_supervisor_wake.WAKE_TEXT,)
+        assert world.prompts_sent(item_id) == (
+            _wake(ticket_id, "hit a backend failure"),
+        )
     finally:
         wake_loop.stop()
         asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
