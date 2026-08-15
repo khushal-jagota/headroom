@@ -64,15 +64,16 @@ Tickets, named only by their status. Then the index: Artifacts, then Remaining T
 which keeps off-today and done work visible without competing with today. Both index
 sections arrive shut.
 
-Every status is its own dropdown. Needs you, Waiting for kickoff, Awaiting approval and
-Paired arrive open. Agent, Blocked, Waiting for closeout, Empty and Done arrive shut,
-still named and counted. Open shows a chevron, shut shows the count, on statuses and
-sections alike.
+Every status is its own dropdown. Needs you, User, Waiting for kickoff, Awaiting
+approval and Paired arrive open. Agent, Blocked, Waiting for closeout, Empty and Done
+arrive shut, still named and counted. Open shows a chevron, shut shows the count, on
+statuses and sections alike. A Ticket waiting on you and a Ticket that is yours to do
+are two groups, here and in the Workspace rail both.
 
-This page splits a Ticket by its condition and the Workspace rail splits it by its raw
-status, so the two screens do not draw the same set of groups. They do use the same
-words: a group here and a group there that hold the same Tickets carry one label. Rename
-one and rename both.
+This page splits a Ticket by its condition and the rail splits it by its raw status, so
+the two screens do not always draw the same set of groups. They do use the same words: a
+group here and a group there that hold the same Tickets carry one label. Rename one and
+rename both.
 
 A Ticket row is its condition mark and its title. Priority is stated once, in the
 identity above, not on every row. Ticket rows link to the canonical Ticket page for all

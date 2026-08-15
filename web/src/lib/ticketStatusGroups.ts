@@ -17,6 +17,7 @@ export type TicketStatusGroupDefinition = {
 
 export const TICKET_STATUS_GROUPS: readonly TicketStatusGroupDefinition[] = [
   { key: "needs-me", label: "Needs you", quiet: false },
+  { key: "user", label: "User", quiet: false },
   { key: "waiting-for-kickoff", label: "Waiting for kickoff", quiet: false },
   { key: "current-awaiting-approval", label: "Awaiting approval", quiet: false },
   { key: "current-paired", label: "Paired", quiet: false },
@@ -35,13 +36,16 @@ export type TicketStatusGroupFacts = TicketConditionFacts & {
   gating_field?: string | null;
 };
 
-// A Ticket's own two facts win first: it is finished, or a blocker holds it. Then the
-// shared awaiting-approval mark splits once: a Ticket still gated on its kickoff is the
-// one worth naming on its own. Everything else waiting is simply awaiting approval.
+// A Ticket's own two facts win first: it is finished, or a blocker holds it. Then two
+// marks split, each because the rail splits them and the two screens name the same
+// Tickets the same way: a Ticket waiting on the user is not a Ticket that is the user's
+// own to do, and a Ticket gated on its kickoff is worth naming apart from later
+// approvals.
 export function ticketStatusGroupKey(ticket: TicketStatusGroupFacts): string {
   if (ticket.stage === "done") return "completed";
   if (ticket.blocked) return "errored";
   const mark = sprintTicketCondition(ticket).mark;
+  if (mark === "needs-me") return ticket.ticket_status === "user" ? "user" : "needs-me";
   if (mark !== "current-awaiting-approval") return mark;
   return ticket.gating_field === "kickoff" ? "waiting-for-kickoff" : mark;
 }

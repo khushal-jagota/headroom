@@ -22,6 +22,7 @@ describe("Ticket status groups", () => {
   it("holds one order, and names the four groups that arrive open", () => {
     expect(TICKET_STATUS_GROUPS.map((group) => group.label)).toEqual([
       "Needs you",
+      "User",
       "Waiting for kickoff",
       "Awaiting approval",
       "Paired",
@@ -33,12 +34,13 @@ describe("Ticket status groups", () => {
     ]);
     expect(
       TICKET_STATUS_GROUPS.filter((group) => !group.quiet).map((group) => group.label)
-    ).toEqual(["Needs you", "Waiting for kickoff", "Awaiting approval", "Paired"]);
+    ).toEqual(["Needs you", "User", "Waiting for kickoff", "Awaiting approval", "Paired"]);
   });
 
   it("names each Ticket's group from the shared condition", () => {
     expect(ticketStatusGroupKey(ticket({ ticket_status: "needs_user" }))).toBe("needs-me");
-    expect(ticketStatusGroupKey(ticket({ ticket_status: "user" }))).toBe("needs-me");
+    // Waiting on the user and being the user's own to do are two groups, as in the rail.
+    expect(ticketStatusGroupKey(ticket({ ticket_status: "user" }))).toBe("user");
     expect(ticketStatusGroupKey(ticket({ ticket_status: "awaiting_approval" }))).toBe(
       "current-awaiting-approval"
     );
