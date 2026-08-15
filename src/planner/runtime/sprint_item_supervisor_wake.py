@@ -20,8 +20,6 @@ from typing import Final, NamedTuple
 from planner.tickets.contracts import TicketStatus
 from planner.tickets.logic.admission import SPRINT_ITEM_SUPERVISOR_ACTOR
 
-# The first line of every wake. The lines under it say what moved.
-WAKE_LEAD_TEXT: Final = "Your Sprint Item needs you. Read current context and act."
 WAKE_SENDER_LABEL: Final = "Panels"
 
 # What a supervisor should look at. A parked proposal is here because the supervisor
@@ -182,4 +180,4 @@ def sprint_item_wake_message(
             lines.append(line)
     if not lines:
         return None
-    return "\n".join((WAKE_LEAD_TEXT, *lines))
+    return "\n".join(lines)
