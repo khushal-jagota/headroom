@@ -12,6 +12,7 @@ from planner.core.contracts import BlockerSummary, JsonDict
 from planner.judgments import data as judgments_data
 from planner.list_reads.configuration import TICKET_RECAP_PREVIEW_CHARS
 from planner.list_reads.contracts import ListPage, ListPageRequest
+from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     AtCap,
@@ -24,7 +25,6 @@ from planner.tickets.contracts import (
 )
 from planner.tickets.logic import fields_codec, machine
 from planner.worker_types.configuration import configured_worker_type_registry
-from planner.worker_types.registry import WorkerTypeRegistry
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
@@ -428,9 +428,9 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
     turn end (``latest_turn_ended_sequence``) all belong to the conversation system and
     are added by the async board route, which can await it.
 
-    Beside the columns, ``sprint_items`` carries each represented Sprint Item's project
-    and progress. The cards are today's Tickets only, so the Item's own counts cannot be
-    derived from them.
+    Beside the columns, ``sprint_items`` carries each represented Sprint Item's own
+    supervisor conversation. A card answers for its Ticket's worker, and no card answers
+    for the Item's own worker, so the rail cannot mark an Item's title without this.
     """
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.stage, tickets.priority, tickets.deadline, "
@@ -578,7 +578,6 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "columns": columns,
         "sprint_items": _board_sprint_items(
             conn,
-            registry=registry,
             item_ids=sorted(
                 {
                     str(row["sprint_item_id"])
@@ -593,43 +592,32 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
 def _board_sprint_items(
     conn: sqlite3.Connection,
     *,
-    registry: WorkerTypeRegistry,
     item_ids: list[str],
 ) -> list[BoardSprintItem]:
-    """Each Sprint Item's project and its done-of-total across all its Tickets."""
+    """Each Sprint Item's creation stamp and its supervisor's current conversation.
+
+    The supervisor is an ordinary non-Ticket agent, so its conversation is the one the
+    ``agents`` roster holds under the Item's ``supervisor_agent_key``. An Item nobody
+    has spoken to has none, and reads as ``None``.
+    """
     if not item_ids:
         return []
     placeholders = ",".join("?" * len(item_ids))
     rows = conn.execute(
-        "SELECT sprint_items.id AS id, projects.name AS project_name, "
-        "sprint_items.created_at AS created_at, "
-        "tickets.stage AS ticket_stage, tickets.worker_type AS ticket_worker_type "
-        "FROM sprint_items "
-        "JOIN projects ON projects.id = sprint_items.project_id "
-        "JOIN tickets ON tickets.sprint_item_id = sprint_items.id "
-        f"WHERE sprint_items.id IN ({placeholders})",
+        "SELECT id, created_at, supervisor_agent_key FROM sprint_items "
+        f"WHERE id IN ({placeholders})",
         item_ids,
     ).fetchall()
-    project_names = {str(row["id"]): str(row["project_name"]) for row in rows}
-    created_ats = {str(row["id"]): int(row["created_at"]) for row in rows}
-    counted: dict[str, list[int]] = {item_id: [0, 0] for item_id in project_names}
-    for row in rows:
-        stage = str(row["ticket_stage"])
-        definition = registry.require(str(row["ticket_worker_type"]))
-        if stage == definition.dropped_stage.id:
-            continue
-        counts = counted[str(row["id"])]
-        counts[0] += 1 if stage == definition.completed_stage() else 0
-        counts[1] += 1
+    conversations = conversation_start.read_agent_conversations(
+        conn, [str(row["supervisor_agent_key"]) for row in rows]
+    )
     return [
         BoardSprintItem(
-            id=item_id,
-            project=project_names[item_id],
-            created_at=created_ats[item_id],
-            done_ticket_count=done,
-            total_ticket_count=total,
+            id=str(row["id"]),
+            created_at=int(row["created_at"]),
+            conversation_id=conversations.get(str(row["supervisor_agent_key"])),
         )
-        for item_id, (done, total) in sorted(counted.items())
+        for row in sorted(rows, key=lambda row: str(row["id"]))
     ]
 
 

@@ -41,7 +41,7 @@ from planner.core.config import load_config
 from planner.core.contracts import LinkKind, Priority
 from planner.days.data import add_day_ticket
 from planner.projects.data import create_project
-from planner.sprints.data import create_item
+from planner.sprints.data import create_item, supervisor_agent_key
 from planner.tickets.api import board as board_route
 from planner.tickets.contracts import AtCap
 from planner.tickets.data import accept_proposal, create_ticket
@@ -204,7 +204,7 @@ def test_board_route_resolves_the_5am_planning_day(
 
     def capture_board(_conn: Connection, *, day_id: str) -> dict[str, Any]:
         resolved_day_ids.append(day_id)
-        return {"columns": []}
+        return {"columns": [], "sprint_items": []}
 
     monkeypatch.setattr("planner.tickets.api.tickets_views.board_view", capture_board)
     clock = SimpleNamespace(now=lambda: now)
@@ -213,7 +213,8 @@ def test_board_route_resolves_the_5am_planning_day(
 
     record = ConversationStore(_database_path(tmp_db))
     assert asyncio.run(board_route(tmp_db, config, clock, conversations, record)) == {
-        "columns": []
+        "columns": [],
+        "sprint_items": [],
     }
     assert resolved_day_ids == [expected_day_id]
 
@@ -599,36 +600,88 @@ def test_completed_board_card_is_done_with_quiet_signals(tmp_db: Connection) -> 
     assert card["is_done"] is True
 
 
-def test_board_sprint_items_count_every_ticket_of_the_item(
+def test_board_sprint_items_carry_the_supervisors_own_conversation(
+    tmp_db: Connection, fake_clock: TestClock
+) -> None:
+    spoken_to = create_item(
+        tmp_db,
+        title="Item with a supervisor mid-turn",
+        project_id="project_vylo",
+        clock=fake_clock,
+    )
+    silent = create_item(
+        tmp_db,
+        title="Item nobody has spoken to",
+        project_id="project_vylo",
+        clock=fake_clock,
+    )
+    tmp_db.execute(
+        "UPDATE agents SET conversation_id = 'conv-supervisor' WHERE agent_key = ?",
+        (supervisor_agent_key(spoken_to.id),),
+    )
+    for title, item_id in (("Spoken", spoken_to.id), ("Silent", silent.id)):
+        add_day_ticket(
+            tmp_db,
+            "day_2026-07-04",
+            _ticket(tmp_db, title, 1, sprint_item_id=item_id),
+            10,
+        )
+
+    board = board_view(tmp_db, day_id="day_2026-07-04")
+
+    # The Item's link is its own supervisor's, not any of its Tickets' workers'.
+    expected: list[dict[str, object]] = [
+        {
+            "id": spoken_to.id,
+            "created_at": spoken_to.created_at,
+            "conversation_id": "conv-supervisor",
+        },
+        {
+            "id": silent.id,
+            "created_at": silent.created_at,
+            "conversation_id": None,
+        },
+    ]
+    assert board["sprint_items"] == sorted(expected, key=lambda entry: str(entry["id"]))
+
+
+def test_board_route_marks_a_sprint_item_from_its_supervisor_conversation(
     tmp_db: Connection, fake_clock: TestClock
 ) -> None:
     item = create_item(
         tmp_db,
-        title="Sidebar item",
+        title="Item with a working supervisor",
         project_id="project_vylo",
         clock=fake_clock,
     )
-    on_today = _ticket(tmp_db, "On today", 1, sprint_item_id=item.id)
-    finished = _ticket(tmp_db, "Finished", 2, sprint_item_id=item.id)
-    dropped = _ticket(tmp_db, "Dropped", 3, sprint_item_id=item.id)
-    _ticket(tmp_db, "Not on today", 4, sprint_item_id=item.id)
+    _ticket(tmp_db, "Its ticket", 1, sprint_item_id=item.id)
     tmp_db.execute(
-        "UPDATE tickets SET stage = 'done', ticket_status = 'empty' WHERE id = ?",
-        (finished,),
+        "UPDATE agents SET conversation_id = 'conv-supervisor' WHERE agent_key = ?",
+        (supervisor_agent_key(item.id),),
     )
-    tmp_db.execute("UPDATE tickets SET stage = 'dropped' WHERE id = ?", (dropped,))
-    add_day_ticket(tmp_db, "day_2026-07-04", on_today, 10)
+    conversations = InMemoryConversationSystem()
 
-    board = board_view(tmp_db, day_id="day_2026-07-04")
+    async def start_turn() -> None:
+        await conversations.start_conversation(
+            ConversationStartRequest(conversation_id="conv-supervisor", model="a-model")
+        )
+        await conversations.send(
+            "conv-supervisor", text_message_content("look at this"), sender_label="user"
+        )
 
-    # Three live Tickets belong to the Item; only one of them is on today.
+    asyncio.run(start_turn())
+
+    board = _enriched_board(tmp_db, conversations)
+
+    # An Item is a row like a card: the same three signals, read the same way.
     assert board["sprint_items"] == [
         {
             "id": item.id,
-            "project": "Vylo",
             "created_at": item.created_at,
-            "done_ticket_count": 1,
-            "total_ticket_count": 3,
+            "conversation_id": "conv-supervisor",
+            "agent_working": True,
+            "needs_me": False,
+            "latest_turn_ended_sequence": 0,
         }
     ]
 
