@@ -28,7 +28,7 @@ describe("Ticket status groups", () => {
       "Agent",
       "Blocked",
       "Waiting for closeout",
-      "Not started",
+      "Empty",
       "Done"
     ]);
     expect(

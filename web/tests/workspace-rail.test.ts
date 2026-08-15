@@ -104,7 +104,7 @@ describe("Workspace rail", () => {
 
     expect(groups.map((group) => group.label)).toEqual([
       "Errored",
-      "Needs user",
+      "Needs you",
       "User",
       "Paired",
       "Agent",

@@ -5,10 +5,10 @@ import { sprintTicketCondition, type TicketConditionFacts } from "./sprintPresen
 // names and counts it, and arrives with it collapsed.
 //
 // The workspace rail groups by raw `ticket_status` and holds its own order in
-// `workspaceRail.ts`. These were meant to be one rule. They are not, because the two
-// screens were designed apart and each design was approved on its own terms: this page
-// reads a Ticket's condition, the rail reads its status. Anyone unifying them is
-// changing an approved design on one screen or the other, so do it deliberately.
+// `workspaceRail.ts`. The two screens split a Ticket up differently, but they call the
+// same thing by the same name: a group here and a group there that hold the same
+// Tickets carry one label, and `GROUP_LABELS` in the rail is where the other half of
+// each pair lives. A label changed on one side is changed on both.
 export type TicketStatusGroupDefinition = {
   key: string;
   label: string;
@@ -23,7 +23,7 @@ export const TICKET_STATUS_GROUPS: readonly TicketStatusGroupDefinition[] = [
   { key: "current-running", label: "Agent", quiet: true },
   { key: "errored", label: "Blocked", quiet: true },
   { key: "current-waiting", label: "Waiting for closeout", quiet: true },
-  { key: "upcoming", label: "Not started", quiet: true },
+  { key: "upcoming", label: "Empty", quiet: true },
   { key: "completed", label: "Done", quiet: true }
 ] as const;
 

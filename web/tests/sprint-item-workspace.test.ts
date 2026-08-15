@@ -109,7 +109,7 @@ describe("Sprint Item workspace presentation", () => {
     ).toEqual([["Awaiting approval", ["t_parked_one", "t_parked_two"]]]);
   });
 
-  it("labels a not-yet-started Ticket with the word the rail uses", () => {
+  it("labels a resting Ticket with the word the rail uses", () => {
     const value = workspace();
     const upcoming = { ...value.tickets[0], id: "t_upcoming", ticket_status: "empty", has_pending_proposal: false };
     expect(
@@ -118,7 +118,7 @@ describe("Sprint Item workspace presentation", () => {
         today_ticket_ids: ["t_upcoming"],
         tickets: [upcoming]
       }).map((group) => group.label)
-    ).toEqual(["Not started"]);
+    ).toEqual(["Empty"]);
     // The same Ticket off the Day reads identically in Remaining.
     expect(
       remainingWorkspaceTicketGroups({
@@ -126,10 +126,10 @@ describe("Sprint Item workspace presentation", () => {
         today_ticket_ids: [],
         tickets: [upcoming]
       }).map((group) => group.label)
-    ).toEqual(["Not started"]);
+    ).toEqual(["Empty"]);
   });
 
-  it("labels a closeout-ready Ticket as waiting for closeout, not Not started", () => {
+  it("labels a closeout-ready Ticket as waiting for closeout, not Empty", () => {
     const value = workspace();
     const readyForCloseout = {
       ...value.tickets[0],

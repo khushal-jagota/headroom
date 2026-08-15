@@ -257,7 +257,7 @@ assert.doesNotMatch(appCssSource, /board-workspace-project-filter/);
 assert.match(ticketStatusGroupsSource, /import \{ sprintTicketCondition/);
 assert.match(
   ticketStatusGroupsSource,
-  /"needs-me", label: "Needs you", quiet: false[\s\S]*"waiting-for-kickoff", label: "Waiting for kickoff", quiet: false[\s\S]*"current-awaiting-approval", label: "Awaiting approval", quiet: false[\s\S]*"current-paired", label: "Paired", quiet: false[\s\S]*"current-running", label: "Agent", quiet: true[\s\S]*"errored", label: "Blocked", quiet: true[\s\S]*"current-waiting", label: "Waiting for closeout", quiet: true[\s\S]*"upcoming", label: "Not started", quiet: true[\s\S]*"completed", label: "Done", quiet: true/,
+  /"needs-me", label: "Needs you", quiet: false[\s\S]*"waiting-for-kickoff", label: "Waiting for kickoff", quiet: false[\s\S]*"current-awaiting-approval", label: "Awaiting approval", quiet: false[\s\S]*"current-paired", label: "Paired", quiet: false[\s\S]*"current-running", label: "Agent", quiet: true[\s\S]*"errored", label: "Blocked", quiet: true[\s\S]*"current-waiting", label: "Waiting for closeout", quiet: true[\s\S]*"upcoming", label: "Empty", quiet: true[\s\S]*"completed", label: "Done", quiet: true/,
 );
 assert.doesNotMatch(sprintItemWorkspaceSource, /workspaceRail/);
 

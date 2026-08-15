@@ -28,6 +28,7 @@ const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set([
 ]);
 
 const GROUP_LABELS: Readonly<Record<string, string>> = {
+  needs_user: "Needs you",
   waiting_to_closeout: "Waiting to Closeout",
   waiting_for_kickoff: "Waiting for Kickoff"
 };

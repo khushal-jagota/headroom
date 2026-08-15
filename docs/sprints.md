@@ -65,14 +65,14 @@ which keeps off-today and done work visible without competing with today. Both i
 sections arrive shut.
 
 Every status is its own dropdown. Needs you, Waiting for kickoff, Awaiting approval and
-Paired arrive open. Agent, Blocked, Waiting for closeout, Not started and Done arrive
-shut, still named and counted. Open shows a chevron, shut shows the count, on statuses
-and sections alike.
+Paired arrive open. Agent, Blocked, Waiting for closeout, Empty and Done arrive shut,
+still named and counted. Open shows a chevron, shut shows the count, on statuses and
+sections alike.
 
-This page names a Ticket by its condition. The Workspace rail names it by its raw
-status, in its own order. So the two screens use different words for neighbouring
-groups — this page says Not started where the rail says Empty. Each follows its own
-approved design, and unifying them means changing one of those designs.
+This page splits a Ticket by its condition and the Workspace rail splits it by its raw
+status, so the two screens do not draw the same set of groups. They do use the same
+words: a group here and a group there that hold the same Tickets carry one label. Rename
+one and rename both.
 
 A Ticket row is its condition mark and its title. Priority is stated once, in the
 identity above, not on every row. Ticket rows link to the canonical Ticket page for all

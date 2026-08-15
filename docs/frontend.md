@@ -28,7 +28,7 @@ One screen per part of the system:
   over the same tickets: **Tickets** or **Sprint Items**.
 
   The Tickets view is every ticket on today, in a box per status group, in one order:
-  Errored, Needs user, User, Paired, Agent, Waiting to Closeout, Awaiting approval,
+  Errored, Needs you, User, Paired, Agent, Waiting to Closeout, Awaiting approval,
   Waiting for Kickoff, Empty, Blocked, Done. Every parked proposal sits under Awaiting
   approval, because there is one approval gate; a proposal still gated on its kickoff
   splits out into its own group. A shut box shows how many tickets it holds. Waiting for
