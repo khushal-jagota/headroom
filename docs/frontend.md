@@ -48,10 +48,14 @@ One screen per part of the system:
   ordered by priority and then by age, so an Item holds its place while its tickets move
   under it.
 
-  Hovering a row or an Item box changes its background and nothing else. A selected
-  ticket carries its own mark — a raised surface and a bright edge down its left side —
-  so it reads as selected next to a resting row and a hovered one. Selecting a row moves
-  nothing on the screen.
+  Hovering a row or an Item box changes its background and nothing else. Selection is a
+  background too — the same language the rest of the app uses for a selected thing — and
+  it moves the other way: hover lifts a row off the rail, selection sinks it into one, so
+  the two never read as more and less of the same state. A selected Item is a lifted
+  surface and nothing more; its edge is the same hairline it always had. A selected
+  ticket takes the larger step of the two, so a selected row inside a selected Item is
+  still the strongest thing in the rail. Nothing but colour changes, so selecting
+  anything moves nothing on the screen.
 
   Selection in the rail is exclusive: what the workspace beside it is showing is the one
   thing that looks selected, and nothing else does. Opening a ticket from inside an Item,

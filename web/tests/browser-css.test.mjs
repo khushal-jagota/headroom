@@ -162,7 +162,9 @@ def assert_brand(browser, mobile):
         assert pending["backgroundColor"] == "rgb(34, 42, 56)"
         assert pending["color"] == "rgb(220, 230, 248)"
         assert pending["borderColor"] == "rgb(154, 173, 210)"
-        assert colors(page, ".ticket-row--active")["backgroundColor"] == "rgb(36, 33, 27)"
+        # Selection is a neutral surface, never the accent: the accent means "needs the
+        # human", not "you clicked this".
+        assert colors(page, ".ticket-row--active")["backgroundColor"] == "rgb(20, 18, 16)"
         assert colors(page, ".stage-mark--current-waiting")["borderColor"] == "rgb(154, 173, 210)"
         assert colors(page, ".stage-mark--completed")["backgroundColor"] == "rgb(127, 165, 100)"
         assert colors(page, ".stage-mark--errored")["backgroundColor"] == "rgb(216, 93, 93)"
@@ -464,6 +466,9 @@ def assert_row_states(browser):
             <section class="board-workspace-item" id="box">
               <span class="board-workspace-item-title">Sprint Item</span>
             </section>
+            <section class="board-workspace-item board-workspace-item--selected" id="boxpicked">
+              <span class="board-workspace-item-title">Selected Sprint Item</span>
+            </section>
           </section>
           <details class="sprint-workspace-section" id="section">
             <summary>
@@ -485,21 +490,22 @@ def assert_row_states(browser):
         page.wait_for_timeout(300)
         hovered = colors(page, "#hovered")
         picked = colors(page, "#picked")
-        edge = page.eval_on_selector(
-            "#picked", "el => getComputedStyle(el).boxShadow"
-        )
-        resting_edge = page.eval_on_selector(
-            "#resting", "el => getComputedStyle(el).boxShadow"
-        )
-        # A hovered row lifts its background only, and a selected row is neither the
-        # resting row nor the hovered one.
+        # Hover and selection are both backgrounds, and they move in opposite
+        # directions: hover lifts the row off the rail, selection sinks it into one. So a
+        # selected row is neither a resting row nor a hovered one, and nothing but the
+        # colour is doing the work — no edge, no border, nothing that could move a row.
         assert hovered["backgroundColor"] == "rgb(38, 34, 28)", hovered
-        assert picked["backgroundColor"] == "rgb(36, 33, 27)", picked
+        assert picked["backgroundColor"] == "rgb(20, 18, 16)", picked
         assert picked["backgroundColor"] != hovered["backgroundColor"]
         assert picked["color"] == "rgb(244, 241, 234)", picked
-        assert "rgb(244, 241, 234) 2px 0px 0px 0px inset" == edge, edge
-        assert "rgba(0, 0, 0, 0) 2px 0px 0px 0px inset" == resting_edge, resting_edge
         assert resting["backgroundColor"] == "rgba(0, 0, 0, 0)", resting
+        for name in ("#resting", "#hovered", "#picked"):
+            shadow = page.eval_on_selector(name, "el => getComputedStyle(el).boxShadow")
+            assert shadow == "none", (name, shadow)
+            width = page.eval_on_selector(
+                name, "el => getComputedStyle(el).borderTopWidth"
+            )
+            assert width == "0px", (name, width)
 
         # The Sprint Item box: hover changes the background and never the border, and
         # the title does not change colour under the pointer.
@@ -514,6 +520,46 @@ def assert_row_states(browser):
         assert box_hover["borderColor"] == box_rest["borderColor"], (box_rest, box_hover)
         assert box_hover["backgroundColor"] != box_rest["backgroundColor"]
         assert title_hover["color"] == title_rest["color"], (title_rest, title_hover)
+
+        # A selected Item is a background too, and only that: its hairline is the same
+        # colour and width as an unselected one, so no edge appears when it is picked.
+        box_picked = colors(page, "#boxpicked")
+        assert box_picked["backgroundColor"] == "rgb(36, 33, 27)", box_picked
+        assert box_picked["backgroundColor"] != box_rest["backgroundColor"]
+        assert box_picked["borderColor"] == box_rest["borderColor"], (
+            box_rest,
+            box_picked,
+        )
+        for prop in ("borderTopWidth", "boxShadow", "outlineStyle"):
+            same = page.evaluate(
+                """prop => getComputedStyle(document.querySelector('#boxpicked'))[prop]
+                   === getComputedStyle(document.querySelector('#box'))[prop]""",
+                prop,
+            )
+            assert same, prop
+        # Selection is a background at two strengths. The Item's is a step off the rail
+        # it sits on; the row's is a larger step off the Item, so a selected row inside a
+        # selected Item is still the strongest thing on the screen.
+        rail = page.evaluate(
+            """() => {
+              const raw = getComputedStyle(document.documentElement)
+                .getPropertyValue('--surface-base').trim();
+              const probe = document.createElement('span');
+              probe.style.color = raw;
+              document.body.append(probe);
+              const read = getComputedStyle(probe).color;
+              probe.remove();
+              return read;
+            }"""
+        )
+
+        def level(value):
+            return sum(int(part) for part in value[value.index("(") + 1:-1].split(",")[:3])
+
+        item_step = abs(level(box_picked["backgroundColor"]) - level(rail))
+        row_step = abs(level(picked["backgroundColor"]) - level(box_picked["backgroundColor"]))
+        assert item_step > 0, (rail, box_picked)
+        assert row_step > item_step, (item_step, row_step)
 
         # Opening a section swaps the count for the chevron. The summary must measure
         # the same either way, or every open and shut moves the rest of the page.

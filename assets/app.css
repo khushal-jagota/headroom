@@ -3422,8 +3422,8 @@ select {
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-md);
   background: transparent;
-  /* Hover moves the background and nothing else. The border is the selection mark, so
-   * it must not animate under a pointer that is only passing over. */
+  /* Hover moves the background and nothing else. The hairline is the box's own edge,
+   * not a state, so it never changes — not on hover and not on selection. */
   transition: background var(--motion-fast) var(--motion-ease);
 }
 
@@ -3435,10 +3435,13 @@ select {
   background: var(--surface-overlay);
 }
 
+/* A selected Item is a background and nothing else — the same language as every other
+ * selected thing in the app. Its hairline never changes, so no edge appears or moves
+ * under a pointer that is only passing over. Hover would otherwise sit one step above
+ * selection, so a selected Item holds its own surface while hovered. */
 .board-workspace-item--selected,
 .board-workspace-item--selected:hover {
   background: var(--surface-raised);
-  border-color: var(--text-faintest);
 }
 
 /* The head is still a real button, so the box stays reachable from the keyboard. */
@@ -3513,11 +3516,11 @@ select {
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  /* The row reserves its selection edge at rest and pulls back by the same step, so
-   * the title sits where it always did and selecting a row moves nothing. */
+  /* The row's background reaches one step past its title on the left and the row pulls
+   * back by the same step, so a hovered or selected row is a shape around the title
+   * rather than a stripe starting at it, and the title sits where it always did. */
   padding: var(--space-2) 0 var(--space-2) var(--space-2);
   margin-left: calc(var(--space-2) * -1);
-  box-shadow: inset var(--border-strong) 0 0 transparent;
   text-align: left;
   text-decoration: none;
   font-size: var(--type-sm);
@@ -3547,16 +3550,17 @@ select {
   color: var(--text-faintest);
 }
 
-/* Selection is not a hover that stayed. The row carries its own mark — the raised
- * surface and a bright edge drawn inside it, so the selected row is unmistakable
- * against both a resting row and a hovered one, and nothing moves when it is picked.
- * It sits after the status colours, because a selected row reads as selected whatever
- * its status. The one accent stays reserved for "needs the human". */
+/* Selection is a background, like every other selected thing in the app, and it is the
+ * larger move: hover lifts the row off the rail, selection sinks it into one. They read
+ * as different states rather than as more and less of the same one, and inside a
+ * selected Item — which is itself lifted — the sunken row is the strongest step on the
+ * screen. Nothing but the colour changes, so picking a row moves nothing. It sits after
+ * the status colours, because a selected row reads as selected whatever its status. The
+ * one accent stays reserved for "needs the human". */
 .ticket-row--active,
 .ticket-row--active:hover {
-  background: var(--surface-raised);
+  background: var(--surface-sunken);
   color: var(--text-strong);
-  box-shadow: inset var(--border-strong) 0 0 var(--text-strong);
 }
 
 .ticket-row-title {
