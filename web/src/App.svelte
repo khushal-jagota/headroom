@@ -4,9 +4,11 @@
   import { queries } from "./lib/queryCatalogue";
   import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
   import {
+    impliedWorkspaceView,
     parseWorkspaceAddress,
     workspaceAddress,
-    workspaceSelectionKey
+    type WorkspaceAddress,
+    type WorkspaceSelection
   } from "./lib/workspaceAddress";
   import BacklogRoute from "./routes/BacklogRoute.svelte";
   import BackendsRoute from "./routes/BackendsRoute.svelte";
@@ -28,6 +30,9 @@
     name: string;
     params: Record<string, string>;
     key: string;
+    // The Workspace screen reads its whole selection from here. Its key never carries
+    // the address, so moving around the Workspace does not remount the screen.
+    workspace?: WorkspaceAddress;
   };
 
   const review = createQuery(() => queries.review());
@@ -35,6 +40,15 @@
   let moreOpen = $state(false);
   let moreMenuElement = $state<HTMLDivElement | null>(null);
   let moreButtonElement = $state<HTMLButtonElement | null>(null);
+
+  function workspaceRoute(address: WorkspaceAddress): Route {
+    return { name: "workspace", params: {}, key: "workspace", workspace: address };
+  }
+
+  function redirectToWorkspace(selection: WorkspaceSelection): Route {
+    window.location.replace(workspaceAddress(selection));
+    return workspaceRoute({ selection, view: impliedWorkspaceView(selection) });
+  }
 
   function decodeRouteSegment(segment: string): string {
     try {
@@ -58,32 +72,21 @@
     const segments = path.split("/").filter(Boolean);
     const name = segments[0] || "day";
     const params: Record<string, string> = {};
+    if (name === "board") {
+      return redirectToWorkspace({ kind: "none" });
+    }
     if (name === "chief") {
-      window.location.replace("#/workspace/chief-of-staff");
-      return {
-        name: "workspace",
-        params: { id: "chief-of-staff" },
-        key: "workspace/chief-of-staff"
-      };
+      return redirectToWorkspace({ kind: "chief" });
     }
     if (name === "ticket" && segments[1]) {
-      const id = decodeRouteSegment(segments[1]);
-      const address = workspaceAddress({ kind: "ticket", id });
-      window.location.replace(address);
-      return {
-        name: "workspace",
-        params: { id },
-        key: workspaceSelectionKey({ kind: "ticket", id })
-      };
+      return redirectToWorkspace({ kind: "ticket", id: decodeRouteSegment(segments[1]) });
     }
     if (name === "workspace") {
-      const selection = parseWorkspaceAddress(hash);
-      if (selection === null) {
+      const address = parseWorkspaceAddress(hash);
+      if (address === null) {
         return { name: "unknown", params: {}, key: "unknown" };
       }
-      if (selection.kind === "chief") params.id = "chief-of-staff";
-      if (selection.kind === "ticket") params.id = selection.id;
-      if (selection.kind === "item") params.item = selection.id;
+      return workspaceRoute(address);
     }
     if (name === "workers") {
       const legacyDetail = segments[1]
@@ -100,12 +103,7 @@
     }
     if (name === "agents") {
       if (segments[1] === "chief-of-staff" && segments.length === 2) {
-        window.location.replace("#/workspace/chief-of-staff");
-        return {
-          name: "workspace",
-          params: { id: "chief-of-staff" },
-          key: "workspace/chief-of-staff"
-        };
+        return redirectToWorkspace({ kind: "chief" });
       } else if (segments[1] === "worker-skill" && segments.length === 2) {
         window.location.replace("#/config/worker-skill");
         return {
@@ -122,8 +120,7 @@
           key: `config/workers/${segments[2]}`
         };
       } else if (segments.length === 1) {
-        window.location.replace("#/workspace");
-        return { name: "workspace", params: {}, key: "workspace" };
+        return redirectToWorkspace({ kind: "none" });
       } else {
         return { name: "unknown", params: {}, key: "unknown" };
       }
@@ -168,15 +165,12 @@
     if (name === "sprint" && search.has("item")) {
       params.item = search.get("item") || "";
     }
-    const screenKey =
-      name === "workspace" || name === "board"
-        ? "workspace"
-        : segments.join("/") || "day";
+    const screenKey = segments.join("/") || "day";
     return { name, params, key: query ? `${screenKey}${query}` : screenKey };
   }
 
   function currentNav(name: string): boolean {
-    if (name === "workspace") return route.name === "workspace" || route.name === "board";
+    if (name === "workspace") return route.name === "workspace";
     return route.name === name;
   }
 
@@ -194,7 +188,6 @@
       "day",
       "review",
       "workspace",
-      "board",
       "backlog",
       "ideas",
       "scheduled-tasks",
@@ -209,7 +202,7 @@
   }
 
   function screenTitle(): string {
-    if (route.name === "board" || route.name === "workspace") return "Workspace";
+    if (route.name === "workspace") return "Workspace";
     if (route.name === "day") return "Home";
     return `${route.name.charAt(0).toUpperCase()}${route.name.slice(1)}`;
   }
@@ -345,8 +338,8 @@
             <DayRoute />
           {:else if route.name === "review"}
             <ReviewRoute />
-          {:else if route.name === "workspace" || route.name === "board"}
-            <BoardRoute ticketId={route.params.id} itemId={route.params.item} />
+          {:else if route.name === "workspace" && route.workspace}
+            <BoardRoute address={route.workspace} />
           {:else if route.name === "sprint"}
             <SprintRoute sub={route.params.sub || "tracking"} selectedItemId={route.params.item || null} />
           {:else if route.name === "backlog"}

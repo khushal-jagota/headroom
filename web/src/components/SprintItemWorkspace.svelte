@@ -135,7 +135,7 @@
           <a
             class="ticket-row"
             class:ticket-row--quiet={ticket.stage === "done"}
-            href={workspaceAddress({ kind: "ticket", id: ticket.id })}
+            href={workspaceAddress({ kind: "ticket", id: ticket.id, openedFromItemId: itemId })}
             data-sprint-ticket-id={ticket.id}
             data-ticket-state={condition.mark}
           >

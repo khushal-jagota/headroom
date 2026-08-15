@@ -5,6 +5,10 @@ import {
   workspaceCardGroupKey,
   workspaceGroups
 } from "../src/lib/workspaceRail";
+import {
+  parseWorkspaceAddress,
+  whatTheAddressOpens
+} from "../src/lib/workspaceAddress";
 import type { BoardCard, BoardSprintItem } from "../src/lib/types";
 import { boardCard as card } from "./boardCardFixture";
 
@@ -215,5 +219,91 @@ describe("Workspace rail", () => {
     // group, so the box has nothing to count and says nothing.
     expect(rail.items[0].title).toBe("Finished outcome");
     expect(rail.items[0].groups).toEqual([]);
+  });
+});
+
+describe("What the rail draws open", () => {
+  function opensAt(hash: string) {
+    const address = parseWorkspaceAddress(hash);
+    if (!address) throw new Error(`not a Workspace address: ${hash}`);
+    return whatTheAddressOpens(address);
+  }
+
+  it("opens no Item for the Chief of Staff", () => {
+    expect(opensAt("#/workspace/chief-of-staff")).toEqual({
+      view: "tickets",
+      openItemId: null,
+      markedItemId: null,
+      markedTicketId: null,
+      chiefMarked: true
+    });
+    // The Chief is still the Chief while the rail shows the Sprint Items list.
+    expect(opensAt("#/workspace/chief-of-staff?view=items").openItemId).toBeNull();
+  });
+
+  it("opens no Item for a Ticket picked out of the Tickets list", () => {
+    expect(opensAt("#/workspace/t_one")).toEqual({
+      view: "tickets",
+      openItemId: null,
+      markedItemId: null,
+      markedTicketId: "t_one",
+      chiefMarked: false
+    });
+  });
+
+  it("opens the Item a Ticket was opened from, and marks the Ticket", () => {
+    expect(opensAt("#/workspace/item/si_one/t_one")).toEqual({
+      view: "items",
+      openItemId: "si_one",
+      markedItemId: null,
+      markedTicketId: "t_one",
+      chiefMarked: false
+    });
+  });
+
+  it("marks the Item itself when the Item is what the address names", () => {
+    expect(opensAt("#/workspace/item/si_one")).toEqual({
+      view: "items",
+      openItemId: "si_one",
+      markedItemId: "si_one",
+      markedTicketId: null,
+      chiefMarked: false
+    });
+  });
+
+  it("opens nothing at the bare Workspace address", () => {
+    expect(opensAt("#/workspace")).toEqual({
+      view: "tickets",
+      openItemId: null,
+      markedItemId: null,
+      markedTicketId: null,
+      chiefMarked: false
+    });
+  });
+
+  it("draws the same thing every time for the same address", () => {
+    const addresses = [
+      "#/workspace",
+      "#/workspace?view=items",
+      "#/workspace/chief-of-staff",
+      "#/workspace/t_one",
+      "#/workspace/item/si_one",
+      "#/workspace/item/si_one/t_one",
+      "#/workspace/item/si_one?view=tickets"
+    ];
+    for (const hash of addresses) {
+      expect(opensAt(hash)).toEqual(opensAt(hash));
+    }
+    // Every address opens at most one Item and marks at most one row, so a reload, a
+    // Back, or a change signal landing underneath cannot move what is open.
+    for (const hash of addresses) {
+      const opening = opensAt(hash);
+      const marked = [
+        opening.markedItemId,
+        opening.markedTicketId,
+        opening.chiefMarked ? "chief" : null
+      ].filter(Boolean);
+      expect(marked.length).toBeLessThanOrEqual(1);
+    }
   });
 });

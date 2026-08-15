@@ -64,10 +64,14 @@ One screen per part of the system:
   still the strongest thing in the rail. Nothing but colour changes, so selecting
   anything moves nothing on the screen.
 
+  What is open in the rail is the address, and nothing else. The Workspace keeps no
+  memory of what you looked at before, so the same address always draws the same rail: on
+  a click, on a reload, on Back, and while a change lands underneath it. Going to the
+  Chief of Staff, or opening a ticket from the Tickets view, leaves no Item open.
   Selection in the rail is exclusive: what the workspace beside it is showing is the one
-  thing that looks selected, and nothing else does. Opening a ticket from inside an Item,
-  or going to the Chief of Staff, takes the mark off the Item at that moment — an Item
-  left open behind them is open, not selected, and being open carries no mark of its own.
+  thing that looks selected, and nothing else does. A ticket opened from inside an Item
+  leaves that Item open around it — the address names the Item as well as the ticket —
+  and the mark moves to the ticket, because being open carries no mark of its own.
 
   The Item title carries a mark for the Item's own supervisor conversation, read exactly
   as a ticket row's mark is read. A ticket without a Sprint Item appears in the Tickets
@@ -103,10 +107,15 @@ One screen per part of the system:
 
   On screens wider than 960px, the right side starts with a quiet invitation. An Item
   title opens the existing Sprint Item workspace at `#/workspace/item/<item-id>`.
-  A Ticket opens the complete Ticket screen at `#/workspace/<ticket-id>`. Both
-  addresses survive refresh, sharing, and browser history. A stale Item selection
-  returns to the unselected Workspace. At 960px or less, an Item workspace or a Ticket
-  replaces the rail, and a link back to the Workspace appears above the Ticket.
+  A Ticket opens the complete Ticket screen at `#/workspace/<ticket-id>`. A Ticket
+  opened from inside an Item, in the rail or in the Item workspace, writes
+  `#/workspace/item/<item-id>/<ticket-id>`, which is how the Item stays open behind it.
+  Which of the two views the rail shows rides along as `?view=tickets` or `?view=items`,
+  and only when the reader asked for the view the selection does not already imply. All
+  of these addresses survive refresh, sharing, and browser history. A stale Item drops
+  out of the address, keeping a Ticket that was open beside it. At 960px or less, an
+  Item workspace or a Ticket replaces the rail, and a link back to the Workspace appears
+  above the Ticket.
 
   A Ticket never opens as a full-screen page. Every Ticket link in the app, including
   the ones on the Sprint page and in Review, uses the Workspace address. The old

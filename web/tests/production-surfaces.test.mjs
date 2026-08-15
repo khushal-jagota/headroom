@@ -325,12 +325,12 @@ assert.match(boardRouteSource, /chevron="trailing"\n\s+defaultOpen\n/);
 assert.doesNotMatch(boardRouteSource, /more|toggleReveal|hiddenWorkspaceCardCount/);
 assert.doesNotMatch(workspaceRailSource, /hidden|workspaceItemGroups/);
 // The two views read the same groups, and the selector is one control over both.
-assert.match(boardRouteSource, /\{@render ticketGroups\(rail\.groups, true, false\)\}/);
-assert.match(boardRouteSource, /\{@render ticketGroups\(item\.groups, false, true\)\}/);
+assert.match(boardRouteSource, /\{@render ticketGroups\(rail\.groups, true, null\)\}/);
+assert.match(boardRouteSource, /\{@render ticketGroups\(item\.groups, false, item\.id\)\}/);
 assert.match(boardRouteSource, /data-workspace-view=\{option\.key\}/);
 // Selection in the rail is exclusive: the address alone says what is selected, so an
 // Item held open behind a Ticket, or behind the Chief of Staff, is not lit as well.
-assert.match(boardRouteSource, /\{@const selected = itemId === item\.id\}/);
+assert.match(boardRouteSource, /\{@const selected = opening\.markedItemId === item\.id\}/);
 assert.match(
   boardRouteSource,
   /class:board-workspace-item--selected=\{selected\}/,
@@ -342,6 +342,6 @@ assert.doesNotMatch(
 // An Item's mark is its own supervisor's conversation, carried by the board.
 assert.match(workspaceRailSource, /conversation_id: summary\?\.conversation_id \?\? null/);
 assert.match(boardRouteSource, /conversationSignalPresentation\(\s*item\.signals/);
-assert.match(boardRouteSource, /<SprintItemWorkspace itemId=\{selectedItem\.id\}/);
+assert.match(boardRouteSource, /<SprintItemWorkspace itemId=\{openItem\.id\}/);
 
 console.log("production-surfaces.test.mjs: all assertions passed");
