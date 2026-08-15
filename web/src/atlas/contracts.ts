@@ -9,8 +9,8 @@ export type AtlasBuilding = {
   district: AtlasDistrict;
   x: number;
   y: number;
-  activeTicketId: string | null;
-  activeTicketTitle: string | null;
+  currentTicketId: string | null;
+  currentTicketTitle: string | null;
   href: string;
   state: "active" | "quiet";
 };
@@ -35,7 +35,7 @@ export type AtlasWorld = {
   buildings: AtlasBuilding[];
   agents: AtlasAgent[];
   alerts: AtlasAlert[];
-  activeJobCount: number;
+  runningWorkerCount: number;
   crewCount: number;
   approvalCount: number;
 };

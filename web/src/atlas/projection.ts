@@ -21,23 +21,22 @@ function ticketCards(inputs: AtlasInputs): BoardCard[] {
   );
 }
 
-function projectBuilding(project: AtlasInputs["projects"][number], cards: BoardCard[], index: number): AtlasBuilding {
+function projectBuilding(project: AtlasInputs["projects"][number], cards: BoardCard[]): AtlasBuilding {
   const projectCards = cards.filter((card) => card.project_id === project.id);
-  const active = projectCards.find((card) => !card.is_done) ?? projectCards[0] ?? null;
-  const slot = BUILDING_SLOTS[index % BUILDING_SLOTS.length];
-  const cycle = Math.floor(index / BUILDING_SLOTS.length);
-  const spread = stableNumber(project.id) % 7;
+  const current = projectCards.find((card) => card.agent_working) ?? projectCards.find((card) => !card.is_done) ?? null;
+  const projectNumber = stableNumber(project.id);
+  const slot = BUILDING_SLOTS[projectNumber % BUILDING_SLOTS.length];
   return {
     id: project.id,
     label: project.name,
     summary: project.summary || "No project summary yet.",
-    district: DISTRICTS[index % DISTRICTS.length],
-    x: Math.min(90, slot[0] + cycle * 6 + spread),
-    y: Math.min(84, slot[1] + cycle * 5),
-    activeTicketId: active ? String(active.id) : null,
-    activeTicketTitle: active ? String(active.title) : null,
-    href: active ? `#/workspace/${encodeURIComponent(String(active.id))}` : "#/backlog",
-    state: active && !active.is_done ? "active" : "quiet"
+    district: DISTRICTS[Math.floor(projectNumber / BUILDING_SLOTS.length) % DISTRICTS.length],
+    x: Math.min(90, slot[0] + ((projectNumber >>> 8) % 7)),
+    y: Math.min(84, slot[1] + ((projectNumber >>> 16) % 7)),
+    currentTicketId: current ? String(current.id) : null,
+    currentTicketTitle: current ? String(current.title) : null,
+    href: current ? `#/workspace/${encodeURIComponent(String(current.id))}` : "#/backlog",
+    state: current?.agent_working ? "active" : "quiet"
   };
 }
 
@@ -45,7 +44,7 @@ export function atlasWorld(inputs: AtlasInputs): AtlasWorld {
   const cards = ticketCards(inputs);
   const buildings = [...inputs.projects]
     .sort((left, right) => left.id.localeCompare(right.id))
-    .map((project, index) => projectBuilding(project, cards, index));
+    .map((project) => projectBuilding(project, cards));
   const agents = [
     {
       id: "chief-of-staff",
@@ -70,12 +69,11 @@ export function atlasWorld(inputs: AtlasInputs): AtlasWorld {
     ticketId: item.ticket_id,
     href: `#/ticket/${encodeURIComponent(item.ticket_id)}`
   }));
-  const activeJobCount = cards.filter((card) => !card.is_done && card.ticket_status !== "empty").length;
   return {
     buildings,
     agents,
     alerts,
-    activeJobCount,
+    runningWorkerCount: inputs.review.running_worker_count,
     crewCount: agents.length,
     approvalCount: alerts.length
   };

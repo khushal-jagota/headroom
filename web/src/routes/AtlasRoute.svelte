@@ -44,7 +44,7 @@
       <header class="atlas-topbar">
         <div class="atlas-brand"><span class="atlas-brand-mark">✦</span><span>Nightshift Atlas</span></div>
         <div class="atlas-counters" aria-label="Atlas status">
-          <span><b>{world.activeJobCount}</b> active jobs</span>
+          <span><b>{world.runningWorkerCount}</b> workers running</span>
           <span><b>{world.crewCount}</b> crew</span>
           <a href="#/review"><b>{world.approvalCount}</b> approvals</a>
           <span><b>Usage</b> unavailable</span>
@@ -85,7 +85,7 @@
                   style={`--building-x:${building.x}%;--building-y:${building.y}%;`}
                   onclick={() => selectBuilding(building)}
                   ondblclick={() => (window.location.hash = building.href)}
-                  aria-label={`${building.label}. ${building.activeTicketTitle || "No active job"}`}
+                  aria-label={`${building.label}. ${building.currentTicketTitle || "No current job"}`}
                 >
                   <span class="atlas-building-roof"></span><span class="atlas-building-wall"></span><span class="atlas-building-name">{building.label}</span>
                 </button>
@@ -115,8 +115,8 @@
             <div class="atlas-detail-kicker">{selectedBuilding.district}</div>
             <h2>{selectedBuilding.label}</h2>
             <p>{selectedBuilding.summary}</p>
-            {#if selectedBuilding.activeTicketTitle}
-              <div class="atlas-detail-job">Active: {selectedBuilding.activeTicketTitle}</div>
+            {#if selectedBuilding.currentTicketTitle}
+              <div class="atlas-detail-job">Current: {selectedBuilding.currentTicketTitle}</div>
             {:else}
               <div class="atlas-detail-job">No active work in this district.</div>
             {/if}
