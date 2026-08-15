@@ -34,8 +34,8 @@ to its own Item.
 At its ceiling a Ticket either stops or proposes, and there is one approval gate — a
 parked proposal waits for the user. Review holds today's parked proposals and explicit
 Worker help requests. When a Sprint Item needs its supervisor, Panels wakes it with a
-single message that carries no facts at all, and the supervisor reads the current state of
-its Item and Tickets itself.
+single message that names each Ticket that moved and what happened to it, and the
+supervisor reads the current state of its Item and Tickets itself.
 
 ## The systems
 
