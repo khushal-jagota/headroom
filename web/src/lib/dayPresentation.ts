@@ -36,7 +36,7 @@ export function dayVisualTicket(
         typeof ticket.conversation_id === "string" ? ticket.conversation_id : null,
       needs_me: Boolean(ticket.needs_me),
       agent_working: Boolean(ticket.agent_working),
-      latest_turn_ended_sequence: Number(ticket.latest_turn_ended_sequence ?? 0)
+      unread_position: Number(ticket.latest_turn_ended_sequence ?? 0)
     },
     replyWatermarks
   );

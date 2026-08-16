@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from planner.notifications.contracts import (
     NOTIFICATION_SUBJECTS,
     NOTIFICATION_TYPE_BY_ID,
+    SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY,
     TICKET_NOTIFICATION_SUBJECT_KEY,
     NotificationFact,
     NotificationIntent,
@@ -192,15 +193,16 @@ def _insert_fact(
     )
     conn.execute(
         "INSERT OR IGNORE INTO notification_facts"
-        "(fact_id, notification_type, subject_kind, ticket_id, agent_key, source_kind, "
-        "source_id, source_sequence, occurred_at, payload) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "(fact_id, notification_type, subject_kind, ticket_id, agent_key, sprint_item_id, "
+        "source_kind, source_id, source_sequence, occurred_at, payload) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             fact_id,
             notification_type,
             subject_kind,
             subject_id if subject_kind == "ticket" else None,
             subject_id if subject_kind == "agent" else None,
+            subject_id if subject_kind == "sprint_item" else None,
             source_kind,
             source_id,
             source_sequence,
@@ -208,6 +210,21 @@ def _insert_fact(
             payload,
         ),
     )
+
+
+def _preference_subject_key(fact: NotificationFact) -> str:
+    """Which saved switch decides this fact.
+
+    Every Ticket shares one switch, and every Sprint Item shares one: a sprint holds
+    twenty or thirty Items and they are replaced each sprint, so a switch per Item would
+    be a screen of rows that die. An agent is its own subject, because there is one of
+    each.
+    """
+    if fact.subject_kind == "ticket":
+        return TICKET_NOTIFICATION_SUBJECT_KEY
+    if fact.subject_kind == "sprint_item":
+        return SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY
+    return fact.subject_id
 
 
 def _ticket_fact_type(status: str) -> str | None:
@@ -258,14 +275,20 @@ def project_facts(conn: sqlite3.Connection) -> int:
                 (str(row["id"]), revision),
             )
 
+        # A Sprint Item supervisor is an agent, but the reader knows it as its Item: the
+        # push says the Item's title and opens the Item. So its conversation's facts take
+        # the Item as their subject, not the agent.
         conversations = conn.execute(
             "SELECT c.conversation_id, c.latest_sequence, "
-            "CASE WHEN t.id IS NOT NULL THEN 'ticket' ELSE 'agent' END AS subject_kind, "
-            "COALESCE(t.id, a.agent_key) AS subject_id, t.title AS ticket_title, "
+            "CASE WHEN t.id IS NOT NULL THEN 'ticket' "
+            "WHEN i.id IS NOT NULL THEN 'sprint_item' ELSE 'agent' END AS subject_kind, "
+            "COALESCE(t.id, i.id, a.agent_key) AS subject_id, "
+            "COALESCE(t.title, i.title) AS subject_title, "
             "pc.sequence AS projected_sequence "
             "FROM conversations c "
             "LEFT JOIN tickets t ON t.conversation_id = c.conversation_id "
             "LEFT JOIN agents a ON a.conversation_id = c.conversation_id "
+            "LEFT JOIN sprint_items i ON i.supervisor_agent_key = a.agent_key "
             "LEFT JOIN notification_projection_cursors pc "
             "ON pc.source_kind = 'conversation' AND pc.source_id = c.conversation_id "
             "WHERE (t.id IS NOT NULL OR a.agent_key IS NOT NULL) "
@@ -276,8 +299,8 @@ def project_facts(conn: sqlite3.Connection) -> int:
             subject_kind = cast(NotificationSubjectKind, str(conversation["subject_kind"]))
             subject_id = str(conversation["subject_id"])
             subject_label = (
-                str(conversation["ticket_title"])
-                if subject_kind == "ticket"
+                str(conversation["subject_title"])
+                if subject_kind in {"ticket", "sprint_item"}
                 else _agent_label(subject_id)
             )
             after = (
@@ -322,6 +345,38 @@ def project_facts(conn: sqlite3.Connection) -> int:
                 "ON CONFLICT(source_kind, source_id) DO UPDATE SET sequence = excluded.sequence",
                 (conversation_id, int(conversation["latest_sequence"])),
             )
+
+        # A ping is the supervisor's own deliberate act, so the Item is its source, and
+        # the stored ping position is its sequence. A second ping at the same position
+        # is the same fact.
+        pings = conn.execute(
+            "SELECT i.id, i.title, i.supervisor_ping_sequence, i.supervisor_ping_at "
+            "FROM sprint_items i LEFT JOIN notification_projection_cursors c "
+            "ON c.source_kind = 'sprint_item_ping' AND c.source_id = i.id "
+            "WHERE i.supervisor_ping_sequence IS NOT NULL "
+            "AND (c.source_id IS NULL OR i.supervisor_ping_sequence > c.sequence)"
+        ).fetchall()
+        for ping in pings:
+            item_id = str(ping["id"])
+            sequence = int(ping["supervisor_ping_sequence"])
+            _insert_fact(
+                conn,
+                fact_id=f"sprint_item_ping:{item_id}:{sequence}",
+                notification_type="sprint_item_ping",
+                subject_kind="sprint_item",
+                subject_id=item_id,
+                subject_label=str(ping["title"]),
+                source_kind="sprint_item_ping",
+                source_id=item_id,
+                source_sequence=sequence,
+                occurred_at=int(ping["supervisor_ping_at"]),
+            )
+            conn.execute(
+                "INSERT INTO notification_projection_cursors(source_kind, source_id, sequence) "
+                "VALUES ('sprint_item_ping', ?, ?) "
+                "ON CONFLICT(source_kind, source_id) DO UPDATE SET sequence = excluded.sequence",
+                (item_id, sequence),
+            )
     return conn.total_changes - inserted_before
 
 
@@ -332,7 +387,7 @@ def apply_policy(conn: sqlite3.Connection, now: int) -> int:
         preferences = resolved_preferences(conn)
         rows = conn.execute(
             "SELECT f.fact_id, f.notification_type, f.subject_kind, "
-            "COALESCE(f.ticket_id, f.agent_key) AS subject_id, "
+            "COALESCE(f.ticket_id, f.agent_key, f.sprint_item_id) AS subject_id, "
             "f.occurred_at, f.payload "
             "FROM notification_facts f LEFT JOIN notification_decisions d "
             "ON d.fact_id = f.fact_id WHERE d.fact_id IS NULL "
@@ -353,11 +408,7 @@ def apply_policy(conn: sqlite3.Connection, now: int) -> int:
                 ),
                 occurred_at=int(row["occurred_at"]),
             )
-            subject_key = (
-                TICKET_NOTIFICATION_SUBJECT_KEY
-                if fact.subject_kind == "ticket"
-                else fact.subject_id
-            )
+            subject_key = _preference_subject_key(fact)
             intent = decide_notification(
                 fact,
                 enabled=preferences.get((subject_key, fact.notification_type), False),

@@ -52,6 +52,8 @@ const KIND_BY_EXTENSION = new Map<string, FilePreviewKind>([
 ]);
 const KINDS_RENDERED_FROM_URL = new Set<FilePreviewKind>(["image", "video", "audio"]);
 const TICKET_ID_RE = /^t_[a-z0-9]+$/;
+const TICKET_DEV_SERVER_PREFIX = "/dev/tickets/";
+const PORT_RE = /^[0-9]{1,5}$/;
 const RESIDUAL_UNSAFE_RE = /%(?:25|2e|2f|5c)/i;
 const MAX_MARKDOWN_EMBED_DEPTH = 2;
 
@@ -183,13 +185,39 @@ function sprintItemFileTargetFromHref(href: string): FilePreviewTarget | null {
   return sprintItemFileTarget(parts.entityId, parts.path);
 }
 
-function managedHrefParts(href: string, prefix: string): { entityId: string; path: string } | null {
+/**
+ * Recognize the Ticket-scoped address Panels proxies to a live dev server, so a
+ * recorded preview link is claimed like the managed-file links it sits beside. The
+ * address is a Panels route, not a file, so it stays an ordinary external target.
+ */
+export function isTicketDevServerHref(href: string): boolean {
+  if (!isSameOriginHref(href)) return false;
+  const pathname = rawPathnameFromHref(href);
+  if (!pathname.startsWith(TICKET_DEV_SERVER_PREFIX)) return false;
+  const [ticketSegment, portSegment] = pathname
+    .slice(TICKET_DEV_SERVER_PREFIX.length)
+    .split("/", 2);
+  if (portSegment === undefined || !PORT_RE.test(portSegment)) return false;
+  const port = Number(portSegment);
+  if (port < 1 || port > 65_535) return false;
+  try {
+    return TICKET_ID_RE.test(decodeURIComponent(ticketSegment));
+  } catch {
+    return false;
+  }
+}
+
+function isSameOriginHref(href: string): boolean {
   const localOrigin = typeof window === "undefined" ? "http://planner.local" : window.location.origin;
   try {
-    if (new URL(href, localOrigin).origin !== localOrigin) return null;
+    return new URL(href, localOrigin).origin === localOrigin;
   } catch {
-    return null;
+    return false;
   }
+}
+
+function managedHrefParts(href: string, prefix: string): { entityId: string; path: string } | null {
+  if (!isSameOriginHref(href)) return null;
   const pathname = rawPathnameFromHref(href);
   if (!pathname.startsWith(prefix)) return null;
   const rest = pathname.slice(prefix.length);

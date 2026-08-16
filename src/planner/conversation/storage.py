@@ -207,6 +207,12 @@ class ConversationStore:
             self._read_events_after_sync, conversation_id, after_sequence
         )
 
+    async def read_event(
+        self, conversation_id: str, sequence: int
+    ) -> StoredConversationEvent | None:
+        """One row of this conversation's record, by the position it was written at."""
+        return await asyncio.to_thread(self._read_event_sync, conversation_id, sequence)
+
     async def sender_message_outcome(
         self, conversation_id: str, sender_message_id: str
     ) -> StoredConversationEvent | None:
@@ -440,6 +446,20 @@ class ConversationStore:
         finally:
             conn.close()
         return tuple(_stored_event(row) for row in rows)
+
+    def _read_event_sync(
+        self, conversation_id: str, sequence: int
+    ) -> StoredConversationEvent | None:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT conversation_id, sequence, kind, payload, created_at "
+                "FROM conversation_events WHERE conversation_id = ? AND sequence = ?",
+                (conversation_id, sequence),
+            ).fetchone()
+        finally:
+            conn.close()
+        return None if row is None else _stored_event(row)
 
     def _sender_message_outcome_sync(
         self, conversation_id: str, sender_message_id: str

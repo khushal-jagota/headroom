@@ -428,13 +428,13 @@ def test_notification_settings_api_serves_catalogue_and_persists_choice(
         assert [subject["key"] for subject in payload["subjects"]] == [
             "tickets",
             "chief_of_staff",
+            "sprint_item_supervisors",
         ]
         types_by_subject = {
             subject["key"]: {item["id"] for item in subject["types"]}
             for subject in payload["subjects"]
         }
-        assert sum(len(subject["types"]) for subject in payload["subjects"]) == 9
-        assert all(item["enabled"] for subject in payload["subjects"] for item in subject["types"])
+        assert sum(len(subject["types"]) for subject in payload["subjects"]) == 11
         assert types_by_subject["tickets"] == {
             "ticket_needs_approval",
             "needs_input",
@@ -448,6 +448,23 @@ def test_notification_settings_api_serves_catalogue_and_persists_choice(
             "worker_completed",
             "worker_failed",
         }
+        # A supervisor completes about three thousand turns a day, so the subject holds
+        # no completed-turn switch. Its failures arrive off, because an upgrade must not
+        # start pushing about thirty failures a day that nobody asked for.
+        assert types_by_subject["sprint_item_supervisors"] == {
+            "sprint_item_ping",
+            "worker_failed",
+        }
+        enabled_by_subject = {
+            subject["key"]: {item["id"]: item["enabled"] for item in subject["types"]}
+            for subject in payload["subjects"]
+        }
+        assert enabled_by_subject["sprint_item_supervisors"] == {
+            "sprint_item_ping": True,
+            "worker_failed": False,
+        }
+        assert all(enabled_by_subject["tickets"].values())
+        assert all(enabled_by_subject["chief_of_staff"].values())
         assert payload["vapid_public_key"]
 
         changed = client.put(

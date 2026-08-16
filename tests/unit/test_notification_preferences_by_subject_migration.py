@@ -11,7 +11,7 @@ from planner.core.db import connect, create_schema
 from planner.notifications import data as notifications_data
 
 PREVIOUS_REVISION = "backend_usage_and_model_enablement"
-HEAD_REVISION = "one_approval_gate"
+HEAD_REVISION = "ticket_wakes_supervisor"
 
 
 def _upgrade_to_previous_revision(path: Path) -> None:
@@ -128,6 +128,8 @@ def test_upgrade_keys_preferences_by_subject_and_preserves_notification_history(
         ("chief_of_staff", "permission_requested", 0, 13),
         ("chief_of_staff", "worker_completed", 1, 14),
         ("chief_of_staff", "worker_failed", 0, 15),
+        # The ping revision seeds this one row: supervisor failures arrive off.
+        ("sprint_item_supervisors", "worker_failed", 0, 0),
         ("tickets", "needs_input", 1, 12),
         ("tickets", "permission_requested", 0, 13),
         ("tickets", "ticket_needs_approval", 0, 11),

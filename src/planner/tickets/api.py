@@ -18,6 +18,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -257,6 +258,13 @@ def body_opt_str(body: JsonDict, key: str) -> str | None:
     return raw
 
 
+def body_bool(body: JsonDict, key: str, default: bool = False) -> bool:
+    raw = body.get(key, default)
+    if not isinstance(raw, bool):
+        raise PlannerError(ErrorCode.validation, f"invalid {key}", {key: raw})
+    return raw
+
+
 def body_str_list(body: JsonDict, key: str) -> list[str]:
     raw = body.get(key, [])
     if not isinstance(raw, list) or any(not isinstance(value, str) for value in raw):
@@ -322,6 +330,7 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         blocked_by_ticket_ids=body_str_list(raw, "blocked_by_ticket_ids"),
         ceiling=body_opt_str(raw, "ceiling"),
         at_cap=body_opt_str(raw, "at_cap"),
+        wakes_supervisor=body_bool(raw, "wakes_supervisor"),
     )
     if "employee_backend" in raw:
         body["employee_backend"] = body_str(raw, "employee_backend")
@@ -548,6 +557,7 @@ async def create_ticket(
         sprint_id_explicit="sprint_id" in raw,
         stated_ceiling=body["ceiling"],
         stated_at_cap=_parse_scope_at_cap(body["at_cap"]),
+        wakes_supervisor=body["wakes_supervisor"],
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -788,6 +798,105 @@ async def _advertised_launch_options(
     )
 
 
+@dataclass(frozen=True)
+class ResolvedEmployeeConfiguration:
+    """A launch configuration that has passed every check a write can make beforehand.
+
+    Holding it as a value is what lets a caller validate at one moment and write at
+    another. The supervisor restart needs exactly that: a configuration it cannot write
+    must be refused before the old conversation is killed, or a bad argument would cost
+    the Ticket its worker and give it nothing back.
+    """
+
+    expected: EmployeeLaunchConfiguration
+    employee_backend: str
+    employee_launch_model: str
+    employee_launch_reasoning_effort: str | None
+    advertised_models: frozenset[str] | None
+    reasoning_supported: bool | None
+    advertised_reasoning_efforts: frozenset[str] | None
+
+
+async def resolve_employee_configuration(
+    request: Request,
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    employee_backend: str,
+    employee_launch_model: str,
+    employee_launch_reasoning_effort: str | None,
+) -> ResolvedEmployeeConfiguration:
+    """Check a launch configuration against the backend registry and its catalog.
+
+    Every check that can be made without writing is made here: the backend is registered,
+    the model is not disabled, and a same-backend change is measured against what that
+    backend advertises. A backend change carries no catalog, for the reason
+    ``normalize_employee_launch_configuration`` gives — the old backend's catalog is the
+    wrong one to ask.
+    """
+    expected = tickets_data.employee_launch_configuration(
+        tickets_data.read_ticket(conn, ticket_id)
+    )
+    registered_backend = require_conversation_backend_key(employee_backend)
+    advertised_models: frozenset[str] | None = None
+    reasoning_supported: bool | None = None
+    advertised_reasoning_efforts: frozenset[str] | None = None
+    candidate = EmployeeLaunchConfiguration(
+        employee_backend=registered_backend,
+        employee_launch_model=employee_launch_model,
+        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
+    )
+    if not model_is_enabled(conn, registered_backend, employee_launch_model):
+        raise PlannerError(
+            ErrorCode.validation,
+            "Employee model is disabled",
+            {
+                "employee_backend": str(registered_backend),
+                "employee_launch_model": employee_launch_model,
+            },
+        )
+    if registered_backend == expected.employee_backend and candidate != expected:
+        advertised_models, advertised_reasoning_efforts = (
+            await _advertised_launch_options(
+                request,
+                registered_backend,
+                employee_launch_model,
+            )
+        )
+        reasoning_supported = len(advertised_reasoning_efforts) > 0
+    return ResolvedEmployeeConfiguration(
+        expected=expected,
+        employee_backend=employee_backend,
+        employee_launch_model=employee_launch_model,
+        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
+        advertised_models=advertised_models,
+        reasoning_supported=reasoning_supported,
+        advertised_reasoning_efforts=advertised_reasoning_efforts,
+    )
+
+
+def write_resolved_employee_configuration(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    resolved: ResolvedEmployeeConfiguration,
+    *,
+    now: int,
+) -> Ticket:
+    """Write a resolved configuration through the one launch-values door."""
+    return tickets_data.write_employee_configuration(
+        conn,
+        ticket_id,
+        expected_employee_configuration=resolved.expected,
+        employee_backend=resolved.employee_backend,
+        employee_launch_model=resolved.employee_launch_model,
+        employee_launch_reasoning_effort=resolved.employee_launch_reasoning_effort,
+        advertised_models=resolved.advertised_models,
+        reasoning_supported=resolved.reasoning_supported,
+        advertised_reasoning_efforts=resolved.advertised_reasoning_efforts,
+        now=now,
+    )
+
+
 @router.get("/tickets/{ticket_id}/worker-self")
 async def get_worker_self_ticket(
     ticket_id: str,
@@ -896,47 +1005,16 @@ async def put_ticket_employee_configuration(
             raw, "employee_launch_reasoning_effort"
         ),
     )
-    expected = tickets_data.employee_launch_configuration(
-        tickets_data.read_ticket(conn, ticket_id)
-    )
-    registered_backend = require_conversation_backend_key(body["employee_backend"])
-    advertised_models: frozenset[str] | None = None
-    reasoning_supported: bool | None = None
-    advertised_reasoning_efforts: frozenset[str] | None = None
-    candidate = EmployeeLaunchConfiguration(
-        employee_backend=registered_backend,
-        employee_launch_model=body["employee_launch_model"],
-        employee_launch_reasoning_effort=body["employee_launch_reasoning_effort"],
-    )
-    if not model_is_enabled(conn, registered_backend, body["employee_launch_model"]):
-        raise PlannerError(
-            ErrorCode.validation,
-            "Employee model is disabled",
-            {
-                "employee_backend": str(registered_backend),
-                "employee_launch_model": body["employee_launch_model"],
-            },
-        )
-    if registered_backend == expected.employee_backend and candidate != expected:
-        advertised_models, advertised_reasoning_efforts = (
-            await _advertised_launch_options(
-                request,
-                registered_backend,
-                body["employee_launch_model"],
-            )
-        )
-        reasoning_supported = len(advertised_reasoning_efforts) > 0
-    ticket = tickets_data.write_employee_configuration(
+    resolved = await resolve_employee_configuration(
+        request,
         conn,
         ticket_id,
-        expected_employee_configuration=expected,
         employee_backend=body["employee_backend"],
         employee_launch_model=body["employee_launch_model"],
         employee_launch_reasoning_effort=body["employee_launch_reasoning_effort"],
-        advertised_models=advertised_models,
-        reasoning_supported=reasoning_supported,
-        advertised_reasoning_efforts=advertised_reasoning_efforts,
-        now=clk.now_unix(),
+    )
+    ticket = write_resolved_employee_configuration(
+        conn, ticket_id, resolved, now=clk.now_unix()
     )
     return _ticket_detail_with_worker_settings(
         conn, ticket.id, clk.now_unix(), get_config(request)
@@ -981,6 +1059,7 @@ async def patch_ticket(
         "title",
         "priority",
         "deadline",
+        "wakes_supervisor",
         "project",
         "project_id",
         "sprint_id",
@@ -1002,6 +1081,8 @@ async def patch_ticket(
         edit["priority"] = parse_enum(Priority, body_str(body, "priority"), "priority")
     if "deadline" in body:
         edit["deadline"] = body_opt_str(body, "deadline")
+    if "wakes_supervisor" in body:
+        edit["wakes_supervisor"] = body_bool(body, "wakes_supervisor")
 
     if "project" in body or "project_id" in body:
         project_raw = body_opt_str(body, "project")
@@ -1679,21 +1760,24 @@ async def add_conversation_row_signals(
     conversation_system: ConversationSystem,
     conversation_record: ConversationStore,
 ) -> JsonDict:
-    """Add the three conversation-owned row signals to every row on the board.
+    """Add the live conversation-owned row signals to every row on the board.
 
-    A row is a card or a Sprint Item. Both carry a ``conversation_id`` and both are
-    marked the same way in the rail, so both are asked the same three questions here.
-    A card's conversation belongs to its Ticket's worker, and an Item's belongs to its
-    own supervisor.
+    A row is a card or a Sprint Item, and both carry a ``conversation_id``. A card's
+    conversation belongs to its Ticket's worker, and an Item's belongs to its own
+    supervisor.
 
-    ``agent_working`` is whether the Ticket's conversation has a turn running right now,
-    and ``needs_me`` is whether that turn is waiting on a permission decision or answers
-    only the owner can give. ``latest_turn_ended_sequence`` is where that conversation
-    last had a turn end — the row's half of the reply mark, which the browser compares
-    against how far the reader has got. None of the three is a tickets-domain fact and
-    all are awaited, so ``board_view`` cannot answer them and they are added here instead.
-    A Ticket with no conversation has no conversation to ask about: the first two read false and the
-    third reads 0, which is before every real position.
+    ``agent_working`` is whether that conversation has a turn running right now, and
+    ``needs_me`` is whether that turn is waiting on a permission decision or answers only
+    the owner can give. Both are asked for every row.
+
+    ``latest_turn_ended_sequence`` is asked for cards alone. It is where the conversation
+    last had a turn end, and it is a card's half of the unread-reply mark. A supervisor
+    ends hundreds of turns a day, almost none of which want anybody, so an Item is marked
+    by its last ping instead, which is a database fact that ``board_view`` already read.
+
+    None of these signals is a tickets-domain fact and all are awaited, so ``board_view``
+    cannot answer them. A row with no conversation has no conversation to ask about, so
+    the first two read false and the third reads 0, which is before every real position.
 
     The record is asked once for the whole board rather than once per row: it is one
     question about a list, and a list is what the board is.
@@ -1701,23 +1785,23 @@ async def add_conversation_row_signals(
     This reads and writes nothing but the payload it was handed — no transaction, no
     connection of its own.
     """
-    rows = [card for column in board["columns"] for card in column["cards"]]
-    rows.extend(board["sprint_items"])
+    cards = [card for column in board["columns"] for card in column["cards"]]
+    rows = [*cards, *board["sprint_items"]]
     latest_turn_ended = await conversation_record.latest_turn_ended_sequences(
         [
             card["conversation_id"]
-            for card in rows
+            for card in cards
             if card["conversation_id"] is not None
         ]
     )
-    for card in rows:
-        conversation_id = card["conversation_id"]
-        card["agent_working"] = (
+    for row in rows:
+        conversation_id = row["conversation_id"]
+        row["agent_working"] = (
             await conversation_system.is_running(conversation_id)
             if conversation_id is not None
             else False
         )
-        card["needs_me"] = (
+        row["needs_me"] = (
             (
                 await conversation_system.has_pending_permission_ask(conversation_id)
                 or await conversation_system.has_pending_user_input(conversation_id)
@@ -1725,6 +1809,8 @@ async def add_conversation_row_signals(
             if conversation_id is not None
             else False
         )
+    for card in cards:
+        conversation_id = card["conversation_id"]
         card["latest_turn_ended_sequence"] = (
             latest_turn_ended.get(conversation_id, 0)
             if conversation_id is not None

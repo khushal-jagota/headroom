@@ -16,13 +16,6 @@ GENERAL_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     stages=(
         StageDefinition("needs_kickoff", "Kickoff", "kickoff", False, StageOwnershipMode.worker),
         StageDefinition(
-            "needs_understanding",
-            "Understanding",
-            "understanding",
-            False,
-            StageOwnershipMode.paired,
-        ),
-        StageDefinition(
             "needs_execution",
             "Execution",
             "execution",
@@ -35,7 +28,6 @@ GENERAL_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     dropped_stage=StageDefinition("dropped", "Dropped", None, True, None),
     fields=(
         FieldDefinition("kickoff", "Kickoff"),
-        FieldDefinition("understanding", "Understanding"),
         FieldDefinition("execution", "Execution"),
         FieldDefinition("closeout", "Closeout"),
     ),

@@ -67,8 +67,8 @@ sections arrive shut.
 Every status is its own dropdown. Errored, Needs you, User, Waiting for kickoff,
 Awaiting approval, Paired and Agent arrive open — a broken run and work running right
 now are what the reader came for. Waiting for closeout, Empty, Blocked and Done arrive
-shut, still named and counted, and they are exactly what the Workspace rail leaves out:
-a group you have to open here is a group the rail does not carry. Open shows a chevron,
+shut, still named and counted. The Workspace rail carries every group as well, and shuts
+its own three, so the two screens shut different lists. Open shows a chevron,
 shut shows the count, on statuses and sections alike, and the two measure the same, so
 opening one moves nothing else on the page. A Ticket waiting on you and a Ticket that is
 yours to do are two groups, here and in the Workspace rail both. So are a Ticket whose
@@ -140,7 +140,7 @@ configuration during migration. The Other section is a view of loose Tickets and
 no supervisor.
 
 The supervisor conversation starts only when it is first needed: a user message, or the
-first wake because the Item needs its supervisor. A reset kills current work and clears
+first wake because a watched Ticket on the Item needs its supervisor. A reset kills current work and clears
 the agent link. Conversation records and message files remain as history. The Sprint Item
 body is the shared brief.
 
@@ -173,10 +173,25 @@ the Sprint Item supervisor agent key as the sender. A missing, reset, stale, or 
 conversation is refused. This message path cannot create a conversation and does not
 change the Ticket Stage, scope, status, or Day membership.
 
+A supervisor reaches the user with a ping. It is one deliberate act, and the supervisor
+takes it when the user must see something. A ping lights that Item in the Workspace and
+sends one notification to every enabled device. The notification names the Item, says
+that it wants the user, and carries no supervisor text: the message itself is already in
+the Item's conversation, one tap away. The mark stays on until the user opens the Item,
+so a second ping while the first is unread changes nothing. Nothing else a supervisor
+does reaches the user, and an ordinary turn of its own lights nothing.
+
 Supervisor wakes are separate from Web Push notifications, and they store nothing. Panels
 asks one read-only question about each Sprint Item — does this Item need its supervisor
 right now, and what should it be told — and it asks only when the change signal says
-something was written. Five things put a Ticket in the answer: it proposed something, it
+something was written.
+
+Only a watched Ticket is in the answer. Whoever creates a Ticket says whether its
+movement wakes the supervisor, and the default is no, so a supervisor hears about the
+Tickets somebody marked and checks the rest itself when asked. The user or the
+supervisor can turn the watch on or off later on a Ticket that is already running.
+
+For a watched Ticket, five things put it in the answer: it proposed something, it
 entered a paired stage, its Worker asked for human help, its Worker's backend failed, or
 it finished. A Ticket only counts once, when it moves.
 

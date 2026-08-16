@@ -6,6 +6,11 @@ document at `/`; the Vite chunks are mounted under `/_app/`. Shared tokens and
 application CSS live in `assets/`. The Markdown pipeline and managed rendering
 lifecycle live under `web/src/lib/`.
 
+Answers travel compressed. The server gzips any response over 1 KB, which matters most
+for a conversation open: the largest thread is 9.4 MB of JSON and goes over the wire as
+1.8 MB. Live event streams are sent frame by frame and are never compressed, because
+holding frames back to compress them is the opposite of what they are for.
+
 ## The screens
 
 One screen per part of the system:
@@ -27,28 +32,25 @@ One screen per part of the system:
   appear. The Chief of Staff row leads, and under it a selector chooses one of two views
   over the same tickets: **Tickets** or **Sprint Items**.
 
-  The rail holds the groups that want the reader, in one order: Errored, Needs you,
-  User, Paired, Agent, Awaiting approval, Waiting for Kickoff. Every parked proposal
-  sits under Awaiting approval, because there is one approval gate; a proposal still
-  gated on its kickoff splits out into its own group. The quiet states — Waiting to
-  Closeout, Empty, Done, and a ticket waiting on another ticket — are not in the rail at
-  all, in either view: they are read on the Sprint Item page, which still lists every
-  group. A ticket whose own run errored is not quiet and does reach the rail, as Errored;
-  the Sprint Item page files it under Blocked with the tickets that are waiting on
-  something. Every group the rail draws arrives open, and nothing hides behind a "+n
-  more". Rows inside a group are ordered by activity, newest first.
+  The rail holds every status group, in one order: Errored, Needs you, User, Paired,
+  Agent, Waiting to Closeout, Awaiting approval, Waiting for Kickoff, Empty, Blocked,
+  Done. Every parked proposal sits under Awaiting approval, because there is one
+  approval gate; a proposal still gated on its kickoff splits out into its own group. A
+  ticket whose own run errored reaches the rail as Errored; the Sprint Item page files
+  it under Blocked with the tickets that are waiting on something. A group with no
+  tickets is not drawn.
 
-  A consequence worth stating plainly: a ticket you have just made, and have not started,
-  is in none of those groups, so the Workspace does not show it. The Sprint Item page,
-  the sprint, and the ticket's own address all still do.
+  Three groups arrive shut: Waiting for Kickoff, Blocked and Done. Every other group
+  arrives open. A shut group is still its own group, with its own name and count, and
+  the reader opens it — nothing hides behind a "+n more", and no status is missing from
+  the rail. Rows inside a group are ordered by activity, newest first.
 
-  The Tickets view is every ticket on today that sits in one of those groups, in a box
-  per group.
+  The Tickets view is every ticket on today, in a box per group.
 
   The Sprint Items view is one box per Sprint Item with a ticket on today. A shut Item
-  shows a line of counts — how many tickets it has in each group; an Item with nothing
-  in those groups shows no line. Clicking anywhere in the box selects the Item and opens
-  its workspace beside the rail. That is all a click on an Item ever does: no click shuts
+  shows a line of counts — how many tickets it has in each group, quiet groups included;
+  an Item with no tickets on today shows no line. Clicking anywhere in the box selects
+  the Item and opens its workspace beside the rail. That is all a click on an Item ever does: no click shuts
   an Item, so a reader inside one of its tickets clicks the Item to come back to it. An
   open Item shows the same status groups nested inside it, without their own boxes.
   Folding one of those groups, or opening a ticket, leaves the Item open. Items are
@@ -64,13 +66,19 @@ One screen per part of the system:
   still the strongest thing in the rail. Nothing but colour changes, so selecting
   anything moves nothing on the screen.
 
+  What is open in the rail is the address, and nothing else. The Workspace keeps no
+  memory of what you looked at before, so the same address always draws the same rail: on
+  a click, on a reload, on Back, and while a change lands underneath it. Going to the
+  Chief of Staff, or opening a ticket from the Tickets view, leaves no Item open.
   Selection in the rail is exclusive: what the workspace beside it is showing is the one
-  thing that looks selected, and nothing else does. Opening a ticket from inside an Item,
-  or going to the Chief of Staff, takes the mark off the Item at that moment — an Item
-  left open behind them is open, not selected, and being open carries no mark of its own.
+  thing that looks selected, and nothing else does. A ticket opened from inside an Item
+  leaves that Item open around it — the address names the Item as well as the ticket —
+  and the mark moves to the ticket, because being open carries no mark of its own.
 
-  The Item title carries a mark for the Item's own supervisor conversation, read exactly
-  as a ticket row's mark is read. A ticket without a Sprint Item appears in the Tickets
+  The Item title carries a mark for the Item's own supervisor, read the way a ticket
+  row's mark is read but fed by a different fact: a ping, not a reply. A supervisor takes
+  hundreds of turns a day and almost none of them want anybody, so only its ping lights
+  the Item. A ticket without a Sprint Item appears in the Tickets
   view like any other. Every Ticket row is the shared Ticket row and keeps the existing
   conversation mark; it carries its priority tile in the Tickets view and drops it inside
   a Sprint Item, where the Item is the thing being read.
@@ -89,9 +97,11 @@ One screen per part of the system:
 
   All three come from the conversation the row is linked to — the ticket's worker for a
   ticket row, the Item's supervisor for an Item. The first two are asked
-  of the conversation system directly. The third is a comparison: the row carries where
-  its conversation last had a turn end, and this browser keeps how far the reader has
-  got in that conversation. A reply is waiting when the ending is past the reading.
+  of the conversation system directly. The third is a comparison: the row carries a
+  position in its conversation, and this browser keeps how far the reader has got in that
+  conversation. Something is waiting when the position is past the reading. A ticket row
+  carries where its worker's last turn ended. An Item carries where its supervisor last
+  pinged, so opening the Item is what puts an Item's mark out.
 
   How far somebody has read is about that person at that screen, not about the ticket,
   so it is kept in their own browser and the server is never told. Nothing is written
@@ -103,10 +113,15 @@ One screen per part of the system:
 
   On screens wider than 960px, the right side starts with a quiet invitation. An Item
   title opens the existing Sprint Item workspace at `#/workspace/item/<item-id>`.
-  A Ticket opens the complete Ticket screen at `#/workspace/<ticket-id>`. Both
-  addresses survive refresh, sharing, and browser history. A stale Item selection
-  returns to the unselected Workspace. At 960px or less, an Item workspace or a Ticket
-  replaces the rail, and a link back to the Workspace appears above the Ticket.
+  A Ticket opens the complete Ticket screen at `#/workspace/<ticket-id>`. A Ticket
+  opened from inside an Item, in the rail or in the Item workspace, writes
+  `#/workspace/item/<item-id>/<ticket-id>`, which is how the Item stays open behind it.
+  Which of the two views the rail shows rides along as `?view=tickets` or `?view=items`,
+  and only when the reader asked for the view the selection does not already imply. All
+  of these addresses survive refresh, sharing, and browser history. A stale Item drops
+  out of the address, keeping a Ticket that was open beside it. At 960px or less, an
+  Item workspace or a Ticket replaces the rail, and a link back to the Workspace appears
+  above the Ticket.
 
   A Ticket never opens as a full-screen page. Every Ticket link in the app, including
   the ones on the Sprint page and in Review, uses the Workspace address. The old
@@ -286,7 +301,8 @@ has no usage source.
   in a Ticket conversation whose address is `http://localhost:<port>/...` or
   `http://127.0.0.1:<port>/...` is rendered as
   `/dev/tickets/<ticket-id>/<port>/...`. The link keeps its path, query, and fragment;
-  the port stays in the link rather than becoming Ticket state. This context belongs
+  the port stays in the link rather than becoming Ticket state. The rewritten address is
+  a preview like any other one written that way. This context belongs
   only to the Ticket conversation, so the same Markdown on another surface remains an
   ordinary loopback link. The first proxy contract carries pages and relative resource
   or navigation paths under that prefix. Applications that hard-code root-origin URLs
@@ -312,10 +328,12 @@ has no usage source.
   applies the same safe-path, symlink, media-type, and `nosniff` response policy.
 - **File previews use one contract.** Markdown turns a link that names a managed file,
   such as `/files/tickets/t_123/notes/plan.md`, into the shared file preview component,
-  and every image into that same component wherever the image is hosted. Any other link
-  stays an ordinary link: a same-page anchor is still an anchor, one of this app's own
-  routes still navigates inside the app, and an off-site address still goes off-site. An
-  image sitting inside such a link is left alone with it.
+  and every image into that same component wherever the image is hosted. A link to a
+  Ticket's dev server, `/dev/tickets/t_123/8791/`, joins them: it is a Panels address the
+  user can open, so it gets the same treatment and reads as "Open" plus the link's own
+  text. Any other link stays an ordinary link: a same-page anchor is still an anchor, one
+  of this app's own routes still navigates inside the app, and an off-site address still
+  goes off-site. An image sitting inside such a link is left alone with it.
   A preview shows the thing itself, softly rounded, with nothing drawn around it. An image
   is an image, SVG among them; a video is its own player; audio is its own control. None of
   the three carries a title, a caption, or anything to click.
@@ -387,8 +405,16 @@ hand-rolling the same shapes per screen. Each does one job:
 - **StageMark** — the single stage dot showing a field's progress.
 - **ApprovalBlock** — the one approval surface: an editable proposal draft, the scope
   picker, and the approve/accept action, plus a read-only mode for dropped tickets.
-- **ResourceState** — the shared error / loading scaffold; shows an error line, a
-  loading line, or the content. Data-empty states ("No ideas yet.") stay in the screens.
+- **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
+  the kickoff priority, the approval control, and the send-back box. It is named by a
+  ticket id and a field and reads that ticket itself, so any screen can raise the same
+  ask. Which ask is current — walking, skipping, the keyboard shortcuts — stays with the
+  screen. The Review screen and Atlas's review walk both mount it.
+- **ResourceState** — the shared error / loading scaffold. It asks what the screen has
+  to show before it asks what went wrong: a screen that has data keeps showing it and
+  puts a failed read as a line above it, and only a screen with nothing yet is given
+  over to the error line or the loading line. Data-empty states ("No ideas yet.") stay
+  in the screens.
 - **InlineEdit** — product editing and save behavior for Markdown and plain text.
 - **MarkdownBlock** — the read-only product wrapper for managed Markdown.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).

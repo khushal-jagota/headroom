@@ -341,6 +341,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         recap=row["recap"],
         ceiling=str(row["ceiling"]),
         at_cap=AtCap(row["at_cap"]),
+        wakes_supervisor=bool(row["wakes_supervisor"]),
         ticket_status=TicketStatus(row["ticket_status"]),
         ticket_status_changed_at=int(row["ticket_status_changed_at"]),
         ticket_status_revision=int(row["ticket_status_revision"]),
@@ -892,20 +893,19 @@ def employee_configuration_editable(ticket: Ticket) -> bool:
     """Whether this Ticket's launch values may still be changed.
 
     A Ticket that names a conversation is frozen: those values are what that conversation
-    was started on, and there is no changing them after the fact. Everything else is a
-    question about the Ticket in hand, so this asks the database nothing.
+    was started on, and there is no changing them after the fact. A Ticket with a worker
+    step out is frozen too, because the values are about to be what a conversation was
+    started on. Everything else is a question about the Ticket in hand, so this asks the
+    database nothing.
+
+    There is no test on the Stage. There used to be one, and it said `needs_kickoff`,
+    which read as "only a Ticket nobody has started yet". The conversation was always the
+    real reason, and a Ticket keeps one conversation across its worker steps, so naming
+    no conversation already means pristine — or reset, which is the case this widening is
+    for. A reset Ticket is exactly one whose next conversation has not been started, and
+    choosing what that one runs on is the point of restarting it.
     """
-    return (
-        ticket.stage == "needs_kickoff"
-        and ticket.ticket_status
-        in {
-            TicketStatus.awaiting_approval,
-            TicketStatus.paired,
-            TicketStatus.empty,
-            TicketStatus.blocked,
-        }
-        and ticket.conversation_id is None
-    )
+    return ticket.conversation_id is None and ticket.ticket_status is not TicketStatus.agent
 
 
 def write_employee_configuration(
@@ -957,7 +957,7 @@ def write_employee_configuration(
         if not employee_configuration_editable(ticket):
             raise PlannerError(
                 ErrorCode.already_running,
-                "Employee configuration is frozen after Kickoff or the first worker session",
+                "Employee configuration is frozen while a conversation or a worker step holds it",
                 {"ticket_id": ticket_id},
             )
         conn.execute(
@@ -996,6 +996,7 @@ def create_ticket(
     day_id: str | None = None,
     stated_ceiling: str | None = None,
     stated_at_cap: AtCap | None = None,
+    wakes_supervisor: bool = False,
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
@@ -1060,11 +1061,11 @@ def create_ticket(
             "id, title, worker_type, employee_backend, employee_launch_model, "
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_id, sprint_item_id, "
-            "recap, ceiling, at_cap, "
+            "recap, ceiling, at_cap, wakes_supervisor, "
             "ticket_status, stage_ownership_overrides, default_stage_ownership_mode, "
             "conversation_id, alias, fields, created_at, updated_at, "
             "ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, NULL, NULL, "
             "?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1081,6 +1082,7 @@ def create_ticket(
                 sprint_item_id,
                 ceiling,
                 at_cap.value,
+                1 if wakes_supervisor else 0,
                 initial_ticket_status.value,
                 "{}",
                 (
@@ -2232,6 +2234,11 @@ def edit_ticket(
         title = edit["title"] if "title" in edit else ticket.title
         priority = edit["priority"] if "priority" in edit else ticket.priority
         deadline = edit["deadline"] if "deadline" in edit else ticket.deadline
+        wakes_supervisor = (
+            edit["wakes_supervisor"]
+            if "wakes_supervisor" in edit
+            else ticket.wakes_supervisor
+        )
 
         project_id = edit["project_id"] if "project_id" in edit else ticket.project_id
         sprint_id = edit["sprint_id"] if "sprint_id" in edit else ticket.sprint_id
@@ -2251,10 +2258,16 @@ def edit_ticket(
             sprint_item_id=sprint_item_id,
             blocked_by_ticket_ids=None,
         )
-        candidates: tuple[tuple[str, str, str | None, str | None], ...] = (
+        candidates: tuple[tuple[str, str, str | int | None, str | int | None], ...] = (
             ("title", "title", ticket.title, title),
             ("priority", "priority", ticket.priority.value, priority.value),
             ("deadline", "deadline", ticket.deadline, deadline),
+            (
+                "wakes_supervisor",
+                "wakes_supervisor",
+                int(ticket.wakes_supervisor),
+                int(wakes_supervisor),
+            ),
             ("project_id", "project_id", ticket.project_id, project_id),
             ("sprint_id", "sprint_id", ticket.sprint_id, sprint_id),
             ("sprint_item_id", "sprint_item_id", ticket.sprint_item_id, sprint_item_id),

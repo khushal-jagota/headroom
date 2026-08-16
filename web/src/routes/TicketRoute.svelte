@@ -27,6 +27,7 @@
     type OwnerSendBody
   } from "../lib/conversation/wire";
   import WorkerConfigurationSetup from "../components/WorkerConfigurationSetup.svelte";
+  import ClampedText from "../components/ClampedText.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
   import ResourceState from "../components/ResourceState.svelte";
@@ -70,9 +71,6 @@
   let copied = $state(false);
   let conversationBackends = $state<readonly BackendSnapshot[]>([]);
   let leashMenu = $state<HTMLDetailsElement | null>(null);
-  let recapElement = $state<HTMLElement | null>(null);
-  let recapExpanded = $state(false);
-  let recapCanExpand = $state(false);
 
   /** How far open this page's conversation is.
    *
@@ -130,25 +128,6 @@
   function sprintItemTitle(itemId: string): string {
     return (sprintItems.data?.items || []).find((item) => item.id === itemId)?.title || "Sprint Item";
   }
-
-  $effect(() => {
-    const recap = ticket.data?.recap;
-    const node = recapElement;
-    if (!node) return;
-    void recap;
-    const measure = () => {
-      const lineHeight = Number.parseFloat(getComputedStyle(node).lineHeight);
-      const maxHeight = Number.isFinite(lineHeight) ? lineHeight * 3 : node.clientHeight;
-      recapCanExpand = node.scrollHeight > maxHeight + 1;
-    };
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
-    observer?.observe(node);
-    const frame = requestAnimationFrame(measure);
-    return () => {
-      cancelAnimationFrame(frame);
-      observer?.disconnect();
-    };
-  });
 
   onMount(() => {
     // What the conversation's model and effort pickers offer. Read once on arrival rather
@@ -476,10 +455,9 @@
                 onSave={(raw) => patch({ title: raw })}
               />
             </div>
-            <div
-              bind:this={recapElement}
-              class="ticket-recap"
-              class:ticket-recap--clamped={recapCanExpand && !recapExpanded}
+            <ClampedText
+              contentKey={detail.recap}
+              moreControlAttributes={{ "data-recap-toggle": "" }}
               data-recap
             >
               <InlineEdit
@@ -493,15 +471,7 @@
                     body: { body: raw }
                   })}
               />
-            </div>
-            {#if recapCanExpand}
-              <button
-                type="button"
-                class="ticket-recap-more"
-                data-recap-toggle
-                onclick={() => (recapExpanded = !recapExpanded)}
-              >{recapExpanded ? "Show less" : "Show more"}</button>
-            {/if}
+            </ClampedText>
           </div>
           <div class="ticket-operating">
             {#if detail.stage !== "done" && detail.stage !== "needs_kickoff"}
@@ -695,11 +665,11 @@
         </div>
       </main>
       <div
-        class="ticket-conversation-layer"
+        class="conversation-layer"
         data-conversation-layer-host
         onclickcapture={dismissConversationOnAPressBesideTheCard}
       >
-        <div class="ticket-conversation-column">
+        <div class="conversation-column">
           <TicketConversationHistory
             history={detail.conversation_history}
             activeConversationId={detail.conversation_id}

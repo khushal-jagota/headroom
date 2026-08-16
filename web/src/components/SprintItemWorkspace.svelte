@@ -19,6 +19,7 @@
     type DeliveredMessage,
     type OwnerSendBody
   } from "../lib/conversation/wire";
+  import ClampedText from "./ClampedText.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import ResourceState from "./ResourceState.svelte";
@@ -30,7 +31,9 @@
     itemId,
     sprintName,
     backHref = "#/sprint"
-  }: { itemId: string; sprintName: string; backHref?: string } = $props();
+    // A host that is already a way back needs no link back. Atlas raises this over
+    // the world with its own close, so it passes null and the line is not drawn.
+  }: { itemId: string; sprintName: string; backHref?: string | null } = $props();
 
   const workspace = createQuery(() => queries.sprintItemWorkspace(itemId));
   const startValues = createQuery(() => queries.sprintItemConversationStartValues(itemId));
@@ -60,31 +63,6 @@
       body: { [field]: value }
     });
   }
-
-  // The brief clamps to three lines. The control appears only when text is hidden,
-  // measured the same way the Ticket page measures its recap.
-  let briefElement = $state<HTMLElement | null>(null);
-  let briefExpanded = $state(false);
-  let briefCanExpand = $state(false);
-
-  $effect(() => {
-    const body = workspace.data?.body;
-    const node = briefElement;
-    if (!node) return;
-    void body;
-    const measure = () => {
-      const lineHeight = Number.parseFloat(getComputedStyle(node).lineHeight);
-      const maxHeight = Number.isFinite(lineHeight) ? lineHeight * 3 : node.clientHeight;
-      briefCanExpand = node.scrollHeight > maxHeight + 1;
-    };
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
-    observer?.observe(node);
-    const frame = requestAnimationFrame(measure);
-    return () => {
-      cancelAnimationFrame(frame);
-      observer?.disconnect();
-    };
-  });
 
   async function sendMessage(body: OwnerSendBody): Promise<DeliveredMessage> {
     const delivered = await mutateJson<DeliveredMessage>(
@@ -135,7 +113,7 @@
           <a
             class="ticket-row"
             class:ticket-row--quiet={ticket.stage === "done"}
-            href={workspaceAddress({ kind: "ticket", id: ticket.id })}
+            href={workspaceAddress({ kind: "ticket", id: ticket.id, openedFromItemId: itemId })}
             data-sprint-ticket-id={ticket.id}
             data-ticket-state={condition.mark}
           >
@@ -166,7 +144,9 @@
       {#if workspace.data}
         {@const item = workspace.data}
         <div class="sprint-item-column">
-          <a class="sprint-item-back" href={backHref}>‹ {sprintName}</a>
+          {#if backHref !== null}
+            <a class="sprint-item-back" href={backHref}>‹ {sprintName}</a>
+          {/if}
           <header class="sprint-workspace-head">
             <div class="sprint-workspace-identity">
               <TicketPriorityControl
@@ -184,10 +164,10 @@
                 onSave={(value) => saveItem("title", value)}
               />
             </h1>
-            <div
-              bind:this={briefElement}
-              class="sprint-workspace-brief ticket-recap"
-              class:ticket-recap--clamped={briefCanExpand && !briefExpanded}
+            <ClampedText
+              class="sprint-workspace-brief"
+              contentKey={item.body}
+              moreControlAttributes={{ "data-sprint-item-brief-toggle": "" }}
               data-sprint-item-brief
             >
               <InlineEdit
@@ -197,15 +177,7 @@
                 placeholder="Write the shared brief for this outcome…"
                 onSave={(value) => saveItem("body", value)}
               />
-            </div>
-            {#if briefCanExpand}
-              <button
-                type="button"
-                class="ticket-recap-more"
-                data-sprint-item-brief-toggle
-                onclick={() => (briefExpanded = !briefExpanded)}
-              >{briefExpanded ? "Show less" : "Show more"}</button>
-            {/if}
+            </ClampedText>
           </header>
 
           <div class="sprint-workspace-work" data-workspace-section="today">
@@ -256,8 +228,8 @@
       {/if}
     </ResourceState>
   </main>
-  <div class="sprint-item-conversation-layer" onclickcapture={dismissConversation}>
-    <div class="sprint-item-conversation-column">
+  <div class="conversation-layer" onclickcapture={dismissConversation}>
+    <div class="conversation-column">
       {#if workspace.data}
         <TicketConversationHistory
           history={workspace.data.conversation_history}

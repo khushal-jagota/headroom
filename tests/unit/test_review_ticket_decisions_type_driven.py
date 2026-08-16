@@ -389,6 +389,7 @@ def test_old_queue_surface_is_absent_from_scoped_live_files() -> None:
         "src/planner/sprints/views.py",
         "web/src/lib/types.ts",
         "web/src/routes/ReviewRoute.svelte",
+        "web/src/components/ReviewProposalCard.svelte",
         "web/src/App.svelte",
         "assets/app.css",
     )
@@ -414,7 +415,13 @@ def test_old_queue_surface_is_absent_from_scoped_live_files() -> None:
 
 
 def test_review_component_has_only_ticket_specific_entry_contract() -> None:
-    source = (REPO_ROOT / "web/src/routes/ReviewRoute.svelte").read_text(encoding="utf-8")
+    # The Review screen is two files: the route, which owns the queue and the
+    # needs_user card, and ReviewProposalCard, which owns one waiting proposal and
+    # is shared with Atlas's review walk. Neither may carry a generic entry shape.
+    route = (REPO_ROOT / "web/src/routes/ReviewRoute.svelte").read_text(encoding="utf-8")
+    card = (REPO_ROOT / "web/src/components/ReviewProposalCard.svelte").read_text(
+        encoding="utf-8"
+    )
     for forbidden in (
         "entity_id",
         "entity_type",
@@ -426,7 +433,11 @@ def test_review_component_has_only_ticket_specific_entry_contract() -> None:
         ".overdue",
         ".running_agents",
     ):
-        assert forbidden not in source
-    assert "data-ticket-id={currentItem.ticket_id}" in source
-    assert "data-field={currentItem.field}" in source
-    assert "refreshReviewAfter" not in source
+        assert forbidden not in route
+        assert forbidden not in card
+    # A card is named by a Ticket id and a Ticket field, and nothing else.
+    assert "data-ticket-id={currentItem.ticket_id}" in route
+    assert "data-ticket-id={ticketId}" in card
+    assert "data-field={field}" in card
+    assert "refreshReviewAfter" not in route
+    assert "refreshReviewAfter" not in card

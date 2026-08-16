@@ -1,133 +1,197 @@
 <script lang="ts">
+  /** Atlas — the day's work as a place.
+   *
+   * The screen is two things. Below is the world: an explorable archipelago where a
+   * Project is an island, a Sprint Item is a structure on its pad with an overseer,
+   * and a Ticket is a worker doing what that Ticket is doing. Above it, when
+   * something is picked up, is a real screen of Panels — the Ticket screen, the
+   * Sprint Item screen, a supervisor's conversation — not a copy of one.
+   *
+   * This route owns neither. It reads the board, hands the world a view-model, and
+   * raises the right screen over it when the world says something was chosen. The
+   * world is three.js and is loaded only here, so no other screen carries it.
+   */
+  import { onMount, untrack } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
-  import ResourceState from "../components/ResourceState.svelte";
-  import { atlasWorld } from "../atlas/projection";
-  import type { AtlasBuilding } from "../atlas/contracts";
+  import { buildAtlasWorld, type AtlasWorld } from "../lib/atlas/model";
+  import { readSlotBook, writeSlotBook, type SlotBook } from "../lib/atlas/slots";
+  import type { AtlasScene, AtlasSelection } from "../lib/atlas/contracts";
+  import AtlasPanel from "../components/atlas/AtlasPanel.svelte";
+  import AtlasSupervisorConversation from "../components/atlas/AtlasSupervisorConversation.svelte";
+  import AtlasReviewStop from "../components/atlas/AtlasReviewStop.svelte";
+  import SprintItemWorkspace from "../components/SprintItemWorkspace.svelte";
+  import TicketRoute from "./TicketRoute.svelte";
 
-  const projects = createQuery(() => queries.projects());
   const board = createQuery(() => queries.board());
-  const workers = createQuery(() => queries.workers());
   const review = createQuery(() => queries.review());
-  let selectedBuildingId = $state<string | null>(null);
-  let mapElement = $state<HTMLDivElement | null>(null);
-  let world = $derived(
-    projects.data && board.data && workers.data && review.data
-      ? atlasWorld({ projects: projects.data.projects, board: board.data, workers: workers.data, review: review.data })
-      : null
-  );
-  let selectedBuilding = $derived(world?.buildings.find((building) => building.id === selectedBuildingId) ?? null);
 
-  function selectBuilding(building: AtlasBuilding): void {
-    selectedBuildingId = building.id;
+  let canvas = $state<HTMLCanvasElement | null>(null);
+  let scene = $state<AtlasScene | null>(null);
+  let selection = $state<AtlasSelection | null>(null);
+  // The review walk: a route through the world, worker to worker. While it is on,
+  // the panel shows the stop's own proposal rather than whatever it would show for
+  // a plain selection.
+  let walkIndex = $state<number | null>(null);
+  let clock = $state(readClock());
+
+  let slotBook: SlotBook = readSlotBook(typeof localStorage === "undefined" ? null : localStorage);
+
+  const world = $derived.by(() => {
+    const built = buildAtlasWorld(board.data, review.data, slotBook);
+    slotBook = built.book;
+    if (built.slotsGrew) {
+      writeSlotBook(typeof localStorage === "undefined" ? null : localStorage, built.book);
+    }
+    return built.world;
+  });
+
+  const proposalStops = $derived(
+    (review.data?.items ?? []).filter((item) => item.review_item_type === "proposal")
+  );
+  const walkStop = $derived(walkIndex === null ? null : (proposalStops[walkIndex] ?? null));
+
+  function readClock(): { time: string; date: string } {
+    const now = new Date();
+    return {
+      time: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
+      date: now
+        .toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })
+        .toUpperCase()
+    };
   }
 
-  function jumpTo(x: number, y: number): void {
-    const map = mapElement;
-    if (!map) return;
-    map.scrollTo({
-      left: Math.max(0, (map.scrollWidth * x) / 100 - map.clientWidth / 2),
-      top: Math.max(0, (map.scrollHeight * y) / 100 - map.clientHeight / 2),
-      behavior: "smooth"
-    });
+  const finishedCount = $derived.by(() => {
+    let done = 0;
+    let total = 0;
+    for (const project of world.projects) {
+      for (const item of project.items) {
+        done += item.doneCount;
+        total += item.total;
+      }
+    }
+    return { done, total };
+  });
+
+  onMount(() => {
+    let live: AtlasScene | null = null;
+    let disposed = false;
+    const element = untrack(() => canvas);
+    if (element) {
+      // three.js arrives with this screen and no other.
+      void import("../lib/atlas/world").then(({ createAtlasScene }) => {
+        if (disposed) return;
+        const started: AtlasScene = createAtlasScene({
+          canvas: element,
+          onSelect: (picked: AtlasSelection | null) => {
+            selection = picked;
+            if (picked === null) walkIndex = null;
+          },
+          reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        });
+        live = started;
+        scene = started;
+        started.show(untrack(() => world));
+      });
+    }
+    const tick = window.setInterval(() => (clock = readClock()), 20_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(tick);
+      live?.dispose();
+      scene = null;
+    };
+  });
+
+  // Every refresh of the board is a new reading of the world. The scene diffs it and
+  // speaks what changed; nothing here decides what is worth saying.
+  $effect(() => {
+    const reading: AtlasWorld = world;
+    scene?.show(reading);
+  });
+
+  function closePanel(): void {
+    selection = null;
+    walkIndex = null;
+    scene?.select(null);
+  }
+
+  function goHome(): void {
+    closePanel();
+    scene?.home();
+  }
+
+  function startWalk(): void {
+    if (proposalStops.length === 0) return;
+    moveWalkTo(0);
+  }
+
+  function moveWalkTo(index: number): void {
+    if (index < 0 || index >= proposalStops.length) {
+      // The walk's end: the world sails home and the panel shows nothing.
+      goHome();
+      return;
+    }
+    walkIndex = index;
+    const stop = proposalStops[index];
+    selection = { kind: "ticket", id: stop.ticket_id };
+    scene?.select(selection, { travel: true });
   }
 </script>
 
-<section class="atlas-screen" data-screen="atlas">
-  <ResourceState
-    error={projects.error || board.error || workers.error || review.error}
-    loading={projects.isFetching || board.isFetching || workers.isFetching || review.isFetching}
-    hasData={Boolean(world)}
-    loadingText="Surveying the atlas..."
-  >
-    {#if world}
-      <header class="atlas-topbar">
-        <div class="atlas-brand"><span class="atlas-brand-mark">✦</span><span>Nightshift Atlas</span></div>
-        <div class="atlas-counters" aria-label="Atlas status">
-          <span><b>{world.activeJobCount}</b> active jobs</span>
-          <span><b>{world.crewCount}</b> crew</span>
-          <a href="#/review"><b>{world.approvalCount}</b> approvals</a>
-          <span><b>Usage</b> unavailable</span>
-        </div>
-        <a class="atlas-panels-link" href="#/workspace">Panels view ↗</a>
-      </header>
+<div class="atlas-screen" data-screen="atlas">
+  <canvas class="atlas-canvas" bind:this={canvas} data-atlas-canvas></canvas>
 
-      <div class="atlas-layout">
-        <aside class="atlas-rail" aria-label="Atlas controller">
-          <div class="atlas-rail-heading">Districts</div>
-          {#each ["northbank", "rivergate", "southfield"] as district}
-            <button type="button" onclick={() => jumpTo(district === "northbank" ? 25 : district === "rivergate" ? 53 : 78, district === "northbank" ? 27 : district === "rivergate" ? 52 : 70)}>
-              {district}
+  <div class="atlas-hud">
+    <div class="atlas-hud-top">
+      <button type="button" class="atlas-wordmark" onclick={goHome} data-atlas-home>ATLAS</button>
+      <div class="atlas-clock" data-atlas-clock>
+        <span class="atlas-clock-time">{clock.time}</span>
+        <span>{clock.date}</span>
+        {#if finishedCount.total > 0}
+          <span class="atlas-clock-finished"
+            >{finishedCount.done} of {finishedCount.total} works stand finished</span
+          >
+        {/if}
+        {#if proposalStops.length > 0 && walkIndex === null}
+          <div class="atlas-clock-walk">
+            <button type="button" onclick={startWalk} data-atlas-walk>
+              {proposalStops.length} to review · walk the queue
             </button>
-          {/each}
-          <div class="atlas-rail-heading">Need you</div>
-          {#if world.alerts.length}
-            {#each world.alerts as alert (alert.id)}
-              <a class="atlas-alert" href={alert.href}>{alert.label}</a>
-            {/each}
-          {:else}
-            <div class="atlas-empty">Clear. No approvals waiting.</div>
-          {/if}
-        </aside>
-
-        <div class="atlas-map-frame">
-          <div class="atlas-map" bind:this={mapElement} aria-label="Nightshift Atlas map">
-            <div class="atlas-world">
-              <div class="atlas-river atlas-river-one"></div><div class="atlas-river atlas-river-two"></div>
-              <div class="atlas-bridge atlas-bridge-one"></div><div class="atlas-bridge atlas-bridge-two"></div>
-              <div class="atlas-town-label atlas-town-one">Northbank</div><div class="atlas-town-label atlas-town-two">Rivergate</div><div class="atlas-town-label atlas-town-three">Southfield</div>
-              {#each world.buildings as building (building.id)}
-                <button
-                  type="button"
-                  class:atlas-building--active={building.state === "active"}
-                  class:atlas-building--selected={selectedBuilding?.id === building.id}
-                  class="atlas-building"
-                  style={`--building-x:${building.x}%;--building-y:${building.y}%;`}
-                  onclick={() => selectBuilding(building)}
-                  ondblclick={() => (window.location.hash = building.href)}
-                  aria-label={`${building.label}. ${building.activeTicketTitle || "No active job"}`}
-                >
-                  <span class="atlas-building-roof"></span><span class="atlas-building-wall"></span><span class="atlas-building-name">{building.label}</span>
-                </button>
-              {/each}
-              {#each world.agents as agent (agent.id)}
-                <a class="atlas-agent" href={agent.href} style={`--agent-x:${agent.x}%;--agent-y:${agent.y}%;`} aria-label={`${agent.label}, ${agent.role}`}>
-                  <span class="atlas-agent-head"></span><span class="atlas-agent-name">{agent.label}</span>
-                </a>
-              {/each}
-              {#if world.buildings.length === 0}
-                <div class="atlas-world-empty">The plots are ready. Create a Panels project and its building appears here.</div>
-              {/if}
-            </div>
           </div>
-          <div class="atlas-minimap" aria-label="Map navigator">
-            <div class="atlas-minimap-world">
-              {#each world.buildings as building (building.id)}
-                <button class="atlas-minimap-dot" style={`--building-x:${building.x}%;--building-y:${building.y}%;`} aria-label={`Jump to ${building.label}`} onclick={() => { selectBuilding(building); jumpTo(building.x, building.y); }}></button>
-              {/each}
-              <span class="atlas-minimap-viewport"></span>
-            </div>
-          </div>
-        </div>
-
-        <aside class="atlas-detail" aria-live="polite">
-          {#if selectedBuilding}
-            <div class="atlas-detail-kicker">{selectedBuilding.district}</div>
-            <h2>{selectedBuilding.label}</h2>
-            <p>{selectedBuilding.summary}</p>
-            {#if selectedBuilding.activeTicketTitle}
-              <div class="atlas-detail-job">Active: {selectedBuilding.activeTicketTitle}</div>
-            {:else}
-              <div class="atlas-detail-job">No active work in this district.</div>
-            {/if}
-            <a class="atlas-action" href={selectedBuilding.href}>Open in Panels ↗</a>
-          {:else}
-            <div class="atlas-detail-kicker">Command map</div>
-            <h2>Pick a building</h2>
-            <p>Single-click to inspect. Double-click to open its real Panels work.</p>
-          {/if}
-        </aside>
+        {/if}
       </div>
+    </div>
+    {#if !selection}
+      <span class="atlas-hint">
+        Drag to look · scroll to zoom · click ground to travel, water to sail home
+      </span>
     {/if}
-  </ResourceState>
-</section>
+  </div>
+
+  <AtlasPanel open={selection !== null} onClose={closePanel}>
+    {#if walkStop}
+      <AtlasReviewStop
+        ticketId={walkStop.ticket_id}
+        field={walkStop.field}
+        position={(walkIndex ?? 0) + 1}
+        total={proposalStops.length}
+        onPrevious={() => moveWalkTo((walkIndex ?? 0) - 1)}
+        onSkip={() => moveWalkTo((walkIndex ?? 0) + 1)}
+        onResolved={() => moveWalkTo(walkIndex ?? 0)}
+      />
+    {:else if selection?.kind === "ticket" || selection?.kind === "stele"}
+      {#key selection.id}
+        <TicketRoute id={selection.id} />
+      {/key}
+    {:else if selection?.kind === "item"}
+      {#key selection.id}
+        <SprintItemWorkspace itemId={selection.id} sprintName="Atlas" backHref={null} />
+      {/key}
+    {:else if selection?.kind === "overseer"}
+      {#key selection.id}
+        <AtlasSupervisorConversation itemId={selection.id} />
+      {/key}
+    {/if}
+  </AtlasPanel>
+</div>

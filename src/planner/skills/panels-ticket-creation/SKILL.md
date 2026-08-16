@@ -71,6 +71,10 @@ begins instead of waiting for a second approval.
 State only the scope you were actually given. Widening a Ticket beyond what the user
 authorized is not a creation detail.
 
+`--wakes-supervisor` says that movement on this Ticket wakes its Sprint Item supervisor.
+The default is no. Use it when the Ticket exists to support the supervisor rather than
+the user, and the user asked for it or would want it.
+
 After creation, read the Ticket back as a whole. Its title, Worker type, Kickoff,
 today status, direct Project and Sprint, optional Sprint Item, priority,
 deadline, and blockers should tell one coherent story. Correct a mismatch through the

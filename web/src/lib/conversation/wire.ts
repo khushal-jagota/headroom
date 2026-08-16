@@ -223,7 +223,15 @@ export type ConversationEvent =
     >
   | Row<
       "tool_call_finished",
-      { tool_call_id: string; tool_call_status: ToolCallStatus; detail: string | null }
+      {
+        tool_call_id: string;
+        tool_call_status: ToolCallStatus;
+        /** What the tool printed, capped by the server. A row that says it was capped
+         *  holds the start of the output, and the rest is fetched by the row's own
+         *  sequence when a reader opens the fold. */
+        detail: string | null;
+        detail_capped?: boolean;
+      }
     >
   | Row<
       "permission_asked",
@@ -513,6 +521,17 @@ export async function readEventsAfter(
     `/conversations/${encodeURIComponent(conversationId)}/events?after=${after}`
   );
   return answer.events;
+}
+
+/** The whole output of one finished tool call, which an open does not carry. */
+export async function readToolCallDetail(
+  conversationId: string,
+  sequence: number
+): Promise<string | null> {
+  const answer = await request<{ detail: string | null }>(
+    `/conversations/${encodeURIComponent(conversationId)}/events/${sequence}/detail`
+  );
+  return answer.detail;
 }
 
 export function sendPrompt(

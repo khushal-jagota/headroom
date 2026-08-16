@@ -4,7 +4,11 @@ export type ConversationSignals = {
   conversation_id: string | null;
   needs_me: boolean;
   agent_working: boolean;
-  latest_turn_ended_sequence: number;
+  // The position the reader must reach for this row to count as read. Each kind of row
+  // supplies its own: a Ticket card supplies where its worker's last turn ended, and a
+  // Sprint Item supplies where its supervisor last pinged. 0 is before every real
+  // position, so a row with nothing to show is never lit.
+  unread_position: number;
 };
 
 export type ConversationSignalPresentation = {
@@ -16,8 +20,8 @@ export type ConversationSignalPresentation = {
  * Present the conversation facts shared by Workspace rows and the Agents roster.
  *
  * A request only the user can answer wins over the running turn that carries it.
- * Otherwise a completed turn is unseen until this browser's per-conversation
- * watermark reaches it.
+ * Otherwise the row is unseen until this browser's per-conversation watermark reaches
+ * the position the caller supplied.
  */
 export function conversationSignalPresentation(
   signals: ConversationSignals,
@@ -29,11 +33,11 @@ export function conversationSignalPresentation(
   if (signals.agent_working) {
     return { state: "current-running", ariaLabel: "Agent working" };
   }
-  const latestTurnEnded = Number(signals.latest_turn_ended_sequence ?? 0);
-  if (latestTurnEnded === 0 || typeof signals.conversation_id !== "string") {
+  const unreadPosition = Number(signals.unread_position ?? 0);
+  if (unreadPosition === 0 || typeof signals.conversation_id !== "string") {
     return { state: "upcoming", ariaLabel: "Nothing waiting" };
   }
-  if (latestTurnEnded > (replyWatermarks[signals.conversation_id] ?? 0)) {
+  if (unreadPosition > (replyWatermarks[signals.conversation_id] ?? 0)) {
     return { state: "current-awaiting-approval", ariaLabel: "Unseen agent reply" };
   }
   return { state: "reply-seen", ariaLabel: "Agent reply seen" };

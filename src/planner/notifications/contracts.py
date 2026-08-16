@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, Literal
 
-NotificationSubjectKind = Literal["ticket", "agent"]
+NotificationSubjectKind = Literal["ticket", "agent", "sprint_item"]
 TICKET_NOTIFICATION_SUBJECT_KEY: Final = "tickets"
+SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY: Final = "sprint_item_supervisors"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,21 +56,41 @@ NOTIFICATION_TYPES: Final[tuple[NotificationType, ...]] = (
         "A worker turn or Ticket failed and needs attention.",
         True,
     ),
+    NotificationType(
+        "sprint_item_ping",
+        "Sprint Item wants you",
+        "A Sprint Item supervisor asked for you by name.",
+        True,
+    ),
 )
 NOTIFICATION_TYPE_BY_ID: Final[dict[str, NotificationType]] = {
     item.id: item for item in NOTIFICATION_TYPES
 }
 
+# What each subject offers. A Sprint Item supervisor offers two switches and no third:
+# its turns complete about three thousand times a day, so a completed turn is not an
+# event anybody can be told about. It says what it wants with a ping instead.
 NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
     NotificationSubject(
         TICKET_NOTIFICATION_SUBJECT_KEY,
         "Tickets",
-        tuple(item.id for item in NOTIFICATION_TYPES),
+        (
+            "ticket_needs_approval",
+            "needs_input",
+            "permission_requested",
+            "worker_completed",
+            "worker_failed",
+        ),
     ),
     NotificationSubject(
         "chief_of_staff",
         "Chief of Staff",
-        tuple(item.id for item in NOTIFICATION_TYPES if item.id != "ticket_needs_approval"),
+        ("needs_input", "permission_requested", "worker_completed", "worker_failed"),
+    ),
+    NotificationSubject(
+        SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY,
+        "Sprint Item supervisors",
+        ("sprint_item_ping", "worker_failed"),
     ),
 )
 NOTIFICATION_SUBJECT_BY_KEY: Final[dict[str, NotificationSubject]] = {

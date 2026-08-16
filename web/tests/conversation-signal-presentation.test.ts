@@ -6,11 +6,11 @@ const resting = {
   conversation_id: "conv-chief",
   needs_me: false,
   agent_working: false,
-  latest_turn_ended_sequence: 0
+  unread_position: 0
 };
 
 describe("conversation signal presentation", () => {
-  it("presents a conversation with no completed turn as nothing waiting", () => {
+  it("presents a conversation with nothing unread as nothing waiting", () => {
     expect(conversationSignalPresentation(resting, {})).toEqual({
       state: "upcoming",
       ariaLabel: "Nothing waiting"
@@ -32,10 +32,10 @@ describe("conversation signal presentation", () => {
     ).toEqual({ state: "needs-me", ariaLabel: "Needs you" });
   });
 
-  it("presents a completed turn past this browser's watermark as unseen", () => {
+  it("presents an unread position past this browser's watermark as unseen", () => {
     expect(
       conversationSignalPresentation(
-        { ...resting, latest_turn_ended_sequence: 9 },
+        { ...resting, unread_position: 9 },
         { "conv-chief": 8 }
       )
     ).toEqual({
@@ -44,10 +44,10 @@ describe("conversation signal presentation", () => {
     });
   });
 
-  it("presents a completed turn at this browser's watermark as seen", () => {
+  it("presents an unread position at this browser's watermark as seen", () => {
     expect(
       conversationSignalPresentation(
-        { ...resting, latest_turn_ended_sequence: 9 },
+        { ...resting, unread_position: 9 },
         { "conv-chief": 9 }
       )
     ).toEqual({ state: "reply-seen", ariaLabel: "Agent reply seen" });

@@ -9,7 +9,11 @@
     type WorkspaceRailItem,
     type WorkspaceTicketGroup
   } from "../lib/workspaceRail";
-  import { workspaceAddress } from "../lib/workspaceAddress";
+  import {
+    whatTheAddressOpens,
+    workspaceAddress,
+    type WorkspaceAddress
+  } from "../lib/workspaceAddress";
   import type { BoardCard } from "../lib/types";
   import ChiefConversation from "../components/ChiefConversation.svelte";
   import Disclosure from "../components/Disclosure.svelte";
@@ -20,66 +24,65 @@
   import TicketRoute from "./TicketRoute.svelte";
   import chiefOfStaffProfile from "../assets/chief-of-staff-profile.webp";
 
-  let { ticketId, itemId }: { ticketId?: string; itemId?: string } = $props();
+  let { address }: { address: WorkspaceAddress } = $props();
 
   const VIEWS = [
-    { key: "tickets", label: "Tickets" },
-    { key: "items", label: "Sprint Items" }
+    { key: "items", label: "Sprint Items" },
+    { key: "tickets", label: "Tickets" }
   ] as const;
 
   const board = createQuery(() => queries.board());
   const workers = createQuery(() => queries.workers());
-  // Two views over one board. Until the reader picks one, an Item in the address
-  // decides, so a reloaded Item selection is visible in the rail it belongs to.
-  // Otherwise Tickets leads: it shows every Ticket without a selection.
-  let chosenView = $state<"tickets" | "items" | null>(null);
-  let view = $derived(chosenView ?? (itemId ? "items" : "tickets"));
-  // Which Item the rail holds open. It follows the address, until a Ticket opened from
-  // inside an Item takes the pane: the Item the reader is working in stays open.
-  // Held open is not selected. The address alone says what is selected, so exactly one
-  // row in the rail carries the selected mark, whatever is still open around it.
-  let openedItemId = $state<string | null>(null);
-  let railItemId = $derived(openedItemId ?? itemId ?? null);
+  // The address says which list the rail shows, which Item is open, and which single row
+  // carries the selected mark. This screen keeps no answer of its own, so the same
+  // address always draws the same rail.
+  let opening = $derived(whatTheAddressOpens(address));
   let allCards = $derived((board.data?.columns ?? []).flatMap((column) => column.cards));
   let rail = $derived(buildWorkspaceRail(allCards, board.data?.sprint_items ?? []));
-  let selectedCard = $derived(allCards.find((card) => card.id === ticketId) ?? null);
-  let selectedItem = $derived(rail.items.find((item) => item.id === itemId) ?? null);
-  let chiefSelected = $derived(ticketId === "chief-of-staff");
   // A Ticket opens here from anywhere, including the Sprint page and Review, so the
   // selection is not limited to the cards on today's board. The rail highlights a
   // Ticket only when it holds a card for it, and TicketRoute answers for the Ticket
   // itself, including one that does not exist.
-  let ticketSelected = $derived(Boolean(ticketId) && !chiefSelected);
+  let selectedCard = $derived(
+    allCards.find((card) => card.id === opening.markedTicketId) ?? null
+  );
+  let openItem = $derived(rail.items.find((item) => item.id === opening.openItemId) ?? null);
+  let itemPane = $derived(Boolean(opening.markedItemId) && Boolean(openItem));
   let nothingWaits = $derived(
-    view === "tickets" ? rail.groups.length === 0 : rail.items.length === 0
+    opening.view === "tickets" ? rail.groups.length === 0 : rail.items.length === 0
   );
 
-  // An Item in the address is the open Item, however the reader arrived at it, so a
-  // Ticket opened from inside it afterwards still finds its Item open.
+  // An Item that is not on the board cannot be drawn open. The address gives it up once
+  // the board has settled, and a Ticket in the pane keeps its own address.
   $effect(() => {
-    if (itemId) {
-      openedItemId = itemId;
-    }
-  });
-
-  $effect(() => {
-    const staleItem = itemId && !selectedItem;
+    const staleItem = opening.openItemId && !openItem;
     if (staleItem && board.data && !board.isFetching && !board.isError) {
-      window.location.replace(workspaceAddress({ kind: "none" }));
+      const kept = opening.markedTicketId
+        ? workspaceAddress({ kind: "ticket", id: opening.markedTicketId })
+        : workspaceAddress({ kind: "none" });
+      window.location.replace(kept);
     }
   });
 
-  function selectCard(id: string): void {
-    window.location.hash = workspaceAddress({ kind: "ticket", id });
+  // Every click writes an address, and the draw follows from it. A Ticket clicked inside
+  // an open Item names that Item, which is the whole of "opened from inside an Item".
+  function selectCard(id: string, insideItemId: string | null): void {
+    const selection = insideItemId
+      ? ({ kind: "ticket", id, openedFromItemId: insideItemId } as const)
+      : ({ kind: "ticket", id } as const);
+    window.location.hash = workspaceAddress(selection, opening.view);
   }
 
   // The whole box is the target, and the click has one meaning: open this Item and
   // show its supervisor. No click on an Item shuts it, including a click on the Item
-  // already in the pane. Reaching for an Item is choosing this view.
+  // already in the pane.
   function selectItem(id: string): void {
-    chosenView = "items";
-    openedItemId = id;
     window.location.hash = workspaceAddress({ kind: "item", id });
+  }
+
+  // Changing the list the rail shows keeps whatever the pane is showing.
+  function showView(next: (typeof VIEWS)[number]["key"]): void {
+    window.location.hash = workspaceAddress(address.selection, next);
   }
 
   let howFarThisBrowserHasRead = $state<Record<string, number>>({});
@@ -107,7 +110,12 @@
   let chiefPresentation = $derived(
     workers.data
       ? conversationSignalPresentation(
-          workers.data.chief_of_staff,
+          {
+            conversation_id: workers.data.chief_of_staff.conversation_id,
+            needs_me: workers.data.chief_of_staff.needs_me,
+            agent_working: workers.data.chief_of_staff.agent_working,
+            unread_position: workers.data.chief_of_staff.latest_turn_ended_sequence
+          },
           howFarThisBrowserHasRead
         )
       : null
@@ -126,14 +134,31 @@
         conversation_id: card.conversation_id,
         needs_me: card.needs_me,
         agent_working: card.agent_working,
-        latest_turn_ended_sequence: card.latest_turn_ended_sequence
+        unread_position: card.latest_turn_ended_sequence
       },
       howFarThisBrowserHasRead
     );
   }
+
+  // Awake beats rested: a done Item that needs the user, is mid-turn, or holds a
+  // reply this browser has not seen yet stays with the live Items.
+  function itemIsAwake(item: WorkspaceRailItem): boolean {
+    const state = conversationSignalPresentation(item.signals, howFarThisBrowserHasRead).state;
+    return state === "needs-me" || state === "current-running" || state === "current-awaiting-approval";
+  }
+
+  // A stable partition, not a re-sort: live-or-awake Items keep rail.items's
+  // priority-then-age order, then rested-and-quiet Items follow in that same order.
+  function partitionByRest(items: readonly WorkspaceRailItem[]): WorkspaceRailItem[] {
+    const live = items.filter((item) => !item.rested || itemIsAwake(item));
+    const rested = items.filter((item) => item.rested && !itemIsAwake(item));
+    return [...live, ...rested];
+  }
+
+  let orderedItems = $derived(partitionByRest(rail.items));
 </script>
 
-{#snippet ticketRow(card: BoardCard, withPriority: boolean)}
+{#snippet ticketRow(card: BoardCard, withPriority: boolean, insideItemId: string | null)}
   {@const presentation = cardPresentation(card)}
   <SprintTicketRow
     priority={withPriority ? card.priority : null}
@@ -141,7 +166,7 @@
     state={presentation.state}
     ariaLabel={presentation.ariaLabel}
     active={selectedCard?.id === card.id}
-    onclick={() => selectCard(card.id)}
+    onclick={() => selectCard(card.id, insideItemId)}
     stageMarkClass="board-workspace-stage-mark"
     stageMarkAttributes={{
       "data-stage-state": presentation.state,
@@ -159,14 +184,14 @@
 {#snippet ticketGroups(
   groups: WorkspaceTicketGroup[],
   withPriority: boolean,
-  nested: boolean
+  insideItemId: string | null
 )}
   {#each groups as group (group.key)}
     <Disclosure
       variant="workspace-bucket"
       chevron="trailing"
-      defaultOpen
-      class={nested ? "disclosure--workspace-bucket--nested" : ""}
+      defaultOpen={!group.defaultCollapsed}
+      class={insideItemId ? "disclosure--workspace-bucket--nested" : ""}
       data-bucket-section=""
       data-bucket-key={group.key}
     >
@@ -181,7 +206,7 @@
 
       <div class="board-workspace-bucket-tickets">
         {#each group.cards as card (card.id)}
-          {@render ticketRow(card, withPriority)}
+          {@render ticketRow(card, withPriority, insideItemId)}
         {/each}
       </div>
     </Disclosure>
@@ -189,8 +214,8 @@
 {/snippet}
 
 {#snippet sprintItem(item: WorkspaceRailItem)}
-  {@const open = railItemId === item.id}
-  {@const selected = itemId === item.id}
+  {@const open = opening.openItemId === item.id}
+  {@const selected = opening.markedItemId === item.id}
   {@const presentation = conversationSignalPresentation(
     item.signals,
     howFarThisBrowserHasRead
@@ -212,14 +237,17 @@
       aria-expanded={open}
       aria-current={selected ? "page" : undefined}
     >
-      <span class="board-workspace-item-title">{item.title}</span>
+      <span
+        class="board-workspace-item-title"
+        class:board-workspace-item-title--rested={item.rested && !itemIsAwake(item)}
+      >{item.title}</span>
       <StageMark
         state={presentation.state}
         class="board-workspace-stage-mark"
         data-stage-state={presentation.state}
         data-needs-me={item.signals.needs_me ? "true" : "false"}
         data-agent-working={item.signals.agent_working ? "true" : "false"}
-        data-latest-turn-ended={item.signals.latest_turn_ended_sequence}
+        data-latest-ping={item.signals.unread_position}
         aria-label={presentation.ariaLabel}
       />
     </button>
@@ -230,7 +258,7 @@
         onclick={(event) => event.stopPropagation()}
         role="presentation"
       >
-        {@render ticketGroups(item.groups, false, true)}
+        {@render ticketGroups(item.groups, false, item.id)}
       </div>
     {:else if item.groups.length}
       <div class="board-workspace-item-line">
@@ -253,18 +281,18 @@
     <div class="board-workspace-wrap">
       <div
         class="board-workspace-shell"
-        class:board-workspace-shell--chief={chiefSelected}
-        class:board-workspace-shell--item={Boolean(selectedItem)}
-        class:board-workspace-shell--ticket={ticketSelected}
+        class:board-workspace-shell--chief={opening.chiefMarked}
+        class:board-workspace-shell--item={itemPane}
+        class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)}
       >
         <section class="board-workspace-left" aria-label="Workspace">
           {#if workers.data}
             <a
               class="board-workspace-chief-row"
-              class:active={chiefSelected}
-              href={workspaceAddress({ kind: "chief" })}
+              class:active={opening.chiefMarked}
+              href={workspaceAddress({ kind: "chief" }, opening.view)}
               data-chief-destination
-              aria-current={chiefSelected ? "page" : undefined}
+              aria-current={opening.chiefMarked ? "page" : undefined}
             >
               <img
                 class="board-workspace-agent-profile"
@@ -294,17 +322,17 @@
                 type="button"
                 class="board-workspace-view"
                 role="tab"
-                aria-selected={view === option.key}
+                aria-selected={opening.view === option.key}
                 data-workspace-view={option.key}
-                onclick={() => (chosenView = option.key)}
+                onclick={() => showView(option.key)}
               >{option.label}</button>
             {/each}
           </div>
 
-          {#if view === "tickets"}
-            {@render ticketGroups(rail.groups, true, false)}
+          {#if opening.view === "tickets"}
+            {@render ticketGroups(rail.groups, true, null)}
           {:else}
-            {#each rail.items as item (item.id)}
+            {#each orderedItems as item (item.id)}
               {@render sprintItem(item)}
             {/each}
           {/if}
@@ -315,24 +343,24 @@
         </section>
 
         <section
-          class:board-workspace-right--ticket={ticketSelected}
-          class:board-workspace-right--chief={chiefSelected}
-          class:board-workspace-right--item={Boolean(selectedItem)}
+          class:board-workspace-right--ticket={Boolean(opening.markedTicketId)}
+          class:board-workspace-right--chief={opening.chiefMarked}
+          class:board-workspace-right--item={itemPane}
           class="board-workspace-right"
-          aria-label={chiefSelected ? "Chief of Staff conversation" : selectedItem ? "Sprint Item workspace" : "Workspace inspector"}
+          aria-label={opening.chiefMarked ? "Chief of Staff conversation" : itemPane ? "Sprint Item workspace" : "Workspace inspector"}
         >
-          {#if chiefSelected}
+          {#if opening.chiefMarked}
             <div class="board-workspace-chief-conversation">
               <ChiefConversation />
             </div>
-          {:else if ticketSelected && ticketId}
-            <a class="board-workspace-back" href={workspaceAddress({ kind: "none" })}>&lsaquo; Workspace</a>
-            {#key ticketId}
-              <TicketRoute id={ticketId} />
+          {:else if opening.markedTicketId}
+            <a class="board-workspace-back" href={workspaceAddress({ kind: "none" }, opening.view)}>&lsaquo; Workspace</a>
+            {#key opening.markedTicketId}
+              <TicketRoute id={opening.markedTicketId} />
             {/key}
-          {:else if selectedItem}
-            {#key selectedItem.id}
-              <SprintItemWorkspace itemId={selectedItem.id} sprintName="Workspace" backHref="#/workspace" />
+          {:else if itemPane && openItem}
+            {#key openItem.id}
+              <SprintItemWorkspace itemId={openItem.id} sprintName="Workspace" backHref="#/workspace" />
             {/key}
           {:else}
             <div class="board-workspace-empty-inspector">
