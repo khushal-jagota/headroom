@@ -400,8 +400,11 @@ hand-rolling the same shapes per screen. Each does one job:
 - **StageMark** — the single stage dot showing a field's progress.
 - **ApprovalBlock** — the one approval surface: an editable proposal draft, the scope
   picker, and the approve/accept action, plus a read-only mode for dropped tickets.
-- **ResourceState** — the shared error / loading scaffold; shows an error line, a
-  loading line, or the content. Data-empty states ("No ideas yet.") stay in the screens.
+- **ResourceState** — the shared error / loading scaffold. It asks what the screen has
+  to show before it asks what went wrong: a screen that has data keeps showing it and
+  puts a failed read as a line above it, and only a screen with nothing yet is given
+  over to the error line or the loading line. Data-empty states ("No ideas yet.") stay
+  in the screens.
 - **InlineEdit** — product editing and save behavior for Markdown and plain text.
 - **MarkdownBlock** — the read-only product wrapper for managed Markdown.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).

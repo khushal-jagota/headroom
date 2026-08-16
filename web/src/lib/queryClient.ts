@@ -13,8 +13,10 @@ export const queryClient = new QueryClient({
       refetchOnReconnect: true,
       // Server state is never assumed fresh: an invalidation always refetches.
       staleTime: 0,
-      // A failed read surfaces immediately instead of being retried silently.
-      retry: false
+      // One retry, then the failure surfaces. A failure now shows as a line
+      // above the data the screen already has, so it no longer costs the reader
+      // their screen, and a single blip is not worth showing them at all.
+      retry: 1
     }
   }
 });
