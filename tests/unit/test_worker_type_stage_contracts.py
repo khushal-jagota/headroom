@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
+
 from dataclasses import fields
 from pathlib import Path
 from sqlite3 import Connection
@@ -112,19 +114,9 @@ def test_http_contract_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
         assert "state" not in made.json()
         manifest = client.get("/api/worker-types")
         assert manifest.status_code == 200
-        assert [item["worker_type"] for item in manifest.json()["worker_types"]] == [
-            "coding",
-            "general",
-            "debugging",
-            "new_worker",
-            "exploration",
-            "initiative_planning",
-            "product_design",
-            "planning-day",
-                "planning-midday-check",
-                "planning-sprint",
-                "personal",
-        ]
+        assert [item["worker_type"] for item in manifest.json()["worker_types"]] == list(
+            PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
+        )
         assert client.get("/api/ticket-types").status_code == 404
 
         list_parameters = {

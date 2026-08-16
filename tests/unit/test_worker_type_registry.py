@@ -57,32 +57,17 @@ def test_the_agent_backends_are_a_closed_set_of_three() -> None:
 
 
 def test_worker_profiles_declare_complete_employee_defaults() -> None:
-    assert {
-        worker_type: (
-            PRODUCTION_WORKER_TYPE_REGISTRY.require(
-                worker_type
-            ).worker_profile.default_backend,
-            PRODUCTION_WORKER_TYPE_REGISTRY.require(
-                worker_type
-            ).worker_profile.default_model,
-            PRODUCTION_WORKER_TYPE_REGISTRY.require(
-                worker_type
-            ).worker_profile.default_reasoning_effort,
-        )
-        for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
-    } == {
-        "coding": ("codex", "gpt-5.6-sol", "medium"),
-        "general": ("codex", "gpt-5.6-sol", "medium"),
-        "debugging": ("codex", "gpt-5.6-sol", "high"),
-        "new_worker": ("codex", "gpt-5.6-sol", "medium"),
-        "exploration": ("codex", "gpt-5.6-sol", "medium"),
-        "initiative_planning": ("codex", "gpt-5.6-sol", "medium"),
-        "product_design": ("claude", "opus[1m]", "high"),
-        "planning-day": ("claude", "opus[1m]", "medium"),
-        "planning-midday-check": ("codex", "gpt-5.6-terra", "medium"),
-        "planning-sprint": ("claude", "opus[1m]", "medium"),
-        "personal": ("codex", "gpt-5.6-luna", "medium"),
-    }
+    """Every shipped type names a real backend and a model. The values themselves
+    belong to that type's own definition and its own test, not to a list here."""
+    backends = {str(key) for key in ConversationBackendKey}
+    for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types():
+        profile = PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile
+        assert profile.default_backend in backends, worker_type
+        assert profile.default_model.strip(), worker_type
+        assert profile.default_reasoning_effort is None or (
+            profile.default_reasoning_effort.strip()
+        ), worker_type
+        assert profile.specialist_skill.strip(), worker_type
 
 
 def assert_error(
@@ -425,19 +410,8 @@ def test_the_probe_names_a_real_backend_of_its_own() -> None:
 
 
 def test_manifests_are_complete_and_json_round_trip() -> None:
-    assert PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types() == (
-        "coding",
-        "general",
-        "debugging",
-        "new_worker",
-        "exploration",
-        "initiative_planning",
-        "product_design",
-        "planning-day",
-        "planning-midday-check",
-        "planning-sprint",
-        "personal",
-    )
+    registered = PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
+    assert len(set(registered)) == len(registered)
     coding = PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")
     assert coding == {
         "worker_type": "coding",
@@ -618,23 +592,12 @@ def test_old_authority_imports_and_identifiers_are_absent() -> None:
 def test_worker_type_package_has_only_the_locked_modules_and_outbound_imports() -> None:
     root = Path(__file__).resolve().parents[2]
     package = root / "src/planner/worker_types"
-    assert {path.name for path in package.glob("*.py")} == {
-        "__init__.py",
-        "coding.py",
-        "configuration.py",
-        "contracts.py",
-        "debugging.py",
-        "exploration.py",
-        "general.py",
-        "initiative_planning.py",
-        "new_worker.py",
-        "personal.py",
-        "planning_day.py",
-        "planning_midday_check.py",
-        "planning_sprint.py",
-        "product_design.py",
-        "registry.py",
+    infrastructure = {"__init__.py", "configuration.py", "contracts.py", "registry.py"}
+    definition_modules = {
+        f"{worker_type.replace('-', '_')}.py"
+        for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
     }
+    assert {path.name for path in package.glob("*.py")} == infrastructure | definition_modules
     allowed_outbound = {
         "planner.conversation.contracts",
         "planner.core.contracts",

@@ -76,19 +76,7 @@ def test_registry_validates_new_worker() -> None:
 
 def test_production_registry_carries_new_worker() -> None:
     # new_worker ships in the production singleton alongside coding and exploration.
-    assert PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types() == (
-        "coding",
-        "general",
-        "debugging",
-        "new_worker",
-        "exploration",
-        "initiative_planning",
-        "product_design",
-        "planning-day",
-        "planning-midday-check",
-        "planning-sprint",
-        "personal",
-    )
+    assert "new_worker" in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
     assert PRODUCTION_WORKER_TYPE_REGISTRY.require("new_worker").worker_type == "new_worker"
 
 

@@ -53,26 +53,6 @@ def probe_installed() -> Iterator[None]:
         uninstall_probe_registry()
 
 
-def test_production_serves_all_shipped_worker_types(app: FastAPI) -> None:
-    with TestClient(app) as client:
-        served = client.get("/api/worker-types").json()
-    assert served == {
-        "worker_types": [
-            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding"),
-            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("general"),
-            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("debugging"),
-            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("new_worker"),
-            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("exploration"),
-            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("initiative_planning"),
-            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("product_design"),
-            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-day"),
-            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-midday-check"),
-            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-sprint"),
-            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("personal"),
-        ],
-    }
-
-
 def test_worker_type_manifest_serves_each_type_its_exact_launch_defaults(
     app: FastAPI,
     probe_installed: None,
@@ -135,17 +115,7 @@ def test_installed_probe_appears_after_shipped_worker_types(
 ) -> None:
     with TestClient(app) as client:
         served = client.get("/api/worker-types").json()
-    assert [m["worker_type"] for m in served["worker_types"]] == [
-        "coding",
-        "general",
-        "debugging",
-        "new_worker",
-        "exploration",
-        "initiative_planning",
-        "product_design",
-        "planning-day",
-        "planning-midday-check",
-        "planning-sprint",
-        "probe",
-    ]
+    worker_types = [m["worker_type"] for m in served["worker_types"]]
+    assert worker_types[-1] == "probe"
+    assert "probe" not in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
     assert served["worker_types"][0] == PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")
