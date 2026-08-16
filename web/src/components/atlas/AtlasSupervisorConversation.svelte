@@ -70,7 +70,7 @@
         {workspace.data.title}
       </a>
     </div>
-    <div class="atlas-supervisor-conversation ticket-conversation-layer">
+    <div class="atlas-supervisor-conversation conversation-layer">
       <LiveConversation
         bind:conversationState
         {conversationId}

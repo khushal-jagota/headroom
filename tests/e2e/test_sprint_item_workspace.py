@@ -227,7 +227,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     assert (
         page.evaluate(
             "() => getComputedStyle(document.querySelector("
-            "'.sprint-item-conversation-column')).paddingLeft"
+            "'.conversation-column')).paddingLeft"
         )
         == "16px"
     )
@@ -257,7 +257,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     inset = "() => getComputedStyle(document.querySelector('%s')).paddingLeft"
     page.set_viewport_size({"width": 1000, "height": 900})
     page.locator("[data-conversation-input]").wait_for(timeout=WAIT_MS)
-    assert page.evaluate(inset % ".sprint-item-conversation-column") == "24px"
+    assert page.evaluate(inset % ".conversation-column") == "24px"
     page.goto(f"{server.base}/#/workspace/{today_ticket['id']}")
     page.locator("[data-conversation-input]").wait_for(timeout=WAIT_MS)
-    assert page.evaluate(inset % ".ticket-conversation-column") == "24px"
+    assert page.evaluate(inset % ".conversation-column") == "24px"
