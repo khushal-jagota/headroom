@@ -16,7 +16,9 @@ from tests.e2e.conftest import WAIT_MS
 from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 
-def _refetch_the_board(server: ServerHandle, page: Page, api: ApiHelper, ticket: str, title: str) -> None:
+def _refetch_the_board(
+    server: ServerHandle, page: Page, api: ApiHelper, ticket: str, title: str
+) -> None:
     """Write on the server, then wait until the browser has acted on the change."""
     before = page.evaluate("() => window.__plannerDebug.flushes")
     api.direct_patch(server, f"/api/tickets/{ticket}", {"title": title})
