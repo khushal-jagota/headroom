@@ -8,8 +8,13 @@ lifecycle live under `web/src/lib/`.
 
 Answers travel compressed. The server gzips any response over 1 KB, which matters most
 for a conversation open: the largest thread is 9.4 MB of JSON and goes over the wire as
-1.8 MB. Live event streams are sent frame by frame and are never compressed, because
-holding frames back to compress them is the opposite of what they are for.
+1.8 MB. A live event stream never reaches the compression at all: the server decides from
+the address, before the request is answered, and sends a stream down a route that has no
+compression in it. That is not fussiness. Compression cannot say anything about a
+response until it has seen some of the body, so it holds the response's headers back
+until then — and a stream with nothing to report yet has no body to release them with.
+The browser would sit there waiting to be connected, and the page would never learn that
+anything had changed.
 
 ## The screens
 
@@ -410,8 +415,11 @@ hand-rolling the same shapes per screen. Each does one job:
   ticket id and a field and reads that ticket itself, so any screen can raise the same
   ask. Which ask is current — walking, skipping, the keyboard shortcuts — stays with the
   screen. The Review screen and Atlas's review walk both mount it.
-- **ResourceState** — the shared error / loading scaffold; shows an error line, a
-  loading line, or the content. Data-empty states ("No ideas yet.") stay in the screens.
+- **ResourceState** — the shared error / loading scaffold. It asks what the screen has
+  to show before it asks what went wrong: a screen that has data keeps showing it and
+  puts a failed read as a line above it, and only a screen with nothing yet is given
+  over to the error line or the loading line. Data-empty states ("No ideas yet.") stay
+  in the screens.
 - **InlineEdit** — product editing and save behavior for Markdown and plain text.
 - **MarkdownBlock** — the read-only product wrapper for managed Markdown.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).

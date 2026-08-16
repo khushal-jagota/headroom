@@ -244,6 +244,59 @@ def test_the_heartbeat_cadence_comes_from_configuration(
     assert frames == [": keep-alive\n\n"] * 2
 
 
+def test_a_quiet_stream_sends_its_headers_before_it_has_a_frame_to_send(
+    tmp_path: Path,
+) -> None:
+    """The browser opens the stream on the headers, and it opens before anything happens.
+
+    This is the whole of what compression in front of a stream takes away. Compression
+    holds a response's headers until it sees some of the body, and a stream with nothing
+    to report has no body to release them with. A test that reads a frame first releases
+    them itself and sees nothing wrong, so this one asks for the headers of a stream that
+    has been given nothing to say.
+    """
+    app = _make_app(tmp_path, sse_heartbeat_ms=60_000)
+
+    async def serve_until_the_headers_arrive() -> tuple[dict[str, object], int]:
+        started: dict[str, object] = {}
+        frames = 0
+        frames_when_the_headers_arrived = -1
+        arrived = asyncio.Event()
+        disconnected = asyncio.Event()
+
+        async def receive() -> dict[str, object]:
+            await disconnected.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: MutableMapping[str, Any]) -> None:
+            nonlocal frames, frames_when_the_headers_arrived
+            if message["type"] == "http.response.start":
+                started.update(message)
+                frames_when_the_headers_arrived = frames
+                arrived.set()
+            elif message["type"] == "http.response.body" and message.get("body", b""):
+                frames += 1
+
+        serving = asyncio.create_task(
+            app(_scope([(b"accept-encoding", b"gzip, deflate, br")]), receive, send)
+        )
+        try:
+            await asyncio.wait_for(arrived.wait(), timeout=5)
+        finally:
+            disconnected.set()
+            await asyncio.wait_for(serving, timeout=5)
+        return started, frames_when_the_headers_arrived
+
+    started, frames_when_the_headers_arrived = asyncio.run(
+        serve_until_the_headers_arrive()
+    )
+
+    assert started["status"] == 200
+    assert frames_when_the_headers_arrived == 0
+    headers = dict(started["headers"])  # type: ignore[call-overload]
+    assert headers[b"content-type"] == b"text/event-stream; charset=utf-8"
+
+
 def test_the_stream_is_not_compressed_even_when_the_browser_offers_gzip(
     tmp_path: Path,
 ) -> None:
