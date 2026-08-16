@@ -1585,8 +1585,8 @@ try {
 {/if}
 
 <div data-top-bar-fixture style="width: 100%; max-width: 700px; height: 360px;">
-  <div class="ticket-conversation-layer" style="height: 100%;">
-    <div class="ticket-conversation-column">
+  <div class="conversation-layer" style="height: 100%;">
+    <div class="conversation-column">
       <ConversationPane
         conversationId="top-bar"
         label="Product Design"

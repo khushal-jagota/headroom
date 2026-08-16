@@ -405,6 +405,11 @@ hand-rolling the same shapes per screen. Each does one job:
 - **StageMark** — the single stage dot showing a field's progress.
 - **ApprovalBlock** — the one approval surface: an editable proposal draft, the scope
   picker, and the approve/accept action, plus a read-only mode for dropped tickets.
+- **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
+  the kickoff priority, the approval control, and the send-back box. It is named by a
+  ticket id and a field and reads that ticket itself, so any screen can raise the same
+  ask. Which ask is current — walking, skipping, the keyboard shortcuts — stays with the
+  screen. The Review screen and Atlas's review walk both mount it.
 - **ResourceState** — the shared error / loading scaffold. It asks what the screen has
   to show before it asks what went wrong: a screen that has data keeps showing it and
   puts a failed read as a line above it, and only a screen with nothing yet is given

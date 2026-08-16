@@ -317,7 +317,8 @@ and require an existing Worker conversation.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
-(the approval walk).
+(the approval walk), `web/src/components/ReviewProposalCard.svelte` (one waiting
+proposal, shared by every screen that shows one).
 
 ## Permanent deletion
 

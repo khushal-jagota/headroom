@@ -7,7 +7,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test:vitest": "vitest run --typecheck",
-    "test:legacy": "node tests/managed-markdown.test.mjs && node tests/markdown-renderer.test.mjs && node tests/browser-css.test.mjs && node tests/shell-status.test.mjs && node tests/backlog-ideas.test.mjs && node tests/scheduled-tasks-browser.test.mjs && node tests/production-surfaces.test.mjs && node tests/backends-source-contract.test.mjs && node tests/agents-workspace-source.test.mjs && node tests/workspace-item-host.test.mjs && node tests/workspace-item-rest.test.mjs && node tests/worker-configuration-setup.test.mjs && node tests/conversation-rest-line.test.mjs && node tests/conversation-pane.test.mjs && node tests/conversation-pane-browser.test.mjs && node tests/file-preview-browser.test.mjs",
+    "test:legacy": "node tests/managed-markdown.test.mjs && node tests/markdown-renderer.test.mjs && node tests/browser-css.test.mjs && node tests/shell-status.test.mjs && node tests/backlog-ideas.test.mjs && node tests/scheduled-tasks-browser.test.mjs && node tests/production-surfaces.test.mjs && node tests/backends-source-contract.test.mjs && node tests/agents-workspace-source.test.mjs && node tests/workspace-item-host.test.mjs && node tests/workspace-item-rest.test.mjs && node tests/worker-configuration-setup.test.mjs && node tests/conversation-rest-line.test.mjs && node tests/conversation-pane.test.mjs && node tests/conversation-pane-browser.test.mjs && node tests/file-preview-browser.test.mjs && node tests/atlas-screen-source.test.mjs",
     "test": "npm run test:vitest && npm run test:legacy"
   },
   "dependencies": {
@@ -22,6 +22,7 @@
     "remark-rehype": "11.1.2",
     "remark-stringify": "11.0.0",
     "svelte": "^5.19.7",
+    "three": "^0.170.0",
     "unified": "11.0.5",
     "unist-util-visit": "5.0.0",
     "vite": "^6.1.0",
@@ -29,6 +30,7 @@
     "zustand": "5.0.13"
   },
   "devDependencies": {
+    "@types/three": "^0.170.0",
     "svelte-check": "^4.1.4",
     "typescript": "^5.7.3",
     "vitest": "4.1.10"
