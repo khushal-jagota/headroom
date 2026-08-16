@@ -246,6 +246,14 @@ files live beside the database rather than in it, so the writer announces the ch
 itself once the new file is in place; if that fails, the canonical file is put back and
 every backend continues to see the prior revision.
 
+A settings file outlives the app version that wrote it, so a Worker type whose Stages
+change can leave a stored file the definition no longer describes. A read reconciles the
+file to the running definition: a Stage the definition no longer declares is dropped, a
+Stage the file omits takes the definition's own ownership default, and a suggested
+Kickoff ceiling that is no longer a later Stage returns to the shipped one. A corrected
+file is written back. Writes stay strict, so a request naming a Stage the Worker does not
+have is still refused.
+
 Every editable skill name is read-only. Description and Markdown body are ordinary
 direct edits that save, fail, and retry independently. Successful skill edits refresh
 the configured planner Hermes home without changing existing conversations.
