@@ -31,7 +31,9 @@
     itemId,
     sprintName,
     backHref = "#/sprint"
-  }: { itemId: string; sprintName: string; backHref?: string } = $props();
+    // A host that is already a way back needs no link back. Atlas raises this over
+    // the world with its own close, so it passes null and the line is not drawn.
+  }: { itemId: string; sprintName: string; backHref?: string | null } = $props();
 
   const workspace = createQuery(() => queries.sprintItemWorkspace(itemId));
   const startValues = createQuery(() => queries.sprintItemConversationStartValues(itemId));
@@ -142,7 +144,9 @@
       {#if workspace.data}
         {@const item = workspace.data}
         <div class="sprint-item-column">
-          <a class="sprint-item-back" href={backHref}>‹ {sprintName}</a>
+          {#if backHref !== null}
+            <a class="sprint-item-back" href={backHref}>‹ {sprintName}</a>
+          {/if}
           <header class="sprint-workspace-head">
             <div class="sprint-workspace-identity">
               <TicketPriorityControl

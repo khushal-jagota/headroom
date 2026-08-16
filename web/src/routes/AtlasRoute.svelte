@@ -186,7 +186,7 @@
       {/key}
     {:else if selection?.kind === "item"}
       {#key selection.id}
-        <SprintItemWorkspace itemId={selection.id} sprintName="Atlas" backHref="#/atlas" />
+        <SprintItemWorkspace itemId={selection.id} sprintName="Atlas" backHref={null} />
       {/key}
     {:else if selection?.kind === "overseer"}
       {#key selection.id}
