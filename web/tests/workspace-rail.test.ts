@@ -317,14 +317,14 @@ describe("What the rail draws open", () => {
 
   it("opens no Item for the Chief of Staff", () => {
     expect(opensAt("#/workspace/chief-of-staff")).toEqual({
-      view: "tickets",
+      view: "items",
       openItemId: null,
       markedItemId: null,
       markedTicketId: null,
       chiefMarked: true
     });
-    // The Chief is still the Chief while the rail shows the Sprint Items list.
-    expect(opensAt("#/workspace/chief-of-staff?view=items").openItemId).toBeNull();
+    // The Chief is still the Chief while the rail shows the Tickets list.
+    expect(opensAt("#/workspace/chief-of-staff?view=tickets").openItemId).toBeNull();
   });
 
   it("opens no Item for a Ticket picked out of the Tickets list", () => {
@@ -359,7 +359,7 @@ describe("What the rail draws open", () => {
 
   it("opens nothing at the bare Workspace address", () => {
     expect(opensAt("#/workspace")).toEqual({
-      view: "tickets",
+      view: "items",
       openItemId: null,
       markedItemId: null,
       markedTicketId: null,

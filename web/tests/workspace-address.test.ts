@@ -10,12 +10,13 @@ describe("Workspace addresses", () => {
   it("parses the rail, Chief, Ticket, and Sprint Item identities", () => {
     expect(parseWorkspaceAddress("#/workspace")).toEqual({
       selection: { kind: "none" },
-      view: "tickets"
+      view: "items"
     });
     expect(parseWorkspaceAddress("#/workspace/chief-of-staff")).toEqual({
       selection: { kind: "chief" },
-      view: "tickets"
+      view: "items"
     });
+    // A Ticket that names no Item is the one thing the Sprint Items list cannot draw.
     expect(parseWorkspaceAddress("#/workspace/ticket%20one")).toEqual({
       selection: { kind: "ticket", id: "ticket one" },
       view: "tickets"
@@ -53,15 +54,18 @@ describe("Workspace addresses", () => {
   });
 
   it("writes the view only when the reader asked for the other one", () => {
-    // An Item, and a Ticket opened from inside one, already say Sprint Items.
+    // Everything but a Ticket on its own already says Sprint Items.
     expect(workspaceAddress({ kind: "item", id: "si_one" }, "items")).toBe(
       "#/workspace/item/si_one"
     );
-    expect(workspaceAddress({ kind: "chief" }, "tickets")).toBe(
+    expect(workspaceAddress({ kind: "chief" }, "items")).toBe(
       "#/workspace/chief-of-staff"
     );
-    expect(workspaceAddress({ kind: "chief" }, "items")).toBe(
-      "#/workspace/chief-of-staff?view=items"
+    expect(workspaceAddress({ kind: "chief" }, "tickets")).toBe(
+      "#/workspace/chief-of-staff?view=tickets"
+    );
+    expect(workspaceAddress({ kind: "ticket", id: "t_one" }, "tickets")).toBe(
+      "#/workspace/t_one"
     );
     expect(workspaceAddress({ kind: "item", id: "si_one" }, "tickets")).toBe(
       "#/workspace/item/si_one?view=tickets"
@@ -79,7 +83,7 @@ describe("Workspace addresses", () => {
     });
     expect(parseWorkspaceAddress("#/workspace?view=sideways")).toEqual({
       selection: { kind: "none" },
-      view: "tickets"
+      view: "items"
     });
   });
 

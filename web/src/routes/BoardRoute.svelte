@@ -27,8 +27,8 @@
   let { address }: { address: WorkspaceAddress } = $props();
 
   const VIEWS = [
-    { key: "tickets", label: "Tickets" },
-    { key: "items", label: "Sprint Items" }
+    { key: "items", label: "Sprint Items" },
+    { key: "tickets", label: "Tickets" }
   ] as const;
 
   const board = createQuery(() => queries.board());
