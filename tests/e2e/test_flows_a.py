@@ -14,7 +14,7 @@ import sqlite3
 from collections.abc import Callable
 
 from playwright.sync_api import BrowserContext, Page
-from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
+from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle, open_status_group
 
 WAIT_MS = 10_000
 
@@ -85,8 +85,8 @@ def test_e22_cli_create_live_board(
     board = 'section[data-screen="workspace"]'
     ctx_a = context_factory()
     ctx_b = context_factory()
-    page_a = open_page(ctx_a, server, "#/workspace", board)
-    page_b = open_page(ctx_b, server, "#/workspace", board)
+    page_a = open_page(ctx_a, server, "#/workspace?view=tickets", board)
+    page_b = open_page(ctx_b, server, "#/workspace?view=tickets", board)
 
     for page in (page_a, page_b):
         count = page.eval_on_selector_all(
@@ -114,13 +114,16 @@ def test_e22_cli_create_live_board(
     assert created["stage"] == "needs_kickoff", created
 
     card = f'[data-card][data-ticket-stage="needs_kickoff"][data-ticket-id="{tid}"]'
-    # No reload, no goto: the today's-roster card arrives via a change-stream
-    # refetch of the open pages.
+    # No reload, no goto: the today's-roster card arrives via a change-stream refetch of
+    # the open pages. Its group is drawn only once it holds a Ticket and arrives shut, so
+    # each page opens it after the card lands. The arrival is the subject, not the fold.
     _wait_present(page_b, card)
+    open_status_group(page_b, "waiting_for_kickoff")
     assert "T18 board ticket" in page_b.inner_text(card)
     assert page_b.evaluate("window.__plannerDebug.flushes") > flushes_b
 
     _wait_present(page_a, card)
+    open_status_group(page_a, "waiting_for_kickoff")
     assert "T18 board ticket" in page_a.inner_text(card)
 
     # Workspace follows today's membership: removing the Ticket removes its card.
