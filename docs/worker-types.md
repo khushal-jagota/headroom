@@ -437,4 +437,4 @@ prefix, and reconciliation support before changing state.
 
 ---
 
-_Last verified: 2026-08-09._
+_Last verified: 2026-08-16._
