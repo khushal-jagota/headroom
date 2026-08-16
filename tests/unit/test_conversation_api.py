@@ -25,7 +25,6 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from starlette.middleware.gzip import GZipMiddleware
 
 from planner.conversation.api import (
     COMMITTED_EVENT_STREAM_NAME,
@@ -101,12 +100,17 @@ from planner.core import sse
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
+from planner.core.response_compression import (
+    CompressExceptEventStreams,
+    event_stream_route_patterns,
+)
 from planner.core.server import create_app
 from planner.files.logic.paths import conversation_files_root
 from planner.tickets import data as tickets_data
 
 VENDOR_SESSION_CURSOR = "vendor-session-1"
 HEARTBEAT_MILLISECONDS = 40
+CONVERSATION_PREFIX = "/api/conversation"
 
 
 # --- the backend side ---------------------------------------------------------------------
@@ -307,7 +311,7 @@ class _Harness:
             sse_heartbeat_ms=HEARTBEAT_MILLISECONDS,
         )
         self.app = FastAPI()
-        self.app.include_router(router, prefix="/api/conversation")
+        self.app.include_router(router, prefix=CONVERSATION_PREFIX)
         self.app.state.conversation = self.runtime
 
     def _make_child(
@@ -2848,6 +2852,20 @@ def test_a_message_with_nothing_in_it_is_refused_rather_than_recorded(
     _run(exercise)
 
 
+def _compression_as_the_server_composes_it(app: FastAPI) -> CompressExceptEventStreams:
+    """The compression the server puts in front of this router, composed the same way.
+
+    The server reads which routes are streams from the routers it includes, so the test
+    reads them from the same router under the same prefix.
+    """
+    return CompressExceptEventStreams(
+        app,
+        event_stream_patterns=event_stream_route_patterns(router.routes, CONVERSATION_PREFIX),
+        minimum_size=1024,
+        compresslevel=4,
+    )
+
+
 def test_the_tail_is_not_compressed_even_when_the_browser_offers_gzip(
     harness: _Harness,
 ) -> None:
@@ -2859,10 +2877,10 @@ def test_the_tail_is_not_compressed_even_when_the_browser_offers_gzip(
             await _start(client, "c")
             async with _EventStreamDrive(
                 harness.app,
-                "/api/conversation/conversations/c/tail",
+                f"{CONVERSATION_PREFIX}/conversations/c/tail",
                 "after=0",
                 headers=[(b"accept-encoding", b"gzip, deflate, br")],
-                entry=GZipMiddleware(harness.app, minimum_size=1024, compresslevel=4),
+                entry=_compression_as_the_server_composes_it(harness.app),
             ) as stream:
                 await stream.wait_until_watching(harness.live_tail)
                 frame = await stream.next_frame()

@@ -8,8 +8,13 @@ lifecycle live under `web/src/lib/`.
 
 Answers travel compressed. The server gzips any response over 1 KB, which matters most
 for a conversation open: the largest thread is 9.4 MB of JSON and goes over the wire as
-1.8 MB. Live event streams are sent frame by frame and are never compressed, because
-holding frames back to compress them is the opposite of what they are for.
+1.8 MB. A live event stream never reaches the compression at all: the server decides from
+the address, before the request is answered, and sends a stream down a route that has no
+compression in it. That is not fussiness. Compression cannot say anything about a
+response until it has seen some of the body, so it holds the response's headers back
+until then — and a stream with nothing to report yet has no body to release them with.
+The browser would sit there waiting to be connected, and the page would never learn that
+anything had changed.
 
 ## The screens
 
