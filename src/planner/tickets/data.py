@@ -1966,7 +1966,7 @@ def delete_ticket(
     *,
     actor: str,
     now: int,
-    force: bool = False,
+    even_while_running: bool = False,
     supervisor_sprint_item_id: str | None = None,
 ) -> TicketDeletion:
     """Permanently remove a mistaken ticket and its product footprint in one transaction.
@@ -1975,9 +1975,11 @@ def delete_ticket(
     Ticket's conversation is live is a question for the conversation system, so the route
     asks it before calling this writer; this writer stays a pure database transaction.
 
-    A status can be stranded at `agent` with no worker running, and then that guard keeps
-    a dead Ticket alive. `force` skips it. It skips nothing else: the actor check above
-    still runs, and the conversation guard remains the route's to skip.
+    `even_while_running` deletes a Ticket the status still calls claimed. The user asks
+    for it with `--force`, for a status stranded at `agent` with no worker behind it, and
+    a Sprint Item supervisor deleting its own child Ticket always has it. It skips that
+    one guard: the actor check above still runs, and silencing a live worker is the
+    route's, since only the conversation system knows one is there.
 
     A Sprint Item supervisor deletes only a current child of its own Item. The route
     admits it and names that Item here, and the parent is rechecked inside the
@@ -1989,7 +1991,7 @@ def delete_ticket(
         _require_current_supervisor_parent(
             conn, ticket, supervisor_sprint_item_id, "Ticket deletion"
         )
-        if not force and ticket.ticket_status is TicketStatus.agent:
+        if not even_while_running and ticket.ticket_status is TicketStatus.agent:
             raise PlannerError(
                 ErrorCode.already_running,
                 "ticket activity is still running",

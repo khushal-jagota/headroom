@@ -156,8 +156,9 @@ unless the supervisor states a wider scope it was given.
 
 A supervisor also deletes a current child Ticket, through the ordinary deletion route.
 The Item is taken from the supervisor's own identity, so it cannot reach a Ticket
-elsewhere. The deletion is permanent, and the supervisor asks the user before it deletes.
-A running Ticket is refused, and only the user can force a delete past that.
+elsewhere. That boundary is the only check. The deletion is permanent and nothing else
+guards it: a Ticket whose Worker is mid-turn is deleted too, and that Worker is killed
+with it.
 
 Config edits the canonical Sprint Item supervisor role skill. Supported backends read
 that managed source for future conversations. A save does not rewrite an existing

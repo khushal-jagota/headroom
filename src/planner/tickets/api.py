@@ -216,6 +216,27 @@ async def reject_while_the_conversation_is_running(
         )
 
 
+async def silence_the_worker_before_deleting(
+    conn: sqlite3.Connection,
+    conversation_system: ConversationSystem,
+    ticket_id: str,
+) -> None:
+    """Kill the turn of a Ticket that is about to stop existing.
+
+    A deletion that goes ahead over a running Worker is the one path where a turn would
+    outlive the row it belongs to: the Ticket's status, its context, and its conversation
+    link all go, and the Worker keeps talking into a conversation nothing owns. Killing
+    stops that turn and discards every held message, so nothing runs afterwards.
+
+    The conversation record and its history survive, as they do for every deletion. An
+    idle conversation, or none at all, means there is nothing to kill.
+    """
+    conversation_id = tickets_data.read_ticket(conn, ticket_id).conversation_id
+    if conversation_id is None:
+        return
+    await conversation_system.kill(conversation_id)
+
+
 @contextmanager
 def txn(conn: sqlite3.Connection) -> Iterator[None]:
     """Wrap a NON-self-transacting writer (days/dispatch/links) so a mid-sequence
@@ -1031,19 +1052,21 @@ async def delete_ticket(
     conversations: Conversations,
     force: Annotated[bool, Query()] = False,
 ) -> JsonDict:
-    # Force skips a guard that protects a running Worker, so it stays exactly as direct as
-    # it is today. The deletion itself also admits the supervisor of the Ticket's Item.
-    if force:
-        require_direct_write(ctx)
     supervisor_sprint_item_id = require_ticket_delete(conn, ctx, ticket_id)
-    if not force:
+    # A supervisor deletes its own child Ticket outright, and force is how the user reaches
+    # the same place. Both walk past the running guards, so the Ticket's turn is killed
+    # here instead: a Worker must never outlive the Ticket it belongs to.
+    even_while_running = force or supervisor_sprint_item_id is not None
+    if even_while_running:
+        await silence_the_worker_before_deleting(conn, conversations, ticket_id)
+    else:
         await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
     deleted = tickets_data.delete_ticket(
         conn,
         ticket_id,
         actor=ctx.actor,
         now=clk.now_unix(),
-        force=force,
+        even_while_running=even_while_running,
         supervisor_sprint_item_id=supervisor_sprint_item_id,
     )
     return {

@@ -128,11 +128,13 @@ record shapes. Direct `show` commands also keep their full record shapes.
   `--sprint-item <id>` or `--clear-sprint-item`. Omitted dimensions keep their current
   values, and the server rejects an incoherent final combination.
   `ticket delete` is permanent and requires `--yes`. The user deletes any Ticket, and a
-  Sprint Item supervisor deletes a current child Ticket of its own Item. It normally
-  refuses a Ticket that is running, either because its
+  Sprint Item supervisor deletes a current child Ticket of its own Item. For the user it
+  normally refuses a Ticket that is running, either because its
   status says a worker step is out or because its conversation is mid-turn. `--force`
   deletes such a Ticket anyway, for a Ticket whose status is stuck with no worker
-  running. Force changes nothing else: the same cascade, and still only a person.
+  running. A supervisor meets no such guard on its own child Tickets, and `--force` adds
+  nothing for it. Force changes nothing else: the same cascade. Whenever a delete goes
+  ahead over a running worker, that worker's turn is killed first.
 - **`ticket employee-configuration <id> --backend <key> --model <id> [--reasoning-effort <e>]`**
   — set what this Ticket's worker launches on. All three go together, because a model id
   belongs to the backend that named it; leave `--reasoning-effort` out for a model that

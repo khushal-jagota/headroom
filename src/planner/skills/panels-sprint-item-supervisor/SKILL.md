@@ -88,10 +88,10 @@ Use these canonical actions when they match the decision:
   other: its kickoff parks for the user. Add `--ceiling` and `--at-cap` to state how far
   the new Worker may go, when the user gave you that scope to grant.
 - `ticket delete <ticket> --yes` permanently deletes a current child Ticket of your Item.
-  The Ticket and its working history are gone, and nothing brings them back, so ask the
-  user first and delete only the Ticket they name. It is refused while the Ticket is
-  running, either because a worker step is out or because its conversation is mid-turn.
-  `--force` deletes a running Ticket and is the user's own action, not yours.
+  Nothing guards it. The Ticket, its fields, and its working history are gone, a Worker
+  mid-turn is killed with them, and none of it comes back. The server checks one thing,
+  which is that the Ticket is a current child of your Item. Everything else about the
+  decision is yours, and there is no undo behind you.
 - `set-item` changes one plain Sprint Item field.
 - `set-ticket` changes one current child Ticket field.
 - `scope` changes the child Ticket ceiling and what happens at it. The ceiling takes

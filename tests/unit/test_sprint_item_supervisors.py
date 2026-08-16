@@ -1197,33 +1197,80 @@ def test_supervisor_deletes_a_current_child_and_nothing_else(tmp_path: Path) -> 
     assert survivor.status_code == 200
 
 
-def test_supervisor_deletion_stops_at_a_running_child_and_at_force(tmp_path: Path) -> None:
-    """Force skips the guard that protects a running Worker, so it stays the user's."""
+def test_supervisor_deletes_a_running_child_and_leaves_no_worker_behind(
+    tmp_path: Path,
+) -> None:
+    """Delete is unguarded for a supervisor, so the running turn is what needs killing.
+
+    The Ticket carries the claim, the pending context, and the conversation link, and all
+    three go with the row. The turn does not: it is somebody else's process, and without
+    this it keeps talking into a conversation that belongs to nothing.
+    """
     app, db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _create_item(client)
         running = _stranded_child(client, db_path, str(item["id"]))
-        quiet = _child_ticket(client, str(item["id"]), "Not running")
-        while_running = client.delete(
+        asyncio.run(
+            app.state.conversation_system.start_conversation(
+                ConversationStartRequest(conversation_id="conv-dead-worker", model="a-model")
+            )
+        )
+        asyncio.run(
+            app.state.conversation_system.send(
+                "conv-dead-worker",
+                text_message_content("mid-turn"),
+                sender_label="loop",
+            )
+        )
+        assert asyncio.run(app.state.conversation_system.is_running("conv-dead-worker"))
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "INSERT INTO pending_worker_context(worker_entity_id,context_key,text,revision) "
+                "VALUES (?, 'guidance', 'unread', 1)",
+                (running,),
+            )
+            conn.commit()
+        deleted = client.delete(
             f"/api/tickets/{running}", headers=_supervisor_headers(str(item["id"]))
         )
-        forced = client.delete(
-            f"/api/tickets/{running}?force=true",
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        forced_on_a_quiet_child = client.delete(
-            f"/api/tickets/{quiet}?force=true",
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        user_forced = client.delete(f"/api/tickets/{running}?force=true")
+        gone = client.get(f"/api/tickets/{running}")
+        with connect(str(db_path)) as conn:
+            leftover_context = conn.execute(
+                "SELECT 1 FROM pending_worker_context WHERE worker_entity_id = ?",
+                (running,),
+            ).fetchone()
+            leftover_link = conn.execute(
+                "SELECT 1 FROM ticket_conversations WHERE ticket_id = ?", (running,)
+            ).fetchone()
 
-    assert while_running.status_code == 409
-    assert while_running.json()["error"]["code"] == "already_running"
-    assert forced.status_code == 400
-    assert forced.json()["error"]["code"] == "agent_forbidden"
-    assert forced_on_a_quiet_child.status_code == 400
-    assert forced_on_a_quiet_child.json()["error"]["code"] == "agent_forbidden"
-    assert user_forced.status_code == 200, user_forced.text
+    assert deleted.status_code == 200, deleted.text
+    assert gone.status_code == 404
+    assert asyncio.run(app.state.conversation_system.is_running("conv-dead-worker")) is False
+    assert asyncio.run(app.state.conversation_system.held_prompts("conv-dead-worker")) == ()
+    assert leftover_context is None
+    assert leftover_link is None
+
+
+def test_supervisor_may_force_its_own_delete(tmp_path: Path) -> None:
+    """Force adds nothing for a supervisor, and it is no longer refused one."""
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        first = _create_item(client, "First")
+        second = _create_item(client, "Second")
+        own = _child_ticket(client, str(first["id"]), "Mine to force")
+        elsewhere = _child_ticket(client, str(second["id"]), "Another Item's child")
+        forced_elsewhere = client.delete(
+            f"/api/tickets/{elsewhere}?force=true",
+            headers=_supervisor_headers(str(first["id"])),
+        )
+        forced = client.delete(
+            f"/api/tickets/{own}?force=true", headers=_supervisor_headers(str(first["id"]))
+        )
+
+    assert forced_elsewhere.status_code == 400
+    assert forced_elsewhere.json()["error"]["code"] == "agent_forbidden"
+    assert forced.status_code == 200, forced.text
+    assert forced.json()["ticket_id"] == own
 
 
 def test_a_ceiling_accepts_the_plain_stage_name(tmp_path: Path) -> None:
