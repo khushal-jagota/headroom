@@ -13,8 +13,8 @@ Eleven Worker types ship today:
 
 - **`coding`** handles product and repository work.
 - **`general`** is the catch-all, chosen when no specialist type fits. It runs a
-  deliberately minimal lifecycle — agree the task with the user, do it, then land its
-  consequences — for arbitrary work.
+  deliberately minimal lifecycle — do the task, then land its consequences — for
+  arbitrary work.
 - **`debugging`** understands a reported software bug, diagnoses its structural cause,
   and defines the implementation handoff without implementing it.
 - **`new_worker`** designs and lands a new kind of worker.
@@ -56,8 +56,8 @@ external-work reconciliation.
 
 The shipped `coding` and `debugging` definitions default every non-terminal Stage to
 worker ownership.
-`general` pairs only for Understanding, where the task is agreed with the user; its
-Execution and Closeout are worker-owned. `new_worker` starts with worker-owned Kickoff,
+`general` does the same: its Kickoff, Execution, and Closeout are all worker-owned.
+`new_worker` starts with worker-owned Kickoff,
 then uses paired
 ownership for Understanding before worker-owned Stages and Thinking, pairs again for
 Runtime Defaults, then returns to worker-owned Drafting and Closeout. `exploration`
