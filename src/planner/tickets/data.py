@@ -456,6 +456,7 @@ def _require_current_supervisor_parent(
     conn: sqlite3.Connection,
     ticket: Ticket,
     sprint_item_id: str | None,
+    action: str = "Ticket review",
 ) -> None:
     """Recheck exact current parent while the resolving write holds its transaction."""
     if sprint_item_id is None:
@@ -468,7 +469,7 @@ def _require_current_supervisor_parent(
     if row is None:
         raise PlannerError(
             ErrorCode.agent_forbidden,
-            "Ticket review is not available to this Sprint Item supervisor",
+            f"{action} is not available to this Sprint Item supervisor",
             {
                 "actor": admission.SPRINT_ITEM_SUPERVISOR_ACTOR,
                 "sprint_item_id": sprint_item_id,
@@ -1966,6 +1967,7 @@ def delete_ticket(
     actor: str,
     now: int,
     force: bool = False,
+    supervisor_sprint_item_id: str | None = None,
 ) -> TicketDeletion:
     """Permanently remove a mistaken ticket and its product footprint in one transaction.
 
@@ -1976,10 +1978,17 @@ def delete_ticket(
     A status can be stranded at `agent` with no worker running, and then that guard keeps
     a dead Ticket alive. `force` skips it. It skips nothing else: the actor check above
     still runs, and the conversation guard remains the route's to skip.
+
+    A Sprint Item supervisor deletes only a current child of its own Item. The route
+    admits it and names that Item here, and the parent is rechecked inside the
+    transaction, because a Ticket can move between the two.
     """
-    admission.require_direct_actor(actor, "delete_ticket")
+    admission.require_direct_or_supervisor_actor(actor, "delete_ticket")
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
+        _require_current_supervisor_parent(
+            conn, ticket, supervisor_sprint_item_id, "Ticket deletion"
+        )
         if not force and ticket.ticket_status is TicketStatus.agent:
             raise PlannerError(
                 ErrorCode.already_running,

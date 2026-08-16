@@ -1152,6 +1152,80 @@ def test_supervisor_cannot_approve_a_ticket_outside_its_own_item(
     assert refused.json()["error"]["code"] == "agent_forbidden"
 
 
+def _child_ticket(client: TestClient, item_id: str, title: str = "Child of the Item") -> str:
+    created = client.post(
+        "/api/tickets",
+        json={
+            "worker_type": "coding",
+            "title": title,
+            "kickoff_note": "Do the work.",
+            "sprint_item_id": item_id,
+        },
+    )
+    assert created.status_code == 200, created.text
+    return str(created.json()["id"])
+
+
+def test_supervisor_deletes_a_current_child_and_nothing_else(tmp_path: Path) -> None:
+    """The Item comes from the supervisor's own identity, so it reaches no other Ticket."""
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        first = _create_item(client, "First")
+        second = _create_item(client, "Second")
+        own = _child_ticket(client, str(first["id"]), "Mine to delete")
+        elsewhere = _child_ticket(client, str(second["id"]), "Another Item's child")
+        cross = client.delete(
+            f"/api/tickets/{elsewhere}", headers=_supervisor_headers(str(first["id"]))
+        )
+        without_an_item = client.delete(
+            f"/api/tickets/{own}", headers={"X-Plan-Actor": "sprint_item_supervisor"}
+        )
+        deleted = client.delete(
+            f"/api/tickets/{own}", headers=_supervisor_headers(str(first["id"]))
+        )
+        gone = client.get(f"/api/tickets/{own}")
+        survivor = client.get(f"/api/tickets/{elsewhere}")
+
+    assert cross.status_code == 400
+    assert cross.json()["error"]["code"] == "agent_forbidden"
+    assert without_an_item.status_code == 400
+    assert without_an_item.json()["error"]["code"] == "agent_forbidden"
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["ticket_id"] == own
+    assert deleted.json()["sprint_item_ids"] == [str(first["id"])]
+    assert gone.status_code == 404
+    assert survivor.status_code == 200
+
+
+def test_supervisor_deletion_stops_at_a_running_child_and_at_force(tmp_path: Path) -> None:
+    """Force skips the guard that protects a running Worker, so it stays the user's."""
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        running = _stranded_child(client, db_path, str(item["id"]))
+        quiet = _child_ticket(client, str(item["id"]), "Not running")
+        while_running = client.delete(
+            f"/api/tickets/{running}", headers=_supervisor_headers(str(item["id"]))
+        )
+        forced = client.delete(
+            f"/api/tickets/{running}?force=true",
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        forced_on_a_quiet_child = client.delete(
+            f"/api/tickets/{quiet}?force=true",
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        user_forced = client.delete(f"/api/tickets/{running}?force=true")
+
+    assert while_running.status_code == 409
+    assert while_running.json()["error"]["code"] == "already_running"
+    assert forced.status_code == 400
+    assert forced.json()["error"]["code"] == "agent_forbidden"
+    assert forced_on_a_quiet_child.status_code == 400
+    assert forced_on_a_quiet_child.json()["error"]["code"] == "agent_forbidden"
+    assert user_forced.status_code == 200, user_forced.text
+
+
 def test_a_ceiling_accepts_the_plain_stage_name(tmp_path: Path) -> None:
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:

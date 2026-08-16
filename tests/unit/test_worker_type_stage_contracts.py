@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
-
 from dataclasses import fields
 from pathlib import Path
 from sqlite3 import Connection
@@ -20,6 +18,7 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets.contracts import Ticket
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
+from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 
 _EMPTY_FIELDS_DEFAULT = (
     '{"kickoff":{"value":null,"proposal":null,"user_note":null},'

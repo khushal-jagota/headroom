@@ -87,6 +87,11 @@ Use these canonical actions when they match the decision:
   Load and follow `panels-ticket-creation` first. A Ticket you create is scoped like any
   other: its kickoff parks for the user. Add `--ceiling` and `--at-cap` to state how far
   the new Worker may go, when the user gave you that scope to grant.
+- `ticket delete <ticket> --yes` permanently deletes a current child Ticket of your Item.
+  The Ticket and its working history are gone, and nothing brings them back, so ask the
+  user first and delete only the Ticket they name. It is refused while the Ticket is
+  running, either because a worker step is out or because its conversation is mid-turn.
+  `--force` deletes a running Ticket and is the user's own action, not yours.
 - `set-item` changes one plain Sprint Item field.
 - `set-ticket` changes one current child Ticket field.
 - `scope` changes the child Ticket ceiling and what happens at it. The ceiling takes

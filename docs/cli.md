@@ -127,8 +127,9 @@ record shapes. Direct `show` commands also keep their full record shapes.
   with `--sprint <id|current>` or `--backlog`. Select classification with
   `--sprint-item <id>` or `--clear-sprint-item`. Omitted dimensions keep their current
   values, and the server rejects an incoherent final combination.
-  `ticket delete` is a permanent direct operation
-  and requires `--yes`. It normally refuses a Ticket that is running, either because its
+  `ticket delete` is permanent and requires `--yes`. The user deletes any Ticket, and a
+  Sprint Item supervisor deletes a current child Ticket of its own Item. It normally
+  refuses a Ticket that is running, either because its
   status says a worker step is out or because its conversation is mid-turn. `--force`
   deletes such a Ticket anyway, for a Ticket whose status is stuck with no worker
   running. Force changes nothing else: the same cascade, and still only a person.

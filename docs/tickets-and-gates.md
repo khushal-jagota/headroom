@@ -322,11 +322,14 @@ proposal, shared by every screen that shows one).
 
 ## Permanent deletion
 
-Dropping a ticket keeps its record. Permanent deletion is different: it is a
-direct-only capability for a ticket created by mistake. The ticket UI intentionally
+Dropping a ticket keeps its record. Permanent deletion is different: it is for a ticket
+created by mistake. The user deletes any ticket, and a Sprint Item supervisor deletes a
+current child ticket of its own item. Nobody else can. The ticket UI intentionally
 has no delete control; deletion remains a manual API or CLI operation, and the CLI
 requires `--yes`. It is refused while the Ticket's status says a worker step is out,
-and also while its conversation has a turn running. One transaction removes the ticket
+and also while its conversation has a turn running. Only the user can force a delete
+past those two guards, because forcing one can erase a running worker. One transaction
+removes the ticket
 from days, sprint views, links, Review, Workspace, and pending worker context. Other
 tickets and day ordering stay intact.
 

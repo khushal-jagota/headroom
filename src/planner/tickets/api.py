@@ -46,6 +46,7 @@ from planner.core.authctx import (
     request_context,
     require_chief,
     require_direct_write,
+    require_ticket_delete,
     require_ticket_worker_write,
 )
 from planner.core.clock import Clock
@@ -1030,7 +1031,11 @@ async def delete_ticket(
     conversations: Conversations,
     force: Annotated[bool, Query()] = False,
 ) -> JsonDict:
-    require_direct_write(ctx)
+    # Force skips a guard that protects a running Worker, so it stays exactly as direct as
+    # it is today. The deletion itself also admits the supervisor of the Ticket's Item.
+    if force:
+        require_direct_write(ctx)
+    supervisor_sprint_item_id = require_ticket_delete(conn, ctx, ticket_id)
     if not force:
         await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
     deleted = tickets_data.delete_ticket(
@@ -1039,6 +1044,7 @@ async def delete_ticket(
         actor=ctx.actor,
         now=clk.now_unix(),
         force=force,
+        supervisor_sprint_item_id=supervisor_sprint_item_id,
     )
     return {
         "ok": True,

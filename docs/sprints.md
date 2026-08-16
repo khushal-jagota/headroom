@@ -154,6 +154,11 @@ A supervisor creates its own child Tickets with the ordinary Ticket creation rou
 Ticket it creates is scoped like any other: the kickoff parks for the user's approval
 unless the supervisor states a wider scope it was given.
 
+A supervisor also deletes a current child Ticket, through the ordinary deletion route.
+The Item is taken from the supervisor's own identity, so it cannot reach a Ticket
+elsewhere. The deletion is permanent, and the supervisor asks the user before it deletes.
+A running Ticket is refused, and only the user can force a delete past that.
+
 Config edits the canonical Sprint Item supervisor role skill. Supported backends read
 that managed source for future conversations. A save does not rewrite an existing
 conversation, its role record, or its history.
