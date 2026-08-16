@@ -1799,10 +1799,10 @@ async def add_conversation_row_signals(
     ``needs_me`` is whether that turn is waiting on a permission decision or answers only
     the owner can give. Both are asked for every row.
 
-    ``latest_turn_ended_sequence`` is asked for cards alone. It is where the conversation
-    last had a turn end, and it is a card's half of the unread-reply mark. A supervisor
-    ends hundreds of turns a day, almost none of which want anybody, so an Item is marked
-    by its last ping instead, which is a database fact that ``board_view`` already read.
+    ``latest_turn_ended_sequence`` is where the conversation last had a turn end, and it
+    is the unread-reply half of a row's mark. Every row is asked for it. An Item also
+    carries its supervisor's last ping, a database fact ``board_view`` already read, and
+    the row ranks the two: the ping asks for the user and the reply does not.
 
     None of these signals is a tickets-domain fact and all are awaited, so ``board_view``
     cannot answer them. A row with no conversation has no conversation to ask about, so
@@ -1817,11 +1817,7 @@ async def add_conversation_row_signals(
     cards = [card for column in board["columns"] for card in column["cards"]]
     rows = [*cards, *board["sprint_items"]]
     latest_turn_ended = await conversation_record.latest_turn_ended_sequences(
-        [
-            card["conversation_id"]
-            for card in cards
-            if card["conversation_id"] is not None
-        ]
+        [row["conversation_id"] for row in rows if row["conversation_id"] is not None]
     )
     for row in rows:
         conversation_id = row["conversation_id"]
@@ -1838,9 +1834,7 @@ async def add_conversation_row_signals(
             if conversation_id is not None
             else False
         )
-    for card in cards:
-        conversation_id = card["conversation_id"]
-        card["latest_turn_ended_sequence"] = (
+        row["latest_turn_ended_sequence"] = (
             latest_turn_ended.get(conversation_id, 0)
             if conversation_id is not None
             else 0
