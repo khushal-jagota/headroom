@@ -20,7 +20,6 @@ from planner.conversation.message_content import text_message_content
 from planner.core import change_signal
 from planner.core.clock import build_clock
 from planner.core.config import load_config
-from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.environments.hermes_home import provision_planner_home_skills
