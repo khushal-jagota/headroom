@@ -281,6 +281,10 @@ function addsNothingTo(said: string, within: string): boolean {
 }
 
 function toolCallLine(row: ToolCallRow): ToolCallLine {
+  // The start of a long output is not the output. A fragment can lose the shape the
+  // rules below read — an object that no longer parses, a first line that was never the
+  // whole of one — so a capped row's line is drawn from what is whole.
+  const wholeDetail = typeof row.cappedDetailSequence === "number" ? null : row.detail;
   // Both halves matter: the title says what happened and the summary says which call it
   // was. When a backend kind has no trustworthy phrase, its own title remains the fact.
   const written = withoutTheKindItStated(
@@ -291,8 +295,8 @@ function toolCallLine(row: ToolCallRow): ToolCallLine {
     row.title.trim().toLowerCase() === row.toolKind.trim().toLowerCase();
   const phrase = TOOL_CALL_PHRASES[toolGlyphKind(row.toolKind)];
   const spoken =
-    identifyingFact(row.startedDetail, row.detail) ??
-    (titleNamesTheTool ? spokenDetail(row.startedDetail, row.detail) : written);
+    identifyingFact(row.startedDetail, wholeDetail) ??
+    (titleNamesTheTool ? spokenDetail(row.startedDetail, wholeDetail) : written);
   const summary =
     spoken === null ? null : shortened(commandWithoutShellInvocation(spoken));
   const title = phrase !== undefined && summary !== null ? phrase : written;
@@ -313,11 +317,15 @@ export function presentToolCall(row: ToolCallRow): ToolCallPresentation {
   // while a caller independently chooses different wording or disclosure behavior.
   const line = toolCallLine(row);
   const detail = readableConversationDetail(row.progress ?? row.detail);
+  // A capped row holds the start of output the reader has not seen, so it opens whatever
+  // that start happens to look like. Reading the prefix instead would let a row whose
+  // first line repeats its title refuse to open onto the rest of the output.
+  const capped = row.progress === null && typeof row.cappedDetailSequence === "number";
   return {
     iconPaths: STEP_ICON_PATHS[toolGlyphKind(row.toolKind)],
     title: line.title,
     summary: line.summary,
     detail,
-    canExpand: detail !== null && !lineShowsWholeDetail(line, detail)
+    canExpand: capped || (detail !== null && !lineShowsWholeDetail(line, detail))
   };
 }

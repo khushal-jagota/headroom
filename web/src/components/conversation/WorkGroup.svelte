@@ -18,9 +18,12 @@
 
   let {
     entries,
+    conversationId,
     hidden = false
   }: {
     entries: readonly ToolCallRowType[];
+    /** Whose record these rows are, which is where a row's whole output is asked for. */
+    conversationId: string;
     /** Its turn is settled and folded, so this run is behind the fold. */
     hidden?: boolean;
   } = $props();
@@ -44,7 +47,7 @@
   >
     <div class="acp-steps" data-conversation-work-entries>
       {#each visible as entry (entry.key)}
-        <ToolCallRow row={entry} />
+        <ToolCallRow row={entry} {conversationId} />
       {/each}
     </div>
     {#if hiddenCount > 0}
