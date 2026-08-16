@@ -180,12 +180,15 @@ conversation is refused. This message path cannot create a conversation and does
 change the Ticket Stage, scope, status, or Day membership.
 
 A supervisor reaches the user with a ping. It is one deliberate act, and the supervisor
-takes it when the user must see something. A ping lights that Item in the Workspace and
-sends one notification to every enabled device. The notification names the Item, says
+takes it when the user must see something. A ping turns that Item's Workspace mark white
+and sends one notification to every enabled device. The notification names the Item, says
 that it wants the user, and carries no supervisor text: the message itself is already in
 the Item's conversation, one tap away. The mark stays on until the user opens the Item,
-so a second ping while the first is unread changes nothing. Nothing else a supervisor
-does reaches the user, and an ordinary turn of its own lights nothing.
+so a second ping while the first is unread changes nothing.
+
+An ordinary supervisor reply marks the Item too, quietly, in the accent colour a Ticket
+uses for an unread reply. The ping is the only thing that notifies: a reply waits on the
+row until the user goes looking, and never pushes.
 
 Supervisor wakes are separate from Web Push notifications, and they store nothing. Panels
 asks one read-only question about each Sprint Item — does this Item need its supervisor

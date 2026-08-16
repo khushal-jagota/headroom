@@ -193,8 +193,8 @@ record shapes. Direct `show` commands also keep their full record shapes.
   for the user's approval.
 - **`sprint item supervisor artifact-list / artifact-write / artifact-delete`** — manage
   files under the owning Item's `artifacts/` directory.
-- **`sprint item supervisor ping`** — tell the user that this Item wants them. It lights
-  the Item in the Workspace and sends one notification. It carries no text, so the
+- **`sprint item supervisor ping`** — tell the user that this Item wants them. It turns
+  the Item's Workspace mark white and sends one notification. It carries no text, so the
   supervisor writes what it wants in its own conversation first.
 - **`worker propose / recap / note / trouble / request-user-help / my-ticket`** — worker actions.
   `propose`, `recap`, `note`, and `trouble` take their text on stdin only; there is no

@@ -81,9 +81,10 @@ One screen per part of the system:
   and the mark moves to the ticket, because being open carries no mark of its own.
 
   The Item title carries a mark for the Item's own supervisor, read the way a ticket
-  row's mark is read but fed by a different fact: a ping, not a reply. A supervisor takes
-  hundreds of turns a day and almost none of them want anybody, so only its ping lights
-  the Item. A ticket without a Sprint Item appears in the Tickets
+  row's mark is read but fed by two facts rather than one. An unseen ping takes the white
+  dot, because a ping is the one act a supervisor takes when only the user can answer. An
+  unseen reply takes the accent dot behind it, the same way a ticket's does. A ticket
+  without a Sprint Item appears in the Tickets
   view like any other. Every Ticket row is the shared Ticket row and keeps the existing
   conversation mark; it carries its priority tile in the Tickets view and drops it inside
   a Sprint Item, where the Item is the thing being read.
@@ -94,8 +95,9 @@ One screen per part of the system:
   The mark carries three signals in one order of precedence, and each is one
   system's own fact rather than a blend of several. A **pure white dot** means the
   worker is waiting on a permission decision or answers only the user can give — it wins
-  outright, because that turn is still running and only the user can clear the wait.
-  Below it, a **spinner** means the worker is running right now. With
+  outright, because that turn is still running and only the user can clear the wait. On
+  an Item the same dot also means an unseen ping, which says the same thing: only the
+  user can answer this. Below it, a **spinner** means the worker is running right now. With
   neither, the mark shows the **reply state**: a filled accent dot for a reply the
   user has not seen, the same dot greyed once the user has opened the ticket since
   that reply, and a faint ring when nothing is waiting.
@@ -104,9 +106,10 @@ One screen per part of the system:
   ticket row, the Item's supervisor for an Item. The first two are asked
   of the conversation system directly. The third is a comparison: the row carries a
   position in its conversation, and this browser keeps how far the reader has got in that
-  conversation. Something is waiting when the position is past the reading. A ticket row
-  carries where its worker's last turn ended. An Item carries where its supervisor last
-  pinged, so opening the Item is what puts an Item's mark out.
+  conversation. Something is waiting when the position is past the reading. Every row
+  carries where its conversation's last turn ended. An Item carries a second position as
+  well, where its supervisor last pinged, and that one is read as the white dot. Both
+  positions sit in the one conversation, so opening the Item puts the whole mark out.
 
   How far somebody has read is about that person at that screen, not about the ticket,
   so it is kept in their own browser and the server is never told. Nothing is written
