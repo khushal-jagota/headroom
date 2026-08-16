@@ -3408,10 +3408,12 @@ select {
 }
 
 /* A nested bucket has no box to separate it from the next one, so this margin is the
- * only thing that says "different group". It is therefore the largest gap in the Item:
- * bigger than row-to-row, and much bigger than a header to its own rows. */
+ * only thing that says "different group". It stays the largest gap in the Item — bigger
+ * than row-to-row, and much bigger than a header to its own rows — but the Item's own
+ * box already separates the Item from everything else, so it does not need to be as
+ * large as it was. */
 .disclosure--workspace-bucket--nested + .disclosure--workspace-bucket--nested {
-  margin-top: var(--space-5);
+  margin-top: var(--space-4);
 }
 
 .disclosure--workspace-bucket--nested .board-workspace-bucket-label {
@@ -3510,11 +3512,13 @@ select {
 }
 
 /* The Item title owns every group under it, not just the first, so it must not bind to
- * the first one. It sits off its groups by the same painted gap that separates one group
- * from the next. That is one step larger than the between-group margin, because the
- * between-group gap also carries the last row's bottom padding and this one does not. */
+ * the first one. The bordered box is what holds the Item together and does that job, so
+ * the title does not need extra air of its own: this comes down one step, and the two
+ * gaps inside an Item come to one value. It stays one step larger than the between-group
+ * margin, because the between-group gap also carries the last row's bottom padding and
+ * this one does not. */
 .board-workspace-item-groups {
-  margin-top: var(--space-6);
+  margin-top: var(--space-5);
 }
 
 .board-workspace-quiet-line {
@@ -4412,7 +4416,7 @@ select {
 }
 
 /* The ticket screen is what the page inside it — and so the conversation's share of that
- * page — is measured against; see .ticket-conversation-layer for why it is this element
+ * page — is measured against; see .conversation-layer for why it is this element
  * and not the viewport. It is also the frame the conversation's own popovers are placed
  * in, which is what the positioning is for. */
 .ticket-screen {
@@ -4425,7 +4429,12 @@ select {
    * pane, which is around 500px narrower than the window it sits in. Inline-size only,
    * so the height chain from the shell down to the page is untouched. */
   container-type: inline-size;
-  container-name: ticket-pane;
+  /* Two names, one container: `ticket-pane` for what only this screen asks about, and
+   * `conversation-host` for the question every host of the conversation card asks — is my
+   * pane narrow enough to give the card its gutters back. Naming the second one is what
+   * lets that ask be written once for all hosts; an unnamed query would quietly re-point
+   * at the first container anyone put in between. */
+  container-name: ticket-pane conversation-host;
 }
 
 /* The page is a column of two: the ticket, then the conversation, with the page's own gap
@@ -4457,25 +4466,34 @@ select {
   overflow: auto;
 }
 
-/* --- The conversation, the section under the ticket ------------------------ */
-/* The conversation is not a column beside the document and not a layer over it. It is the
- * second and last section of the ticket page, and the two of them divide that page's
- * height between them. Everything follows from that: nothing is reserved, nothing can be
- * covered, and growing the conversation is only the ticket taking the smaller share.
+/* --- The conversation, the section under a document ------------------------ */
+/* One card, one class family, every host. The Ticket page, the Sprint Item page and the
+ * Atlas supervisor panel all end in this same conversation, so it is keyed to its own
+ * name and not to any one of theirs. A host is any element that ends its column with
+ * `.conversation-layer`; a host that also wants the narrow-pane insets names itself a
+ * `conversation-host` container. Where one host genuinely differs from another, the
+ * difference is written once against that host, next to the host's own rules — never as a
+ * second copy of the card.
  *
- * Its share is a share of the TICKET PAGE and never of the window, because the whole of
- * this route also renders inside the Workspace's right pane, where the two are nothing
+ * The conversation is not a column beside the document and not a layer over it. It is the
+ * second and last section of the page, and the two of them divide that page's
+ * height between them. Everything follows from that: nothing is reserved, nothing can be
+ * covered, and growing the conversation is only the document taking the smaller share.
+ *
+ * Its share is a share of the PAGE and never of the window, because these routes
+ * also render inside the Workspace's right pane, where the two are nothing
  * like the same rectangle. Sizing against the page gets the full screen and the pane right
  * at once, and it is what decides that Opened is as tall as the page and not the nav.
  *
- * A section and never a mode: the ticket above stays readable, scrollable and clickable at
- * every height. Clicking the ticket drops it back a state — TicketRoute owns that gesture.
+ * A section and never a mode: the document above stays readable, scrollable and clickable
+ * at every height. Clicking the document drops it back a state — the host owns that
+ * gesture.
  *
  * The state is drawn on the pane inside, so each height is asked for through :has: rest is
  * its own content, peeked takes a bit over half the page, opened takes all of it. */
-.ticket-conversation-layer {
-  /* The section under the ticket. At rest it is as tall as it needs to be; the two states
-   * above give it a share of the page and the ticket keeps the rest. Its own ladder — the
+.conversation-layer {
+  /* The section under the document. At rest it is as tall as it needs to be; the two states
+   * above give it a share of the page and the document keeps the rest. Its own ladder — the
    * jump button, the overflow menu, the "/" popover — sits inside this stacking context. */
   z-index: 1;
   flex: none;
@@ -4487,15 +4505,15 @@ select {
 }
 
 /* The conversation stands in the page's one column, with its inset, so it stays in the
- * same column the ticket is written in instead of stretching across the whole screen.
- * The column itself is set once, further down, for all three of its users. */
-.ticket-conversation-column {
+ * same column the document is written in instead of stretching across the whole screen.
+ * The column itself is set once, further down, for all of its users. */
+.conversation-column {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
   min-width: 0;
-  padding: 0 var(--space-7);
+  padding-inline: var(--space-7);
 }
 
 /* One card, in every state. The recessed well the person types into is cut into its lower
@@ -4513,15 +4531,15 @@ select {
 }
 
 /* Everything inside the card is held off its edges. */
-.ticket-conversation-layer [data-conversation-pane] {
-  padding: 0 var(--space-4);
+.conversation-layer [data-conversation-pane] {
+  padding-inline: var(--space-4);
 }
 
 /* The well is cut into the card rather than floating in it: it runs the card's full width,
  * meets its bottom corners, and its top edge is the one line across the whole card. It is
  * the one thing that reaches past the card's inset, so it pulls itself back out by it and
  * keeps its own padding for the text inside. */
-.ticket-conversation-layer .chat-box {
+.conversation-layer .chat-box {
   /* All four edges are always there and only their colour changes, so focus moves nothing.
    * Drawing them on arrival would grow the well by a pixel on three sides and shift the
    * text under the cursor at the moment the cursor lands in it. Three of them are invisible
@@ -4536,21 +4554,22 @@ select {
 
 /* Focused, the well shows its whole shape rather than the one edge it normally draws, so
  * what is lit is the area being typed into and not a line above it. */
-.ticket-conversation-layer .chat-box:focus-within {
+.conversation-layer .chat-box:focus-within {
   border-color: color-mix(in srgb, var(--accent-bright) 40%, transparent);
 }
 
-.ticket-conversation-layer [data-conversation-pane]:not([data-conversation-state="opened"]) .chat-box {
+.conversation-layer [data-conversation-pane]:not([data-conversation-state="opened"]) .chat-box {
   border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 
-/* Peeked and opened take a share of the page and leave the rest to the ticket, which keeps
- * scrolling inside whatever it is given. Nothing is covered, so nothing is unreachable. */
-.ticket-conversation-layer:has([data-conversation-state="peeked"]) {
+/* Peeked and opened take a share of the page and leave the rest to the document, which
+ * keeps scrolling inside whatever it is given. Nothing is covered, so nothing is
+ * unreachable. */
+.conversation-layer:has([data-conversation-state="peeked"]) {
   height: 60%;
 }
 
-.ticket-conversation-layer:has([data-conversation-state="opened"]) {
+.conversation-layer:has([data-conversation-state="opened"]) {
   height: 100%;
 }
 
@@ -4559,17 +4578,22 @@ select {
  * Workspace right pane is narrow on a window that is not — and the Sprint Item beside
  * this Ticket in that same slot has always measured its pane. Two rulers for one inset
  * put a step between the two of them at every width where the pane and the window
- * disagree. On the full-screen route the pane is the window, so nothing moves there. */
-@container ticket-pane (max-width: 720px) {
-  .ticket-conversation-column {
+ * disagree. On the full-screen route the pane is the window, so nothing moves there.
+ *
+ * The query names `conversation-host` rather than one screen's pane, so every host of the
+ * card gets this from its own pane and one block serves them all. A host that declares no
+ * such container never asks the question — the Atlas panel is that case today, and it
+ * draws the wide insets at every width, exactly as it did. */
+@container conversation-host (max-width: 720px) {
+  .conversation-column {
     padding-inline: var(--page-gutter);
   }
 
-  .ticket-conversation-layer [data-conversation-pane] {
+  .conversation-layer [data-conversation-pane] {
     padding-inline: var(--surface-pad);
   }
 
-  .ticket-conversation-layer .chat-box {
+  .conversation-layer .chat-box {
     margin-inline: calc(var(--surface-pad) * -1);
     padding-inline: var(--surface-pad);
   }
@@ -4716,7 +4740,11 @@ select {
   overflow-wrap: anywhere;
 }
 
-/* The recap is the title's quiet, editable second line. It has no surface of its own. */
+/* The recap is the title's quiet, editable second line. It has no surface of its own.
+ *
+ * It is also the voice the Sprint Item's brief and the Sprint's primary bet speak in, and
+ * ClampedText.svelte is what draws all three: the clamp below is its resting height and
+ * the measurement it takes is the same number of lines. */
 .ticket-recap {
   display: block;
   max-width: 62ch;
@@ -4737,8 +4765,12 @@ select {
   color: var(--text-default);
 }
 
+/* Three lines by default, and whatever `--clamp-lines` says when a screen wants a taller
+ * reading window — the Sprint's bet asks for four and a half. The line is the type's own
+ * (font-size × the 1.5 line-height above), so the number here is the number of lines the
+ * component measures against. */
 .ticket-recap--clamped {
-  max-height: calc(var(--type-serif-lg) * 4.5);
+  max-height: calc(var(--type-serif-lg) * 1.5 * var(--clamp-lines, 3));
   overflow: hidden;
 }
 
@@ -4968,9 +5000,8 @@ select {
  * the column is never wider than what draws it. */
 .ticket-head,
 .ticket-col,
-.ticket-conversation-column,
-.sprint-item-column,
-.sprint-item-conversation-column {
+.conversation-column,
+.sprint-item-column {
   width: min(
     100%,
     max(
@@ -5038,13 +5069,16 @@ select {
 }
 
 /* Short landscape phones need a little more of the ticket above a peeked
- * conversation. Opened remains an explicit full-height reading mode. */
+ * conversation. Opened remains an explicit full-height reading mode.
+ *
+ * The Ticket asks for this and no other host does, so it is written on the Ticket screen
+ * rather than in the shared card: a Sprint Item's peeked share is 60% at every height. */
 @media (max-width: 720px) and (max-height: 480px) {
-  .ticket-conversation-layer:has([data-conversation-state="peeked"]) {
+  [data-screen="ticket"] .conversation-layer:has([data-conversation-state="peeked"]) {
     height: 52%;
   }
 
-  .ticket-conversation-column {
+  [data-screen="ticket"] .conversation-column {
     padding-inline: var(--page-gutter);
   }
 }
@@ -5279,13 +5313,10 @@ select {
 }
 
 /* The primary bet and Sprint Item body use the Ticket recap voice. The text is
- * the control only when the four-and-a-half-line clamp hides content. */
+ * the control only when the clamp hides content; the four-and-a-half lines it clamps to
+ * are asked for where the text is written, as ClampedText's `lines`. */
 [data-screen="sprint"] .sprint-summary {
   cursor: default;
-}
-
-[data-screen="sprint"] .sprint-summary.ticket-recap--clamped {
-  max-height: calc(var(--type-serif-lg) * 1.5 * 4.5);
 }
 
 [data-screen="sprint"] .sprint-summary .markdown > :first-child {
@@ -5641,7 +5672,9 @@ select {
   overflow: hidden;
   padding-bottom: max(var(--space-6), env(safe-area-inset-bottom));
   container-type: inline-size;
-  container-name: sprint-item-pane;
+  /* Its own name for its own rules, and `conversation-host` for the one question every
+   * host of the conversation card asks of its pane. See .ticket-screen. */
+  container-name: sprint-item-pane conversation-host;
 }
 
 .sprint-item-doc {
@@ -5763,8 +5796,10 @@ select {
   margin-top: 0;
 }
 
-/* A status group. Native <details>, like the sections it sits above. Size carries the
-   hierarchy: 20px in the faint ink, larger than the Ticket under it and greyer than it. */
+/* A status group. Native <details>, like the sections it sits above. The rail draws the
+   same object, so it speaks with the rail's voice: the serif, at the nested bucket's
+   size. Colour carries the hierarchy instead of size — faint ink, greyer than the Ticket
+   under it, and never louder than the block that contains it. */
 .sprint-workspace-status + .sprint-workspace-status {
   margin-top: var(--space-5);
 }
@@ -5778,10 +5813,33 @@ select {
   list-style: none;
   cursor: pointer;
   color: var(--text-faint);
-  font-size: var(--type-lg);
-  font-weight: 600;
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-md);
+  font-weight: 500;
+  letter-spacing: var(--tracking-title);
   line-height: 1.3;
   transition: color var(--motion-fast) var(--motion-ease);
+}
+
+/* A .ticket-row pads itself by --space-2 and a group header does not. So wherever a
+   header stands where a row would have stood, the painted gap is short by that pad.
+   The next two rules give the header that pad in exactly those two places, rather than
+   retuning margins that already measure correctly.
+ *
+ * First place: the top of a block. A block that opens with a plain row gets its gap from
+ * the row's own padding; a block that opens with a group header gets nothing. Only the
+ * first group is against the label — the rest are spaced by the group-to-group margin
+ * above, which is correct. */
+.sprint-workspace-section-body > .sprint-workspace-status:first-child {
+  margin-top: var(--space-2);
+}
+
+/* Second place: the bottom of a block. A block ends in a row, which pads itself, or in a
+   shut group header, which does not, and the seam to the next block came out at two
+   different values because of it. Scoped to the shut state: an open header's bottom pad
+   would push its own rows away, and that is the one gap already right. */
+.sprint-workspace-status:not([open]) > summary {
+  padding-bottom: var(--space-2);
 }
 
 .sprint-workspace-status > summary::-webkit-details-marker {
@@ -5886,72 +5944,28 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   font-size: var(--type-sm);
 }
 
-.sprint-item-conversation-layer {
-  z-index: 1;
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  max-width: 100%;
-  min-height: 0;
+/* The Sprint Item ends in the shared conversation card (.conversation-layer, set once on
+ * the Ticket screen above) and takes its narrow-pane insets from its own pane, because
+ * .sprint-item-page names itself a `conversation-host` container.
+ *
+ * Two things this card has never done that the Ticket's does. Both are one declaration
+ * each, and both are here rather than in the shared family because the shared family is
+ * what the Ticket, the Atlas panel and the next host all draw:
+ *   1. its pane keeps the standard spacing between head, transcript and well instead of
+ *      closing the seam to nothing, so the well sits a step below the parts above it;
+ *   2. its well does not light its other three edges when the composer takes focus — only
+ *      the one line across the card stays drawn.
+ * Delete either rule and this card matches the Ticket's exactly. */
+.sprint-item-page .conversation-layer [data-conversation-pane] {
+  gap: var(--space-2);
 }
 
-.sprint-item-conversation-column {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  padding-inline: var(--space-7);
-}
-
-.sprint-item-conversation-layer [data-conversation-pane] {
-  padding-inline: var(--space-4);
-}
-
-.sprint-item-conversation-layer [data-conversation-pane][data-conversation-state="rest"],
-.sprint-item-conversation-layer [data-conversation-pane][data-conversation-state="peeked"] {
-  background: var(--accent-ink);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
-}
-
-.sprint-item-conversation-layer .chat-box {
-  margin-inline: calc(var(--space-4) * -1);
-  padding-inline: var(--space-4);
-  border-width: var(--border-hairline);
+.sprint-item-page .conversation-layer .chat-box:focus-within {
   border-color: transparent;
   border-top-color: var(--border-color);
-  border-radius: 0;
-}
-
-.sprint-item-conversation-layer [data-conversation-pane]:not([data-conversation-state="opened"]) .chat-box {
-  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-}
-
-.sprint-item-conversation-layer:has([data-conversation-state="peeked"]) {
-  height: 60%;
-}
-
-.sprint-item-conversation-layer:has([data-conversation-state="opened"]) {
-  height: 100%;
 }
 
 @container sprint-item-pane (max-width: 720px) {
-  .sprint-item-conversation-column {
-    padding-inline: var(--page-gutter);
-  }
-
-  .sprint-item-conversation-layer [data-conversation-pane] {
-    padding-inline: var(--surface-pad);
-  }
-
-  .sprint-item-conversation-layer .chat-box {
-    margin-inline: calc(var(--surface-pad) * -1);
-    padding-inline: var(--surface-pad);
-  }
-
   .sprint-workspace-title {
     font-size: 24px;
   }
@@ -6811,4 +6825,251 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   [data-screen="notifications"] {
     padding: var(--space-5) 0 var(--space-page-tail);
   }
+}
+
+/* --- Atlas: the world screen ---------------------------------------------- */
+/* Atlas is a world with a panel over it, so it claims the whole area below the nav
+ * and yields none of it to shell padding. The same height chain the ticket screen
+ * uses, for the same reason: what it raises over the world is the ticket screen. */
+.shell:has(.atlas-screen) {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell:has(.atlas-screen) .shell-content {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+}
+
+.shell:has(.atlas-screen) .screen {
+  height: 100%;
+}
+
+.atlas-screen {
+  position: relative;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.atlas-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* The world answers pointer gestures itself: drag to orbit, scroll to zoom. */
+  touch-action: none;
+}
+
+/* The world's own chrome: the wordmark home, the day's clock block, the hint line.
+ * These are the only things Atlas draws that are not the world or a real screen. */
+.atlas-hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+}
+
+/* Only the controls take a pointer. The rows that lay them out stay transparent,
+ * or their empty middle swallows clicks on the world behind them — and a click on
+ * the world is how a reading is let go of. */
+.atlas-wordmark,
+.atlas-clock {
+  pointer-events: auto;
+}
+
+.atlas-hud-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+}
+
+.atlas-wordmark {
+  background: none;
+  border: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-strong);
+  font-family: var(--font-serif);
+  font-size: var(--type-md);
+  letter-spacing: 0.34em;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+
+.atlas-wordmark:hover {
+  background: var(--surface-overlay);
+}
+
+.atlas-clock {
+  text-align: right;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-mono);
+}
+
+/* Each fact in the clock block is its own line: the time, the day, then how much
+ * of the work stands finished. */
+.atlas-clock > span {
+  display: block;
+}
+
+.atlas-clock-time {
+  color: var(--text-strong);
+  font-size: var(--type-lg);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.atlas-clock-finished {
+  margin-top: var(--space-1);
+  color: var(--text-faint);
+}
+
+.atlas-clock-walk {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+.atlas-clock-walk button {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent-bright);
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.atlas-hint {
+  align-self: center;
+  color: var(--text-faintest);
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-mono);
+  text-transform: uppercase;
+}
+
+/* The panel over the world.
+ *
+ * Width is the one thing this screen decides for itself, and it is decided against
+ * the measure the real screens read at — never against the space available. The
+ * ceiling is the Ticket column's own measure, so the panel is never wider than the
+ * column it carries; below that it takes a third of the window, so the world keeps
+ * the screen it is the point of. The reference build used a flat 640px and none of
+ * these tokens, and it read as the panel owning the screen.
+ *
+ * The height is definite because the screens inside measure themselves against
+ * their pane: `.ticket-screen { height: 100% }` needs something to be 100% of. */
+.atlas-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: clamp(360px, 34vw, var(--ticket-column-measure));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface-base);
+  border-left: var(--border-hairline) solid var(--border-color);
+  box-shadow: -24px 0 48px -32px rgb(0 0 0 / 0.55);
+  z-index: 2;
+}
+
+.atlas-panel-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.atlas-panel-close {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-3);
+  z-index: 5;
+  width: var(--space-6);
+  height: var(--space-6);
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-faint);
+  font-size: var(--type-lg);
+  cursor: pointer;
+}
+
+.atlas-panel-close:hover {
+  color: var(--text-strong);
+  background: var(--surface-overlay);
+}
+
+/* On a phone the panel is a bottom sheet, and the world keeps the top of the screen. */
+@media (max-width: 720px) {
+  .atlas-panel {
+    top: auto;
+    left: 0;
+    width: auto;
+    height: 72dvh;
+    border-left: 0;
+    border-top: var(--border-hairline) solid var(--border-color);
+    box-shadow: 0 -24px 48px -32px rgb(0 0 0 / 0.55);
+  }
+
+  .atlas-hud {
+    padding: var(--space-3) var(--space-4);
+  }
+}
+
+/* The overseer read in full: a short identity, then the conversation taking the rest. */
+.atlas-supervisor {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--space-5);
+  /* The panel is narrower than any window this runs in, so the conversation must
+   * measure its insets against the panel. The Ticket and Sprint Item screens carry
+   * their own container; this one is the conversation on its own and needs its own. */
+  container-type: inline-size;
+  container-name: conversation-host;
+}
+
+.atlas-supervisor-head {
+  flex: none;
+  padding: 0 var(--page-gutter) var(--space-3);
+}
+
+.atlas-supervisor-eyebrow {
+  color: var(--text-faintest);
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-mono);
+  text-transform: uppercase;
+}
+
+.atlas-supervisor-title {
+  display: block;
+  margin-top: var(--space-2);
+  color: var(--text-strong);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-xl);
+  text-decoration: none;
+}
+
+.atlas-supervisor-title:hover {
+  color: var(--accent-bright);
+}
+
+.atlas-supervisor-conversation {
+  flex: 1;
+  min-height: 0;
 }

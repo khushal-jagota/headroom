@@ -113,6 +113,7 @@
       <WorkGroup
         entries={item.entries}
         hidden={item.settled && expandedTurns[item.turnKey] !== true}
+        {conversationId}
       />
     {:else if item.row.kind === "prompt"}
       {@const label = promptLabelFor(item.row.senderLabel, ownSenderLabel)}

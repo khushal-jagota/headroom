@@ -29,6 +29,7 @@ from fastapi.testclient import TestClient
 from planner.conversation.api import (
     COMMITTED_EVENT_STREAM_NAME,
     LIVE_FRAME_STREAM_NAME,
+    PUBLIC_TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS,
     ConversationRuntime,
     router,
 )
@@ -99,12 +100,17 @@ from planner.core import sse
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
+from planner.core.response_compression import (
+    CompressExceptEventStreams,
+    event_stream_route_patterns,
+)
 from planner.core.server import create_app
 from planner.files.logic.paths import conversation_files_root
 from planner.tickets import data as tickets_data
 
 VENDOR_SESSION_CURSOR = "vendor-session-1"
 HEARTBEAT_MILLISECONDS = 40
+CONVERSATION_PREFIX = "/api/conversation"
 
 
 # --- the backend side ---------------------------------------------------------------------
@@ -305,7 +311,7 @@ class _Harness:
             sse_heartbeat_ms=HEARTBEAT_MILLISECONDS,
         )
         self.app = FastAPI()
-        self.app.include_router(router, prefix="/api/conversation")
+        self.app.include_router(router, prefix=CONVERSATION_PREFIX)
         self.app.state.conversation = self.runtime
 
     def _make_child(
@@ -532,13 +538,25 @@ async def _start(
 class _EventStreamDrive:
     """One open SSE response, read frame by frame while the test carries on."""
 
-    def __init__(self, app: FastAPI, path: str, query: str) -> None:
+    def __init__(
+        self,
+        app: FastAPI,
+        path: str,
+        query: str,
+        headers: list[tuple[bytes, bytes]] | None = None,
+        entry: Any = None,
+    ) -> None:
         self._app = app
+        # What is actually called. The scope still names the FastAPI application, so
+        # middleware under test can wrap the route without hiding `request.app`.
+        self._entry = entry or app
         self._path = path
         self._query = query
+        self._headers = headers or []
         self._chunks: asyncio.Queue[bytes] = asyncio.Queue()
         self._buffer = ""
         self._task: asyncio.Task[None] | None = None
+        self.started: dict[str, Any] = {}
 
     async def __aenter__(self) -> _EventStreamDrive:
         scope: dict[str, Any] = {
@@ -551,7 +569,7 @@ class _EventStreamDrive:
             "raw_path": self._path.encode(),
             "root_path": "",
             "query_string": self._query.encode(),
-            "headers": [],
+            "headers": self._headers,
             "client": ("127.0.0.1", 51234),
             "server": ("127.0.0.1", 8767),
             "app": self._app,
@@ -563,10 +581,12 @@ class _EventStreamDrive:
             raise AssertionError("unreachable")
 
         async def send(message: MutableMapping[str, Any]) -> None:
-            if message["type"] == "http.response.body":
+            if message["type"] == "http.response.start":
+                self.started.update(message)
+            elif message["type"] == "http.response.body":
                 await self._chunks.put(bytes(message.get("body", b"")))
 
-        self._task = asyncio.create_task(self._app(scope, receive, send))
+        self._task = asyncio.create_task(self._entry(scope, receive, send))
         return self
 
     async def __aexit__(self, *exception: object) -> None:
@@ -1732,6 +1752,128 @@ def test_public_replays_keep_non_claude_and_unrecognized_json_detail(
     _run(exercise)
 
 
+def test_a_public_read_carries_the_start_of_a_long_tool_output_and_says_so(
+    harness: _Harness,
+) -> None:
+    """An open pays for the lines it draws, not for output nobody has opened.
+
+    The events read and the tail replay are the two ways an open arrives, so both are
+    exercised here, and the row that was shortened says that it was.
+    """
+
+    async def exercise() -> None:
+        whole = "".join(f"line {number}\n" for number in range(4_000))
+        assert len(whole) > PUBLIC_TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS
+        short = "up to date\n"
+        async with harness.client() as client:
+            await _start(client, "long-output")
+            for payload in (
+                ToolCallFinishedEventPayload(
+                    tool_call_id="call-1",
+                    tool_call_status=ToolCallStatus.completed,
+                    detail=whole,
+                ),
+                ToolCallFinishedEventPayload(
+                    tool_call_id="call-2",
+                    tool_call_status=ToolCallStatus.completed,
+                    detail=short,
+                ),
+            ):
+                await harness.store.append_event("long-output", payload)
+
+            response = await client.get(
+                "/api/conversation/conversations/long-output/events"
+            )
+            fetched = response.json()["events"]
+            assert fetched[0]["payload"] == {
+                "tool_call_id": "call-1",
+                "tool_call_status": "completed",
+                "detail": whole[:PUBLIC_TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS],
+                "detail_capped": True,
+            }
+            # A short output is the whole of what the tool printed, so nothing says it
+            # was shortened and the fold has nothing to ask for.
+            assert fetched[1]["payload"] == {
+                "tool_call_id": "call-2",
+                "tool_call_status": "completed",
+                "detail": short,
+            }
+            assert len(response.content) < len(whole) // 10
+
+            async with _EventStreamDrive(
+                harness.app,
+                "/api/conversation/conversations/long-output/tail",
+                "after=0",
+            ) as stream:
+                replayed = [await stream.next_named_frame() for _ in range(2)]
+                assert [event for _name, event in replayed] == fetched
+
+            # The record kept the whole of it, and that is what the fold asks for.
+            whole_response = await client.get(
+                "/api/conversation/conversations/long-output/events/1/detail"
+            )
+            assert whole_response.json() == {"detail": whole}
+            stored = await harness.store.read_events_after("long-output", 0)
+            assert isinstance(stored[0].payload, ToolCallFinishedEventPayload)
+            assert stored[0].payload.detail == whole
+
+    _run(exercise)
+
+
+def test_the_whole_detail_of_something_that_is_not_a_finished_tool_call_is_a_404(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            await harness.store.append_event(
+                "c", AgentMessageEventPayload(content=text_message_content("hello"))
+            )
+            base = "/api/conversation/conversations"
+            assert (await client.get(f"{base}/c/events/1/detail")).status_code == 404
+            assert (await client.get(f"{base}/c/events/9/detail")).status_code == 404
+            assert (await client.get(f"{base}/nope/events/1/detail")).status_code == 404
+
+    _run(exercise)
+
+
+def test_the_whole_detail_of_a_legacy_claude_image_row_is_still_nothing(
+    harness: _Harness,
+) -> None:
+    """The route the fold asks on is a public read, so it hides what the others hide."""
+
+    async def exercise() -> None:
+        legacy_detail = json.dumps(
+            [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "A" * 4_000,
+                    },
+                }
+            ],
+            sort_keys=True,
+        )
+        async with harness.client() as client:
+            await _start(client, "claude-image-detail", backend_key="claude")
+            await harness.store.append_event(
+                "claude-image-detail",
+                ToolCallFinishedEventPayload(
+                    tool_call_id="view-1",
+                    tool_call_status=ToolCallStatus.completed,
+                    detail=legacy_detail,
+                ),
+            )
+            whole = await client.get(
+                "/api/conversation/conversations/claude-image-detail/events/1/detail"
+            )
+            assert whole.json() == {"detail": None}
+
+    _run(exercise)
+
+
 def test_the_tail_replays_then_carries_on_with_no_gap_and_no_repeat(
     harness: _Harness,
 ) -> None:
@@ -2706,5 +2848,45 @@ def test_a_message_with_nothing_in_it_is_refused_rather_than_recorded(
                 await client.get("/api/conversation/conversations/c/events")
             ).json()["events"]
             assert rows == []
+
+    _run(exercise)
+
+
+def _compression_as_the_server_composes_it(app: FastAPI) -> CompressExceptEventStreams:
+    """The compression the server puts in front of this router, composed the same way.
+
+    The server reads which routes are streams from the routers it includes, so the test
+    reads them from the same router under the same prefix.
+    """
+    return CompressExceptEventStreams(
+        app,
+        event_stream_patterns=event_stream_route_patterns(router.routes, CONVERSATION_PREFIX),
+        minimum_size=1024,
+        compresslevel=4,
+    )
+
+
+def test_the_tail_is_not_compressed_even_when_the_browser_offers_gzip(
+    harness: _Harness,
+) -> None:
+    """The open is the thing this stream feeds, so a buffered tail would be the worst
+    place to pay for compression."""
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            async with _EventStreamDrive(
+                harness.app,
+                f"{CONVERSATION_PREFIX}/conversations/c/tail",
+                "after=0",
+                headers=[(b"accept-encoding", b"gzip, deflate, br")],
+                entry=_compression_as_the_server_composes_it(harness.app),
+            ) as stream:
+                await stream.wait_until_watching(harness.live_tail)
+                frame = await stream.next_frame()
+                headers = dict(stream.started["headers"])
+                assert b"content-encoding" not in headers
+                # A whole readable frame arrived, so no compressor is holding it back.
+                assert frame.endswith("\n\n")
 
     _run(exercise)

@@ -22,9 +22,10 @@ that has not produced anything visible yet can still show that it is alive.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, ClassVar, assert_never
+from typing import Any, ClassVar, Final, assert_never
 
 from planner.conversation.contracts import (
     PromptDeliveryMode,
@@ -62,6 +63,44 @@ class ConversationEventKind(StrEnum):
     token_usage = "token_usage"
     context_compacted = "context_compacted"
     turn_ended = "turn_ended"
+
+
+CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION: Final = frozenset(
+    {
+        ConversationEventKind.agent_message,
+        ConversationEventKind.tool_call_started,
+        ConversationEventKind.tool_call_finished,
+        ConversationEventKind.plan_updated,
+        ConversationEventKind.token_usage,
+        ConversationEventKind.context_compacted,
+    }
+)
+"""The kinds nothing outside an open conversation draws.
+
+A working agent writes these all turn long — tool call after tool call — and the only
+place they are read is the conversation itself, which is fed each row directly as it is
+written rather than told to come back for it.
+
+Every other kind moves something a reader who is not in the conversation can see: the
+board reads whether a Ticket is working, whether it needs its owner, and where its last
+turn ended, which is prompts, permission asks and answers, questions and their answers,
+and turn endings. So the list here is the exception and the rest is the rule — a kind
+added later is on a screen until someone proves it is not.
+"""
+
+
+def conversation_event_kinds_need_the_change_signal(
+    kinds: Iterable[ConversationEventKind],
+) -> bool:
+    """Whether rows of these kinds, written together, are worth telling readers about.
+
+    One row of a kind a screen outside the conversation reads is enough: they are written
+    as one transaction, and the signal carries nothing that could name part of it.
+    """
+    return any(
+        kind not in CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION
+        for kind in kinds
+    )
 
 
 class ConversationTurnEnding(StrEnum):

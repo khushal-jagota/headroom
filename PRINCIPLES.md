@@ -41,3 +41,4 @@ These are standing rules. They apply unless a live owner decision overrides them
 - End-to-end tests exist only for a material risk that requires a real browser and live server together. Use a frontend, unit, or integration test when that cheaper layer proves the same contract.
 - A Ticket plan or review that adds or changes end-to-end coverage states the material risk, the exercised boundary, and why cheaper layers cannot prove it.
 - Keep the smallest end-to-end proof that protects the risk. Do not use end-to-end tests for route catalogs, presentation details, exact geometry, or contracts already proved at a lower layer.
+- A test names the product choices it depends on and pins none that it does not own. Defaults someone is free to change — which view a screen opens on, which group arrives open — are asked for in the test, never assumed.

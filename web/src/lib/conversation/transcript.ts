@@ -85,6 +85,11 @@ export type TranscriptRow =
        *  saying what this call was asked to do, which is the thing that says which call it
        *  was — and it must not disappear the moment the call ends. */
       startedDetail: string | null;
+      /** Where the whole output is, when `detail` holds only the start of it. The finish
+       *  row's own position, which is not this row's: a finish is drawn into the line its
+       *  start opened, and that line keeps the start's sequence. Null means `detail` is
+       *  the whole of what the tool printed. */
+      cappedDetailSequence: number | null;
       status: "running" | "completed" | "failed";
       progress: string | null;
     }
@@ -308,6 +313,7 @@ export function transcriptRows(
           toolKind: event.payload.tool_kind,
           detail: event.payload.detail,
           startedDetail: event.payload.detail,
+          cappedDetailSequence: null,
           status: "running",
           progress: null
         });
@@ -320,6 +326,7 @@ export function transcriptRows(
             ...started,
             status: event.payload.tool_call_status,
             detail: event.payload.detail ?? started.detail,
+            cappedDetailSequence: event.payload.detail_capped === true ? sequence : null,
             progress: null
           };
           break;
@@ -335,6 +342,7 @@ export function transcriptRows(
           toolKind: "other",
           detail: event.payload.detail,
           startedDetail: null,
+          cappedDetailSequence: event.payload.detail_capped === true ? sequence : null,
           status: event.payload.tool_call_status,
           progress: null
         });

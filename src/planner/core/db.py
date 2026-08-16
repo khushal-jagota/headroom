@@ -5,8 +5,9 @@ all times are INTEGER unix seconds; all dates are TEXT ISO. Column names match t
 contract dataclass field names one-for-one.
 
 Every connection opened here also announces its own commits on the process-wide change
-signal, so nothing a writer does has to remember to say it wrote. Every writer comes
-through this door, so there is no commit the signal does not carry.
+signal, so nothing a writer does has to remember to say it wrote. A writer with a reason
+that no reader is waiting for its rows closes its transaction with
+``commit_without_change_signal`` instead, which is the one way past it.
 
 The schema itself is not written here. It lives in the migration history under
 ``migrations/``, whose first revision is the schema as the old hand-written migration
@@ -25,8 +26,6 @@ from sqlalchemy import Connection, Engine, create_engine, event
 from sqlalchemy.engine import URL
 
 from planner.core import change_signal
-from planner.notifications import data as notifications_data
-from planner.projects import data as projects_data
 
 MIGRATIONS_DIRECTORY: Final = Path(__file__).resolve().parent / "migrations"
 BASELINE_REVISION: Final = "baseline_v37"
@@ -89,7 +88,7 @@ def _statement_commits(sql: str) -> bool:
 
 
 class ChangeSignallingConnection(sqlite3.Connection):
-    """A connection that announces every write it commits, once each.
+    """A connection that announces the writes it commits, once each.
 
     This is the door writers already go through, so no writer has to remember to
     announce anything. A write commits in one of two ways here, and both are watched:
@@ -108,6 +107,9 @@ class ChangeSignallingConnection(sqlite3.Connection):
     background loops open a transaction on every pass and are themselves woken by
     this signal, so an empty commit that announced would wake the loop that made it
     and the tick would collapse into a busy-spin.
+
+    A caller that knows no reader is waiting for its rows closes its transaction with
+    ``commit_without_change_signal``, which goes around this and stays quiet.
     """
 
     # Rows changed when the currently open transaction began; None when no
@@ -144,6 +146,21 @@ class ChangeSignallingConnection(sqlite3.Connection):
         return baseline is None or self.total_changes != baseline
 
 
+def commit_without_change_signal(conn: sqlite3.Connection) -> None:
+    """Keep an open transaction's work without announcing it.
+
+    The signal tells every reader to come back for what changed, and a reader that comes
+    back refetches its whole screen. So a write nobody is waiting for is worth a quiet
+    commit: internal history maintenance that no screen shows, and the conversation rows
+    that only an open conversation shows, which is fed its rows directly rather than
+    through the signal.
+
+    Staying quiet is decided at the write, one commit at a time. Anything that might have
+    a reader commits normally.
+    """
+    sqlite3.Connection.execute(conn, "COMMIT")
+
+
 def connect(db_path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
     conn = sqlite3.connect(
         db_path,
@@ -163,6 +180,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
     Safe to call on every open: a new database is built, a current one is left alone.
     """
+    # Seeding is the only thing here that knows a domain, and domains open connections
+    # through this module — so these are imported where they are used, leaving this module
+    # importable on its own.
+    from planner.notifications import data as notifications_data
+    from planner.projects import data as projects_data
+
     if conn.in_transaction:
         raise RuntimeError(
             "create_schema needs a connection with no transaction open, because migrations "

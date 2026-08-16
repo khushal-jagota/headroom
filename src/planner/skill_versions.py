@@ -1,4 +1,11 @@
-"""Durable versions of managed skills and the worker steps that selected them."""
+"""Durable versions of managed skills and the worker steps that selected them.
+
+Nothing here is on a screen: these rows are the history behind what a worker was sent,
+kept for later reading rather than watched as they land. So every commit here is a quiet
+one. What a reader does see already announces itself — a skill editor announces its file
+change, and the conversation event that settles a queued binding is written and announced
+by the conversation record, not here.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +14,7 @@ import sqlite3
 from pathlib import Path
 from typing import Final
 
+from planner.core.db import commit_without_change_signal
 from planner.skill_sources import ensure_managed_panels_skills, panels_skill_root
 
 SKILL_FILE_NAME: Final = "SKILL.md"
@@ -16,15 +24,6 @@ SHARED_WORKER_SKILL_NAME: Final = "panels-worker"
 ORIENTATION_ROLE: Final = "orientation"
 SHARED_WORKER_ROLE: Final = "shared_worker"
 SPECIALIST_ROLE: Final = "specialist"
-
-
-def _commit_without_change_signal(conn: sqlite3.Connection) -> None:
-    """Commit internal history maintenance without a second public change signal.
-
-    Skill editors already announce their file change. Startup runs before subscribers,
-    and conversation event commits announce the event that settled a queued binding.
-    """
-    sqlite3.Connection.execute(conn, "COMMIT")
 
 
 def _version_id(skill_name: str, content_sha256: str) -> str:
@@ -66,7 +65,7 @@ def capture_skill_version(
     conn.execute("BEGIN IMMEDIATE")
     try:
         version_id = _record_skill_version(conn, skill_name, content)
-        _commit_without_change_signal(conn)
+        commit_without_change_signal(conn)
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
@@ -89,7 +88,7 @@ def reconcile_managed_skill_versions(
             skill_path = directory / SKILL_FILE_NAME
             if directory.is_dir() and not directory.name.startswith(".") and skill_path.is_file():
                 _record_skill_version(conn, directory.name, skill_path.read_bytes())
-        _commit_without_change_signal(conn)
+        commit_without_change_signal(conn)
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
@@ -126,7 +125,7 @@ def bind_worker_step_skills(
                 "VALUES (?, ?, ?, 'provisional')",
                 (sender_message_id, role, version_id),
             )
-        _commit_without_change_signal(conn)
+        commit_without_change_signal(conn)
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
@@ -185,7 +184,7 @@ def reconcile_provisional_worker_step_bindings(conn: sqlite3.Connection) -> None
                 # Held prompts live only in the old process. With no prompt row there is
                 # no durable proof that this step ran, so an unresolved binding expires.
                 settle_worker_step_skill_bindings(conn, sender_message_id, delivered=False)
-        _commit_without_change_signal(conn)
+        commit_without_change_signal(conn)
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")

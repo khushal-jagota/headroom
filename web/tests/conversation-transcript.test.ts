@@ -71,6 +71,28 @@ describe("Conversation transcript", () => {
       detail: "42 lines"
     });
     expect(rows[0]).toMatchObject({ kind: "prompt", mode: "run_when_free" });
+    expect(tools[0]).toMatchObject({ cappedDetailSequence: null });
+  });
+
+  it("keeps where the whole output is when only its start arrived", () => {
+    // The line the finish is drawn into keeps the start's number, so the finish's own
+    // number is kept beside it. That is what the fold asks the record for.
+    const rows = rowsFrom([
+      toolCallStartedEvent(1, { toolCallId: "tool-1", title: "Bash" }),
+      toolCallFinishedEvent(2, {
+        toolCallId: "tool-1",
+        detail: "the first kilobyte",
+        detailCapped: true
+      }),
+      toolCallFinishedEvent(3, { toolCallId: "orphan", detail: "all of it" })
+    ]);
+    const tools = rows.filter(
+      (row): row is Extract<TranscriptRow, { kind: "tool_call" }> =>
+        row.kind === "tool_call"
+    );
+
+    expect(tools[0]).toMatchObject({ sequence: 1, cappedDetailSequence: 2 });
+    expect(tools[1]).toMatchObject({ sequence: 3, cappedDetailSequence: null });
   });
 
   it("keeps a running unanswered ask live", () => {

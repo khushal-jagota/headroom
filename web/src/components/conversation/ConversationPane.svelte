@@ -380,8 +380,8 @@
 
 <style>
   :global([data-conversation-pane]) { gap: var(--space-2); }
-  /* Inside the ticket's card the well and rest line are two halves of one card. */
-  :global(.ticket-conversation-layer [data-conversation-pane]) { gap: 0; }
+  /* Inside the conversation card the well and rest line are two halves of one card. */
+  :global(.conversation-layer [data-conversation-pane]) { gap: 0; }
   /* Rest keeps the same child viewport mounted, but gives its head and thread no display. */
   :global([data-conversation-pane][data-conversation-state="rest"] .chat-head),
   :global([data-conversation-pane][data-conversation-state="rest"] .chat-thread-shell) {
