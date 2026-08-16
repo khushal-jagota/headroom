@@ -44,6 +44,20 @@ listen for new ones. Opening a conversation, reconnecting after a dropped
 connection, and a second device are all that same fetch. Nothing re-downloads
 mid-read.
 
+An open conversation is handed each new row directly, so it never has to be told to
+come and look. That is why most rows are written quietly: an agent message, a tool
+call starting or finishing, a plan, a token count, and a compaction are shown only
+inside the conversation, and writing them does not send every other open screen back
+for a fresh copy of itself. A working agent writes dozens of those a minute, and
+announcing each one sends every open tab back for everything it is showing.
+
+The rows anything else reads still announce themselves the ordinary way: a delivered,
+refused, or discarded prompt, a permission ask and its answer, an agent question and
+its answer, a model change, and a turn ending. Those are what the board reads to say
+whether a Ticket is working or needs its owner, so they are what a screen outside the
+conversation is told about. A kind added later announces itself unless somebody
+establishes that nothing outside the conversation shows it.
+
 ## What a message is
 
 A message is not a piece of text. It is a run of pieces, in the order they were
@@ -274,6 +288,18 @@ wrote it. Throughout, a command reads as the command rather than the invocation
 that carried it, the fact is kept short enough that a row stays one line, and it
 is dropped when the title already says it. What the tool printed stays behind the
 row, where a directory listing cannot push the conversation off the screen.
+
+Because it stays behind the row, opening a conversation does not carry it. A read
+brings the first kilobyte of what each tool printed, and says which rows it
+shortened. The rest of one row's output is fetched when somebody opens that row.
+On the largest conversation that is the difference between nine megabytes and
+four. The record keeps every character either way.
+
+A row that was shortened is not read for the line the closed row shows. The start
+of an output is not the output: an object cut in half no longer reads as one, and
+a first line that was never the whole of one would become a summary of something
+nobody printed. So a shortened row's line is drawn from what the call was asked to
+do, which is whole.
 
 All of this is read from what the notebook already holds, so conversations
 recorded before any of it existed read the same way as new ones.

@@ -99,6 +99,7 @@ from planner.conversation.voice_transcription import (
     transcribe_conversation_audio,
 )
 from planner.core.db import connect
+from planner.core.response_compression import answers_with_an_event_stream
 from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
 
 # The two things a tail carries, told apart by name so a browser never has to guess which
@@ -307,6 +308,18 @@ VOICE_AUDIO_MEDIA_TYPES = frozenset(
 # decoded bytes before anything is kept or sent.
 MAX_VOICE_AUDIO_BYTES = 25 * 1024 * 1024
 
+# How much of a finished tool call's output a public read carries. The thread draws a
+# one-line summary from this field and shows the output itself only when a reader opens
+# the fold, so an open that carried every past tool call's whole output paid for text
+# nobody had asked to see. The record keeps the whole text, and the fold asks for it by
+# the row's own position.
+#
+# The figure comes from drawing every stored tool call line twice, whole and capped:
+# 1 KB carries a fifth of the largest conversation's tool output and moves 11 lines of
+# 80,070, each one a row whose subject was read out of more than 1 KB of output. Larger
+# caps save little, because most of the weight is in rows of a few kilobytes.
+PUBLIC_TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS = 1024
+
 
 def _canonical_voice_audio_media_type(value: str) -> str | None:
     """Return the allowlisted base type from a browser's full MIME value.
@@ -397,7 +410,34 @@ async def read_conversation_events(
     }
 
 
+@router.get("/conversations/{conversation_id}/events/{sequence}/detail")
+async def read_conversation_event_detail(
+    conversation_id: str, sequence: int, runtime: Runtime
+) -> dict[str, Any]:
+    """The whole output of one finished tool call.
+
+    An open carries a capped copy of this field. A reader who opens the fold asks here
+    for the rest of it, so the bytes follow what somebody chose to look at.
+    """
+    record = await _require_conversation(runtime, conversation_id)
+    event = await runtime.store.read_event(conversation_id, sequence)
+    if event is None or not isinstance(event.payload, ToolCallFinishedEventPayload):
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"conversation {conversation_id} has no finished tool call "
+                f"at {sequence}"
+            ),
+        )
+    return {
+        "detail": _readable_tool_call_detail(
+            event.payload.detail, backend_key=record.backend_key
+        )
+    }
+
+
 @router.get("/conversations/{conversation_id}/tail")
+@answers_with_an_event_stream
 async def tail_conversation(
     conversation_id: str, runtime: Runtime, after: int = 0
 ) -> StreamingResponse:
@@ -953,12 +993,22 @@ def _public_event_json(
     event: StoredConversationEvent, *, backend_key: ConversationBackendKey
 ) -> dict[str, Any]:
     payload = json.loads(conversation_event_payload_to_canonical_json(event.payload))
-    if (
-        backend_key is ConversationBackendKey.claude
-        and isinstance(event.payload, ToolCallFinishedEventPayload)
-        and _is_legacy_claude_image_only_detail(event.payload.detail)
-    ):
-        payload["detail"] = None
+    if isinstance(event.payload, ToolCallFinishedEventPayload):
+        readable = _readable_tool_call_detail(
+            event.payload.detail, backend_key=backend_key
+        )
+        carried = (
+            None
+            if readable is None
+            else readable[:PUBLIC_TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS]
+        )
+        payload["detail"] = carried
+        if carried is not None and readable is not None and len(carried) < len(readable):
+            # A short output and a shortened one read the same, so the row says which
+            # this is. The fold asks for the whole text only when there is more of it,
+            # and the flag is written only on the rows it is true for, because the
+            # bytes an open carries are the point of the cap.
+            payload["detail_capped"] = True
     return {
         "conversation_id": event.conversation_id,
         "sequence": event.sequence,
@@ -966,6 +1016,22 @@ def _public_event_json(
         "payload": payload,
         "created_at": event.created_at,
     }
+
+
+def _readable_tool_call_detail(
+    detail: str | None, *, backend_key: ConversationBackendKey
+) -> str | None:
+    """What a reader may be shown of a finished tool call, before any cap.
+
+    Old Claude rows can hold image blocks with no readable text in them. There is
+    nothing in one to show, so no public read carries it — not the events read, not the
+    tail, and not the route the fold asks on.
+    """
+    if backend_key is ConversationBackendKey.claude and (
+        _is_legacy_claude_image_only_detail(detail)
+    ):
+        return None
+    return detail
 
 
 def _is_legacy_claude_image_only_detail(detail: str | None) -> bool:

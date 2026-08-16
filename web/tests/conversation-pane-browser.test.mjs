@@ -124,11 +124,11 @@ try {
     <button type="button" data-ticket-behind onclick={dismissConversation}>Ticket content</button>
   </section>
   <section
-    class="ticket-conversation-layer"
+    class="conversation-layer"
     data-conversation-layer-host
     onclickcapture={dismissBesidePane}
   >
-    <div class="ticket-conversation-column">
+    <div class="conversation-column">
       <ConversationPane
         bind:conversationState
         conversationId="browser-fixture"
@@ -166,10 +166,10 @@ try {
     inset: 4px auto auto 4px;
     z-index: 3;
   }
-  .ticket-conversation-layer {
+  .conversation-layer {
     align-items: center;
   }
-  .ticket-conversation-column {
+  .conversation-column {
     box-sizing: border-box;
     width: min(680px, calc(100% - 96px));
   }

@@ -30,20 +30,21 @@ def _get_ticket(server: ServerHandle, ticket_id: str) -> JsonObject:
     return body
 
 
-def test_workspace_holds_the_groups_that_want_the_reader_and_leaves_the_rest_out(
+def test_workspace_holds_every_group_and_a_live_blocker_moves_a_row_between_them(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     cli: Callable[..., JsonObject],
     api: ApiHelper,
 ) -> None:
-    """The rail is what wants you now, and a blocking link decides which side a row is on.
+    """A blocking link decides which group a row is in, and the rail carries them all.
 
     A Ticket waiting on its kickoff and a Ticket waiting on a later approval are two
-    groups, and both are in the rail. A Ticket that is blocked, resting, or done is not
-    in the rail at all — those are read on the Sprint Item page, which still lists every
-    group. The point of doing this in a browser is that a live blocker moves a row
-    between those two sides without a reload.
+    groups. A blocked, resting, or finished Ticket is in its own group too — the rail
+    holds every group a Ticket lands in, and shuts the quiet ones. The point of doing
+    this in a browser is that a live blocker moves a row between groups without a
+    reload. Which groups arrive open is the rail's choice, so this test reads
+    membership and never the fold.
     """
     blocker = cli(
         server, "ticket", "create", "--worker-type", "coding", "--title", "Prerequisite"
@@ -99,7 +100,7 @@ def test_workspace_holds_the_groups_that_want_the_reader_and_leaves_the_rest_out
     page = open_page(
         context_factory(),
         server,
-        "#/workspace",
+        "#/workspace?view=tickets",
         'section[data-screen="workspace"]',
     )
     active_card = f'[data-card][data-ticket-id="{blocker}"]'
@@ -107,22 +108,18 @@ def test_workspace_holds_the_groups_that_want_the_reader_and_leaves_the_rest_out
     kickoff_card = f'[data-card][data-ticket-id="{kickoff_dependent}"]'
     shared_card = f'[data-card][data-ticket-id="{shared_dependent}"]'
 
-    # The two Tickets that want the reader sit in their own groups, each already open:
-    # a kickoff approval and a later approval are not the same waiting.
+    # The two Tickets that want the reader sit in their own groups: a kickoff approval
+    # and a later approval are not the same waiting.
     page.wait_for_selector(
-        f'[data-bucket-key="waiting_for_kickoff"] {kickoff_card}', timeout=WAIT_MS
+        f'[data-bucket-key="waiting_for_kickoff"] {kickoff_card}',
+        state="attached",
+        timeout=WAIT_MS,
     )
-    assert page.locator(
-        f'[data-bucket-key="waiting_for_kickoff"] {kickoff_card}'
-    ).is_visible()
-    assert page.locator(f'[data-bucket-key="awaiting_approval"] {later_card}').is_visible()
+    assert page.locator(f'[data-bucket-key="awaiting_approval"] {later_card}').count() == 1
 
-    # Nothing quiet is in the rail, and nothing is folded away pretending to be there:
-    # the resting blocker and the blocked dependent have no card in either view.
-    assert page.locator(active_card).count() == 0
-    assert page.locator(shared_card).count() == 0
-    assert page.locator('[data-bucket-key="empty"]').count() == 0
-    assert page.locator('[data-bucket-key="blocked"]').count() == 0
+    # The quiet ones are in the rail too, each in the group its own status names.
+    assert page.locator(f'[data-bucket-key="empty"] {active_card}').count() == 1
+    assert page.locator(f'[data-bucket-key="blocked"] {shared_card}').count() == 1
 
     # Their own status and stage remain intact behind the rail's choice.
     assert page.get_attribute(later_card, "data-ticket-status") == "awaiting_approval"
@@ -134,24 +131,21 @@ def test_workspace_holds_the_groups_that_want_the_reader_and_leaves_the_rest_out
     assert _get_ticket(server, shared_dependent)["ticket_status"] == "blocked"
     assert _get_ticket(server, shared_dependent)["stage"] == "needs_approach"
 
-    # Removing the last live blocker settles that row back to empty, which is still not
-    # a group the rail carries — so the row stays out, without a reload.
+    # Removing the last live blocker settles that row back to empty, and the row moves
+    # from Blocked to Empty without a reload.
     cli(server, "ticket", "unblock", shared_dependent, "--by", blocker)
-    page.wait_for_function(
-        "selector => document.querySelectorAll(selector).length === 0",
-        arg=shared_card,
-        timeout=WAIT_MS,
+    page.wait_for_selector(
+        f'[data-bucket-key="empty"] {shared_card}', state="attached", timeout=WAIT_MS
     )
+    assert page.locator(f'[data-bucket-key="blocked"] {shared_card}').count() == 0
     assert _get_ticket(server, shared_dependent)["ticket_status"] == "empty"
 
-    # A finished Ticket is not put away behind a count here; it is not in the rail.
+    # A finished Ticket moves to Done the same way, and is still its own group.
     _post_stage(server, blocker, "done")
-    page.wait_for_function(
-        "selector => document.querySelectorAll(selector).length === 0",
-        arg=active_card,
-        timeout=WAIT_MS,
+    page.wait_for_selector(
+        f'[data-bucket-key="done"] {active_card}', state="attached", timeout=WAIT_MS
     )
-    assert page.locator('[data-bucket-key="done"]').count() == 0
+    assert page.locator(f'[data-bucket-key="empty"] {active_card}').count() == 0
     # The Tickets that do want the reader are untouched by all of it.
     assert page.locator(kickoff_card).count() == 1
     assert page.locator(later_card).count() == 1

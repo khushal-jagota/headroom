@@ -36,6 +36,8 @@ type ToolCallFinishedOptions = ConversationEventMetadata & {
   toolCallId: string;
   status?: ToolCallStatus;
   detail?: string | null;
+  /** The server carried only the start of this output. */
+  detailCapped?: boolean;
 };
 type PermissionAskedOptions = ConversationEventMetadata & {
   askId: string;
@@ -111,12 +113,23 @@ export function toolCallStartedEvent(
 
 export function toolCallFinishedEvent(
   sequence: number,
-  { toolCallId, status = "completed", detail = null, ...metadata }: ToolCallFinishedOptions
+  {
+    toolCallId,
+    status = "completed",
+    detail = null,
+    detailCapped = false,
+    ...metadata
+  }: ToolCallFinishedOptions
 ): EventOf<"tool_call_finished"> {
   return {
     ...eventMetadata(sequence, metadata),
     kind: "tool_call_finished",
-    payload: { tool_call_id: toolCallId, tool_call_status: status, detail }
+    payload: {
+      tool_call_id: toolCallId,
+      tool_call_status: status,
+      detail,
+      ...(detailCapped ? { detail_capped: true } : {})
+    }
   };
 }
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import html
 import os
+import re
 import sqlite3
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
@@ -13,7 +14,7 @@ from time import monotonic as _monotonic
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -28,6 +29,11 @@ from planner.core.db import connect
 from planner.core.dev_server_proxy import build_dev_server_proxy_router
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.path_observer import observe_path_changes
+from planner.core.response_compression import (
+    CompressExceptEventStreams,
+    answers_with_an_event_stream,
+    event_stream_route_patterns,
+)
 from planner.core.sse import change_stream
 from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
@@ -233,6 +239,14 @@ def create_app(
     async def handle_planner_error(request: Request, exc: PlannerError) -> JSONResponse:
         return JSONResponse(status_code=http_status_for(exc.code), content=exc.to_payload())
 
+    # Every router the application serves is included through here, so this is where the
+    # live streams among them are collected. The compression below has to know them.
+    event_stream_patterns: list[re.Pattern[str]] = []
+
+    def include_router(router: APIRouter, prefix: str = "") -> None:
+        app.include_router(router, prefix=prefix)
+        event_stream_patterns.extend(event_stream_route_patterns(router.routes, prefix))
+
     for domain_router in (
         tickets_router,
         judgments_router,
@@ -243,10 +257,10 @@ def create_app(
         notifications_router,
         worker_settings_router,
     ):
-        app.include_router(domain_router, prefix="/api")
-    app.include_router(files_router)
-    app.include_router(conversation_router, prefix="/api/conversation")
-    app.include_router(
+        include_router(domain_router, prefix="/api")
+    include_router(files_router)
+    include_router(conversation_router, prefix="/api/conversation")
+    include_router(
         build_dev_server_proxy_router(transport=dev_server_proxy_transport_for_test)
     )
 
@@ -307,6 +321,7 @@ def create_app(
         }
 
     @app.get("/api/changes")
+    @answers_with_an_event_stream
     async def changes() -> StreamingResponse:
         return StreamingResponse(
             change_stream(config.sse_heartbeat_ms),
@@ -329,9 +344,24 @@ def create_app(
         )
 
     if config.test_mode:
-        app.include_router(build_test_router(config, clock), prefix="/api")
+        include_router(build_test_router(config, clock), prefix="/api")
     if _WEB_DIST.is_dir():
         app.mount("/_app", StaticFiles(directory=_WEB_DIST, html=True), name="vite_app")
     app.mount("/assets", StaticFiles(directory=_ASSETS_DIR), name="assets")
     app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+    # Reads are large and the link is remote, so bodies travel compressed. Level 4 is
+    # the measured knee on the largest real body: it costs 100 ms of CPU and saves
+    # 7.5 MB, where level 9 spends 245 ms for 0.12 MB more. The change signal and the
+    # conversation tail go around the compression entirely, because the middleware holds
+    # every response's headers back until a body arrives, and a live stream that has
+    # nothing to say yet has no body to release them with.
+    app.add_middleware(
+        CompressExceptEventStreams,
+        event_stream_patterns=(
+            *event_stream_patterns,
+            *event_stream_route_patterns(app.routes),
+        ),
+        minimum_size=1024,
+        compresslevel=4,
+    )
     return app

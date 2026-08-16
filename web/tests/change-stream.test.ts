@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { INVALIDATE_DEBOUNCE_MS } from "../src/lib/changeStream";
+
 const fakes = vi.hoisted(() => ({
   invalidateQueries: vi.fn<() => Promise<void>>()
 }));
@@ -29,12 +31,34 @@ class FakeEventSource {
   }
 }
 
+class FakeDocument {
+  visibilityState: "visible" | "hidden" = "visible";
+  private readonly listeners = new Map<string, Set<() => void>>();
+
+  addEventListener(type: string, handler: () => void): void {
+    const held = this.listeners.get(type) ?? new Set<() => void>();
+    held.add(handler);
+    this.listeners.set(type, held);
+  }
+
+  removeEventListener(type: string, handler: () => void): void {
+    this.listeners.get(type)?.delete(handler);
+  }
+
+  /** Leave the tab, or come back to it, exactly as a browser reports it. */
+  becomes(visibility: "visible" | "hidden"): void {
+    this.visibilityState = visibility;
+    for (const handler of this.listeners.get("visibilitychange") ?? []) handler();
+  }
+}
+
 type ChangeStreamModule = typeof import("../src/lib/changeStream");
 
 let loadedModule: ChangeStreamModule | null = null;
 let unsubscribe: (() => void) | null = null;
 let statuses: string[] = [];
 let debug: PlannerDebug;
+let fakeDocument: FakeDocument;
 
 async function loadChangeStream(): Promise<ChangeStreamModule> {
   const module = await import("../src/lib/changeStream");
@@ -51,7 +75,9 @@ beforeEach(() => {
   FakeEventSource.instances = [];
   statuses = [];
   debug = { sseOpens: 0, sseReconciliations: 0, flushes: 0 };
+  fakeDocument = new FakeDocument();
   vi.stubGlobal("EventSource", FakeEventSource);
+  vi.stubGlobal("document", fakeDocument);
   vi.stubGlobal("window", {
     setTimeout: globalThis.setTimeout,
     clearTimeout: globalThis.clearTimeout,
@@ -125,18 +151,18 @@ describe("change stream", () => {
 
     source.onmessage?.();
     source.onmessage?.();
-    await vi.advanceTimersByTimeAsync(249);
+    await vi.advanceTimersByTimeAsync(INVALIDATE_DEBOUNCE_MS - 1);
     expect(fakes.invalidateQueries).toHaveBeenCalledTimes(1);
 
     source.onmessage?.();
-    await vi.advanceTimersByTimeAsync(249);
+    await vi.advanceTimersByTimeAsync(INVALIDATE_DEBOUNCE_MS - 1);
     expect(fakes.invalidateQueries).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(fakes.invalidateQueries).toHaveBeenCalledTimes(2);
     expect(debug.flushes).toBe(2);
 
     source.onmessage?.();
-    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(INVALIDATE_DEBOUNCE_MS);
     expect(fakes.invalidateQueries).toHaveBeenCalledTimes(3);
   });
 
@@ -161,6 +187,47 @@ describe("change stream", () => {
     });
   });
 
+  it("holds every change that lands while the tab is hidden, and answers them all at once on the way back", async () => {
+    const { startChangeStream } = await loadChangeStream();
+    startChangeStream();
+    const source = FakeEventSource.instances[0];
+    source.onopen?.();
+    await vi.waitFor(() => expect(debug.sseReconciliations).toBe(1));
+
+    fakeDocument.becomes("hidden");
+    source.onmessage?.();
+    source.onmessage?.();
+    source.onmessage?.();
+    await vi.advanceTimersByTimeAsync(INVALIDATE_DEBOUNCE_MS);
+    // Nothing on screen to bring up to date, so nothing was fetched for it.
+    expect(fakes.invalidateQueries).toHaveBeenCalledTimes(1);
+
+    fakeDocument.becomes("visible");
+    await vi.waitFor(() => expect(fakes.invalidateQueries).toHaveBeenCalledTimes(2));
+
+    // Coming back to a tab that missed nothing asks for nothing.
+    fakeDocument.becomes("hidden");
+    fakeDocument.becomes("visible");
+    await vi.advanceTimersByTimeAsync(INVALIDATE_DEBOUNCE_MS);
+    expect(fakes.invalidateQueries).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves nothing listening for the tab once the stream is stopped", async () => {
+    const { startChangeStream, stopChangeStream } = await loadChangeStream();
+    startChangeStream();
+    const source = FakeEventSource.instances[0];
+    source.onopen?.();
+    await vi.waitFor(() => expect(debug.sseReconciliations).toBe(1));
+
+    fakeDocument.becomes("hidden");
+    source.onmessage?.();
+    stopChangeStream();
+
+    fakeDocument.becomes("visible");
+    await vi.advanceTimersByTimeAsync(INVALIDATE_DEBOUNCE_MS);
+    expect(fakes.invalidateQueries).toHaveBeenCalledTimes(1);
+  });
+
   it("stops cleanly, cancels a pending flush, and ignores stale callbacks", async () => {
     const { startChangeStream, stopChangeStream } = await loadChangeStream();
     startChangeStream();
@@ -172,12 +239,12 @@ describe("change stream", () => {
 
     expect(source.closed).toBe(true);
     expect(statuses.at(-1)).toBe("reconnecting");
-    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(INVALIDATE_DEBOUNCE_MS);
     expect(fakes.invalidateQueries).toHaveBeenCalledTimes(1);
 
     source.onopen?.();
     source.onmessage?.();
-    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(INVALIDATE_DEBOUNCE_MS);
     expect(fakes.invalidateQueries).toHaveBeenCalledTimes(1);
     expect(debug).toEqual({
       sseOpens: 1,

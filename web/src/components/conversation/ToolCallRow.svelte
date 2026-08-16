@@ -9,13 +9,34 @@
    */
   import { presentToolCall } from "../../lib/conversation/toolCallPresentation";
   import type { ToolCallRow } from "../../lib/conversation/transcript";
+  import { readToolCallDetail } from "../../lib/conversation/wire";
 
-  let { row }: { row: ToolCallRow } = $props();
+  let { row, conversationId }: { row: ToolCallRow; conversationId: string } = $props();
 
   let open = $state(false);
+  /** The whole output, once this reader has asked for it. An open carries only the start
+   *  of a long one, so the rest arrives when somebody opens the row and is kept for the
+   *  rest of the visit. */
+  let wholeDetail = $state<string | null>(null);
+  let detailFailed = $state(false);
 
   let presentation = $derived(presentToolCall(row));
   let regionId = $derived(`c2-tool-${row.toolCallId}`);
+  let shownDetail = $derived(wholeDetail ?? presentation.detail);
+
+  async function openRow(): Promise<void> {
+    open = !open;
+    const at = row.cappedDetailSequence;
+    if (!open || at === null || wholeDetail !== null) return;
+    detailFailed = false;
+    try {
+      wholeDetail = await readToolCallDetail(conversationId, at);
+    } catch {
+      // The start of the output is still true and stays on screen. The row says only
+      // that the rest of it did not arrive.
+      detailFailed = true;
+    }
+  }
 </script>
 
 {#snippet body()}
@@ -50,11 +71,16 @@
       data-conversation-tool-status={row.status}
       aria-expanded={open}
       aria-controls={regionId}
-      onclick={() => (open = !open)}
+      onclick={openRow}
     >{@render body()}</button>
     {#if open}
       <div id={regionId} class="c2-tool-body">
-        <pre class="c2-tool-output" data-conversation-tool-output>{presentation.detail}</pre>
+        <pre class="c2-tool-output" data-conversation-tool-output>{shownDetail ?? ""}</pre>
+        {#if detailFailed}
+          <p class="c2-tool-detail-failed" data-conversation-tool-detail-failed>
+            The rest of this output did not load.
+          </p>
+        {/if}
       </div>
     {/if}
   </div>
@@ -109,6 +135,11 @@
     font-size: var(--type-xs);
     white-space: pre;
     overflow-wrap: normal;
+  }
+  .c2-tool-detail-failed {
+    margin: var(--space-1) 0 0;
+    color: var(--text-faintest);
+    font-size: var(--type-xs);
   }
   @media (prefers-reduced-motion: reduce) {
     .c2-tool { transition: none; }

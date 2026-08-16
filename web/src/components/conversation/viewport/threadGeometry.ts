@@ -19,6 +19,10 @@ export type ThreadReading = {
 export type ThreadGeometry = {
   hasShape(): boolean;
   read(reservedSpacePixels: number): ThreadReading;
+  readFromNewestLineBottom(
+    newestLineBottomPixels: number,
+    reservedSpacePixels: number
+  ): ThreadReading;
   newestLineIsInSight(cachedNewestLineBottomPixels: number): boolean;
   newestLineScrollTop(cachedNewestLineBottomPixels: number): number;
   sentMessage(messageId: string): Element | null;
@@ -78,34 +82,48 @@ export function threadGeometry(
     return cachedNewestLineBottomPixels >= thread.scrollTop;
   }
 
+  /** Everything about the reading that follows from where the last line ends. */
+  function readFromNewestLineBottom(
+    newestLineBottomPixels: number,
+    reservedSpacePixels: number
+  ): ThreadReading {
+    const alwaysBelowTheLastLine =
+      thread.scrollHeight - newestLineBottomPixels - reservedSpacePixels;
+    const stillHolding = Math.max(
+      0,
+      Math.ceil(
+        thread.scrollTop
+        + thread.clientHeight
+        - newestLineBottomPixels
+        - alwaysBelowTheLastLine
+      )
+    );
+    const remainingReservedSpacePixels = Math.min(
+      reservedSpacePixels,
+      stillHolding
+    );
+    return {
+      newestLineBottomPixels,
+      remainingReservedSpacePixels,
+      newestLineIsInSight: newestLineIsInSight(newestLineBottomPixels)
+    };
+  }
+
   return {
     hasShape(): boolean {
       return thread.clientHeight > 0;
     },
 
     read(reservedSpacePixels: number): ThreadReading {
-      const newestLineBottomPixels = newestLineBottom();
-      const alwaysBelowTheLastLine =
-        thread.scrollHeight - newestLineBottomPixels - reservedSpacePixels;
-      const stillHolding = Math.max(
-        0,
-        Math.ceil(
-          thread.scrollTop
-          + thread.clientHeight
-          - newestLineBottomPixels
-          - alwaysBelowTheLastLine
-        )
-      );
-      const remainingReservedSpacePixels = Math.min(
-        reservedSpacePixels,
-        stillHolding
-      );
-      return {
-        newestLineBottomPixels,
-        remainingReservedSpacePixels,
-        newestLineIsInSight: newestLineIsInSight(newestLineBottomPixels)
-      };
+      return readFromNewestLineBottom(newestLineBottom(), reservedSpacePixels);
     },
+
+    /** The same reading, without walking the thread to find where its last line ends.
+     *
+     * Finding that is the expensive half — every child is measured — and scrolling does
+     * not move it. So a caller that has done nothing but scroll since it measured can hand
+     * back what it measured instead of asking for it again. */
+    readFromNewestLineBottom,
 
     newestLineIsInSight,
     newestLineScrollTop,

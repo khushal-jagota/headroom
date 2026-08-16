@@ -6,7 +6,7 @@
    * rows and folds preserve the line they were reading; following only moves forwards,
    * and Latest is the one explicit move allowed to go backwards.
    */
-  import { tick, untrack, type Snippet } from "svelte";
+  import { onMount, tick, untrack, type Snippet } from "svelte";
   import ConversationTranscript from "../ConversationTranscript.svelte";
   import MessagePieces from "../MessagePieces.svelte";
   import type { ConversationState } from "../../../lib/conversation/conversationState";
@@ -19,7 +19,7 @@
     BackendModel,
     PromptDeliveryMode
   } from "../../../lib/conversation/wire";
-  import { threadGeometry, type HeldView } from "./threadGeometry";
+  import { threadGeometry, type HeldView, type ThreadReading } from "./threadGeometry";
   import { READER_DRIVING_MILLISECONDS } from "./viewportConfiguration";
 
   let {
@@ -67,6 +67,18 @@
   let stateHasBeenDrawn = false;
   /** A reader's view held for the whole trip through a zero-height rest state. */
   let viewHeldAcrossTheMove: HeldView | null = null;
+  /** The thread changed while nobody was looking, so it has not been measured for it. */
+  let unmeasuredWhileHidden = false;
+
+  /** Whether nobody is looking at this tab.
+   *
+   * Every measurement below walks the whole thread and forces the browser to lay it out
+   * there and then, which is the same work whether or not there is anybody to see the
+   * result. A hidden tab has nowhere for a reader to be and nothing to keep them at, so
+   * arriving rows are drawn and left unmeasured until the tab comes back. */
+  function nobodyIsLookingAtTheTab(): boolean {
+    return document.visibilityState === "hidden";
+  }
 
   /** What a message says about the way it was sent, in the transcript's own words. */
   function modeChip(mode: PromptDeliveryMode): string | null {
@@ -84,16 +96,28 @@
     if (least > thread.scrollTop) thread.scrollTop = least;
   }
 
-  /** Read the thread's full shape again after something other than scrolling changes it. */
-  function readTheThreadAgain(thread: HTMLDivElement): void {
-    const reading = threadGeometry(thread, reservedSpaceElement).read(
-      reservedSpacePixels
-    );
+  function takeTheReading(reading: ThreadReading): void {
     newestLineBottomPixels = reading.newestLineBottomPixels;
     if (reading.remainingReservedSpacePixels < reservedSpacePixels) {
       reservedSpacePixels = reading.remainingReservedSpacePixels;
     }
     jumpVisible = !reading.newestLineIsInSight;
+  }
+
+  /** Read the thread's full shape again after something other than scrolling changes it. */
+  function readTheThreadAgain(thread: HTMLDivElement): void {
+    takeTheReading(threadGeometry(thread, reservedSpaceElement).read(reservedSpacePixels));
+  }
+
+  /** The same, for a thread that has only been scrolled since it was last measured: where
+   *  its last line ends has not moved, so it is not looked for again. */
+  function readTheThreadAgainAfterScrollingOnly(thread: HTMLDivElement): void {
+    takeTheReading(
+      threadGeometry(thread, reservedSpaceElement).readFromNewestLineBottom(
+        newestLineBottomPixels,
+        reservedSpacePixels
+      )
+    );
   }
 
   function readerIsDrivingTheScroll(): boolean {
@@ -191,13 +215,21 @@
     const thread = threadElement;
     if (thread === null) return;
     if (outgoingMessages.length === 0) settledMessageIds = new Set();
+    if (nobodyIsLookingAtTheTab()) {
+      unmeasuredWhileHidden = true;
+      return;
+    }
     // A thread at rest has no view, room, or message position to measure.
     if (!untrack(() => threadGeometry(thread, reservedSpaceElement).hasShape())) return;
-    const held = untrack(() =>
-      threadGeometry(thread, reservedSpaceElement).holdView()
-    );
     const justSent = untrack(() => messageToSettleOn());
     const wasFollowing = untrack(() => following);
+    // Holding the view walks the whole thread, and only one of the four ways this can end
+    // restores from it. A reader following the newest line, or one whose own message is
+    // about to be settled, is never put back on a line they were reading.
+    const held =
+      settledOnOpening && justSent === null && !wasFollowing
+        ? untrack(() => threadGeometry(thread, reservedSpaceElement).holdView())
+        : null;
     const request = ++scrollRenderRequest;
     void tick().then(async () => {
       const currentThread = threadElement;
@@ -207,6 +239,9 @@
       newestLineBottomPixels = currentGeometry.read(
         reservedSpacePixels
       ).newestLineBottomPixels;
+      // Settling a sent message changes the thread's own height as well as its position.
+      // Every other ending here moves the scroll and nothing else.
+      let theContentMovedToo = false;
       if (!settledOnOpening) {
         // Opening a conversation puts you at the end of it, wherever that is.
         settledOnOpening = true;
@@ -214,13 +249,15 @@
         keepTheNewestLineInSight(currentThread);
       } else if (justSent !== null) {
         if (await settleTheSentMessage(justSent)) settledMessageIds.add(justSent);
+        theContentMovedToo = true;
       } else if (wasFollowing) {
         keepTheNewestLineInSight(currentThread);
-      } else {
+      } else if (held !== null) {
         keepTheReaderWhereTheyWere(currentThread, held);
       }
       if (request !== scrollRenderRequest || threadElement === null) return;
-      readTheThreadAgain(threadElement);
+      if (theContentMovedToo) readTheThreadAgain(threadElement);
+      else readTheThreadAgainAfterScrollingOnly(threadElement);
     });
   });
 
@@ -231,12 +268,12 @@
    */
   function theThreadIsADifferentShapeNow(): void {
     const thread = threadElement;
-    if (
-      thread === null
-      || !threadGeometry(thread, reservedSpaceElement).hasShape()
-    ) {
+    if (thread === null) return;
+    if (nobodyIsLookingAtTheTab()) {
+      unmeasuredWhileHidden = true;
       return;
     }
+    if (!threadGeometry(thread, reservedSpaceElement).hasShape()) return;
     settleTheViewAfterAChangeOfShape(thread, null);
   }
 
@@ -323,6 +360,19 @@
       readTheThreadAgain(currentThread);
     });
   }
+
+  // Everything that arrived while the tab was away is measured once, on the way back, and
+  // it is the same settlement a change of shape gets: a reader who was following keeps the
+  // newest line, and a reader who was not is not moved.
+  onMount(() => {
+    const onVisible = (): void => {
+      if (document.visibilityState !== "visible" || !unmeasuredWhileHidden) return;
+      unmeasuredWhileHidden = false;
+      void tick().then(theThreadIsADifferentShapeNow);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  });
 </script>
 
 <svelte:window

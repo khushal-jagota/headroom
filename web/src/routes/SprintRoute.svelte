@@ -17,6 +17,7 @@
     type SprintTicket
   } from "../lib/sprintPresentation";
   import type { AnyRecord } from "../lib/types";
+  import ClampedText from "../components/ClampedText.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
@@ -74,7 +75,8 @@
     otherSections.today.length + otherSections.later.length + otherSections.done.length
   );
 
-  let summaryElement = $state<HTMLElement | null>(null);
+  // The bet is its own control: there is no "Show more" under it, the text itself opens
+  // and closes, and a new bet arrives closed.
   let summaryExpanded = $state(false);
   let summaryCanExpand = $state(false);
   let measuredSummaryKey = "";
@@ -86,25 +88,6 @@
     measuredSummaryKey = key;
     summaryExpanded = false;
     summaryCanExpand = false;
-  });
-
-  $effect(() => {
-    const node = summaryElement;
-    const key = summaryKey;
-    if (!node) return;
-    void key;
-    const measure = () => {
-      const lineHeight = Number.parseFloat(getComputedStyle(node).lineHeight);
-      const maxHeight = Number.isFinite(lineHeight) ? lineHeight * 4.5 : node.clientHeight;
-      summaryCanExpand = node.scrollHeight > maxHeight + 1;
-    };
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
-    observer?.observe(node);
-    const frame = requestAnimationFrame(measure);
-    return () => {
-      cancelAnimationFrame(frame);
-      observer?.disconnect();
-    };
   });
 
   function toggleSummary(): void {
@@ -221,18 +204,23 @@
               </h1>
               {#if String(sprint.primary_bet || "").trim()}
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-                <div
-                  bind:this={summaryElement}
-                  class="ticket-recap sprint-summary"
-                  class:ticket-recap--clamped={!summaryExpanded}
-                  class:sprint-summary--expandable={summaryCanExpand}
+                <ClampedText
+                  class={summaryCanExpand
+                    ? "sprint-summary sprint-summary--expandable"
+                    : "sprint-summary"}
+                  lines={4.5}
+                  contentKey={summaryKey}
+                  clampEvenWhenItFits
+                  moreControl={false}
+                  bind:expanded={summaryExpanded}
+                  bind:canExpand={summaryCanExpand}
                   role={summaryCanExpand ? "button" : undefined}
                   tabindex={summaryCanExpand ? 0 : undefined}
                   aria-expanded={summaryCanExpand ? summaryExpanded : undefined}
                   onclick={toggleSummary}
                   onkeydown={toggleSummaryFromKeyboard}
                   data-sprint-bet
-                ><MarkdownBlock text={sprint.primary_bet} /></div>
+                ><MarkdownBlock text={sprint.primary_bet} /></ClampedText>
               {/if}
               <div class="sprint-meta-line">
                 <span>{sprintDate(sprint.date_start)} – {sprintDate(sprint.date_end)}</span>
