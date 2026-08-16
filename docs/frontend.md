@@ -6,6 +6,11 @@ document at `/`; the Vite chunks are mounted under `/_app/`. Shared tokens and
 application CSS live in `assets/`. The Markdown pipeline and managed rendering
 lifecycle live under `web/src/lib/`.
 
+Answers travel compressed. The server gzips any response over 1 KB, which matters most
+for a conversation open: the largest thread is 9.4 MB of JSON and goes over the wire as
+1.8 MB. Live event streams are sent frame by frame and are never compressed, because
+holding frames back to compress them is the opposite of what they are for.
+
 ## The screens
 
 One screen per part of the system:

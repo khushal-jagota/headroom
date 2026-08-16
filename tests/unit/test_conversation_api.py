@@ -25,6 +25,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.middleware.gzip import GZipMiddleware
 
 from planner.conversation.api import (
     COMMITTED_EVENT_STREAM_NAME,
@@ -532,13 +533,25 @@ async def _start(
 class _EventStreamDrive:
     """One open SSE response, read frame by frame while the test carries on."""
 
-    def __init__(self, app: FastAPI, path: str, query: str) -> None:
+    def __init__(
+        self,
+        app: FastAPI,
+        path: str,
+        query: str,
+        headers: list[tuple[bytes, bytes]] | None = None,
+        entry: Any = None,
+    ) -> None:
         self._app = app
+        # What is actually called. The scope still names the FastAPI application, so
+        # middleware under test can wrap the route without hiding `request.app`.
+        self._entry = entry or app
         self._path = path
         self._query = query
+        self._headers = headers or []
         self._chunks: asyncio.Queue[bytes] = asyncio.Queue()
         self._buffer = ""
         self._task: asyncio.Task[None] | None = None
+        self.started: dict[str, Any] = {}
 
     async def __aenter__(self) -> _EventStreamDrive:
         scope: dict[str, Any] = {
@@ -551,7 +564,7 @@ class _EventStreamDrive:
             "raw_path": self._path.encode(),
             "root_path": "",
             "query_string": self._query.encode(),
-            "headers": [],
+            "headers": self._headers,
             "client": ("127.0.0.1", 51234),
             "server": ("127.0.0.1", 8767),
             "app": self._app,
@@ -563,10 +576,12 @@ class _EventStreamDrive:
             raise AssertionError("unreachable")
 
         async def send(message: MutableMapping[str, Any]) -> None:
-            if message["type"] == "http.response.body":
+            if message["type"] == "http.response.start":
+                self.started.update(message)
+            elif message["type"] == "http.response.body":
                 await self._chunks.put(bytes(message.get("body", b"")))
 
-        self._task = asyncio.create_task(self._app(scope, receive, send))
+        self._task = asyncio.create_task(self._entry(scope, receive, send))
         return self
 
     async def __aexit__(self, *exception: object) -> None:
@@ -2706,5 +2721,31 @@ def test_a_message_with_nothing_in_it_is_refused_rather_than_recorded(
                 await client.get("/api/conversation/conversations/c/events")
             ).json()["events"]
             assert rows == []
+
+    _run(exercise)
+
+
+def test_the_tail_is_not_compressed_even_when_the_browser_offers_gzip(
+    harness: _Harness,
+) -> None:
+    """The open is the thing this stream feeds, so a buffered tail would be the worst
+    place to pay for compression."""
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            async with _EventStreamDrive(
+                harness.app,
+                "/api/conversation/conversations/c/tail",
+                "after=0",
+                headers=[(b"accept-encoding", b"gzip, deflate, br")],
+                entry=GZipMiddleware(harness.app, minimum_size=1024, compresslevel=4),
+            ) as stream:
+                await stream.wait_until_watching(harness.live_tail)
+                frame = await stream.next_frame()
+                headers = dict(stream.started["headers"])
+                assert b"content-encoding" not in headers
+                # A whole readable frame arrived, so no compressor is holding it back.
+                assert frame.endswith("\n\n")
 
     _run(exercise)

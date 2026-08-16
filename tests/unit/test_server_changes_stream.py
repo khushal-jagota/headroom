@@ -45,7 +45,7 @@ def _make_app(tmp_path: Path, *, sse_heartbeat_ms: int) -> FastAPI:
     return create_app(config, build_clock(config), conn_factory)
 
 
-def _scope() -> dict[str, object]:
+def _scope(headers: list[tuple[bytes, bytes]] | None = None) -> dict[str, object]:
     return {
         "type": "http",
         "asgi": {"version": "3.0", "spec_version": "2.3"},
@@ -56,7 +56,7 @@ def _scope() -> dict[str, object]:
         "raw_path": b"/api/changes",
         "root_path": "",
         "query_string": b"",
-        "headers": [],
+        "headers": headers or [],
         "client": ("127.0.0.1", 51234),
         "server": ("127.0.0.1", 8767),
     }
@@ -74,6 +74,7 @@ async def _collect_frames(
     *,
     frames_wanted: int,
     once_open: Callable[[], Awaitable[None]] | None = None,
+    headers: list[tuple[bytes, bytes]] | None = None,
 ) -> tuple[dict[str, object], list[str]]:
     """Serve /api/changes until `frames_wanted` frames have been sent."""
     started: dict[str, object] = {}
@@ -96,7 +97,7 @@ async def _collect_frames(
                 if len(frames) >= frames_wanted:
                     enough.set()
 
-    serving = asyncio.create_task(app(_scope(), receive, send))
+    serving = asyncio.create_task(app(_scope(headers), receive, send))
     try:
         await _await_open_stream()
         if once_open is not None:
@@ -241,3 +242,20 @@ def test_the_heartbeat_cadence_comes_from_configuration(
     _started, frames = asyncio.run(_collect_frames(app, frames_wanted=2))
 
     assert frames == [": keep-alive\n\n"] * 2
+
+
+def test_the_stream_is_not_compressed_even_when_the_browser_offers_gzip(
+    tmp_path: Path,
+) -> None:
+    """Compression buffers bytes, so it must not reach a stream of live frames."""
+    app = _make_app(tmp_path, sse_heartbeat_ms=1)
+
+    started, frames = asyncio.run(
+        _collect_frames(
+            app, frames_wanted=1, headers=[(b"accept-encoding", b"gzip, deflate, br")]
+        )
+    )
+
+    headers = dict(started["headers"])  # type: ignore[call-overload]
+    assert b"content-encoding" not in headers
+    assert frames == [": keep-alive\n\n"]
