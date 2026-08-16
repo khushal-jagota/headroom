@@ -6812,3 +6812,231 @@ details:not([open]) > summary > .sprint-workspace-chevron {
     padding: var(--space-5) 0 var(--space-page-tail);
   }
 }
+
+/* --- Atlas: the world screen ---------------------------------------------- */
+/* Atlas is a world with a panel over it, so it claims the whole area below the nav
+ * and yields none of it to shell padding. The same height chain the ticket screen
+ * uses, for the same reason: what it raises over the world is the ticket screen. */
+.shell:has(.atlas-screen) {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell:has(.atlas-screen) .shell-content {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+}
+
+.shell:has(.atlas-screen) .screen {
+  height: 100%;
+}
+
+.atlas-screen {
+  position: relative;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.atlas-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* The world answers pointer gestures itself: drag to orbit, scroll to zoom. */
+  touch-action: none;
+}
+
+/* The world's own chrome: the wordmark home, the day's clock block, the hint line.
+ * These are the only things Atlas draws that are not the world or a real screen. */
+.atlas-hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+}
+
+.atlas-hud > * {
+  pointer-events: auto;
+}
+
+.atlas-hud-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+}
+
+.atlas-wordmark {
+  background: none;
+  border: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-strong);
+  font-family: var(--font-serif);
+  font-size: var(--type-md);
+  letter-spacing: 0.34em;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+
+.atlas-wordmark:hover {
+  background: var(--surface-overlay);
+}
+
+.atlas-clock {
+  text-align: right;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-mono);
+}
+
+.atlas-clock-time {
+  display: block;
+  color: var(--text-strong);
+  font-size: var(--type-lg);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.atlas-clock-walk {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+.atlas-clock-walk button {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent-bright);
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.atlas-hint {
+  align-self: center;
+  color: var(--text-faintest);
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-mono);
+  text-transform: uppercase;
+}
+
+/* The panel over the world.
+ *
+ * Width is the one thing this screen decides for itself, and it is decided against
+ * the measure the real screens read at — never against the space available. The
+ * ceiling is the Ticket column's own measure, so the panel is never wider than the
+ * column it carries; below that it takes a third of the window, so the world keeps
+ * the screen it is the point of. The reference build used a flat 640px and none of
+ * these tokens, and it read as the panel owning the screen.
+ *
+ * The height is definite because the screens inside measure themselves against
+ * their pane: `.ticket-screen { height: 100% }` needs something to be 100% of. */
+.atlas-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: clamp(360px, 34vw, var(--ticket-column-measure));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface-base);
+  border-left: var(--border-hairline) solid var(--border-color);
+  box-shadow: -24px 0 48px -32px rgb(0 0 0 / 0.55);
+  z-index: 2;
+}
+
+.atlas-panel-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.atlas-panel-close {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-3);
+  z-index: 5;
+  width: var(--space-6);
+  height: var(--space-6);
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-faint);
+  font-size: var(--type-lg);
+  cursor: pointer;
+}
+
+.atlas-panel-close:hover {
+  color: var(--text-strong);
+  background: var(--surface-overlay);
+}
+
+/* On a phone the panel is a bottom sheet, and the world keeps the top of the screen. */
+@media (max-width: 720px) {
+  .atlas-panel {
+    top: auto;
+    left: 0;
+    width: auto;
+    height: 72dvh;
+    border-left: 0;
+    border-top: var(--border-hairline) solid var(--border-color);
+    box-shadow: 0 -24px 48px -32px rgb(0 0 0 / 0.55);
+  }
+
+  .atlas-hud {
+    padding: var(--space-3) var(--space-4);
+  }
+}
+
+/* The overseer read in full: a short identity, then the conversation taking the rest. */
+.atlas-supervisor {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--space-5);
+}
+
+.atlas-supervisor-head {
+  flex: none;
+  padding: 0 var(--page-gutter) var(--space-3);
+}
+
+.atlas-supervisor-eyebrow {
+  color: var(--text-faintest);
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-mono);
+  text-transform: uppercase;
+}
+
+.atlas-supervisor-title {
+  display: block;
+  margin-top: var(--space-2);
+  color: var(--text-strong);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-xl);
+  text-decoration: none;
+}
+
+.atlas-supervisor-title:hover {
+  color: var(--accent-bright);
+}
+
+.atlas-supervisor-conversation {
+  flex: 1;
+  min-height: 0;
+}
