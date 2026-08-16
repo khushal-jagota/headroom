@@ -6845,7 +6845,11 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   padding: var(--space-4) var(--space-5);
 }
 
-.atlas-hud > * {
+/* Only the controls take a pointer. The rows that lay them out stay transparent,
+ * or their empty middle swallows clicks on the world behind them — and a click on
+ * the world is how a reading is let go of. */
+.atlas-wordmark,
+.atlas-clock {
   pointer-events: auto;
 }
 
