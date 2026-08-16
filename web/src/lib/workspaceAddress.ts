@@ -32,13 +32,12 @@ function decodeSegment(segment: string): string {
   }
 }
 
-// An Item, or a Ticket opened from inside one, belongs to the Sprint Items view.
-// Everything else belongs to Tickets. An address only carries `?view=` when the reader
-// asked for the other one.
+// Everything belongs to the Sprint Items view, except a Ticket that names no Item: the
+// Items list cannot draw it, so it belongs to Tickets. An address only carries `?view=`
+// when the reader asked for the other one.
 export function impliedWorkspaceView(selection: WorkspaceSelection): WorkspaceView {
-  if (selection.kind === "item") return "items";
-  if (selection.kind === "ticket" && selection.openedFromItemId) return "items";
-  return "tickets";
+  if (selection.kind === "ticket" && !selection.openedFromItemId) return "tickets";
+  return "items";
 }
 
 function parseSelection(segments: string[]): WorkspaceSelection | null {
