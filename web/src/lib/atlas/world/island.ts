@@ -7,12 +7,11 @@
 // air above the island for anyone far enough out to need it.
 
 import * as THREE from "three";
-import type { AtlasItem, AtlasProject } from "../model";
+import type { AtlasProject } from "../model";
 import { ACCENTS, C, mixHex } from "./palette";
 import { AtlasKit } from "./materials";
 import { hashCode, mulberry32 } from "./random";
 import { PickIndex } from "./picking";
-import { LAYOUT } from "./tuning";
 
 export type IslandTheme = {
   ground: readonly [string, string];
@@ -120,98 +119,25 @@ export function pennantStandard(kit: AtlasKit, accent: string): THREE.Group {
   return g;
 }
 
-// ---------------- where things stand ----------------
+// ---------------- the ground, which only ever grows ----------------
 
-export type IslandLayout = {
-  pads: number[];
-  positions: { x: number; z: number }[];
-  radius: number;
-};
-
-// Each sprint item gets its own pad: a round terrace of its own. Sprint items
-// stand well apart on their island — the island grows to carry the spacing.
-export function islandLayout(items: AtlasItem[]): IslandLayout {
-  const pads = items.map((item) => {
-    const live = item.tickets.filter((ticket) => !ticket.done).length;
-    return Math.max(
-      LAYOUT.padMin,
-      LAYOUT.padBase +
-        live * LAYOUT.padPerLiveTicket +
-        Math.min(LAYOUT.padPerTicketCap, item.total * LAYOUT.padPerTicket)
-    );
-  });
-  const maxPad = Math.max(...pads, LAYOUT.padMin);
-  let positions: { x: number; z: number }[];
-  if (items.length === 1) {
-    positions = [{ x: 0, z: 0 }];
-  } else {
-    const n = items.length;
-    const ringR =
-      n === 2 ? maxPad + LAYOUT.ringTwo : maxPad * LAYOUT.ringSpread + n * LAYOUT.ringPerItem;
-    positions = items.map((_, i) => {
-      const a = -Math.PI / 2 + (i / n) * Math.PI * 2;
-      return {
-        x: Math.cos(a) * ringR * (n === 2 ? 0.55 : 0.92),
-        z: Math.sin(a) * ringR * 0.78
-      };
-    });
-  }
-  let radius = 0;
-  positions.forEach((pos, i) => {
-    radius = Math.max(radius, Math.hypot(pos.x, pos.z) + pads[i]);
-  });
-  return { pads, positions, radius: radius + LAYOUT.shoreMargin };
-}
-
-export type IslandPlacement = { x: number; z: number; rot: number };
-
-// Islands are large and far apart, laid along a line and centred on the world.
-export function placeIslands(radii: number[]): {
-  placed: IslandPlacement[];
-  extent: number;
-} {
-  const placed: IslandPlacement[] = [];
-  let x = 0;
-  radii.forEach((radius, i) => {
-    if (i > 0) x += radii[i - 1] + radius + LAYOUT.islandGap;
-    placed.push({
-      x,
-      z:
-        (i % 2 === 0 ? 1 : -1) *
-        Math.min(LAYOUT.islandStagger, radius * LAYOUT.islandStaggerFraction),
-      rot: i % 2 === 0 ? 0.1 : -0.14
-    });
-  });
-  const cx = placed.length ? (placed[0].x + placed[placed.length - 1].x) / 2 : 0;
-  let extent = 0;
-  placed.forEach((placement, i) => {
-    placement.x -= cx;
-    extent = Math.max(extent, Math.abs(placement.x) + radii[i]);
-  });
-  return { placed, extent };
-}
-
-// ---------------- the island itself ----------------
-
-export type IslandParts = {
+export type IslandGround = {
   group: THREE.Group;
-  precinct: THREE.Group;
-  theme: IslandTheme;
-  accent: string;
   foamA: THREE.Mesh;
   foamB: THREE.Mesh;
-  namePlate: THREE.Sprite;
 };
 
-export function makeIsland(
+// The land and the water around it, at one radius. Everything here is a function of
+// the radius alone, so when an island grows this is the whole of what is rebuilt —
+// and the ground it replaces is released, never left behind. Its materials are its
+// own, so releasing it takes nothing another part of the island is still using.
+export function makeGround(
   kit: AtlasKit,
   index: PickIndex,
   project: AtlasProject,
-  lay: IslandLayout
-): IslandParts {
-  const theme = themeFor(project);
-  const accent = ACCENTS[project.slot % ACCENTS.length];
-  const radius = lay.radius;
+  theme: IslandTheme,
+  radius: number
+): IslandGround {
   const g = new THREE.Group();
   const seg = theme.shape === "hex" ? 7 : 22;
   const groundM = kit.mat(theme.ground[0]);
@@ -321,10 +247,40 @@ export function makeIsland(
     }
   }
 
-  const rng = mulberry32(hashCode(project.id) + 11);
-  for (let i = 0; i < Math.round(radius * 1.6); i++) {
+  return { group: g, foamA, foamB };
+}
+
+// ---------------- what grows on the ground ----------------
+
+// Each growth draws its own trees, so the ones already standing are never drawn a
+// second time and never move. The seed carries the generation, so the same growth
+// of the same project grows the same wood twice.
+const SCATTER_GENERATION_SALT = 9973;
+
+// The scatter of one band of ground: ground patches through it, a treeline just
+// inside the shore, and — on a sparse island — its stones. Called with fromRadius 0
+// for the island's first drawing, and with the old shore afterwards, so only ground
+// the human has never seen is planted.
+export function makeScatter(
+  kit: AtlasKit,
+  project: AtlasProject,
+  theme: IslandTheme,
+  fromRadius: number,
+  radius: number,
+  generation: number
+): THREE.Group {
+  const g = new THREE.Group();
+  const rng = mulberry32(hashCode(project.id) + 11 + generation * SCATTER_GENERATION_SALT);
+
+  // ground patches lie evenly out from the middle: the new band takes its share
+  const patchInner = Math.max(0, fromRadius - 1.4);
+  const patchOuter = Math.max(patchInner, radius - 1.4);
+  const patchCount = Math.round(
+    (radius * 1.6 * (patchOuter - patchInner)) / Math.max(0.001, radius - 1.4)
+  );
+  for (let i = 0; i < patchCount; i++) {
     const a = rng() * Math.PI * 2;
-    const r = rng() * (radius - 1.4);
+    const r = patchInner + rng() * (patchOuter - patchInner);
     const patch = new THREE.Mesh(
       new THREE.CircleGeometry(0.7 + rng() * 1.7, 10),
       kit.mat(theme.ground[1], { roughness: 1 })
@@ -337,12 +293,16 @@ export function makeIsland(
     g.add(patch);
   }
 
+  // the treeline follows the shore: when the shore moves out a new one grows at it,
+  // and the old one stays where it stands, an inland wood
   const treeCount = theme.veg === "sparse" ? 6 : Math.round(radius * 1.7);
   for (let i = 0; i < treeCount; i++) {
     const a = rng() * Math.PI * 2;
     const r = radius - 1.0 - rng() * 1.1;
     // leave the way to the gate stone clear
     if (Math.abs(((a - 0.62 + Math.PI) % (Math.PI * 2)) - Math.PI) < 0.5) continue;
+    // nothing new is planted on ground that was already drawn
+    if (r < fromRadius) continue;
     const tall =
       theme.veg === "cypress" ? rng() > 0.2 : theme.veg === "olive" ? rng() > 0.8 : rng() > 0.5;
     const tree = tall
@@ -352,19 +312,57 @@ export function makeIsland(
     tree.rotation.y = rng() * Math.PI;
     g.add(tree);
   }
+
   if (theme.veg === "sparse") {
-    for (let i = 0; i < 7; i++) {
+    const stoneInner = Math.max(0, fromRadius - 1.2);
+    const stoneOuter = Math.max(stoneInner, radius - 1.2);
+    const stoneCount = Math.round(
+      (7 * (stoneOuter - stoneInner)) / Math.max(0.001, radius - 1.2)
+    );
+    const stoneM = kit.mat(theme.cliff);
+    for (let i = 0; i < stoneCount; i++) {
       const a = rng() * Math.PI * 2;
-      const r = rng() * (radius - 1.2);
-      const stone = new THREE.Mesh(
-        new THREE.IcosahedronGeometry(0.14 + rng() * 0.22, 0),
-        cliffM
-      );
+      const r = stoneInner + rng() * (stoneOuter - stoneInner);
+      const stone = new THREE.Mesh(new THREE.IcosahedronGeometry(0.14 + rng() * 0.22, 0), stoneM);
       stone.position.set(Math.cos(a) * r, 1.05, Math.sin(a) * r);
       stone.castShadow = true;
       g.add(stone);
     }
   }
+
+  return g;
+}
+
+// ---------------- the island itself ----------------
+
+export type IslandParts = {
+  group: THREE.Group;
+  // the radius-dependent ground, held apart so growth can replace exactly it
+  ground: THREE.Group;
+  precinct: THREE.Group;
+  theme: IslandTheme;
+  accent: string;
+  foamA: THREE.Mesh;
+  foamB: THREE.Mesh;
+  namePlate: THREE.Sprite;
+};
+
+// The whole island at the radius it is first seen at. The gate stone, the signature
+// mark and the nameplate are drawn once here and never again: they stand where the
+// human first saw them even after the shore has moved out past them.
+export function makeIsland(
+  kit: AtlasKit,
+  index: PickIndex,
+  project: AtlasProject,
+  radius: number
+): IslandParts {
+  const theme = themeFor(project);
+  const accent = ACCENTS[project.slot % ACCENTS.length];
+  const g = new THREE.Group();
+
+  const ground = makeGround(kit, index, project, theme, radius);
+  g.add(ground.group);
+  g.add(makeScatter(kit, project, theme, 0, radius, 0));
 
   // the island's signature mark
   if (theme.mark === "avenue") {
@@ -376,6 +374,7 @@ export function makeIsland(
       g.add(left, right);
     }
   } else if (theme.mark === "stones") {
+    const cliffM = kit.mat(theme.cliff);
     for (let i = 0; i < 5; i++) {
       const a = Math.PI * 0.15 + i * 0.28;
       const stone = kit.box(
@@ -441,5 +440,14 @@ export function makeIsland(
   // the island's own ground: clicking anywhere on it travels to this project
   index.tag(g, { kind: "island", projectId: project.id });
 
-  return { group: g, precinct, theme, accent, foamA, foamB, namePlate };
+  return {
+    group: g,
+    ground: ground.group,
+    precinct,
+    theme,
+    accent,
+    foamA: ground.foamA,
+    foamB: ground.foamB,
+    namePlate
+  };
 }

@@ -115,6 +115,11 @@ export const LAYOUT = {
   padPerLiveTicket: 0.5,
   padPerTicketCap: 2.0,
   padPerTicket: 0.14,
+  // the clear ground kept between one pad and the next
+  padGap: 5,
+  // the ring the Items present at first sight are set out on. An island drawn for
+  // the first time looks exactly as it always has; only Items that arrive later
+  // are placed by the outward search.
   ringTwo: 5,
   ringSpread: 2.05,
   ringPerItem: 1.5,

@@ -25,13 +25,15 @@ import {
 import { C } from "./palette";
 import { AtlasKit } from "./materials";
 import { applyDay, createSky, nowHour } from "./day";
+import { makeGround, makeIsland, makeScatter, type IslandTheme } from "./island";
 import {
-  islandLayout,
-  makeIsland,
+  growIslandLayout,
   placeIslands,
+  UNPLACED_ISLAND,
   type IslandLayout,
-  type IslandTheme
-} from "./island";
+  type IslandPlacement,
+  type LayoutItem
+} from "./layout";
 import { archetypeFor, buildStructure, type Flame } from "./structures";
 import { ChipField, makeStele, makeWorker, poseWorker, type SteleFigure, type WorkerFigure } from "./workers";
 import {
@@ -81,9 +83,13 @@ type Island = {
   precinct: THREE.Group;
   accent: string;
   theme: IslandTheme;
-  // the island's ground is drawn once, from the layout it had when it first
-  // appeared: a project's island keeps its shape, and nothing shuffles under it
+  // where every pad on this island stands. It is only ever added to, so a pad the
+  // human has seen keeps its ground and nothing shuffles under it.
   lay: IslandLayout;
+  // the radius-dependent ground and sea. When the island outgrows its shore this is
+  // the whole of what is rebuilt; everything else standing on the island is left
+  // exactly where it was drawn.
+  ground: THREE.Group;
   foamA: THREE.Mesh;
   foamB: THREE.Mesh;
   namePlate: THREE.Sprite;
@@ -91,6 +97,15 @@ type Island = {
   lodOn: boolean | null;
   lodFade: number;
 };
+
+// What the layout needs of a Sprint Item: enough to size its pad, and nothing else.
+function layoutItemOf(item: AtlasItem): LayoutItem {
+  return {
+    id: item.id,
+    liveTicketCount: item.tickets.filter((ticket) => !ticket.done).length,
+    ticketCount: item.total
+  };
+}
 
 export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
   const { canvas, onSelect, reducedMotion } = options;
@@ -143,6 +158,10 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
   // ---------------- what stands in the world ----------------
 
   const islands = new Map<string, Island>();
+  // the sea position each project was given the first time it was seen. It is never
+  // taken back: an island that grows grows where it stands, and a project that
+  // arrives later appends beyond the far end of the archipelago.
+  let placements: ReadonlyMap<string, IslandPlacement> = new Map();
   let current: AtlasWorld | null = null;
   let worldExtent = 20;
   let framed = false;
@@ -176,10 +195,11 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
 
   // ---------------- a reading of the board becomes a place ----------------
 
-  function syncItem(island: Island, item: AtlasItem, slotIndex: number): void {
-    const position =
-      island.lay.positions[Math.min(slotIndex, island.lay.positions.length - 1)];
-    const padR = island.lay.pads[Math.min(slotIndex, island.lay.pads.length - 1)];
+  function syncItem(island: Island, item: AtlasItem): void {
+    // the item's own ground, given to it once and kept
+    const position = island.lay.pads.get(item.id);
+    if (!position) return;
+    const padR = position.padR;
     const kind = archetypeFor(item.dominantType, item.slot);
     const progressKey = Math.round(item.progress * 20) + (item.allDone ? 100 : 0);
 
@@ -309,19 +329,49 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
     if (build.plume) build.plume.group.visible = state.anyWorking && !state.anyTrouble;
   }
 
+  // The island outgrew its shore: the ground and the sea around it are drawn again
+  // at the larger radius and the old ones released, and the new ring of land —
+  // and only that ring — is planted. Nothing already standing is touched.
+  function growGround(island: Island, lay: IslandLayout): void {
+    const wasRadius = island.lay.radius;
+    kit.release(island.ground);
+    const ground = makeGround(kit, index, island.project, island.theme, lay.radius);
+    island.group.add(ground.group);
+    island.ground = ground.group;
+    island.foamA = ground.foamA;
+    island.foamB = ground.foamB;
+    island.group.add(
+      makeScatter(kit, island.project, island.theme, wasRadius, lay.radius, lay.generation)
+    );
+  }
+
   function sync(reading: AtlasWorld): void {
-    const lays = reading.projects.map((project) => islandLayout(project.items));
-    const radii = lays.map((lay) => lay.radius);
-    const { placed, extent } = placeIslands(radii);
-    worldExtent = extent;
+    // what each island already is, with room made for whatever has just arrived
+    const lays = reading.projects.map((project) =>
+      growIslandLayout(
+        islands.get(project.id)?.lay ?? UNPLACED_ISLAND,
+        project.items.map(layoutItemOf)
+      )
+    );
+    const seated = placeIslands(
+      placements,
+      reading.projects.map((project, pi) => ({ id: project.id, radius: lays[pi].radius }))
+    );
+    placements = seated.placements;
+    worldExtent = seated.extent;
     // haze begins beyond the home framing, wherever that is for this world
-    fog.near = Math.max(FOG.minNear, rig.frameDistance(extent) * FOG.nearFraction);
+    fog.near = Math.max(FOG.minNear, rig.frameDistance(seated.extent) * FOG.nearFraction);
     fog.far = fog.near + FOG.depth;
 
     reading.projects.forEach((project, pi) => {
+      const lay = lays[pi];
       let island = islands.get(project.id);
       if (!island) {
-        const made = makeIsland(kit, index, project, lays[pi]);
+        const made = makeIsland(kit, index, project, lay.radius);
+        // the island is put on the water once, at the place it was given
+        const at = placements.get(project.id);
+        made.group.position.set(at?.x ?? 0, 0, at?.z ?? 0);
+        made.group.rotation.y = at?.rot ?? 0;
         world.add(made.group);
         island = {
           project,
@@ -329,7 +379,8 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
           precinct: made.precinct,
           accent: made.accent,
           theme: made.theme,
-          lay: lays[pi],
+          lay,
+          ground: made.ground,
           foamA: made.foamA,
           foamB: made.foamB,
           namePlate: made.namePlate,
@@ -338,12 +389,13 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
           lodFade: 1
         };
         islands.set(project.id, island);
+      } else if (lay.radius > island.lay.radius) {
+        growGround(island, lay);
       }
+      island.lay = lay;
       island.project = project;
-      island.group.position.set(placed[pi].x, 0, placed[pi].z);
-      island.group.rotation.y = placed[pi].rot;
 
-      project.items.forEach((item, idx) => syncItem(island, item, idx));
+      project.items.forEach((item) => syncItem(island, item));
 
       const alive = new Set(project.items.map((item) => item.id));
       for (const [id, build] of [...island.items]) {
@@ -365,7 +417,7 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
 
     if (!framed && reading.projects.length) {
       framed = true;
-      rig.frameWorld(extent);
+      rig.frameWorld(seated.extent);
     }
   }
 
