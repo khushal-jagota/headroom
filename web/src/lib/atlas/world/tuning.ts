@@ -133,12 +133,51 @@ export const LAYOUT = {
   buildPadMargin: 1.4
 };
 
+// ---------------- how often the world is stepped and drawn ----------------
+//
+// Every ambient motion in the world is written against absolute time, and every
+// motion that accumulates is multiplied by dt. So the rate below decides how
+// smooth the world looks and nothing at all about how fast anything in it moves.
+
+export const PACING = {
+  // somebody is on the canvas: every frame the browser will give, and for a
+  // moment after their hand leaves, so a flick of the wrist is never sampled slow
+  fullRateAfterPresence: 1.2,
+  // the drift and the ambient world, sampled often enough that nobody can tell
+  ambientFps: 30,
+  // untouched this long and nobody is watching
+  idleAfterPresence: 180,
+  idleFps: 4,
+  // a gap longer than this was a stall, not a slow frame, and is not paid out.
+  // It must stay above the idle step, or the idle world would run slow.
+  maxStepSeconds: 0.35
+};
+
+// ---------------- the sun's shadow map ----------------
+
+export const SHADOW = {
+  // the whole archipelago is redrawn into the map each time, so it is redrawn
+  // often enough that a swinging arm keeps its shadow, and no oftener
+  maxUpdatesPerSecond: 24
+};
+
+// ---------------- reading the clock ----------------
+
+export const SKY_CLOCK = {
+  // the sky's keyframes stand hours apart; reading the hour this often is ample
+  readEverySeconds: 1
+};
+
 // ---------------- what resolves at what range ----------------
 
 export const LOD = {
   // from afar the overseers hold the scene; come closer and the crew resolves
   nearRadiusFactor: 2.1,
   nearMargin: 14,
+  // ambient motion — flicker, plume, shoreline — is spent only within this
+  // multiple of the crew's near distance. Beyond it the swing of a flame is
+  // smaller than a pixel, and the island rests exactly as reduced motion rests it.
+  ambientDistanceFactor: 3,
   // hysteresis, so a figure at the threshold does not flicker in and out
   hysteresis: 6,
   fadeRate: 6,

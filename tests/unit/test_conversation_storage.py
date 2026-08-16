@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
+    CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION,
     AgentMessageEventPayload,
     ContextCompactedEventPayload,
     ConversationEventKind,
@@ -48,6 +50,7 @@ from planner.conversation.events import (
     UserInputOption,
     UserInputQuestion,
     UserInputRequestedEventPayload,
+    conversation_event_kinds_need_the_change_signal,
     conversation_event_payload_from_canonical_json,
     conversation_event_payload_kind,
     conversation_event_payload_to_canonical_json,
@@ -62,6 +65,7 @@ from planner.conversation.storage import (
     ConversationRecordNamesNoModel,
     ConversationStore,
 )
+from planner.core import change_signal
 from planner.core.db import connect, create_schema
 
 A_PROMPT = PromptEventPayload(
@@ -776,3 +780,130 @@ def test_a_message_may_not_hold_something_that_is_not_a_piece() -> None:
             ConversationEventKind.agent_message,
             '{"content":[{"piece":"hologram","text":"hi"}]}',
         )
+
+
+# --- what an append announces ----------------------------------------------------------
+
+
+class _SignalCounter:
+    def __init__(self) -> None:
+        self.count = 0
+
+    def record(self) -> None:
+        self.count += 1
+
+    def reset(self) -> None:
+        self.count = 0
+
+
+@pytest.fixture
+def signals() -> Iterator[_SignalCounter]:
+    counter = _SignalCounter()
+    unsubscribe = change_signal.subscribe(counter.record)
+    try:
+        yield counter
+    finally:
+        unsubscribe()
+
+
+@pytest.mark.parametrize("payload", EVERY_PAYLOAD, ids=lambda payload: str(payload.kind))
+def test_an_append_announces_itself_only_if_a_screen_outside_the_conversation_reads_it(
+    store: ConversationStore,
+    signals: _SignalCounter,
+    payload: ConversationEventPayload,
+) -> None:
+    """A working agent's chatter is not worth sending every open tab back for its screen.
+
+    The rows an open conversation is the only reader of are handed to it as they are
+    written, so nothing is lost by staying quiet about them.
+    """
+    asyncio.run(store.create_conversation(_resolved()))
+    signals.reset()
+
+    asyncio.run(store.append_event("c", payload))
+
+    kind = conversation_event_payload_kind(payload)
+    quiet = kind in CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION
+    assert signals.count == (0 if quiet else 1)
+
+
+@pytest.mark.parametrize("payload", EVERY_PAYLOAD, ids=lambda payload: str(payload.kind))
+def test_an_append_that_announces_nothing_is_still_written_and_still_read_back(
+    store: ConversationStore,
+    tmp_path: Path,
+    payload: ConversationEventPayload,
+) -> None:
+    """Staying quiet is about telling readers, never about keeping the row."""
+    asyncio.run(store.create_conversation(_resolved()))
+    asyncio.run(store.append_event("c", payload))
+
+    conn: sqlite3.Connection = connect(str(tmp_path / "conversations.db"))
+    try:
+        rows = conn.execute(
+            "SELECT sequence, kind FROM conversation_events WHERE conversation_id = 'c'"
+        ).fetchall()
+        marker = conn.execute(
+            "SELECT latest_sequence FROM conversations WHERE conversation_id = 'c'"
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert [(row["sequence"], row["kind"]) for row in rows] == [
+        (1, str(conversation_event_payload_kind(payload)))
+    ]
+    assert marker["latest_sequence"] == 1
+
+
+def test_a_delivery_written_as_one_thing_announces_itself_once(
+    store: ConversationStore, signals: _SignalCounter
+) -> None:
+    """Several rows, one transaction, one announcement — the signal names nothing anyway."""
+    asyncio.run(store.create_conversation(_resolved(model="first-model")))
+    signals.reset()
+
+    asyncio.run(
+        store.append_delivered_prompt(
+            "c",
+            prompt=A_PROMPT,
+            model_change=ModelChangedEventPayload(model="second-model", reasoning_effort=None),
+            extra_prompts=(A_PROMPT,),
+        )
+    )
+
+    assert signals.count == 1
+
+
+def test_a_batch_holding_one_row_a_screen_reads_announces_the_whole_batch() -> None:
+    quiet = AgentMessageEventPayload(content=text_message_content("chatter"))
+    loud = TurnEndedEventPayload(ending=ConversationTurnEnding.completed)
+
+    assert not conversation_event_kinds_need_the_change_signal(
+        [conversation_event_payload_kind(quiet)]
+    )
+    assert conversation_event_kinds_need_the_change_signal(
+        conversation_event_payload_kind(payload) for payload in (quiet, loud, quiet)
+    )
+
+
+def test_the_kinds_the_board_reads_are_all_kinds_that_announce_themselves() -> None:
+    """The board refetches on the signal, so every kind that moves a board row must emit."""
+    board_row_signals_move_on = {
+        ConversationEventKind.prompt,
+        ConversationEventKind.prompt_delivery_refused,
+        ConversationEventKind.prompt_discarded,
+        ConversationEventKind.permission_asked,
+        ConversationEventKind.permission_answered,
+        ConversationEventKind.user_input_requested,
+        ConversationEventKind.user_input_answered,
+        ConversationEventKind.user_input_failed,
+        ConversationEventKind.model_changed,
+        ConversationEventKind.turn_ended,
+    }
+
+    assert not (
+        board_row_signals_move_on & CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION
+    )
+    assert (
+        board_row_signals_move_on | CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION
+        == set(ConversationEventKind)
+    )

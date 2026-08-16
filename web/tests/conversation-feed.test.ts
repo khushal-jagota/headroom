@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   conversationIsRunning,
@@ -9,6 +9,11 @@ import {
   feedWithCommittedEvent,
   feedWithCommittedEvents,
   feedWithLiveFrame,
+  liveFrameIsASignOfLife,
+  HALF_FINISHED_OUTPUT_INTERVAL_MS,
+  HIDDEN_HALF_FINISHED_OUTPUT_INTERVAL_MS,
+  type ConversationFeed,
+  type ConversationStream,
   type ConversationStreamPorts
 } from "../src/lib/conversation/feed";
 import type {
@@ -76,7 +81,6 @@ describe("Conversation feed record", () => {
     expect(feed.streamingAgentText).toBe("hello");
     expect(feed.toolCallProgress).toEqual({ t1: "reading", t2: "writing" });
     expect(feed.events).toHaveLength(1);
-    expect(feed.livenessPulse).toBe(4);
 
     feed = feedWithCommittedEvent(feed, toolCallFinishedEvent(2, { toolCallId: "t1" }));
     expect(feed.toolCallProgress).toEqual({ t2: "writing" });
@@ -89,15 +93,33 @@ describe("Conversation feed record", () => {
     expect(feed.toolCallProgress).toEqual({});
   });
 
-  it("counts thinking as liveness without showing it as content", () => {
-    let feed = feedWithCommittedEvent(emptyConversationFeed(), promptEvent(1));
+  it("takes a frame with nothing in it as a sign of life and leaves the feed alone", () => {
+    const feed = feedWithCommittedEvent(emptyConversationFeed(), promptEvent(1));
 
-    feed = feedWithLiveFrame(feed, { frame: "model_thinking" });
+    for (const frame of [
+      { frame: "model_thinking" },
+      { frame: "held_prompts_changed" }
+    ] as const) {
+      expect(liveFrameIsASignOfLife(feed, frame)).toBe(true);
+      // The same feed back, not an equal one: a thread with no new words in it is not
+      // rebuilt to say the agent is still there.
+      expect(feedWithLiveFrame(feed, frame)).toBe(feed);
+    }
+  });
 
-    expect(feed.livenessPulse).toBe(1);
-    expect(feed.streamingAgentText).toBe("");
-    expect(feed.toolCallProgress).toEqual({});
-    expect(feed.events).toEqual([promptEvent(1)]);
+  it("takes text and tool progress as signs of life too, and keeps what they carry", () => {
+    const feed = feedWithCommittedEvent(emptyConversationFeed(), promptEvent(1));
+    const delta = { frame: "agent_message_delta", text_delta: "he" } as const;
+    const progress = {
+      frame: "tool_call_progress",
+      tool_call_id: "t1",
+      detail: "reading"
+    } as const;
+
+    expect(liveFrameIsASignOfLife(feed, delta)).toBe(true);
+    expect(liveFrameIsASignOfLife(feed, progress)).toBe(true);
+    expect(feedWithLiveFrame(feed, delta).streamingAgentText).toBe("he");
+    expect(feedWithLiveFrame(feed, progress).toolCallProgress).toEqual({ t1: "reading" });
   });
 
   it("rejects ghost frames once the turn is over", () => {
@@ -118,6 +140,7 @@ describe("Conversation feed record", () => {
       })
     ).toBe(ended);
     expect(feedWithLiveFrame(ended, { frame: "model_thinking" })).toBe(ended);
+    expect(liveFrameIsASignOfLife(ended, { frame: "model_thinking" })).toBe(false);
   });
 
   it("ignores a live frame this browser does not understand", () => {
@@ -128,6 +151,7 @@ describe("Conversation feed record", () => {
     } as unknown as ConversationLiveFrame;
 
     expect(feedWithLiveFrame(running, unknownFrame)).toBe(running);
+    expect(liveFrameIsASignOfLife(running, unknownFrame)).toBe(false);
   });
 
   it("reads running state from the newest prompt or ending row", () => {
@@ -204,7 +228,12 @@ describe("Conversation feed liveness", () => {
 });
 
 describe("Conversation stream", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("fetches then tails, publishes live work, and reconnects after closing the old tail", async () => {
+    vi.useFakeTimers();
     const reconnectRead = deferred<ConversationEvent[]>();
     const replacementOpened = deferred<void>();
     const calls: string[] = [];
@@ -253,6 +282,7 @@ describe("Conversation stream", () => {
       frame: "agent_message_delta",
       text_delta: "streaming"
     });
+    await vi.advanceTimersByTimeAsync(HALF_FINISHED_OUTPUT_INTERVAL_MS);
     expect(published.streamingAgentText).toBe("streaming");
     firstTailHandlers!.onLiveFrame({ frame: "held_prompts_changed" });
     expect(heldPromptsChangedCount).toBe(1);
@@ -272,4 +302,119 @@ describe("Conversation stream", () => {
     stream.close();
     expect(calls.at(-1)).toBe("close:3");
   });
+
+  it("gathers up streamed text between screen updates, and draws a row the moment it lands", async () => {
+    vi.useFakeTimers();
+    const live = await streamOnOneOpenTurn();
+
+    live.tail.onLiveFrame({ frame: "agent_message_delta", text_delta: "one " });
+    live.tail.onLiveFrame({ frame: "agent_message_delta", text_delta: "two " });
+    live.tail.onLiveFrame({ frame: "agent_message_delta", text_delta: "three" });
+
+    // Nothing has been drawn yet, and everything has been kept.
+    expect(live.publishedCount).toBe(1);
+    expect(live.stream.feed().streamingAgentText).toBe("one two three");
+
+    await vi.advanceTimersByTimeAsync(HALF_FINISHED_OUTPUT_INTERVAL_MS);
+    expect(live.publishedCount).toBe(2);
+    expect(live.published.streamingAgentText).toBe("one two three");
+
+    // A row waits for nothing, and it takes the half-finished text with it.
+    live.tail.onLiveFrame({ frame: "agent_message_delta", text_delta: " and more" });
+    live.tail.onCommittedEvent(agentMessageEvent(3, "one two three and more"));
+    expect(live.publishedCount).toBe(3);
+    expect(live.published.streamingAgentText).toBe("");
+
+    // The drawing that was waiting was cancelled by the row rather than left to run.
+    await vi.advanceTimersByTimeAsync(HALF_FINISHED_OUTPUT_INTERVAL_MS);
+    expect(live.publishedCount).toBe(3);
+
+    live.stream.close();
+  });
+
+  it("draws half-finished output far less often for a tab nobody is looking at", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("document", { visibilityState: "hidden" });
+    const live = await streamOnOneOpenTurn();
+
+    live.tail.onLiveFrame({ frame: "agent_message_delta", text_delta: "unwatched" });
+    await vi.advanceTimersByTimeAsync(HALF_FINISHED_OUTPUT_INTERVAL_MS);
+    expect(live.publishedCount).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(
+      HIDDEN_HALF_FINISHED_OUTPUT_INTERVAL_MS - HALF_FINISHED_OUTPUT_INTERVAL_MS
+    );
+    expect(live.publishedCount).toBe(2);
+    expect(live.published.streamingAgentText).toBe("unwatched");
+
+    live.stream.close();
+  });
+
+  it("says a frame is a sign of life the moment it arrives, however little it carries", async () => {
+    vi.useFakeTimers();
+    const live = await streamOnOneOpenTurn();
+
+    live.tail.onLiveFrame({ frame: "model_thinking" });
+    live.tail.onLiveFrame({ frame: "model_thinking" });
+
+    // Thinking says the agent is alive now, and it never waits for a screen update. It
+    // also draws nothing: the thread it would redraw has no new words in it.
+    expect(live.signsOfLife).toBe(2);
+    expect(live.publishedCount).toBe(1);
+    await vi.advanceTimersByTimeAsync(HIDDEN_HALF_FINISHED_OUTPUT_INTERVAL_MS);
+    expect(live.publishedCount).toBe(1);
+
+    live.stream.close();
+  });
+
+  it("stops waiting to draw when the reader closes the conversation", async () => {
+    vi.useFakeTimers();
+    const live = await streamOnOneOpenTurn();
+
+    live.tail.onLiveFrame({ frame: "agent_message_delta", text_delta: "half a word" });
+    live.stream.close();
+
+    await vi.advanceTimersByTimeAsync(HIDDEN_HALF_FINISHED_OUTPUT_INTERVAL_MS);
+    expect(live.publishedCount).toBe(1);
+  });
 });
+
+/** A connected stream on a conversation with a turn open, and everything it has said. */
+type OpenTurnStream = {
+  stream: ConversationStream;
+  tail: Parameters<ConversationStreamPorts["openTail"]>[2];
+  published: ConversationFeed;
+  publishedCount: number;
+  signsOfLife: number;
+};
+
+async function streamOnOneOpenTurn(): Promise<OpenTurnStream> {
+  const live: OpenTurnStream = {
+    stream: null as unknown as ConversationStream,
+    tail: null as unknown as OpenTurnStream["tail"],
+    published: emptyConversationFeed(),
+    publishedCount: 0,
+    signsOfLife: 0
+  };
+  live.stream = createConversationStream(
+    "c1",
+    {
+      readEventsAfter: () => Promise.resolve([promptEvent(1)]),
+      openTail: (_conversationId, _after, handlers) => {
+        live.tail = handlers;
+        return () => undefined;
+      }
+    },
+    (next) => {
+      live.published = next;
+      live.publishedCount += 1;
+    },
+    undefined,
+    undefined,
+    () => {
+      live.signsOfLife += 1;
+    }
+  );
+  await live.stream.connect();
+  return live;
+}

@@ -22,6 +22,7 @@ from planner.conversation.events import (
 )
 from planner.conversation.message_content import text_message_content
 from planner.conversation.storage import ConversationStore
+from planner.core import change_signal
 from planner.core.db import connect, create_schema
 from planner.skill_sources import ensure_managed_panels_skills
 from planner.skill_versions import (
@@ -394,3 +395,38 @@ def test_each_role_save_restores_its_file_if_capture_fails(
         assert path.read_bytes() == before
     finally:
         conn.close()
+
+
+def test_settling_a_binding_still_tells_readers_something_changed(tmp_path: Path) -> None:
+    """The prompt row that settles a binding is one a screen reads, so it announces.
+
+    Bindings are settled inside the conversation event transaction, and only a prompt,
+    a refusal, or a discard settles one — all rows the board reads. So no settlement
+    rides in on a commit that stays quiet.
+    """
+    db_path, conn = _database(tmp_path)
+    try:
+        bind_worker_step_skills(conn, tmp_path, "queued-message", "panels-worker-coding")
+    finally:
+        conn.close()
+    store = ConversationStore(str(db_path), integer_now=lambda: 1)
+    announcements: list[None] = []
+    unsubscribe = change_signal.subscribe(lambda: announcements.append(None))
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved("conversation"))
+        announcements.clear()
+        await store.append_delivered_prompt(
+            "conversation", prompt=_prompt("queued-message"), model_change=None
+        )
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        unsubscribe()
+
+    assert len(announcements) == 1
+    with connect(str(db_path)) as check:
+        assert {row["binding_status"] for row in _binding_rows(check, "queued-message")} == {
+            "final"
+        }

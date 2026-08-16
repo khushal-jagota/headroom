@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from planner.core import change_signal
-from planner.core.db import connect, create_schema
+from planner.core.db import commit_without_change_signal, connect, create_schema
 
 
 class _SignalCounter:
@@ -272,3 +272,31 @@ def test_the_signal_arrives_after_the_write_lock_is_released(tmp_path: Path) -> 
         writer.close()
 
     assert seen == [1]
+
+
+def test_a_transaction_ended_quietly_keeps_its_work_and_announces_nothing(
+    conn: sqlite3.Connection, signals: _SignalCounter
+) -> None:
+    """The one way past the door, for writes no reader is waiting for."""
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("INSERT INTO door (note) VALUES ('nobody is waiting')")
+    commit_without_change_signal(conn)
+
+    assert signals.count == 0
+    assert not conn.in_transaction
+    assert conn.execute("SELECT COUNT(*) FROM door").fetchone()[0] == 1
+
+
+def test_the_next_transaction_on_a_connection_that_committed_quietly_still_announces(
+    conn: sqlite3.Connection, signals: _SignalCounter
+) -> None:
+    """Going quiet is a decision about one commit, never a state the connection stays in."""
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("INSERT INTO door (note) VALUES ('quiet')")
+    commit_without_change_signal(conn)
+
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("INSERT INTO door (note) VALUES ('out loud')")
+    conn.execute("COMMIT")
+
+    assert signals.count == 1

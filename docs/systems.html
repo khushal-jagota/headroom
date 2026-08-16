@@ -108,7 +108,7 @@ Chief ───────────► external-work reconciliation         
       <div class="systems">
         <details open>
           <summary><span class="number">01</span><span><b>Record and change signal</b><span>Canonical state and a payload-free wake.</span></span></summary>
-          <div class="body"><p>SQLite stores product, runtime, conversation, notification, schedule, and operational records. Domain writers commit transactions. Each commit announces that something changed. Mounted browser reads and Worker readiness then ask the record again.</p><p class="paths"><code>src/planner/core/db.py</code> · <code>src/planner/core/migrations/</code> · <code>src/planner/core/change_signal.py</code></p></div>
+          <div class="body"><p>SQLite stores product, runtime, conversation, notification, schedule, and operational records. Domain writers commit transactions. Each commit announces that something changed. Mounted browser reads and Worker readiness then ask the record again. A commit stays quiet only where no screen is waiting for its rows: managed skill history, and the conversation rows an open conversation is the only reader of, which is handed them directly.</p><p class="paths"><code>src/planner/core/db.py</code> · <code>src/planner/core/migrations/</code> · <code>src/planner/core/change_signal.py</code></p></div>
         </details>
         <details>
           <summary><span class="number">02</span><span><b>Planning domains</b><span>Days, Sprints, Sprint Items, Tickets, Ideas, and Projects.</span></span></summary>

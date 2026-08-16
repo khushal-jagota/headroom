@@ -19,6 +19,8 @@ export type CameraRig = {
   frameWorld: (extent: number) => void;
   flyTo: (target: THREE.Vector3, distance: number) => void;
   flyHome: (extent: number) => void;
+  // a journey is under way and the eye is moving on its own: it is drawn at full rate
+  isTravelling: () => boolean;
   // the wordmark's way home: the drift is part of the default view, no waiting
   resumeDriftNow: () => void;
   setAspect: (aspect: number) => void;
@@ -88,6 +90,9 @@ export function createCameraRig(
     flyTo,
     flyHome(extent: number): void {
       flyTo(new THREE.Vector3(0, CAMERA.targetY, 0), frameDistance(extent));
+    },
+    isTravelling(): boolean {
+      return flight !== null;
     },
     resumeDriftNow(): void {
       lastInteract = -1e9;

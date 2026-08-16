@@ -123,6 +123,10 @@
 
   let view = $state<ConversationView | null>(null);
   let feed = $state<ConversationFeed>(emptyConversationFeed());
+  /** How many frames have said the conversation is alive. Only its movement is read, and
+   *  it is held apart from the feed so that saying "still working" costs the thread
+   *  nothing: a frame with no words in it moves this and touches no row. */
+  let livenessPulse = $state(0);
   /** What this browser has sent that the record does not have yet, oldest first. */
   let sentMessages = $state<readonly OutgoingMessage[]>([]);
   /** Local sends aimed at the queue before the server snapshot can name them. */
@@ -303,7 +307,8 @@
       // the after-a-restart path: the rows still leave a turn open, and only the system
       // can say nothing is running behind it any more.
       () => void refreshView(),
-      () => void refreshView()
+      () => void refreshView(),
+      () => (livenessPulse += 1)
     );
     try {
       await stream.connect();
@@ -587,7 +592,7 @@
   outgoingMessages={transcriptOutgoingMessages}
   heldPromptRows={heldRows}
   ownSenderLabel={senderLabel}
-  livenessPulse={feed.livenessPulse}
+  {livenessPulse}
   {running}
   {ask}
   {userInput}
