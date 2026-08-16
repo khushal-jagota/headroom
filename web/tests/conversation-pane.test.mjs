@@ -746,11 +746,12 @@ try {
       toolKind: `Tool ${index}`,
       detail,
       startedDetail: null,
+      cappedDetailSequence: null,
       status,
       progress: null
     };
   }
-  const runningWork = drawn(WorkGroup, { entries: [toolRow(1), toolRow(2), toolRow(3)] });
+  const runningWork = drawn(WorkGroup, { conversationId: "c", entries: [toolRow(1), toolRow(2), toolRow(3)] });
   assert.match(runningWork, /\+2 previous tool calls/);
   assert.equal(
     (runningWork.match(/data-conversation-tool="/g) ?? []).length,
@@ -760,7 +761,7 @@ try {
   assert.match(runningWork, /Tool 3/, "and it is the newest one");
   assert.doesNotMatch(runningWork, /Tool 1/);
 
-  const oneEntryWork = drawn(WorkGroup, { entries: [toolRow(1)] });
+  const oneEntryWork = drawn(WorkGroup, { conversationId: "c", entries: [toolRow(1)] });
   assert.doesNotMatch(oneEntryWork, /previous tool call/, "nothing is hidden when nothing is behind");
 
   // Settled: the head becomes the fold, and the runs are behind it.
@@ -794,27 +795,42 @@ try {
     drawn(TurnAnchor, { settled: true, toolCallCount: 0, foldedMessageCount: 3, durationSeconds: 9 }),
     /data-conversation-turn-fold/
   );
-  const hiddenRun = drawn(WorkGroup, { entries: [toolRow(1)], hidden: true });
+  const hiddenRun = drawn(WorkGroup, { conversationId: "c", entries: [toolRow(1)], hidden: true });
   assert.equal(hiddenRun.trim(), "", "a settled run draws nothing until its turn is opened");
 
   // A row's own output is behind the row, capped, and never pasted into the thread.
   const withOutput = drawn(WorkGroup, {
+    conversationId: "c",
     entries: [toolRow(1, "completed", "line one\nline two\nline three")]
   });
   assert.match(withOutput, /aria-expanded="false"/, "a tool row starts closed");
   assert.doesNotMatch(withOutput, /line three/, "its output is not in the thread");
   const withSummary = drawn(WorkGroup, {
+    conversationId: "c",
     entries: [toolRow(1, "completed", "ls -la /tmp")]
   });
   assert.match(withSummary, /data-conversation-tool-summary/);
   assert.match(withSummary, /ls -la \/tmp/, "a one-line detail is the summary itself");
+
+  // An open carries only the start of a long output. The row still opens — there is more
+  // of it to see — and the fragment is not read as the line.
+  const capped = drawn(WorkGroup, {
+    conversationId: "c",
+    entries: [{ ...toolRow(1, "completed", "ls -la /tmp"), cappedDetailSequence: 9 }]
+  });
+  assert.match(capped, /acp-step--expandable/, "a capped row opens onto the rest");
+  assert.doesNotMatch(
+    capped,
+    /data-conversation-tool-summary/,
+    "the start of an output is not the line"
+  );
 
   for (const [status, accessibleMark] of [
     ["running", "Running"],
     ["completed", "Completed"],
     ["failed", "Failed"]
   ]) {
-    const marked = drawn(WorkGroup, { entries: [toolRow(1, status)] });
+    const marked = drawn(WorkGroup, { conversationId: "c", entries: [toolRow(1, status)] });
     assert.match(marked, new RegExp(`data-conversation-tool-status="${status}"`));
     assert.match(marked, new RegExp(`aria-label="${accessibleMark}"`));
   }
@@ -823,6 +839,7 @@ try {
   // arguments as one JSON object, which is why this row used to read "Bash" and nothing
   // else. It now says what happened and which call it was.
   const claudeCall = drawn(WorkGroup, {
+    conversationId: "c",
     entries: [
       {
         ...toolRow(1, "completed", "total 0\ndrwxr-xr-x  12 khushaljagota  staff  384 ."),

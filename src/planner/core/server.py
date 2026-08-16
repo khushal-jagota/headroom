@@ -16,6 +16,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 
 from planner.conversation.api import build_conversation_runtime
 from planner.conversation.api import router as conversation_router
@@ -203,6 +204,11 @@ def create_app(
 
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
+    # Reads are large and the link is remote, so bodies travel compressed. Level 4 is
+    # the measured knee on the largest real body: it costs 100 ms of CPU and saves
+    # 7.5 MB, where level 9 spends 245 ms for 0.12 MB more. Starlette excludes
+    # text/event-stream, so the change signal and the conversation tail still stream.
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=4)
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory

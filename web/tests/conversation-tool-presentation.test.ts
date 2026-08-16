@@ -57,6 +57,7 @@ function toolRow(overrides: Partial<ToolCallRow> = {}): ToolCallRow {
     toolKind: "read",
     detail: null,
     startedDetail: null,
+    cappedDetailSequence: null,
     status: "completed",
     progress: null,
     ...overrides
@@ -300,5 +301,51 @@ describe("Conversation tool-call presentation", () => {
       detail: null,
       canExpand: false
     });
+  });
+
+  it("opens a capped row onto output the reader has not seen", () => {
+    // The start of a long output can look like anything, including a repeat of the line
+    // itself. The row opens because there is more of it, not because the fragment reads
+    // like more of it.
+    expect(
+      presentToolCall(
+        toolRow({
+          title: "Bash",
+          toolKind: "execute",
+          startedDetail: JSON.stringify({ command: "ls -la" }),
+          detail: "ls -la",
+          cappedDetailSequence: 7
+        })
+      )
+    ).toMatchObject({ summary: "ls -la", canExpand: true });
+  });
+
+  it("draws the line of a capped row from what is whole", () => {
+    // A cut object no longer parses and a cut first line was never a whole one, so the
+    // fragment is not read for the line. What the call was asked to do still says which
+    // call it was.
+    const cut = JSON.stringify({ command: "gh run view 3037", extra: "x".repeat(40) }).slice(0, 30);
+    expect(
+      presentToolCall(
+        toolRow({
+          title: "Bash",
+          toolKind: "execute",
+          startedDetail: JSON.stringify({ command: "gh run view 3037" }),
+          detail: cut,
+          cappedDetailSequence: 4
+        })
+      )
+    ).toMatchObject({ title: "Ran command", summary: "gh run view 3037" });
+    expect(
+      presentToolCall(
+        toolRow({
+          title: "TaskStop",
+          toolKind: "other",
+          startedDetail: null,
+          detail: cut,
+          cappedDetailSequence: 4
+        })
+      )
+    ).toMatchObject({ title: "TaskStop", summary: null, canExpand: true });
   });
 });

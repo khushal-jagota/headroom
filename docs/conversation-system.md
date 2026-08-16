@@ -275,6 +275,18 @@ that carried it, the fact is kept short enough that a row stays one line, and it
 is dropped when the title already says it. What the tool printed stays behind the
 row, where a directory listing cannot push the conversation off the screen.
 
+Because it stays behind the row, opening a conversation does not carry it. A read
+brings the first kilobyte of what each tool printed, and says which rows it
+shortened. The rest of one row's output is fetched when somebody opens that row.
+On the largest conversation that is the difference between nine megabytes and
+four. The record keeps every character either way.
+
+A row that was shortened is not read for the line the closed row shows. The start
+of an output is not the output: an object cut in half no longer reads as one, and
+a first line that was never the whole of one would become a summary of something
+nobody printed. So a shortened row's line is drawn from what the call was asked to
+do, which is whole.
+
 All of this is read from what the notebook already holds, so conversations
 recorded before any of it existed read the same way as new ones.
 
