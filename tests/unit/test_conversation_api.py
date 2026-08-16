@@ -29,6 +29,7 @@ from fastapi.testclient import TestClient
 from planner.conversation.api import (
     COMMITTED_EVENT_STREAM_NAME,
     LIVE_FRAME_STREAM_NAME,
+    PUBLIC_TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS,
     ConversationRuntime,
     router,
 )
@@ -1728,6 +1729,128 @@ def test_public_replays_keep_non_claude_and_unrecognized_json_detail(
                     )
                 ).json()["events"]
                 assert events[0]["payload"]["detail"] == detail
+
+    _run(exercise)
+
+
+def test_a_public_read_carries_the_start_of_a_long_tool_output_and_says_so(
+    harness: _Harness,
+) -> None:
+    """An open pays for the lines it draws, not for output nobody has opened.
+
+    The events read and the tail replay are the two ways an open arrives, so both are
+    exercised here, and the row that was shortened says that it was.
+    """
+
+    async def exercise() -> None:
+        whole = "".join(f"line {number}\n" for number in range(4_000))
+        assert len(whole) > PUBLIC_TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS
+        short = "up to date\n"
+        async with harness.client() as client:
+            await _start(client, "long-output")
+            for payload in (
+                ToolCallFinishedEventPayload(
+                    tool_call_id="call-1",
+                    tool_call_status=ToolCallStatus.completed,
+                    detail=whole,
+                ),
+                ToolCallFinishedEventPayload(
+                    tool_call_id="call-2",
+                    tool_call_status=ToolCallStatus.completed,
+                    detail=short,
+                ),
+            ):
+                await harness.store.append_event("long-output", payload)
+
+            response = await client.get(
+                "/api/conversation/conversations/long-output/events"
+            )
+            fetched = response.json()["events"]
+            assert fetched[0]["payload"] == {
+                "tool_call_id": "call-1",
+                "tool_call_status": "completed",
+                "detail": whole[:PUBLIC_TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS],
+                "detail_capped": True,
+            }
+            # A short output is the whole of what the tool printed, so nothing says it
+            # was shortened and the fold has nothing to ask for.
+            assert fetched[1]["payload"] == {
+                "tool_call_id": "call-2",
+                "tool_call_status": "completed",
+                "detail": short,
+            }
+            assert len(response.content) < len(whole) // 10
+
+            async with _EventStreamDrive(
+                harness.app,
+                "/api/conversation/conversations/long-output/tail",
+                "after=0",
+            ) as stream:
+                replayed = [await stream.next_named_frame() for _ in range(2)]
+                assert [event for _name, event in replayed] == fetched
+
+            # The record kept the whole of it, and that is what the fold asks for.
+            whole_response = await client.get(
+                "/api/conversation/conversations/long-output/events/1/detail"
+            )
+            assert whole_response.json() == {"detail": whole}
+            stored = await harness.store.read_events_after("long-output", 0)
+            assert isinstance(stored[0].payload, ToolCallFinishedEventPayload)
+            assert stored[0].payload.detail == whole
+
+    _run(exercise)
+
+
+def test_the_whole_detail_of_something_that_is_not_a_finished_tool_call_is_a_404(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            await harness.store.append_event(
+                "c", AgentMessageEventPayload(content=text_message_content("hello"))
+            )
+            base = "/api/conversation/conversations"
+            assert (await client.get(f"{base}/c/events/1/detail")).status_code == 404
+            assert (await client.get(f"{base}/c/events/9/detail")).status_code == 404
+            assert (await client.get(f"{base}/nope/events/1/detail")).status_code == 404
+
+    _run(exercise)
+
+
+def test_the_whole_detail_of_a_legacy_claude_image_row_is_still_nothing(
+    harness: _Harness,
+) -> None:
+    """The route the fold asks on is a public read, so it hides what the others hide."""
+
+    async def exercise() -> None:
+        legacy_detail = json.dumps(
+            [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "A" * 4_000,
+                    },
+                }
+            ],
+            sort_keys=True,
+        )
+        async with harness.client() as client:
+            await _start(client, "claude-image-detail", backend_key="claude")
+            await harness.store.append_event(
+                "claude-image-detail",
+                ToolCallFinishedEventPayload(
+                    tool_call_id="view-1",
+                    tool_call_status=ToolCallStatus.completed,
+                    detail=legacy_detail,
+                ),
+            )
+            whole = await client.get(
+                "/api/conversation/conversations/claude-image-detail/events/1/detail"
+            )
+            assert whole.json() == {"detail": None}
 
     _run(exercise)
 

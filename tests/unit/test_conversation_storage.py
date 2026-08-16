@@ -578,6 +578,24 @@ def test_the_record_is_read_back_in_order_from_any_position(store: ConversationS
     asyncio.run(exercise())
 
 
+def test_one_row_can_be_read_by_the_position_it_was_written_at(
+    store: ConversationStore,
+) -> None:
+    """A reader who opened one fold wants that row, not the record after it."""
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        await store.create_conversation(_resolved("other"))
+        written = [await store.append_event("c", payload) for payload in EVERY_PAYLOAD]
+
+        assert await store.read_event("c", 1) == written[0]
+        assert await store.read_event("c", len(written)) == written[-1]
+        assert await store.read_event("c", len(written) + 1) is None
+        assert await store.read_event("other", 1) is None
+
+    asyncio.run(exercise())
+
+
 def test_one_conversations_record_never_shows_up_in_anothers(store: ConversationStore) -> None:
     async def exercise() -> None:
         await store.create_conversation(_resolved("first"))
