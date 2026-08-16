@@ -3408,10 +3408,12 @@ select {
 }
 
 /* A nested bucket has no box to separate it from the next one, so this margin is the
- * only thing that says "different group". It is therefore the largest gap in the Item:
- * bigger than row-to-row, and much bigger than a header to its own rows. */
+ * only thing that says "different group". It stays the largest gap in the Item — bigger
+ * than row-to-row, and much bigger than a header to its own rows — but the Item's own
+ * box already separates the Item from everything else, so it does not need to be as
+ * large as it was. */
 .disclosure--workspace-bucket--nested + .disclosure--workspace-bucket--nested {
-  margin-top: var(--space-5);
+  margin-top: var(--space-4);
 }
 
 .disclosure--workspace-bucket--nested .board-workspace-bucket-label {
@@ -3510,11 +3512,13 @@ select {
 }
 
 /* The Item title owns every group under it, not just the first, so it must not bind to
- * the first one. It sits off its groups by the same painted gap that separates one group
- * from the next. That is one step larger than the between-group margin, because the
- * between-group gap also carries the last row's bottom padding and this one does not. */
+ * the first one. The bordered box is what holds the Item together and does that job, so
+ * the title does not need extra air of its own: this comes down one step, and the two
+ * gaps inside an Item come to one value. It stays one step larger than the between-group
+ * margin, because the between-group gap also carries the last row's bottom padding and
+ * this one does not. */
 .board-workspace-item-groups {
-  margin-top: var(--space-6);
+  margin-top: var(--space-5);
 }
 
 .board-workspace-quiet-line {
@@ -5763,8 +5767,10 @@ select {
   margin-top: 0;
 }
 
-/* A status group. Native <details>, like the sections it sits above. Size carries the
-   hierarchy: 20px in the faint ink, larger than the Ticket under it and greyer than it. */
+/* A status group. Native <details>, like the sections it sits above. The rail draws the
+   same object, so it speaks with the rail's voice: the serif, at the nested bucket's
+   size. Colour carries the hierarchy instead of size — faint ink, greyer than the Ticket
+   under it, and never louder than the block that contains it. */
 .sprint-workspace-status + .sprint-workspace-status {
   margin-top: var(--space-5);
 }
@@ -5778,10 +5784,33 @@ select {
   list-style: none;
   cursor: pointer;
   color: var(--text-faint);
-  font-size: var(--type-lg);
-  font-weight: 600;
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-md);
+  font-weight: 500;
+  letter-spacing: var(--tracking-title);
   line-height: 1.3;
   transition: color var(--motion-fast) var(--motion-ease);
+}
+
+/* A .ticket-row pads itself by --space-2 and a group header does not. So wherever a
+   header stands where a row would have stood, the painted gap is short by that pad.
+   The next two rules give the header that pad in exactly those two places, rather than
+   retuning margins that already measure correctly.
+ *
+ * First place: the top of a block. A block that opens with a plain row gets its gap from
+ * the row's own padding; a block that opens with a group header gets nothing. Only the
+ * first group is against the label — the rest are spaced by the group-to-group margin
+ * above, which is correct. */
+.sprint-workspace-section-body > .sprint-workspace-status:first-child {
+  margin-top: var(--space-2);
+}
+
+/* Second place: the bottom of a block. A block ends in a row, which pads itself, or in a
+   shut group header, which does not, and the seam to the next block came out at two
+   different values because of it. Scoped to the shut state: an open header's bottom pad
+   would push its own rows away, and that is the one gap already right. */
+.sprint-workspace-status:not([open]) > summary {
+  padding-bottom: var(--space-2);
 }
 
 .sprint-workspace-status > summary::-webkit-details-marker {
