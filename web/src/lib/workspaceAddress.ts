@@ -1,3 +1,9 @@
+import {
+  previewQuery,
+  targetFromPreviewQuery,
+  type ManagedFileTarget
+} from "./filePreview";
+
 export type WorkspaceView = "tickets" | "items";
 
 export type WorkspaceSelection =
@@ -6,11 +12,14 @@ export type WorkspaceSelection =
   | { kind: "ticket"; id: string; openedFromItemId?: string }
   | { kind: "item"; id: string };
 
-// The whole address: what the pane shows, and which list the rail shows. Nothing else
-// decides either one.
+// The whole address: what the pane shows, which list the rail shows, and the artifact a
+// Ticket has open. Nothing else decides any of them.
 export type WorkspaceAddress = {
   selection: WorkspaceSelection;
   view: WorkspaceView;
+  // The file the open Ticket is showing in place of its document. Only a Ticket can have
+  // one, so it is dropped from any other address.
+  openFile: ManagedFileTarget | null;
 };
 
 // What the rail draws, read off the address alone.
@@ -72,18 +81,23 @@ export function parseWorkspaceAddress(hash: string): WorkspaceAddress | null {
   if (segments[0] !== "workspace") return null;
   const selection = parseSelection(segments);
   if (selection === null) return null;
-  const asked = new URLSearchParams(query).get("view");
+  const params = new URLSearchParams(query);
+  const asked = params.get("view");
   const view = asked === "tickets" || asked === "items" ? asked : null;
-  return { selection, view: view ?? impliedWorkspaceView(selection) };
+  const openFile = selection.kind === "ticket" ? targetFromPreviewQuery(params) : null;
+  return { selection, view: view ?? impliedWorkspaceView(selection), openFile };
 }
 
 export function workspaceAddress(
   selection: WorkspaceSelection,
-  view?: WorkspaceView
+  view?: WorkspaceView,
+  openFile?: ManagedFileTarget | null
 ): string {
   const path = selectionPath(selection);
-  if (!view || view === impliedWorkspaceView(selection)) return path;
-  return `${path}?view=${view}`;
+  const parts: string[] = [];
+  if (view && view !== impliedWorkspaceView(selection)) parts.push(`view=${view}`);
+  if (openFile && selection.kind === "ticket") parts.push(previewQuery(openFile));
+  return parts.length === 0 ? path : `${path}?${parts.join("&")}`;
 }
 
 function selectionPath(selection: WorkspaceSelection): string {

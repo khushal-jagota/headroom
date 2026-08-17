@@ -32,12 +32,21 @@ assert.match(
   route,
   /staleItem && board\.data && !board\.isFetching && !board\.isError[\s\S]*window\.location\.replace\(kept\)/,
 );
-// A stale Item does not take the Ticket in the pane down with it.
+// A stale Item does not take the Ticket in the pane down with it, nor the artifact that
+// Ticket has open.
 assert.match(
   route,
-  /const kept = opening\.markedTicketId\s*\? workspaceAddress\(\{ kind: "ticket", id: opening\.markedTicketId \}\)\s*: workspaceAddress\(\{ kind: "none" \}\)/,
+  /const kept = opening\.markedTicketId\s*\? workspaceAddress\(\s*\{ kind: "ticket", id: opening\.markedTicketId \},\s*undefined,\s*address\.openFile\s*\)\s*: workspaceAddress\(\{ kind: "none" \}\)/,
 );
-assert.match(route, /<TicketRoute id=\{opening\.markedTicketId\} \/>/);
+// The pane's Ticket draws the artifact the address names, and writes it back there.
+assert.match(
+  route,
+  /<TicketRoute\s*id=\{opening\.markedTicketId\}\s*openFile=\{address\.openFile\}\s*onOpenFile=\{openFileOnTicket\}\s*\/>/,
+);
+assert.match(
+  route,
+  /function openFileOnTicket[\s\S]*window\.location\.hash = workspaceAddress\(address\.selection, address\.view, file\)/,
+);
 
 // Item selection keeps its Workspace address at every width, and every click on an Item
 // opens it. The narrow host hides the rail and shows the Item pane, and narrow Ticket

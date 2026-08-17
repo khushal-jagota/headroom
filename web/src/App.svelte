@@ -48,7 +48,11 @@
 
   function redirectToWorkspace(selection: WorkspaceSelection): Route {
     window.location.replace(workspaceAddress(selection));
-    return workspaceRoute({ selection, view: impliedWorkspaceView(selection) });
+    return workspaceRoute({
+      selection,
+      view: impliedWorkspaceView(selection),
+      openFile: null
+    });
   }
 
   function decodeRouteSegment(segment: string): string {

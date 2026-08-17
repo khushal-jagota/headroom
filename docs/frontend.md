@@ -361,14 +361,28 @@ has no usage source.
   saying what the fetch found; nothing else is fetched, so nothing else can say. One file
   extension names one kind, so no file is offered as two.
   The header link opens the Panels preview route, whose targets are
-  `#/preview?source=ticket&ticket=<id>&path=<path>`. On that route HTML is fetched as a
-  document, given to the iframe through a short-lived Blob URL, revoked when the target
-  changes or unmounts, and fills the available page with the same isolated script-enabled
-  iframe. Markdown is fetched as source and rendered directly through `MarkdownBlock` in the
-  full-page document area, so managed links keep the same nested-preview and self-link
-  bounds as embedded Markdown, with no header of its own. ACP message and tool links also use
-  the shared generic/Ticket preview adapter. Conversation images are inline ACP
-  content, not managed files.
+  `#/preview?source=ticket&ticket=<id>&path=<path>`. Wherever that document is drawn, HTML
+  is fetched and given to a sandboxed iframe through a short-lived Blob URL, revoked when
+  the file changes or unmounts, and fills the space it is given. Markdown is fetched as
+  source and rendered directly through `MarkdownBlock`, so managed links keep the same
+  nested-preview and self-link bounds as embedded Markdown, with no header of its own.
+  ACP message and tool links also use the shared generic/Ticket preview adapter.
+  Conversation images are inline ACP content, not managed files.
+- **On a Ticket screen, that link opens the file in place.** A file clicked inside a
+  Ticket does not go to the preview address at all. The Ticket screen catches the click
+  and draws the file over its own reading area, with a strip carrying the file's name and
+  a way out. The Ticket keeps its layout and its scroll place underneath, so closing gives
+  back the page the reader left, and the conversation keeps its own section at the bottom
+  of the page — the artifact and the worker are on screen together, which is the point.
+  An opened conversation is the whole page, so opening a file steps it back to peeked.
+  Escape closes the file, and inside Atlas the panel gives Escape to the file before
+  itself. This is the same on every screen width. A click asking for a new tab or window
+  is left alone, and so is a link to a Ticket's dev server, which is a page rather than a
+  file. On the Workspace the open file rides in the address beside the Ticket, so a
+  reload, Back, and a shared link all show it; Atlas keeps what it is showing in memory
+  rather than in the address, so a file opened there closes with the panel. The
+  `#/preview` address remains the way in from anywhere else — a shared link, a
+  notification, or another screen — and both draw the same document.
 - **Editable Markdown stays one surface.** Ticket notes, recaps, passed fields,
   approval drafts, and future Markdown surfaces remain directly editable with their
   existing focus, blur/save, keyboard, paste, and Escape behavior. What is being typed

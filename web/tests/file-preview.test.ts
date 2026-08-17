@@ -5,6 +5,7 @@ import {
   markdownExpansionFor,
   prepareManagedHtmlPreviewDocument,
   previewHashHref,
+  targetFromPreviewHref,
   resolvePreview,
   targetFromHref,
   ticketFileTarget,
@@ -213,6 +214,32 @@ describe("managed-file targets and preview addresses", () => {
     expect(previewHashHref(ticketMarkdown)).toBe(
       "#/preview?source=ticket&ticket=t_file123&path=notes%2Fspace%20name.md"
     );
+  });
+
+  // A screen that would rather show the file than go to it reads the file back out of
+  // the link the shared preview wrote.
+  it("reads its own preview address back as the file it names", () => {
+    expect(targetFromPreviewHref(previewHashHref(ticketMarkdown))).toEqual(ticketMarkdown);
+    expect(
+      targetFromPreviewHref("#/preview?source=sprint-item&item=si_one&path=notes%2Fplan.md")
+    ).toEqual({ kind: "sprint-item-file", sprintItemId: "si_one", path: "notes/plan.md" });
+    // The form the server builds, with a leading slash.
+    expect(targetFromPreviewHref("/#/preview?source=ticket&ticket=t_one&path=a.md")).toEqual({
+      kind: "ticket-file",
+      ticketId: "t_one",
+      path: "a.md"
+    });
+  });
+
+  it("claims no address but a preview address naming a safe file", () => {
+    expect(targetFromPreviewHref("#/workspace/t_one")).toBeNull();
+    expect(targetFromPreviewHref("/files/tickets/t_one/artifacts/plan.html")).toBeNull();
+    expect(targetFromPreviewHref("#/preview")).toBeNull();
+    expect(targetFromPreviewHref("#/preview?source=ticket&ticket=t_one")).toBeNull();
+    expect(targetFromPreviewHref("#/preview?source=ticket&ticket=t_one&path=../x.md")).toBeNull();
+    expect(targetFromPreviewHref("#/previews?source=ticket&ticket=t_one&path=a.md")).toBeNull();
+    expect(targetFromPreviewHref("https://example.com/thing")).toBeNull();
+    expect(targetFromPreviewHref(null)).toBeNull();
   });
 });
 

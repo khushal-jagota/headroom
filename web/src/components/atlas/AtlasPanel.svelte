@@ -48,11 +48,14 @@
     onNavigate(selection);
   }
 
-  // Escape belongs to the conversation first: it steps an opened conversation back
-  // to peeked, then to rest. Only when nothing inside claimed it does Escape close
-  // the panel, so the two never fight over the key.
+  // Escape belongs to what is open inside the panel first: an artifact opened on the
+  // screen in here, and a conversation that is peeked or opened, which steps back one
+  // state. Only when nothing inside claimed it does Escape close the panel, so they
+  // never fight over the key. The question is asked of the DOM because this handler runs
+  // before the ones the screens inside register.
   function onKeydown(event: KeyboardEvent): void {
     if (event.key !== "Escape" || event.defaultPrevented) return;
+    if (panelElement?.querySelector("[data-ticket-artifact]")) return;
     const pane = panelElement?.querySelector("[data-conversation-pane]");
     const conversationState = pane?.getAttribute("data-conversation-state");
     if (conversationState && conversationState !== "rest") return;

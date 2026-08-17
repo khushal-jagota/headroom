@@ -3,6 +3,12 @@ export type FilePreviewTarget =
   | { kind: "sprint-item-file"; sprintItemId: string; path: string }
   | { kind: "external-link"; href: string; label?: string };
 
+/** A file Panels itself serves and can name in an address. */
+export type ManagedFileTarget = Extract<
+  FilePreviewTarget,
+  { kind: "ticket-file" | "sprint-item-file" }
+>;
+
 export type FilePreviewKind =
   | "markdown"
   | "image"
@@ -138,26 +144,61 @@ export function sprintItemFileTarget(
   return { kind: "sprint-item-file", sprintItemId, path };
 }
 
-export function previewHashHref(
-  target: Extract<FilePreviewTarget, { kind: "ticket-file" | "sprint-item-file" }>
-): string {
+/** One managed file, named in an address.
+ *
+ * The same three parameters everywhere a file rides in a hash: the `#/preview` address,
+ * and the Workspace address of a Ticket with an artifact open. One vocabulary, written
+ * and read by one pair of functions, so no address can name a file its own way.
+ */
+export function previewQuery(target: ManagedFileTarget): string {
   if (target.kind === "sprint-item-file") {
     return (
-      "#/preview?source=sprint-item" +
+      "source=sprint-item" +
       `&item=${encodeURIComponent(target.sprintItemId)}` +
       `&path=${encodeURIComponent(target.path)}`
     );
   }
   return (
-    "#/preview?source=ticket" +
+    "source=ticket" +
     `&ticket=${encodeURIComponent(target.ticketId)}` +
     `&path=${encodeURIComponent(target.path)}`
   );
 }
 
-function managedFileHref(
-  target: Extract<FilePreviewTarget, { kind: "ticket-file" | "sprint-item-file" }>
-): string {
+export function targetFromPreviewQuery(params: URLSearchParams): ManagedFileTarget | null {
+  const path = params.get("path") || "";
+  if (params.get("source") === "ticket") {
+    return ticketFileTarget(params.get("ticket") || "", path);
+  }
+  if (params.get("source") === "sprint-item") {
+    return sprintItemFileTarget(params.get("item") || "", path);
+  }
+  return null;
+}
+
+export function previewHashHref(target: ManagedFileTarget): string {
+  return `#/preview?${previewQuery(target)}`;
+}
+
+/** The file a preview address names, or null for any other address.
+ *
+ * This is what a click on an "Open plan.md" link resolves to. The link is written by the
+ * shared preview component and points at `#/preview`, so a screen that would rather show
+ * the file itself reads the file out of the link and never navigates.
+ */
+export function targetFromPreviewHref(href: string | null | undefined): ManagedFileTarget | null {
+  if (!href) return null;
+  // The server builds both `#/preview…` and `/#/preview…`.
+  const hash = href.startsWith("/#") ? href.slice(1) : href;
+  if (!hash.startsWith("#")) return null;
+  const text = hash.slice(1);
+  const queryIndex = text.indexOf("?");
+  if (queryIndex < 0) return null;
+  if (text.slice(0, queryIndex).replace(/\/+$/, "") !== "/preview") return null;
+  return targetFromPreviewQuery(new URLSearchParams(text.slice(queryIndex + 1)));
+}
+
+function managedFileHref(target: ManagedFileTarget): string {
   return target.kind === "ticket-file" ? ticketFileHref(target) : sprintItemFileHref(target);
 }
 

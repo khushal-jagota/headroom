@@ -8,25 +8,15 @@
  *
  * Nothing here touches the DOM, so it is testable without a browser.
  */
+import { isPlainLinkClick, type ClickedLink, type LinkClick } from "../linkClick";
 import { parseWorkspaceAddress } from "../workspaceAddress";
 import type { AtlasSelection } from "./contracts";
 
 /** The parts of the clicked anchor the decision needs. */
-export type AtlasLink = {
-  // The `href` attribute as written, not the resolved property: the app writes hash
-  // text, and the property comes back as a whole URL.
-  href: string | null;
-  target?: string | null;
-};
+export type AtlasLink = ClickedLink;
 
 /** The parts of the click the decision needs. */
-export type AtlasLinkClick = {
-  button?: number;
-  metaKey?: boolean;
-  ctrlKey?: boolean;
-  shiftKey?: boolean;
-  altKey?: boolean;
-};
+export type AtlasLinkClick = LinkClick;
 
 export function selectionForHref(href: string | null | undefined): AtlasSelection | null {
   if (!href) return null;
@@ -57,8 +47,6 @@ export function selectionForLinkClick(
 ): AtlasSelection | null {
   // A click meant for a new tab or a new window stays the reader's, so the Workspace
   // still opens beside Atlas.
-  if (click.button !== undefined && click.button !== 0) return null;
-  if (click.metaKey || click.ctrlKey || click.shiftKey || click.altKey) return null;
-  if (link.target) return null;
+  if (!isPlainLinkClick(link, click)) return null;
   return selectionForHref(link.href);
 }

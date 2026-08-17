@@ -33,7 +33,12 @@ try {
   import type { AtlasSelection } from "../src/lib/atlas/contracts";
 
   let backOffered = $state(false);
+  // What the Ticket screen inside draws when it has an artifact open.
+  let artifactOpen = $state(false);
 
+  (window as any).__openArtifact = () => { artifactOpen = true; };
+  (window as any).__closeArtifact = () => { artifactOpen = false; };
+  (window as any).__atlasCloses = 0;
   (window as any).__atlasMoves = [];
   (window as any).__atlasBacks = 0;
   (window as any).__offerBack = () => { backOffered = true; };
@@ -46,7 +51,7 @@ try {
 <main class="fixture-world">
   <AtlasPanel
     open
-    onClose={() => {}}
+    onClose={() => { (window as any).__atlasCloses += 1; }}
     onNavigate={navigate}
     onBack={backOffered ? () => { (window as any).__atlasBacks += 1; } : null}
   >
@@ -54,6 +59,9 @@ try {
       <a href="#/workspace/t_abc123" data-mapped-link><span data-mapped-inner>A Ticket</span></a>
       <a href="#/sprint?item=si_xyz" data-supervisor-link>Its Item</a>
       <a href="#/preview?source=ticket&amp;ticket=t_abc123" data-unmapped-link>An artifact</a>
+      {#if artifactOpen}
+        <aside data-ticket-artifact>plan.html</aside>
+      {/if}
     </div>
   </AtlasPanel>
 </main>
@@ -142,6 +150,17 @@ with sync_playwright() as playwright:
     page.locator("[data-unmapped-link]").click()
     page.wait_for_function("() => location.hash.startsWith('#/preview')")
     assert len(page.evaluate("window.__atlasMoves")) == 2
+
+    # Escape belongs to what is open inside the panel first. An artifact on the screen
+    # in here takes it, so the panel does not close out from under the reader.
+    page.evaluate("window.__openArtifact()")
+    page.wait_for_selector("[data-ticket-artifact]")
+    page.keyboard.press("Escape")
+    assert page.evaluate("window.__atlasCloses") == 0
+    page.evaluate("window.__closeArtifact()")
+    page.wait_for_selector("[data-ticket-artifact]", state="detached")
+    page.keyboard.press("Escape")
+    assert page.evaluate("window.__atlasCloses") == 1
 
     # The back line appears only when the route has somewhere to go back to.
     assert page.locator("[data-atlas-back]").count() == 0

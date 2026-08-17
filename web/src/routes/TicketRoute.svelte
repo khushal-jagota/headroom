@@ -37,8 +37,27 @@
   import TicketConversationHistory from "../components/TicketConversationHistory.svelte";
   import TicketVerdict from "../components/TicketVerdict.svelte";
   import TicketTroubleNotes from "../components/TicketTroubleNotes.svelte";
+  import FileDocument from "../components/FileDocument.svelte";
+  import { isPlainLinkClick } from "../lib/linkClick";
+  import {
+    resolvePreview,
+    targetFromPreviewHref,
+    type ManagedFileTarget
+  } from "../lib/filePreview";
 
-  let { id }: { id: string } = $props();
+  let {
+    id,
+    // The artifact this screen is showing, when the host keeps that in its address, and
+    // the way to write it there. The Workspace does; Atlas, which keeps what it is
+    // showing in memory rather than in the address, gives neither and the screen holds
+    // the value itself.
+    openFile = null,
+    onOpenFile = null
+  }: {
+    id: string;
+    openFile?: ManagedFileTarget | null;
+    onOpenFile?: ((file: ManagedFileTarget | null) => void) | null;
+  } = $props();
   const stableId = untrack(() => id);
 
   const ticket = createQuery(() => queries.ticket(stableId));
@@ -119,6 +138,77 @@
     if (!(pressed instanceof Element)) return;
     if (pressed.closest("[data-conversation-pane]") !== null) return;
     dismissConversationToRest();
+  }
+
+  /** The artifact this screen is showing, when the host does not keep it in an address. */
+  let heldFile = $state<ManagedFileTarget | null>(null);
+  let shownFile = $derived(onOpenFile ? openFile : heldFile);
+  let shownFileLabel = $derived(shownFile ? resolvePreview(shownFile).label : "");
+
+  /** Show a file on this screen, or close the one it is showing.
+   *
+   * The Ticket stays where it is underneath, so the person who came to read an artifact
+   * has not left the work it belongs to. An opened conversation is the whole page, and
+   * an artifact opened behind it would be an artifact nobody can see, so the
+   * conversation steps back one to let it through.
+   */
+  function showFile(file: ManagedFileTarget | null): void {
+    if (file && !shownFile) {
+      whatHadFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
+    if (onOpenFile) onOpenFile(file);
+    else heldFile = file;
+    if (file && conversationState === "opened") conversationState = "peeked";
+    if (!file) {
+      whatHadFocus?.focus();
+      whatHadFocus = null;
+    }
+  }
+
+  /** The artifact takes focus when it opens, and gives it back when it closes.
+   *
+   * The reader is now reading the artifact, so that is where the keyboard should be. It
+   * is also what makes Escape reach this screen: a Ticket field is an editable surface
+   * and Escape belongs to the editor while the caret is in one, so an artifact opened
+   * from a link inside a field must move the focus out of it.
+   */
+  let artifactElement = $state<HTMLElement | null>(null);
+  let whatHadFocus: HTMLElement | null = null;
+  $effect(() => {
+    if (shownFile && artifactElement) artifactElement.focus();
+  });
+
+  /** A click on a link to a managed file opens the file here.
+   *
+   * Every "Open plan.md" the shared preview writes points at the `#/preview` address, in
+   * a Ticket field, in a note, and in the conversation alike. On this screen that address
+   * is not somewhere to go: the file is opened over the Ticket's own document instead.
+   * A click asking for a new tab or a new window is left alone, and so is every link that
+   * names anything else — a dev server among them, which is a page and not a file.
+   */
+  function openManagedFileInPlace(event: MouseEvent): void {
+    if (event.defaultPrevented) return;
+    const anchor = (event.target as Element | null)?.closest?.("a[href]");
+    if (!anchor) return;
+    const link = { href: anchor.getAttribute("href"), target: anchor.getAttribute("target") };
+    if (!isPlainLinkClick(link, event)) return;
+    const file = targetFromPreviewHref(link.href);
+    if (!file) return;
+    event.preventDefault();
+    showFile(file);
+  }
+
+  /** Escape closes the artifact, and belongs to it before anything else on the page.
+   *
+   * The conversation steps back a state on Escape too, so the press is claimed here to
+   * keep one press to one thing. The Atlas panel asks the page the same question before
+   * it closes itself, because its own handler runs before this one.
+   */
+  function closeFileOnEscape(event: KeyboardEvent): void {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    if (!shownFile) return;
+    event.preventDefault();
+    showFile(null);
   }
 
   let projectOptions = $derived([
@@ -379,11 +469,20 @@
   }
 </script>
 
+<svelte:window onkeydown={closeFileOnEscape} />
+
+<!-- The catcher for links to managed files sits on the whole screen, so a file opens in
+     place wherever it was written: a Ticket field, the recap, or the conversation. -->
+<!-- The links inside keep their own keyboard behaviour: Enter on a link raises this same
+     event, so the catcher needs no key handling of its own. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- svelte-ignore a11y_click_events_have_key_events -->
 <section
   class="ticket-screen"
   data-screen="ticket"
   data-ticket-id={stableId}
   data-stage={ticket.data?.stage}
+  onclick={openManagedFileInPlace}
 >
   <ResourceState error={ticket.error} loading={ticket.isFetching} hasData={Boolean(ticket.data)} loadingText="Loading ticket...">
     {#if ticket.data && (manifest.error || manifestMissingWorkerType)}
@@ -395,6 +494,7 @@
     {:else if ticket.data}
       {@const detail = ticket.data}
       <div class="ticket-page">
+      <div class="ticket-reading">
       <main class="ticket-doc" onclickcapture={dismissConversationToRest}>
         <header class="ticket-head">
           <div class="ticket-identity" data-ticket-identity>
@@ -664,6 +764,32 @@
           </div>
         </div>
       </main>
+      {#if shownFile}
+        <!-- The artifact fills the document's box and is drawn over it. The Ticket keeps
+             its layout and its scroll place underneath, so closing gives back the page
+             the reader left, and the conversation below keeps its own share. -->
+        <aside
+          class="ticket-artifact"
+          data-ticket-artifact
+          aria-label={shownFileLabel}
+          tabindex="-1"
+          bind:this={artifactElement}
+        >
+          <div class="ticket-artifact-bar">
+            <span class="ticket-artifact-name">{shownFileLabel}</span>
+            <button
+              type="button"
+              class="ticket-artifact-close"
+              data-ticket-artifact-close
+              onclick={() => showFile(null)}
+            >Close</button>
+          </div>
+          <div class="ticket-artifact-body">
+            <FileDocument target={shownFile} />
+          </div>
+        </aside>
+      {/if}
+      </div>
       <div
         class="conversation-layer"
         data-conversation-layer-host

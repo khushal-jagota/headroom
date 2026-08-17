@@ -4437,9 +4437,10 @@ select {
   container-name: ticket-pane conversation-host;
 }
 
-/* The page is a column of two: the ticket, then the conversation, with the page's own gap
- * above the first and below the last. The conversation is NOT over the ticket — it is the
- * section beneath it, and the two share the page's height between them. That is what makes
+/* The page is a column of two: the reading area, then the conversation, with the page's
+ * own gap above the first and below the last. The reading area is the ticket, or an
+ * artifact drawn over the ticket. The conversation is NOT over either one — it is the
+ * section beneath them, and the two share the page's height between them. That is what makes
  * the whole thing hold together: there is no reserved space to keep in step with anything,
  * nothing can hide behind anything, and growing the conversation is just the ticket getting
  * the smaller share. The page is never taller than the page. */
@@ -4457,12 +4458,89 @@ select {
   padding-bottom: max(var(--space-6), env(safe-area-inset-bottom));
 }
 
+/* The reading area is the first of the page's two sections: it takes what the
+ * conversation is not using. What is read in it is the ticket, or an artifact over the
+ * ticket. */
+.ticket-reading {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 0;
+  flex: 1;
+}
+
 /* The ticket takes what the conversation is not using, and scrolls inside it. */
 .ticket-doc {
   min-width: 0;
   max-width: 100%;
   min-height: 0;
   flex: 1;
+  overflow: auto;
+}
+
+/* --- The artifact, opened where it was clicked ---------------------------- */
+/* A file opens on the page it was linked from, and takes the reading area's whole box.
+ * It is drawn over the ticket rather than in place of it: the ticket keeps its layout and
+ * its scroll place underneath, so closing gives back the page the reader left. The
+ * conversation is the section below and is not covered, which is the point — the artifact
+ * and the person's own worker are on the screen at once. */
+.ticket-artifact {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface-base);
+}
+
+/* The same strip the embedded preview curves over its document, carrying the file's name
+ * and the way out. */
+.ticket-artifact-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-raised);
+  border-bottom: var(--border-hairline) solid var(--border-color);
+}
+
+.ticket-artifact-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--type-sm);
+}
+
+.ticket-artifact-close {
+  flex: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent-bright);
+  font-size: var(--type-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ticket-artifact-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* An image, a player, or a download line is drawn in the middle of the box rather than
+ * stretched by it; a document already fills what it is given. */
+.ticket-artifact-body .file-preview--full {
+  margin: var(--space-5) auto;
   overflow: auto;
 }
 
@@ -7010,6 +7088,13 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 .atlas-panel-close:hover {
   color: var(--text-strong);
   background: var(--surface-overlay);
+}
+
+/* An artifact opened on the screen inside starts at the panel's very top, where the
+ * panel's own close button sits. The strip keeps clear of it, the same way the back line
+ * below does. */
+.atlas-panel .ticket-artifact-bar {
+  padding-right: var(--space-7);
 }
 
 /* The way back through the links the reader followed. It names no destination: the
