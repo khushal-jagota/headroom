@@ -12,7 +12,7 @@ from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 
 PREVIOUS_REVISION = "notification_preferences_by_subject"
-HEAD_REVISION = "ticket_wakes_supervisor"
+HEAD_REVISION = "drop_supervisor_wake_and_ping"
 CHECKPOINT_SCHEDULE_ID = "schedule_weekly_sprint_checkpoint"
 
 

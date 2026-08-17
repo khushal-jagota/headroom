@@ -4,9 +4,8 @@ export type ConversationSignals = {
   conversation_id: string | null;
   needs_me: boolean;
   agent_working: boolean;
-  // The position the reader must reach for this row to count as read. Each kind of row
-  // supplies its own: a Ticket card supplies where its worker's last turn ended, and a
-  // Sprint Item supplies where its supervisor last pinged. 0 is before every real
+  // The position the reader must reach for this row to count as read. Every kind of row
+  // supplies where its own conversation last ended a turn. 0 is before every real
   // position, so a row with nothing to show is never lit.
   unread_position: number;
 };

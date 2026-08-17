@@ -14,9 +14,6 @@ _REASONS = {
     "permission_requested": "is waiting for permission",
     "worker_completed": "has a completed worker reply",
     "worker_failed": "has a failed worker reply",
-    # The supervisor already wrote what it wants, one tap away. The push carries none
-    # of that text, so it says only that the Item wants the reader.
-    "sprint_item_ping": "wants you",
 }
 
 
@@ -25,8 +22,6 @@ def _subject_route(fact: NotificationFact) -> str:
         return f"/#/workspace/{fact.subject_id}"
     if fact.subject_kind == "agent":
         return f"/#/agents/{fact.subject_id.replace('_', '-')}"
-    if fact.subject_kind == "sprint_item":
-        return f"/#/workspace/item/{fact.subject_id}"
     raise ValueError(f"unknown notification subject kind: {fact.subject_kind}")
 
 
@@ -38,7 +33,7 @@ def decide_notification(fact: NotificationFact, *, enabled: bool) -> Notificatio
     """
     if fact.notification_type not in NOTIFICATION_TYPE_BY_ID:
         raise ValueError(f"unknown notification type: {fact.notification_type}")
-    if fact.subject_kind not in {"ticket", "agent", "sprint_item"}:
+    if fact.subject_kind not in {"ticket", "agent"}:
         raise ValueError(f"unknown notification subject kind: {fact.subject_kind}")
     if not enabled:
         return None

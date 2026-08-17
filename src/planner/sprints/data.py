@@ -608,26 +608,6 @@ def update_item_field(
     return _load_item(conn, item_id)
 
 
-def record_supervisor_ping(
-    conn: sqlite3.Connection, item_id: str, *, sequence: int, clock: Clock
-) -> SprintItem:
-    """Store where the supervisor last asked for the user.
-
-    The position is a place in the supervisor's conversation, and the Workspace row
-    stays lit while the reader is behind it. A later ping replaces an earlier one: the
-    row is already lit, and one Item asking twice is still one Item asking.
-    """
-    _load_item(conn, item_id)
-    now = clock.now_unix()
-    with _tx(conn):
-        conn.execute(
-            "UPDATE sprint_items SET supervisor_ping_sequence = ?, supervisor_ping_at = ?, "
-            "updated_at = ? WHERE id = ?",
-            (sequence, now, now, item_id),
-        )
-    return _load_item(conn, item_id)
-
-
 def assign_item_sprint(
     conn: sqlite3.Connection, item_id: str, sprint_id: str | None, *, clock: Clock
 ) -> SprintItem:

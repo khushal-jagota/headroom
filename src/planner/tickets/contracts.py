@@ -95,19 +95,19 @@ class BoardCard(TypedDict):
 
 
 class BoardSprintItem(TypedDict):
-    """A Sprint Item's own identity, its supervisor's conversation, and its last ping.
+    """A Sprint Item's own identity and its supervisor's conversation.
 
-    The rail marks an Item's title from its own supervisor, but not from the same fact a
-    card uses. A card is marked by an unread reply; an Item is marked by a ping, the one
-    deliberate act a supervisor takes when it wants the user. ``latest_ping_sequence`` is
-    a database fact and is read here. The two live conversation signals arrive later than
-    this read, exactly as a card's do, so they are not required here.
+    The rail marks an Item's title from the same fact a card uses: an unread reply from
+    the conversation. That reply only ever follows something the user said, because
+    nothing else starts an Item conversation. ``latest_turn_ended_sequence`` and the two
+    live conversation signals all arrive later than this read, exactly as a card's do, so
+    none of them is required here.
     """
 
     id: str
     created_at: int
     conversation_id: str | None
-    latest_ping_sequence: int
+    latest_turn_ended_sequence: NotRequired[int]
     agent_working: NotRequired[bool]
     needs_me: NotRequired[bool]
 
@@ -207,16 +207,12 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     # the kickoff parks for approval.
     ceiling: str | None
     at_cap: str | None
-    # Whether this Ticket's movement wakes its Sprint Item supervisor. Whoever creates
-    # the Ticket says so; omission means no.
-    wakes_supervisor: bool
 
 
 class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     title: str
     priority: Priority
     deadline: str | None
-    wakes_supervisor: bool
     project_id: str | None
     sprint_id: str | None
     sprint_item_id: str | None
@@ -328,9 +324,6 @@ class Ticket:  # §3.3 — column names match exactly
     recap: str  # writable only past the type's first worker Stage
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     at_cap: AtCap  # default propose
-    # Whether this Ticket's movement wakes its Sprint Item supervisor. Default false: a
-    # supervisor is woken only by the Tickets somebody marked when creating them.
-    wakes_supervisor: bool
     ticket_status: TicketStatus  # durable state-of-control; transition functions write it
     # When ticket_status last actually changed. Claiming a Ticket for a worker step
     # captures it, and giving that claim back compares it, so a late release cannot erase

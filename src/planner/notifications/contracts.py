@@ -56,20 +56,14 @@ NOTIFICATION_TYPES: Final[tuple[NotificationType, ...]] = (
         "A worker turn or Ticket failed and needs attention.",
         True,
     ),
-    NotificationType(
-        "sprint_item_ping",
-        "Sprint Item wants you",
-        "A Sprint Item supervisor asked for you by name.",
-        True,
-    ),
 )
 NOTIFICATION_TYPE_BY_ID: Final[dict[str, NotificationType]] = {
     item.id: item for item in NOTIFICATION_TYPES
 }
 
-# What each subject offers. A Sprint Item supervisor offers two switches and no third:
-# its turns complete about three thousand times a day, so a completed turn is not an
-# event anybody can be told about. It says what it wants with a ping instead.
+# What each subject offers. A Sprint Item conversation offers one switch: a failed
+# turn. Nothing it does reaches the user by itself, and the user is present for the
+# turns it takes, because a message of theirs is the only thing that starts one.
 NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
     NotificationSubject(
         TICKET_NOTIFICATION_SUBJECT_KEY,
@@ -90,7 +84,7 @@ NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
     NotificationSubject(
         SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY,
         "Sprint Item supervisors",
-        ("sprint_item_ping", "worker_failed"),
+        ("worker_failed",),
     ),
 )
 NOTIFICATION_SUBJECT_BY_KEY: Final[dict[str, NotificationSubject]] = {

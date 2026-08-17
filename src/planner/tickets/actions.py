@@ -106,7 +106,6 @@ def create_ticket(
     sprint_id_explicit: bool = False,
     stated_ceiling: str | None = None,
     stated_at_cap: AtCap | None = None,
-    wakes_supervisor: bool = False,
 ) -> Ticket:
     if planning_now is None:
         day_id = None
@@ -142,7 +141,6 @@ def create_ticket(
         blocked_by_ticket_ids=blocked_by_ticket_ids,
         stated_ceiling=stated_ceiling,
         stated_at_cap=stated_at_cap,
-        wakes_supervisor=wakes_supervisor,
     )
 
 

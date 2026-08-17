@@ -18,7 +18,6 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.message_content import text_message_content
 from planner.core.authctx import RequestContext, require_sprint_item_supervisor_ticket_write
-from planner.core.clock import Clock
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files.logic.paths import sprint_item_files_root
 from planner.runtime import conversation_start, worker_step_readiness
@@ -366,56 +365,6 @@ async def message_current_worker(
             if isinstance(delivered.fate, PromptDeliveryInjected)
             else "started"
         ),
-    }
-
-
-def ping(
-    conn: sqlite3.Connection,
-    ctx: RequestContext,
-    sprint_item_id: str,
-    *,
-    clock: Clock,
-) -> dict[str, object]:
-    """Say that this Item wants the user.
-
-    The ping writes one position and returns. It starts no turn and sends no prompt, so
-    the supervisor's own turn ends normally and the wake loop keeps waking this Item.
-
-    The stored position is the one after the conversation's last row: the position the
-    next row will take. A reader who is already current sits on the last row, so a ping
-    stored there would be born read. Stored one further on, it stays unread until the
-    reader opens the Item after the ping.
-    """
-    _require_item(conn, ctx, sprint_item_id)
-    item = sprints_data.read_item(conn, sprint_item_id).item
-    conversation_id = conversation_start.read_agent_conversation(
-        conn, item.supervisor_agent_key
-    )
-    if conversation_id is None:
-        raise PlannerError(
-            ErrorCode.not_found,
-            "the supervisor has no conversation to ping from",
-            {"sprint_item_id": sprint_item_id},
-        )
-    row = conn.execute(
-        "SELECT latest_sequence FROM conversations WHERE conversation_id = ?",
-        (conversation_id,),
-    ).fetchone()
-    if row is None:
-        raise PlannerError(
-            ErrorCode.not_found,
-            "the supervisor conversation is not in the record",
-            {"sprint_item_id": sprint_item_id, "conversation_id": conversation_id},
-        )
-    sequence = int(row["latest_sequence"]) + 1
-    item_after_ping = sprints_data.record_supervisor_ping(
-        conn, sprint_item_id, sequence=sequence, clock=clock
-    )
-    return {
-        "sprint_item_id": sprint_item_id,
-        "conversation_id": conversation_id,
-        "ping_sequence": sequence,
-        "ping_at": item_after_ping.updated_at,
     }
 
 
