@@ -95,13 +95,14 @@ class BoardCard(TypedDict):
 
 
 class BoardSprintItem(TypedDict):
-    """A Sprint Item's own identity, its supervisor's conversation, and its last ping.
+    """A Sprint Item's own identity, its supervisor's conversation, and its two positions.
 
-    The rail marks an Item's title from its own supervisor, but not from the same fact a
-    card uses. A card is marked by an unread reply; an Item is marked by a ping, the one
-    deliberate act a supervisor takes when it wants the user. ``latest_ping_sequence`` is
-    a database fact and is read here. The two live conversation signals arrive later than
-    this read, exactly as a card's do, so they are not required here.
+    The rail marks an Item's title from its own supervisor, and it carries both facts a
+    supervisor can leave. ``latest_ping_sequence`` is where the supervisor last asked for
+    the user, the one deliberate act it takes when it wants somebody, and it is a database
+    fact read here. ``latest_turn_ended_sequence`` is where it last replied, the same fact
+    that marks a card. The two live conversation signals and the turn end arrive later
+    than this read, exactly as a card's do, so they are not required here.
     """
 
     id: str
@@ -110,6 +111,7 @@ class BoardSprintItem(TypedDict):
     latest_ping_sequence: int
     agent_working: NotRequired[bool]
     needs_me: NotRequired[bool]
+    latest_turn_ended_sequence: NotRequired[int]
 
 
 @dataclass(frozen=True, slots=True)

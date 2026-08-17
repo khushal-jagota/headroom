@@ -601,10 +601,11 @@ def _board_sprint_items(
     ``agents`` roster holds under the Item's ``supervisor_agent_key``. An Item nobody
     has spoken to has none, and reads as ``None``.
 
-    ``latest_ping_sequence`` is where that supervisor last asked for the user. It is the
-    Item's half of the row mark, and unlike a card it is not a turn end: a supervisor
-    finishes hundreds of turns a day and almost none of them want anybody. An Item that
-    has never been pinged reads 0, which is before every real position.
+    ``latest_ping_sequence`` is where that supervisor last asked for the user, and it is
+    the loud half of the row mark. It is not a turn end: a supervisor finishes hundreds of
+    turns a day and almost none of them want anybody. An Item that has never been pinged
+    reads 0, which is before every real position. The quiet half is the supervisor's last
+    turn end, which the row's later conversation signals carry.
     """
     if not item_ids:
         return []

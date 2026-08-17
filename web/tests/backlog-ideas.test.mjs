@@ -218,7 +218,14 @@ with sync_playwright() as playwright:
     assert "Dark mode only, skip the light theme" in flat.inner_text()
     assert page.locator('[data-ideas] details.disclosure--idea').count() == 0
 
-    # A body changes the real rendered component to a closed disclosure.
+    # A body changes the real rendered component to a closed disclosure. Capturing the
+    # first idea clears the title, and that clearing lands when the POST resolves — so
+    # the next title is typed only once the box is empty. Typed before, the clearing
+    # wipes it and the Capture button stays disabled.
+    page.wait_for_function(
+        "selector => document.querySelector(selector).value === ''",
+        arg='[data-create="idea"] [data-input="title"]',
+    )
     page.locator('[data-create="idea"] [data-input="title"]').fill("One-question onboarding")
     page.locator('[data-create="idea"] [data-input="body"]').fill(
         "Ask one thing that matters, infer the rest."

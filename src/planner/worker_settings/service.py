@@ -525,26 +525,40 @@ def _validate_settings_payload(
     return defaults
 
 
-def _upgrade_new_worker_runtime_defaults_ownership(
+def _reconcile_settings_payload(
     path: Path,
     payload: JsonDict,
     definition: WorkerTypeDefinition,
 ) -> JsonDict:
-    """Add only the newly required new-worker ownership default to old revisions."""
-    if definition.worker_type != "new_worker" or payload.get("worker_type") != "new_worker":
+    """Bring a stored settings revision back in line with the running definition.
+
+    Stored settings outlive the app version that wrote them, so a stage rename,
+    removal, or addition can leave a file the definition no longer describes.
+    Undeclared stage keys are dropped, omitted stages are filled from the
+    definition, and a stale suggested next ceiling is clamped. An unreadable
+    ownership mode is left alone for validation to report.
+    """
+    if payload.get("worker_type") != definition.worker_type:
         return payload
     raw_defaults = payload.get("stage_ownership_defaults")
-    if not isinstance(raw_defaults, dict) or "needs_runtime_defaults" in raw_defaults:
+    if not isinstance(raw_defaults, dict):
         return payload
-    stage = definition.stage_definition("needs_runtime_defaults")
-    if stage.default_ownership_mode is None:
+    reconciled_defaults: JsonDict = {
+        stage.id: raw_defaults.get(stage.id, stage.default_ownership_mode.value)
+        for stage in definition.stages
+        if not stage.is_terminal and stage.default_ownership_mode is not None
+    }
+    reconciled = dict(payload)
+    reconciled["stage_ownership_defaults"] = reconciled_defaults
+    stored_ceiling = payload.get("suggested_next_ceiling")
+    if not isinstance(stored_ceiling, str) or stored_ceiling not in definition.ceiling_range()[1:]:
+        bootstrap_ceiling = definition.advance_target(definition.default_ceiling())
+        assert bootstrap_ceiling is not None
+        reconciled["suggested_next_ceiling"] = bootstrap_ceiling
+    if reconciled == payload:
         return payload
-    upgraded = dict(payload)
-    upgraded_defaults = dict(raw_defaults)
-    upgraded_defaults[stage.id] = stage.default_ownership_mode.value
-    upgraded["stage_ownership_defaults"] = upgraded_defaults
-    _atomic_replace_json(path, upgraded)
-    return upgraded
+    _atomic_replace_json(path, reconciled)
+    return reconciled
 
 
 def _frontmatter_bounds(text: str) -> tuple[list[str], str]:
@@ -689,7 +703,7 @@ def _read_settings_with_recovery(
             _ensure_bootstrapped(root, definition)
     try:
         settings_path = _settings_path(root, definition.worker_type)
-        settings_payload = _upgrade_new_worker_runtime_defaults_ownership(
+        settings_payload = _reconcile_settings_payload(
             settings_path,
             _load_json_object(settings_path),
             definition,
@@ -710,7 +724,7 @@ def _read_settings_with_recovery(
         if not _restore_last_known_good(root, definition.worker_type):
             raise
         settings_path = _settings_path(root, definition.worker_type)
-        settings_payload = _upgrade_new_worker_runtime_defaults_ownership(
+        settings_payload = _reconcile_settings_payload(
             settings_path,
             _load_json_object(settings_path),
             definition,

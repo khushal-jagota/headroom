@@ -675,9 +675,9 @@ def test_board_route_marks_a_sprint_item_from_its_supervisor_conversation(
 
     board = _enriched_board(tmp_db, conversations)
 
-    # An Item is a row like a card, but its mark is not a card's. It carries the two
-    # live signals and its last ping, and no turn end: a supervisor ends hundreds of
-    # turns a day and almost none of them want anybody.
+    # An Item is a row like a card, and it carries everything a card carries. It also
+    # carries its last ping, which no card has: a supervisor ends hundreds of turns a day
+    # and the ping is the one act that wants somebody.
     assert board["sprint_items"] == [
         {
             "id": item.id,
@@ -686,8 +686,56 @@ def test_board_route_marks_a_sprint_item_from_its_supervisor_conversation(
             "latest_ping_sequence": 0,
             "agent_working": True,
             "needs_me": False,
+            "latest_turn_ended_sequence": 0,
         }
     ]
+
+
+def test_board_sprint_item_carries_where_its_supervisor_last_had_a_turn_end(
+    tmp_db: Connection, fake_clock: TestClock
+) -> None:
+    item = create_item(
+        tmp_db,
+        title="Item its supervisor has replied to",
+        project_id="project_vylo",
+        clock=fake_clock,
+    )
+    _ticket(tmp_db, "Its ticket", 1, sprint_item_id=item.id)
+    tmp_db.execute(
+        "UPDATE agents SET conversation_id = 'conv-supervisor' WHERE agent_key = ?",
+        (supervisor_agent_key(item.id),),
+    )
+    record = ConversationStore(_database_path(tmp_db))
+
+    async def write_the_record() -> None:
+        await record.create_conversation(
+            ResolvedConversationStart(
+                conversation_id="conv-supervisor",
+                backend_key=ConversationBackendKey.codex,
+                model="a-model",
+                reasoning_effort=None,
+                role_materials=None,
+                workspace_folder=Path("/tmp"),
+                access=ConversationAccess.full,
+            )
+        )
+        await record.append_event(
+            "conv-supervisor",
+            AgentMessageEventPayload(content=text_message_content("here is what I did")),
+        )
+        await record.append_event(
+            "conv-supervisor",
+            TurnEndedEventPayload(ending=ConversationTurnEnding.completed),
+        )
+
+    asyncio.run(write_the_record())
+
+    board = _enriched_board(tmp_db, InMemoryConversationSystem())
+
+    # The reply the reader lost when the ping took the row over. The Item asks the same
+    # question a card asks, of its own supervisor's conversation.
+    assert board["sprint_items"][0]["latest_turn_ended_sequence"] == 2
+    assert board["sprint_items"][0]["latest_ping_sequence"] == 0
 
 
 def test_board_sprint_items_are_empty_when_no_card_has_an_item(

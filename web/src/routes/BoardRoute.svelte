@@ -247,7 +247,8 @@
         data-stage-state={presentation.state}
         data-needs-me={item.signals.needs_me ? "true" : "false"}
         data-agent-working={item.signals.agent_working ? "true" : "false"}
-        data-latest-ping={item.signals.unread_position}
+        data-latest-ping={item.signals.needs_me_position}
+        data-latest-turn-ended={item.signals.unread_position}
         aria-label={presentation.ariaLabel}
       />
     </button>
