@@ -306,14 +306,11 @@ the direct Ticket controls — and either way the canonical proposal resolver do
 With one reviewer there is nobody to hand a proposal to, so editing a Ticket's scope while
 a proposal waits cannot change who answers it.
 
-A parked proposal is work standing still, which is one of the things that makes a Sprint
-Item need its supervisor. On a watched Ticket it wakes that supervisor through the Sprint
-Item conversation with a line naming the Ticket and the field it proposed: the supervisor
-reads the waiting proposal from current state itself. The wake is so the supervisor can
-see its Item has stopped and coordinate around it — the approval itself belongs to the
-user. A Ticket is watched only when whoever created it said so, and a supervisor is not
-woken by a proposal it wrote itself. General Worker messages use the separate targeted message path
-and require an existing Worker conversation.
+A parked proposal reaches nobody but the user. A Sprint Item conversation is not told
+that one is waiting, and nothing starts it to go and look: the user asks it, or it stays
+quiet. When they do ask, it reads the waiting proposal from current state itself, and the
+approval remains theirs. Worker messages use the separate targeted message path and
+require an existing Worker conversation.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
