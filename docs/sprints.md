@@ -139,10 +139,14 @@ its launch configuration with the item. Existing items received the same fixed
 configuration during migration. The Other section is a view of loose Tickets and owns
 no supervisor.
 
-The supervisor conversation starts only when it is first needed: a user message, or the
-first wake because a watched Ticket on the Item needs its supervisor. A reset kills current work and clears
-the agent link. Conversation records and message files remain as history. The Sprint Item
-body is the shared brief.
+The supervisor conversation starts only when the user sends it a message. Nothing else
+starts one. A reset kills current work and clears the agent link. Conversation records and
+message files remain as history. The Sprint Item body is the shared brief.
+
+Its job is small. It creates Tickets under its Item, and it answers what is going on
+there. It does more when the user asks it to, and the actions below are how. It is not a
+manager: it does not push Tickets along, and it does not resolve parked proposals as
+routine work.
 
 A supervisor acts within its own Sprint Item. It changes Item fields, child Ticket
 fields, Day membership, blocks, scope, proposal review, and Item artifacts through one
@@ -153,6 +157,12 @@ child, is refused.
 A supervisor creates its own child Tickets with the ordinary Ticket creation route. A
 Ticket it creates is scoped like any other: the kickoff parks for the user's approval
 unless the supervisor states a wider scope it was given.
+
+A supervisor also deletes a current child Ticket, through the ordinary deletion route.
+The Item is taken from the supervisor's own identity, so it cannot reach a Ticket
+elsewhere. That boundary is the only check. The deletion is permanent and nothing else
+guards it: a Ticket whose Worker is mid-turn is deleted too, and that Worker is killed
+with it.
 
 Config edits the canonical Sprint Item supervisor role skill. Supported backends read
 that managed source for future conversations. A save does not rewrite an existing
@@ -173,42 +183,11 @@ the Sprint Item supervisor agent key as the sender. A missing, reset, stale, or 
 conversation is refused. This message path cannot create a conversation and does not
 change the Ticket Stage, scope, status, or Day membership.
 
-A supervisor reaches the user with a ping. It is one deliberate act, and the supervisor
-takes it when the user must see something. A ping lights that Item in the Workspace and
-sends one notification to every enabled device. The notification names the Item, says
-that it wants the user, and carries no supervisor text: the message itself is already in
-the Item's conversation, one tap away. The mark stays on until the user opens the Item,
-so a second ping while the first is unread changes nothing. Nothing else a supervisor
-does reaches the user, and an ordinary turn of its own lights nothing.
-
-Supervisor wakes are separate from Web Push notifications, and they store nothing. Panels
-asks one read-only question about each Sprint Item — does this Item need its supervisor
-right now, and what should it be told — and it asks only when the change signal says
-something was written.
-
-Only a watched Ticket is in the answer. Whoever creates a Ticket says whether its
-movement wakes the supervisor, and the default is no, so a supervisor hears about the
-Tickets somebody marked and checks the rest itself when asked. The user or the
-supervisor can turn the watch on or off later on a Ticket that is already running.
-
-For a watched Ticket, five things put it in the answer: it proposed something, it
-entered a paired stage, its Worker asked for human help, its Worker's backend failed, or
-it finished. A Ticket only counts once, when it moves.
-
-When the answer is yes, and the supervisor's conversation is free with nothing already
-waiting for it, Panels sends one message. It opens with the same sentence every time —
-your Sprint Item needs you, read the current context and act — and then names each Ticket
-that moved and what happened to it, one line each, such as "t_r666appn proposed an
-implementation". Every line is something that happened, never a claim about now, because
-what happened stays true however long the message waits. The supervisor still reads
-canonical state itself before it acts, and what it reads is current at the moment it reads
-it. There is nothing to identify, retry, or acknowledge; if the Item still needs its
-supervisor after the turn, the next answer is still yes.
-
-One case looks like a paired stage and is not. A Ticket also goes to paired when the user
-replies to a proposal parked on it, and that proposal stays where it was. Panels tells the
-two apart by looking: paired with a proposal still parked is the user's conversation, and
-it wakes nobody.
+Nothing a supervisor does reaches the user on its own. It sends no notification and it
+lights nothing by acting. The Item row in the Workspace carries the same mark a Ticket
+row carries: an unseen reply from the conversation, put out when the user opens the Item.
+Because only a user message starts a turn, that reply is always an answer to something
+they said.
 
 The workspace reads one coherent Item snapshot with child Ticket Day membership,
 artifacts, supervisor state, and the current conversation link. It adds
@@ -234,4 +213,4 @@ _Code paths:_ `src/planner/sprints/` (the sprint, its items, and workspace read)
 
 ---
 
-_Last verified: 2026-08-15._
+_Last verified: 2026-08-17._

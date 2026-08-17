@@ -308,17 +308,22 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     assert embedded_markdown.locator(".file-preview-document-body").first.evaluate(
         "node => getComputedStyle(node).backgroundColor"
     ) == "rgb(20, 18, 16)"
-    markdown_action = embedded_markdown.locator("a.file-preview-link:visible").first
+    assert (
+        embedded_markdown.locator("a.file-preview-link:visible").first.get_attribute("href")
+        == f"#/preview?source=ticket&ticket={ticket_id}&path=notes%2Fspace%20name.md"
+    )
     expected_markdown_url = (
         f"{server.base}/#/preview?source=ticket&ticket={ticket_id}"
         "&path=notes%2Fspace%20name.md"
     )
-    # A preview opens here rather than in a new tab, so following it is a hash navigation
-    # in this same page: the page that was showing the ticket now shows the preview. This
-    # marker is set on the ticket before the click and read back after it, because the
-    # arrival assertions below would read the same either way if the app had reloaded.
+    # The preview address is the way in from outside a Ticket screen: a shared link or a
+    # stored notification. It opens here rather than in a new tab, so arriving is a hash
+    # navigation in this same page. This marker is set before the move and read back
+    # after it, because the arrival assertions below would read the same either way if
+    # the app had reloaded. A click on the same link inside the Ticket does not come
+    # here at all — see test_ticket_artifact_opens_in_place_over_the_ticket.
     ticket_page.evaluate("window.__previewRouteNavigationMarker = 'kept'")
-    markdown_action.click()
+    ticket_page.evaluate("url => { window.location.href = url; }", expected_markdown_url)
     ticket_page.wait_for_function(
         "expected => window.location.href === expected",
         arg=expected_markdown_url,
@@ -372,11 +377,8 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     _open_ticket_field(ticket_page, "success")
     embedded_preview = ticket_page.locator('[data-file-preview-kind="html"]').first
     embedded_preview.locator("iframe").wait_for(state="visible", timeout=WAIT_MS)
-    html_action = embedded_preview.locator(
-        "a.file-preview-link:visible", has_text="Open page.html"
-    )
     expected_html_url = f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=page.html"
-    html_action.click()
+    ticket_page.evaluate("url => { window.location.href = url; }", expected_html_url)
     ticket_page.wait_for_function(
         "expected => window.location.href === expected",
         arg=expected_html_url,
@@ -427,6 +429,211 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
     )
     assert ticket_page.evaluate("window.__htmlPreviewNavigationMarker") == "kept"
+
+
+def _store_conversation_saying(
+    server: ServerHandle, ticket_id: str, conversation_id: str, text: str
+) -> None:
+    """A Ticket conversation holding one agent message, so its transcript has a link."""
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "INSERT INTO conversations (conversation_id, backend_key, model, "
+            "workspace_folder, access, latest_sequence, created_at) "
+            "VALUES (?, 'codex', 'gpt-5.6-sol', '/tmp/artifact-workspace', 'full', 2, ?)",
+            (conversation_id, 1_700_000_000),
+        )
+        conn.executemany(
+            "INSERT INTO conversation_events "
+            "(conversation_id, sequence, kind, payload, created_at) VALUES (?, ?, ?, ?, ?)",
+            [
+                (conversation_id, 1, "agent_message", json.dumps({"text": text}), 1_700_000_001),
+                (
+                    conversation_id,
+                    2,
+                    "turn_ended",
+                    json.dumps({"ending": "completed", "error_summary": None}),
+                    1_700_000_002,
+                ),
+            ],
+        )
+        conn.execute(
+            "INSERT INTO ticket_conversations (conversation_id, ticket_id) VALUES (?, ?)",
+            (conversation_id, ticket_id),
+        )
+        conn.execute(
+            "UPDATE tickets SET conversation_id = ? WHERE id = ?", (conversation_id, ticket_id)
+        )
+
+
+def test_ticket_artifact_opens_in_place_over_the_ticket(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+) -> None:
+    """An artifact opens on the Ticket screen it was clicked from.
+
+    This needs a real browser and a live server together: the click is caught by the
+    screen rather than by any one component, Panels serves the file, and what is proved
+    is where the artifact lands — over the Ticket, with the conversation still on the
+    page beside it. No component or unit test can produce that.
+    """
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Artifact in place",
+    )["id"]
+    _write_ticket_files(server, ticket_id)
+    _set_fields(
+        server,
+        ticket_id,
+        {
+            "success": {
+                # Enough text above the link that reaching it scrolls the ticket, which
+                # is what makes "closing gives back the page you left" a real claim.
+                "value": (
+                    "Filler paragraph.\n\n" * 40
+                    + f"[Markdown](/files/tickets/{ticket_id}/notes/space%20name.md)"
+                ),
+                "proposal": None,
+                "user_note": None,
+            },
+            "approach": {"value": None, "proposal": None, "user_note": None},
+            "plan": {"value": None, "proposal": None, "user_note": None},
+            "implementation": {"value": None, "proposal": None, "user_note": None},
+            "closeout": {"value": None, "proposal": None, "user_note": None},
+        },
+    )
+    # The worker also posted the artifact in the conversation, which is where a person
+    # most often meets one.
+    _store_conversation_saying(
+        server,
+        ticket_id,
+        "conv_artifact_in_place",
+        f"Here it is: [Markdown](/files/tickets/{ticket_id}/notes/space%20name.md)",
+    )
+    context = context_factory()
+    page = open_page(
+        context,
+        server,
+        f"#/workspace/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+    )
+    _open_ticket_field(page, "success")
+    ticket_address = f"{server.base}/#/workspace/{ticket_id}"
+    artifact_address = (
+        f"{ticket_address}?source=ticket&ticket={ticket_id}&path=notes%2Fspace%20name.md"
+    )
+    open_link = page.locator("a.file-preview-link:visible", has_text="Open space name.md").first
+
+    # Reaching the link scrolls the ticket away from its top, so closing can be shown to
+    # give back the page the reader left rather than a fresh one.
+    open_link.scroll_into_view_if_needed(timeout=WAIT_MS)
+    scrolled_to = page.locator(".ticket-doc").evaluate("node => node.scrollTop")
+    assert scrolled_to > 0
+
+    page.evaluate("window.__artifactInPlaceMarker = 'kept'")
+    open_link.click()
+
+    artifact = page.locator("[data-ticket-artifact]")
+    artifact.wait_for(state="visible", timeout=WAIT_MS)
+    page.wait_for_function(
+        "expected => window.location.href === expected",
+        arg=artifact_address,
+        timeout=WAIT_MS,
+    )
+    # The app never reloaded, and the Ticket screen is still the screen.
+    assert page.evaluate("window.__artifactInPlaceMarker") == "kept"
+    assert (
+        page.locator(f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]').count() == 1
+    )
+    assert page.locator("[data-file-preview-route]").count() == 0
+    artifact.locator("[data-file-preview-markdown] h1").first.wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+    assert artifact.locator("[data-ticket-artifact-close]").inner_text() == "Close"
+
+    # The artifact covers the ticket's own reading area and nothing else. The
+    # conversation keeps its place at the bottom of the page, so the reader can talk to
+    # the worker about what they are looking at.
+    geometry = page.evaluate(
+        """() => {
+            const box = (selector) =>
+                document.querySelector(selector).getBoundingClientRect();
+            const artifact = box('[data-ticket-artifact]');
+            const reading = box('.ticket-reading');
+            const conversation = box('[data-conversation-pane]');
+            return {
+                artifactTop: artifact.top,
+                artifactBottom: artifact.bottom,
+                artifactWidth: artifact.width,
+                artifactHeight: artifact.height,
+                readingTop: reading.top,
+                readingBottom: reading.bottom,
+                readingWidth: reading.width,
+                conversationTop: conversation.top,
+                conversationHeight: conversation.height,
+                viewportHeight: window.innerHeight,
+            };
+        }"""
+    )
+    assert abs(geometry["artifactTop"] - geometry["readingTop"]) <= 1
+    assert abs(geometry["artifactBottom"] - geometry["readingBottom"]) <= 1
+    assert abs(geometry["artifactWidth"] - geometry["readingWidth"]) <= 1
+    assert geometry["artifactHeight"] > 0.3 * geometry["viewportHeight"]
+    assert geometry["conversationTop"] >= geometry["artifactBottom"] - 1
+    assert geometry["conversationHeight"] > 0
+
+    # The ticket is still mounted underneath, holding the place the reader had it at.
+    assert page.locator(".ticket-doc").evaluate("node => node.scrollTop") == scrolled_to
+
+    # Escape closes the artifact and gives the ticket back, at the same place.
+    page.keyboard.press("Escape")
+    page.wait_for_selector("[data-ticket-artifact]", state="detached", timeout=WAIT_MS)
+    page.wait_for_function(
+        "expected => window.location.href === expected",
+        arg=ticket_address,
+        timeout=WAIT_MS,
+    )
+    assert page.locator(".ticket-doc").evaluate("node => node.scrollTop") == scrolled_to
+
+    # An artifact posted in the conversation opens the same way. An opened conversation
+    # is the whole page, and an artifact opened behind it would be one nobody can see, so
+    # opening it steps the conversation back to peeked.
+    page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
+    page.wait_for_selector('[data-conversation-state="peeked"]', timeout=WAIT_MS)
+    page.locator("[data-conversation-expand]").click(timeout=WAIT_MS)
+    page.wait_for_selector('[data-conversation-state="opened"]', timeout=WAIT_MS)
+    page.locator(
+        "[data-conversation-pane] a.file-preview-link:visible", has_text="Open space name.md"
+    ).first.click(timeout=WAIT_MS)
+    artifact.wait_for(state="visible", timeout=WAIT_MS)
+    page.wait_for_selector('[data-conversation-state="peeked"]', timeout=WAIT_MS)
+    assert page.locator("[data-ticket-artifact] [data-file-preview-markdown]").count() == 1
+    page.wait_for_function(
+        "expected => window.location.href === expected",
+        arg=artifact_address,
+        timeout=WAIT_MS,
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_selector("[data-ticket-artifact]", state="detached", timeout=WAIT_MS)
+
+    # The artifact is in the address, so it survives a reload, and Back is a way out of
+    # what the reader opened.
+    page.goto(artifact_address, wait_until="domcontentloaded")
+    page.locator("[data-ticket-artifact] [data-file-preview-markdown] h1").first.wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+    page.locator("[data-ticket-artifact-close]").click()
+    page.wait_for_selector("[data-ticket-artifact]", state="detached", timeout=WAIT_MS)
+    page.go_back()
+    page.locator("[data-ticket-artifact] [data-file-preview-markdown] h1").first.wait_for(
+        state="visible", timeout=WAIT_MS
+    )
 
 
 def test_mobile_embedded_managed_files_use_preview_links(
@@ -538,26 +745,25 @@ def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(
         embedded_preview.frame_locator("iframe[data-file-preview-html]")
     )
 
-    # The second surface is the preview route, which opens here rather than in a new tab.
+    # The second surface is the artifact opened in place, on this same Ticket screen.
     embedded_preview.locator(
         "a.file-preview-link:visible", has_text="Open interactive.html"
     ).click()
-    expected_preview_url = (
-        f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=interactive.html"
+    expected_artifact_url = (
+        f"{server.base}/#/workspace/{ticket_id}"
+        f"?source=ticket&ticket={ticket_id}&path=interactive.html"
     )
     ticket_page.wait_for_function(
         "expected => window.location.href === expected",
-        arg=expected_preview_url,
+        arg=expected_artifact_url,
         timeout=WAIT_MS,
     )
-    full_iframe = ticket_page.locator(
-        "[data-file-preview-route] iframe[data-file-preview-html]"
-    )
+    full_iframe = ticket_page.locator("[data-ticket-artifact] iframe[data-file-preview-html]")
     full_iframe.wait_for(state="visible", timeout=WAIT_MS)
     assert full_iframe.get_attribute("sandbox") == "allow-scripts"
     assert full_iframe.get_attribute("allow") is None
     _exercise_interactive_workspace_rows(
-        ticket_page.frame_locator("[data-file-preview-route] iframe[data-file-preview-html]")
+        ticket_page.frame_locator("[data-ticket-artifact] iframe[data-file-preview-html]")
     )
 
 
@@ -607,24 +813,23 @@ def test_managed_html_preview_loads_sibling_stylesheets_and_images_in_both_surfa
         embedded_preview.frame_locator("iframe[data-file-preview-html]")
     )
 
-    # The second surface is the preview route, which opens here rather than in a new tab.
+    # The second surface is the artifact opened in place, on this same Ticket screen.
     embedded_preview.locator("a.file-preview-link:visible", has_text="Open index.html").click()
-    expected_preview_url = (
-        f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=previews%2Findex.html"
+    expected_artifact_url = (
+        f"{server.base}/#/workspace/{ticket_id}"
+        f"?source=ticket&ticket={ticket_id}&path=previews%2Findex.html"
     )
     ticket_page.wait_for_function(
         "expected => window.location.href === expected",
-        arg=expected_preview_url,
+        arg=expected_artifact_url,
         timeout=WAIT_MS,
     )
-    full_iframe = ticket_page.locator(
-        "[data-file-preview-route] iframe[data-file-preview-html]"
-    )
+    full_iframe = ticket_page.locator("[data-ticket-artifact] iframe[data-file-preview-html]")
     full_iframe.wait_for(state="visible", timeout=WAIT_MS)
     assert full_iframe.get_attribute("sandbox") == "allow-scripts"
     assert full_iframe.get_attribute("allow") is None
     _assert_managed_html_references_render(
-        ticket_page.frame_locator("[data-file-preview-route] iframe[data-file-preview-html]")
+        ticket_page.frame_locator("[data-ticket-artifact] iframe[data-file-preview-html]")
     )
 
 

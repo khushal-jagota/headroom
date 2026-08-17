@@ -20,7 +20,6 @@ from planner.conversation.message_content import text_message_content
 from planner.core import change_signal
 from planner.core.clock import build_clock
 from planner.core.config import load_config
-from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.environments.hermes_home import provision_planner_home_skills
@@ -808,67 +807,29 @@ def test_corrupt_current_files_restore_custom_launch_defaults_on_first_read(
     assert recovered.launch_defaults == expected
 
 
-def test_new_worker_settings_upgrade_adds_only_runtime_defaults_ownership(
-    tmp_path: Path,
-) -> None:
-    registry = configured_worker_type_registry()
-    worker_settings_service.read_worker_settings(tmp_path, registry, "new_worker")
-    root = worker_settings_service.managed_worker_settings_root(tmp_path)
-    settings_path = root / "new_worker" / "settings.json"
-    payload = json.loads(settings_path.read_text(encoding="utf-8"))
-    payload["stage_ownership_defaults"]["needs_stages"] = "user"
-    payload["launch_defaults"] = {
-        "employee_backend": "claude",
-        "employee_launch_model": "claude-sonnet",
-        "employee_launch_reasoning_effort": "high",
-    }
-    del payload["stage_ownership_defaults"]["needs_runtime_defaults"]
-    settings_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    upgraded = worker_settings_service.read_worker_settings(tmp_path, registry, "new_worker")
-
-    assert upgraded.stage_ownership_defaults["needs_runtime_defaults"] == (
-        StageOwnershipMode.paired
-    )
-    assert upgraded.stage_ownership_defaults["needs_stages"] == StageOwnershipMode.user
-    assert upgraded.launch_defaults.employee_backend == "claude"
-    assert upgraded.launch_defaults.employee_launch_model == "claude-sonnet"
-    assert upgraded.launch_defaults.employee_launch_reasoning_effort == "high"
-
-
-def test_new_worker_settings_upgrade_applies_after_last_known_good_restore(
-    tmp_path: Path,
-) -> None:
-    registry = configured_worker_type_registry()
-    worker_settings_service.read_worker_settings(tmp_path, registry, "new_worker")
-    root = worker_settings_service.managed_worker_settings_root(tmp_path)
-    last_good_path = root / ".last-known-good" / "new_worker" / "settings.json"
-    payload = json.loads(last_good_path.read_text(encoding="utf-8"))
-    payload["stage_ownership_defaults"]["needs_thinking"] = "user"
-    payload["launch_defaults"] = {
-        "employee_backend": "claude",
-        "employee_launch_model": "claude-sonnet",
-        "employee_launch_reasoning_effort": "high",
-    }
-    del payload["stage_ownership_defaults"]["needs_runtime_defaults"]
-    last_good_path.write_text(json.dumps(payload), encoding="utf-8")
-    (root / "new_worker" / "settings.json").unlink()
-
-    recovered = worker_settings_service.read_worker_settings(tmp_path, registry, "new_worker")
-
-    assert recovered.stage_ownership_defaults["needs_runtime_defaults"] == (
-        StageOwnershipMode.paired
-    )
-    assert recovered.stage_ownership_defaults["needs_thinking"] == StageOwnershipMode.user
-    assert recovered.launch_defaults.employee_backend == "claude"
-    assert recovered.launch_defaults.employee_launch_model == "claude-sonnet"
-    assert recovered.launch_defaults.employee_launch_reasoning_effort == "high"
-
-
-def test_missing_non_new_worker_stage_default_still_fails_validation(tmp_path: Path) -> None:
+def test_stale_stage_ownership_key_is_dropped_on_read(tmp_path: Path) -> None:
     registry = configured_worker_type_registry()
     worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
     root = worker_settings_service.managed_worker_settings_root(tmp_path)
+    settings_path = root / "coding" / "settings.json"
+    payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    payload["stage_ownership_defaults"]["needs_understanding"] = "user"
+    payload["stage_ownership_defaults"]["needs_success"] = "user"
+    settings_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    reconciled = worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+
+    assert "needs_understanding" not in reconciled.stage_ownership_defaults
+    assert reconciled.stage_ownership_defaults["needs_success"] == StageOwnershipMode.user
+    written = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert "needs_understanding" not in written["stage_ownership_defaults"]
+
+
+def test_missing_stage_default_is_filled_from_the_definition_on_read(tmp_path: Path) -> None:
+    registry = configured_worker_type_registry()
+    worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+    root = worker_settings_service.managed_worker_settings_root(tmp_path)
+    expected = registry.require("coding").stage_definition("needs_plan").default_ownership_mode
     for settings_path in (
         root / "coding" / "settings.json",
         root / ".last-known-good" / "coding" / "settings.json",
@@ -877,8 +838,83 @@ def test_missing_non_new_worker_stage_default_still_fails_validation(tmp_path: P
         del payload["stage_ownership_defaults"]["needs_plan"]
         settings_path.write_text(json.dumps(payload), encoding="utf-8")
 
-    with pytest.raises(PlannerError, match="missing stage defaults"):
-        worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+    reconciled = worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+
+    assert reconciled.stage_ownership_defaults["needs_plan"] == expected
+
+
+def test_stale_suggested_next_ceiling_is_clamped_on_read(tmp_path: Path) -> None:
+    registry = configured_worker_type_registry()
+    worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+    root = worker_settings_service.managed_worker_settings_root(tmp_path)
+    settings_path = root / "coding" / "settings.json"
+    payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    payload["suggested_next_ceiling"] = "needs_understanding"
+    settings_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    reconciled = worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+
+    assert reconciled.suggested_next_ceiling == "needs_success"
+
+
+def test_reconcile_after_last_known_good_restore_and_then_writes_nothing_more(
+    tmp_path: Path,
+) -> None:
+    registry = configured_worker_type_registry()
+    worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+    root = worker_settings_service.managed_worker_settings_root(tmp_path)
+    last_good_path = root / ".last-known-good" / "coding" / "settings.json"
+    payload = json.loads(last_good_path.read_text(encoding="utf-8"))
+    payload["stage_ownership_defaults"]["needs_understanding"] = "user"
+    payload["stage_ownership_defaults"]["needs_success"] = "user"
+    last_good_path.write_text(json.dumps(payload), encoding="utf-8")
+    settings_path = root / "coding" / "settings.json"
+    settings_path.unlink()
+
+    recovered = worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+
+    assert "needs_understanding" not in recovered.stage_ownership_defaults
+    assert recovered.stage_ownership_defaults["needs_success"] == StageOwnershipMode.user
+    settled = settings_path.read_bytes()
+    written_at = settings_path.stat().st_mtime_ns
+
+    worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+
+    assert settings_path.read_bytes() == settled
+    assert settings_path.stat().st_mtime_ns == written_at
+
+
+def test_workers_api_lists_every_worker_type_when_one_settings_file_is_stale(
+    tmp_path: Path,
+) -> None:
+    client, db_path = _app(tmp_path)
+    registry = configured_worker_type_registry()
+    with client:
+        assert client.get("/api/workers").status_code == 200
+        root = worker_settings_service.managed_worker_settings_root(db_path.parent)
+        settings_path = root / "general" / "settings.json"
+        payload = json.loads(settings_path.read_text(encoding="utf-8"))
+        payload["stage_ownership_defaults"]["needs_understanding"] = "worker"
+        settings_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        index = client.get("/api/workers")
+
+        assert index.status_code == 200
+        assert [worker["worker_type"] for worker in index.json()["workers"]] == list(
+            registry.registered_worker_types()
+        )
+
+
+def test_write_path_still_refuses_an_undeclared_stage(tmp_path: Path) -> None:
+    client, _db_path = _app(tmp_path)
+    with client:
+        refused = client.put(
+            "/api/workers/coding/stages/needs_understanding/default-ownership",
+            json={"ownership_mode": "user"},
+        )
+
+    assert refused.status_code == 404
+    assert refused.json()["error"]["message"] == "worker stage not found"
 
 
 def test_missing_current_settings_restores_exact_edited_last_known_good_revision(

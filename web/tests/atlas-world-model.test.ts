@@ -32,7 +32,7 @@ function sprintItem(id: string, values: Partial<BoardSprintItem> = {}): BoardSpr
     conversation_id: null,
     agent_working: false,
     needs_me: false,
-    latest_ping_sequence: 0,
+    latest_turn_ended_sequence: 0,
     ...values
   };
 }

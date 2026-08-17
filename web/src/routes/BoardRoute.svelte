@@ -14,6 +14,7 @@
     workspaceAddress,
     type WorkspaceAddress
   } from "../lib/workspaceAddress";
+  import type { ManagedFileTarget } from "../lib/filePreview";
   import type { BoardCard } from "../lib/types";
   import ChiefConversation from "../components/ChiefConversation.svelte";
   import Disclosure from "../components/Disclosure.svelte";
@@ -58,11 +59,22 @@
     const staleItem = opening.openItemId && !openItem;
     if (staleItem && board.data && !board.isFetching && !board.isError) {
       const kept = opening.markedTicketId
-        ? workspaceAddress({ kind: "ticket", id: opening.markedTicketId })
+        ? workspaceAddress(
+            { kind: "ticket", id: opening.markedTicketId },
+            undefined,
+            address.openFile
+          )
         : workspaceAddress({ kind: "none" });
       window.location.replace(kept);
     }
   });
+
+  // The artifact a Ticket in the pane opened. It rides in the address beside everything
+  // else the screen draws, so a reload, Back, and a shared link all show the same thing,
+  // and Back is how the reader closes what they opened.
+  function openFileOnTicket(file: ManagedFileTarget | null): void {
+    window.location.hash = workspaceAddress(address.selection, address.view, file);
+  }
 
   // Every click writes an address, and the draw follows from it. A Ticket clicked inside
   // an open Item names that Item, which is the whole of "opened from inside an Item".
@@ -247,7 +259,7 @@
         data-stage-state={presentation.state}
         data-needs-me={item.signals.needs_me ? "true" : "false"}
         data-agent-working={item.signals.agent_working ? "true" : "false"}
-        data-latest-ping={item.signals.unread_position}
+        data-latest-turn-ended={item.signals.unread_position}
         aria-label={presentation.ariaLabel}
       />
     </button>
@@ -356,7 +368,11 @@
           {:else if opening.markedTicketId}
             <a class="board-workspace-back" href={workspaceAddress({ kind: "none" }, opening.view)}>&lsaquo; Workspace</a>
             {#key opening.markedTicketId}
-              <TicketRoute id={opening.markedTicketId} />
+              <TicketRoute
+                id={opening.markedTicketId}
+                openFile={address.openFile}
+                onOpenFile={openFileOnTicket}
+              />
             {/key}
           {:else if itemPane && openItem}
             {#key openItem.id}

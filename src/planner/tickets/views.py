@@ -64,7 +64,6 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "stage": str(ticket.stage),
         "priority": ticket.priority.value,
         "deadline": ticket.deadline,
-        "wakes_supervisor": ticket.wakes_supervisor,
         "project_id": ticket.project_id,
         "project": ticket.project_name,
         "sprint_id": ticket.sprint_id,
@@ -595,22 +594,21 @@ def _board_sprint_items(
     *,
     item_ids: list[str],
 ) -> list[BoardSprintItem]:
-    """Each Sprint Item's creation stamp, its supervisor's conversation, and its ping.
+    """Each Sprint Item's creation stamp and its supervisor's conversation.
 
     The supervisor is an ordinary non-Ticket agent, so its conversation is the one the
     ``agents`` roster holds under the Item's ``supervisor_agent_key``. An Item nobody
     has spoken to has none, and reads as ``None``.
 
-    ``latest_ping_sequence`` is where that supervisor last asked for the user. It is the
-    Item's half of the row mark, and unlike a card it is not a turn end: a supervisor
-    finishes hundreds of turns a day and almost none of them want anybody. An Item that
-    has never been pinged reads 0, which is before every real position.
+    The Item's half of the row mark is its conversation's last turn end, the same fact a
+    card uses. That is not a database fact this read owns, so it arrives later, beside
+    the two live conversation signals.
     """
     if not item_ids:
         return []
     placeholders = ",".join("?" * len(item_ids))
     rows = conn.execute(
-        "SELECT id, created_at, supervisor_agent_key, supervisor_ping_sequence "
+        "SELECT id, created_at, supervisor_agent_key "
         f"FROM sprint_items WHERE id IN ({placeholders})",
         item_ids,
     ).fetchall()
@@ -622,11 +620,6 @@ def _board_sprint_items(
             id=str(row["id"]),
             created_at=int(row["created_at"]),
             conversation_id=conversations.get(str(row["supervisor_agent_key"])),
-            latest_ping_sequence=(
-                int(row["supervisor_ping_sequence"])
-                if row["supervisor_ping_sequence"] is not None
-                else 0
-            ),
         )
         for row in sorted(rows, key=lambda row: str(row["id"]))
     ]

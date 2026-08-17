@@ -62,7 +62,6 @@ from planner.tickets.api import (
     _marshal_accept,
     _parse_next_ceiling,
     _parse_scope_at_cap,
-    body_bool,
     body_opt_str,
     body_str,
     parse_enum,
@@ -326,16 +325,6 @@ async def supervisor_message_worker(
     )
 
 
-@router.post("/items/{item_id}/supervisor/ping")
-async def supervisor_ping(item_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
-    """The supervisor says that this Item wants the user.
-
-    It lights the Item's Workspace row and sends one push. It carries no text, because
-    the supervisor has already written what it wants in its own conversation.
-    """
-    return supervisor_service.ping(conn, ctx, item_id, clock=clk)
-
-
 @router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/restart-worker")
 async def supervisor_restart_worker(
     item_id: str,
@@ -459,8 +448,6 @@ async def supervisor_update_ticket(
         edit["priority"] = parse_enum(Priority, body_str(raw, field), field)
     elif field == "deadline":
         edit["deadline"] = body_opt_str(raw, field)
-    elif field == "wakes_supervisor":
-        edit["wakes_supervisor"] = body_bool(raw, field)
     else:
         raise PlannerError(ErrorCode.validation, "unknown Ticket field", {"field": field})
     ticket = tickets_data.edit_ticket(

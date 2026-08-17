@@ -9,6 +9,9 @@ conversation's record has got to, insert the next row, move the conversation's m
 forward, commit. Two writers cannot both decide they own the same sequence number,
 because the second one waits for the first one's lock.
 
+The commit announces itself on the change signal only when the rows it wrote are ones a
+screen outside the conversation reads. See ``_commit_appended_rows``.
+
 Rows are written once. Nothing here updates or deletes a row it has written.
 """
 
@@ -39,11 +42,12 @@ from planner.conversation.events import (
     PromptDeliveryRefusedEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
+    conversation_event_kinds_need_the_change_signal,
     conversation_event_payload_from_canonical_json,
     conversation_event_payload_kind,
     conversation_event_payload_to_canonical_json,
 )
-from planner.core.db import connect
+from planner.core.db import commit_without_change_signal, connect
 from planner.skill_versions import settle_worker_step_skill_bindings
 
 DEFAULT_BUSY_TIMEOUT_MILLISECONDS = 5000
@@ -334,7 +338,7 @@ class ConversationStore:
         try:
             conn.execute("BEGIN IMMEDIATE")
             written = self._insert_rows(conn, conversation_id, (payload,))
-            conn.execute("COMMIT")
+            _commit_appended_rows(conn, (payload,))
         except BaseException:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
@@ -364,7 +368,7 @@ class ConversationStore:
                     "WHERE conversation_id = ?",
                     (model_change.model, model_change.reasoning_effort, conversation_id),
                 )
-            conn.execute("COMMIT")
+            _commit_appended_rows(conn, payloads)
         except BaseException:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
@@ -533,6 +537,24 @@ class ConversationStore:
 
     def _connect(self) -> sqlite3.Connection:
         return connect(self._db_path, self._busy_timeout_ms)
+
+
+def _commit_appended_rows(
+    conn: sqlite3.Connection, payloads: tuple[ConversationEventPayload, ...]
+) -> None:
+    """Close an append, announcing it only if a screen outside the conversation reads it.
+
+    An agent at work writes far more rows than there are things to go and look at, and
+    every announcement sends every open tab back for its whole screen. So the rows only
+    the conversation shows commit quietly; the conversation still gets them, because it
+    is handed each row as it is written.
+    """
+    if conversation_event_kinds_need_the_change_signal(
+        conversation_event_payload_kind(payload) for payload in payloads
+    ):
+        conn.execute("COMMIT")
+        return
+    commit_without_change_signal(conn)
 
 
 def ensure_started_conversation_record(

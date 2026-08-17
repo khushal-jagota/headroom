@@ -33,6 +33,9 @@
   // the panel shows the stop's own proposal rather than whatever it would show for
   // a plain selection.
   let walkIndex = $state<number | null>(null);
+  // Where the reader came through to get here. A Ticket that is not on today has no
+  // body in the world, so the world cannot bring the reader back from it.
+  let backStack = $state<AtlasSelection[]>([]);
   let clock = $state(readClock());
 
   let slotBook: SlotBook = readSlotBook(typeof localStorage === "undefined" ? null : localStorage);
@@ -85,6 +88,9 @@
           canvas: element,
           onSelect: (picked: AtlasSelection | null) => {
             selection = picked;
+            // The back line is the chain of links the reader followed. Picking a body
+            // out of the world starts a fresh chain; the world is its own way back.
+            backStack = [];
             if (picked === null) walkIndex = null;
           },
           reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -113,7 +119,29 @@
   function closePanel(): void {
     selection = null;
     walkIndex = null;
+    backStack = [];
     scene?.select(null);
+  }
+
+  /** Move Atlas to a place a link inside the panel named. The move is the same one the
+   * review walk makes: set the selection, then travel. */
+  function moveTo(next: AtlasSelection): void {
+    selection = next;
+    walkIndex = null;
+    scene?.select(next, { travel: true });
+  }
+
+  function navigateTo(next: AtlasSelection): void {
+    if (selection && selection.kind === next.kind && selection.id === next.id) return;
+    if (selection) backStack = [...backStack, selection];
+    moveTo(next);
+  }
+
+  function goBack(): void {
+    const previous = backStack[backStack.length - 1];
+    if (!previous) return;
+    backStack = backStack.slice(0, -1);
+    moveTo(previous);
   }
 
   function goHome(): void {
@@ -133,6 +161,7 @@
       return;
     }
     walkIndex = index;
+    backStack = [];
     const stop = proposalStops[index];
     selection = { kind: "ticket", id: stop.ticket_id };
     scene?.select(selection, { travel: true });
@@ -169,7 +198,12 @@
     {/if}
   </div>
 
-  <AtlasPanel open={selection !== null} onClose={closePanel}>
+  <AtlasPanel
+    open={selection !== null}
+    onClose={closePanel}
+    onNavigate={navigateTo}
+    onBack={backStack.length > 0 ? goBack : null}
+  >
     {#if walkStop}
       <AtlasReviewStop
         ticketId={walkStop.ticket_id}

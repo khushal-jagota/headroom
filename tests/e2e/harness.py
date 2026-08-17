@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from playwright.sync_api import Page
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLAN_BIN = Path(sys.executable).parent / "panels"
@@ -28,6 +29,23 @@ BOOT_BUDGET_S = 15.0      # server readiness budget
 # ``Any`` on purpose: this is somebody else's JSON, and pretending to know its shape here
 # would be a fiction the tests would then have to fight.
 type JsonObject = dict[str, Any]
+
+
+def open_status_group(page: Page, key: str) -> None:
+    """Open the Workspace status group named by ``key``.
+
+    Which groups arrive open is a product choice, and no test here owns it. A test that
+    must read a row inside a group opens that group itself, and says so by calling this.
+    """
+    group = f'[data-bucket-key="{key}"]'
+    page.wait_for_selector(group, timeout=WAIT_MS)
+    if page.get_attribute(group, "open") is None:
+        page.click(f"{group} > summary")
+    page.wait_for_function(
+        "selector => document.querySelector(selector)?.open === true",
+        arg=group,
+        timeout=WAIT_MS,
+    )
 
 
 @dataclass(frozen=True)

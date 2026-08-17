@@ -12,7 +12,7 @@ from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 
 PREVIOUS_REVISION = "sprint_item_only_placement"
-HEAD_REVISION = "ticket_wakes_supervisor"
+HEAD_REVISION = "drop_supervisor_wake_and_ping"
 
 
 def _upgrade_to_previous_revision(path: Path) -> sqlite3.Connection:

@@ -175,6 +175,12 @@ invent a user decision, create extra records, or draft the Ticket's gated work. 
 missing intent prevents correct capture, ask briefly; when the thought is not yet
 committed work, capture an idea instead of over-structuring it.
 
+Use the `research` Worker type when the user wants a bounded question answered with
+evidence. The question must already be framed, because this worker plans its evidence
+path, researches, and hands back a sourced synthesis without a paired conversation. It
+does not decide or implement. When the question itself is still undefined, use
+`exploration` instead.
+
 Use the `general` Worker type as the catch-all when no specialist type fits: an arbitrary
 unit of work with a deliberately minimal lifecycle.
 

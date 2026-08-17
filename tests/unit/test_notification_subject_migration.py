@@ -11,7 +11,7 @@ from planner.core.db import connect, create_schema
 from planner.notifications import data as notifications_data
 
 PREVIOUS_REVISION = "notifications"
-HEAD_REVISION = "ticket_wakes_supervisor"
+HEAD_REVISION = "drop_supervisor_wake_and_ping"
 
 
 def _upgrade_to_previous_revision(path: Path) -> None:

@@ -86,22 +86,30 @@ def test_supervisor_edit_reaches_every_backend_home_from_one_managed_source(
         ).read_text(encoding="utf-8")
 
 
-def test_supervisor_skill_preserves_the_operating_contract() -> None:
+def test_sprint_item_conversation_skill_states_the_small_job_and_its_actions() -> None:
+    """The role is small, and the list of what it can do is what makes it usable."""
     guidance = (
         panels_skill_root() / "panels-sprint-item-supervisor" / "SKILL.md"
     ).read_text(encoding="utf-8")
     normalized = " ".join(guidance.split())
 
     for required in (
+        # The job, and the manager role it is not.
+        "You create Tickets under this Item, and you answer what is going on here.",
+        "You are not a manager.",
+        "Nothing starts you except a message from the user",
+        "Stay inside that Item and its current child Tickets.",
         "The Sprint Item body is the shared brief.",
-        "Routine progress needs no response.",
-        "A wake names each Ticket that moved and says what happened to it,",
-        "Supervise only current child Tickets.",
-        "Approve only when the current record proves the accepted outcome.",
+        # The restraints that survive the manager role.
         "Ask the user before destructive, irreversible, security-sensitive, or",
-        "`awaiting_approval` and `needs_user` as user-owned states",
+        "Being asked once about one Ticket is not standing permission across the Item.",
         "The readiness system owns Worker starts.",
-        "Re-read canonical context after a restart",
+        # The actions. An agent that cannot see these cannot do the job.
+        "`ticket create --sprint-item <your item>`",
+        "`ticket delete <ticket> --yes`",
+        "`approve` and `reject` resolve a parked proposal.",
+        "`message-worker` sends guidance to a Worker.",
+        "`restart-worker` starts a child Ticket's worker step again",
     ):
         assert required in normalized
 

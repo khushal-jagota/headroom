@@ -44,6 +44,20 @@ listen for new ones. Opening a conversation, reconnecting after a dropped
 connection, and a second device are all that same fetch. Nothing re-downloads
 mid-read.
 
+An open conversation is handed each new row directly, so it never has to be told to
+come and look. That is why most rows are written quietly: an agent message, a tool
+call starting or finishing, a plan, a token count, and a compaction are shown only
+inside the conversation, and writing them does not send every other open screen back
+for a fresh copy of itself. A working agent writes dozens of those a minute, and
+announcing each one sends every open tab back for everything it is showing.
+
+The rows anything else reads still announce themselves the ordinary way: a delivered,
+refused, or discarded prompt, a permission ask and its answer, an agent question and
+its answer, a model change, and a turn ending. Those are what the board reads to say
+whether a Ticket is working or needs its owner, so they are what a screen outside the
+conversation is told about. A kind added later announces itself unless somebody
+establishes that nothing outside the conversation shows it.
+
 ## What a message is
 
 A message is not a piece of text. It is a run of pieces, in the order they were

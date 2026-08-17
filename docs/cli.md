@@ -127,11 +127,14 @@ record shapes. Direct `show` commands also keep their full record shapes.
   with `--sprint <id|current>` or `--backlog`. Select classification with
   `--sprint-item <id>` or `--clear-sprint-item`. Omitted dimensions keep their current
   values, and the server rejects an incoherent final combination.
-  `ticket delete` is a permanent direct operation
-  and requires `--yes`. It normally refuses a Ticket that is running, either because its
+  `ticket delete` is permanent and requires `--yes`. The user deletes any Ticket, and a
+  Sprint Item supervisor deletes a current child Ticket of its own Item. For the user it
+  normally refuses a Ticket that is running, either because its
   status says a worker step is out or because its conversation is mid-turn. `--force`
   deletes such a Ticket anyway, for a Ticket whose status is stuck with no worker
-  running. Force changes nothing else: the same cascade, and still only a person.
+  running. A supervisor meets no such guard on its own child Tickets, and `--force` adds
+  nothing for it. Force changes nothing else: the same cascade. Whenever a delete goes
+  ahead over a running worker, that worker's turn is killed first.
 - **`ticket employee-configuration <id> --backend <key> --model <id> [--reasoning-effort <e>]`**
   — set what this Ticket's worker launches on. All three go together, because a model id
   belongs to the backend that named it; leave `--reasoning-effort` out for a model that
@@ -190,9 +193,6 @@ record shapes. Direct `show` commands also keep their full record shapes.
   for the user's approval.
 - **`sprint item supervisor artifact-list / artifact-write / artifact-delete`** — manage
   files under the owning Item's `artifacts/` directory.
-- **`sprint item supervisor ping`** — tell the user that this Item wants them. It lights
-  the Item in the Workspace and sends one notification. It carries no text, so the
-  supervisor writes what it wants in its own conversation first.
 - **`worker propose / recap / note / trouble / request-user-help / my-ticket`** — worker actions.
   `propose`, `recap`, `note`, and `trouble` take their text on stdin only; there is no
   file-path option, so no shared `/tmp` file can carry one Ticket's text onto another.

@@ -19,6 +19,7 @@ from planner.worker_types.planning_midday_check import (
 from planner.worker_types.planning_sprint import PLANNING_SPRINT_WORKER_TYPE_DEFINITION
 from planner.worker_types.product_design import PRODUCT_DESIGN_WORKER_TYPE_DEFINITION
 from planner.worker_types.registry import WorkerTypeRegistry
+from planner.worker_types.research import RESEARCH_WORKER_TYPE_DEFINITION
 
 _KNOWN_SKILLS = frozenset(
     {
@@ -34,6 +35,7 @@ _KNOWN_SKILLS = frozenset(
         "panels-worker-planning-midday-check",
         "panels-worker-planning-sprint",
         "panels-worker-personal-task",
+        "panels-worker-research",
     }
 )
 _KNOWN_TOOLSET_PROFILES = frozenset({"default"})
@@ -49,6 +51,7 @@ _PRODUCTION_WORKER_TYPE_DEFINITIONS = (
     PLANNING_MIDDAY_CHECK_WORKER_TYPE_DEFINITION,
     PLANNING_SPRINT_WORKER_TYPE_DEFINITION,
     PERSONAL_TASK_WORKER_TYPE_DEFINITION,
+    RESEARCH_WORKER_TYPE_DEFINITION,
 )
 
 

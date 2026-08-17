@@ -16,7 +16,7 @@ import sqlite3
 from collections.abc import Callable
 
 from playwright.sync_api import BrowserContext, Page
-from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
+from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle, open_status_group
 
 WAIT_MS = 10_000
 
@@ -104,9 +104,14 @@ def test_a_change_reaches_the_open_board_without_a_reload(
         "Waiting on the kickoff",
     )["id"]
 
-    page = open_page(context_factory(), server, "#/workspace", 'section[data-screen="workspace"]')
+    page = open_page(
+        context_factory(), server, "#/workspace?view=tickets", 'section[data-screen="workspace"]'
+    )
     card = f'[data-card][data-ticket-id="{ticket_id}"]'
-    page.wait_for_selector(card, timeout=WAIT_MS)
+    # The Ticket waits on its kickoff, and that group arrives shut. Whether it does is
+    # the rail's choice, so this test opens the group rather than assume either way.
+    page.wait_for_selector(card, state="attached", timeout=WAIT_MS)
+    open_status_group(page, "waiting_for_kickoff")
     assert "Board card before the change" in page.inner_text(card)
 
     _mark_page(page)

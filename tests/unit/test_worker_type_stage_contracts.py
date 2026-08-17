@@ -18,6 +18,7 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets.contracts import Ticket
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
+from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 
 _EMPTY_FIELDS_DEFAULT = (
     '{"kickoff":{"value":null,"proposal":null,"user_note":null},'
@@ -112,19 +113,9 @@ def test_http_contract_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
         assert "state" not in made.json()
         manifest = client.get("/api/worker-types")
         assert manifest.status_code == 200
-        assert [item["worker_type"] for item in manifest.json()["worker_types"]] == [
-            "coding",
-            "general",
-            "debugging",
-            "new_worker",
-            "exploration",
-            "initiative_planning",
-            "product_design",
-            "planning-day",
-                "planning-midday-check",
-                "planning-sprint",
-                "personal",
-        ]
+        assert [item["worker_type"] for item in manifest.json()["worker_types"]] == list(
+            PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
+        )
         assert client.get("/api/ticket-types").status_code == 404
 
         list_parameters = {

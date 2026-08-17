@@ -49,7 +49,8 @@ import { createFleet } from "./boats";
 import { BubbleLayer, type BubbleAnchor } from "./bubbles";
 import { createCameraRig } from "./camera";
 import { createPicker, PickIndex, type PickTag } from "./picking";
-import { ARRIVAL, FOG, LAYOUT, LOD, RING, SEA } from "./tuning";
+import { frameIntervalSeconds } from "./pacing";
+import { ARRIVAL, FOG, LAYOUT, LOD, PACING, RING, SEA, SHADOW, SKY_CLOCK } from "./tuning";
 
 type Fire = {
   group: THREE.Group;
@@ -96,6 +97,9 @@ type Island = {
   items: Map<string, ItemBuild>;
   lodOn: boolean | null;
   lodFade: number;
+  // whether this island is close enough for its ambient motion to be worth
+  // spending. Null until the first frame has looked.
+  ambientOn: boolean | null;
 };
 
 // What the layout needs of a Sprint Item: enough to size its pad, and nothing else.
@@ -116,6 +120,9 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // the whole archipelago is drawn again into the sun's map every time it is
+  // refreshed, so the loop asks for it on its own schedule rather than every frame
+  renderer.shadowMap.autoUpdate = false;
 
   const scene = new THREE.Scene();
   const fog = new THREE.Fog("#d8e5e6", FOG.minNear, FOG.minNear + FOG.depth);
@@ -386,7 +393,8 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
           namePlate: made.namePlate,
           items: new Map(),
           lodOn: null,
-          lodFade: 1
+          lodFade: 1,
+          ambientOn: null
         };
         islands.set(project.id, island);
       } else if (lay.radius > island.lay.radius) {
@@ -412,6 +420,10 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
       releaseIsland(island);
       islands.delete(id);
     }
+
+    // the world has been read again: whatever the ring follows may have arrived,
+    // moved to another pad, or left
+    located = selection ? locate(selection) : null;
 
     bubbles.flush(performance.now() / 1000, findAnchor);
 
@@ -441,6 +453,11 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
     lift: number;
     distance: number;
   };
+
+  // Where the selection stands. Finding it means walking every island and every
+  // item on it, and the ring wants it every frame, so it is found when the
+  // selection changes or the world is read again, and not otherwise.
+  let located: Located | null = null;
 
   function locate(picked: AtlasSelection): Located | null {
     for (const island of islands.values()) {
@@ -492,11 +509,12 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
   // Travel to what was chosen, close enough that it genuinely fills the view.
   function putSelection(picked: AtlasSelection | null, travel: boolean): void {
     selection = picked;
+    located = picked ? locate(picked) : null;
     if (!picked) {
       ringMaterial.opacity = 0;
       return;
     }
-    const found = locate(picked);
+    const found = located;
     // an id the world does not have: the intent is kept, and the ring waits
     if (!found || !travel) return;
     found.travelTo.getWorldPosition(_at);
@@ -551,13 +569,12 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
 
   function stepSelectionRing(time: number): void {
     if (!selection) return;
-    const found = locate(selection);
-    if (!found) {
+    if (!located) {
       // whatever was being read has left the world; the ring waits for it
       ringMaterial.opacity = 0;
       return;
     }
-    found.ring.getWorldPosition(_at);
+    located.ring.getWorldPosition(_at);
     selectionRing.position.set(_at.x, _at.y + 0.02, _at.z);
     ringMaterial.opacity = RING.pulseBase + Math.sin(time * RING.pulseRate) * RING.pulseSwing;
   }
@@ -575,24 +592,51 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
   observer.observe(canvas);
   resize();
 
+  // ---------------- who is here ----------------
+
+  // Somebody at the machine is the whole of what the world knows about being
+  // watched. It listens at the window rather than at the canvas on purpose: a
+  // person reading a Ticket in the panel raised over the world is still a person
+  // in front of the world, and the drift behind them must not go to slides.
+  let lastPresence = performance.now() / 1000;
+  const notePresence = (): void => {
+    lastPresence = performance.now() / 1000;
+  };
+  window.addEventListener("pointerdown", notePresence);
+  window.addEventListener("pointermove", notePresence);
+  window.addEventListener("keydown", notePresence);
+  window.addEventListener("wheel", notePresence, { passive: true });
+
   // ---------------- the loop ----------------
 
   let frame = 0;
-  let last = performance.now();
   let running = true;
+  let lastStep = performance.now() / 1000;
+  let shadowsDrawnAt = -Infinity;
+  // the sky is read from the clock, whose keyframes stand hours apart
+  let day = applyDay(sky, scene, fog, nowHour());
+  let skyReadAt = lastStep;
 
   function loop(nowMs: number): void {
     if (!running) return;
     frame = requestAnimationFrame(loop);
-    const dt = Math.min(0.1, (nowMs - last) / 1000);
-    last = nowMs;
     const time = nowMs / 1000;
+    // the world is stepped as often as it is worth stepping and no oftener. Every
+    // ambient motion below is a function of absolute time and every accumulation is
+    // paid in dt, so this changes how smooth the world is and nothing about it.
+    const wait = frameIntervalSeconds(time - lastPresence, rig.isTravelling());
+    if (time - lastStep < wait) return;
+    const dt = Math.min(PACING.maxStepSeconds, time - lastStep);
+    lastStep = time;
     // reduced motion: the world holds still, and only the things that carry
     // meaning — the day, the states, a spoken line — still change
     const anim = reducedMotion ? 0 : time;
 
     rig.step(dt, time);
-    const day = applyDay(sky, scene, fog, nowHour());
+    if (time - skyReadAt >= SKY_CLOCK.readEverySeconds) {
+      day = applyDay(sky, scene, fog, nowHour());
+      skyReadAt = time;
+    }
     const camera = rig.camera;
 
     for (const island of islands.values()) {
@@ -605,6 +649,15 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
       island.lodOn = want;
       island.lodFade += ((want ? 1 : 0) - island.lodFade) * Math.min(1, dt * LOD.fadeRate);
       const show = island.lodFade > LOD.hideBelow;
+      // the ambient life of the island — flicker, plume, shoreline — is spent only
+      // where it can be seen. Out past this the swing of a flame is smaller than a
+      // pixel. An island that has just gone out of range is taken to its resting
+      // pose one last time, the same pose reduced motion leaves it in, and then
+      // left alone until it is worth watching again.
+      const ambientOn = d < near * LOD.ambientDistanceFactor;
+      const ambientLive = ambientOn || island.ambientOn !== false;
+      const ambientAnim = ambientOn ? anim : 0;
+      island.ambientOn = ambientOn;
 
       for (const build of island.items.values()) {
         for (const figure of build.workers.values()) {
@@ -615,26 +668,30 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
           }
         }
         for (const stele of build.steles.values()) stele.group.visible = show;
-        if (build.overseer) animateOverseer(build.overseer, anim, camera);
+        // the overseer keeps its own step at every range: the orb that marks a live
+        // conversation holds its apparent size by how far away the eye stands, and
+        // that is exactly what has to keep working from across the archipelago
+        if (build.overseer) animateOverseer(build.overseer, ambientAnim, camera);
 
+        if (!ambientLive) continue;
         for (const flame of build.flames) {
-          flame.mesh.scale.y = 1 + Math.sin(anim * 9 + flame.x) * 0.2;
+          flame.mesh.scale.y = 1 + Math.sin(ambientAnim * 9 + flame.x) * 0.2;
         }
         for (const light of build.flameLights) {
-          light.intensity = (day.sun < 1 ? 1.2 : 0.4) + Math.sin(anim * 11) * 0.15;
+          light.intensity = (day.sun < 1 ? 1.2 : 0.4) + Math.sin(ambientAnim * 11) * 0.15;
         }
         if (build.fire && build.fire.group.visible) {
           for (const flame of build.fire.flames) {
-            flame.mesh.scale.y = 1 + Math.sin(anim * 9 + flame.x) * 0.2;
+            flame.mesh.scale.y = 1 + Math.sin(ambientAnim * 9 + flame.x) * 0.2;
           }
           for (const light of build.fire.flameLights) {
-            light.intensity = (day.sun < 1 ? 1.2 : 0.4) + Math.sin(anim * 11) * 0.15;
+            light.intensity = (day.sun < 1 ? 1.2 : 0.4) + Math.sin(ambientAnim * 11) * 0.15;
           }
         }
         if (build.plume && build.plume.group.visible) {
           // the work plume: each mote rises its own step and softly re-forms
           for (const mote of build.plume.motes) {
-            const c = (anim * 0.14 + mote.index * 0.25) % 1;
+            const c = (ambientAnim * 0.14 + mote.index * 0.25) % 1;
             mote.sprite.position.y = mote.base + (mote.index + c) * mote.step;
             mote.sprite.material.opacity =
               0.2 * Math.sin(Math.PI * Math.min(1, (mote.index + c) / 4)) + 0.04;
@@ -644,15 +701,17 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
       }
 
       // living shoreline
-      const slot = island.project.slot;
-      const pA = 1 + Math.sin(anim * 0.55 + slot) * 0.013;
-      const pB = 1 + Math.sin(anim * 0.38 + 2 + slot) * 0.017;
-      island.foamA.scale.set(pA, pA, 1);
-      island.foamB.scale.set(pB, pB, 1);
-      (island.foamA.material as THREE.MeshStandardMaterial).opacity =
-        0.62 + Math.sin(anim * 0.55 + 1) * 0.2;
-      (island.foamB.material as THREE.MeshStandardMaterial).opacity =
-        0.4 + Math.sin(anim * 0.38 + 3) * 0.18;
+      if (ambientLive) {
+        const slot = island.project.slot;
+        const pA = 1 + Math.sin(ambientAnim * 0.55 + slot) * 0.013;
+        const pB = 1 + Math.sin(ambientAnim * 0.38 + 2 + slot) * 0.017;
+        island.foamA.scale.set(pA, pA, 1);
+        island.foamB.scale.set(pB, pB, 1);
+        (island.foamA.material as THREE.MeshStandardMaterial).opacity =
+          0.62 + Math.sin(ambientAnim * 0.55 + 1) * 0.2;
+        (island.foamB.material as THREE.MeshStandardMaterial).opacity =
+          0.4 + Math.sin(ambientAnim * 0.38 + 3) * 0.18;
+      }
 
       // the island's name surfaces when you are far enough to need it
       const target = Math.min(
@@ -669,6 +728,13 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
     if (!reducedMotion) chips.step(dt);
     bubbles.step(time, anim, camera);
     stepSelectionRing(time);
+    // the sun draws the whole archipelago into its map each time it is refreshed,
+    // so it is refreshed often enough that a swinging arm keeps its shadow and no
+    // oftener. The renderer clears the flag once it has drawn.
+    if (time - shadowsDrawnAt >= 1 / SHADOW.maxUpdatesPerSecond) {
+      renderer.shadowMap.needsUpdate = true;
+      shadowsDrawnAt = time;
+    }
     renderer.render(scene, camera);
   }
 
@@ -695,6 +761,10 @@ export function createAtlasScene(options: AtlasSceneOptions): AtlasScene {
       running = false;
       cancelAnimationFrame(frame);
       observer.disconnect();
+      window.removeEventListener("pointerdown", notePresence);
+      window.removeEventListener("pointermove", notePresence);
+      window.removeEventListener("keydown", notePresence);
+      window.removeEventListener("wheel", notePresence);
       picker.dispose();
       rig.dispose();
       bubbles.dispose();

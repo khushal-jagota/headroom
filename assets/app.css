@@ -3408,10 +3408,12 @@ select {
 }
 
 /* A nested bucket has no box to separate it from the next one, so this margin is the
- * only thing that says "different group". It is therefore the largest gap in the Item:
- * bigger than row-to-row, and much bigger than a header to its own rows. */
+ * only thing that says "different group". It stays the largest gap in the Item — bigger
+ * than row-to-row, and much bigger than a header to its own rows — but the Item's own
+ * box already separates the Item from everything else, so it does not need to be as
+ * large as it was. */
 .disclosure--workspace-bucket--nested + .disclosure--workspace-bucket--nested {
-  margin-top: var(--space-5);
+  margin-top: var(--space-4);
 }
 
 .disclosure--workspace-bucket--nested .board-workspace-bucket-label {
@@ -3510,11 +3512,13 @@ select {
 }
 
 /* The Item title owns every group under it, not just the first, so it must not bind to
- * the first one. It sits off its groups by the same painted gap that separates one group
- * from the next. That is one step larger than the between-group margin, because the
- * between-group gap also carries the last row's bottom padding and this one does not. */
+ * the first one. The bordered box is what holds the Item together and does that job, so
+ * the title does not need extra air of its own: this comes down one step, and the two
+ * gaps inside an Item come to one value. It stays one step larger than the between-group
+ * margin, because the between-group gap also carries the last row's bottom padding and
+ * this one does not. */
 .board-workspace-item-groups {
-  margin-top: var(--space-6);
+  margin-top: var(--space-5);
 }
 
 .board-workspace-quiet-line {
@@ -4433,9 +4437,10 @@ select {
   container-name: ticket-pane conversation-host;
 }
 
-/* The page is a column of two: the ticket, then the conversation, with the page's own gap
- * above the first and below the last. The conversation is NOT over the ticket — it is the
- * section beneath it, and the two share the page's height between them. That is what makes
+/* The page is a column of two: the reading area, then the conversation, with the page's
+ * own gap above the first and below the last. The reading area is the ticket, or an
+ * artifact drawn over the ticket. The conversation is NOT over either one — it is the
+ * section beneath them, and the two share the page's height between them. That is what makes
  * the whole thing hold together: there is no reserved space to keep in step with anything,
  * nothing can hide behind anything, and growing the conversation is just the ticket getting
  * the smaller share. The page is never taller than the page. */
@@ -4453,12 +4458,89 @@ select {
   padding-bottom: max(var(--space-6), env(safe-area-inset-bottom));
 }
 
+/* The reading area is the first of the page's two sections: it takes what the
+ * conversation is not using. What is read in it is the ticket, or an artifact over the
+ * ticket. */
+.ticket-reading {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 0;
+  flex: 1;
+}
+
 /* The ticket takes what the conversation is not using, and scrolls inside it. */
 .ticket-doc {
   min-width: 0;
   max-width: 100%;
   min-height: 0;
   flex: 1;
+  overflow: auto;
+}
+
+/* --- The artifact, opened where it was clicked ---------------------------- */
+/* A file opens on the page it was linked from, and takes the reading area's whole box.
+ * It is drawn over the ticket rather than in place of it: the ticket keeps its layout and
+ * its scroll place underneath, so closing gives back the page the reader left. The
+ * conversation is the section below and is not covered, which is the point — the artifact
+ * and the person's own worker are on the screen at once. */
+.ticket-artifact {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface-base);
+}
+
+/* The same strip the embedded preview curves over its document, carrying the file's name
+ * and the way out. */
+.ticket-artifact-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-raised);
+  border-bottom: var(--border-hairline) solid var(--border-color);
+}
+
+.ticket-artifact-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--type-sm);
+}
+
+.ticket-artifact-close {
+  flex: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent-bright);
+  font-size: var(--type-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ticket-artifact-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* An image, a player, or a download line is drawn in the middle of the box rather than
+ * stretched by it; a document already fills what it is given. */
+.ticket-artifact-body .file-preview--full {
+  margin: var(--space-5) auto;
   overflow: auto;
 }
 
@@ -5792,8 +5874,10 @@ select {
   margin-top: 0;
 }
 
-/* A status group. Native <details>, like the sections it sits above. Size carries the
-   hierarchy: 20px in the faint ink, larger than the Ticket under it and greyer than it. */
+/* A status group. Native <details>, like the sections it sits above. The rail draws the
+   same object, so it speaks with the rail's voice: the serif, at the nested bucket's
+   size. Colour carries the hierarchy instead of size — faint ink, greyer than the Ticket
+   under it, and never louder than the block that contains it. */
 .sprint-workspace-status + .sprint-workspace-status {
   margin-top: var(--space-5);
 }
@@ -5807,10 +5891,33 @@ select {
   list-style: none;
   cursor: pointer;
   color: var(--text-faint);
-  font-size: var(--type-lg);
-  font-weight: 600;
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-md);
+  font-weight: 500;
+  letter-spacing: var(--tracking-title);
   line-height: 1.3;
   transition: color var(--motion-fast) var(--motion-ease);
+}
+
+/* A .ticket-row pads itself by --space-2 and a group header does not. So wherever a
+   header stands where a row would have stood, the painted gap is short by that pad.
+   The next two rules give the header that pad in exactly those two places, rather than
+   retuning margins that already measure correctly.
+ *
+ * First place: the top of a block. A block that opens with a plain row gets its gap from
+ * the row's own padding; a block that opens with a group header gets nothing. Only the
+ * first group is against the label — the rest are spaced by the group-to-group margin
+ * above, which is correct. */
+.sprint-workspace-section-body > .sprint-workspace-status:first-child {
+  margin-top: var(--space-2);
+}
+
+/* Second place: the bottom of a block. A block ends in a row, which pads itself, or in a
+   shut group header, which does not, and the seam to the next block came out at two
+   different values because of it. Scoped to the shut state: an open header's bottom pad
+   would push its own rows away, and that is the one gap already right. */
+.sprint-workspace-status:not([open]) > summary {
+  padding-bottom: var(--space-2);
 }
 
 .sprint-workspace-status > summary::-webkit-details-marker {
@@ -6981,6 +7088,34 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 .atlas-panel-close:hover {
   color: var(--text-strong);
   background: var(--surface-overlay);
+}
+
+/* An artifact opened on the screen inside starts at the panel's very top, where the
+ * panel's own close button sits. The strip keeps clear of it, the same way the back line
+ * below does. */
+.atlas-panel .ticket-artifact-bar {
+  padding-right: var(--space-7);
+}
+
+/* The way back through the links the reader followed. It names no destination: the
+ * world holds no title for a Ticket that is not on today. It keeps clear of the close
+ * button, which sits over the panel's top-right corner. */
+.atlas-panel-back {
+  flex: none;
+  padding: var(--space-2) var(--space-6) 0 var(--space-3);
+}
+
+.atlas-panel-back button {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--text-faint);
+  font-size: var(--type-sm);
+  cursor: pointer;
+}
+
+.atlas-panel-back button:hover {
+  color: var(--text-strong);
 }
 
 /* On a phone the panel is a bottom sheet, and the world keeps the top of the screen. */

@@ -17,7 +17,7 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "ticket_wakes_supervisor"
+HEAD_REVISION = "drop_supervisor_wake_and_ping"
 
 
 def _table_columns(

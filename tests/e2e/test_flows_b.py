@@ -403,7 +403,7 @@ def test_e31_refresh_restores_state(
     mid_b = (
         f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
     )
-    page_b = open_page(context_factory(), server, "#/workspace", ready_b)
+    page_b = open_page(context_factory(), server, "#/workspace?view=tickets", ready_b)
     page_b.wait_for_selector(mid_b, timeout=WAIT_MS)
     before_b = _snap_board(page_b, mid)
     _reload_settle(page_b, ready_b)

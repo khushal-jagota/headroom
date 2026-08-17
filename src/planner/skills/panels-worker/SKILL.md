@@ -20,6 +20,7 @@ Worker skills:
 - `panels-worker-debugging` — debugging tickets (understanding a reported bug, diagnosing its structural cause, and defining the implementation handoff).
 - `panels-worker-new-worker` — new_worker tickets (designing another worker).
 - `panels-worker-exploration` — exploration tickets.
+- `panels-worker-research` — research tickets (answering a framed question with evidence).
 - `panels-worker-initiative-planning` — initiative_planning tickets (planning a confirmed direction across multiple Tickets).
 - `panels-worker-product-design` — product_design tickets (designing holistic product flows and implementation-ready interactive artifacts).
 - `panels-worker-planning-day` — planning-day tickets (planning the morning's Day with the user).

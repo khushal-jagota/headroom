@@ -9,7 +9,7 @@ Panels stores that choice on the Ticket for its whole life. A read returns the T
 stored Stage and Worker type as they are; it does not substitute coding behavior or ask a
 registry to reinterpret them.
 
-Eleven Worker types ship today:
+Twelve Worker types ship today:
 
 - **`coding`** handles product and repository work.
 - **`general`** is the catch-all, chosen when no specialist type fits. It runs a
@@ -19,6 +19,8 @@ Eleven Worker types ship today:
   and defines the implementation handoff without implementing it.
 - **`new_worker`** designs and lands a new kind of worker.
 - **`exploration`** is a worker for exploring something undefined and making it clearer.
+- **`research`** answers an already-framed question with sourced evidence and synthesis,
+  without deciding or implementing.
 - **`initiative_planning`** works out the shared top-level how for a confirmed direction,
   then creates the bounded Tickets that carry it.
 - **`product_design`** designs holistic product flows and implementation-ready interactive
@@ -60,7 +62,8 @@ worker ownership.
 `new_worker` starts with worker-owned Kickoff,
 then uses paired
 ownership for Understanding before worker-owned Stages and Thinking, pairs again for
-Runtime Defaults, then returns to worker-owned Drafting and Closeout. `exploration`
+Runtime Defaults, then returns to worker-owned Drafting and Closeout. `research` keeps all four of its non-terminal Stages worker-owned, because its question
+arrives already framed and it runs unattended. `exploration`
 uses paired ownership for Understanding and Answer, where the user and worker establish
 the frame and reach the decision together; its other non-terminal Stages default to worker
 ownership. `initiative_planning` uses paired ownership for Question Answers, where
@@ -85,12 +88,13 @@ types and behavior. `src/planner/worker_types/coding.py`,
 `src/planner/worker_types/debugging.py`,
 `src/planner/worker_types/new_worker.py`,
 `src/planner/worker_types/exploration.py`,
+`src/planner/worker_types/research.py`,
 `src/planner/worker_types/initiative_planning.py`,
 `src/planner/worker_types/product_design.py`,
 `src/planner/worker_types/planning_day.py`,
 `src/planner/worker_types/planning_midday_check.py`, and
 `src/planner/worker_types/planning_sprint.py`, and
-`src/planner/worker_types/personal.py` contain the eleven shipped definitions.
+`src/planner/worker_types/personal.py` contain the twelve shipped definitions.
 
 ## Validation and the narrow registry
 
@@ -151,7 +155,7 @@ catalogs of known specialist skills and toolset profiles, the ordered tuple of s
 definitions, and the production registry built from them. The shipped tuple currently
 contains `coding`, `general`, `debugging`, `new_worker`, `exploration`, `initiative_planning`,
 `product_design`, `planning-day`, `planning-midday-check`, and
-`planning-sprint`, and `personal`; its
+`planning-sprint`, and `personal`, and `research`; its
 order is also the manifest order.
 
 Which agent backends exist is not this composition's business. It is the conversation
@@ -241,6 +245,14 @@ Settings writes use atomic replacement and one writer lock per Worker or Chief. 
 files live beside the database rather than in it, so the writer announces the change
 itself once the new file is in place; if that fails, the canonical file is put back and
 every backend continues to see the prior revision.
+
+A settings file outlives the app version that wrote it, so a Worker type whose Stages
+change can leave a stored file the definition no longer describes. A read reconciles the
+file to the running definition: a Stage the definition no longer declares is dropped, a
+Stage the file omits takes the definition's own ownership default, and a suggested
+Kickoff ceiling that is no longer a later Stage returns to the shipped one. A corrected
+file is written back. Writes stay strict, so a request naming a Stage the Worker does not
+have is still refused.
 
 Every editable skill name is read-only. Description and Markdown body are ordinary
 direct edits that save, fail, and retry independently. Successful skill edits refresh
@@ -343,6 +355,7 @@ process is started again under it when there is a reason to.
 - `panels-worker-debugging` guides `debugging` Tickets.
 - `panels-worker-new-worker` guides `new_worker` Tickets.
 - `panels-worker-exploration` guides `exploration` Tickets.
+- `panels-worker-research` guides `research` Tickets.
 - `panels-worker-initiative-planning` guides `initiative_planning` Tickets.
 - `panels-worker-product-design` guides `product_design` Tickets.
 - `panels-worker-planning-day` guides `planning-day` Tickets.
@@ -424,4 +437,4 @@ prefix, and reconciliation support before changing state.
 
 ---
 
-_Last verified: 2026-08-09._
+_Last verified: 2026-08-16._

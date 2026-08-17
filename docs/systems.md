@@ -42,6 +42,10 @@ no entity name or payload. The browser invalidates its cached reads, and Worker 
 checks current Tickets again. SQLite and periodic loops remain canonical if a signal is
 missed.
 
+A commit stays quiet only where the writer establishes that no screen is waiting for its
+rows: managed skill history, and the conversation rows an open conversation is the sole
+reader of, which is handed them directly (`conversation-system.md`).
+
 _Code paths:_ `src/planner/core/db.py`, `src/planner/core/migrations/`, and
 `src/planner/core/change_signal.py`.
 

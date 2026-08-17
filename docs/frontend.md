@@ -8,8 +8,13 @@ lifecycle live under `web/src/lib/`.
 
 Answers travel compressed. The server gzips any response over 1 KB, which matters most
 for a conversation open: the largest thread is 9.4 MB of JSON and goes over the wire as
-1.8 MB. Live event streams are sent frame by frame and are never compressed, because
-holding frames back to compress them is the opposite of what they are for.
+1.8 MB. A live event stream never reaches the compression at all: the server decides from
+the address, before the request is answered, and sends a stream down a route that has no
+compression in it. That is not fussiness. Compression cannot say anything about a
+response until it has seen some of the body, so it holds the response's headers back
+until then — and a stream with nothing to report yet has no body to release them with.
+The browser would sit there waiting to be connected, and the page would never learn that
+anything had changed.
 
 ## The screens
 
@@ -75,10 +80,10 @@ One screen per part of the system:
   leaves that Item open around it — the address names the Item as well as the ticket —
   and the mark moves to the ticket, because being open carries no mark of its own.
 
-  The Item title carries a mark for the Item's own supervisor, read the way a ticket
-  row's mark is read but fed by a different fact: a ping, not a reply. A supervisor takes
-  hundreds of turns a day and almost none of them want anybody, so only its ping lights
-  the Item. A ticket without a Sprint Item appears in the Tickets
+  The Item title carries a mark for the Item's own supervisor, read exactly the way a
+  ticket row's mark is read and fed by the same fact: an unseen reply. That conversation
+  replies only to something the user said, because nothing else starts it.
+  A ticket without a Sprint Item appears in the Tickets
   view like any other. Every Ticket row is the shared Ticket row and keeps the existing
   conversation mark; it carries its priority tile in the Tickets view and drops it inside
   a Sprint Item, where the Item is the thing being read.
@@ -89,8 +94,9 @@ One screen per part of the system:
   The mark carries three signals in one order of precedence, and each is one
   system's own fact rather than a blend of several. A **pure white dot** means the
   worker is waiting on a permission decision or answers only the user can give — it wins
-  outright, because that turn is still running and only the user can clear the wait.
-  Below it, a **spinner** means the worker is running right now. With
+  outright, because that turn is still running and only the user can clear the wait. On
+  an Item the same dot also means an unseen ping, which says the same thing: only the
+  user can answer this. Below it, a **spinner** means the worker is running right now. With
   neither, the mark shows the **reply state**: a filled accent dot for a reply the
   user has not seen, the same dot greyed once the user has opened the ticket since
   that reply, and a faint ring when nothing is waiting.
@@ -99,9 +105,9 @@ One screen per part of the system:
   ticket row, the Item's supervisor for an Item. The first two are asked
   of the conversation system directly. The third is a comparison: the row carries a
   position in its conversation, and this browser keeps how far the reader has got in that
-  conversation. Something is waiting when the position is past the reading. A ticket row
-  carries where its worker's last turn ended. An Item carries where its supervisor last
-  pinged, so opening the Item is what puts an Item's mark out.
+  conversation. Something is waiting when the position is past the reading. Every row
+  carries where its own conversation's last turn ended, so opening the ticket or the
+  Item is what puts its mark out.
 
   How far somebody has read is about that person at that screen, not about the ticket,
   so it is kept in their own browser and the server is never told. Nothing is written
@@ -355,14 +361,28 @@ has no usage source.
   saying what the fetch found; nothing else is fetched, so nothing else can say. One file
   extension names one kind, so no file is offered as two.
   The header link opens the Panels preview route, whose targets are
-  `#/preview?source=ticket&ticket=<id>&path=<path>`. On that route HTML is fetched as a
-  document, given to the iframe through a short-lived Blob URL, revoked when the target
-  changes or unmounts, and fills the available page with the same isolated script-enabled
-  iframe. Markdown is fetched as source and rendered directly through `MarkdownBlock` in the
-  full-page document area, so managed links keep the same nested-preview and self-link
-  bounds as embedded Markdown, with no header of its own. ACP message and tool links also use
-  the shared generic/Ticket preview adapter. Conversation images are inline ACP
-  content, not managed files.
+  `#/preview?source=ticket&ticket=<id>&path=<path>`. Wherever that document is drawn, HTML
+  is fetched and given to a sandboxed iframe through a short-lived Blob URL, revoked when
+  the file changes or unmounts, and fills the space it is given. Markdown is fetched as
+  source and rendered directly through `MarkdownBlock`, so managed links keep the same
+  nested-preview and self-link bounds as embedded Markdown, with no header of its own.
+  ACP message and tool links also use the shared generic/Ticket preview adapter.
+  Conversation images are inline ACP content, not managed files.
+- **On a Ticket screen, that link opens the file in place.** A file clicked inside a
+  Ticket does not go to the preview address at all. The Ticket screen catches the click
+  and draws the file over its own reading area, with a strip carrying the file's name and
+  a way out. The Ticket keeps its layout and its scroll place underneath, so closing gives
+  back the page the reader left, and the conversation keeps its own section at the bottom
+  of the page — the artifact and the worker are on screen together, which is the point.
+  An opened conversation is the whole page, so opening a file steps it back to peeked.
+  Escape closes the file, and inside Atlas the panel gives Escape to the file before
+  itself. This is the same on every screen width. A click asking for a new tab or window
+  is left alone, and so is a link to a Ticket's dev server, which is a page rather than a
+  file. On the Workspace the open file rides in the address beside the Ticket, so a
+  reload, Back, and a shared link all show it; Atlas keeps what it is showing in memory
+  rather than in the address, so a file opened there closes with the panel. The
+  `#/preview` address remains the way in from anywhere else — a shared link, a
+  notification, or another screen — and both draw the same document.
 - **Editable Markdown stays one surface.** Ticket notes, recaps, passed fields,
   approval drafts, and future Markdown surfaces remain directly editable with their
   existing focus, blur/save, keyboard, paste, and Escape behavior. What is being typed

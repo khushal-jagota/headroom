@@ -22,10 +22,6 @@ export type ConversationFeed = {
   readonly streamingAgentText: string;
   /** Output from tool calls that are still running, by tool call id. */
   readonly toolCallProgress: Readonly<Record<string, string>>;
-  /** How many live frames have arrived. Only ever compared with its own last value:
-   *  a surface watches it move to know something happened just now, which is the one
-   *  thing a content-free frame can honestly say. */
-  readonly livenessPulse: number;
 };
 
 export function emptyConversationFeed(): ConversationFeed {
@@ -33,8 +29,7 @@ export function emptyConversationFeed(): ConversationFeed {
     events: [],
     latestSequence: 0,
     streamingAgentText: "",
-    toolCallProgress: {},
-    livenessPulse: 0
+    toolCallProgress: {}
   };
 }
 
@@ -77,34 +72,51 @@ export function feedWithCommittedEvents(
   return events.reduce(feedWithCommittedEvent, feed);
 }
 
+/** Whether a frame says the thing running this conversation is alive right now.
+ *
+ * Every frame this browser understands says it, whatever else it carries — that it arrived
+ * at all is the one thing a content-free frame can honestly report. Two kinds do not. A
+ * frame that arrives after its own turn's rows is a ghost: the tail can hand over a piece
+ * of text that was queued behind the replay it interrupted, and rows are the record, so
+ * when they say nothing is running there is nothing alive behind them. And a frame this
+ * browser does not know yet says nothing, because the server may be ahead of it and a page
+ * that guessed at the shape would report something nobody sent.
+ *
+ * A sign of life is not content and never becomes a row. It is kept apart from the feed
+ * for exactly that reason: a conversation that is only thinking must move the one line that
+ * says so without putting the transcript through a rebuild it has no new words for.
+ */
+export function liveFrameIsASignOfLife(
+  feed: ConversationFeed,
+  frame: ConversationLiveFrame
+): boolean {
+  if (!conversationIsRunning(feed)) return false;
+  return (
+    frame.frame === "agent_message_delta"
+    || frame.frame === "tool_call_progress"
+    || frame.frame === "model_thinking"
+    || frame.frame === "held_prompts_changed"
+  );
+}
+
 export function feedWithLiveFrame(
   feed: ConversationFeed,
   frame: ConversationLiveFrame
 ): ConversationFeed {
-  // A frame that arrives after its own turn's rows is a ghost: the tail can hand over a
-  // piece of text that was queued behind the replay it interrupted, and drawing it would
-  // put half a message back on screen underneath the finished one. Rows are the record,
-  // so when they say nothing is running there is nothing half-finished to show.
-  if (!conversationIsRunning(feed)) return feed;
-  // Every frame is a sign of life, whatever else it carries.
-  const alive = { ...feed, livenessPulse: feed.livenessPulse + 1 };
+  // A ghost frame and a frame this browser does not know are not drawn — see above.
+  if (!liveFrameIsASignOfLife(feed, frame)) return feed;
   switch (frame.frame) {
     case "agent_message_delta":
-      return { ...alive, streamingAgentText: feed.streamingAgentText + frame.text_delta };
+      return { ...feed, streamingAgentText: feed.streamingAgentText + frame.text_delta };
     case "tool_call_progress":
       return {
-        ...alive,
+        ...feed,
         toolCallProgress: { ...feed.toolCallProgress, [frame.tool_call_id]: frame.detail }
       };
-    case "model_thinking":
-      // There is nothing to show and nothing to keep. That it arrived is the whole message.
-      return alive;
-    case "held_prompts_changed":
-      // Queue content lives in the conversation snapshot. The stream callback refreshes it.
-      return alive;
     default:
-      // A frame this browser does not know yet. The server may be ahead of it, and a
-      // page that guessed at the shape would draw something nobody sent.
+      // Thinking has nothing to show and nothing to keep; queue content lives in the
+      // conversation snapshot, which the stream callback refreshes. Both leave the feed
+      // exactly as it was, which is what stops them redrawing a thread nothing was added to.
       return feed;
   }
 }
@@ -213,6 +225,26 @@ export function currentRunValues(
 
 // --- the stream that keeps a feed current -------------------------------------------------
 
+/** How often half-finished output reaches the reader.
+ *
+ * Text arrives a few characters at a time, and every one of those redraws the thread and
+ * re-renders the whole of the answer written so far, which grows with the answer. So the
+ * deltas between one screen update and the next are gathered up and drawn together. At a
+ * tenth of a second the words still appear as they are being written. Committed rows never
+ * wait: a row is the record, and it is drawn the moment it lands.
+ */
+export const HALF_FINISHED_OUTPUT_INTERVAL_MS = 100;
+
+/** The same, for a tab nobody is looking at. The work costs exactly as much there and the
+ *  words are not being read; coming back draws whatever has accumulated. */
+export const HIDDEN_HALF_FINISHED_OUTPUT_INTERVAL_MS = 1_000;
+
+/** Whether nobody is looking at this tab. Asked of a document only where there is one:
+ *  this module is exercised headlessly, without a browser. */
+function theTabIsHidden(): boolean {
+  return typeof document !== "undefined" && document.visibilityState === "hidden";
+}
+
 export type ConversationStreamPorts = {
   readEventsAfter: (conversationId: string, after: number) => Promise<ConversationEvent[]>;
   openTail: (
@@ -230,6 +262,8 @@ export type ConversationStream = {
   /** Fetch the rows this reader is missing, then tail from there. Also the reconnect. */
   connect: () => Promise<void>;
   close: () => void;
+  /** Everything the stream holds, including half-finished output that has not been drawn
+   *  yet. Rows are always here the moment they land. */
   feed: () => ConversationFeed;
 };
 
@@ -247,16 +281,46 @@ export function createConversationStream(
    *  system about itself again: reconnecting is what happens after a server went away,
    *  and the rows alone cannot tell you that a turn stopped when it did. */
   onConnected?: () => void,
-  onHeldPromptsChanged?: () => void
+  onHeldPromptsChanged?: () => void,
+  /** A frame arrived that says the thing running this conversation is alive right now.
+   *  Told separately from the feed and never made to wait, because it is not content:
+   *  the line that says a turn is working moves on this and on nothing else. */
+  onSignOfLife?: () => void
 ): ConversationStream {
   let feed = emptyConversationFeed();
   let closeTail: (() => void) | null = null;
   let closed = false;
   let generation = 0;
+  let drawingHalfFinishedOutput: ReturnType<typeof setTimeout> | null = null;
+
+  function stopWaitingToDraw(): void {
+    if (drawingHalfFinishedOutput === null) return;
+    clearTimeout(drawingHalfFinishedOutput);
+    drawingHalfFinishedOutput = null;
+  }
 
   function publish(next: ConversationFeed): void {
+    stopWaitingToDraw();
     feed = next;
     onFeed(feed);
+  }
+
+  /** Keep half-finished output, and draw it with whatever else arrives before the next
+   *  screen update. A frame that changed nothing is not drawn at all. */
+  function publishOnTheNextScreenUpdate(next: ConversationFeed): void {
+    if (next === feed) return;
+    feed = next;
+    if (drawingHalfFinishedOutput !== null) return;
+    drawingHalfFinishedOutput = setTimeout(
+      () => {
+        drawingHalfFinishedOutput = null;
+        if (closed) return;
+        onFeed(feed);
+      },
+      theTabIsHidden()
+        ? HIDDEN_HALF_FINISHED_OUTPUT_INTERVAL_MS
+        : HALF_FINISHED_OUTPUT_INTERVAL_MS
+    );
   }
 
   async function connect(): Promise<void> {
@@ -275,7 +339,8 @@ export function createConversationStream(
       onLiveFrame: (frame) => {
         if (opening !== generation) return;
         if (frame.frame === "held_prompts_changed") onHeldPromptsChanged?.();
-        publish(feedWithLiveFrame(feed, frame));
+        if (liveFrameIsASignOfLife(feed, frame)) onSignOfLife?.();
+        publishOnTheNextScreenUpdate(feedWithLiveFrame(feed, frame));
       },
       onTrouble: () => {
         if (closed || opening !== generation) return;
@@ -292,6 +357,7 @@ export function createConversationStream(
     connect,
     close: () => {
       closed = true;
+      stopWaitingToDraw();
       closeTail?.();
       closeTail = null;
     },

@@ -99,6 +99,7 @@ from planner.conversation.voice_transcription import (
     transcribe_conversation_audio,
 )
 from planner.core.db import connect
+from planner.core.response_compression import answers_with_an_event_stream
 from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
 
 # The two things a tail carries, told apart by name so a browser never has to guess which
@@ -436,6 +437,7 @@ async def read_conversation_event_detail(
 
 
 @router.get("/conversations/{conversation_id}/tail")
+@answers_with_an_event_stream
 async def tail_conversation(
     conversation_id: str, runtime: Runtime, after: int = 0
 ) -> StreamingResponse:

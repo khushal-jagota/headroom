@@ -341,7 +341,6 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         recap=row["recap"],
         ceiling=str(row["ceiling"]),
         at_cap=AtCap(row["at_cap"]),
-        wakes_supervisor=bool(row["wakes_supervisor"]),
         ticket_status=TicketStatus(row["ticket_status"]),
         ticket_status_changed_at=int(row["ticket_status_changed_at"]),
         ticket_status_revision=int(row["ticket_status_revision"]),
@@ -456,6 +455,7 @@ def _require_current_supervisor_parent(
     conn: sqlite3.Connection,
     ticket: Ticket,
     sprint_item_id: str | None,
+    action: str = "Ticket review",
 ) -> None:
     """Recheck exact current parent while the resolving write holds its transaction."""
     if sprint_item_id is None:
@@ -468,7 +468,7 @@ def _require_current_supervisor_parent(
     if row is None:
         raise PlannerError(
             ErrorCode.agent_forbidden,
-            "Ticket review is not available to this Sprint Item supervisor",
+            f"{action} is not available to this Sprint Item supervisor",
             {
                 "actor": admission.SPRINT_ITEM_SUPERVISOR_ACTOR,
                 "sprint_item_id": sprint_item_id,
@@ -996,7 +996,6 @@ def create_ticket(
     day_id: str | None = None,
     stated_ceiling: str | None = None,
     stated_at_cap: AtCap | None = None,
-    wakes_supervisor: bool = False,
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
@@ -1061,11 +1060,11 @@ def create_ticket(
             "id, title, worker_type, employee_backend, employee_launch_model, "
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_id, sprint_item_id, "
-            "recap, ceiling, at_cap, wakes_supervisor, "
+            "recap, ceiling, at_cap, "
             "ticket_status, stage_ownership_overrides, default_stage_ownership_mode, "
             "conversation_id, alias, fields, created_at, updated_at, "
             "ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, NULL, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, "
             "?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1082,7 +1081,6 @@ def create_ticket(
                 sprint_item_id,
                 ceiling,
                 at_cap.value,
-                1 if wakes_supervisor else 0,
                 initial_ticket_status.value,
                 "{}",
                 (
@@ -1965,7 +1963,8 @@ def delete_ticket(
     *,
     actor: str,
     now: int,
-    force: bool = False,
+    even_while_running: bool = False,
+    supervisor_sprint_item_id: str | None = None,
 ) -> TicketDeletion:
     """Permanently remove a mistaken ticket and its product footprint in one transaction.
 
@@ -1973,14 +1972,23 @@ def delete_ticket(
     Ticket's conversation is live is a question for the conversation system, so the route
     asks it before calling this writer; this writer stays a pure database transaction.
 
-    A status can be stranded at `agent` with no worker running, and then that guard keeps
-    a dead Ticket alive. `force` skips it. It skips nothing else: the actor check above
-    still runs, and the conversation guard remains the route's to skip.
+    `even_while_running` deletes a Ticket the status still calls claimed. The user asks
+    for it with `--force`, for a status stranded at `agent` with no worker behind it, and
+    a Sprint Item supervisor deleting its own child Ticket always has it. It skips that
+    one guard: the actor check above still runs, and silencing a live worker is the
+    route's, since only the conversation system knows one is there.
+
+    A Sprint Item supervisor deletes only a current child of its own Item. The route
+    admits it and names that Item here, and the parent is rechecked inside the
+    transaction, because a Ticket can move between the two.
     """
-    admission.require_direct_actor(actor, "delete_ticket")
+    admission.require_direct_or_supervisor_actor(actor, "delete_ticket")
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
-        if not force and ticket.ticket_status is TicketStatus.agent:
+        _require_current_supervisor_parent(
+            conn, ticket, supervisor_sprint_item_id, "Ticket deletion"
+        )
+        if not even_while_running and ticket.ticket_status is TicketStatus.agent:
             raise PlannerError(
                 ErrorCode.already_running,
                 "ticket activity is still running",
@@ -2234,12 +2242,6 @@ def edit_ticket(
         title = edit["title"] if "title" in edit else ticket.title
         priority = edit["priority"] if "priority" in edit else ticket.priority
         deadline = edit["deadline"] if "deadline" in edit else ticket.deadline
-        wakes_supervisor = (
-            edit["wakes_supervisor"]
-            if "wakes_supervisor" in edit
-            else ticket.wakes_supervisor
-        )
-
         project_id = edit["project_id"] if "project_id" in edit else ticket.project_id
         sprint_id = edit["sprint_id"] if "sprint_id" in edit else ticket.sprint_id
         sprint_item_id = (
@@ -2262,12 +2264,6 @@ def edit_ticket(
             ("title", "title", ticket.title, title),
             ("priority", "priority", ticket.priority.value, priority.value),
             ("deadline", "deadline", ticket.deadline, deadline),
-            (
-                "wakes_supervisor",
-                "wakes_supervisor",
-                int(ticket.wakes_supervisor),
-                int(wakes_supervisor),
-            ),
             ("project_id", "project_id", ticket.project_id, project_id),
             ("sprint_id", "sprint_id", ticket.sprint_id, sprint_id),
             ("sprint_item_id", "sprint_item_id", ticket.sprint_item_id, sprint_item_id),

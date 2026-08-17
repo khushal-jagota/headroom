@@ -207,15 +207,16 @@ def test_delete_ticket_rejects_agent_and_each_active_worker_invariant(
     assert controlled_exc.value.code is ErrorCode.already_running
     assert tickets_data.read_ticket(tmp_db, controlled.id).id == controlled.id
 
-    # Force skips the status guard only. An agent is still refused.
+    # Deleting a Ticket that still looks running skips the status guard only. An agent is
+    # still refused.
     with pytest.raises(PlannerError) as forced_agent_exc:
         tickets_data.delete_ticket(
-            tmp_db, controlled.id, actor="agent", now=now, force=True
+            tmp_db, controlled.id, actor="agent", now=now, even_while_running=True
         )
     assert forced_agent_exc.value.code is ErrorCode.agent_forbidden
 
     deleted = tickets_data.delete_ticket(
-        tmp_db, controlled.id, actor="human", now=now, force=True
+        tmp_db, controlled.id, actor="human", now=now, even_while_running=True
     )
     assert deleted.ticket_id == controlled.id
     assert tmp_db.execute(
@@ -343,6 +344,11 @@ def test_delete_route_force_deletes_a_stuck_ticket_that_still_looks_running(
         forced = client.delete(f"/api/tickets/{target.id}?force=true")
         assert forced.status_code == 200, forced.text
         assert client.get(f"/api/tickets/{target.id}").status_code == 404
+        # The Ticket is gone, so its turn is stopped rather than left talking into a
+        # conversation nothing owns.
+        assert (
+            asyncio.run(app.state.conversation_system.is_running("conv-stuck")) is False
+        )
 
 
 def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path: Path) -> None:

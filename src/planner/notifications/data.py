@@ -346,37 +346,6 @@ def project_facts(conn: sqlite3.Connection) -> int:
                 (conversation_id, int(conversation["latest_sequence"])),
             )
 
-        # A ping is the supervisor's own deliberate act, so the Item is its source, and
-        # the stored ping position is its sequence. A second ping at the same position
-        # is the same fact.
-        pings = conn.execute(
-            "SELECT i.id, i.title, i.supervisor_ping_sequence, i.supervisor_ping_at "
-            "FROM sprint_items i LEFT JOIN notification_projection_cursors c "
-            "ON c.source_kind = 'sprint_item_ping' AND c.source_id = i.id "
-            "WHERE i.supervisor_ping_sequence IS NOT NULL "
-            "AND (c.source_id IS NULL OR i.supervisor_ping_sequence > c.sequence)"
-        ).fetchall()
-        for ping in pings:
-            item_id = str(ping["id"])
-            sequence = int(ping["supervisor_ping_sequence"])
-            _insert_fact(
-                conn,
-                fact_id=f"sprint_item_ping:{item_id}:{sequence}",
-                notification_type="sprint_item_ping",
-                subject_kind="sprint_item",
-                subject_id=item_id,
-                subject_label=str(ping["title"]),
-                source_kind="sprint_item_ping",
-                source_id=item_id,
-                source_sequence=sequence,
-                occurred_at=int(ping["supervisor_ping_at"]),
-            )
-            conn.execute(
-                "INSERT INTO notification_projection_cursors(source_kind, source_id, sequence) "
-                "VALUES ('sprint_item_ping', ?, ?) "
-                "ON CONFLICT(source_kind, source_id) DO UPDATE SET sequence = excluded.sequence",
-                (item_id, sequence),
-            )
     return conn.total_changes - inserted_before
 
 

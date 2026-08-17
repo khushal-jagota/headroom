@@ -52,4 +52,13 @@ describe("conversation signal presentation", () => {
       )
     ).toEqual({ state: "reply-seen", ariaLabel: "Agent reply seen" });
   });
+
+  it("says nothing waiting when a row has no conversation to hold a position", () => {
+    expect(
+      conversationSignalPresentation(
+        { ...resting, conversation_id: null, unread_position: 20 },
+        {}
+      )
+    ).toEqual({ state: "upcoming", ariaLabel: "Nothing waiting" });
+  });
 });

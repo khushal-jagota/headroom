@@ -129,14 +129,50 @@ def require_sprint_item_supervisor_ticket_write(
         or ctx.sprint_item_id != sprint_item_id
     ):
         _reject_sprint_item_supervisor_write(ctx, sprint_item_id, ticket_id)
+    if not _is_current_child_ticket(conn, sprint_item_id, ticket_id):
+        _reject_sprint_item_supervisor_write(ctx, sprint_item_id, ticket_id)
+
+
+def _is_current_child_ticket(
+    conn: sqlite3.Connection, sprint_item_id: str, ticket_id: str
+) -> bool:
+    """Whether this Ticket is right now a child of that normal Sprint Item."""
     row = conn.execute(
         "SELECT 1 FROM sprint_items AS item "
         "JOIN tickets AS ticket ON ticket.sprint_item_id = item.id "
         "WHERE item.id = ? AND item.kind = 'normal' AND ticket.id = ?",
         (sprint_item_id, ticket_id),
     ).fetchone()
-    if row is None:
-        _reject_sprint_item_supervisor_write(ctx, sprint_item_id, ticket_id)
+    return row is not None
+
+
+def require_ticket_delete(
+    conn: sqlite3.Connection, ctx: RequestContext, ticket_id: str
+) -> str | None:
+    """Admit one permanent Ticket deletion, and name the supervisor Item behind it.
+
+    A direct caller deletes any Ticket and has no Item, so this returns ``None`` for one.
+    A Sprint Item supervisor deletes only a current child of the Item its own request
+    identity names, and that Item id comes back for the writer to recheck under its
+    transaction. Every other actor is refused.
+    """
+    if not ctx.is_attributed or ctx.is_chief:
+        return None
+    if (
+        ctx.actor != SPRINT_ITEM_SUPERVISOR_ACTOR
+        or ctx.sprint_item_id is None
+        or not _is_current_child_ticket(conn, ctx.sprint_item_id, ticket_id)
+    ):
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            "Ticket deletion is not available to this actor",
+            {
+                "actor": ctx.actor,
+                "sprint_item_id": ctx.sprint_item_id,
+                "ticket_id": ticket_id,
+            },
+        )
+    return ctx.sprint_item_id
 
 
 def _reject_sprint_item_supervisor_write(

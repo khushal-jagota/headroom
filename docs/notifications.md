@@ -31,15 +31,13 @@ Ticket status. Each saved choice uses its subject and notification type as one k
 Chief choice never changes the matching Ticket choice.
 
 Sprint Item supervisors share one subject between all of them, because a sprint holds
-twenty or thirty Items and they are replaced each sprint. It offers two choices: a Sprint
-Item wants you, which is a supervisor's ping, and worker failed. It offers no completed
-turn, because supervisors complete a few thousand turns a day and almost none of them
-want anybody. Failures arrive switched off.
+twenty or thirty Items and they are replaced each sprint. It offers one choice: worker
+failed, and it arrives switched off. Nothing an Item conversation does reaches the user
+by itself, and the user is there for the turns it takes, because a message of theirs is
+the only thing that starts one.
 
 The notification contains no transcript, prompt, permission detail, or worker output.
-Opening a Ticket notification goes to `/#/workspace/<ticket-id>`, and opening a Sprint
-Item one goes to `/#/workspace/item/<item-id>`, where the supervisor already wrote what
-it wants. A notification stored
+Opening a Ticket notification goes to `/#/workspace/<ticket-id>`. A notification stored
 before Tickets moved to the Workspace still carries the old `/#/ticket/<ticket-id>`
 address, which the app redirects. A Chief notification
 uses the retained `/#/agents/chief-of-staff` address, which the app redirects to
@@ -50,8 +48,8 @@ coalesce at the operating system.
 
 ## Durable delivery
 
-Panels projects new Ticket status revisions, events from Ticket, Chief, and supervisor
-conversations, and supervisor pings into facts. Permission asks, requests for user input,
+Panels projects new Ticket status revisions and events from Ticket, Chief, and supervisor
+conversations into facts. Permission asks, requests for user input,
 and completed or failed turns all use the same projection and policy path. A cursor per
 source makes that projection restart-safe and prevents old history from being treated as new after
 an upgrade. Every fact gets one durable policy decision. An allowed fact creates one

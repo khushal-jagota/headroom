@@ -22,6 +22,7 @@ Tickets have a Worker type that sets their stages and worker. Worker types inclu
 its structural cause, and defining the implementation handoff), `new_worker` (creating
 a new kind of worker),
 `exploration` (a worker for exploring something undefined and making it clearer),
+`research` (answering an already-framed question with sourced evidence and synthesis),
 `initiative_planning` (working out the shared top-level how for a confirmed direction
 before creating its downstream Tickets), `product_design` (designing holistic product
 flows and implementation-ready interactive artifacts), `planning-day` (planning the
