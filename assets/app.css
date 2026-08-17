@@ -7012,6 +7012,27 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   background: var(--surface-overlay);
 }
 
+/* The way back through the links the reader followed. It names no destination: the
+ * world holds no title for a Ticket that is not on today. It keeps clear of the close
+ * button, which sits over the panel's top-right corner. */
+.atlas-panel-back {
+  flex: none;
+  padding: var(--space-2) var(--space-6) 0 var(--space-3);
+}
+
+.atlas-panel-back button {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--text-faint);
+  font-size: var(--type-sm);
+  cursor: pointer;
+}
+
+.atlas-panel-back button:hover {
+  color: var(--text-strong);
+}
+
 /* On a phone the panel is a bottom sheet, and the world keeps the top of the screen. */
 @media (max-width: 720px) {
   .atlas-panel {

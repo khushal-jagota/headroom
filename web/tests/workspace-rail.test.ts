@@ -232,14 +232,14 @@ describe("Workspace rail", () => {
       [
         item("si_one", {
           conversation_id: "conv-supervisor",
-          latest_turn_ended_sequence: 12
+          latest_turn_ended_sequence: 30
         })
       ]
     );
 
-    expect(rail.items[0].signals.unread_position).toBe(12);
+    expect(rail.items[0].signals.unread_position).toBe(30);
     expect(
-      conversationSignalPresentation(rail.items[0].signals, { "conv-supervisor": 11 }).state
+      conversationSignalPresentation(rail.items[0].signals, { "conv-supervisor": 29 }).state
     ).toBe("current-awaiting-approval");
     // Opening the Item carries the reader past the reply and puts the row out.
     expect(
@@ -247,7 +247,18 @@ describe("Workspace rail", () => {
     ).toBe("reply-seen");
   });
 
-  it("leaves an Item whose conversation has never replied unlit", () => {
+  it("marks an Item its conversation has replied on", () => {
+    const rail = buildWorkspaceRail(
+      [card("its-ticket", { sprint_item_id: "si_one" })],
+      [item("si_one", { conversation_id: "conv-supervisor", latest_turn_ended_sequence: 9 })]
+    );
+
+    expect(
+      conversationSignalPresentation(rail.items[0].signals, {}).state
+    ).toBe("current-awaiting-approval");
+  });
+
+  it("leaves an Item its conversation has never spoken on unlit", () => {
     const rail = buildWorkspaceRail(
       [card("its-ticket", { sprint_item_id: "si_one" })],
       [item("si_one", { conversation_id: "conv-supervisor" })]

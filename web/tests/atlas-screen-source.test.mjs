@@ -54,6 +54,19 @@ const panelRule = css.slice(css.indexOf(".atlas-panel {"), css.indexOf(".atlas-p
 assert.match(panelRule, /var\(--ticket-column-measure\)/);
 assert.doesNotMatch(panelRule, /width: 640px/);
 
+// A link inside the panel moves Atlas. The route owns where Atlas is, so the panel
+// reports the place and does not travel by itself.
+assert.match(route, /onNavigate=\{navigateTo\}/);
+assert.match(route, /scene\?\.select\(next, \{ travel: true \}\)/);
+assert.doesNotMatch(panel, /scene/);
+
+// The back line is the chain of links the reader followed, and it is dropped by
+// everything that returns them to the world.
+const closePanel = route.slice(route.indexOf("function closePanel"), route.indexOf("function goHome"));
+assert.match(closePanel, /backStack = \[\]/);
+assert.match(route, /function goHome\(\): void \{\s*closePanel\(\);/);
+assert.match(route, /onBack=\{backStack\.length > 0 \? goBack : null\}/);
+
 // On a phone it is a bottom sheet, and the world keeps the top of the screen.
 const narrow = css.slice(css.indexOf("@media (max-width: 720px) {", css.indexOf(".atlas-panel {")));
 assert.match(narrow, /\.atlas-panel {/);
