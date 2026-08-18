@@ -20,7 +20,7 @@ The planning system has these pieces:
 Tickets have a Worker type that sets their stages and worker. Worker types include
 `coding` (product or repo work), `debugging` (understanding a reported bug, diagnosing
 its structural cause, and defining the implementation handoff), `new_worker` (creating
-a new kind of worker),
+a new kind of worker), `amend_worker` (changing an existing Worker type in place),
 `exploration` (a worker for exploring something undefined and making it clearer),
 `research` (answering an already-framed question with sourced evidence and synthesis),
 `initiative_planning` (working out the shared top-level how for a confirmed direction

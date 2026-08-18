@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from planner.worker_types.amend_worker import AMEND_WORKER_TYPE_DEFINITION
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
     PRODUCTION_WORKER_TYPE_REGISTRY,
@@ -31,6 +32,7 @@ from planner.worker_types.registry import WorkerTypeRegistry
 from planner.worker_types.research import RESEARCH_WORKER_TYPE_DEFINITION
 
 __all__ = [
+    "AMEND_WORKER_TYPE_DEFINITION",
     "CODING_WORKER_TYPE_DEFINITION",
     "DEBUGGING_WORKER_TYPE_DEFINITION",
     "EXPLORATION_WORKER_TYPE_DEFINITION",

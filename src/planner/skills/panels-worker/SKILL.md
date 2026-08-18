@@ -19,6 +19,7 @@ Worker skills:
 - `panels-worker-general` — general tickets (a catch-all worker for arbitrary work with a minimal lifecycle).
 - `panels-worker-debugging` — debugging tickets (understanding a reported bug, diagnosing its structural cause, and defining the implementation handoff).
 - `panels-worker-new-worker` — new_worker tickets (designing another worker).
+- `panels-worker-amend-worker` — amend_worker tickets (changing an existing worker).
 - `panels-worker-exploration` — exploration tickets.
 - `panels-worker-research` — research tickets (answering a framed question with evidence).
 - `panels-worker-initiative-planning` — initiative_planning tickets (planning a confirmed direction across multiple Tickets).

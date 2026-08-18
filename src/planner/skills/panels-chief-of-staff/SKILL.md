@@ -181,6 +181,10 @@ path, researches, and hands back a sourced synthesis without a paired conversati
 does not decide or implement. When the question itself is still undefined, use
 `exploration` instead.
 
+Use the `amend_worker` Worker type when an existing Worker type needs changing: a Stage
+removed or added, an ownership mode, a runtime default, or its skill guidance. One
+Worker per Ticket. Designing a worker that does not exist yet is `new_worker`.
+
 Use the `general` Worker type as the catch-all when no specialist type fits: an arbitrary
 unit of work with a deliberately minimal lifecycle.
 
