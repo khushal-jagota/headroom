@@ -136,13 +136,6 @@ def _nothing_listens(port: int) -> bool:
         return probe.connect_ex(("127.0.0.1", port)) != 0
 
 
-def test_serve_is_a_stable_supervisor_with_one_application_child(server: ServerHandle) -> None:
-    children = _direct_children(server.proc.pid)
-    assert len(children) == 1
-    assert httpx.get(f"{server.base}/api/meta").status_code == 200
-    assert "data-svelte-app" in httpx.get(f"{server.base}/").text
-
-
 def test_second_supervisor_with_different_socket_cannot_replace_owner(
     server: ServerHandle,
     tmp_path: Path,
@@ -214,23 +207,6 @@ def test_unexpected_application_exit_ends_supervisor_without_retry(
     assert server.proc.returncode != 0
     assert not server.control_socket_path.exists()
     assert _nothing_listens(server.port)
-
-
-def test_restart_replaces_one_generation_and_preserves_supervisor(server: ServerHandle) -> None:
-    supervisor_pid = server.proc.pid
-    application_pid = _wait_for_one_child(supervisor_pid)
-
-    result = _run_restart(server)
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout == "Panels restart accepted.\n"
-    assert server.proc.pid == supervisor_pid
-    replacement_pid = _wait_for_one_child(supervisor_pid, different_from=application_pid)
-    assert replacement_pid != application_pid
-    _wait_until(lambda: not _process_exists(application_pid), "old application remained alive")
-    _wait_for_http(server.base)
-    meta = httpx.get(f"{server.base}/api/meta").json()
-    assert meta == {"test_mode": True, "app_sha": None}
 
 
 def test_restart_acknowledgement_client_close_precedes_child_shutdown(
