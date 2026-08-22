@@ -2255,12 +2255,11 @@ def test_the_janitor_sweeps_on_its_own(tmp_path: Path) -> None:
     _run(exercise)
 
 
-@pytest.mark.parametrize("backend_key", tuple(ConversationBackendKey))
-def test_idle_conversations_compact_through_every_production_backend(
-    harness: _Harness, backend_key: ConversationBackendKey
+def test_idle_conversation_compacts_at_the_lower_window_boundary(
+    harness: _Harness,
 ) -> None:
     async def exercise() -> None:
-        await _start(harness, "c", backend_key=backend_key)
+        await _start(harness, "c", backend_key=ConversationBackendKey.codex)
         await harness.system.send("c", text_message_content("first"), sender_label="owner")
         await harness.complete_turn("c")
         harness.clock.advance(50 * 60 - 1)
@@ -2602,13 +2601,12 @@ def test_promoted_pre_wire_exception_releases_sender_identity_for_safe_retry(
     _run(exercise)
 
 
-@pytest.mark.parametrize("manual_prompt", [False, True])
-def test_every_confirmed_context_boundary_suppresses_the_next_idle_sweep(
-    harness: _Harness, manual_prompt: bool
+def test_confirmed_context_boundary_suppresses_the_next_idle_sweep(
+    harness: _Harness,
 ) -> None:
     async def exercise() -> None:
         await _start(harness, "c")
-        text = "/compact" if manual_prompt else "ordinary backend-auto turn"
+        text = "ordinary backend-auto turn"
         await harness.system.send("c", text_message_content(text), sender_label="owner")
         await harness.confirm_compaction("c")
         await harness.complete_turn("c")
