@@ -149,6 +149,7 @@ class _FakeBackend:
     needs_failed_child_recovery_once: bool = False
     ends_the_turn_while_writing: bool = False
     writes_raise_something_unnamed: bool = False
+    stop_raises_something_unnamed: bool = False
 
     cancels_raise_something_unnamed: bool = False
     reports_its_ending_during_a_cancel: bool = False
@@ -315,6 +316,8 @@ class _FakeBackendChild:
             self._backend.stop_has_begun.set()
         if self._backend.stops_wait_for_release is not None:
             await self._backend.stops_wait_for_release.wait()
+        if self._backend.stop_raises_something_unnamed:
+            raise RuntimeError("the child did not stop")
         self._backend.stops += 1
         self._backend.lifecycle_events.append("stop")
         self._backend.live_children -= 1
@@ -2436,6 +2439,37 @@ def test_uncertain_automatic_compaction_discards_its_child_before_message_releas
     _run(exercise)
 
 
+def test_uncertain_compaction_keeps_message_held_when_child_stop_fails(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60)
+        real_append = harness.store.append_delivered_prompt
+
+        async def fail_compaction_record(conversation_id: str, **kwargs):  # type: ignore[no-untyped-def]
+            if message_content_text(kwargs["prompt"].content) == "/compact":
+                raise sqlite3.OperationalError("record unavailable")
+            return await real_append(conversation_id, **kwargs)
+
+        harness.store.append_delivered_prompt = fail_compaction_record  # type: ignore[method-assign]
+        backend = harness.backend("c")
+        backend.stop_raises_something_unnamed = True
+        await harness.system.send(
+            "c", text_message_content("must stay held"), sender_label="owner"
+        )
+
+        assert backend.written_texts() == ("first", "/compact")
+        assert backend.live_children == 1
+        waiting = await harness.system.held_prompts("c")
+        assert [message_content_text(item.content) for item in waiting] == ["must stay held"]
+        backend.stop_raises_something_unnamed = False
+
+    _run(exercise)
+
+
 def test_dequeued_sender_identity_stays_admitted_until_the_prompt_row_exists(
     harness: _Harness,
 ) -> None:
@@ -2463,6 +2497,35 @@ def test_dequeued_sender_identity_stays_admitted_until_the_prompt_row_exists(
         await ending
         assert await duplicate == PromptDeliveryStarted()
         assert backend.written_texts().count("held once") == 1
+
+    _run(exercise)
+
+
+def test_promoted_pre_wire_exception_releases_sender_identity_for_safe_retry(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        content = text_message_content("promoted retry")
+        await harness.system.send(
+            "c", content, sender_label="owner", sender_message_id="promoted-id"
+        )
+        selected = (await harness.system.held_prompts("c"))[0]
+        backend = harness.backend("c")
+        backend.writes_raise_something_unnamed = True
+
+        with pytest.raises(RuntimeError, match="adapter fell over"):
+            await harness.system.promote_held_prompt(
+                "c", selected.held_prompt_id, HeldPromptPromotionMode.send_now
+            )
+
+        backend.writes_raise_something_unnamed = False
+        fate = await harness.system.send(
+            "c", content, sender_label="owner", sender_message_id="promoted-id"
+        )
+        assert fate == PromptDeliveryStarted()
+        assert backend.written_texts().count("promoted retry") == 1
 
     _run(exercise)
 

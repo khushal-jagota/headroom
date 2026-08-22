@@ -651,6 +651,12 @@ class SqliteProcessConversationSystem:
                     model_change=held.model_change,
                     reasoning_effort_change=held.reasoning_effort_change,
                 )
+            except BaseException:
+                self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
+                async with state.lock:
+                    self._settle_held_deliveries(state, (held,))
+                raise
+            try:
                 started = await self._finalize_delivery(
                     state,
                     reservation,
@@ -668,6 +674,8 @@ class SqliteProcessConversationSystem:
                 async with state.lock:
                     self._settle_held_deliveries(state, (held,))
             except BaseException:
+                # The delivery reached the backend before its durable outcome failed.
+                # Keep the sender identity admitted because a retry is not yet safe.
                 self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
                 raise
             if started:
@@ -1191,12 +1199,25 @@ class SqliteProcessConversationSystem:
                 "conversation %s could not start automatic compaction",
                 state.record.conversation_id,
             )
+            termination_confirmed = True
             async with state.lock:
                 child = state.child
                 if child is not None:
                     state.child = None
-                    await self._stop_child(state, child)
-            await self._drain_held_prompts(state)
+                    termination_confirmed = await self._stop_child(state, child)
+                    if not termination_confirmed:
+                        # Keep the uncertain process attached so no replacement can run
+                        # beside it. The held line stays intact until an operator or a
+                        # later successful stop establishes that release is safe.
+                        state.child = child
+            if termination_confirmed:
+                await self._drain_held_prompts(state)
+            else:
+                LOGGER.error(
+                    "conversation %s kept held traffic quarantined after automatic "
+                    "compaction child termination failed",
+                    state.record.conversation_id,
+                )
         else:
             # A refused delivery already drains inside the normal delivery path. This
             # second call is a no-op then, and closes any exceptional path that settled
@@ -1777,7 +1798,7 @@ class SqliteProcessConversationSystem:
             state.child = None
         await self._stop_child(state, child)
 
-    async def _stop_child(self, state: _ConversationState, child: BackendChild) -> None:
+    async def _stop_child(self, state: _ConversationState, child: BackendChild) -> bool:
         try:
             await child.stop()
         except Exception:
@@ -1787,9 +1808,10 @@ class SqliteProcessConversationSystem:
             )
             # The process may still be alive. Keep it counted so installation maintenance
             # remains conservatively refused rather than mutating underneath it.
-            return
+            return False
         if self._backend_lifecycle is not None:
             await self._backend_lifecycle.child_stopped(state.record.backend_key)
+        return True
 
     async def _cancel_child_turn(self, state: _ConversationState, child: BackendChild) -> None:
         """Tell the child to stop its turn, and deal honestly with a cancel that failed.
