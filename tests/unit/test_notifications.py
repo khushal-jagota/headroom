@@ -116,6 +116,8 @@ def test_backend_routes_pass_through_the_service_worker_push_handler() -> None:
         options = notification["options"]
         assert isinstance(options, dict)
         assert options["body"] == intent.body
+        assert options["icon"] == "/static/icon-192.png"
+        assert options["badge"] == "/static/icon-192.png"
         assert options["tag"] == intent.tag
         assert options["data"] == {"route": intent.route}
 
