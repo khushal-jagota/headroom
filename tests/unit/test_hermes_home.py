@@ -58,6 +58,15 @@ def test_provision_planner_home_skills_symlinks_packaged_skills_idempotently(
         assert (target / "SKILL.md").is_file()
 
 
+def test_default_hermes_skills_expose_general_from_managed_source(tmp_path: Path) -> None:
+    provision_planner_home_skills(tmp_path / "home", configured_database_parent=tmp_path)
+
+    target = tmp_path / "home" / "skills" / "panels-worker-general"
+    managed_source = tmp_path / "skills" / "panels-worker-general"
+    assert target.is_symlink()
+    assert target.resolve(strict=True) == managed_source.resolve(strict=True)
+
+
 def test_provision_planner_home_skills_removes_retired_exposure_and_preserves_custom(
     tmp_path: Path,
 ) -> None:

@@ -5,10 +5,6 @@ from pathlib import Path
 from planner.environments.hermes_home import PLANNER_SKILL_NAMES
 from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 
-# This pre-existing omission is a product follow-up. This test-only audit does not
-# change runtime provisioning, but it preserves the contract for every listed type.
-HERMES_PROVISIONING_GAP = "general"
-
 
 def test_production_worker_types_carry_their_distinct_workflow_and_runtime_contracts() -> None:
     expected = {
@@ -163,5 +159,4 @@ def test_production_worker_types_carry_their_distinct_workflow_and_runtime_contr
             / "SKILL.md"
         )
         assert skill_path.is_file(), worker_type
-        if worker_type != HERMES_PROVISIONING_GAP:
-            assert profile.specialist_skill in PLANNER_SKILL_NAMES, worker_type
+        assert profile.specialist_skill in PLANNER_SKILL_NAMES, worker_type
