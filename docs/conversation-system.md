@@ -128,11 +128,31 @@ quietest line on the page.
 
 **Where the thread was cut.** A backend that summarises what came before and
 drops it leaves a transcript whose earlier context has silently gone. All three
-do it, none of them was asked to by Panels, and now each says so: codex sends it
+do it, and each says so: codex sends it
 as an item, claude as a system message, and hermes inside its own metadata on a
 session update — the ACP protocol has no word for compaction at all, so hermes'
 own `_meta` is the only place it appears. The thread draws it as a seam, in the
 same stylesheet the pane that came before drew the same thing with.
+
+Panels protects an idle thread before its one-hour backend cache boundary. The
+five-minute maintenance sweep starts `/compact` from 50 minutes through less than
+60 minutes without ordinary agent activity. The run normally starts between 50 and
+55 minutes after the latest durable agent output or turn ending. At 60 minutes the
+cache window has passed, so Panels does not compact that conversation automatically.
+A user prompt does not start this clock. A restart reads the durable activity marker
+but ignores historical conversations older than the useful cache window.
+
+The maintenance turn uses each backend's existing command path. Codex calls
+`thread/compact/start`. Claude sends `/compact` through its query. Hermes sends
+`/compact` through ACP `session/prompt`. Panels accepts success only after Codex
+reports a completed `contextCompaction` item, Claude reports `compact_boundary`, or
+Hermes reports session provenance with reason `compression`.
+
+A successful boundary suppresses another automatic run until a later ordinary
+turn produces agent activity. The maintenance turn does not reset its own clock.
+If a message arrives after the deadline, the conversation lock reserves compaction
+first and holds the message behind it. The message proceeds once after confirmed
+success, refusal, failure, or a completed turn with no compaction confirmation.
 
 ## Sending
 
@@ -329,7 +349,7 @@ ACP has no agent-question request, so its existing permission flow is unchanged.
 
 ## Processes, honestly
 
-One child process per conversation, started only when a send needs it. The
+One child process per conversation, started when a send or maintenance run needs it. The
 agent's own session handle is stored on the conversation row, so a later send
 can bring the same memory back. After a server restart nothing is running and
 the system says so — there is no pretending, and no machinery that quietly
