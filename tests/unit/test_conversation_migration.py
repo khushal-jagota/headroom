@@ -85,6 +85,23 @@ def test_automatic_compaction_migration_restores_latest_agent_activity(tmp_path:
             (4, "turn_ended", 40),
         ),
     )
+    conn.execute(
+        "INSERT INTO conversations (conversation_id, backend_key, workspace_folder, access, "
+        "latest_sequence, created_at) VALUES ('later', 'claude', '/tmp', 'full', 7, 1)"
+    )
+    conn.executemany(
+        "INSERT INTO conversation_events "
+        "(conversation_id, sequence, kind, payload, created_at) VALUES ('later', ?, ?, '{}', ?)",
+        (
+            (1, "prompt", 10),
+            (2, "agent_message", 20),
+            (3, "context_compacted", 30),
+            (4, "turn_ended", 40),
+            (5, "prompt", 50),
+            (6, "agent_message", 60),
+            (7, "turn_ended", 70),
+        ),
+    )
 
     create_schema(conn)
 
@@ -92,7 +109,13 @@ def test_automatic_compaction_migration_restores_latest_agent_activity(tmp_path:
         "SELECT latest_agent_activity_at, latest_agent_activity_sequence, "
         "automatically_compacted_through_sequence FROM conversations WHERE conversation_id = 'c'"
     ).fetchone()
-    assert tuple(row) == (40, 4, 0)
+    assert tuple(row) == (40, 4, 4)
+    later = conn.execute(
+        "SELECT latest_agent_activity_at, latest_agent_activity_sequence, "
+        "automatically_compacted_through_sequence FROM conversations "
+        "WHERE conversation_id = 'later'"
+    ).fetchone()
+    assert tuple(later) == (70, 7, 0)
     conn.close()
 
 

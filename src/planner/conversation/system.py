@@ -182,6 +182,7 @@ class _ReservedTurn:
 class _RunningTurn:
     token: TurnToken
     automatic_compaction: bool = False
+    compaction_confirmed: bool = False
     pending_permission_ask_ids: set[str] = field(default_factory=set)
     pending_user_input_questions: dict[str, tuple[UserInputQuestion, ...]] = field(
         default_factory=dict
@@ -257,6 +258,9 @@ class _ConversationState:
     phase_settled: asyncio.Event = field(default_factory=asyncio.Event)
     held_prompts: deque[_HeldPrompt] = field(default_factory=deque)
     admitted_sender_messages: dict[str, _AdmittedSenderMessage] = field(default_factory=dict)
+    sender_messages_being_delivered: dict[str, _AdmittedSenderMessage] = field(
+        default_factory=dict
+    )
     backend_event_queue: asyncio.Queue[_BackendEventHandler] = field(default_factory=asyncio.Queue)
     backend_event_pump: asyncio.Task[None] | None = None
     reserved_turn: _ReservedTurn | None = None
@@ -371,7 +375,9 @@ class SqliteProcessConversationSystem:
             while True:
                 settled: asyncio.Event | None = None
                 async with state.lock:
-                    admitted = state.admitted_sender_messages.get(sender_message_id)
+                    admitted = state.sender_messages_being_delivered.get(sender_message_id)
+                    if admitted is None:
+                        admitted = state.admitted_sender_messages.get(sender_message_id)
                     if admitted is not None:
                         if (admitted.content, admitted.sender_label) != (content, sender_label):
                             raise ValueError("sender_message_id already names a different message")
@@ -598,6 +604,8 @@ class SqliteProcessConversationSystem:
 
             if mode is HeldPromptPromotionMode.send_now:
                 running = state.running_turn
+                if running is not None and running.automatic_compaction:
+                    return PromptDeliveryQueued(queue_position=position + 1)
                 if running is not None:
                     try:
                         await self._cancel_and_end_running_turn(state, running)
@@ -605,10 +613,12 @@ class SqliteProcessConversationSystem:
                         self._settle_phase(state)
                         raise
                 del state.held_prompts[position]
+                self._begin_held_deliveries(state, (held,))
                 self._publish_held_prompts_changed(state)
                 reservation = self._reserve_turn(state)
             else:
                 del state.held_prompts[position]
+                self._begin_held_deliveries(state, (held,))
                 self._publish_held_prompts_changed(state)
                 if not backend_supports_steer(state.record.backend_key):
                     immediate_refusal = PromptDeliveryRefusalReason.backend_cannot_steer
@@ -624,6 +634,7 @@ class SqliteProcessConversationSystem:
                         PromptDeliveryMode.steer,
                         immediate_refusal,
                     )
+                    self._settle_held_deliveries(state, (held,))
         finally:
             state.lock.release()
 
@@ -654,6 +665,8 @@ class SqliteProcessConversationSystem:
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.idle,
                 )
+                async with state.lock:
+                    self._settle_held_deliveries(state, (held,))
             except BaseException:
                 self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
                 raise
@@ -675,6 +688,7 @@ class SqliteProcessConversationSystem:
             refusal = PromptDeliveryRefusalReason.write_to_backend_failed
             async with state.lock:
                 await self._record_promoted_refusal(state, held, PromptDeliveryMode.steer, refusal)
+                self._settle_held_deliveries(state, (held,))
             await self._drain_held_prompts(state)
             return PromptDeliveryRefused(refusal_reason=refusal)
 
@@ -689,6 +703,7 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
                 ),
             )
+            self._settle_held_deliveries(state, (held,))
         return PromptDeliveryInjected()
 
     async def discard_held_prompt(self, conversation_id: str, held_prompt_id: str) -> bool:
@@ -987,6 +1002,36 @@ class SqliteProcessConversationSystem:
         self._publish_held_prompts_changed(state)
         return PromptDeliveryQueued(queue_position=len(state.held_prompts))
 
+    @staticmethod
+    def _begin_held_deliveries(
+        state: _ConversationState, held_prompts: tuple[_HeldPrompt, ...]
+    ) -> None:
+        """Keep sender identities visible after dequeue and before their durable outcome."""
+        for held in held_prompts:
+            sender_message_id = held.sender_message_id
+            if sender_message_id is None:
+                continue
+            existing = state.sender_messages_being_delivered.get(sender_message_id)
+            if existing is not None:
+                raise RuntimeError("a held sender message is already being delivered")
+            state.sender_messages_being_delivered[sender_message_id] = _AdmittedSenderMessage(
+                content=held.content,
+                sender_label=held.sender_label,
+            )
+
+    @staticmethod
+    def _settle_held_deliveries(
+        state: _ConversationState, held_prompts: tuple[_HeldPrompt, ...]
+    ) -> None:
+        """Release duplicate callers after each dequeued message has a durable outcome."""
+        for held in held_prompts:
+            sender_message_id = held.sender_message_id
+            if sender_message_id is None:
+                continue
+            admitted = state.sender_messages_being_delivered.pop(sender_message_id, None)
+            if admitted is not None:
+                admitted.settled.set()
+
     def _automatic_compaction_is_due(self, state: _ConversationState) -> bool:
         activity_at = state.record.latest_agent_activity_at
         return (
@@ -1137,6 +1182,7 @@ class SqliteProcessConversationSystem:
                 reasoning_effort_change=None,
                 sender_message_id=None,
                 sent_at_unix_milliseconds=None,
+                drain_after_delivery_exception=False,
             )
         except asyncio.CancelledError:
             raise
@@ -1145,6 +1191,11 @@ class SqliteProcessConversationSystem:
                 "conversation %s could not start automatic compaction",
                 state.record.conversation_id,
             )
+            async with state.lock:
+                child = state.child
+                if child is not None:
+                    state.child = None
+                    await self._stop_child(state, child)
             await self._drain_held_prompts(state)
         else:
             # A refused delivery already drains inside the normal delivery path. This
@@ -1164,6 +1215,7 @@ class SqliteProcessConversationSystem:
         reasoning_effort_change: str | None,
         sender_message_id: str | None,
         sent_at_unix_milliseconds: int | None,
+        drain_after_delivery_exception: bool = True,
     ) -> PromptDeliveryFate:
         try:
             delivery = await self._deliver_prompt(
@@ -1183,7 +1235,8 @@ class SqliteProcessConversationSystem:
             # free and whatever was waiting is owed its run. Without this the line was
             # left behind with the conversation idle and no drain coming back for it.
             self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
-            await self._drain_held_prompts(state)
+            if drain_after_delivery_exception:
+                await self._drain_held_prompts(state)
             raise
 
         try:
@@ -1460,6 +1513,7 @@ class SqliteProcessConversationSystem:
                 batch = leading_run_that_can_share_a_turn(state.held_prompts)
                 for _ in batch:
                     state.held_prompts.popleft()
+                self._begin_held_deliveries(state, batch)
                 held = batch[0]
                 rest = batch[1:]
                 combined = one_prompt_from(batch)
@@ -1500,6 +1554,7 @@ class SqliteProcessConversationSystem:
                                 sender_message_id=message.sender_message_id,
                             ),
                         )
+                    self._settle_held_deliveries(state, batch)
                 continue
 
             try:
@@ -1518,6 +1573,8 @@ class SqliteProcessConversationSystem:
                     phase_when_not_started=_ConversationPhase.draining,
                     also_delivered=rest,
                 )
+                async with state.lock:
+                    self._settle_held_deliveries(state, batch)
             except BaseException:
                 # The text is already on a live agent's wire and only the record fell
                 # over. The line stops here rather than sending a second message into a
@@ -1656,6 +1713,7 @@ class SqliteProcessConversationSystem:
             state,
             TurnEndedEventPayload(ending=ending, error_summary=error_summary),
             agent_activity=not running.automatic_compaction,
+            automatic_compaction_confirmed=running.compaction_confirmed,
         )
 
     # --- the child ----------------------------------------------------------------------
@@ -1880,8 +1938,9 @@ class SqliteProcessConversationSystem:
             await self._append_event(
                 state,
                 ContextCompactedEventPayload(),
-                automatic_compaction_confirmed=running.automatic_compaction,
+                automatic_compaction_confirmed=True,
             )
+            running.compaction_confirmed = True
         finally:
             state.lock.release()
 

@@ -42,6 +42,20 @@ def upgrade() -> None:
         f"AND kind IN ({agent_activity_kinds}) ORDER BY sequence DESC LIMIT 1)"
     )
     op.execute(
+        "UPDATE conversations SET automatically_compacted_through_sequence = "
+        "latest_agent_activity_sequence WHERE EXISTS (SELECT 1 FROM conversation_events boundary "
+        "WHERE boundary.conversation_id = conversations.conversation_id "
+        "AND boundary.kind = 'context_compacted') AND NOT EXISTS ("
+        "SELECT 1 FROM conversation_events prompt WHERE prompt.conversation_id = "
+        "conversations.conversation_id AND prompt.kind = 'prompt' AND prompt.sequence > ("
+        "SELECT MAX(boundary.sequence) FROM conversation_events boundary WHERE "
+        "boundary.conversation_id = conversations.conversation_id "
+        "AND boundary.kind = 'context_compacted') AND EXISTS (SELECT 1 FROM "
+        "conversation_events activity WHERE activity.conversation_id = "
+        "conversations.conversation_id AND activity.sequence > prompt.sequence "
+        f"AND activity.kind IN ({agent_activity_kinds})))"
+    )
+    op.execute(
         "CREATE INDEX idx_conversations_automatic_compaction_due "
         "ON conversations(latest_agent_activity_at, latest_agent_activity_sequence, "
         "automatically_compacted_through_sequence)"

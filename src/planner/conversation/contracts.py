@@ -324,7 +324,7 @@ type PromptDeliveryFate = (
 
 
 type HeldPromptPromotionFate = (
-    PromptDeliveryStarted | PromptDeliveryInjected | PromptDeliveryRefused
+    PromptDeliveryStarted | PromptDeliveryQueued | PromptDeliveryInjected | PromptDeliveryRefused
 )
 
 

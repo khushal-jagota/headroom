@@ -2406,6 +2406,106 @@ def test_late_agent_output_moves_the_same_second_activity_sequence(harness: _Har
     _run(exercise)
 
 
+def test_uncertain_automatic_compaction_discards_its_child_before_message_release(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60)
+        real_append = harness.store.append_delivered_prompt
+
+        async def fail_compaction_record(conversation_id: str, **kwargs):  # type: ignore[no-untyped-def]
+            if message_content_text(kwargs["prompt"].content) == "/compact":
+                raise sqlite3.OperationalError("record unavailable")
+            return await real_append(conversation_id, **kwargs)
+
+        harness.store.append_delivered_prompt = fail_compaction_record  # type: ignore[method-assign]
+        await harness.system.send(
+            "c", text_message_content("after uncertain wire"), sender_label="owner"
+        )
+
+        lifecycle = harness.backend("c").lifecycle_events
+        compact_write = lifecycle.index("write:/compact")
+        child_stop = lifecycle.index("stop", compact_write)
+        user_write = lifecycle.index("write:after uncertain wire", child_stop)
+        assert compact_write < child_stop < user_write
+        assert harness.backend("c").session_starts == 2
+
+    _run(exercise)
+
+
+def test_dequeued_sender_identity_stays_admitted_until_the_prompt_row_exists(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        content = text_message_content("held once")
+        await harness.system.send(
+            "c", content, sender_label="owner", sender_message_id="held-race"
+        )
+        backend = harness.backend("c")
+        backend.write_has_begun = asyncio.Event()
+        backend.writes_wait_for_release = asyncio.Event()
+
+        ending = asyncio.create_task(harness.complete_turn("c"))
+        await backend.write_has_begun.wait()
+        duplicate = asyncio.create_task(
+            harness.system.send(
+                "c", content, sender_label="owner", sender_message_id="held-race"
+            )
+        )
+        await asyncio.sleep(0)
+        assert not duplicate.done()
+        backend.writes_wait_for_release.set()
+        await ending
+        assert await duplicate == PromptDeliveryStarted()
+        assert backend.written_texts().count("held once") == 1
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("manual_prompt", [False, True])
+def test_every_confirmed_context_boundary_suppresses_the_next_idle_sweep(
+    harness: _Harness, manual_prompt: bool
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        text = "/compact" if manual_prompt else "ordinary backend-auto turn"
+        await harness.system.send("c", text_message_content(text), sender_label="owner")
+        await harness.confirm_compaction("c")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60 + 1)
+        await harness.system._sweep_idle_children()
+        assert harness.backend("c").written_texts() == (text,)
+
+    _run(exercise)
+
+
+def test_promoted_send_now_stays_held_behind_automatic_compaction(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60)
+        await harness.system._sweep_idle_children()
+        await harness.system.send("c", text_message_content("held"), sender_label="owner")
+        selected = (await harness.system.held_prompts("c"))[0]
+
+        fate = await harness.system.promote_held_prompt(
+            "c", selected.held_prompt_id, HeldPromptPromotionMode.send_now
+        )
+
+        assert fate == PromptDeliveryQueued(queue_position=1)
+        assert harness.backend("c").cancellations == 0
+        waiting = await harness.system.held_prompts("c")
+        assert [message_content_text(item.content) for item in waiting] == ["held"]
+
+    _run(exercise)
+
+
 def test_shutting_down_stops_every_child(harness: _Harness) -> None:
     async def exercise() -> None:
         await _start(harness, "first")
