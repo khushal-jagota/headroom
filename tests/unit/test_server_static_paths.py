@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import struct
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -14,6 +15,11 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+
+
+def _png_size(payload: bytes) -> tuple[int, int]:
+    assert payload.startswith(b"\x89PNG\r\n\x1a\n")
+    return struct.unpack(">II", payload[16:24])
 
 
 def test_worker_workspace_root_prefers_existing_projects_directory(
@@ -90,6 +96,11 @@ def test_static_assets_are_served_when_cwd_has_no_assets(
         root = client.get("/")
         css = client.get("/assets/app.css")
         favicon = client.get("/static/favicon.ico")
+        favicon_png = client.get("/static/favicon-32.png")
+        apple_touch_icon = client.get("/static/apple-touch-icon.png")
+        icon_192 = client.get("/static/icon-192.png")
+        icon_512 = client.get("/static/icon-512.png")
+        maskable_icon = client.get("/static/icon-maskable-512.png")
         manifest = client.get("/static/manifest.webmanifest")
         service_worker = client.get("/service-worker.js")
 
@@ -100,9 +111,56 @@ def test_static_assets_are_served_when_cwd_has_no_assets(
     assert css.status_code == 200
     assert ".ticket-page" in css.text
     assert favicon.status_code == 200
+    assert favicon_png.status_code == 200
+    assert apple_touch_icon.status_code == 200
+    assert icon_192.status_code == 200
+    assert icon_512.status_code == 200
+    assert maskable_icon.status_code == 200
+    assert _png_size(favicon_png.content) == (32, 32)
+    assert _png_size(apple_touch_icon.content) == (180, 180)
+    assert _png_size(icon_192.content) == (192, 192)
+    assert _png_size(icon_512.content) == (512, 512)
+    assert _png_size(maskable_icon.content) == (512, 512)
+    assert '<link rel="apple-touch-icon" href="/static/apple-touch-icon.png"' in root.text
+    assert 'href="/static/favicon-32.png"' in root.text
     assert manifest.status_code == 200
-    assert manifest.json()["display"] == "standalone"
-    assert {icon["sizes"] for icon in manifest.json()["icons"]} == {"192x192", "512x512"}
+    manifest_payload = manifest.json()
+    assert manifest_payload["display"] == "standalone"
+    assert manifest_payload["icons"] == [
+        {
+            "src": "/static/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any",
+        },
+        {
+            "src": "/static/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any",
+        },
+        {
+            "src": "/static/icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable",
+        },
+    ]
+    assert manifest_payload["shortcuts"] == [
+        {
+            "name": "Chief of Staff",
+            "short_name": "Chief",
+            "description": "Open the Chief of Staff conversation.",
+            "url": "/#/workspace/chief-of-staff",
+            "icons": [
+                {
+                    "src": "/static/icon-192.png",
+                    "sizes": "192x192",
+                    "type": "image/png",
+                }
+            ],
+        }
+    ]
     assert service_worker.status_code == 200
     assert service_worker.headers["content-type"].startswith("application/javascript")
     assert service_worker.headers["cache-control"] == "no-cache"
