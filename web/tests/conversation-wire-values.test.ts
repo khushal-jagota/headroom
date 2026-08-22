@@ -43,6 +43,13 @@ describe("Conversation wire values", () => {
         stored_file_id: "file-1",
         media_type: "image/png",
         file_name: "shot.png"
+      },
+      {
+        piece: "file" as const,
+        stored_file_id: "file-2",
+        media_type: "application/json",
+        file_name: "facts.json",
+        byte_count: 42
       }
     ];
     expect(messageContentOf({ content: pieces })).toBe(pieces);

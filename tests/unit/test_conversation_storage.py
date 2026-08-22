@@ -56,6 +56,7 @@ from planner.conversation.events import (
     conversation_event_payload_to_canonical_json,
 )
 from planner.conversation.message_content import (
+    MessageFile,
     MessageImage,
     MessageText,
     text_message_content,
@@ -704,6 +705,12 @@ A_MESSAGE_WITH_MORE_THAN_WORDS = PromptEventPayload(
         MessageText(text="look at this"),
         MessageImage(
             stored_file_id="f_abc", media_type="image/png", file_name="screenshot.png"
+        ),
+        MessageFile(
+            stored_file_id="f_data",
+            media_type="text/csv",
+            file_name="data.csv",
+            byte_count=18,
         ),
         MessageText(text="and tell me what it is"),
     ),

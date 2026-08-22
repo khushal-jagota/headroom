@@ -7,6 +7,7 @@ import {
 } from "../src/components/conversation/composer/draftTransaction";
 import type { RunValues } from "../src/lib/conversation/composer";
 import type { PendingConversationImage } from "../src/lib/conversation/pendingImages";
+import type { PendingConversationFile } from "../src/lib/conversation/pendingFiles";
 import type { PromptDeliveryMode } from "../src/lib/conversation/wire";
 
 function pendingImage(
@@ -26,6 +27,16 @@ function pendingImage(
   };
 }
 
+function pendingFile(id: number, fileName: string, data: string): PendingConversationFile {
+  return {
+    id,
+    fileName,
+    mediaType: "application/json",
+    byteCount: 2,
+    data
+  };
+}
+
 function draft(overrides: Partial<ComposerDraft> = {}): ComposerDraft {
   return {
     text: "  look here  ",
@@ -33,6 +44,7 @@ function draft(overrides: Partial<ComposerDraft> = {}): ComposerDraft {
       pendingImage(7, "first.png", "AQID", 3),
       pendingImage(8, "second.png", "BAU=", 2)
     ],
+    pendingFiles: [],
     pickedModel: "sonnet",
     pickedReasoningEffort: "low",
     compositionRevision: 14,
@@ -106,6 +118,33 @@ describe("composer draft transaction", () => {
     ]);
   });
 
+  it("sends and restores files with the rest of a refused draft", () => {
+    const attempt = beginComposerSend(
+      draft({ pendingFiles: [pendingFile(4, "facts.json", "e30=")] }),
+      carriedRunValues,
+      "run_when_free"
+    );
+
+    expect(attempt.content.at(-1)).toEqual({
+      piece: "file",
+      data: "e30=",
+      media_type: "application/json",
+      file_name: "facts.json"
+    });
+    const restoration = restoreRefusedComposerSend(
+      attempt.draftAfterSend,
+      attempt,
+      20,
+      30,
+      0
+    );
+    expect(restoration.restored).toBe(true);
+    expect(restoration.nextFileId).toBe(31);
+    expect(restoration.draft.pendingFiles).toEqual([
+      pendingFile(30, "facts.json", "e30=")
+    ]);
+  });
+
   it.each([
     ["steer", "sonnet", "low"],
     ["run_when_free", null, null],
@@ -118,6 +157,7 @@ describe("composer draft transaction", () => {
       expect(attempt.draftAfterSend).toEqual({
         text: "",
         pendingImages: [],
+        pendingFiles: [],
         pickedModel: expectedModel,
         pickedReasoningEffort: expectedEffort,
         compositionRevision: 14
@@ -135,11 +175,13 @@ describe("composer draft transaction", () => {
       attempt.draftAfterSend,
       attempt,
       20,
+      30,
       0
     );
 
     expect(restoration.restored).toBe(true);
     expect(restoration.nextImageId).toBe(22);
+    expect(restoration.nextFileId).toBe(30);
     expect(restoration.draft).toMatchObject({
       text: "look here",
       pickedModel: "sonnet",
@@ -187,13 +229,15 @@ describe("composer draft transaction", () => {
       currentDraft,
       attempt,
       40,
+      50,
       imageIntakesInFlight
     );
 
     expect(restoration).toEqual({
       restored: false,
       draft: currentDraft,
-      nextImageId: 40
+      nextImageId: 40,
+      nextFileId: 50
     });
     expect(restoration.draft).toBe(currentDraft);
   });

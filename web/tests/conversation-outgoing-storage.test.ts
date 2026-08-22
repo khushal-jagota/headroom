@@ -41,6 +41,7 @@ class MemoryStorage implements Storage {
 
 let storage: MemoryStorage;
 let outgoing: OutgoingModule;
+let fileEntries: Map<string, unknown>;
 
 function mint(
   content: OutgoingMessage["content"],
@@ -61,8 +62,18 @@ async function reloadOutgoingModule(): Promise<void> {
 
 beforeEach(async () => {
   storage = new MemoryStorage();
+  fileEntries = new Map();
   vi.stubGlobal("window", { sessionStorage: storage });
   await reloadOutgoingModule();
+  outgoing.setOutgoingMessageFileStoreForTest({
+    read: async (conversationId) => fileEntries.get(conversationId),
+    write: async (conversationId, messages) => {
+      fileEntries.set(conversationId, messages);
+    },
+    remove: async (conversationId) => {
+      fileEntries.delete(conversationId);
+    }
+  });
 });
 
 afterEach(() => {
@@ -70,7 +81,70 @@ afterEach(() => {
 });
 
 describe("outgoing Conversation message storage", () => {
-  it("recalls each Conversation's complete messages and image bytes", () => {
+  it("uses the intended Conversation id before a first message opens it", async () => {
+    const message = mint([{
+      piece: "file",
+      data: "e30=",
+      media_type: "application/json",
+      file_name: "facts.json"
+    }]);
+    const persistenceId = outgoing.outgoingPersistenceConversationId(
+      null,
+      "intended-conversation",
+      message.messageId
+    );
+
+    expect(persistenceId).toBe("intended-conversation");
+    expect(await outgoing.rememberOutgoingMessages(persistenceId, [message])).toBe(true);
+    expect(storage.getItem("panels.conversation.outgoing.intended-conversation"))
+      .toContain('"storage":"indexed_db"');
+  });
+
+  it("moves an owner pointer to the canonical id after a lost first-send response", async () => {
+    const message = mint([{
+      piece: "file",
+      data: "e30=",
+      media_type: "application/json",
+      file_name: "facts.json"
+    }]);
+    const provisionalId = "owner:ticket:t-lost-response";
+    await outgoing.rememberOutgoingMessages(provisionalId, [message]);
+
+    expect(await outgoing.moveRememberedOutgoingMessages(provisionalId, "canonical")).toBe(true);
+    expect(storage.getItem(`panels.conversation.outgoing.${provisionalId}`)).toBeNull();
+    expect((await outgoing.recallOutgoingMessages("canonical"))[0].content)
+      .toEqual(message.content);
+  });
+
+  it("keeps the owner pointer usable when canonical migration storage fails", async () => {
+    const message = mint([{
+      piece: "file",
+      data: "e30=",
+      media_type: "application/json",
+      file_name: "facts.json"
+    }]);
+    const ownerId = "owner:ticket:t-migration-failed";
+    expect(outgoing.reserveOutgoingMessageFiles(message)).toBe(true);
+    expect(await outgoing.rememberOutgoingMessages(ownerId, [message])).toBe(true);
+    const setItem = storage.setItem.bind(storage);
+    vi.spyOn(storage, "setItem").mockImplementation((key, value) => {
+      if (key === "panels.conversation.outgoing.canonical") {
+        throw new Error("sessionStorage write failed");
+      }
+      setItem(key, value);
+    });
+
+    expect(await outgoing.moveRememberedOutgoingMessages(ownerId, "canonical")).toBe(false);
+    expect(storage.getItem(`panels.conversation.outgoing.${ownerId}`)).not.toBeNull();
+    expect(storage.getItem("panels.conversation.outgoing.canonical")).toBeNull();
+    expect((await outgoing.recallOutgoingMessages(ownerId))[0].content).toEqual(message.content);
+
+    expect(await outgoing.rememberOutgoingMessages(ownerId, [])).toBe(true);
+    expect(storage.getItem(`panels.conversation.outgoing.${ownerId}`)).toBeNull();
+    expect(fileEntries.size).toBe(0);
+  });
+
+  it("recalls each Conversation's complete messages and image bytes", async () => {
     const held = {
       ...mint([
         { piece: "text", text: "held" },
@@ -79,23 +153,29 @@ describe("outgoing Conversation message storage", () => {
           data: "AQID",
           media_type: "image/png",
           file_name: "held.png"
+        },
+        {
+          piece: "file",
+          data: "e30=",
+          media_type: "application/json",
+          file_name: "facts.json"
         }
       ]),
       knownFate: "waiting_for_the_agent" as const
     };
     const inFlight = mint([{ piece: "text", text: "in flight" }], 1_700_000_000_456);
 
-    outgoing.rememberOutgoingMessages("conversation-1", [held, inFlight]);
+    await outgoing.rememberOutgoingMessages("conversation-1", [held, inFlight]);
 
-    expect(outgoing.recallOutgoingMessages("conversation-1")).toEqual([
+    expect(await outgoing.recallOutgoingMessages("conversation-1")).toEqual([
       held,
       { ...inFlight, knownFate: "sent_before_this_page" }
     ]);
-    expect(outgoing.recallOutgoingMessages("conversation-2")).toEqual([]);
+    expect(await outgoing.recallOutgoingMessages("conversation-2")).toEqual([]);
     expect(storage.entries.has("panels.conversation.outgoing.conversation-1")).toBe(true);
   });
 
-  it("rejects untrusted or malformed tab storage", () => {
+  it("rejects untrusted or malformed tab storage", async () => {
     storage.setItem(
       "panels.conversation.outgoing.invalid-entries",
       '[{"messageId":"x"},null,7,{"content":[{"piece":"text","text":"no id"}]}]'
@@ -110,13 +190,21 @@ describe("outgoing Conversation message storage", () => {
       "panels.conversation.outgoing.invalid-image",
       JSON.stringify([image])
     );
+    storage.setItem(
+      "panels.conversation.outgoing.invalid-file",
+      JSON.stringify([{
+        ...mint([{ piece: "file", data: "e30=", media_type: "application/json", file_name: "facts.json" }]),
+        content: [{ piece: "file", data: "e30=", media_type: "text/html", file_name: "facts.json" }]
+      }])
+    );
 
-    expect(outgoing.recallOutgoingMessages("invalid-entries")).toEqual([]);
-    expect(outgoing.recallOutgoingMessages("invalid-json")).toEqual([]);
-    expect(outgoing.recallOutgoingMessages("invalid-image")).toEqual([]);
+    expect(await outgoing.recallOutgoingMessages("invalid-entries")).toEqual([]);
+    expect(await outgoing.recallOutgoingMessages("invalid-json")).toEqual([]);
+    expect(await outgoing.recallOutgoingMessages("invalid-image")).toEqual([]);
+    expect(await outgoing.recallOutgoingMessages("invalid-file")).toEqual([]);
   });
 
-  it("stores and recalls a concrete three-MiB image inside the tab envelope", () => {
+  it("stores and recalls a concrete three-MiB image inside the tab envelope", async () => {
     const threeMiB = 3 * 1024 * 1024;
     const base64 = "A".repeat(4 * Math.ceil(threeMiB / 3));
     const message = mint([
@@ -128,12 +216,39 @@ describe("outgoing Conversation message storage", () => {
       }
     ]);
 
-    outgoing.rememberOutgoingMessages("boundary", [message]);
+    await outgoing.rememberOutgoingMessages("boundary", [message]);
 
     const stored = storage.getItem("panels.conversation.outgoing.boundary");
     expect(stored).not.toBeNull();
     expect(stored!.length).toBeLessThan(5_000_000);
-    expect(outgoing.recallOutgoingMessages("boundary")[0].content).toEqual(message.content);
+    expect((await outgoing.recallOutgoingMessages("boundary"))[0].content).toEqual(message.content);
+  });
+
+  it("stores a ten-MiB file in IndexedDB with compact session coordination", async () => {
+    const tenMiB = 10 * 1024 * 1024;
+    const message = mint([{
+      piece: "file",
+      data: `${"A".repeat(4 * Math.floor(tenMiB / 3))}AA==`,
+      media_type: "text/plain",
+      file_name: "boundary.txt"
+    }]);
+
+    await outgoing.rememberOutgoingMessages("file-boundary", [message]);
+
+    const coordinated = storage.getItem("panels.conversation.outgoing.file-boundary");
+    expect(coordinated).toContain('"storage":"indexed_db"');
+    expect(coordinated!.length).toBeLessThan(1_000);
+    expect([...fileEntries.values()]).toEqual([[message]]);
+
+    await reloadOutgoingModule();
+    outgoing.setOutgoingMessageFileStoreForTest({
+      read: async (conversationId) => fileEntries.get(conversationId),
+      write: async (conversationId, messages) => { fileEntries.set(conversationId, messages); },
+      remove: async (conversationId) => { fileEntries.delete(conversationId); }
+    });
+
+    expect((await outgoing.recallOutgoingMessages("file-boundary"))[0].content)
+      .toEqual(message.content);
   });
 
   it("rebuilds the shared image budget after reload and releases canonical copies", async () => {
@@ -146,21 +261,31 @@ describe("outgoing Conversation message storage", () => {
     );
 
     expect(outgoing.reserveOutgoingMessageImages(first)).toBe(true);
-    outgoing.rememberOutgoingMessages("first-conversation", [first]);
+    await outgoing.rememberOutgoingMessages("first-conversation", [first]);
 
     await reloadOutgoingModule();
+    outgoing.setOutgoingMessageFileStoreForTest({
+      read: async (conversationId) => fileEntries.get(conversationId),
+      write: async (conversationId, messages) => { fileEntries.set(conversationId, messages); },
+      remove: async (conversationId) => { fileEntries.delete(conversationId); }
+    });
 
     expect(outgoing.reserveOutgoingMessageImages(second)).toBe(false);
 
-    outgoing.rememberOutgoingMessages("first-conversation", []);
+    await outgoing.rememberOutgoingMessages("first-conversation", []);
     expect(outgoing.reserveOutgoingMessageImages(second)).toBe(true);
-    outgoing.rememberOutgoingMessages("second-conversation", [second]);
+    await outgoing.rememberOutgoingMessages("second-conversation", [second]);
 
     await reloadOutgoingModule();
+    outgoing.setOutgoingMessageFileStoreForTest({
+      read: async (conversationId) => fileEntries.get(conversationId),
+      write: async (conversationId, messages) => { fileEntries.set(conversationId, messages); },
+      remove: async (conversationId) => { fileEntries.delete(conversationId); }
+    });
 
-    expect(outgoing.recallOutgoingMessages("second-conversation")[0].content)
+    expect((await outgoing.recallOutgoingMessages("second-conversation"))[0].content)
       .toEqual(second.content);
-    outgoing.rememberOutgoingMessages("second-conversation", []);
+    await outgoing.rememberOutgoingMessages("second-conversation", []);
     outgoing.releaseOutgoingMessageImages(second.messageId);
 
     const threeMiB = 3 * 1024 * 1024;
@@ -172,16 +297,85 @@ describe("outgoing Conversation message storage", () => {
       }
     ], 1_700_000_000_789);
     expect(outgoing.reserveOutgoingMessageImages(finalMessage)).toBe(true);
-    expect(outgoing.recallOutgoingMessages("second-conversation")).toEqual([]);
+    expect(await outgoing.recallOutgoingMessages("second-conversation")).toEqual([]);
   });
 
-  it("removes a Conversation key when nothing remains", () => {
+  it("removes a Conversation key when nothing remains", async () => {
     const message = mint([{ piece: "text", text: "held" }]);
-    outgoing.rememberOutgoingMessages("conversation-1", [message]);
+    await outgoing.rememberOutgoingMessages("conversation-1", [message]);
 
-    outgoing.rememberOutgoingMessages("conversation-1", []);
+    await outgoing.rememberOutgoingMessages("conversation-1", []);
 
     expect(storage.getItem("panels.conversation.outgoing.conversation-1")).toBeNull();
-    expect(outgoing.recallOutgoingMessages("conversation-1")).toEqual([]);
+    expect(await outgoing.recallOutgoingMessages("conversation-1")).toEqual([]);
+  });
+
+  it("keeps a separate ten-MiB envelope for outstanding files", () => {
+    const sixMiB = 6 * 1024 * 1024;
+    const base64 = "A".repeat(4 * Math.ceil(sixMiB / 3));
+    const first = mint([{
+      piece: "file",
+      data: base64,
+      media_type: "text/plain",
+      file_name: "first.txt"
+    }]);
+    const second = mint([{
+      piece: "file",
+      data: base64,
+      media_type: "text/plain",
+      file_name: "second.txt"
+    }], 1_700_000_000_456);
+
+    expect(outgoing.reserveOutgoingMessageFiles(first)).toBe(true);
+    expect(outgoing.reserveOutgoingMessageFiles(second)).toBe(false);
+    outgoing.releaseOutgoingMessageFiles(first.messageId);
+    expect(outgoing.reserveOutgoingMessageFiles(second)).toBe(true);
+  });
+
+  it("reports an IndexedDB open or write failure before a file send proceeds", async () => {
+    outgoing.setOutgoingMessageFileStoreForTest({
+      read: async () => undefined,
+      write: async () => { throw new Error("IndexedDB did not open"); },
+      remove: async () => undefined
+    });
+    const message = mint([{
+      piece: "file",
+      data: "e30=",
+      media_type: "application/json",
+      file_name: "facts.json"
+    }]);
+
+    expect(await outgoing.rememberOutgoingMessages("write-failed", [message])).toBe(false);
+    expect(storage.getItem("panels.conversation.outgoing.write-failed")).toBeNull();
+    expect(await outgoing.recallOutgoingMessages("write-failed")).toEqual([]);
+  });
+
+  it("does not restore stale reservations when IndexedDB delete cleanup fails", async () => {
+    outgoing.setOutgoingMessageFileStoreForTest({
+      read: async (storageKey) => fileEntries.get(storageKey),
+      write: async (storageKey, messages) => { fileEntries.set(storageKey, messages); },
+      remove: async () => { throw new Error("delete failed"); }
+    });
+    const tenMiB = 10 * 1024 * 1024;
+    const data = `${"A".repeat(4 * Math.floor(tenMiB / 3))}AA==`;
+    const first = mint([{
+      piece: "file",
+      data,
+      media_type: "text/plain",
+      file_name: "first.txt"
+    }]);
+    const second = mint([{
+      piece: "file",
+      data,
+      media_type: "text/plain",
+      file_name: "second.txt"
+    }], 1_700_000_000_456);
+
+    expect(outgoing.reserveOutgoingMessageFiles(first)).toBe(true);
+    expect(await outgoing.rememberOutgoingMessages("delete-failed", [first])).toBe(true);
+    expect(await outgoing.rememberOutgoingMessages("delete-failed", [])).toBe(true);
+    expect(storage.getItem("panels.conversation.outgoing.delete-failed")).toBeNull();
+    expect(fileEntries.size).toBe(1);
+    expect(outgoing.reserveOutgoingMessageFiles(second)).toBe(true);
   });
 });

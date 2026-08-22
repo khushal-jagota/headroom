@@ -46,7 +46,7 @@ export type PromptDeliveryRefusalReason =
   | "no_running_turn_to_steer_into"
   | "backend_cannot_steer";
 
-/** What one message is made of: written words, and pictures.
+/** What one message is made of: written words, pictures, and files.
  *
  * Nearly every message is one piece of written words, and that is what a message with
  * only words is: a run of one. A picture names a file the record kept, which
@@ -54,7 +54,14 @@ export type PromptDeliveryRefusalReason =
  */
 export type MessagePiece =
   | { piece: "text"; text: string }
-  | { piece: "image"; stored_file_id: string; media_type: string; file_name?: string };
+  | { piece: "image"; stored_file_id: string; media_type: string; file_name?: string }
+  | {
+      piece: "file";
+      stored_file_id: string;
+      media_type: string;
+      file_name: string;
+      byte_count: number;
+    };
 
 export type MessageContent = MessagePiece[];
 
@@ -396,7 +403,8 @@ export type StartConversationBody = {
  */
 export type SentMessagePiece =
   | { piece: "text"; text: string }
-  | { piece: "image"; data: string; media_type: string; file_name?: string };
+  | { piece: "image"; data: string; media_type: string; file_name?: string }
+  | { piece: "file"; data: string; media_type: string; file_name: string };
 
 export type SendPromptBody = {
   content: SentMessagePiece[];

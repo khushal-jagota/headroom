@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { heldPromptRows } from "../src/lib/conversation/heldPrompts";
+import { heldPromptRowLabel, heldPromptRows } from "../src/lib/conversation/heldPrompts";
 import type { OutgoingMessage } from "../src/lib/conversation/outgoing";
 import type { HeldPrompt } from "../src/lib/conversation/wire";
 
@@ -69,5 +69,25 @@ describe("held prompt composer rows", () => {
   it("keeps uncertain local messages inert", () => {
     expect(heldPromptRows([], [local("unknown", 100, "answer_never_came_back")]))
       .toMatchObject([{ heldPromptId: null, state: "unknown" }]);
+  });
+
+  it("labels file-only and mixed attachment rows without inventing message text", () => {
+    const base = heldPromptRows([], [local("files", 100)])[0];
+    expect(heldPromptRowLabel({
+      ...base,
+      content: [{
+        piece: "file",
+        data: "e30=",
+        media_type: "application/json",
+        file_name: "facts.json"
+      }]
+    })).toBe("File message");
+    expect(heldPromptRowLabel({
+      ...base,
+      content: [
+        { piece: "image", data: "AQ==", media_type: "image/png" },
+        { piece: "file", data: "e30=", media_type: "application/json", file_name: "facts.json" }
+      ]
+    })).toBe("1 image · 1 file");
   });
 });

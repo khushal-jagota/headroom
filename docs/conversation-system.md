@@ -61,27 +61,24 @@ establishes that nothing outside the conversation shows it.
 ## What a message is
 
 A message is not a piece of text. It is a run of pieces, in the order they were
-put in, and there are two kinds of piece: written words, and a picture.
+put in, and there are three kinds of piece: written words, a picture, and an
+attached document or data file.
 
-There is deliberately no third kind. A voice note becomes words by speech-to-text
-before anything reaches a message, so nothing here ever sees a sound. And a file
-an agent wants you to look at is a markdown link in its own words, which already
-draws as a preview — a separate kind for it would be a second, worse way to draw
-the same thing.
+There is deliberately no sound. A voice note becomes words by speech-to-text
+before anything reaches a message, so nothing here ever sees one.
 
 Nearly every message is one piece of written words, and that stays as simple as
 it sounds. A message that is only words is stored exactly the way it was before a
 message could be anything else, so every conversation already in the notebook
 reads unchanged and an ordinary row never grows.
 
-The bytes of a picture do not go in the row. A notebook is read in
-full every time somebody opens a conversation, and a screenshot inside one of
-those rows would be megabytes re-read every time. So the bytes are kept in a file
-beside the notebook, under the conversation that carries them, and the row names
-the file. That one value serves everybody: the notebook holds it, the browser
-fetches the picture from it, and the agent is handed it — codex wants the file's
-path and is given exactly that, while claude and hermes want the bytes and they
-are read from the same file.
+Attachment bytes do not go in the row. A notebook is read in full every time somebody
+opens a conversation, so large bytes there would be read again every time. The bytes
+stay in a managed file under their conversation, and the row names that file.
+
+The same managed value serves the notebook, browser, and backend. Images retain their
+native routes. Hermes receives an ACP resource link for a document or data file. Codex
+and Claude receive explicit attachment context with the managed local path.
 
 A message's pictures total at most 3 MiB of raw bytes and each is a structurally
 valid PNG, JPEG, GIF, or WebP. That raw limit leaves room for base64 expansion in
@@ -96,12 +93,17 @@ authoritative: it validates the completed bytes and the aggregate before keeping
 any file or prompt, and records the media type those bytes prove, not the type the
 browser claimed.
 
+Documents and data files have a separate 10 MiB raw-byte limit per message. Panels
+accepts PDF, UTF-8 plain text, Markdown, CSV, TSV, JSON, and JSONL. The server derives
+the type from the safe file name and validates the content before it keeps any bytes.
+Archives, executables, unknown formats, and audio are refused.
+
 Those files last as long as the notebook does, which is forever. Nothing in
 Panels deletes a conversation. Reset stops the active conversation and clears its active
 pointer, but its Ticket history association remains. Ticket deletion removes the
 associations and leaves each conversation record behind. A file removed by either would
-turn a picture somebody sent into a picture nobody can see, while the row still
-says a picture was sent.
+turn an attachment somebody sent into a file nobody can retrieve, while the row still
+says that the attachment was sent.
 
 A finished tool call keeps the readable text that its backend reports. Claude can
 report a result as a list of text and non-text blocks. Panels joins its text blocks
@@ -134,11 +136,10 @@ same stylesheet the pane that came before drew the same thing with.
 
 ## Sending
 
-The composer accepts pictures from its image picker, the clipboard, or a drop. They
-wait beside the draft in one visible order, can be removed one at a time, and can be
-sent with words or as the whole message. The browser sends one native content run:
-the trimmed words when there are any, followed by every remaining picture in the
-order shown. There is no separate upload conversation or attachment record.
+The composer accepts pictures and supported files from its pickers, the clipboard, or
+a drop. Attachments wait beside the draft and can be removed one at a time. They can
+travel with words or form the whole message. There is no separate upload conversation
+or attachment record.
 
 Send has no delivery knob. Every new message runs when the agent is free, and a
 busy agent holds it in a FIFO line. Enter and the send arrow use that same rule,

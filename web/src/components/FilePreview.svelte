@@ -3,6 +3,7 @@
   import type { FilePreviewTarget } from "../lib/filePreview";
   import {
     MANAGED_HTML_PREVIEW_SANDBOX,
+    boundedConversationTextPreview,
     markdownExpansionFor,
     prepareManagedHtmlPreviewDocument,
     resolvePreview
@@ -29,13 +30,15 @@
   let resolved = $derived(resolvePreview(target));
   let expansion = $derived(markdownExpansionFor(resolved, depth, visited));
   let shouldFetchText = $derived(
-    (resolved.kind === "markdown" && expansion.expandable) || resolved.kind === "html"
+    (resolved.kind === "markdown" && expansion.expandable)
+      || resolved.kind === "html"
+      || resolved.kind === "text"
   );
   let showsMedia = $derived(
     (resolved.kind === "image" || resolved.kind === "video" || resolved.kind === "audio") &&
       !error
   );
-  let showsDocument = $derived(shouldFetchText && !error);
+  let showsDocument = $derived((shouldFetchText || resolved.kind === "pdf") && !error);
   let inline = $derived(!showsMedia && !showsDocument);
 
   function onMediaError() {
@@ -54,9 +57,11 @@
         return response.text();
       })
       .then((body) => {
-        text =
-          current.kind === "html"
-            ? prepareManagedHtmlPreviewDocument(body, current.href)
+        text = current.kind === "html"
+          ? prepareManagedHtmlPreviewDocument(body, current.href)
+          : (current.kind === "text" || current.kind === "markdown")
+              && current.target.kind === "conversation-file"
+            ? boundedConversationTextPreview(body)
             : body;
       })
       .catch((err) => {
@@ -124,10 +129,16 @@
     ></audio>
   {:else if error}
     <span class="quiet-line">{error}</span>
+  {:else if resolved.kind === "pdf"}
+    <iframe
+      class="file-preview-frame file-preview-frame--pdf"
+      src={resolved.href}
+      title={resolved.label}
+    ></iframe>
   {:else if resolved.kind === "html"}
     <article class="file-preview-document">
       <div class="file-preview-document-header">
-        {@render openLink(resolved.previewHref)}
+        {@render openLink(resolved.previewHref ?? resolved.href)}
       </div>
       <iframe
         bind:this={htmlFrame}
@@ -140,7 +151,7 @@
   {:else if resolved.kind === "markdown" && expansion.expandable}
     <article class="file-preview-document">
       <div class="file-preview-document-header">
-        {@render openLink(resolved.previewHref)}
+        {@render openLink(resolved.previewHref ?? resolved.href)}
       </div>
       <div class="file-preview-document-body">
         {#if text === null}
@@ -151,10 +162,32 @@
       </div>
     </article>
   {:else if resolved.kind === "markdown"}
-    {@render openLink(resolved.previewHref)}
+    {@render openLink(resolved.previewHref ?? resolved.href)}
+  {:else if resolved.kind === "text"}
+    <article class="file-preview-document">
+      <div class="file-preview-document-header">
+        {@render openLink(resolved.previewHref ?? resolved.href)}
+      </div>
+      <pre class="conversation-text-preview">{text ?? "Loading preview..."}</pre>
+    </article>
   {:else if resolved.kind === "download"}
     <a class="file-preview-link" href={resolved.href} download="">Download {resolved.label}</a>
   {:else}
     {@render openLink(resolved.href)}
   {/if}
 </div>
+
+<style>
+  .file-preview-frame--pdf { min-height: min(32rem, 60vh); }
+  .conversation-text-preview {
+    max-height: min(24rem, 50vh);
+    margin: 0;
+    padding: var(--space-3);
+    overflow: auto;
+    color: var(--text-default);
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+</style>

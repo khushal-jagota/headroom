@@ -79,6 +79,7 @@ from acp.schema import (
     Implementation,
     PermissionOption,
     RequestPermissionResponse,
+    ResourceContentBlock,
     SessionConfigOptionSelect,
     SessionInfoUpdate,
     TextContentBlock,
@@ -119,6 +120,7 @@ from planner.conversation.events import (
 )
 from planner.conversation.message_content import (
     MessageContent,
+    MessageFile,
     MessageImage,
     MessagePiece,
     MessageText,
@@ -720,7 +722,27 @@ class HermesAcpBackendChild:
                             mime_type=piece.media_type,
                         )
                     )
+                case MessageFile():
+                    blocks.append(
+                        ResourceContentBlock(
+                            type="resource_link",
+                            uri=self._kept_path(piece.stored_file_id).as_uri(),
+                            name=piece.file_name,
+                            title=piece.file_name,
+                            mime_type=piece.media_type,
+                            size=piece.byte_count,
+                        )
+                    )
         return blocks
+
+    def _kept_path(self, stored_file_id: str) -> Path:
+        """Return the managed path for an ACP resource link."""
+        try:
+            return self._message_files.path_of(
+                self._resolved_start.conversation_id, stored_file_id
+            )
+        except MessageFileMissing as unreadable:
+            raise PromptWriteFailed(f"{stored_file_id} could not be read") from unreadable
 
     async def _encoded_bytes(self, stored_file_id: str) -> str:
         """The bytes of a kept file, as ACP wants them.

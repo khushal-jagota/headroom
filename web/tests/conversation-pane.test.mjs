@@ -32,6 +32,7 @@ const expectedInventory = [
   "BackendMark.svelte",
   "ComposerCatalogMenu.svelte",
   "ConversationComposer.svelte",
+  "ConversationFileCard.svelte",
   "ConversationPane.svelte",
   "ConversationRestBar.svelte",
   "ConversationTranscript.svelte",
@@ -90,6 +91,18 @@ const ticketRouteSource = await readFile(
   new URL("../src/routes/TicketRoute.svelte", import.meta.url),
   "utf8"
 );
+const chiefConversationSource = await readFile(
+  new URL("../src/components/ChiefConversation.svelte", import.meta.url),
+  "utf8"
+);
+const sprintItemWorkspaceSource = await readFile(
+  new URL("../src/components/SprintItemWorkspace.svelte", import.meta.url),
+  "utf8"
+);
+const atlasSupervisorSource = await readFile(
+  new URL("../src/components/atlas/AtlasSupervisorConversation.svelte", import.meta.url),
+  "utf8"
+);
 const appSource = await readFile(new URL("../src/App.svelte", import.meta.url), "utf8");
 
 assert.match(ticketRouteSource, /label=\{conversationWorkerTypeLabel\(detail\)\}/);
@@ -97,6 +110,17 @@ assert.match(
   ticketRouteSource,
   /composerPlaceholder=\{`Message \$\{conversationEmployeeLabel\(detail\)\}\.\.\.`\}/
 );
+assert.match(chiefConversationSource, /persistenceKey="owner:chief"/);
+assert.match(ticketRouteSource, /persistenceKey=\{`owner:ticket:\$\{detail\.id\}`\}/);
+assert.match(
+  sprintItemWorkspaceSource,
+  /persistenceKey=\{`owner:sprint-item:\$\{itemId\}`\}/
+);
+assert.match(
+  atlasSupervisorSource,
+  /persistenceKey=\{`owner:sprint-item:\$\{itemId\}`\}/
+);
+assert.match(routeSource, /persistenceKey=\{`owner:dev:\$\{conversationId\}`\}/);
 
 // The pane is an adaptation of the conversation styles the app already has, not a second set.
 for (const className of [
@@ -120,12 +144,48 @@ assert.match(sources["ConversationTranscript.svelte"], /chat-u|chat-a/);
 // message is where that now lives, because a message is a run of pieces and its words are
 // one of them.
 assert.match(sources["MessagePieces.svelte"], /MarkdownBlock/);
+assert.match(sources["MessagePieces.svelte"], /ConversationFileCard/);
 assert.match(sources["ConversationTranscript.svelte"], /MessagePieces/);
 assert.match(sources["composer/ComposerRunControls.svelte"], /chat-submit/);
 assert.match(sources["composer/HeldPromptStack.svelte"], /data-conversation-held-row/);
 assert.match(sources["ConversationPane.svelte"], /chat-overflow/);
+assert.match(
+  sources["LiveConversation.svelte"],
+  /if \(!await holdOnTo\(\[\.\.\.sentMessages, message\], persistenceConversationId\)\)/
+);
+assert.ok(
+  sources["LiveConversation.svelte"].indexOf("if (!await holdOnTo")
+    < sources["LiveConversation.svelte"].indexOf("await sendMessage"),
+  "first-file durability must finish before the owner network send"
+);
+assert.match(
+  sources["LiveConversation.svelte"],
+  /outgoingPersistenceConversationId\([\s\S]*conversationId \?\? persistenceKey/
+);
+assert.match(
+  sources["LiveConversation.svelte"],
+  /The file could not be saved in this browser\. It was returned to the composer\./
+);
+const canonicalAdoption = sources["LiveConversation.svelte"].slice(
+  sources["LiveConversation.svelte"].indexOf("async function adopt(id:"),
+  sources["LiveConversation.svelte"].indexOf("async function adoptUnopenedPersistence")
+);
+assert.ok(
+  canonicalAdoption.indexOf("await moveRememberedOutgoingMessages(persistenceKey, id)")
+    < canonicalAdoption.indexOf("await recallOutgoingMessages(activePersistenceId)"),
+  "canonical adoption reconciles the stable owner pointer before recall"
+);
+assert.match(
+  canonicalAdoption,
+  /activePersistenceId = persistenceMoved \? id : persistenceKey/
+);
+assert.match(
+  sources["LiveConversation.svelte"],
+  /activePersistenceId \?\? openedId \?\? conversationId \?\? persistenceKey/
+);
 
 const composerSource = sources["ConversationComposer.svelte"];
+const heldStackSource = sources["composer/HeldPromptStack.svelte"];
 assert.ok(
   composerSource.indexOf("<HeldPromptStack") < composerSource.indexOf('class="chat-box"'),
   "the shared queue tray sits above the separate input box"
@@ -140,10 +200,11 @@ assert.match(composerSource, /publishCompositionState\(false\)/);
 for (const activeComposition of [
   'text !== ""',
   "pendingImages.length > 0",
+  "pendingFiles.length > 0",
   'voiceState.phase !== "idle"',
   "takenOver",
-  "draggingImages",
-  "imageIntakesInFlight > 0",
+  "draggingAttachments",
+  "attachmentIntakesInFlight > 0",
   "runSelection.pickedBackend !== null",
   "runSelection.pickedModel !== null",
   "runSelection.pickedReasoningEffort !== null"
@@ -153,8 +214,19 @@ for (const activeComposition of [
     `release deferral must include ${activeComposition}`
   );
 }
+assert.match(composerSource, /data-conversation-file-input/);
+assert.match(composerSource, /CONVERSATION_FILE_ACCEPT/);
+assert.match(composerSource, /Drop images or files to attach/);
+assert.match(sources["ConversationFileCard.svelte"], /<FilePreview/);
+assert.match(sources["ConversationFileCard.svelte"], /download={fileName}/);
+assert.match(heldStackSource, /ConversationFileCard/);
+const filePreviewSource = await readFile(
+  new URL("../src/components/FilePreview.svelte", import.meta.url),
+  "utf8"
+);
+assert.match(filePreviewSource, /shouldFetchText \|\| resolved\.kind === "pdf"/);
+assert.match(filePreviewSource, /boundedConversationTextPreview/);
 
-const heldStackSource = sources["composer/HeldPromptStack.svelte"];
 assert.ok(
   heldStackSource.indexOf('data-conversation-held-promote="send_now"')
     < heldStackSource.indexOf('data-conversation-held-promote="steer"'),
@@ -1313,11 +1385,18 @@ try {
 <script lang="ts">
   import ConversationComposer from "../src/components/conversation/ConversationComposer.svelte";
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
+  import LiveConversation from "../src/components/conversation/LiveConversation.svelte";
   import TicketConversationHistory from "../src/components/TicketConversationHistory.svelte";
   import ConversationTranscript from "../src/components/conversation/ConversationTranscript.svelte";
   import TaskProgress from "../src/components/conversation/TaskProgress.svelte";
   import PermissionAskCard from "../src/components/conversation/PermissionAskCard.svelte";
   import UserInputQuestionPanel from "../src/components/conversation/UserInputQuestionPanel.svelte";
+  import {
+    mintOutgoingMessage,
+    recallOutgoingMessages,
+    rememberOutgoingMessages,
+    setOutgoingMessageFileStoreForTest
+  } from "../src/lib/conversation/outgoing";
 
   const sends: unknown[] = [];
   const answers: string[] = [];
@@ -1328,6 +1407,8 @@ try {
   let showComposer = $state(true);
   let activeTicketConversation = $state<string | null>("active-1");
   let selectedPastConversation = $state<string | null>(null);
+  let showFirstFileFixture = $state(false);
+  let firstFileNetworkSends = 0;
   (window as any).__sends = () => sends;
   (window as any).__answers = () => answers;
   (window as any).__userInputAnswers = () => userInputAnswers;
@@ -1344,6 +1425,43 @@ try {
   (window as any).__destroyComposer = () => {
     showComposer = false;
   };
+  (window as any).__storeTenMiBFileMessage = async () => {
+    const bytes = 10 * 1024 * 1024;
+    const data = "A".repeat(4 * Math.floor(bytes / 3)) + "AA==";
+    const message = mintOutgoingMessage({
+      content: [{
+        piece: "file",
+        data,
+        media_type: "text/plain",
+        file_name: "boundary.txt"
+      }],
+      senderLabel: "owner",
+      mode: "run_when_free",
+      sentAtUnixMilliseconds: 1_700_000_000_123
+    });
+    await rememberOutgoingMessages("browser-file-boundary", [message]);
+    return sessionStorage.getItem(
+      "panels.conversation.outgoing.browser-file-boundary"
+    )?.length ?? 0;
+  };
+  (window as any).__recallTenMiBFileMessage = async () => {
+    const recalled = await recallOutgoingMessages("browser-file-boundary");
+    const piece = recalled[0]?.content[0];
+    return piece?.piece === "file"
+      ? { fileName: piece.file_name, dataLength: piece.data.length }
+      : null;
+  };
+  (window as any).__clearTenMiBFileMessage = () =>
+    rememberOutgoingMessages("browser-file-boundary", []);
+  (window as any).__failFirstFilePersistence = () => {
+    setOutgoingMessageFileStoreForTest({
+      read: async () => undefined,
+      write: async () => { throw new Error("IndexedDB unavailable"); },
+      remove: async () => undefined
+    });
+    showFirstFileFixture = true;
+  };
+  (window as any).__firstFileNetworkSends = () => firstFileNetworkSends;
   (window as any).__setActiveTicketConversation = (conversationId: string | null) => {
     activeTicketConversation = conversationId;
   };
@@ -1562,6 +1680,11 @@ try {
       }
     ]
   };
+
+  async function sendFirstFileMessage() {
+    firstFileNetworkSends += 1;
+    return { conversation_id: "first-file-canonical", fate: "started" as const };
+  }
 </script>
 
 {#if showComposer}
@@ -1666,6 +1789,19 @@ try {
     onSubmit={(given) => userInputAnswers.push(given)}
   />
 </div>
+
+{#if showFirstFileFixture}
+  <div data-first-file-failure-fixture style="width: 100%; max-width: 700px; height: 360px;">
+    <LiveConversation
+      conversationId={null}
+      persistenceKey="owner:test-first-file"
+      label="First file"
+      senderLabel="owner"
+      startValues={{ backend_key: "hermes", model: "opus", reasoning_effort: null }}
+      sendMessage={sendFirstFileMessage}
+    />
+  </div>
+{/if}
 `,
     "utf8"
   );
@@ -1722,6 +1858,19 @@ with sync_playwright() as playwright:
     page = browser.new_page()
     page.set_default_timeout(5_000)
     page.goto(sys.argv[1], wait_until="domcontentloaded")
+
+    # A valid ten-MiB file uses compact session coordination and survives a real reload
+    # through the browser's IndexedDB implementation.
+    compact_length = page.evaluate("window.__storeTenMiBFileMessage()")
+    assert 0 < compact_length < 1_000, compact_length
+    page.reload(wait_until="domcontentloaded")
+    recalled_file = page.evaluate("window.__recallTenMiBFileMessage()")
+    assert recalled_file == {
+        "fileName": "boundary.txt",
+        "dataLength": 13_981_016,
+    }, recalled_file
+    page.evaluate("window.__clearTenMiBFileMessage()")
+
     page.add_style_tag(path="assets/tokens.css")
     page.add_style_tag(path="assets/app.css")
 
@@ -1857,7 +2006,9 @@ with sync_playwright() as playwright:
               for (const attribute of [
                 "data-conversation-slash",
                 "data-conversation-image",
+                "data-conversation-file",
                 "data-conversation-image-input",
+                "data-conversation-file-input",
                 "data-conversation-picker-model",
                 "data-conversation-delivery",
                 "data-conversation-send",
@@ -1872,7 +2023,9 @@ with sync_playwright() as playwright:
     assert footer_child_roles() == [
         "data-conversation-slash",
         "data-conversation-image",
+        "data-conversation-file",
         "data-conversation-image-input",
+        "data-conversation-file-input",
         "data-conversation-picker-model",
         "div",
     ], footer_child_roles()
@@ -2042,8 +2195,7 @@ with sync_playwright() as playwright:
     assert intoOne["picked"]["backendKey"] is None, intoOne
     page.evaluate("window.__setExists(false)")
 
-    # The established image intake is one ordered pending collection, whichever gesture
-    # supplied it. A mixed picker keeps the pictures and says what it rejected.
+    # The attachment intake keeps supported images and files from a mixed picker.
     page.evaluate(
         """() => {
           window.__revokedImageUrls = [];
@@ -2063,10 +2215,13 @@ with sync_playwright() as playwright:
     page.wait_for_function(
         "document.querySelectorAll('[data-chat-image-preview]').length === 2"
     )
-    assert (
-        "Choose PNG, JPEG, GIF or WebP images totaling up to 3 MiB."
-        in page.locator("[data-conversation-error]").inner_text()
+    page.wait_for_function(
+        "document.querySelectorAll('[data-chat-file-preview]').length === 1"
     )
+    assert page.locator("[data-conversation-error]").count() == 0
+    assert page.locator("[data-chat-file-preview]").get_attribute(
+        "data-chat-file-name"
+    ) == "note.txt"
     assert page.locator("[data-chat-image-preview]").evaluate_all(
         "rows => rows.map(row => row.dataset.chatImageName)"
     ) == ["first.png", "second.webp"]
@@ -2105,7 +2260,7 @@ with sync_playwright() as playwright:
         "rows => rows.map(row => row.dataset.chatImageName)"
     ) == ["second.webp", "pasted.png", "dropped.gif"]
 
-    # Text and every remaining image become one ordered native content run.
+    # Text and every remaining attachment become one native content run.
     the_box.fill("look at these")
     page.locator("[data-conversation-send]").click()
     page.wait_for_function("window.__sends().length === 5")
@@ -2115,10 +2270,12 @@ with sync_playwright() as playwright:
         {"piece": "image", "data": "BAU=", "media_type": "image/webp", "file_name": "second.webp"},
         {"piece": "image", "data": "Bg==", "media_type": "image/png", "file_name": "pasted.png"},
         {"piece": "image", "data": "Bwg=", "media_type": "image/gif", "file_name": "dropped.gif"},
+        {"piece": "file", "data": "bm90IGFuIGltYWdl", "media_type": "text/plain", "file_name": "note.txt"},
     ], with_images
     page.wait_for_function(
         "document.querySelectorAll('[data-chat-image-preview]').length === 0"
     )
+    assert page.locator("[data-chat-file-preview]").count() == 0
     assert page.evaluate("window.__revokedImageUrls.length") == 4, (
         "the removed image and all three sent image previews released their blob URLs"
     )
@@ -2593,7 +2750,9 @@ with sync_playwright() as playwright:
     assert footer_child_roles() == [
         "data-conversation-slash",
         "data-conversation-image",
+        "data-conversation-file",
         "data-conversation-image-input",
+        "data-conversation-file-input",
         "data-conversation-picker-model",
         "div",
     ], footer_child_roles()
@@ -2624,6 +2783,27 @@ with sync_playwright() as playwright:
     assert ordinary["picked"]["reasoningEffort"] is None, ordinary
     assert face(model) == "Opus", face(model)
 
+    # A first file message is not handed to its owner when IndexedDB cannot open. The
+    # established false result restores the exact draft and reports why.
+    first_file = page.locator("[data-first-file-failure-fixture]")
+    page.evaluate("window.__failFirstFilePersistence()")
+    first_file.locator("[data-conversation-input]").fill("keep this exact draft")
+    first_file.locator("[data-conversation-file-input]").set_input_files(
+        {"name": "facts.json", "mimeType": "application/json", "buffer": b"{}"}
+    )
+    first_file.locator("[data-conversation-send]").click()
+    page.wait_for_function(
+        "document.querySelector('[data-first-file-failure-fixture] [data-conversation-error]')"
+    )
+    assert page.evaluate("window.__firstFileNetworkSends()") == 0
+    assert first_file.locator("[data-conversation-input]").input_value() == "keep this exact draft"
+    assert first_file.locator("[data-chat-file-preview]").get_attribute(
+        "data-chat-file-name"
+    ) == "facts.json"
+    assert "returned to the composer" in first_file.locator(
+        "[data-conversation-error]"
+    ).inner_text()
+
     # If navigation destroys the composer while a file is still being read, the batch
     # releases the preview it creates on completion instead of assigning it to the dead
     # component.
@@ -2637,13 +2817,13 @@ with sync_playwright() as playwright:
           };
         }"""
     )
-    page.locator("[data-conversation-image-input]").set_input_files(
+    page.locator("[data-conversation-image-input]").first.set_input_files(
         {"name": "late.png", "mimeType": "image/png", "buffer": bytes([12])}
     )
     page.evaluate("window.__destroyComposer()")
     page.evaluate("window.__finishImageRead()")
     page.wait_for_function("window.__revokedImageUrls.length === 7")
-    assert page.locator("[data-conversation-composer]").count() == 0
+    assert page.locator("[data-conversation-composer]").count() == 1
 
     browser.close()
 

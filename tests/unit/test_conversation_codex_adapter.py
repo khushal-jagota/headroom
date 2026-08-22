@@ -61,6 +61,7 @@ from planner.conversation.events import (
 )
 from planner.conversation.message_content import (
     MessageContent,
+    MessageFile,
     MessageImage,
     MessageText,
     message_content_text,
@@ -2222,6 +2223,41 @@ def test_a_picture_reaches_codex_as_the_file_it_is(tmp_path: Path) -> None:
             assert given == [
                 {"type": "text", "text": "look at this"},
                 {"type": "localImage", "path": str(kept.absolute_path)},
+            ]
+
+    _run(exercise)
+
+
+def test_a_file_reaches_codex_as_explicit_managed_path_context(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={}) as scripted:
+            await scripted.start(cursor=None)
+            kept = await scripted.message_files.keep("c", b"answer,42\n", media_type="text/csv")
+            content = (
+                MessageFile(
+                    stored_file_id=kept.stored_file_id,
+                    media_type="text/csv",
+                    file_name="facts.csv",
+                    byte_count=10,
+                ),
+            )
+            await scripted.child.write_prompt(
+                TurnToken(conversation_id="c", turn_number=1),
+                content,
+                sender_content=content,
+                sender_label="owner",
+                mode=PromptDeliveryMode.run_when_free,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+            assert scripted.sent("turn/start")["params"]["input"] == [
+                {
+                    "type": "text",
+                    "text": (
+                        'Attached file "facts.csv" (text/csv, 10 bytes) is available at '
+                        f"{kept.absolute_path}."
+                    ),
+                }
             ]
 
     _run(exercise)

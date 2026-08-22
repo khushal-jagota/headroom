@@ -128,6 +128,7 @@ from planner.conversation.events import (
 )
 from planner.conversation.message_content import (
     MessageContent,
+    MessageFile,
     MessageImage,
     MessageText,
     text_message_content,
@@ -482,6 +483,13 @@ class ClaudeAgentSdkBackendChild:
                             },
                         }
                     )
+                case MessageFile():
+                    blocks.append(
+                        {
+                            "type": "text",
+                            "text": self._file_context(piece),
+                        }
+                    )
 
         async def one_user_message() -> AsyncIterator[dict[str, Any]]:
             yield {
@@ -491,6 +499,20 @@ class ClaudeAgentSdkBackendChild:
             }
 
         return one_user_message()
+
+    def _file_context(self, piece: MessageFile) -> str:
+        try:
+            path = self._message_files.path_of(
+                self._resolved_start.conversation_id, piece.stored_file_id
+            )
+        except MessageFileMissing as unreadable:
+            raise PromptWriteFailed(
+                f"{piece.stored_file_id} could not be read"
+            ) from unreadable
+        return (
+            f'Attached file "{piece.file_name}" ({piece.media_type}, '
+            f"{piece.byte_count} bytes) is available at {path}."
+        )
 
     async def _encoded_bytes(self, stored_file_id: str) -> str:
         """The bytes of a kept file, as the SDK's image block wants them."""

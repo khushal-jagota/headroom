@@ -367,7 +367,9 @@ has no usage source.
   source and rendered directly through `MarkdownBlock`, so managed links keep the same
   nested-preview and self-link bounds as embedded Markdown, with no header of its own.
   ACP message and tool links also use the shared generic/Ticket preview adapter.
-  Conversation images are inline ACP content, not managed files.
+  Conversation images and files use conversation-owned managed bytes. Images render
+  inline. Supported documents and data files render as named cards with preview and
+  download actions. PDF uses a document frame. Text and data use a bounded text preview.
 - **On a Ticket screen, that link opens the file in place.** A file clicked inside a
   Ticket does not go to the preview address at all. The Ticket screen catches the click
   and draws the file over its own reading area, with a strip carrying the file's name and
@@ -446,9 +448,11 @@ hand-rolling the same shapes per screen. Each does one job:
 - **ConversationPane / ConversationTranscript / ConversationComposer** — what a
   conversation looks like: the rows, the one raised ask, the status line, and the
   composer with its model, effort and skill choices. The composer also owns pending
-  pictures from the picker, clipboard and drag-and-drop. It shows them in order,
-  removes them individually, and hands one ordered text-and-image content run to
-  `LiveConversation`; image-only messages use that same path.
+  pictures, documents, and data files from the pickers, clipboard, and drag-and-drop.
+  It removes attachments individually and hands one content run to `LiveConversation`.
+  Messages that contain only attachments use that same path. A file-bearing message that
+  still waits for its durable row keeps its bytes in browser database storage, so a reload
+  restores it across the full supported file-size range.
 
   On the Ticket screen the conversation is a layer along the bottom of the page rather
   than a column beside it, and it has **three states**. At **rest** it is the composer and

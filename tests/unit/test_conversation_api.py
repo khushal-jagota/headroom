@@ -23,14 +23,17 @@ from typing import Any
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+import planner.conversation.api as conversation_api
 from planner.conversation.api import (
     COMMITTED_EVENT_STREAM_NAME,
     LIVE_FRAME_STREAM_NAME,
     PUBLIC_TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS,
     ConversationRuntime,
+    SentFilePiece,
+    conversation_message_content,
     router,
 )
 from planner.conversation.backend_state import BackendStateStore
@@ -2687,6 +2690,168 @@ def test_invalid_or_unsupported_picture_bytes_leave_no_row_or_managed_file(
             ).json() == {"events": []}
             files = harness.db_path.parent / "files" / "conversations"
             assert not list(files.glob("**/*"))
+
+    _run(exercise)
+
+
+def test_a_data_file_is_validated_kept_and_served_with_server_metadata(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            payload = b'name,value\nanswer,"42"\n'
+            sent = await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [
+                        {
+                            "piece": "file",
+                            "data": base64.b64encode(payload).decode("ascii"),
+                            "media_type": "application/octet-stream",
+                            "file_name": "facts.csv",
+                        }
+                    ],
+                    "sender_label": "owner",
+                },
+            )
+            assert sent.json() == {"fate": "started"}
+
+            rows = (await client.get("/api/conversation/conversations/c/events")).json()[
+                "events"
+            ]
+            piece = rows[0]["payload"]["content"][0]
+            assert piece == {
+                "piece": "file",
+                "stored_file_id": piece["stored_file_id"],
+                "media_type": "text/csv",
+                "file_name": "facts.csv",
+                "byte_count": len(payload),
+            }
+            served = await client.get(
+                f"/api/conversation/conversations/c/files/{piece['stored_file_id']}"
+            )
+            assert served.headers["content-type"] == "text/csv; charset=utf-8"
+            assert served.content == payload
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    ("file_name", "payload", "detail"),
+    [
+        ("empty.txt", b"", "must not be empty"),
+        ("bad.json", b"{no", "must contain valid JSON"),
+        ("bad.jsonl", b'{"ok":1}\nno', "invalid JSON on line 2"),
+        ("empty.jsonl", b" \n\t\n", "must contain a JSON value"),
+        ("program.exe", b"hello", "unsupported conversation file type"),
+        ("bad.txt", b"\xff", "must be UTF-8"),
+        ("nul.txt", b"hello\x00world", "must not contain NUL bytes"),
+        ("bad.pdf", b"not a pdf", "unsupported or invalid conversation PDF"),
+        ("line\nbreak.txt", b"hello", "plain, trimmed file name"),
+        (f"{'x' * 252}.txt", b"hello", "plain, trimmed file name"),
+    ],
+)
+def test_invalid_files_leave_no_row_or_managed_file(
+    harness: _Harness, file_name: str, payload: bytes, detail: str
+) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            rejected = await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [
+                        {
+                            "piece": "file",
+                            "data": base64.b64encode(payload).decode("ascii"),
+                            "media_type": "application/octet-stream",
+                            "file_name": file_name,
+                        }
+                    ],
+                    "sender_label": "owner",
+                },
+            )
+            assert rejected.status_code == 422
+            assert detail in rejected.json()["detail"]
+            assert (
+                await client.get("/api/conversation/conversations/c/events")
+            ).json() == {"events": []}
+            files = harness.db_path.parent / "files" / "conversations"
+            assert not list(files.glob("**/*"))
+
+    _run(exercise)
+
+
+def test_a_valid_file_followed_by_an_invalid_file_keeps_nothing(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        message_files = ConversationMessageFiles(tmp_path / "planner.db")
+        with pytest.raises(HTTPException, match="must contain valid JSON"):
+            await conversation_message_content(
+                message_files,
+                "c",
+                [
+                    SentFilePiece(
+                        piece="file",
+                        data=base64.b64encode(b"valid text").decode("ascii"),
+                        media_type="text/plain",
+                        file_name="valid.txt",
+                    ),
+                    SentFilePiece(
+                        piece="file",
+                        data=base64.b64encode(b"{no").decode("ascii"),
+                        media_type="application/json",
+                        file_name="invalid.json",
+                    ),
+                ],
+            )
+        assert not list((tmp_path / "files").glob("**/*"))
+
+    _run(exercise)
+
+
+def test_file_bytes_are_limited_per_piece_before_decode_and_in_aggregate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_api, "MAX_CONVERSATION_MESSAGE_FILE_BYTES", 10)
+        message_files = ConversationMessageFiles(tmp_path / "planner.db")
+
+        with pytest.raises(HTTPException, match="files are too large"):
+            await conversation_message_content(
+                message_files,
+                "single",
+                [
+                    SentFilePiece(
+                        piece="file",
+                        data="A" * 17,
+                        media_type="text/plain",
+                        file_name="large.txt",
+                    )
+                ],
+            )
+
+        encoded = base64.b64encode(b"123456").decode("ascii")
+        with pytest.raises(HTTPException, match="files are too large"):
+            await conversation_message_content(
+                message_files,
+                "aggregate",
+                [
+                    SentFilePiece(
+                        piece="file",
+                        data=encoded,
+                        media_type="text/plain",
+                        file_name="one.txt",
+                    ),
+                    SentFilePiece(
+                        piece="file",
+                        data=encoded,
+                        media_type="text/plain",
+                        file_name="two.txt",
+                    ),
+                ],
+            )
+        assert not list((tmp_path / "files").glob("**/*"))
 
     _run(exercise)
 

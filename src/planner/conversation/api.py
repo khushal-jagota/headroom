@@ -65,6 +65,10 @@ from planner.conversation.events import (
     UserInputRequestedEventPayload,
     conversation_event_payload_to_canonical_json,
 )
+from planner.conversation.file_validation import (
+    MAX_CONVERSATION_MESSAGE_FILE_BYTES,
+    validated_file_media_type,
+)
 from planner.conversation.image_validation import (
     MAX_CONVERSATION_IMAGE_BYTES,
     MAX_CONVERSATION_MESSAGE_IMAGE_BYTES,
@@ -73,6 +77,7 @@ from planner.conversation.image_validation import (
 from planner.conversation.live_tail import ConversationLiveTail, ConversationTailItem
 from planner.conversation.message_content import (
     MessageContent,
+    MessageFile,
     MessageImage,
     MessagePiece,
     MessageText,
@@ -244,7 +249,16 @@ class SentImagePiece(BaseModel):
     file_name: str | None = None
 
 
-type SentPiece = SentTextPiece | SentImagePiece
+class SentFilePiece(BaseModel):
+    """A document or data file, with bytes that stop at the intake boundary."""
+
+    piece: Literal["file"]
+    data: str
+    media_type: str
+    file_name: str
+
+
+type SentPiece = SentTextPiece | SentImagePiece | SentFilePiece
 
 
 class SendBody(BaseModel):
@@ -915,10 +929,12 @@ async def conversation_message_content(
     It takes the files rather than the whole runtime because the owner-scoped send doors
     live in another module and need exactly this and nothing else.
     """
-    # Prove every image before keeping any of them. A later malformed piece must reject
+    # Prove every attachment before keeping any. A malformed later piece must reject
     # the whole request without leaving an earlier piece behind as an unnamed managed file.
     validated_images: list[tuple[bytes, str]] = []
+    validated_files: list[tuple[bytes, str]] = []
     total_image_bytes = 0
+    total_file_bytes = 0
     for piece in sent:
         if isinstance(piece, SentImagePiece):
             contents = _decoded_image(piece.data)
@@ -933,9 +949,23 @@ async def conversation_message_content(
             except ValueError as invalid:
                 raise HTTPException(status_code=422, detail=str(invalid)) from invalid
             validated_images.append((contents, media_type))
+        elif isinstance(piece, SentFilePiece):
+            contents = _decoded_file(piece.data)
+            total_file_bytes += len(contents)
+            if total_file_bytes > MAX_CONVERSATION_MESSAGE_FILE_BYTES:
+                raise HTTPException(
+                    status_code=422,
+                    detail="a conversation message's files are too large",
+                )
+            try:
+                media_type = validated_file_media_type(contents, piece.file_name)
+            except ValueError as invalid:
+                raise HTTPException(status_code=422, detail=str(invalid)) from invalid
+            validated_files.append((contents, media_type))
 
     pieces: list[MessagePiece] = []
     image_index = 0
+    file_index = 0
     for piece in sent:
         match piece:
             case SentTextPiece():
@@ -951,6 +981,20 @@ async def conversation_message_content(
                         stored_file_id=kept.stored_file_id,
                         media_type=media_type,
                         file_name=piece.file_name,
+                    )
+                )
+            case SentFilePiece():
+                contents, media_type = validated_files[file_index]
+                file_index += 1
+                kept = await message_files.keep(
+                    conversation_id, contents, media_type=media_type
+                )
+                pieces.append(
+                    MessageFile(
+                        stored_file_id=kept.stored_file_id,
+                        media_type=media_type,
+                        file_name=piece.file_name,
+                        byte_count=kept.byte_count,
                     )
                 )
     return tuple(pieces)
@@ -976,6 +1020,21 @@ def _decoded_image(data: str) -> bytes:
     if len(data) > maximum_encoded_length:
         raise HTTPException(status_code=422, detail="a conversation image is too large")
     return _decoded(data)
+
+
+def _decoded_file(data: str) -> bytes:
+    """Decode one bounded document or data file without a large intermediate value."""
+    maximum_encoded_length = 4 * ((MAX_CONVERSATION_MESSAGE_FILE_BYTES + 2) // 3)
+    if len(data) > maximum_encoded_length:
+        raise HTTPException(
+            status_code=422, detail="a conversation message's files are too large"
+        )
+    contents = _decoded(data)
+    if len(contents) > MAX_CONVERSATION_MESSAGE_FILE_BYTES:
+        raise HTTPException(
+            status_code=422, detail="a conversation message's files are too large"
+        )
+    return contents
 
 
 def _decoded_voice_audio(data: str) -> bytes:

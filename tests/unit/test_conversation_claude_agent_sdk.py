@@ -79,6 +79,7 @@ from planner.conversation.contracts import (
 from planner.conversation.events import ConversationTurnEnding, ToolCallStatus, UserInputAnswer
 from planner.conversation.message_content import (
     MessageContent,
+    MessageFile,
     MessageImage,
     MessageText,
     message_content_text,
@@ -2472,6 +2473,43 @@ def test_a_picture_reaches_claude_as_a_content_block_beside_the_words(
                     "data": b64encode(b"\x89PNG not really").decode("ascii"),
                 },
             },
+        ]
+
+    _run(exercise)
+
+
+def test_a_file_reaches_claude_as_explicit_managed_path_context(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        child, _, clients = await _connected_bench(tmp_path)
+        kept = await _bench_message_files(child).keep(
+            "c-claude-1", b"answer,42\n", media_type="text/csv"
+        )
+        content = (
+            MessageFile(
+                stored_file_id=kept.stored_file_id,
+                media_type="text/csv",
+                file_name="facts.csv",
+                byte_count=10,
+            ),
+        )
+        await child.write_prompt(
+            TURN,
+            content,
+            sender_content=content,
+            sender_label="owner",
+            mode=PromptDeliveryMode.run_when_free,
+            model_change=None,
+            reasoning_effort_change=None,
+        )
+        sent = clients[0].streamed_messages[0]
+        assert sent["message"]["content"] == [
+            {
+                "type": "text",
+                "text": (
+                    'Attached file "facts.csv" (text/csv, 10 bytes) is available at '
+                    f"{kept.absolute_path}."
+                ),
+            }
         ]
 
     _run(exercise)

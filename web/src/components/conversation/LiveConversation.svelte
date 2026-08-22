@@ -31,10 +31,14 @@
   import {
     afterTheRecordHasBeenRead,
     mintOutgoingMessage,
+    moveRememberedOutgoingMessages,
+    outgoingPersistenceConversationId,
     outgoingMessagesTheRecordHasNot,
     recallOutgoingMessages,
+    releaseOutgoingMessageFiles,
     releaseOutgoingMessageImages,
     rememberOutgoingMessages,
+    reserveOutgoingMessageFiles,
     reserveOutgoingMessageImages,
     reserveRecalledOutgoingMessages,
     type OutgoingMessage,
@@ -69,6 +73,7 @@
 
   let {
     conversationId = null,
+    persistenceKey,
     label,
     backends = [],
     senderLabel = "owner",
@@ -85,6 +90,8 @@
   }: {
     /** The conversation to show, or null for a caller that has not started one. */
     conversationId?: string | null;
+    /** Stable owner identity used before the server assigns a Conversation id. */
+    persistenceKey: string;
     /** Present only when this is the conversation owned by a Ticket. */
     ticketId?: string | null;
     label: string;
@@ -142,6 +149,10 @@
    *  sets it directly, because the message that caused the start has to go somewhere now
    *  rather than after the parent's own state has come back round. */
   let openedId = $state<string | null>(null);
+  /** The identity under which this tab's optimistic rows are currently durable. It can
+   *  remain the stable owner key when session storage refuses a canonical-id migration;
+   *  record reconciliation then empties that exact key instead of orphaning it. */
+  let activePersistenceId = $state<string | null>(null);
 
   let stream: ConversationStream | null = null;
 
@@ -238,8 +249,8 @@
       openedId = null;
       view = null;
       feed = emptyConversationFeed();
-      holdOnTo([]);
       composerStackMessageIds = [];
+      void adoptUnopenedPersistence(persistenceKey);
       return;
     }
     void adopt(wanted);
@@ -250,12 +261,36 @@
     openedId = id;
     view = null;
     feed = emptyConversationFeed();
+    // A reload can happen after the first request reached the server but before its
+    // response moved this tab's recovery pointer. Reconcile the owner's stable identity
+    // into the canonical Conversation before looking for remembered messages there.
+    const persistenceMoved = (
+      persistenceKey !== id
+        ? await moveRememberedOutgoingMessages(persistenceKey, id)
+        : true
+    );
+    activePersistenceId = persistenceMoved ? id : persistenceKey;
+    if (!persistenceMoved) {
+      errorNote = "The browser could not restore a pending file into this conversation.";
+    }
     // Whatever this tab was still holding for this conversation when it was last here.
-    sentMessages = reserveRecalledOutgoingMessages(recallOutgoingMessages(id));
+    sentMessages = reserveRecalledOutgoingMessages(
+      await recallOutgoingMessages(activePersistenceId)
+    );
     composerStackMessageIds = sentMessages
       .filter((message) => message.knownFate === "waiting_for_the_agent")
       .map((message) => message.messageId);
     await openConversation(id);
+  }
+
+  async function adoptUnopenedPersistence(storageKey: string): Promise<void> {
+    const recalled = reserveRecalledOutgoingMessages(await recallOutgoingMessages(storageKey));
+    if (openedId !== null || conversationId !== null || persistenceKey !== storageKey) return;
+    activePersistenceId = storageKey;
+    sentMessages = recalled;
+    composerStackMessageIds = sentMessages
+      .filter((message) => message.knownFate === "waiting_for_the_agent")
+      .map((message) => message.messageId);
   }
 
   function closeStream(): void {
@@ -300,7 +335,7 @@
         // The record draws a message once it has it. A copy it now holds is not redrawn
         // somewhere else — it simply stops being drawn.
         const stillOutgoing = outgoingMessagesTheRecordHasNot(sentMessages, next.events);
-        if (stillOutgoing !== sentMessages) holdOnTo(stillOutgoing);
+        if (stillOutgoing !== sentMessages) void holdOnTo(stillOutgoing);
         connectionTrouble = false;
       },
       // Every connect asks the system about itself again, after the rows are in. This is
@@ -332,7 +367,7 @@
    */
   function theRecordHasBeenRead(): void {
     const told = afterTheRecordHasBeenRead(sentMessages);
-    if (told !== sentMessages) holdOnTo(told);
+    if (told !== sentMessages) void holdOnTo(told);
   }
 
   async function refreshView(): Promise<void> {
@@ -381,7 +416,22 @@
       errorNote = "Wait for an outstanding image message to reach the conversation.";
       return false;
     }
-    holdOnTo([...sentMessages, message]);
+    if (!reserveOutgoingMessageFiles(message)) {
+      releaseOutgoingMessageImages(message.messageId);
+      errorNote = "Wait for an outstanding file message to reach the conversation.";
+      return false;
+    }
+    const persistenceConversationId = outgoingPersistenceConversationId(
+      openedId,
+      conversationId ?? persistenceKey,
+      message.messageId
+    );
+    if (!await holdOnTo([...sentMessages, message], persistenceConversationId)) {
+      forgetUndurableMessage(message.messageId);
+      errorNote = "The file could not be saved in this browser. It was returned to the composer.";
+      return false;
+    }
+    activePersistenceId = persistenceConversationId;
     try {
       // The conversation this message is for is one the record has answered for. Holding
       // an id is not the same as one existing — a Ticket names its conversation before
@@ -392,6 +442,20 @@
       );
       // The answer is the fate, with the conversation it happened in alongside it.
       const fate = delivered;
+      if (
+        delivered.conversation_id !== null
+        && delivered.conversation_id !== persistenceConversationId
+      ) {
+        if (await moveRememberedOutgoingMessages(
+          persistenceConversationId,
+          delivered.conversation_id
+        )) {
+          activePersistenceId = delivered.conversation_id;
+        } else {
+          activePersistenceId = persistenceConversationId;
+          errorNote = "The browser could not carry the pending file into this conversation.";
+        }
+      }
       if (delivered.conversation_id !== null && delivered.conversation_id !== openedId) {
         // The message made a conversation. Pointed at it and opened, without recalling:
         // what this browser is holding is the message being sent right now, which is newer
@@ -402,14 +466,14 @@
       fateNote = fate.fate === "refused" ? fateSentence(fate) : null;
       fateNoteIsRefusal = fate.fate === "refused";
       if (fate.fate === "refused") {
-        stopDrawing(message.messageId);
+        await stopDrawing(message.messageId);
         await refreshView();
         return false;
       }
       // Held for a busy agent: it has reached nothing yet, and it says so rather than
       // sitting there looking like a message something is answering.
       if (fate.fate === "queued") {
-        whatIsKnownAbout(message.messageId, "waiting_for_the_agent");
+        await whatIsKnownAbout(message.messageId, "waiting_for_the_agent");
         if (!composerStackMessageIds.includes(message.messageId)) {
           composerStackMessageIds = [...composerStackMessageIds, message.messageId];
         }
@@ -422,10 +486,10 @@
     } catch (error) {
       errorNote = sentenceFor(error);
       if (theServerTurnedItAway(error)) {
-        stopDrawing(message.messageId);
+        await stopDrawing(message.messageId);
         return false;
       }
-      whatIsKnownAbout(message.messageId, "answer_never_came_back");
+      await whatIsKnownAbout(message.messageId, "answer_never_came_back");
       return true;
     }
   }
@@ -440,24 +504,43 @@
     return error instanceof ConversationWireError && error.status >= 400 && error.status < 500;
   }
 
-  function holdOnTo(messages: readonly OutgoingMessage[]): void {
+  async function holdOnTo(
+    messages: readonly OutgoingMessage[],
+    persistenceConversationId: string | null = (
+      activePersistenceId ?? openedId ?? conversationId ?? persistenceKey
+    )
+  ): Promise<boolean> {
     const stillHeld = new Set(messages.map((message) => message.messageId));
     for (const message of sentMessages) {
       if (!stillHeld.has(message.messageId)) {
         releaseOutgoingMessageImages(message.messageId);
+        releaseOutgoingMessageFiles(message.messageId);
       }
     }
     sentMessages = messages;
     composerStackMessageIds = composerStackMessageIds.filter((messageId) => stillHeld.has(messageId));
-    if (openedId !== null) rememberOutgoingMessages(openedId, messages);
+    if (persistenceConversationId !== null) {
+      return rememberOutgoingMessages(persistenceConversationId, messages);
+    }
+    return true;
   }
 
-  function stopDrawing(messageId: string): void {
-    holdOnTo(sentMessages.filter((message) => message.messageId !== messageId));
+  function forgetUndurableMessage(messageId: string): void {
+    sentMessages = sentMessages.filter((message) => message.messageId !== messageId);
+    composerStackMessageIds = composerStackMessageIds.filter((candidate) => candidate !== messageId);
+    releaseOutgoingMessageImages(messageId);
+    releaseOutgoingMessageFiles(messageId);
   }
 
-  function whatIsKnownAbout(messageId: string, knownFate: OutgoingMessageKnownFate): void {
-    holdOnTo(
+  function stopDrawing(messageId: string): Promise<boolean> {
+    return holdOnTo(sentMessages.filter((message) => message.messageId !== messageId));
+  }
+
+  function whatIsKnownAbout(
+    messageId: string,
+    knownFate: OutgoingMessageKnownFate
+  ): Promise<boolean> {
+    return holdOnTo(
       sentMessages.map((message) =>
         message.messageId === messageId ? { ...message, knownFate } : message
       )
@@ -555,7 +638,7 @@
     // The old conversation's activity has been killed, so nothing this tab was holding for
     // it is going anywhere. It is let go before the id changes, or it would be left behind
     // under a name nothing here answers to any more.
-    holdOnTo([]);
+    void holdOnTo([]);
     composerStackMessageIds = [];
     openedId = null;
     view = null;

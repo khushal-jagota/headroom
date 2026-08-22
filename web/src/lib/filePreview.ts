@@ -1,6 +1,12 @@
+import {
+  conversationFileMediaType,
+  isSafeConversationFileName
+} from "./conversation/pendingFiles";
+
 export type FilePreviewTarget =
   | { kind: "ticket-file"; ticketId: string; path: string }
   | { kind: "sprint-item-file"; sprintItemId: string; path: string }
+  | { kind: "conversation-file"; href: string; fileName: string }
   | { kind: "external-link"; href: string; label?: string };
 
 /** A file Panels itself serves and can name in an address. */
@@ -15,6 +21,8 @@ export type FilePreviewKind =
   | "video"
   | "audio"
   | "html"
+  | "pdf"
+  | "text"
   | "download"
   | "external";
 
@@ -28,6 +36,7 @@ export type ResolvedPreview = {
 };
 
 export const MANAGED_HTML_PREVIEW_SANDBOX = "allow-scripts";
+export const MAX_CONVERSATION_TEXT_PREVIEW_BYTES = 256 * 1024;
 
 const KIND_BY_EXTENSION = new Map<string, FilePreviewKind>([
   ["md", "markdown"],
@@ -56,6 +65,16 @@ const KIND_BY_EXTENSION = new Map<string, FilePreviewKind>([
   ["opus", "audio"],
   ["wav", "audio"]
 ]);
+const CONVERSATION_KIND_BY_EXTENSION = new Map<string, FilePreviewKind>([
+  ["md", "markdown"],
+  ["markdown", "markdown"],
+  ["pdf", "pdf"],
+  ["txt", "text"],
+  ["csv", "text"],
+  ["tsv", "text"],
+  ["json", "text"],
+  ["jsonl", "text"]
+]);
 const KINDS_RENDERED_FROM_URL = new Set<FilePreviewKind>(["image", "video", "audio"]);
 const TICKET_ID_RE = /^t_[a-z0-9]+$/;
 const TICKET_DEV_SERVER_PREFIX = "/dev/tickets/";
@@ -79,6 +98,18 @@ export function resolvePreview(target: FilePreviewTarget): ResolvedPreview {
     };
   }
 
+  if (target.kind === "conversation-file") {
+    if (!conversationFileTarget(target.href, target.fileName)) {
+      throw new Error("unsafe conversation file target");
+    }
+    return {
+      kind: CONVERSATION_KIND_BY_EXTENSION.get(extensionFor(target.fileName)) || "download",
+      target,
+      href: target.href,
+      label: filenameLabel(target.fileName)
+    };
+  }
+
   if (target.kind === "ticket-file" && !ticketFileTarget(target.ticketId, target.path)) {
     throw new Error("unsafe ticket file target");
   }
@@ -95,6 +126,39 @@ export function resolvePreview(target: FilePreviewTarget): ResolvedPreview {
     label: filenameLabel(target.path),
     previewHref: previewHashHref(target)
   };
+}
+
+export function boundedConversationTextPreview(text: string): string {
+  const encoded = new TextEncoder().encode(text);
+  if (encoded.byteLength <= MAX_CONVERSATION_TEXT_PREVIEW_BYTES) return text;
+  const visible = new TextDecoder().decode(
+    encoded.subarray(0, MAX_CONVERSATION_TEXT_PREVIEW_BYTES)
+  );
+  return `${visible}\n\n[Preview truncated after 256 KiB. Download the file to read the rest.]`;
+}
+
+/** A durable Conversation file URL or the exact data URL of an outgoing file. */
+export function conversationFileTarget(
+  href: string,
+  fileName: string
+): Extract<FilePreviewTarget, { kind: "conversation-file" }> | null {
+  if (!isSafeConversationFileName(fileName)) return null;
+  const dataMatch = /^data:([^;,]+);base64,[a-z0-9+/]*={0,2}$/i.exec(href);
+  if (dataMatch !== null) {
+    if (conversationFileMediaType(fileName) !== dataMatch[1]?.toLowerCase()) return null;
+    return { kind: "conversation-file", href, fileName };
+  }
+  if (!isSameOriginHref(href)) return null;
+  const path = rawPathnameFromHref(href);
+  if (!path.startsWith("/api/conversation/conversations/")) return null;
+  const parts = path.slice("/api/conversation/conversations/".length).split("/");
+  if (parts.length !== 3 || parts[1] !== "files") return null;
+  try {
+    if (!decodeURIComponent(parts[0] ?? "") || !decodeURIComponent(parts[2] ?? "")) return null;
+  } catch {
+    return null;
+  }
+  return { kind: "conversation-file", href, fileName };
 }
 
 export function prepareManagedHtmlPreviewDocument(html: string, managedHtmlHref: string): string {

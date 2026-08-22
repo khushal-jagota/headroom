@@ -12,6 +12,8 @@
    * than something to guess at here.
    */
   import MarkdownBlock from "../MarkdownBlock.svelte";
+  import ConversationFileCard from "./ConversationFileCard.svelte";
+  import { base64DecodedByteCount } from "../../lib/conversation/pendingFiles";
   import {
     conversationFileHref,
     type MessagePiece,
@@ -44,6 +46,15 @@
         ? `data:${piece.media_type};base64,${piece.data}`
         : conversationFileHref(conversationId, piece.stored_file_id)}
       alt={piece.file_name ?? "an image in this message"}
+    />
+  {:else if piece.piece === "file"}
+    <ConversationFileCard
+      href={"data" in piece
+        ? `data:${piece.media_type};base64,${piece.data}`
+        : conversationFileHref(conversationId, piece.stored_file_id)}
+      fileName={piece.file_name}
+      mediaType={piece.media_type}
+      byteCount={"data" in piece ? base64DecodedByteCount(piece.data) : piece.byte_count}
     />
   {/if}
 {/each}

@@ -75,6 +75,7 @@ from planner.conversation.events import (
 from planner.conversation.live_tail import ConversationTailSubscription
 from planner.conversation.message_content import (
     MessageContent,
+    MessageFile,
     MessageImage,
     MessageText,
     message_content_text,
@@ -1179,6 +1180,33 @@ def test_a_picture_reaches_hermes_as_its_bytes(tmp_path: Path) -> None:
             assert blocks[1]["piece"] == "image"
             assert blocks[1]["media_type"] == "image/png"
             assert b64decode(blocks[1]["data"]) == b"\x89PNG not really"
+
+    _run(exercise)
+
+
+def test_a_file_reaches_hermes_as_an_acp_resource_link(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, _, sink):
+            assert sink.message_files is not None
+            kept = await sink.message_files.keep("c", b"answer,42\n", media_type="text/csv")
+            blocks = await child._prompt_blocks(
+                (
+                    MessageFile(
+                        stored_file_id=kept.stored_file_id,
+                        media_type="text/csv",
+                        file_name="facts.csv",
+                        byte_count=10,
+                    ),
+                )
+            )
+            assert blocks[0].model_dump(by_alias=True, exclude_none=True) == {
+                "type": "resource_link",
+                "uri": kept.absolute_path.as_uri(),
+                "name": "facts.csv",
+                "title": "facts.csv",
+                "mimeType": "text/csv",
+                "size": 10,
+            }
 
     _run(exercise)
 

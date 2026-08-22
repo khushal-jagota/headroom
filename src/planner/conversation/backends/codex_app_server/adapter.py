@@ -86,6 +86,7 @@ from planner.conversation.events import (
 )
 from planner.conversation.message_content import (
     MessageContent,
+    MessageFile,
     MessageImage,
     MessageText,
     text_message_content,
@@ -712,6 +713,10 @@ class CodexAppServerBackendChild:
                             type="localImage", path=str(self._kept_path(piece.stored_file_id))
                         )
                     )
+                case MessageFile():
+                    given.append(
+                        bindings.TextUserInput(type="text", text=self._file_context(piece))
+                    )
         if invocation is not None and invocation.kind is ComposerCatalogEntryKind.skill:
             given.append(
                 bindings.SkillUserInput(
@@ -728,6 +733,13 @@ class CodexAppServerBackendChild:
                 )
             )
         return given
+
+    def _file_context(self, piece: MessageFile) -> str:
+        path = self._kept_path(piece.stored_file_id)
+        return (
+            f'Attached file "{piece.file_name}" ({piece.media_type}, '
+            f"{piece.byte_count} bytes) is available at {path}."
+        )
 
     def _kept_path(self, stored_file_id: str) -> Path:
         """Where a kept file is, or a write that does not happen.
