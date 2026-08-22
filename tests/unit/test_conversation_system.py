@@ -2465,6 +2465,19 @@ def test_uncertain_compaction_keeps_message_held_when_child_stop_fails(
         assert backend.live_children == 1
         waiting = await harness.system.held_prompts("c")
         assert [message_content_text(item.content) for item in waiting] == ["must stay held"]
+        direct = await harness.system.send(
+            "c",
+            text_message_content("direct send-now"),
+            sender_label="owner",
+            mode=PromptDeliveryMode.send_now,
+        )
+        assert direct == PromptDeliveryQueued(queue_position=2)
+        promoted = await harness.system.promote_held_prompt(
+            "c", waiting[0].held_prompt_id, HeldPromptPromotionMode.send_now
+        )
+        assert promoted == PromptDeliveryQueued(queue_position=1)
+        assert backend.written_texts() == ("first", "/compact")
+        assert backend.cancellations == 0
         backend.stop_raises_something_unnamed = False
 
     _run(exercise)

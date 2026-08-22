@@ -268,6 +268,7 @@ class _ConversationState:
     last_ended_turn_token: TurnToken | None = None
     last_ended_turn_was_automatic_compaction: bool = False
     child: BackendChild | None = None
+    child_is_quarantined: bool = False
     next_turn_number: int = 1
     has_delivered_prompt: bool = False
     last_touched_monotonic: float = 0.0
@@ -601,6 +602,8 @@ class SqliteProcessConversationSystem:
             if position is None:
                 return None
             held = state.held_prompts[position]
+            if state.child_is_quarantined:
+                return PromptDeliveryQueued(queue_position=position + 1)
 
             if mode is HeldPromptPromotionMode.send_now:
                 running = state.running_turn
@@ -939,7 +942,11 @@ class SqliteProcessConversationSystem:
                     return PromptDeliveryQueued(queue_position=position)
             # Held if anything at all is going on, and held if anything is already
             # waiting: a message that arrived later never runs earlier.
-            if state.phase is not _ConversationPhase.idle or state.held_prompts:
+            if (
+                state.child_is_quarantined
+                or state.phase is not _ConversationPhase.idle
+                or state.held_prompts
+            ):
                 return self._hold_prompt(
                     state,
                     content=content,
@@ -1043,7 +1050,8 @@ class SqliteProcessConversationSystem:
     def _automatic_compaction_is_due(self, state: _ConversationState) -> bool:
         activity_at = state.record.latest_agent_activity_at
         return (
-            activity_at is not None
+            not state.child_is_quarantined
+            and activity_at is not None
             and activity_at <= int(self._unix_time_now()) - AUTOMATIC_COMPACTION_AFTER_SECONDS
             and state.record.latest_agent_activity_sequence
             > state.record.automatically_compacted_through_sequence
@@ -1065,6 +1073,16 @@ class SqliteProcessConversationSystem:
         try:
             try:
                 running = state.running_turn
+                if state.child_is_quarantined:
+                    return self._hold_prompt(
+                        state,
+                        content=content,
+                        sender_label=sender_label,
+                        model_change=model_change,
+                        reasoning_effort_change=reasoning_effort_change,
+                        sender_message_id=sender_message_id,
+                        sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    )
                 if running is not None and running.automatic_compaction:
                     return self._hold_prompt(
                         state,
@@ -1144,6 +1162,10 @@ class SqliteProcessConversationSystem:
         try:
             running = state.running_turn
             child = state.child
+            if state.child_is_quarantined:
+                return PromptDeliveryRefused(
+                    refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed
+                )
             if running is None or child is None:
                 return PromptDeliveryRefused(
                     refusal_reason=PromptDeliveryRefusalReason.no_running_turn_to_steer_into
@@ -1210,6 +1232,9 @@ class SqliteProcessConversationSystem:
                         # beside it. The held line stays intact until an operator or a
                         # later successful stop establishes that release is safe.
                         state.child = child
+                        state.child_is_quarantined = True
+                    else:
+                        state.child_is_quarantined = False
             if termination_confirmed:
                 await self._drain_held_prompts(state)
             else:
@@ -1370,7 +1395,10 @@ class SqliteProcessConversationSystem:
         old_child = state.child
         state.child = None
         if old_child is not None:
-            await self._stop_child(state, old_child)
+            if not await self._stop_child(state, old_child):
+                state.child = old_child
+                state.child_is_quarantined = True
+                return PromptDeliveryRefusalReason.write_to_backend_failed
         try:
             child = await self._ensure_child(
                 state, model=model_change, reasoning_effort=reasoning_effort_change
@@ -1522,7 +1550,11 @@ class SqliteProcessConversationSystem:
         caller that sent it is long gone — and the next one is tried.
         """
         async with state.lock:
-            if state.phase is not _ConversationPhase.idle or not state.held_prompts:
+            if (
+                state.child_is_quarantined
+                or state.phase is not _ConversationPhase.idle
+                or not state.held_prompts
+            ):
                 return
             self._set_phase(state, _ConversationPhase.draining)
 
@@ -1752,6 +1784,8 @@ class SqliteProcessConversationSystem:
         that has to be spawned for that delivery is spawned on them rather than on the
         values it is replacing.
         """
+        if state.child_is_quarantined:
+            raise BackendSpawnFailed(state.record.conversation_id)
         child = state.child
         if child is not None:
             return child
@@ -1796,7 +1830,12 @@ class SqliteProcessConversationSystem:
         """
         if state.child is child:
             state.child = None
-        await self._stop_child(state, child)
+        stopped = await self._stop_child(state, child)
+        if stopped:
+            state.child_is_quarantined = False
+        else:
+            state.child = child
+            state.child_is_quarantined = True
 
     async def _stop_child(self, state: _ConversationState, child: BackendChild) -> bool:
         try:
@@ -2230,6 +2269,7 @@ class SqliteProcessConversationSystem:
 
         async with self._conversations_lock:
             states = list(self._conversations.values())
+        recovered_quarantines: list[_ConversationState] = []
         for state in states:
             if state.child is None or state.lock.locked():
                 continue
@@ -2237,11 +2277,22 @@ class SqliteProcessConversationSystem:
                 child = state.child
                 if child is None or state.phase is not _ConversationPhase.idle:
                     continue
-                idle_for = self._monotonic_now() - state.last_touched_monotonic
-                if idle_for < self._idle_child_stop_after_seconds:
-                    continue
+                was_quarantined = state.child_is_quarantined
+                if not was_quarantined:
+                    idle_for = self._monotonic_now() - state.last_touched_monotonic
+                    if idle_for < self._idle_child_stop_after_seconds:
+                        continue
                 state.child = None
-                await self._stop_child(state, child)
+                stopped = await self._stop_child(state, child)
+                if not stopped:
+                    state.child = child
+                    state.child_is_quarantined = True
+                    continue
+                state.child_is_quarantined = False
+                if was_quarantined and state.held_prompts:
+                    recovered_quarantines.append(state)
+        for state in recovered_quarantines:
+            await self._drain_held_prompts(state)
 
     # --- shared internals ---------------------------------------------------------------
 
