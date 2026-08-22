@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import tomllib
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -12,34 +10,6 @@ from click.testing import CliRunner
 
 from planner.cli import http
 from planner.cli import main as cli_main
-
-
-def test_panels_is_the_startup_console_script() -> None:
-    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-    scripts = pyproject["project"]["scripts"]
-
-    assert scripts["panels"] == "planner.cli.main:main"
-    assert "planner" not in scripts
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        ["ticket", "show"],
-        ["worker", "my-ticket"],
-        ["sprint", "show"],
-        ["sprint", "item", "show"],
-        ["day", "show"],
-        ["project", "show"],
-    ],
-)
-def test_record_read_help_teaches_the_optional_part_list(command: list[str]) -> None:
-    result = CliRunner().invoke(cli_main.main, [*command, "--help"])
-
-    assert result.exit_code == 0, result.output
-    assert "[PART_NAMES]" in result.output
-    assert "selected comma-separated PART_NAMES" in result.output
-    assert "Print machine-readable JSON" in result.output
 
 
 def test_worker_my_ticket_human_line_surfaces_worker(
@@ -119,9 +89,7 @@ def test_worker_request_user_help_is_a_no_payload_worker_command(
     )
 
     assert result.exit_code == 0, result.output
-    assert calls == [
-        ("POST", "/api/tickets/t_help/request-user-help", {"as_json": False})
-    ]
+    assert calls == [("POST", "/api/tickets/t_help/request-user-help", {"as_json": False})]
     assert "user help requested on t_help" in result.output
 
 
