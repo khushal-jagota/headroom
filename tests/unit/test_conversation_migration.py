@@ -17,7 +17,7 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "drop_supervisor_wake_and_ping"
+HEAD_REVISION = "conversation_automatic_compaction"
 
 
 def _table_columns(
@@ -62,7 +62,38 @@ def test_a_conversation_holds_what_it_was_started_with_and_where_it_has_got_to(
         ("latest_sequence", "INTEGER", 1, 0),
         ("created_at", "INTEGER", 1, 0),
         ("composer_catalog", "TEXT", 1, 0),
+        ("latest_agent_activity_at", "INTEGER", 0, 0),
+        ("latest_agent_activity_sequence", "INTEGER", 1, 0),
+        ("automatically_compacted_through_sequence", "INTEGER", 1, 0),
     ]
+
+
+def test_automatic_compaction_migration_restores_latest_agent_activity(tmp_path: Path) -> None:
+    db_path = tmp_path / "before-automatic-compaction.db"
+    conn = _build_a_database_at(db_path, "drop_supervisor_wake_and_ping")
+    conn.execute(
+        "INSERT INTO conversations (conversation_id, backend_key, workspace_folder, access, "
+        "latest_sequence, created_at) VALUES ('c', 'claude', '/tmp', 'full', 4, 1)"
+    )
+    conn.executemany(
+        "INSERT INTO conversation_events "
+        "(conversation_id, sequence, kind, payload, created_at) VALUES ('c', ?, ?, '{}', ?)",
+        (
+            (1, "prompt", 10),
+            (2, "agent_message", 20),
+            (3, "context_compacted", 30),
+            (4, "turn_ended", 40),
+        ),
+    )
+
+    create_schema(conn)
+
+    row = conn.execute(
+        "SELECT latest_agent_activity_at, latest_agent_activity_sequence, "
+        "automatically_compacted_through_sequence FROM conversations WHERE conversation_id = 'c'"
+    ).fetchone()
+    assert tuple(row) == (40, 4, 0)
+    conn.close()
 
 
 def test_a_row_of_a_conversations_record_is_keyed_by_its_place_in_that_conversation(

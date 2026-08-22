@@ -102,6 +102,9 @@ class ConversationRecord:
     vendor_session_cursor: str | None
     composer_catalog: tuple[ComposerCatalogEntry, ...]
     latest_sequence: int
+    latest_agent_activity_at: int | None
+    latest_agent_activity_sequence: int
+    automatically_compacted_through_sequence: int
     created_at: int
 
     def resolved_start(self) -> ResolvedConversationStart:
@@ -165,10 +168,29 @@ class ConversationStore:
         return await asyncio.to_thread(self._read_conversation_sync, conversation_id)
 
     async def append_event(
-        self, conversation_id: str, payload: ConversationEventPayload
+        self,
+        conversation_id: str,
+        payload: ConversationEventPayload,
+        *,
+        agent_activity: bool = False,
+        automatic_compaction_confirmed: bool = False,
     ) -> StoredConversationEvent:
         """Write the next row of this conversation's record and return it as written."""
-        return await asyncio.to_thread(self._append_event_sync, conversation_id, payload)
+        return await asyncio.to_thread(
+            self._append_event_sync,
+            conversation_id,
+            payload,
+            agent_activity,
+            automatic_compaction_confirmed,
+        )
+
+    async def conversations_due_for_automatic_compaction(
+        self, due_at_or_before: int
+    ) -> tuple[str, ...]:
+        """Return durable candidates whose ordinary agent activity is not protected."""
+        return await asyncio.to_thread(
+            self._conversations_due_for_automatic_compaction_sync, due_at_or_before
+        )
 
     async def append_delivered_prompt(
         self,
@@ -286,6 +308,9 @@ class ConversationStore:
             vendor_session_cursor=None,
             composer_catalog=(),
             latest_sequence=0,
+            latest_agent_activity_at=None,
+            latest_agent_activity_sequence=0,
+            automatically_compacted_through_sequence=0,
             created_at=self._integer_now(),
         )
         conn = self._connect()
@@ -294,8 +319,9 @@ class ConversationStore:
                 "INSERT INTO conversations (conversation_id, backend_key, model, "
                 "reasoning_effort, workspace_folder, role_text, "
                 "identity_environment_variables, access, vendor_session_cursor, "
-                "composer_catalog, latest_sequence, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "composer_catalog, latest_sequence, latest_agent_activity_at, "
+                "latest_agent_activity_sequence, automatically_compacted_through_sequence, "
+                "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     record.conversation_id,
                     str(record.backend_key),
@@ -308,6 +334,9 @@ class ConversationStore:
                     record.vendor_session_cursor,
                     _composer_catalog_to_json(record.composer_catalog),
                     record.latest_sequence,
+                    record.latest_agent_activity_at,
+                    record.latest_agent_activity_sequence,
+                    record.automatically_compacted_through_sequence,
                     record.created_at,
                 ),
             )
@@ -323,7 +352,9 @@ class ConversationStore:
             row = conn.execute(
                 "SELECT conversation_id, backend_key, model, reasoning_effort, "
                 "workspace_folder, role_text, identity_environment_variables, access, "
-                "vendor_session_cursor, composer_catalog, latest_sequence, created_at "
+                "vendor_session_cursor, composer_catalog, latest_sequence, "
+                "latest_agent_activity_at, latest_agent_activity_sequence, "
+                "automatically_compacted_through_sequence, created_at "
                 "FROM conversations WHERE conversation_id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -332,12 +363,29 @@ class ConversationStore:
         return None if row is None else _conversation_record(row)
 
     def _append_event_sync(
-        self, conversation_id: str, payload: ConversationEventPayload
+        self,
+        conversation_id: str,
+        payload: ConversationEventPayload,
+        agent_activity: bool,
+        automatic_compaction_confirmed: bool,
     ) -> StoredConversationEvent:
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
             written = self._insert_rows(conn, conversation_id, (payload,))
+            stored = written[0]
+            if agent_activity:
+                conn.execute(
+                    "UPDATE conversations SET latest_agent_activity_at = ?, "
+                    "latest_agent_activity_sequence = ? WHERE conversation_id = ?",
+                    (stored.created_at, stored.sequence, conversation_id),
+                )
+            if automatic_compaction_confirmed:
+                conn.execute(
+                    "UPDATE conversations SET automatically_compacted_through_sequence = "
+                    "latest_agent_activity_sequence WHERE conversation_id = ?",
+                    (conversation_id,),
+                )
             _commit_appended_rows(conn, (payload,))
         except BaseException:
             if conn.in_transaction:
@@ -346,6 +394,23 @@ class ConversationStore:
         finally:
             conn.close()
         return written[0]
+
+    def _conversations_due_for_automatic_compaction_sync(
+        self, due_at_or_before: int
+    ) -> tuple[str, ...]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT conversation_id FROM conversations "
+                "WHERE latest_agent_activity_at IS NOT NULL "
+                "AND latest_agent_activity_at <= ? "
+                "AND latest_agent_activity_sequence > automatically_compacted_through_sequence "
+                "ORDER BY latest_agent_activity_at, conversation_id",
+                (due_at_or_before,),
+            ).fetchall()
+        finally:
+            conn.close()
+        return tuple(str(row["conversation_id"]) for row in rows)
 
     def _append_delivered_prompt_sync(
         self,
@@ -496,9 +561,7 @@ class ConversationStore:
             ).fetchall()
         finally:
             conn.close()
-        return {
-            str(row["conversation_id"]): int(row["latest_turn_ended_sequence"]) for row in rows
-        }
+        return {str(row["conversation_id"]): int(row["latest_turn_ended_sequence"]) for row in rows}
 
     def _has_delivered_prompt_sync(self, conversation_id: str) -> bool:
         conn = self._connect()
@@ -633,6 +696,15 @@ def _conversation_record(row: sqlite3.Row) -> ConversationRecord:
         ),
         composer_catalog=_composer_catalog_from_json(str(row["composer_catalog"])),
         latest_sequence=int(row["latest_sequence"]),
+        latest_agent_activity_at=(
+            None
+            if row["latest_agent_activity_at"] is None
+            else int(row["latest_agent_activity_at"])
+        ),
+        latest_agent_activity_sequence=int(row["latest_agent_activity_sequence"]),
+        automatically_compacted_through_sequence=int(
+            row["automatically_compacted_through_sequence"]
+        ),
         created_at=int(row["created_at"]),
     )
 

@@ -339,13 +339,14 @@ class _Harness:
         self,
         db_path: Path,
         *,
+        clock: _FakeMonotonicClock | None = None,
         idle_child_stop_after_seconds: float = 30 * 60,
         idle_child_sweep_interval_seconds: float = 5 * 60,
     ) -> None:
-        self.store = ConversationStore(str(db_path))
+        self.clock = _FakeMonotonicClock() if clock is None else clock
+        self.store = ConversationStore(str(db_path), integer_now=lambda: int(self.clock.now))
         self.backends: dict[str, _FakeBackend] = {}
         self.spawned_conversation_ids: list[str] = []
-        self.clock = _FakeMonotonicClock()
         self.live_tail = ConversationLiveTail()
         self.backend_lifecycle = BackendLifecycleCoordinator()
         self.message_files = ConversationMessageFiles(str(db_path))
@@ -357,6 +358,7 @@ class _Harness:
             },
             live_tail=self.live_tail,
             monotonic_now=self.clock,
+            unix_time_now=self.clock,
             idle_child_stop_after_seconds=idle_child_stop_after_seconds,
             idle_child_sweep_interval_seconds=idle_child_sweep_interval_seconds,
             backend_lifecycle=self.backend_lifecycle,
@@ -482,6 +484,13 @@ class _Harness:
         await backend.sink.agent_message_completed(token, content)
         await self.settle()
 
+    async def confirm_compaction(self, conversation_id: str) -> None:
+        backend = self.backend(conversation_id)
+        token = backend.live_turn_token
+        assert token is not None and backend.sink is not None
+        await backend.sink.context_compacted(token)
+        await self.settle()
+
     # --- reading the record ---
 
     async def events(self, conversation_id: str) -> tuple[StoredConversationEvent, ...]:
@@ -570,9 +579,11 @@ def test_starting_a_conversation_writes_its_record_and_touches_nothing_else(
         written_calls.append("create_conversation")
         return await real_create(resolved)
 
-    async def recording_append(conversation_id: str, payload):  # type: ignore[no-untyped-def]
+    async def recording_append(  # type: ignore[no-untyped-def]
+        conversation_id: str, payload, **kwargs
+    ):
         written_calls.append("append_event")
-        return await real_append(conversation_id, payload)
+        return await real_append(conversation_id, payload, **kwargs)
 
     harness.store.create_conversation = recording_create  # type: ignore[method-assign]
     harness.store.append_event = recording_append  # type: ignore[method-assign]
@@ -2241,6 +2252,160 @@ def test_the_janitor_sweeps_on_its_own(tmp_path: Path) -> None:
     _run(exercise)
 
 
+@pytest.mark.parametrize("backend_key", tuple(ConversationBackendKey))
+def test_idle_conversations_compact_through_every_production_backend(
+    harness: _Harness, backend_key: ConversationBackendKey
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c", backend_key=backend_key)
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60 - 1)
+        await harness.system._sweep_idle_children()
+        assert harness.backend("c").written_texts() == ("first",)
+        harness.clock.advance(1)
+        await harness.system._sweep_idle_children()
+        assert harness.backend("c").written_texts() == ("first", "/compact")
+
+    _run(exercise)
+
+
+def test_confirmed_compaction_waits_for_new_agent_activity_before_repeating(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60)
+        await harness.system._sweep_idle_children()
+        await harness.confirm_compaction("c")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60 + 1)
+        await harness.system._sweep_idle_children()
+        assert harness.backend("c").written_texts() == ("first", "/compact")
+        await harness.system.send("c", text_message_content("ordinary"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60)
+        await harness.system._sweep_idle_children()
+        assert harness.backend("c").written_texts()[-2:] == ("ordinary", "/compact")
+
+    _run(exercise)
+
+
+def test_boundary_duplicate_waits_for_compaction_and_runs_once(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60)
+        content = text_message_content("at the boundary")
+        first = await harness.system.send(
+            "c", content, sender_label="owner", sender_message_id="same-id"
+        )
+        duplicate = await harness.system.send(
+            "c", content, sender_label="owner", sender_message_id="same-id"
+        )
+        assert isinstance(first, PromptDeliveryQueued)
+        assert isinstance(duplicate, PromptDeliveryQueued)
+        assert harness.backend("c").written_texts() == ("first", "/compact")
+        await harness.confirm_compaction("c")
+        await harness.complete_turn("c")
+        assert harness.backend("c").written_texts().count("at the boundary") == 1
+
+    _run(exercise)
+
+
+def test_send_now_does_not_cancel_automatic_compaction(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60)
+        await harness.system._sweep_idle_children()
+        fate = await harness.system.send(
+            "c",
+            text_message_content("urgent"),
+            sender_label="owner",
+            mode=PromptDeliveryMode.send_now,
+        )
+        assert isinstance(fate, PromptDeliveryQueued)
+        assert harness.backend("c").cancellations == 0
+        await harness.confirm_compaction("c")
+        await harness.complete_turn("c")
+        assert harness.backend("c").written_texts()[-1] == "urgent"
+
+    _run(exercise)
+
+
+def test_compaction_failure_releases_the_boundary_message_once(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60)
+        harness.backend("c").write_failures_remaining = 1
+        await harness.system.send(
+            "c", text_message_content("after refusal"), sender_label="owner"
+        )
+        assert harness.backend("c").written_texts() == ("first", "after refusal")
+
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60)
+        await harness.system.send(
+            "c", text_message_content("after no boundary"), sender_label="owner"
+        )
+        await harness.complete_turn("c")
+        assert harness.backend("c").written_texts().count("after no boundary") == 1
+        assert (await harness.recorded_endings("c"))[-1] is ConversationTurnEnding.failed
+
+    _run(exercise)
+
+
+def test_restart_sweep_recovers_an_unloaded_due_conversation(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        db_path = tmp_path / "restart.db"
+        conn = connect(str(db_path))
+        create_schema(conn)
+        conn.close()
+        clock = _FakeMonotonicClock()
+        first = _Harness(db_path, clock=clock)
+        await _start(first, "c")
+        await first.system.send("c", text_message_content("first"), sender_label="owner")
+        await first.complete_turn("c")
+        await first.system.shutdown()
+        clock.advance(50 * 60)
+        restarted = _Harness(db_path, clock=clock)
+        try:
+            await restarted.system._sweep_idle_children()
+            assert restarted.backend("c").written_texts() == ("/compact",)
+            assert restarted.spawned_conversation_ids == ["c"]
+        finally:
+            await restarted.system.shutdown()
+
+    _run(exercise)
+
+
+def test_late_agent_output_moves_the_same_second_activity_sequence(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        backend = harness.backend("c")
+        token = backend.live_turn_token
+        assert token is not None and backend.sink is not None
+        await harness.complete_turn("c")
+        before = await harness.store.read_conversation("c")
+        assert before is not None
+        await backend.sink.agent_message_completed(token, text_message_content("late"))
+        await harness.settle()
+        after = await harness.store.read_conversation("c")
+        assert after is not None
+        assert after.latest_agent_activity_at == before.latest_agent_activity_at
+        assert after.latest_agent_activity_sequence > before.latest_agent_activity_sequence
+
+    _run(exercise)
+
+
 def test_shutting_down_stops_every_child(harness: _Harness) -> None:
     async def exercise() -> None:
         await _start(harness, "first")
@@ -2900,10 +3065,12 @@ def test_a_failed_turn_whose_ending_cannot_be_written_still_says_so_in_the_log(
 
         real_append = harness.store.append_event
 
-        async def append_that_cannot_write_an_ending(conversation_id: str, payload):  # type: ignore[no-untyped-def]
+        async def append_that_cannot_write_an_ending(  # type: ignore[no-untyped-def]
+            conversation_id: str, payload, **kwargs
+        ):
             if isinstance(payload, TurnEndedEventPayload):
                 raise sqlite3.OperationalError("database is locked")
-            return await real_append(conversation_id, payload)
+            return await real_append(conversation_id, payload, **kwargs)
 
         harness.store.append_event = append_that_cannot_write_an_ending  # type: ignore[method-assign]
 
