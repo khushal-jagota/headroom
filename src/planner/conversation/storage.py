@@ -185,11 +185,13 @@ class ConversationStore:
         )
 
     async def conversations_due_for_automatic_compaction(
-        self, due_at_or_before: int
+        self, *, due_at_or_before: int, activity_after: int
     ) -> tuple[str, ...]:
-        """Return durable candidates whose ordinary agent activity is not protected."""
+        """Return unprotected activity inside the bounded automatic compaction window."""
         return await asyncio.to_thread(
-            self._conversations_due_for_automatic_compaction_sync, due_at_or_before
+            self._conversations_due_for_automatic_compaction_sync,
+            due_at_or_before,
+            activity_after,
         )
 
     async def append_delivered_prompt(
@@ -396,7 +398,7 @@ class ConversationStore:
         return written[0]
 
     def _conversations_due_for_automatic_compaction_sync(
-        self, due_at_or_before: int
+        self, due_at_or_before: int, activity_after: int
     ) -> tuple[str, ...]:
         conn = self._connect()
         try:
@@ -404,9 +406,10 @@ class ConversationStore:
                 "SELECT conversation_id FROM conversations "
                 "WHERE latest_agent_activity_at IS NOT NULL "
                 "AND latest_agent_activity_at <= ? "
+                "AND latest_agent_activity_at > ? "
                 "AND latest_agent_activity_sequence > automatically_compacted_through_sequence "
                 "ORDER BY latest_agent_activity_at, conversation_id",
-                (due_at_or_before,),
+                (due_at_or_before, activity_after),
             ).fetchall()
         finally:
             conn.close()

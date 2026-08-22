@@ -135,10 +135,12 @@ own `_meta` is the only place it appears. The thread draws it as a seam, in the
 same stylesheet the pane that came before drew the same thing with.
 
 Panels protects an idle thread before its one-hour backend cache boundary. The
-five-minute maintenance sweep starts `/compact` after 50 minutes without ordinary
-agent activity. The run starts between 50 and 55 minutes after the latest durable
-agent output or turn ending. A user prompt does not start this clock. A restart
-reads the durable activity marker and continues the same deadline.
+five-minute maintenance sweep starts `/compact` from 50 minutes through less than
+60 minutes without ordinary agent activity. The run normally starts between 50 and
+55 minutes after the latest durable agent output or turn ending. At 60 minutes the
+cache window has passed, so Panels does not compact that conversation automatically.
+A user prompt does not start this clock. A restart reads the durable activity marker
+but ignores historical conversations older than the useful cache window.
 
 The maintenance turn uses each backend's existing command path. Codex calls
 `thread/compact/start`. Claude sends `/compact` through its query. Hermes sends

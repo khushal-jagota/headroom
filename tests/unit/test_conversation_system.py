@@ -2389,6 +2389,65 @@ def test_restart_sweep_recovers_an_unloaded_due_conversation(tmp_path: Path) -> 
     _run(exercise)
 
 
+def test_exact_sixty_minute_boundary_is_outside_the_compaction_window(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(60 * 60)
+
+        await harness.system._sweep_idle_children()
+
+        assert harness.backend("c").written_texts() == ("first",)
+
+    _run(exercise)
+
+
+def test_restart_sweep_ignores_historical_conversation_backlog(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        db_path = tmp_path / "old-restart.db"
+        conn = connect(str(db_path))
+        create_schema(conn)
+        conn.close()
+        clock = _FakeMonotonicClock()
+        first = _Harness(db_path, clock=clock)
+        await _start(first, "c")
+        await first.system.send("c", text_message_content("first"), sender_label="owner")
+        await first.complete_turn("c")
+        await first.system.shutdown()
+        clock.advance(24 * 60 * 60)
+        restarted = _Harness(db_path, clock=clock)
+        try:
+            await restarted.system._sweep_idle_children()
+            assert restarted.spawned_conversation_ids == []
+            assert restarted.backend("c").written_texts() == ()
+        finally:
+            await restarted.system.shutdown()
+
+    _run(exercise)
+
+
+def test_message_after_cache_window_starts_without_automatic_compaction(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(60 * 60 + 1)
+
+        fate = await harness.system.send(
+            "c", text_message_content("after cache window"), sender_label="owner"
+        )
+
+        assert fate == PromptDeliveryStarted()
+        assert harness.backend("c").written_texts() == ("first", "after cache window")
+
+    _run(exercise)
+
+
 def test_late_agent_output_moves_the_same_second_activity_sequence(harness: _Harness) -> None:
     async def exercise() -> None:
         await _start(harness, "c")

@@ -131,6 +131,7 @@ IDLE_CHILD_SWEEP_INTERVAL_SECONDS = 5 * 60
 # A sweep runs every five minutes. This lead time keeps the automatic compaction before
 # the backend cache boundary even when the conversation becomes eligible just after one.
 AUTOMATIC_COMPACTION_AFTER_SECONDS = 50 * 60
+AUTOMATIC_COMPACTION_BEFORE_SECONDS = 60 * 60
 AUTOMATIC_COMPACTION_PROMPT = "/compact"
 AUTOMATIC_COMPACTION_SENDER_LABEL = "Panels"
 
@@ -1049,10 +1050,14 @@ class SqliteProcessConversationSystem:
 
     def _automatic_compaction_is_due(self, state: _ConversationState) -> bool:
         activity_at = state.record.latest_agent_activity_at
+        activity_age = (
+            None if activity_at is None else int(self._unix_time_now()) - activity_at
+        )
         return (
             not state.child_is_quarantined
-            and activity_at is not None
-            and activity_at <= int(self._unix_time_now()) - AUTOMATIC_COMPACTION_AFTER_SECONDS
+            and activity_age is not None
+            and AUTOMATIC_COMPACTION_AFTER_SECONDS <= activity_age
+            < AUTOMATIC_COMPACTION_BEFORE_SECONDS
             and state.record.latest_agent_activity_sequence
             > state.record.automatically_compacted_through_sequence
         )
@@ -2253,7 +2258,12 @@ class SqliteProcessConversationSystem:
         agents in it.
         """
         due_ids = await self._store.conversations_due_for_automatic_compaction(
-            int(self._unix_time_now()) - AUTOMATIC_COMPACTION_AFTER_SECONDS
+            due_at_or_before=(
+                int(self._unix_time_now()) - AUTOMATIC_COMPACTION_AFTER_SECONDS
+            ),
+            activity_after=(
+                int(self._unix_time_now()) - AUTOMATIC_COMPACTION_BEFORE_SECONDS
+            ),
         )
         for conversation_id in due_ids:
             state = await self._conversation_state(conversation_id)
