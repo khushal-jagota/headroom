@@ -12,25 +12,16 @@ import { frameIntervalSeconds } from "../src/lib/atlas/world/pacing";
 import { PACING } from "../src/lib/atlas/world/tuning";
 
 describe("frame pacing", () => {
-  it("takes every frame while a hand is on the canvas", () => {
+  it("uses full, ambient, and resting rates at their boundaries", () => {
     expect(frameIntervalSeconds(0, false)).toBe(0);
     expect(frameIntervalSeconds(PACING.fullRateAfterPresence - 0.01, false)).toBe(0);
-  });
-
-  it("takes every frame while the eye is travelling, however long since a touch", () => {
     expect(frameIntervalSeconds(PACING.idleAfterPresence * 10, true)).toBe(0);
-  });
-
-  it("settles to the ambient rate once the hand has left", () => {
     expect(frameIntervalSeconds(PACING.fullRateAfterPresence, false)).toBeCloseTo(
       1 / PACING.ambientFps
     );
     expect(frameIntervalSeconds(PACING.idleAfterPresence - 0.01, false)).toBeCloseTo(
       1 / PACING.ambientFps
     );
-  });
-
-  it("rests once nobody has been there for a long while", () => {
     expect(frameIntervalSeconds(PACING.idleAfterPresence, false)).toBeCloseTo(
       1 / PACING.idleFps
     );

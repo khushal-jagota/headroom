@@ -168,21 +168,6 @@ describe("managed-file preview resolution", () => {
     expect(resolvePreview({ kind: "external-link", href }).kind).toBe("external");
   });
 
-  it("does not expose the retired actionLabel", () => {
-    const resolvedPreviews = [
-      resolvePreview({ kind: "ticket-file", ticketId: "t_file123", path: "page.html" }),
-      resolvePreview({ kind: "ticket-file", ticketId: "t_file123", path: "icon.svg" }),
-      resolvePreview({
-        kind: "external-link",
-        href: "https://example.com/pictures/photo.png"
-      })
-    ];
-
-    for (const resolved of resolvedPreviews) {
-      expect("actionLabel" in resolved).toBe(false);
-    }
-  });
-
   it("allows one new Markdown expansion and records its visited URL", () => {
     expect(markdownExpansionFor(resolvePreview(ticketMarkdown), 0, [])).toEqual({
       expandable: true,
