@@ -423,6 +423,7 @@ def test_a_persisted_cursor_without_a_delivered_prompt_keeps_first_prompt_dispat
                 "restart-codex", text_message_content(prompt_text), sender_label="owner"
             )
             assert isinstance(refused, PromptDeliveryRefused)
+            await first.wait_until_quiescent()
             record = await store.read_conversation("restart-codex")
             assert record is not None and record.vendor_session_cursor == "thread-1"
             assert await store.has_delivered_prompt("restart-codex") is False
