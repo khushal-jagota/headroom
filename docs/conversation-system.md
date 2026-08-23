@@ -156,6 +156,13 @@ success, refusal, failure, or a completed turn with no compaction confirmation.
 
 ## Sending
 
+The top-level `panels send-message` command is the plain-text command-line door into this
+same send operation. It resolves a Chief, Ticket, Sprint Item, or registered agent, then
+uses that owner's current conversation path. It creates the normal conversation for the
+first three owner types when needed. A general agent row has no launch configuration, so
+it can receive a message only while it points to a current conversation. The command adds
+no second transport, queue, or conversation record.
+
 The composer accepts pictures and supported files from its pickers, the clipboard, or
 a drop. Attachments wait beside the draft and can be removed one at a time. They can
 travel with words or form the whole message. There is no separate upload conversation

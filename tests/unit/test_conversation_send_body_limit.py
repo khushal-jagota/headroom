@@ -20,6 +20,7 @@ _SEND_PATH = "/api/conversation/conversations/c/send"
         "/api/chief/conversation/send",
         "/api/tickets/t_1/conversation/send",
         "/api/items/si_1/supervisor/conversation/send",
+        "/api/messages/send",
     ],
 )
 def test_content_length_rejects_every_send_before_body_or_downstream_read(
