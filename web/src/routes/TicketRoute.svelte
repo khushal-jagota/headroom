@@ -144,6 +144,8 @@
   let heldFile = $state<ManagedFileTarget | null>(null);
   let shownFile = $derived(onOpenFile ? openFile : heldFile);
   let shownFileLabel = $derived(shownFile ? resolvePreview(shownFile).label : "");
+  let shownFileIsHtml = $derived(shownFile ? resolvePreview(shownFile).kind === "html" : false);
+  let artifactReloadSignal = $state(0);
 
   /** Show a file on this screen, or close the one it is showing.
    *
@@ -777,15 +779,25 @@
         >
           <div class="ticket-artifact-bar">
             <span class="ticket-artifact-name">{shownFileLabel}</span>
-            <button
-              type="button"
-              class="ticket-artifact-close"
-              data-ticket-artifact-close
-              onclick={() => showFile(null)}
-            >Close</button>
+            <div class="ticket-artifact-actions">
+              {#if shownFileIsHtml}
+                <button
+                  type="button"
+                  class="ticket-artifact-action"
+                  data-ticket-artifact-refresh
+                  onclick={() => artifactReloadSignal += 1}
+                >Refresh</button>
+              {/if}
+              <button
+                type="button"
+                class="ticket-artifact-action"
+                data-ticket-artifact-close
+                onclick={() => showFile(null)}
+              >Close</button>
+            </div>
           </div>
           <div class="ticket-artifact-body">
-            <FileDocument target={shownFile} />
+            <FileDocument target={shownFile} reloadSignal={artifactReloadSignal} />
           </div>
         </aside>
       {/if}

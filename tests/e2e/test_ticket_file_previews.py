@@ -556,6 +556,7 @@ def test_ticket_artifact_opens_in_place_over_the_ticket(
         state="visible", timeout=WAIT_MS
     )
     assert artifact.locator("[data-ticket-artifact-close]").inner_text() == "Close"
+    assert artifact.locator("[data-ticket-artifact-refresh]").count() == 0
 
     # The artifact covers the ticket's own reading area and nothing else. The
     # conversation keeps its place at the bottom of the page, so the reader can talk to
@@ -692,6 +693,79 @@ def test_mobile_embedded_managed_files_use_preview_links(
     download = page.locator('[data-file-preview-kind="download"]').first
     assert download.locator("a.file-preview-mobile-link").count() == 0
     download.locator('a.file-preview-link[download]').wait_for(state="visible", timeout=WAIT_MS)
+
+
+def test_open_html_artifact_refreshes_from_its_managed_file(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+) -> None:
+    """Refresh crosses the Ticket UI, managed file route, and sandboxed iframe.
+
+    A component test cannot prove that a changed managed file reaches the open sandboxed
+    document without closing the artifact or leaving its Ticket.
+    """
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Refresh HTML artifact",
+    )["id"]
+    _write_ticket_files(server, ticket_id)
+    _set_fields(
+        server,
+        ticket_id,
+        {
+            "success": {
+                "value": f"[HTML](/files/tickets/{ticket_id}/page.html)",
+                "proposal": None,
+                "user_note": None,
+            },
+            "approach": {"value": None, "proposal": None, "user_note": None},
+            "plan": {"value": None, "proposal": None, "user_note": None},
+            "implementation": {"value": None, "proposal": None, "user_note": None},
+            "closeout": {"value": None, "proposal": None, "user_note": None},
+        },
+    )
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/workspace/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+    )
+    _open_ticket_field(page, "success")
+    page.locator('a.file-preview-link:visible', has_text="Open page.html").first.click()
+
+    artifact = page.locator("[data-ticket-artifact]")
+    iframe = artifact.locator("iframe[data-file-preview-html]")
+    frame = artifact.frame_locator("iframe[data-file-preview-html]")
+    frame.locator("h1", has_text="HTML File").wait_for(state="visible", timeout=WAIT_MS)
+    initial_blob_src = iframe.get_attribute("src")
+    assert initial_blob_src is not None
+    artifact_address = page.url
+    page.evaluate("window.__artifactRefreshMarker = 'kept'")
+
+    (_ticket_files_dir(server, ticket_id) / "page.html").write_text(
+        "<h1>Refreshed HTML File</h1>", encoding="utf-8"
+    )
+    refresh = artifact.locator("[data-ticket-artifact-refresh]")
+    assert refresh.inner_text() == "Refresh"
+    refresh.click()
+
+    frame.locator("h1", has_text="Refreshed HTML File").wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+    assert iframe.get_attribute("src") != initial_blob_src
+    assert page.url == artifact_address
+    assert page.evaluate("window.__artifactRefreshMarker") == "kept"
+    assert artifact.is_visible()
+    assert (
+        page.locator(f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]').count() == 1
+    )
 
 
 def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(

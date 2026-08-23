@@ -4517,7 +4517,14 @@ select {
   font-size: var(--type-sm);
 }
 
-.ticket-artifact-close {
+.ticket-artifact-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.ticket-artifact-action {
   flex: none;
   background: none;
   border: 0;
