@@ -118,9 +118,7 @@ def test_every_owner_selector_resolves_and_first_send_starts(tmp_path: Path) -> 
     }
 
 
-def test_busy_delivery_returns_canonical_queue_fate_without_internal_position(
-    tmp_path: Path,
-) -> None:
+def test_busy_delivery_returns_the_canonical_queue_fate(tmp_path: Path) -> None:
     app, _ = _app(tmp_path)
     with TestClient(app) as client:
         first = _send(client, {"type": "chief"}, "First")
@@ -128,7 +126,7 @@ def test_busy_delivery_returns_canonical_queue_fate_without_internal_position(
 
     assert first.json()["fate"] == "started"
     assert queued.json()["fate"] == "queued"
-    assert "queue_position" not in queued.json()
+    assert queued.json()["queue_position"] == 1
     assert queued.json()["conversation_id"] == first.json()["conversation_id"]
 
 

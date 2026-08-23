@@ -65,7 +65,6 @@ def _result_json(result: MessageDeliveryResult) -> JsonDict:
     if result.target.target_id is not None:
         target["id"] = result.target.target_id
     fate = delivery_fate_json(result.fate)
-    fate.pop("queue_position", None)
     return {
         "target": target,
         "resolved_destination": {

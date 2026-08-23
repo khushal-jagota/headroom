@@ -77,9 +77,9 @@ record shapes. Direct `show` commands also keep their full record shapes.
   conversation on the first message. An arbitrary registered agent must already have a
   current conversation because its row does not contain launch settings. The result names
   the resolved destination, conversation, and delivery fate. Started means delivery began,
-  queued means it waits for the busy conversation, and refused means the existing
-  conversation system could not deliver it. It does not report whether the recipient
-  completed the requested work.
+  queued names its position while it waits for the busy conversation, and refused means
+  the existing conversation system could not deliver it. It does not report whether the
+  recipient completed the requested work.
 - **`day show / list-tickets / set / add-ticket / remove-ticket`** — plan a day and
   assign tickets to it. `day show` returns the Day header and authored parts;
   `day list-tickets` returns the ticket list explicitly. `day set
