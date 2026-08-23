@@ -4,7 +4,13 @@
  * received a complete answer yet. A sender message id joins those two views without
  * allowing an optimistic copy to become a second row.
  */
-import { messageContentOf, type HeldPrompt, type MessagePiece, type SentMessagePiece } from "./wire";
+import {
+  messageContentOf,
+  messageContentText,
+  type HeldPrompt,
+  type MessagePiece,
+  type SentMessagePiece
+} from "./wire";
 import type { OutgoingMessage } from "./outgoing";
 
 export type HeldPromptRowState = "held" | "in_flight" | "unknown";
@@ -18,6 +24,18 @@ export type HeldPromptRow = Readonly<{
   sentAtUnixMilliseconds: number;
   state: HeldPromptRowState;
 }>;
+
+export function heldPromptRowLabel(row: HeldPromptRow): string {
+  const words = messageContentText(row.content);
+  if (words !== "") return words;
+  const imageCount = row.content.filter((piece) => piece.piece === "image").length;
+  const fileCount = row.content.filter((piece) => piece.piece === "file").length;
+  if (imageCount > 0 && fileCount > 0) {
+    return `${imageCount} image${imageCount === 1 ? "" : "s"} · ${fileCount} file${fileCount === 1 ? "" : "s"}`;
+  }
+  if (fileCount > 0) return fileCount === 1 ? "File message" : `${fileCount} files`;
+  return imageCount === 1 ? "Image message" : `${imageCount} images`;
+}
 
 function stateForLocal(message: OutgoingMessage): HeldPromptRowState {
   if (message.knownFate === "answer_never_came_back") return "unknown";

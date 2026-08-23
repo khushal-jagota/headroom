@@ -78,6 +78,7 @@
 {:else}
   <LiveConversation
     {conversationId}
+    persistenceKey="owner:chief"
     label="Chief of Staff"
     {backends}
     startValues={startValues.data ?? null}

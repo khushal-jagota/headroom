@@ -61,27 +61,24 @@ establishes that nothing outside the conversation shows it.
 ## What a message is
 
 A message is not a piece of text. It is a run of pieces, in the order they were
-put in, and there are two kinds of piece: written words, and a picture.
+put in, and there are three kinds of piece: written words, a picture, and an
+attached document or data file.
 
-There is deliberately no third kind. A voice note becomes words by speech-to-text
-before anything reaches a message, so nothing here ever sees a sound. And a file
-an agent wants you to look at is a markdown link in its own words, which already
-draws as a preview — a separate kind for it would be a second, worse way to draw
-the same thing.
+There is deliberately no sound. A voice note becomes words by speech-to-text
+before anything reaches a message, so nothing here ever sees one.
 
 Nearly every message is one piece of written words, and that stays as simple as
 it sounds. A message that is only words is stored exactly the way it was before a
 message could be anything else, so every conversation already in the notebook
 reads unchanged and an ordinary row never grows.
 
-The bytes of a picture do not go in the row. A notebook is read in
-full every time somebody opens a conversation, and a screenshot inside one of
-those rows would be megabytes re-read every time. So the bytes are kept in a file
-beside the notebook, under the conversation that carries them, and the row names
-the file. That one value serves everybody: the notebook holds it, the browser
-fetches the picture from it, and the agent is handed it — codex wants the file's
-path and is given exactly that, while claude and hermes want the bytes and they
-are read from the same file.
+Attachment bytes do not go in the row. A notebook is read in full every time somebody
+opens a conversation, so large bytes there would be read again every time. The bytes
+stay in a managed file under their conversation, and the row names that file.
+
+The same managed value serves the notebook, browser, and backend. Images retain their
+native routes. Hermes receives an ACP resource link for a document or data file. Codex
+and Claude receive explicit attachment context with the managed local path.
 
 A message's pictures total at most 3 MiB of raw bytes and each is a structurally
 valid PNG, JPEG, GIF, or WebP. That raw limit leaves room for base64 expansion in
@@ -96,12 +93,17 @@ authoritative: it validates the completed bytes and the aggregate before keeping
 any file or prompt, and records the media type those bytes prove, not the type the
 browser claimed.
 
+Documents and data files have a separate 10 MiB raw-byte limit per message. Panels
+accepts PDF, UTF-8 plain text, Markdown, CSV, TSV, JSON, and JSONL. The server derives
+the type from the safe file name and validates the content before it keeps any bytes.
+Archives, executables, unknown formats, and audio are refused.
+
 Those files last as long as the notebook does, which is forever. Nothing in
 Panels deletes a conversation. Reset stops the active conversation and clears its active
 pointer, but its Ticket history association remains. Ticket deletion removes the
 associations and leaves each conversation record behind. A file removed by either would
-turn a picture somebody sent into a picture nobody can see, while the row still
-says a picture was sent.
+turn an attachment somebody sent into a file nobody can retrieve, while the row still
+says that the attachment was sent.
 
 A finished tool call keeps the readable text that its backend reports. Claude can
 report a result as a list of text and non-text blocks. Panels joins its text blocks
@@ -126,19 +128,38 @@ quietest line on the page.
 
 **Where the thread was cut.** A backend that summarises what came before and
 drops it leaves a transcript whose earlier context has silently gone. All three
-do it, none of them was asked to by Panels, and now each says so: codex sends it
+do it, and each says so: codex sends it
 as an item, claude as a system message, and hermes inside its own metadata on a
 session update — the ACP protocol has no word for compaction at all, so hermes'
 own `_meta` is the only place it appears. The thread draws it as a seam, in the
 same stylesheet the pane that came before drew the same thing with.
 
+Panels protects an idle thread before its one-hour backend cache boundary. The
+five-minute maintenance sweep starts `/compact` from 50 minutes through less than
+60 minutes without ordinary agent activity. The run normally starts between 50 and
+55 minutes after the latest durable agent output or turn ending. At 60 minutes the
+cache window has passed, so Panels does not compact that conversation automatically.
+A user prompt does not start this clock. A restart reads the durable activity marker
+but ignores historical conversations older than the useful cache window.
+
+The maintenance turn uses each backend's existing command path. Codex calls
+`thread/compact/start`. Claude sends `/compact` through its query. Hermes sends
+`/compact` through ACP `session/prompt`. Panels accepts success only after Codex
+reports a completed `contextCompaction` item, Claude reports `compact_boundary`, or
+Hermes reports session provenance with reason `compression`.
+
+A successful boundary suppresses another automatic run until a later ordinary
+turn produces agent activity. The maintenance turn does not reset its own clock.
+If a message arrives after the deadline, the conversation lock reserves compaction
+first and holds the message behind it. The message proceeds once after confirmed
+success, refusal, failure, or a completed turn with no compaction confirmation.
+
 ## Sending
 
-The composer accepts pictures from its image picker, the clipboard, or a drop. They
-wait beside the draft in one visible order, can be removed one at a time, and can be
-sent with words or as the whole message. The browser sends one native content run:
-the trimmed words when there are any, followed by every remaining picture in the
-order shown. There is no separate upload conversation or attachment record.
+The composer accepts pictures and supported files from its pickers, the clipboard, or
+a drop. Attachments wait beside the draft and can be removed one at a time. They can
+travel with words or form the whole message. There is no separate upload conversation
+or attachment record.
 
 Send has no delivery knob. Every new message runs when the agent is free, and a
 busy agent holds it in a FIFO line. Enter and the send arrow use that same rule,
@@ -328,7 +349,7 @@ ACP has no agent-question request, so its existing permission flow is unchanged.
 
 ## Processes, honestly
 
-One child process per conversation, started only when a send needs it. The
+One child process per conversation, started when a send or maintenance run needs it. The
 agent's own session handle is stored on the conversation row, so a later send
 can bring the same memory back. After a server restart nothing is running and
 the system says so — there is no pretending, and no machinery that quietly

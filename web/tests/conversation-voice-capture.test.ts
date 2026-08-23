@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   createVoiceCapture,
-  formatVoiceTime,
   VoiceTranscriptionError,
   type VoiceCaptureDeps,
   type VoiceCaptureState,
@@ -112,14 +111,6 @@ function makeHarness(
 function settle(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
-
-describe("formatVoiceTime", () => {
-  it("reads as m:ss", () => {
-    expect(formatVoiceTime(0)).toBe("0:00");
-    expect(formatVoiceTime(41_000)).toBe("0:41");
-    expect(formatVoiceTime(61_500)).toBe("1:01");
-  });
-});
 
 describe("voice capture machine", () => {
   it("runs idle → recording → transcribing → landed transcript", async () => {

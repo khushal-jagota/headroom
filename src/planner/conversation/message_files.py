@@ -1,15 +1,14 @@
 """The files a conversation's messages carry, kept beside the record.
 
-A picture or a sound in a message is bytes, and bytes do not go in the row. A record is
-read whole every time a conversation is opened, replayed on every tail, and read again to
-find a waiting permission ask; a screenshot inside one of those rows would be megabytes
-shipped on every one of those reads. So the row names the file and the file lives here.
+A picture, document, data file, or sound is bytes, and bytes do not go in the row. A
+record is read whole every time a conversation is opened and replayed on every tail. Raw
+file bytes inside a row would be shipped on every read. The row names the file, and the
+file lives here.
 
 Keeping them as files rather than as blobs is what lets one vocabulary run the whole way.
-A backend is handed the same value the record holds: codex takes the path as it is, claude
-and hermes read the file and encode it, and the browser links to it. A blob in the row
-would have meant two vocabularies — an id in the record and bytes at the adapters — and
-this whole change exists so that there is one.
+A backend is handed the same value the record holds. Adapters choose the backend's native
+image or file route, and the browser links to the managed bytes. A blob in the row would
+require a second message vocabulary. The managed id keeps one durable message shape.
 
 **How long they last: as long as the record does, which is forever.** Nothing in Panels
 deletes a conversation. Resetting one kills its activity and unlinks it, and says so in

@@ -1,15 +1,19 @@
 <script lang="ts">
-  import { messageContentText } from "../../../lib/conversation/wire";
-  import type { HeldPromptRow } from "../../../lib/conversation/heldPrompts";
+  import { conversationFileHref } from "../../../lib/conversation/wire";
+  import { base64DecodedByteCount } from "../../../lib/conversation/pendingFiles";
+  import ConversationFileCard from "../ConversationFileCard.svelte";
+  import { heldPromptRowLabel, type HeldPromptRow } from "../../../lib/conversation/heldPrompts";
 
   let {
     rows,
+    conversationId = null,
     hermes = false,
     running = false,
     onDiscard,
     onPromote
   }: {
     rows: readonly HeldPromptRow[];
+    conversationId?: string | null;
     hermes?: boolean;
     running?: boolean;
     onDiscard?: (heldPromptId: string) => Promise<void> | void;
@@ -17,13 +21,6 @@
   } = $props();
 
   let actionInFlight = $state<string | null>(null);
-  function rowText(row: HeldPromptRow): string {
-    const words = messageContentText(row.content);
-    if (words !== "") return words;
-    const imageCount = row.content.filter((piece) => piece.piece === "image").length;
-    return imageCount === 1 ? "Image message" : `${imageCount} images`;
-  }
-
   function stateWord(row: HeldPromptRow): string | null {
     if (row.state === "in_flight") return "sending";
     if (row.state === "unknown") return "no answer came";
@@ -69,7 +66,7 @@
               ? undefined
               : void act(row.key, () => onDiscard?.(row.heldPromptId!))}
           >×</button>
-          <span class="chat-qrow-txt">{rowText(row)}</span>
+          <span class="chat-qrow-txt">{heldPromptRowLabel(row)}</span>
           {#if word}<span class="chat-qrow-state">{word}</span>{/if}
           <button
             type="button"
@@ -95,8 +92,26 @@
                 : void act(row.key, () => onPromote?.(row.heldPromptId!, "steer"))}
             >Hermes Steer</button>
           {/if}
+          {#each row.content as piece}
+            {#if piece.piece === "file" && ("data" in piece || conversationId !== null)}
+              <div class="chat-qrow-file">
+                <ConversationFileCard
+                  href={"data" in piece
+                    ? `data:${piece.media_type};base64,${piece.data}`
+                    : conversationFileHref(conversationId!, piece.stored_file_id)}
+                  fileName={piece.file_name}
+                  mediaType={piece.media_type}
+                  byteCount={"data" in piece ? base64DecodedByteCount(piece.data) : piece.byte_count}
+                />
+              </div>
+            {/if}
+          {/each}
         </li>
       {/each}
     </ol>
   </div>
 {/if}
+
+<style>
+  .chat-qrow-file { grid-column: 2 / -1; min-width: 0; }
+</style>

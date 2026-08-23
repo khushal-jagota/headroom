@@ -5,44 +5,20 @@ import { selectionForHref, selectionForLinkClick } from "../src/lib/atlas/naviga
 const plainClick = { button: 0 };
 
 describe("an href inside the Atlas panel", () => {
-  it("finds the Ticket a Workspace address names", () => {
-    expect(selectionForHref("#/workspace/t_abc123")).toEqual({
-      kind: "ticket",
-      id: "t_abc123"
-    });
-  });
+  it("finds each supported Atlas selection", () => {
+    const cases = [
+      ["#/workspace/t_abc123", { kind: "ticket", id: "t_abc123" }],
+      ["#/workspace/item/si_xyz/t_abc123", { kind: "ticket", id: "t_abc123" }],
+      ["#/workspace/item/si_xyz", { kind: "item", id: "si_xyz" }],
+      ["/#/workspace/t_abc123", { kind: "ticket", id: "t_abc123" }],
+      ["#/sprint?item=si_xyz", { kind: "item", id: "si_xyz" }],
+      ["#/sprint?item=si%20x", { kind: "item", id: "si x" }],
+      ["#/workspace/t%20a", { kind: "ticket", id: "t a" }]
+    ] as const;
 
-  it("finds the Ticket opened from inside an Item", () => {
-    expect(selectionForHref("#/workspace/item/si_xyz/t_abc123")).toEqual({
-      kind: "ticket",
-      id: "t_abc123"
-    });
-  });
-
-  it("finds the Item", () => {
-    expect(selectionForHref("#/workspace/item/si_xyz")).toEqual({
-      kind: "item",
-      id: "si_xyz"
-    });
-  });
-
-  it("reads the form the server builds with a leading slash", () => {
-    expect(selectionForHref("/#/workspace/t_abc123")).toEqual({
-      kind: "ticket",
-      id: "t_abc123"
-    });
-  });
-
-  it("reads the supervisor panel's own link to its Item", () => {
-    expect(selectionForHref("#/sprint?item=si_xyz")).toEqual({
-      kind: "item",
-      id: "si_xyz"
-    });
-  });
-
-  it("decodes an id the address escaped", () => {
-    expect(selectionForHref("#/sprint?item=si%20x")).toEqual({ kind: "item", id: "si x" });
-    expect(selectionForHref("#/workspace/t%20a")).toEqual({ kind: "ticket", id: "t a" });
+    for (const [href, selection] of cases) {
+      expect(selectionForHref(href)).toEqual(selection);
+    }
   });
 
   it("leaves alone what is no place in the world", () => {

@@ -22,6 +22,7 @@ from planner.conversation.api import build_conversation_runtime
 from planner.conversation.api import router as conversation_router
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.production_backends import production_backend_child_factories
+from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddleware
 from planner.core import change_signal
 from planner.core.clock import Clock
 from planner.core.config import HOST, Config
@@ -208,6 +209,7 @@ def create_app(
                     await conversation.shutdown()
 
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
+    app.add_middleware(ConversationSendBodyLimitMiddleware)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
     app.state.config = config
     app.state.clock = clock

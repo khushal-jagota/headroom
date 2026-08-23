@@ -804,6 +804,7 @@
           <LiveConversation
             bind:conversationState
             conversationId={selectedConversationId}
+            persistenceKey={`owner:ticket:${detail.id}`}
             ticketId={detail.id}
             readOnly={selectedPastConversationId !== null}
             label={conversationWorkerTypeLabel(detail)}

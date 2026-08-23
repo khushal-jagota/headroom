@@ -74,6 +74,7 @@
       <LiveConversation
         bind:conversationState
         {conversationId}
+        persistenceKey={`owner:sprint-item:${itemId}`}
         label="Sprint Item"
         {backends}
         startValues={startValues.data ?? null}

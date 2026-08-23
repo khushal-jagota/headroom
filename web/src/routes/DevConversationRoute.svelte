@@ -148,6 +148,7 @@
   <div class="c2-route-pane">
     <LiveConversation
       conversationId={liveConversationId}
+      persistenceKey={`owner:dev:${conversationId}`}
       label={`${runningBackendKey ?? newBackendKey} · ${liveConversationId ?? conversationId}`}
       {backends}
       senderLabel={SENDER_LABEL}

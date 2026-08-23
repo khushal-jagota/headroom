@@ -241,6 +241,7 @@
       <LiveConversation
         bind:conversationState
         conversationId={selectedConversationId}
+        persistenceKey={`owner:sprint-item:${itemId}`}
         readOnly={selectedPastConversationId !== null}
         label="Sprint Item"
         composerPlaceholder="Message this Sprint Item…"

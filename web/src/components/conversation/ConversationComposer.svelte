@@ -20,6 +20,7 @@
    */
   import { onMount, tick } from "svelte";
   import ComposerCatalogMenu from "./ComposerCatalogMenu.svelte";
+  import ConversationFileCard from "./ConversationFileCard.svelte";
   import ComposerRunControls from "./composer/ComposerRunControls.svelte";
   import HeldPromptStack from "./composer/HeldPromptStack.svelte";
   import PermissionAskActions from "./PermissionAskActions.svelte";
@@ -58,6 +59,12 @@
     releasePendingImages,
     type PendingConversationImage
   } from "../../lib/conversation/pendingImages";
+  import {
+    CONVERSATION_FILE_ACCEPT,
+    createPendingConversationFiles,
+    pendingConversationFileBytes,
+    type PendingConversationFile
+  } from "../../lib/conversation/pendingFiles";
   import type {
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
@@ -184,13 +191,16 @@
   let menuWasDismissed = $state(false);
   let activeCatalogEntryIndex = $state(0);
   let pendingImages = $state<PendingConversationImage[]>([]);
+  let pendingFiles = $state<PendingConversationFile[]>([]);
   let imageInput = $state<HTMLInputElement | null>(null);
+  let fileInput = $state<HTMLInputElement | null>(null);
   let nextImageId = 1;
+  let nextFileId = 1;
   let dragDepth = 0;
-  let draggingImages = $state(false);
+  let draggingAttachments = $state(false);
   let intakeError = $state<string | null>(null);
   let intakeTail: Promise<void> = Promise.resolve();
-  let imageIntakesInFlight = $state(0);
+  let attachmentIntakesInFlight = $state(0);
   /** Changes only when the person composes something new. A refusal may restore its
    *  snapshot only while this is still the revision that was sent. */
   let compositionRevision = 0;
@@ -207,7 +217,7 @@
   let voice: VoiceCapture | null = null;
 
   let takenOver = $derived(ask !== null || userInput !== null);
-  let inputDisabled = $derived(disabled || takenOver || imageIntakesInFlight > 0);
+  let inputDisabled = $derived(disabled || takenOver || attachmentIntakesInFlight > 0);
   /** Voice is offered at all only where a finger is the pointer, the browser can record,
    *  nothing has taken the composer over, and there is a conversation to transcribe
    *  against. The question panel and permission ask always outrank it. */
@@ -224,6 +234,7 @@
     && !inputDisabled
     && text === ""
     && pendingImages.length === 0
+    && pendingFiles.length === 0
   );
   let livePlaceholder = $derived(ask !== null ? askPlaceholder(ask) : placeholder);
   let runControlsInput = $derived<ComposerRunControlsInput>({
@@ -238,7 +249,7 @@
     startsOnModel,
     startsOnReasoningEffort,
     inputDisabled,
-    hasSendableContent: text.trim() !== "" || pendingImages.length > 0,
+    hasSendableContent: text.trim() !== "" || pendingImages.length > 0 || pendingFiles.length > 0,
     sendsInFlight
   });
   let runControlsView = $derived(resolveComposerRunControls(runControlsInput));
@@ -246,10 +257,11 @@
   let compositionActive = $derived(
     text !== ""
     || pendingImages.length > 0
+    || pendingFiles.length > 0
     || voiceState.phase !== "idle"
     || takenOver
-    || draggingImages
-    || imageIntakesInFlight > 0
+    || draggingAttachments
+    || attachmentIntakesInFlight > 0
     || runSelection.pickedBackend !== null
     || runSelection.pickedModel !== null
     || runSelection.pickedReasoningEffort !== null
@@ -297,7 +309,7 @@
   $effect(() => {
     if (!inputDisabled) return;
     dragDepth = 0;
-    draggingImages = false;
+    draggingAttachments = false;
   });
 
   // Catalog changes may make a pending pick meaningless. That is reconciliation, not
@@ -332,6 +344,7 @@
     return {
       text,
       pendingImages,
+      pendingFiles,
       pickedModel: runSelection.pickedModel,
       pickedReasoningEffort: runSelection.pickedReasoningEffort,
       compositionRevision
@@ -341,6 +354,7 @@
   function applyComposerDraft(draft: ComposerDraft): void {
     text = draft.text;
     pendingImages = [...draft.pendingImages];
+    pendingFiles = [...draft.pendingFiles];
     runSelection = {
       ...runSelection,
       pickedModel: draft.pickedModel,
@@ -367,7 +381,7 @@
   async function send(): Promise<void> {
     await intakeTail;
     const trimmed = text.trim();
-    if ((!trimmed && pendingImages.length === 0) || inputDisabled) return;
+    if ((!trimmed && pendingImages.length === 0 && pendingFiles.length === 0) || inputDisabled) return;
     const attempt = beginComposerSend(
       currentComposerDraft(),
       runControlsView.carriedRunValues,
@@ -414,11 +428,13 @@
       currentComposerDraft(),
       attempt,
       nextImageId,
-      imageIntakesInFlight
+      nextFileId,
+      attachmentIntakesInFlight
     );
     if (!restoration.restored) return;
     applyComposerDraft(restoration.draft);
     nextImageId = restoration.nextImageId;
+    nextFileId = restoration.nextFileId;
     const restoredText = restoration.draft.text;
     const restoredRevision = restoration.draft.compositionRevision;
     await tick();
@@ -443,33 +459,46 @@
   }
 
   async function intakeChosenFiles(files: readonly File[]): Promise<void> {
-    imageIntakesInFlight += 1;
+    attachmentIntakesInFlight += 1;
     try {
+      const imageFiles = files.filter((file) => file.type.toLowerCase().startsWith("image/"));
+      const documentFiles = files.filter((file) => !file.type.toLowerCase().startsWith("image/"));
       const intake = await createPendingConversationImages(
-        files,
+        imageFiles,
         nextImageId,
         pendingConversationImageBytes(pendingImages)
+      );
+      const fileIntake = await createPendingConversationFiles(
+        documentFiles,
+        nextFileId,
+        pendingConversationFileBytes(pendingFiles)
       );
       if (destroyed) {
         releasePendingImages(intake.accepted);
         return;
       }
       nextImageId = intake.nextId;
+      nextFileId = fileIntake.nextId;
       if (intake.accepted.length > 0) {
         recordDraftChange();
         pendingImages = [...pendingImages, ...intake.accepted];
       }
-      intakeError = intake.rejected.length > 0
-        ? "Choose PNG, JPEG, GIF or WebP images totaling up to 3 MiB."
+      if (fileIntake.accepted.length > 0) {
+        recordDraftChange();
+        pendingFiles = [...pendingFiles, ...fileIntake.accepted];
+      }
+      intakeError = intake.rejected.length > 0 || fileIntake.rejected.length > 0
+        ? "Choose PNG, JPEG, GIF or WebP images up to 3 MiB, or PDF, text, Markdown, CSV, TSV, JSON or JSONL files up to 10 MiB."
         : null;
     } catch (error) {
       if (!destroyed) {
-        intakeError = error instanceof Error ? error.message : "The image could not be read.";
+        intakeError = error instanceof Error ? error.message : "The attachment could not be read.";
       }
     } finally {
       if (!destroyed) {
-        imageIntakesInFlight -= 1;
+        attachmentIntakesInFlight -= 1;
         if (imageInput) imageInput.value = "";
+        if (fileInput) fileInput.value = "";
       }
     }
   }
@@ -480,36 +509,41 @@
     releasePendingImages([image]);
   }
 
-  function hasImageTransfer(event: DragEvent): boolean {
+  function removeFile(file: PendingConversationFile): void {
+    recordDraftChange();
+    pendingFiles = pendingFiles.filter((candidate) => candidate.id !== file.id);
+  }
+
+  function hasAttachmentTransfer(event: DragEvent): boolean {
     return Array.from(event.dataTransfer?.items ?? []).some((item) =>
-      item.type.toLowerCase().startsWith("image/")
+      item.kind === "file"
     );
   }
 
   function onDragEnter(event: DragEvent): void {
-    if (inputDisabled || !hasImageTransfer(event)) return;
+    if (inputDisabled || !hasAttachmentTransfer(event)) return;
     event.preventDefault();
     dragDepth += 1;
-    draggingImages = true;
+    draggingAttachments = true;
   }
 
   function onDragOver(event: DragEvent): void {
-    if (inputDisabled || !hasImageTransfer(event)) return;
+    if (inputDisabled || !hasAttachmentTransfer(event)) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
-    draggingImages = true;
+    draggingAttachments = true;
   }
 
   function onDragLeave(): void {
     dragDepth = Math.max(0, dragDepth - 1);
-    if (dragDepth === 0) draggingImages = false;
+    if (dragDepth === 0) draggingAttachments = false;
   }
 
   function onDrop(event: DragEvent): void {
     if (inputDisabled) return;
     event.preventDefault();
     dragDepth = 0;
-    draggingImages = false;
+    draggingAttachments = false;
     void intakeFiles(event.dataTransfer?.files);
   }
 
@@ -729,6 +763,7 @@
   <div class="chat-box-stack">
     <HeldPromptStack
       rows={heldPromptRows}
+      {conversationId}
       hermes={backendKey === "hermes"}
       {running}
       onDiscard={onDiscardHeldPrompt}
@@ -737,7 +772,7 @@
 
     <div
       class="chat-box"
-      class:drag={draggingImages}
+      class:drag={draggingAttachments}
       class:has-ask={takenOver}
       data-conversation-box
       data-conversation-taken-over={takenOver ? "true" : undefined}
@@ -792,6 +827,30 @@
                 title="Remove image"
                 disabled={inputDisabled}
                 onclick={() => removeImage(image)}
+              >×</button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      {#if userInput === null && pendingFiles.length > 0}
+        <div class="chat-file-previews" data-chat-file-previews aria-label="Pending files">
+          {#each pendingFiles as file, index (file.id)}
+            <div class="chat-file-preview" data-chat-file-preview data-chat-file-name={file.fileName}>
+              <ConversationFileCard
+                href={`data:${file.mediaType};base64,${file.data}`}
+                fileName={file.fileName}
+                mediaType={file.mediaType}
+                byteCount={file.byteCount}
+              />
+              <button
+                type="button"
+                class="chat-file-remove"
+                data-chat-file-remove
+                aria-label={`Remove file ${index + 1}: ${file.fileName}`}
+                title="Remove file"
+                disabled={inputDisabled}
+                onclick={() => removeFile(file)}
               >×</button>
             </div>
           {/each}
@@ -936,6 +995,23 @@
               <path d="M2.5 3.5h11v9h-11zM4 10l2.5-2.5 2 2 1.5-1.5 2 2M10.5 6h.01" />
             </svg>
           </button>
+          <button
+            type="button"
+            class="chat-image"
+            class:on={pendingFiles.length > 0}
+            data-conversation-file
+            data-conversation-file-count={pendingFiles.length || undefined}
+            aria-label={pendingFiles.length > 0 ? "Attach more files" : "Attach files"}
+            title={pendingFiles.length > 0
+              ? `${pendingFiles.length} file${pendingFiles.length === 1 ? "" : "s"} selected`
+              : "Attach files"}
+            disabled={inputDisabled}
+            onclick={() => fileInput?.click()}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 12.5l6.8-6.8a3 3 0 0 1 4.2 4.2l-8.2 8.2a5 5 0 0 1-7.1-7.1l8-8" />
+            </svg>
+          </button>
           {#if voiceAvailable}
             <!-- Recording from a composer with words already in it appends to them. -->
             <button
@@ -962,6 +1038,15 @@
             multiple
             onchange={() => void intakeFiles(imageInput?.files)}
           />
+          <input
+            bind:this={fileInput}
+            class="chat-image-input"
+            data-conversation-file-input
+            type="file"
+            accept={CONVERSATION_FILE_ACCEPT}
+            multiple
+            onchange={() => void intakeFiles(fileInput?.files)}
+          />
 
           {#if showRunPicker}
             <ComposerRunControls view={runControlsView} intents={runControlIntents} />
@@ -970,7 +1055,7 @@
       </div>
       {/if}
       <div class="chat-drop-label" data-conversation-drop-label aria-hidden="true">
-        Drop images to attach
+        Drop images or files to attach
       </div>
     </div>
   </div>
@@ -998,5 +1083,20 @@
     color: var(--text-faint);
     font-family: var(--font-mono);
     font-size: var(--type-xs);
+  }
+  .chat-file-previews { display: grid; gap: var(--space-2); padding: var(--space-2); }
+  .chat-file-preview { position: relative; min-width: 0; }
+  .chat-file-remove {
+    position: absolute;
+    inset-block-start: var(--space-3);
+    inset-inline-end: var(--space-3);
+    z-index: 1;
+    width: 1.5rem;
+    height: 1.5rem;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--surface-overlay);
+    color: var(--text-muted);
+    cursor: pointer;
   }
 </style>

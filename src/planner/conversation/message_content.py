@@ -6,16 +6,16 @@ with a sentence about it, and an agent hands back the file it produced. A record
 only hold a string has to throw those away at the door, which is what this module exists
 to stop.
 
-Two kinds of piece, and that is the whole vocabulary:
+Three kinds of piece, and that is the whole vocabulary:
 
 - ``MessageText`` — written words, as markdown.
 - ``MessageImage`` — a picture that is part of the message.
+- ``MessageFile`` — a document or data file that is part of the message.
 
 There is deliberately no sound: a voice note becomes words by speech-to-text long before
-anything reaches a message, so nothing downstream ever sees one. And there is deliberately
-no kind for a file an agent points at: that is a markdown link in the agent's own words,
-which already draws as a preview, and a second way to draw the same thing would be a worse
-one.
+anything reaches a message, so nothing downstream ever sees one. A file that an agent
+produces remains a markdown link in its own words. ``MessageFile`` carries a file that a
+person attached as input rather than adding a second form for agent-produced files.
 
 The bytes of a picture are not in here. The piece names the file this system
 kept, and the file lives beside the record — see ``planner.conversation.message_files``.
@@ -51,7 +51,17 @@ class MessageImage:
     file_name: str | None = None
 
 
-type MessagePiece = MessageText | MessageImage
+@dataclass(frozen=True, slots=True)
+class MessageFile:
+    """A document or data file kept beside the conversation record."""
+
+    stored_file_id: str
+    media_type: str
+    file_name: str
+    byte_count: int
+
+
+type MessagePiece = MessageText | MessageImage | MessageFile
 
 # What one message is made of, in the order it was made. Always at least one piece: a
 # message with nothing in it is not a message, and it is refused where it is sent rather
@@ -89,7 +99,7 @@ def require_message_content(content: MessageContent) -> MessageContent:
         raise MessageContentNotPieces(
             "a message is a run of pieces; use text_message_content(...) to send words"
         )
-    if not all(isinstance(piece, (MessageText, MessageImage)) for piece in content):
+    if not all(isinstance(piece, (MessageText, MessageImage, MessageFile)) for piece in content):
         raise MessageContentNotPieces("a message may only hold message pieces")
     if not content:
         raise MessageContentEmpty("a message must have something in it")
@@ -185,6 +195,7 @@ PIECE_FIELD = "piece"
 
 PIECE_NAME_TEXT = "text"
 PIECE_NAME_IMAGE = "image"
+PIECE_NAME_FILE = "file"
 
 
 def _piece_json_object(piece: MessagePiece) -> dict[str, Any]:
@@ -197,6 +208,14 @@ def _piece_json_object(piece: MessagePiece) -> dict[str, Any]:
                 "stored_file_id": piece.stored_file_id,
                 "media_type": piece.media_type,
                 **({} if piece.file_name is None else {"file_name": piece.file_name}),
+            }
+        case MessageFile():
+            return {
+                PIECE_FIELD: PIECE_NAME_FILE,
+                "stored_file_id": piece.stored_file_id,
+                "media_type": piece.media_type,
+                "file_name": piece.file_name,
+                "byte_count": piece.byte_count,
             }
         case _:  # pragma: no cover - the piece type is closed
             assert_never(piece)
@@ -213,6 +232,13 @@ def _piece_from_json_object(stored: object) -> MessagePiece:
                 stored_file_id=_text(stored, "stored_file_id"),
                 media_type=_text(stored, "media_type"),
                 file_name=_optional_text(stored, "file_name"),
+            )
+        case "file":
+            return MessageFile(
+                stored_file_id=_text(stored, "stored_file_id"),
+                media_type=_text(stored, "media_type"),
+                file_name=_text(stored, "file_name"),
+                byte_count=_non_negative_integer(stored, "byte_count"),
             )
         case unknown:
             raise ValueError(f"unknown message piece {unknown}")
@@ -231,4 +257,11 @@ def _optional_text(stored: dict[str, Any], field_name: str) -> str | None:
         return None
     if not isinstance(value, str):
         raise ValueError(f"{field_name} must be text or absent")
+    return value
+
+
+def _non_negative_integer(stored: dict[str, Any], field_name: str) -> int:
+    value = stored[field_name]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field_name} must be a non-negative integer")
     return value

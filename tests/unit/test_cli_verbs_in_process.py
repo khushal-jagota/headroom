@@ -931,9 +931,8 @@ def test_worker_write_commands_take_text_on_stdin_only(
     detail = api.get(server, f"/api/tickets/{tid}")
     assert detail["recap"] == "recap from stdin"
 
-    # `trouble` only accepts writes during an active claimed worker step; its stdin
-    # acceptance is proven end-to-end in tests/e2e/test_ticket_trouble_notes.py. The
-    # refusal assertion above already covers its argument parsing.
+    # `trouble` only accepts writes during an active claimed worker step. The refusal
+    # assertion above covers its argument parsing. Writer tests cover the active path.
 
 
 def test_sprint_item_ticket_commands_move_atomically_and_to_backlog(

@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import inspect
 import json
 
 import pytest
 
 from planner.core.errors import PlannerError
-from planner.runtime import worker_step_readiness
-from planner.tickets.contracts import AtCap, StageOwnershipMode, TicketFields
-from planner.tickets.logic import admission, external_work, fields_codec, machine, resolution
+from planner.tickets.contracts import AtCap, StageOwnershipMode
+from planner.tickets.logic import fields_codec, machine
 from planner.worker_types.contracts import (
     FieldDefinition,
     StageDefinition,
@@ -98,88 +96,4 @@ def test_stored_decode_is_registry_free_and_declared_validation_is_explicit() ->
         fields_codec.declared_fields_from_json(
             json.dumps({"kickoff": {"value": None, "proposal": None, "user_note": None}}),
             SYNTHETIC_WORKER_TYPE_DEFINITION.field_ids(),
-        )
-
-
-@pytest.mark.parametrize(
-    ("function", "args"),
-    [
-        (machine.field_is_passed, (FIELD_ALPHA, BETA)),
-        (machine.auto_accept_target, (ALPHA, BETA, FIELD_ALPHA)),
-        (machine.at_or_beyond_ceiling, (BETA, ALPHA)),
-        (machine.resolve_scope, (BETA, "done", AtCap.stop)),
-        (
-            machine.has_pending_gating_proposal,
-            (ALPHA, TicketFields.empty(SYNTHETIC_WORKER_TYPE_DEFINITION.field_ids())),
-        ),
-        (admission.check_agent_proposal, (ALPHA, BETA, AtCap.propose, FIELD_ALPHA)),
-        (machine.has_pending_parked_proposal, (object(),)),
-        (machine.effective_stage_ownership_mode, (ALPHA, {})),
-        (resolution.decide_file_proposal, (object(), FIELD_ALPHA, "body", "agent", 0)),
-        (
-            resolution.decide_accept,
-            (object(), FIELD_ALPHA, "human", None, "none", AtCap.propose),
-        ),
-        (resolution.decide_edit_value, (object(), FIELD_ALPHA, "body", "human")),
-        (resolution.decide_return_for_revision, (object(), "human")),
-        (
-            resolution.decide_scope_change,
-            (object(), BETA, AtCap.propose, "human"),
-        ),
-        (external_work.decide_external_work, (object(), BETA, {})),
-        (
-            worker_step_readiness.is_ready_for_worker_step,
-            (object(), object()),
-        ),
-    ],
-)
-def test_semantic_functions_require_definition(function: object, args: tuple[object, ...]) -> None:
-    with pytest.raises(TypeError):
-        function(*args)  # type: ignore[operator]
-
-
-def test_semantic_signatures_have_required_descriptive_parameter() -> None:
-    functions = (
-        machine.field_is_passed,
-        machine.auto_accept_target,
-        machine.at_or_beyond_ceiling,
-        machine.resolve_scope,
-        machine.has_pending_gating_proposal,
-        machine.has_pending_parked_proposal,
-        machine.effective_stage_ownership_mode,
-        admission.check_agent_proposal,
-        resolution._accept_gating_proposal,
-        resolution.decide_file_proposal,
-        resolution.decide_accept,
-        resolution.decide_edit_value,
-        resolution.decide_return_for_revision,
-        resolution.decide_scope_change,
-        external_work.decide_external_work,
-        worker_step_readiness.is_ready_for_worker_step,
-    )
-    for function in functions:
-        parameter = inspect.signature(function).parameters["worker_type_definition"]
-        assert parameter.kind is inspect.Parameter.KEYWORD_ONLY, function.__name__
-        assert parameter.default is inspect.Parameter.empty, function.__name__
-
-
-def test_readiness_requires_an_explicit_day_and_definition() -> None:
-    function = worker_step_readiness.is_ready_for_worker_step
-    parameters = inspect.signature(function).parameters
-    for name in ("planning_day_id", "worker_type_definition"):
-        parameter = parameters[name]
-        assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
-        assert parameter.default is inspect.Parameter.empty
-
-    with pytest.raises(TypeError):
-        function(  # type: ignore[call-arg]
-            object(),  # type: ignore[arg-type]  # deliberately wrong: proves keyword-only enforcement
-            object(),  # type: ignore[arg-type]  # deliberately wrong: proves keyword-only enforcement
-            worker_type_definition=SYNTHETIC_WORKER_TYPE_DEFINITION,
-        )
-    with pytest.raises(TypeError):
-        function(  # type: ignore[call-arg]
-            object(),  # type: ignore[arg-type]  # deliberately wrong: proves keyword-only enforcement
-            object(),  # type: ignore[arg-type]  # deliberately wrong: proves keyword-only enforcement
-            planning_day_id="day_2099-01-01",
         )

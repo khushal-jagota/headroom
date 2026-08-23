@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from planner.worker_types.amend_worker import AMEND_WORKER_TYPE_DEFINITION
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.contracts import WorkerTypeDefinition
 from planner.worker_types.debugging import DEBUGGING_WORKER_TYPE_DEFINITION
@@ -28,6 +29,7 @@ _KNOWN_SKILLS = frozenset(
         "panels-worker-general",
         "panels-worker-debugging",
         "panels-worker-new-worker",
+        "panels-worker-amend-worker",
         "panels-worker-exploration",
         "panels-worker-initiative-planning",
         "panels-worker-product-design",
@@ -44,6 +46,7 @@ _PRODUCTION_WORKER_TYPE_DEFINITIONS = (
     GENERAL_WORKER_TYPE_DEFINITION,
     DEBUGGING_WORKER_TYPE_DEFINITION,
     NEW_WORKER_TYPE_DEFINITION,
+    AMEND_WORKER_TYPE_DEFINITION,
     EXPLORATION_WORKER_TYPE_DEFINITION,
     INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION,
     PRODUCT_DESIGN_WORKER_TYPE_DEFINITION,

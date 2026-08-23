@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  conversationFileTarget,
+  boundedConversationTextPreview,
   isTicketDevServerHref,
   markdownExpansionFor,
   prepareManagedHtmlPreviewDocument,
@@ -24,6 +26,41 @@ afterEach(() => {
 });
 
 describe("managed-file preview resolution", () => {
+  it("resolves safe durable and optimistic Conversation file targets by original name", () => {
+    const durable = conversationFileTarget(
+      "/api/conversation/conversations/c%2F1/files/file%201",
+      "notes.md"
+    );
+    const outgoing = conversationFileTarget(
+      "data:application/json;base64,e30=",
+      "facts.json"
+    );
+
+    expect(durable).not.toBeNull();
+    expect(resolvePreview(durable!)).toMatchObject({
+      kind: "markdown",
+      href: "/api/conversation/conversations/c%2F1/files/file%201",
+      label: "notes.md"
+    });
+    expect(resolvePreview(outgoing!)).toMatchObject({
+      kind: "text",
+      href: "data:application/json;base64,e30=",
+      label: "facts.json"
+    });
+  });
+
+  it.each([
+    ["https://example.com/api/conversation/conversations/c1/files/f1", "notes.md"],
+    ["/api/conversation/conversations/c1/not-files/f1", "notes.md"],
+    ["data:text/html;base64,PGgxPm5vPC9oMT4=", "page.html"],
+    ["data:application/octet-stream;base64,e30=", "facts.json"],
+    ["data:text/plain;base64,e30=", "facts.json"],
+    ["data:application/json;base64,e30=", "bad\u0000name.json"],
+    ["data:application/json;base64,e30=", " facts.json"],
+    ["data:application/json;base64,e30=", "folder/facts.json"]
+  ])("rejects unsafe Conversation file target %s", (href, fileName) => {
+    expect(conversationFileTarget(href, fileName)).toBeNull();
+  });
   it("resolves Ticket Markdown with its encoded URL, label, and preview address", () => {
     expect(resolvePreview(ticketMarkdown)).toEqual({
       kind: "markdown",
@@ -52,6 +89,33 @@ describe("managed-file preview resolution", () => {
     expect(resolvePreview({ kind: "ticket-file", ticketId: "t_file123", path }).kind).toBe(
       expectedKind
     );
+  });
+
+  it("keeps text and data preview kinds scoped to Conversation files", () => {
+    expect(resolvePreview({ kind: "ticket-file", ticketId: "t_file123", path: "notes.txt" }).kind)
+      .toBe("download");
+    for (const [fileName, kind] of [
+      ["report.pdf", "pdf"],
+      ["notes.txt", "text"],
+      ["rows.csv", "text"],
+      ["rows.tsv", "text"],
+      ["facts.json", "text"],
+      ["events.jsonl", "text"]
+    ] as const) {
+      const target = conversationFileTarget(
+        "/api/conversation/conversations/c1/files/f1",
+        fileName
+      );
+      expect(resolvePreview(target!).kind).toBe(kind);
+    }
+  });
+
+  it("bounds Conversation text preview bytes and states when it truncates", () => {
+    expect(boundedConversationTextPreview("small")).toBe("small");
+    const preview = boundedConversationTextPreview("é".repeat(200_000));
+    expect(new TextEncoder().encode(preview.split("\n\n[", 1)[0]).byteLength)
+      .toBeLessThanOrEqual(256 * 1024);
+    expect(preview).toMatch(/Preview truncated after 256 KiB/);
   });
 
   it("resolves an ordinary external target as an external link", () => {
@@ -102,21 +166,6 @@ describe("managed-file preview resolution", () => {
     "#/day"
   ])("keeps fetched-document or link target %s external", (href) => {
     expect(resolvePreview({ kind: "external-link", href }).kind).toBe("external");
-  });
-
-  it("does not expose the retired actionLabel", () => {
-    const resolvedPreviews = [
-      resolvePreview({ kind: "ticket-file", ticketId: "t_file123", path: "page.html" }),
-      resolvePreview({ kind: "ticket-file", ticketId: "t_file123", path: "icon.svg" }),
-      resolvePreview({
-        kind: "external-link",
-        href: "https://example.com/pictures/photo.png"
-      })
-    ];
-
-    for (const resolved of resolvedPreviews) {
-      expect("actionLabel" in resolved).toBe(false);
-    }
   });
 
   it("allows one new Markdown expansion and records its visited URL", () => {

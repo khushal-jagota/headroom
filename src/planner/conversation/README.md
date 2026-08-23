@@ -20,10 +20,13 @@ the layer being replaced. Renaming it is the job of whoever deletes that layer.
 - `in_memory_conversation_system.py` — a deterministic in-memory implementation. It is a
   real implementation of the contract, usable as a stand-in wherever a conversation
   system is needed but a child process is not.
+- `message_content.py` — the ordered text, image, and file pieces in each message.
+- `message_files.py` — the durable bytes that image and file pieces name.
+- `file_validation.py` — the accepted document and data formats and their size boundary.
 
 ## The boundary
 
-Five operations cross it — start a conversation, send text into it, interrupt the
+Five operations cross it — start a conversation, send a message into it, interrupt the
 running turn, kill its activity outright (stop the turn AND discard the held messages —
 what pressing New uses), ask whether it is running — plus one more read: whether a
 permission ask is waiting, which exists for the surfaces that tell the owner a
@@ -32,6 +35,18 @@ session id
 of the backend is internal to the conversation system and appears nowhere here.
 Permissions are internal too — they have no method, only rules, and those rules are on
 the Protocol's docstring.
+
+A message can contain text, images, and attached documents or data files. Panels accepts
+PDF, UTF-8 text, Markdown, CSV, TSV, JSON, and JSONL files. One message can carry at most
+10 MiB of these files. The server validates every attachment before it stores any file.
+It derives each file's media type and byte count rather than trusting browser metadata.
+Conversation send routes reject request bodies above 20 MiB before JSON parsing. This
+ceiling leaves room for the base64 form of both file and image budgets plus JSON metadata.
+
+The durable message stores a managed file id, the original file name, the canonical media
+type, and the byte count. Hermes receives an ACP resource link. Codex and Claude receive
+the managed local path as explicit attachment context. Images keep their native backend
+routes.
 
 A send may carry a model or reasoning-effort change: from that delivery on, the
 conversation runs on the named value. There is no separate set-model operation — the
