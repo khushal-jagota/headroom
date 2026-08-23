@@ -73,8 +73,7 @@ worker outright and discards anything it was still holding — and the new one s
 the Ticket's last-chosen backend, model and reasoning.
 
 The Ticket also keeps every conversation it has had. Reset clears only the active
-pointer. The history remains in oldest-first order, and each past transcript remains
-reachable from the Ticket. A past conversation is a record, not a place to send new work.
+pointer. The Ticket page shows only the active conversation, where new work can be sent.
 
 The conversation system owns the transcript. Panels keeps no second message or
 active-turn table. Pending worker context reaches the worker only when it is included
