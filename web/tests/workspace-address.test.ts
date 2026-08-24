@@ -10,7 +10,7 @@ describe("Workspace addresses", () => {
   it("parses the rail, Chief, Ticket, and Sprint Item identities", () => {
     expect(parseWorkspaceAddress("#/workspace")).toEqual({
       selection: { kind: "none" },
-      view: "items",
+      view: "tickets",
       openFile: null
     });
     expect(parseWorkspaceAddress("#/workspace/chief-of-staff")).toEqual({
@@ -59,7 +59,10 @@ describe("Workspace addresses", () => {
   });
 
   it("writes the view only when the reader asked for the other one", () => {
-    // Everything but a Ticket on its own already says Sprint Items.
+    expect(workspaceAddress({ kind: "none" }, "tickets")).toBe("#/workspace");
+    expect(workspaceAddress({ kind: "none" }, "items")).toBe(
+      "#/workspace?view=items"
+    );
     expect(workspaceAddress({ kind: "item", id: "si_one" }, "items")).toBe(
       "#/workspace/item/si_one"
     );
@@ -90,7 +93,7 @@ describe("Workspace addresses", () => {
     });
     expect(parseWorkspaceAddress("#/workspace?view=sideways")).toEqual({
       selection: { kind: "none" },
-      view: "items",
+      view: "tickets",
       openFile: null
     });
   });
