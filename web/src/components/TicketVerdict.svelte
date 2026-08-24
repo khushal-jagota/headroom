@@ -155,7 +155,7 @@
   .ticket-verdict button {
     border: var(--border-hairline) solid var(--border-color);
     border-radius: var(--radius-sm);
-    background: var(--surface-base);
+    background: var(--surface-1);
     color: var(--text-default);
     cursor: pointer;
     padding: var(--space-2) var(--space-3);
@@ -206,7 +206,7 @@
     resize: vertical;
     border: var(--border-hairline) solid var(--border-color);
     border-radius: var(--radius-sm);
-    background: var(--surface-base);
+    background: var(--surface-1);
     color: var(--text-default);
     font-family: var(--font-serif);
     font-size: var(--type-serif-md);

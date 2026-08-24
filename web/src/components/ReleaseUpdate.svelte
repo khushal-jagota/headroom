@@ -66,9 +66,9 @@
     padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
     border: var(--border-hairline) solid var(--border-color);
     border-radius: var(--radius-lg);
-    background: var(--surface-raised);
+    background: var(--surface-2);
     color: var(--text-strong);
-    box-shadow: 0 var(--space-3) var(--space-6) var(--surface-scrim);
+    box-shadow: var(--shadow-float);
     font-size: 0.9rem;
   }
 
@@ -79,7 +79,7 @@
     border: var(--border-hairline) solid var(--border-color);
     border-radius: var(--radius-md);
     background: var(--accent-text);
-    color: var(--accent-ink);
+    color: var(--surface-ink);
     font: inherit;
     font-weight: 600;
     cursor: pointer;

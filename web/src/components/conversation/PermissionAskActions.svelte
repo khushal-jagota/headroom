@@ -95,7 +95,7 @@
     margin-inline-start: auto;
     background: var(--accent-bright);
     border-color: var(--accent-bright);
-    color: var(--accent-ink);
+    color: var(--surface-ink);
     font-weight: 600;
   }
   .c2-ask-answer.is-primary:hover { filter: brightness(1.08); }

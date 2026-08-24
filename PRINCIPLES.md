@@ -26,7 +26,7 @@ These are standing rules. They apply unless a live owner decision overrides them
 - Do not build fallback providers, retry choreography, or speculative resilience unless the spec demands it. A failed call gets a calm retry state.
 
 ## Design system
-- Everything themable lives in one token file: surfaces, text tokens, accent (bright/surface/text), radius scale, motion durations (fast/base/slow), spacing scale, border widths. The app's entire personality must be tunable by editing this one file.
+- Everything themable lives in one token file: two neutral surfaces, recessed and ink surfaces, relative hover and scrim effects, floating shadow, text tokens, accent (bright/surface/text), radius scale, motion durations (fast/base/slow), spacing scale, and border widths. The app's entire personality must be tunable by editing this one file.
 - New token categories require evidence of need. Do not invent them speculatively.
 - Minimal means selectively punchy, not timid: restrained surfaces, then deliberate moments of full impact. Add nothing to the UI unless it makes the user feel something or a smart person genuinely needs it to understand the screen. No explanatory text for the obvious.
 - Type: strict scale, five sizes maximum. Hierarchy and spacing rhythm create calm.

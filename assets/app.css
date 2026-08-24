@@ -9,7 +9,7 @@
 
 body {
   margin: 0;
-  background: var(--surface-base);
+  background: var(--surface-1);
   color: var(--text-default);
   font-family: var(--font-ui);
   font-size: var(--type-md);
@@ -245,7 +245,7 @@ textarea {
   padding: var(--space-2);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-md);
-  background: var(--surface-overlay);
+  background: var(--surface-2);
   box-shadow: var(--shadow-float);
 }
 
@@ -269,10 +269,14 @@ textarea {
   text-decoration: none;
 }
 
-.shell-more-menu a:hover,
+.shell-more-menu a:hover {
+  color: var(--text-strong);
+  background-image: var(--interaction-hover);
+}
+
 .shell-more-menu a.active {
   color: var(--text-strong);
-  background: var(--surface-raised);
+  background: var(--surface-recessed);
 }
 
 .shell-more-subtitle {
@@ -304,7 +308,7 @@ textarea {
   line-height: 1;
   font-variant-numeric: tabular-nums;
   background: var(--accent-bright);
-  color: var(--accent-ink);
+  color: var(--surface-ink);
   border-radius: var(--radius-pill);
   padding: var(--space-1) var(--space-2);
 }
@@ -380,7 +384,7 @@ textarea {
   padding: var(--space-4);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-base);
-  background: var(--surface-raised);
+  background: var(--surface-2);
   box-shadow: var(--shadow-float);
 }
 
@@ -516,7 +520,7 @@ textarea {
     height: var(--shell-nav-height);
     padding: 0 var(--space-4);
     border-bottom: var(--border-hairline) solid var(--border-color);
-    background: var(--surface-base);
+    background: var(--surface-1);
   }
 
   .shell-mobile-title {
@@ -537,7 +541,7 @@ textarea {
     padding: 0 0 env(safe-area-inset-bottom);
     border-top: var(--border-hairline) solid var(--border-color);
     border-bottom: 0;
-    background: var(--surface-raised);
+    background: var(--surface-2);
   }
 
   .shell-links {
@@ -608,7 +612,7 @@ textarea {
     width: 100%;
     padding: 0;
     border: 0;
-    background: var(--surface-scrim);
+    background: var(--scrim);
   }
 }
 
@@ -818,7 +822,7 @@ textarea {
   gap: var(--space-3);
   margin-bottom: var(--space-6);
   padding: var(--space-3);
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-md);
 }
@@ -864,7 +868,7 @@ textarea {
 
 .worker-launch-defaults-controls select {
   max-width: 18rem;
-  background: var(--surface-default);
+  background: var(--surface-1);
   color: var(--text-strong);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-sm);
@@ -925,7 +929,7 @@ textarea {
   min-width: 11rem;
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
   color: var(--text-strong);
   padding: var(--space-2) var(--space-3);
 }
@@ -971,7 +975,7 @@ textarea {
   width: 100%;
   max-width: calc(var(--space-7) * 3);
   min-width: 0;
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
   color: var(--text-strong);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-sm);
@@ -1038,7 +1042,7 @@ textarea {
 
 .worker-skill-body {
   min-width: 0;
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-md);
   padding: var(--space-3);
@@ -1121,8 +1125,8 @@ textarea {
 /* --- Panel --------------------------------------------------------------- */
 
 .panel {
-  background: var(--surface-raised);
-  border: var(--border-hairline) solid var(--surface-overlay);
+  background: var(--surface-2);
+  border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-md);
   margin-bottom: var(--space-4);
 }
@@ -1133,7 +1137,7 @@ textarea {
   font-size: var(--type-lg);
   font-weight: 600;
   color: var(--text-strong);
-  border-bottom: var(--border-hairline) solid var(--surface-overlay);
+  border-bottom: var(--border-hairline) solid var(--border-color);
 }
 
 .panel-body {
@@ -1200,7 +1204,7 @@ textarea {
 .markdown code {
   font-family: var(--font-mono);
   font-size: var(--type-sm);
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
   padding: 0 var(--space-1);
   border-radius: var(--radius-sm);
 }
@@ -1208,7 +1212,7 @@ textarea {
 .markdown pre {
   min-width: 0;
   max-width: 100%;
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
   padding: var(--space-3);
   border-radius: var(--radius-md);
   overflow-x: auto;
@@ -1238,13 +1242,13 @@ textarea {
 .markdown blockquote {
   margin: 0 0 var(--space-3);
   padding-left: var(--space-3);
-  border-left: 2px solid var(--surface-overlay);
+  border-left: 2px solid var(--border-color);
   color: var(--text-muted);
 }
 
 .markdown hr {
   border: 0;
-  border-top: var(--border-hairline) solid var(--surface-overlay);
+  border-top: var(--border-hairline) solid var(--border-color);
   margin: var(--space-4) 0;
 }
 
@@ -1276,7 +1280,7 @@ textarea {
 .markdown th,
 .markdown td {
   padding: var(--space-2);
-  border: var(--border-hairline) solid var(--surface-overlay);
+  border: var(--border-hairline) solid var(--border-color);
   text-align: left;
   vertical-align: top;
 }
@@ -1290,7 +1294,7 @@ textarea {
 .markdown th {
   color: var(--text-strong);
   font-weight: 600;
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
 }
 
 .markdown img {
@@ -1378,7 +1382,7 @@ textarea {
    itself scrolls underneath it. */
 .file-preview-document-header {
   padding: var(--space-2) var(--space-3);
-  background: var(--surface-raised);
+  background: var(--surface-2);
   border-bottom: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-md) var(--radius-md) 0 0;
 }
@@ -1391,13 +1395,13 @@ textarea {
   max-width: 100%;
   max-height: var(--file-preview-markdown-max-height);
   padding: var(--space-2) var(--space-3);
-  background: var(--surface-raised);
+  background: var(--surface-2);
   border-radius: 0 0 var(--radius-md) var(--radius-md);
   overflow: auto;
 }
 
 .file-preview--embedded[data-file-preview-kind="markdown"] .file-preview-document-body {
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
 }
 
 @media (max-width: 40rem) {
@@ -1417,7 +1421,7 @@ textarea {
   display: block;
   width: 100%;
   min-height: 18rem;
-  background: var(--surface-base);
+  background: var(--surface-1);
   border: 0;
   border-radius: 0 0 var(--radius-md) var(--radius-md);
 }
@@ -1452,7 +1456,7 @@ textarea {
   display: block;
   width: 100%;
   height: 100%;
-  background: var(--surface-base);
+  background: var(--surface-1);
   border: 0;
 }
 
@@ -1474,7 +1478,7 @@ textarea {
 
 .field-editor-input {
   width: 100%;
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
   color: var(--text-default);
   border: var(--border-hairline) solid var(--text-faint);
   border-radius: var(--radius-sm);
@@ -1509,7 +1513,7 @@ textarea {
 }
 
 .button--quiet {
-  background: var(--surface-overlay);
+  background: var(--surface-2);
   color: var(--text-strong);
   border: var(--border-hairline) solid var(--text-faint);
   border-radius: var(--radius-sm);
@@ -1531,7 +1535,7 @@ textarea {
   align-items: center;
   font-size: var(--type-xs);
   color: var(--text-muted);
-  background: var(--surface-overlay);
+  background: var(--surface-2);
   border: 0;
   border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2);
@@ -1553,14 +1557,14 @@ textarea {
   padding: 0 var(--space-2);
   border-radius: var(--radius-pill);
   border: var(--border-hairline) solid transparent;
-  background: var(--surface-overlay);
+  background: var(--surface-2);
   color: var(--text-default);
   white-space: nowrap;
   line-height: 1.6;
 }
 
 .chip--state {
-  background: var(--surface-overlay);
+  background: var(--surface-2);
   color: var(--text-default);
   border-color: transparent;
 }
@@ -1595,7 +1599,7 @@ textarea {
 }
 
 .chip--agent {
-  background: var(--surface-overlay);
+  background: var(--surface-2);
   color: var(--text-strong);
   border-color: var(--text-muted);
 }
@@ -1656,7 +1660,7 @@ textarea {
  * element qualifier keeps these winning over per-screen resting colors. */
 a.list-row:hover,
 button.list-row:hover {
-  background: var(--surface-overlay);
+  background-image: var(--interaction-hover);
 }
 
 a.list-row:hover .list-row-title,
@@ -1808,7 +1812,7 @@ button.list-row:hover .list-row-title {
   min-width: 0;
   padding: var(--space-5);
   border-radius: var(--radius-lg);
-  background: var(--accent-ink);
+  background: var(--surface-ink);
   color: var(--text-strong);
   text-decoration: none;
   transition: background var(--motion-base) var(--motion-ease),
@@ -1816,7 +1820,7 @@ button.list-row:hover .list-row-title {
 }
 
 [data-screen="day"] .act:hover {
-  background: var(--accent-surface);
+  background-image: var(--interaction-hover);
   transform: translateY(-2px);
 }
 
@@ -1838,12 +1842,12 @@ button.list-row:hover .list-row-title {
 }
 
 [data-screen="day"] .act--you:hover {
-  background: var(--accent-bright);
+  background-image: var(--interaction-hover);
 }
 
 [data-screen="day"] .act--you .n,
 [data-screen="day"] .act--you .k {
-  color: var(--accent-ink);
+  color: var(--surface-ink);
 }
 
 [data-screen="day"] .act--you .k {
@@ -1979,7 +1983,7 @@ button.list-row:hover .list-row-title {
   flex: none;
   width: var(--space-3);
   height: var(--space-3);
-  border: var(--border-strong) solid var(--surface-overlay);
+  border: var(--border-strong) solid var(--border-color);
   border-top-color: var(--accent-bright);
   border-radius: var(--radius-pill);
   animation: acp-spin var(--motion-loop-spin) linear infinite;
@@ -2131,7 +2135,7 @@ button.list-row:hover .list-row-title {
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
 }
-.chat-overflow-btn:hover { color: var(--text-muted); background: var(--surface-overlay); }
+.chat-overflow-btn:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
 
 .chat-overflow-menu {
   position: absolute;
@@ -2139,7 +2143,7 @@ button.list-row:hover .list-row-title {
   right: 0;
   z-index: 2;
   min-width: 160px;
-  background: var(--surface-raised);
+  background: var(--surface-2);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-md);
   padding: var(--space-1);
@@ -2159,7 +2163,7 @@ button.list-row:hover .list-row-title {
   text-align: left;
   padding: var(--space-1) var(--space-2);
 }
-.chat-overflow-item:hover { color: var(--text-strong); background: var(--surface-overlay); }
+.chat-overflow-item:hover { color: var(--text-strong); background-image: var(--interaction-hover); }
 .chat-overflow-item--confirm { color: var(--accent-error); }
 .chat-overflow-item--confirm:hover { color: var(--accent-error); }
 
@@ -2265,7 +2269,7 @@ button.list-row:hover .list-row-title {
   white-space: nowrap;
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-pill);
-  background: var(--surface-raised);
+  background: var(--surface-2);
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: var(--type-xs);
@@ -2278,7 +2282,7 @@ button.list-row:hover .list-row-title {
     color var(--motion-fast) var(--motion-ease);
 }
 .chat-jump:hover {
-  background: var(--surface-overlay);
+  background-image: var(--interaction-hover);
   border-color: var(--accent-bright);
   color: var(--text-strong);
 }
@@ -2287,7 +2291,7 @@ button.list-row:hover .list-row-title {
 .chat-u {
   align-self: flex-end;
   max-width: 82%;
-  background: var(--surface-overlay);
+  background: var(--surface-2);
   color: var(--text-strong);
   border-radius: var(--radius-lg);
   padding: var(--space-2) var(--space-3);
@@ -2329,7 +2333,7 @@ button.list-row:hover .list-row-title {
 .chat-box {
   position: relative;   /* anchors the "/" command popover above it */
   flex: none;
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-lg);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
@@ -2345,7 +2349,7 @@ button.list-row:hover .list-row-title {
 
 /* The task-progress popover shares the raised-popover shadow; the property
  * lives here because component styles may not declare box-shadow. */
-.task-pop { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
+.task-pop { box-shadow: var(--shadow-float); }
 
 /* The composer catalog is a raised popover above the composer. No dividers and no accent:
  * grouped rows fade into the surface. */
@@ -2356,10 +2360,10 @@ button.list-row:hover .list-row-title {
   bottom: calc(100% + var(--space-2));
   max-height: 320px;
   overflow-y: auto;
-  background: var(--surface-raised);
+  background: var(--surface-2);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-lg);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-float);
   padding: var(--space-1);
   z-index: 20;
 }
@@ -2382,7 +2386,7 @@ button.list-row:hover .list-row-title {
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-md);
 }
-.chat-menu-item.on { background: var(--surface-overlay); }
+.chat-menu-item.on { background: var(--surface-recessed); }
 .chat-menu-name {
   flex: none;
   font-family: var(--font-mono);
@@ -2412,7 +2416,7 @@ button.list-row:hover .list-row-title {
   height: 52px;
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-md);
-  background: var(--surface-overlay);
+  background: var(--surface-2);
 }
 .chat-image-preview img {
   width: 100%;
@@ -2432,7 +2436,7 @@ button.list-row:hover .list-row-title {
   padding: 0;
   border: var(--border-hairline) solid var(--border-color);
   border-radius: 50%;
-  background: var(--surface-raised);
+  background: var(--surface-2);
   color: var(--text-strong);
   cursor: pointer;
   font-size: var(--type-md);
@@ -2440,7 +2444,7 @@ button.list-row:hover .list-row-title {
 }
 .chat-image-remove:hover {
   border-color: var(--accent-error);
-  background: color-mix(in srgb, var(--accent-error) 18%, var(--surface-raised));
+  background-image: var(--interaction-hover);
 }
 .chat-image-remove:disabled { opacity: 0.5; cursor: default; }
 .chat-drop-label {
@@ -2451,7 +2455,7 @@ button.list-row:hover .list-row-title {
   justify-content: center;
   border: var(--border-hairline) dashed color-mix(in srgb, var(--accent-bright) 72%, transparent);
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--surface-sunken) 88%, transparent);
+  background: var(--scrim);
   color: var(--text-strong);
   font-weight: 600;
   pointer-events: none;
@@ -2493,7 +2497,7 @@ button.list-row:hover .list-row-title {
   border-radius: var(--radius-sm);
   line-height: 1.2;
 }
-.chat-slash:hover { color: var(--text-muted); background: var(--surface-overlay); }
+.chat-slash:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
 .chat-image {
   width: var(--space-5);
   height: var(--space-5);
@@ -2506,8 +2510,8 @@ button.list-row:hover .list-row-title {
   padding: var(--space-1);
   border-radius: var(--radius-sm);
 }
-.chat-image:hover { color: var(--text-muted); background: var(--surface-overlay); }
-.chat-image.on { color: var(--accent-bright); background: var(--surface-overlay); }
+.chat-image:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
+.chat-image.on { color: var(--accent-bright); background: var(--surface-recessed); }
 .chat-image:disabled { opacity: 0.5; cursor: default; }
 .chat-image svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.2; }
 .chat-image-input { display: none; }
@@ -2521,7 +2525,7 @@ button.list-row:hover .list-row-title {
   width: var(--space-5); height: var(--space-5);
   border: none;
   border-radius: var(--radius-md);
-  background: var(--surface-overlay);
+  background: var(--surface-2);
   color: var(--text-faintest);
   cursor: pointer;
   font-size: var(--type-md);
@@ -2530,7 +2534,7 @@ button.list-row:hover .list-row-title {
   place-items: center;
   transition: background var(--motion-base) var(--motion-ease), color var(--motion-base) var(--motion-ease);
 }
-.chat-send.on { background: var(--accent-bright); color: var(--accent-ink); }
+.chat-send.on { background: var(--accent-bright); color: var(--surface-ink); }
 .chat-send.stop {
   background: transparent;
   border: var(--border-hairline) solid var(--accent-error);
@@ -2597,7 +2601,7 @@ button.list-row:hover .list-row-title {
   border: none;
   border-radius: var(--radius-md);
   background: var(--accent-bright);
-  color: var(--accent-ink);
+  color: var(--surface-ink);
   cursor: pointer;
 }
 .chat-voice-stop {
@@ -2607,7 +2611,7 @@ button.list-row:hover .list-row-title {
   place-items: center;
   padding: 0;
 }
-.chat-voice-square { width: 9px; height: 9px; border-radius: 2px; background: var(--accent-ink); }
+.chat-voice-square { width: 9px; height: 9px; border-radius: 2px; background: var(--surface-ink); }
 .chat-voice-retry {
   height: var(--space-5);
   padding: 0 var(--space-3);
@@ -2622,7 +2626,7 @@ button.list-row:hover .list-row-title {
   min-width: 0;
   margin: 0 var(--space-2);
   padding: var(--space-1) var(--space-2);
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
   border: var(--border-hairline) solid var(--border-color);
   border-bottom: 0;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
@@ -2681,7 +2685,7 @@ button.list-row:hover .list-row-title {
   font-size: var(--type-sm);
   line-height: 1;
 }
-.chat-qrow-x:hover:not(:disabled) { color: var(--accent-error); background: var(--surface-overlay); }
+.chat-qrow-x:hover:not(:disabled) { color: var(--accent-error); background-image: var(--interaction-hover); }
 .chat-qrow-state {
   flex: none;
   align-self: center;
@@ -2756,7 +2760,7 @@ select {
 
 .scope-select select {
   appearance: none;
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
   border: 0;
   border-radius: var(--radius-sm);
   color: var(--text-strong);
@@ -2772,7 +2776,7 @@ select {
 }
 
 .scope-select select:hover {
-  background: var(--surface-overlay);
+  background-image: var(--interaction-hover);
 }
 
 .scope-atcap {
@@ -2857,7 +2861,7 @@ select {
   font-family: var(--font-mono);
   font-size: var(--type-xs);
   color: var(--text-faint);
-  background: var(--surface-overlay);
+  background: var(--surface-2);
   border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2);
   margin-right: var(--space-1);
@@ -2889,7 +2893,7 @@ select {
   right: 0;
   bottom: var(--space-3);
   left: 0;
-  border-top: var(--border-hairline) solid var(--surface-overlay);
+  border-top: var(--border-hairline) solid var(--border-color);
 }
 
 .review-empty-mark span {
@@ -3042,7 +3046,7 @@ select {
   outline: 0;
   border-radius: var(--radius-md);
   padding: var(--space-3) var(--space-3);
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
   color: var(--text-strong);
   caret-color: var(--accent-bright);
   font-family: var(--font-ui);
@@ -3084,7 +3088,7 @@ select {
   color: var(--text-faintest);
   cursor: pointer;
 }
-.review-voice-mic:hover { color: var(--text-muted); background: var(--surface-overlay); }
+.review-voice-mic:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
 .review-voice-mic:disabled { opacity: 0.5; cursor: default; }
 .review-voice-mic svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.2; }
 /* The centred line stands where the textarea rests, at its height, so nothing jumps. */
@@ -3179,9 +3183,13 @@ select {
     background var(--motion-fast) var(--motion-ease);
 }
 
-.board-workspace-chief-row:hover,
+.board-workspace-chief-row:hover {
+  background-image: var(--interaction-hover);
+  color: var(--text-strong);
+}
+
 .board-workspace-chief-row.active {
-  background: var(--surface-overlay);
+  background: var(--surface-recessed);
   color: var(--text-strong);
 }
 
@@ -3222,23 +3230,23 @@ select {
   display: flex;
   flex-direction: column;
   padding: var(--space-5) var(--space-6);
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
 }
 
 .board-workspace-right--ticket {
   padding: 0;
-  background: var(--surface-base);
+  background: var(--surface-1);
 }
 
 .board-workspace-right--item {
   padding: 0;
   overflow: hidden;
-  background: var(--surface-base);
+  background: var(--surface-1);
 }
 
 .board-workspace-right--chief {
   padding: var(--space-5) var(--space-6);
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
 }
 
 /* The way back to the rail. Below 960px the rail is hidden, so the Ticket pane
@@ -3443,7 +3451,7 @@ select {
 }
 
 .board-workspace-item:hover {
-  background: var(--surface-overlay);
+  background-image: var(--interaction-hover);
 }
 
 /* A selected Item is a background and nothing else — the same language as every other
@@ -3452,7 +3460,7 @@ select {
  * selection, so a selected Item holds its own surface while hovered. */
 .board-workspace-item--selected,
 .board-workspace-item--selected:hover {
-  background: var(--surface-raised);
+  background: var(--surface-2);
 }
 
 /* The head is still a real button, so the box stays reachable from the keyboard. */
@@ -3553,7 +3561,7 @@ select {
 }
 
 .ticket-row:hover {
-  background: var(--surface-overlay);
+  background-image: var(--interaction-hover);
   color: var(--text-strong);
 }
 
@@ -3582,7 +3590,7 @@ select {
  * one accent stays reserved for "needs the human". */
 .ticket-row--active,
 .ticket-row--active:hover {
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
   color: var(--text-strong);
 }
 
@@ -3947,7 +3955,7 @@ select {
 .approval {
   min-width: 0;
   max-width: 100%;
-  background: var(--surface-raised);
+  background: var(--surface-2);
   border-radius: var(--radius-lg);
   padding: var(--space-5);
 }
@@ -4061,7 +4069,7 @@ select {
 .approval-proposal-shell {
   min-width: 0;
   max-width: 100%;
-  background: linear-gradient(180deg, var(--surface-overlay), var(--surface-raised));
+  background: var(--surface-2);
   border-radius: var(--radius-lg);
   padding: var(--space-5) var(--space-6) var(--space-5);
   box-shadow:
@@ -4097,7 +4105,7 @@ select {
 .approval-proposal-shell .button--primary,
 [data-screen="ticket"] .approval[data-mode="proposal"] .button--primary {
   background: var(--accent-bright);
-  color: var(--accent-ink);
+  color: var(--surface-ink);
   border-color: var(--accent-bright);
   font-size: var(--type-sm);
   font-weight: 600;
@@ -4344,7 +4352,7 @@ select {
   align-items: center;
   font-size: var(--type-xs);
   color: var(--text-muted);
-  background: var(--surface-overlay);
+  background: var(--surface-2);
   border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2);
   cursor: pointer;
@@ -4493,7 +4501,7 @@ select {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--surface-base);
+  background: var(--surface-1);
 }
 
 /* The same strip the embedded preview curves over its document, carrying the file's name
@@ -4504,7 +4512,7 @@ select {
   justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
-  background: var(--surface-raised);
+  background: var(--surface-2);
   border-bottom: var(--border-hairline) solid var(--border-color);
 }
 
@@ -4609,7 +4617,7 @@ select {
 [data-conversation-pane][data-conversation-state="peeked"] {
   /* The card's own surface, and the status bar is what you see of it: the well covers the
    * rest, so this colour is the bar at rest and the bar's head once it is opened up. */
-  background: var(--accent-ink);
+  background: var(--surface-ink);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-lg);
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
@@ -4705,7 +4713,7 @@ select {
 [data-conversation-pane][data-conversation-state="opened"] {
   /* The surface stays the ink blue it wears at rest and peeked; opening it changes its
    * shape, not its colour. */
-  background: var(--accent-ink);
+  background: var(--surface-ink);
 }
 
 /* Header and body stand in the page's one column, set once further down. The header has no
@@ -4882,7 +4890,7 @@ select {
 
 .ticket-recap-inner {
   padding: var(--space-3) var(--space-4);
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
   border-radius: var(--radius-md);
   color: var(--text-muted);
 }
@@ -4980,10 +4988,10 @@ select {
   min-width: 220px;
   max-width: min(320px, calc(100vw - var(--space-6)));
   padding: var(--space-1) 0;
-  background: var(--surface-overlay);
+  background: var(--surface-2);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-md);
-  box-shadow: 0 var(--space-2) var(--space-5) var(--surface-scrim);
+  box-shadow: var(--shadow-float);
 }
 
 .ticket-leash-option {
@@ -5003,10 +5011,14 @@ select {
 }
 
 .ticket-leash-option:hover,
-.ticket-leash-option:focus-visible,
+.ticket-leash-option:focus-visible {
+  color: var(--text-strong);
+  background-image: var(--interaction-hover);
+}
+
 .ticket-leash-option--selected {
   color: var(--text-strong);
-  background: var(--surface-raised);
+  background: var(--surface-recessed);
 }
 
 .ticket-leash-option:focus-visible {
@@ -5032,7 +5044,7 @@ select {
   width: 100%;
   padding: var(--space-2) var(--space-3);
   border: 0;
-  background: var(--surface-overlay);
+  background: var(--surface-2);
   color: var(--text-muted);
   font: inherit;
   font-size: var(--type-sm);
@@ -5042,7 +5054,7 @@ select {
 .ticket-leash-select:hover,
 .ticket-leash-select:focus-visible {
   color: var(--text-strong);
-  background: var(--surface-raised);
+  background-image: var(--interaction-hover);
 }
 
 .ticket-leash-select:focus-visible {
@@ -5191,7 +5203,7 @@ select {
   min-width: 0;
   max-width: 100%;
   padding: 2px 5px 2px var(--space-2);
-  background: var(--surface-overlay);
+  background: var(--surface-2);
   border-radius: var(--radius-sm);
 }
 
@@ -5996,7 +6008,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 }
 
 .sprint-workspace-artifact:hover {
-  background: var(--surface-overlay);
+  background-image: var(--interaction-hover);
   color: var(--text-strong);
 }
 
@@ -6286,7 +6298,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   font-family: inherit;
   font-size: var(--type-xs);
   color: var(--text-faint);
-  background: var(--surface-raised);
+  background: var(--surface-2);
   border-radius: var(--radius-sm);
   padding: 0 var(--space-1);
 }
@@ -6528,7 +6540,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   width: 34px;
   height: 20px;
   padding: 0;
-  background: var(--surface-overlay);
+  background: var(--surface-2);
   border: 0;
   border-radius: var(--radius-pill);
   cursor: pointer;
@@ -6625,7 +6637,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 .scheduled-task-advanced-control {
   width: 100%;
   padding: var(--space-2) var(--space-3);
-  background: var(--surface-sunken);
+  background: var(--surface-recessed);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-sm);
   color: var(--text-default);
@@ -6668,7 +6680,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 }
 
 .scheduled-task-row:hover {
-  background: var(--surface-raised);
+  background-image: var(--interaction-hover);
 }
 
 .scheduled-task-row-title {
@@ -6767,7 +6779,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   font-family: inherit;
   font-size: var(--type-xs);
   color: var(--text-faint);
-  background: var(--surface-raised);
+  background: var(--surface-2);
   border: 0;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -6783,14 +6795,14 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 [data-screen="backlog"] .opt[aria-pressed="true"],
 [data-screen="ideas"] .opt[aria-pressed="true"] {
   color: var(--text-strong);
-  background: var(--surface-overlay);
+  background: var(--surface-recessed);
 }
 
 /* Commit — the one solid brand-accent action on the capture, the mockup's .commit. */
 [data-screen="backlog"] [data-commit].button,
 [data-screen="ideas"] [data-commit].button {
   background: var(--accent-bright);
-  color: var(--accent-ink);
+  color: var(--surface-ink);
   border-color: var(--accent-bright);
   font-weight: 600;
   padding: var(--space-3) var(--space-4);
@@ -6889,14 +6901,14 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   padding: var(--space-2) var(--space-3);
   font: inherit;
   color: var(--text-default);
-  background: var(--surface-raised);
+  background: var(--surface-2);
   border: 0;
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
 .notification-action--primary {
-  color: var(--accent-ink);
+  color: var(--surface-ink);
   background: var(--accent-bright);
   font-weight: 600;
 }
@@ -6988,7 +7000,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 }
 
 .atlas-wordmark:hover {
-  background: var(--surface-overlay);
+  background-image: var(--interaction-hover);
 }
 
 .atlas-clock {
@@ -7062,7 +7074,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--surface-base);
+  background: var(--surface-1);
   border-left: var(--border-hairline) solid var(--border-color);
   box-shadow: -24px 0 48px -32px rgb(0 0 0 / 0.55);
   z-index: 2;
@@ -7094,7 +7106,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 
 .atlas-panel-close:hover {
   color: var(--text-strong);
-  background: var(--surface-overlay);
+  background-image: var(--interaction-hover);
 }
 
 /* An artifact opened on the screen inside starts at the panel's very top, where the

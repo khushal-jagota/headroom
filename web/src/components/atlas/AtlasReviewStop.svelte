@@ -64,7 +64,7 @@
     gap: var(--space-4);
     padding: var(--space-3) var(--space-5);
     border-top: var(--border-hairline) solid var(--border-color);
-    background: var(--surface-base);
+    background: var(--surface-1);
   }
 
   .atlas-review-walk button {

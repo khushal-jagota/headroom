@@ -47,7 +47,12 @@ BRAND_TOKENS = {
     "--accent-bright": "#9aadd2",
     "--accent-surface": "#222a38",
     "--accent-text": "#dce6f8",
-    "--accent-ink": "#111318",
+}
+SURFACE_TOKENS = {
+    "--surface-1": "#1b1917",
+    "--surface-2": "#24211b",
+    "--surface-recessed": "#141210",
+    "--surface-ink": "#111318",
 }
 SEMANTIC_TOKENS = {
     "--accent-done": "#7fa564",
@@ -107,6 +112,10 @@ def colors(page, selector):
     }""")
 
 
+def background_image(page, selector):
+    return page.eval_on_selector(selector, "element => getComputedStyle(element).backgroundImage")
+
+
 def assert_brand(browser, mobile):
     context = browser.new_context(
         has_touch=mobile,
@@ -132,7 +141,7 @@ def assert_brand(browser, mobile):
           <span class="priority-tile priority-tile--p2">P2</span>
           <span class="priority-tile priority-tile--p3">P3</span>
         """)
-        names = [*BRAND_TOKENS, *SEMANTIC_TOKENS, *PRIORITY_TOKENS]
+        names = [*BRAND_TOKENS, *SURFACE_TOKENS, *SEMANTIC_TOKENS, *PRIORITY_TOKENS]
         tokens = page.evaluate("""names => {
           const style = getComputedStyle(document.documentElement);
           return Object.fromEntries(names.map(name => [
@@ -140,6 +149,7 @@ def assert_brand(browser, mobile):
           ]));
         }""", names)
         assert {name: tokens[name] for name in BRAND_TOKENS} == BRAND_TOKENS
+        assert {name: tokens[name] for name in SURFACE_TOKENS} == SURFACE_TOKENS
         assert {name: tokens[name] for name in SEMANTIC_TOKENS} == SEMANTIC_TOKENS
         assert {name: tokens[name] for name in PRIORITY_TOKENS} == PRIORITY_TOKENS
         assert colors(page, ".nav-badge") == {
@@ -448,7 +458,7 @@ def assert_mobile_content_containment(browser):
 
 
 def assert_row_states(browser):
-    """Hover is a background. Selection is a mark. Opening something moves nothing."""
+    """Hover is a relative layer. Selection is a surface. Opening moves nothing."""
     context = browser.new_context(viewport={"width": 1280, "height": 800})
     try:
         page = context.new_page()
@@ -490,13 +500,13 @@ def assert_row_states(browser):
         page.wait_for_timeout(300)
         hovered = colors(page, "#hovered")
         picked = colors(page, "#picked")
-        # Hover and selection are both backgrounds, and they move in opposite
-        # directions: hover lifts the row off the rail, selection sinks it into one. So a
-        # selected row is neither a resting row nor a hovered one, and nothing but the
-        # colour is doing the work — no edge, no border, nothing that could move a row.
-        assert hovered["backgroundColor"] == "rgb(38, 34, 28)", hovered
+        # Hover is a translucent image over the row's own surface; selection uses the
+        # recessed surface. Neither state adds an edge or moves the row.
+        assert hovered["backgroundColor"] == "rgba(0, 0, 0, 0)", hovered
+        assert background_image(page, "#hovered") != "none"
         assert picked["backgroundColor"] == "rgb(20, 18, 16)", picked
         assert picked["backgroundColor"] != hovered["backgroundColor"]
+        assert background_image(page, "#picked") == "none"
         assert picked["color"] == "rgb(244, 241, 234)", picked
         assert resting["backgroundColor"] == "rgba(0, 0, 0, 0)", resting
         for name in ("#resting", "#hovered", "#picked"):
@@ -518,7 +528,8 @@ def assert_row_states(browser):
         box_hover = colors(page, "#box")
         title_hover = colors(page, "#box .board-workspace-item-title")
         assert box_hover["borderColor"] == box_rest["borderColor"], (box_rest, box_hover)
-        assert box_hover["backgroundColor"] != box_rest["backgroundColor"]
+        assert box_hover["backgroundColor"] == box_rest["backgroundColor"]
+        assert background_image(page, "#box") != "none"
         assert title_hover["color"] == title_rest["color"], (title_rest, title_hover)
 
         # A selected Item is a background too, and only that: its hairline is the same
@@ -543,7 +554,7 @@ def assert_row_states(browser):
         rail = page.evaluate(
             """() => {
               const raw = getComputedStyle(document.documentElement)
-                .getPropertyValue('--surface-base').trim();
+                .getPropertyValue('--surface-1').trim();
               const probe = document.createElement('span');
               probe.style.color = raw;
               document.body.append(probe);

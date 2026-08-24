@@ -5,12 +5,21 @@
  * categories without evidence of need (PRINCIPLES.md, SPEC §10). */
 
 :root {
-  /* Surfaces — warm near-black neutrals so the slate-blue accent stays the emphasis */
-  --surface-base: #1b1917;
-  --surface-raised: #24211b;
-  --surface-overlay: #26221c;
-  --surface-sunken: #141210;
-  --surface-scrim: rgb(10 9 8 / 55%);
+  /* Surfaces — two general neutral planes, one deliberately recessed plane, and
+   * the cool near-black ink band used by conversations and human-input cards. */
+  --surface-1: #1b1917;
+  --surface-2: #24211b;
+  --surface-recessed: #141210;
+  --surface-ink: #111318;
+
+  /* Relative effects. Hover is an image layer over an element's own surface;
+   * scrim dims everything behind an open layer. They are intentionally not a
+   * symmetric light/dark pair. */
+  --interaction-hover: linear-gradient(
+    rgb(230 210 175 / 5%),
+    rgb(230 210 175 / 5%)
+  );
+  --scrim: rgb(10 9 8 / 55%);
 
   /* Text tokens — descending emphasis.
    *
@@ -23,7 +32,7 @@
    * scale now clears the body-text floor, and the steps between them are near enough to
    * even that the quiet end reads as quiet rather than as unfinished.
    *
-   * Against --surface-base: 15.5, 12.3, 9.8, 7.3, 5.4 to one. */
+   * Against --surface-1: 15.5, 12.3, 9.8, 7.3, 5.4 to one. */
   --text-strong: #f4f1ea;
   --text-default: #dcd8cf;
   --text-muted: #c5c1b7;
@@ -36,8 +45,6 @@
   /* The fill of small marked things — a chip, a pill, the primary button. Dark enough
    * that it barely lifts off the page, which is what makes it right for them. */
   --accent-text: #dce6f8;
-  --accent-ink: #111318;   /* dark text on the accent fill (e.g. Approve), and the near-black
-                            * surface behind the conversation band and the permission card */
   --accent-done: #7fa564;  /* the green done marks */
   --accent-error: #d85d5d; /* red marks for errored ticket stages */
   /* The one pure white in the palette: the row dot for a worker waiting on a permission
@@ -104,6 +111,7 @@
   --border-hairline: 1px;
   --border-strong: 2px;
   --border-color: rgba(230, 210, 175, 0.11);
+  --shadow-float: 0 var(--space-2) var(--space-5) rgb(10 9 8 / 45%);
 
   /* Type — two font stacks plus the closed sans size scale */
   --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;

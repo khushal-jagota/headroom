@@ -258,7 +258,7 @@ An image wrapped in a link:
     padding: var(--space-3);
     /* The page surface rather than a raised one, so a preview is judged against the
        surface it actually lands on. */
-    background: var(--surface-base);
+    background: var(--surface-1);
     border: var(--border-hairline) solid var(--border-color);
     border-radius: var(--radius-md);
   }
