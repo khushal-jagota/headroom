@@ -427,6 +427,7 @@ class ClaudeAgentSdkBackendChild:
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
+        automatic_compaction: bool = False,
     ) -> None:
         """Start a turn with this message, on values this child is already running.
 
@@ -439,7 +440,7 @@ class ClaudeAgentSdkBackendChild:
         half-made here: the adapter asks for a rebind before it writes anything, and the
         child that is written to is one that was started on the new values.
         """
-        del sender_content, sender_label, mode
+        del sender_content, sender_label, mode, automatic_compaction
         self._require_the_carried_values_are_in_force(model_change, reasoning_effort_change)
         client = self._connected_client()
         self._require_a_live_wire()

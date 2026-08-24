@@ -159,6 +159,7 @@ class _FakeBackend:
     live_children: int = 0
     most_live_children_at_once: int = 0
     lifecycle_events: list[str] = field(default_factory=list)
+    automatic_compaction_writes: list[bool] = field(default_factory=list)
 
     # Gates, for the tests that need the system to be genuinely part-way through
     # something while another caller arrives.
@@ -222,6 +223,7 @@ class _FakeBackendChild:
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
+        automatic_compaction: bool = False,
     ) -> None:
         # The label and the mode travel with the text as metadata for backends that have a
         # channel for it. This stand-in has none, so it takes them and lets them go.
@@ -252,6 +254,7 @@ class _FakeBackendChild:
         self._backend.writes.append(
             _FakeBackendWrite(content=content, sender_content=sender_content)
         )
+        self._backend.automatic_compaction_writes.append(automatic_compaction)
         self._backend.lifecycle_events.append(f"write:{message_content_text(content)}")
         self._backend.live_turn_token = turn_token
         if self._backend.ends_the_turn_while_writing:
@@ -2268,6 +2271,26 @@ def test_idle_conversation_compacts_at_the_lower_window_boundary(
         harness.clock.advance(1)
         await harness.system._sweep_idle_children()
         assert harness.backend("c").written_texts() == ("first", "/compact")
+        assert harness.backend("c").automatic_compaction_writes == [False, True]
+
+    _run(exercise)
+
+
+def test_automatic_compaction_intent_survives_a_backend_rebind(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.backend("c").needs_rebind_once = True
+        harness.clock.advance(50 * 60)
+
+        await harness.system._sweep_idle_children()
+
+        assert harness.backend("c").written_texts() == ("first", "/compact")
+        assert harness.backend("c").automatic_compaction_writes == [False, True]
+        assert harness.backend("c").session_starts == 2
 
     _run(exercise)
 

@@ -345,6 +345,7 @@ class BackendChild(Protocol):
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
+        automatic_compaction: bool = False,
     ) -> None:
         """Start a turn with this message, on these values.
 
@@ -376,6 +377,11 @@ class BackendChild(Protocol):
         wire and the change is in force, or neither happened.
 
         A change of ``None`` means leave that value where it is.
+
+        ``automatic_compaction`` names the one maintenance turn that the core requested.
+        It is semantic intent, not a guess from prompt text. An adapter can use it to
+        select a backend-native command and recognize that command's confirmation. It is
+        false for every sender-authored turn, including one whose text is ``/compact``.
 
         Returns once the text is on the wire, not when the turn ends. Raises
         ``PromptWriteFailed`` if the current write did not complete, or ``NeedsRebind``

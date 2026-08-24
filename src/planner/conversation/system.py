@@ -654,6 +654,7 @@ class SqliteProcessConversationSystem:
                     mode=PromptDeliveryMode.send_now,
                     model_change=held.model_change,
                     reasoning_effort_change=held.reasoning_effort_change,
+                    automatic_compaction=False,
                 )
             except BaseException:
                 self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
@@ -1277,6 +1278,7 @@ class SqliteProcessConversationSystem:
                 mode=mode,
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
+                automatic_compaction=reservation.automatic_compaction,
             )
         except asyncio.CancelledError:
             self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
@@ -1329,6 +1331,7 @@ class SqliteProcessConversationSystem:
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
+        automatic_compaction: bool,
     ) -> _PromptDeliveryAttempt:
         """Get the message onto a live child's wire, or name why that was impossible.
 
@@ -1352,6 +1355,7 @@ class SqliteProcessConversationSystem:
                 mode=mode,
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
+                automatic_compaction=automatic_compaction,
             )
         except PromptWriteFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.write_to_backend_failed)
@@ -1365,6 +1369,7 @@ class SqliteProcessConversationSystem:
                 mode=mode,
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
+                automatic_compaction=automatic_compaction,
             )
             return _PromptDeliveryAttempt(
                 refusal,
@@ -1383,6 +1388,7 @@ class SqliteProcessConversationSystem:
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
+        automatic_compaction: bool,
     ) -> PromptDeliveryRefusalReason | None:
         """Start the child again on the new values, under the same conversation, and write.
 
@@ -1421,6 +1427,7 @@ class SqliteProcessConversationSystem:
                 mode=mode,
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
+                automatic_compaction=automatic_compaction,
             )
         except (PromptWriteFailed, NeedsRebind):
             await self._discard_child(state, child)
@@ -1587,6 +1594,7 @@ class SqliteProcessConversationSystem:
                     mode=PromptDeliveryMode.run_when_free,
                     model_change=held.model_change,
                     reasoning_effort_change=held.reasoning_effort_change,
+                    automatic_compaction=False,
                 )
             except asyncio.CancelledError:
                 self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
