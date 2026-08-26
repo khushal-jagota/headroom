@@ -8,6 +8,19 @@ principles those tokens serve. Warm near-black surfaces, one amber accent that m
 Distilled from `tokens.css`, `PRINCIPLES.md`, and the Vylo conversation reference (no-divider fades,
 bubble-less assistant, recessed composer).
 
+## Surface roles
+
+- `--surface-1` is the main neutral plane; `--surface-2` is the contained neutral
+  plane for cards, menus, controls, and the human message bubble.
+- `--surface-recessed` is for wells, editors, code, and persistent selections.
+- `--surface-ink` is the cool near-black conversation band and human-input panel;
+  it also supplies dark foreground ink on bright fills.
+- `--interaction-hover` is a translucent image over the element's own surface.
+  It highlights the local foreground without assuming what lies beneath it.
+- `--scrim` dims the background behind an open layer. It is not the inverse of
+  hover and does not share hover's strength.
+- `--shadow-float` is the common shadow for menus, popovers, and floating notices.
+
 ## Principles
 
 1. **Omit, then omit again.** Every element is guilty until proven load-bearing. Cut labels,
@@ -19,7 +32,7 @@ bubble-less assistant, recessed composer).
    value.
 
 3. **Fade, don't divide.** Prefer no lines. Let scroll areas dissolve into solid bars (a mask
-   gradient), and get depth from a recessed surface (`--surface-sunken` + an inset shadow) or a
+   gradient), and get depth from a recessed surface (`--surface-recessed` + an inset shadow) or a
    raise, not borders. Spend a `--border-color` hairline only where a real seam is needed.
 
 4. **One accent, one meaning.** `--accent-bright` (amber) means *needs the human* — a pending
@@ -51,8 +64,8 @@ bubble-less assistant, recessed composer).
    surface the words are the content and the small sans elements are the machinery. No italics
    except input placeholders.
 
-10. **Depth is rationed to the ask.** The one raised approval surface earns a top-light gradient,
-    a top highlight, and a long soft shadow, with the solid-amber Approve glowing beneath.
+10. **Depth is rationed to the ask.** The one raised approval surface earns a top highlight
+    and a long soft shadow, with the solid-amber Approve glowing beneath.
     Nothing else on any page is elevated. Hairlines survive only where a real list needs a seam
     (the ticket stage spine, the sprint/ideas/backlog rows) and at the conversation rail edge; blocks are
     otherwise separated by space, not lines.

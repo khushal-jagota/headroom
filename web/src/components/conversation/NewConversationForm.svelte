@@ -100,7 +100,7 @@
     padding: var(--space-4);
     border: var(--border-hairline) dashed var(--border-color);
     border-radius: var(--radius-lg);
-    background: var(--surface-raised);
+    background: var(--surface-2);
   }
   .c2-new-title {
     margin: 0;
@@ -121,7 +121,7 @@
     flex: 1;
     min-width: 0;
     max-width: 100%;
-    background: var(--surface-sunken);
+    background: var(--surface-recessed);
     border: var(--border-hairline) solid var(--border-color);
     border-radius: var(--radius-sm);
     color: var(--text-default);

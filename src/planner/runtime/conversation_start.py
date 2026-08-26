@@ -692,7 +692,7 @@ async def send_to_agent_conversation(
     conn: sqlite3.Connection,
     agent_key: str,
     content: MessageContent,
-    values: ConversationStartValues,
+    values: ConversationStartValues | None,
     *,
     conversation_id: str | None,
     created_conversation_id: str | None = None,
@@ -709,11 +709,21 @@ async def send_to_agent_conversation(
     conversation it is for and is refused if that is not the one the agent is in, and a
     message sent with no conversation brings one into being on the values it says it runs
     under. If it does not land, the conversation goes with it.
+
+    ``values`` can be absent only for a registered agent that already has a conversation.
+    Such an agent can receive a message, but Panels cannot invent a role or launch
+    configuration to start it.
     """
     in_now = read_agent_conversation(conn, agent_key)
     if conversation_id is None and in_now is None:
         if mode is PromptDeliveryMode.steer:
             return _no_turn_to_steer_into()
+        if values is None:
+            raise PlannerError(
+                ErrorCode.validation,
+                "agent has no current conversation and no start configuration",
+                {"agent_key": agent_key},
+            )
         making = created_conversation_id or new_conversation_id()
         linked = await start_agent_conversation(
             system,

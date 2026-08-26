@@ -144,9 +144,17 @@ but ignores historical conversations older than the useful cache window.
 
 The maintenance turn uses each backend's existing command path. Codex calls
 `thread/compact/start`. Claude sends `/compact` through its query. Hermes sends
-`/compact` through ACP `session/prompt`. Panels accepts success only after Codex
-reports a completed `contextCompaction` item, Claude reports `compact_boundary`, or
-Hermes reports session provenance with reason `compression`.
+the `/compress` command that the ACP session advertises. The Hermes adapter waits
+for the session's first complete command list and uses its latest list. It refuses
+the maintenance write when the list does not arrive or does not contain `compress`.
+
+Panels accepts success only after Codex reports a completed
+`contextCompaction` item or Claude reports `compact_boundary`. For a Hermes
+maintenance turn, the adapter requires the complete two-line host response with
+message and token counts. It confirms success only when the after-message count is
+lower. Missing or malformed output, failure text, extra messages, and equal or
+higher counts do not confirm compaction. Hermes session provenance still records
+compaction during ordinary turns, but it cannot confirm this maintenance turn.
 
 A successful boundary suppresses another automatic run until a later ordinary
 turn produces agent activity. The maintenance turn does not reset its own clock.
@@ -155,6 +163,13 @@ first and holds the message behind it. The message proceeds once after confirmed
 success, refusal, failure, or a completed turn with no compaction confirmation.
 
 ## Sending
+
+The top-level `panels send-message` command is the plain-text command-line door into this
+same send operation. It resolves a Chief, Ticket, Sprint Item, or registered agent, then
+uses that owner's current conversation path. It creates the normal conversation for the
+first three owner types when needed. A general agent row has no launch configuration, so
+it can receive a message only while it points to a current conversation. The command adds
+no second transport, queue, or conversation record.
 
 The composer accepts pictures and supported files from its pickers, the clipboard, or
 a drop. Attachments wait beside the draft and can be removed one at a time. They can

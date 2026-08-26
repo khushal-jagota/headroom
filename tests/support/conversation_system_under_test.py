@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 import tempfile
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -90,7 +91,11 @@ from planner.conversation.message_content import (
     MessageText,
 )
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.conversation.storage import ConversationStore, StoredConversationEvent
+from planner.conversation.storage import (
+    ConversationRecord,
+    ConversationStore,
+    StoredConversationEvent,
+)
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.db import connect, create_schema
 
@@ -312,6 +317,7 @@ class _CountedChild:
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
+        automatic_compaction: bool = False,
     ) -> None:
         await self._child.write_prompt(
             turn_token,
@@ -321,6 +327,7 @@ class _CountedChild:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            automatic_compaction=automatic_compaction,
         )
         self._conversation.expected_prompt_writes += 1
 
@@ -454,6 +461,10 @@ class ConversationSystemUnderTest:
         """Every row the system wrote for this conversation, kinds and all."""
         return await self._store.read_events_after(conversation_id, 0)
 
+    async def conversation_record(self, conversation_id: str) -> ConversationRecord | None:
+        """The real stored conversation row, for integration assertions on watermarks."""
+        return await self._store.read_conversation(conversation_id)
+
     async def backend_writes(self, conversation_id: str) -> tuple[BackendWrite, ...]:
         report = await self._account(conversation_id)
         return tuple(
@@ -495,6 +506,11 @@ class ConversationSystemUnderTest:
 
     async def settle(self) -> None:
         await self._system.wait_until_quiescent()
+
+    async def sweep_idle_children(self) -> None:
+        """Run the real maintenance sweep once and wait for its backend consequences."""
+        await self._system._sweep_idle_children()
+        await self.settle()
 
     async def complete_running_turn(self, conversation_id: str) -> None:
         await self._end_the_turn(conversation_id, {"command": "complete_turn"})
@@ -660,7 +676,9 @@ def _recorded_fact(event: StoredConversationEvent) -> RecordedFact | None:
 
 
 @asynccontextmanager
-async def open_conversation_system_under_test() -> AsyncIterator[ConversationSystemUnderTest]:
+async def open_conversation_system_under_test(
+    *, clock: Callable[[], float] | None = None
+) -> AsyncIterator[ConversationSystemUnderTest]:
     """A real system on a temporary database, with every backend key on a scripted agent.
 
     Which backend key a conversation is started on changes nothing about the child: steer
@@ -677,7 +695,11 @@ async def open_conversation_system_under_test() -> AsyncIterator[ConversationSys
     finally:
         connection.close()
 
-    store = ConversationStore(str(database_path))
+    monotonic_now = time.monotonic if clock is None else clock
+    unix_time_now = time.time if clock is None else clock
+    store = ConversationStore(
+        str(database_path), integer_now=lambda: int(unix_time_now())
+    )
     subject: ConversationSystemUnderTest | None = None
 
     def make_child(
@@ -700,6 +722,8 @@ async def open_conversation_system_under_test() -> AsyncIterator[ConversationSys
         message_files=message_files,
         backend_child_factories={key: make_child for key in ConversationBackendKey},
         live_tail=live_tail,
+        monotonic_now=monotonic_now,
+        unix_time_now=unix_time_now,
     )
     subject = ConversationSystemUnderTest(system, store, socket_directory, live_tail)
     try:

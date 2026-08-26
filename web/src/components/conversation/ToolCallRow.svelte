@@ -114,7 +114,7 @@
     padding-inline: var(--space-2);
     transition: background var(--motion-fast) var(--motion-ease);
   }
-  .c2-tool:hover { background: var(--surface-overlay); }
+  .c2-tool:hover { background-image: var(--interaction-hover); }
   /* What happened is the brighter half of the line; which call it was is the quieter one. */
   .c2-tool :global(.acp-step-title) { color: var(--text-default); }
   /* Indented past the icon so it hangs off the line it belongs to, behind a rule rather

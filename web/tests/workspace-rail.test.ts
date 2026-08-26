@@ -374,7 +374,7 @@ describe("What the rail draws open", () => {
 
   it("opens nothing at the bare Workspace address", () => {
     expect(opensAt("#/workspace")).toEqual({
-      view: "items",
+      view: "tickets",
       openItemId: null,
       markedItemId: null,
       markedTicketId: null,

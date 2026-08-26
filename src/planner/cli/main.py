@@ -2,6 +2,7 @@
 
 The command tree mirrors the product model:
 
+* send-message: send text to one Panels conversation owner
 * day: plan and inspect a planning day
 * worker-type: discover the configured Worker types
 * schedule: configure exact-time creation of ordinary Tickets
@@ -493,6 +494,70 @@ def main() -> None:
 
 
 main.add_command(environment_group)
+
+
+@main.command("send-message")
+@click.option("--chief", is_flag=True, help="Send to the Chief of Staff.")
+@click.option("--ticket", "ticket_id", default=None, help="Send to a Ticket worker.")
+@click.option(
+    "--sprint-item",
+    "sprint_item_id",
+    default=None,
+    help="Send to a Sprint Item supervisor.",
+)
+@click.option("--agent", "agent_key", default=None, help="Send to a registered agent.")
+@click.option("--message", default=None, help="Message text.")
+@click.option("--body-file", default=None, help="Read message text from this file, or -.")
+@json_option
+def send_message(
+    chief: bool,
+    ticket_id: str | None,
+    sprint_item_id: str | None,
+    agent_key: str | None,
+    message: str | None,
+    body_file: str | None,
+    as_json: bool,
+) -> None:
+    """Send one message to one Panels conversation owner."""
+    targets = sum(
+        1
+        for selected in (
+            chief,
+            ticket_id is not None,
+            sprint_item_id is not None,
+            agent_key is not None,
+        )
+        if selected
+    )
+    if targets != 1:
+        http.fail_validation(
+            "send-message requires exactly one of --chief, --ticket, --sprint-item, or --agent",
+            as_json,
+        )
+    if (message is None) == (body_file is None):
+        http.fail_validation(
+            "send-message requires exactly one of --message or --body-file", as_json
+        )
+    text = message if message is not None else _read_source(body_file or "", as_json)
+    if not text.strip():
+        http.fail_validation("empty message", as_json)
+    if chief:
+        target: dict[str, str] = {"type": "chief"}
+    elif ticket_id is not None:
+        target = {"type": "ticket", "id": ticket_id}
+    elif sprint_item_id is not None:
+        target = {"type": "sprint_item", "id": sprint_item_id}
+    else:
+        assert agent_key is not None
+        target = {"type": "agent", "id": agent_key}
+    data = http.send(
+        "POST",
+        "/api/messages/send",
+        as_json=as_json,
+        json_body={"target": target, "message": text},
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, f"message {data['fate']}")
 
 
 @main.command("serve")

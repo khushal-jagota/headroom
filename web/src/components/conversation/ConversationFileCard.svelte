@@ -42,7 +42,7 @@
     padding: var(--space-3);
     border: var(--border-hairline) solid var(--border-color);
     border-radius: var(--radius-sm);
-    background: var(--surface-inset);
+    background: var(--surface-recessed);
     min-width: 0;
   }
   .conversation-file-card__head {

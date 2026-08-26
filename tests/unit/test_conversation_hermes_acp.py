@@ -56,16 +56,19 @@ from planner.conversation.contracts import (
     ConversationRoleMaterials,
     ConversationStartRequest,
     PromptDeliveryMode,
+    PromptDeliveryQueued,
     PromptDeliveryStarted,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
     AgentMessageEventPayload,
+    ContextCompactedEventPayload,
     ConversationEventKind,
     ConversationTurnEnding,
     ModelThinkingFrame,
     PlanEntry,
     PlanUpdatedEventPayload,
+    PromptEventPayload,
     ToolCallFinishedEventPayload,
     ToolCallProgressFrame,
     ToolCallStartedEventPayload,
@@ -110,6 +113,10 @@ HERMES_OTHER_MODEL = "openai-codex:gpt-5.4-mini"
 HERMES_MODEL_QUESTION = (
     "Answer with only the exact model identifier you are running as. "
     "No tools, no explanation, one line."
+)
+
+HERMES_COMPACTION_SUCCESS = (
+    "Context compressed: 40 -> 12 messages\n~12,345 -> ~4,321 tokens"
 )
 
 real_hermes_only = pytest.mark.skipif(
@@ -1530,5 +1537,374 @@ def test_the_commands_pushed_a_second_time_replace_the_ones_before_them(
                     ),
                 ),
             ]
+
+    _run(exercise)
+
+
+async def _advertise_commands(
+    control: ScriptedAcpAgentControl,
+    sink: _RecordingSink,
+    *names: str,
+) -> None:
+    await control.send(
+        {
+            "command": "emit_available_commands",
+            "commands": [
+                {"name": name, "description": f"Run {name}"} for name in names
+            ],
+        }
+    )
+    await sink.wait_for_available_commands()
+
+
+async def _write_automatic_compaction(child: HermesAcpBackendChild) -> None:
+    content = text_message_content("/compact")
+    await child.write_prompt(
+        TurnToken(conversation_id="c", turn_number=1),
+        content,
+        sender_content=content,
+        sender_label="Panels",
+        mode=PromptDeliveryMode.run_when_free,
+        model_change=None,
+        reasoning_effort_change=None,
+        automatic_compaction=True,
+    )
+
+
+def test_automatic_compaction_waits_for_the_first_command_catalog_and_sends_compress(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            writing = asyncio.create_task(_write_automatic_compaction(child))
+            await asyncio.sleep(0)
+            assert not writing.done()
+
+            await _advertise_commands(control, sink, "compress")
+            await writing
+
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert [write["text"] for write in report["prompt_writes"]] == [
+                "/compress"
+            ]
+
+    _run(exercise)
+
+
+def test_the_latest_command_catalog_can_remove_automatic_compaction(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            await _advertise_commands(control, sink, "compress")
+            await _advertise_commands(control, sink, "review")
+
+            with pytest.raises(PromptWriteFailed, match="compress command"):
+                await _write_automatic_compaction(child)
+
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert report["prompt_writes"] == []
+
+    _run(exercise)
+
+
+def test_automatic_compaction_refuses_an_absent_or_missing_command_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            await _advertise_commands(control, sink, "review")
+            with pytest.raises(PromptWriteFailed, match="compress command"):
+                await _write_automatic_compaction(child)
+
+        monkeypatch.setattr(
+            hermes_acp, "AVAILABLE_COMMANDS_WAIT_TIMEOUT_SECONDS", 0.01
+        )
+        async with _scripted_child(tmp_path) as (child, _, _):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            with pytest.raises(PromptWriteFailed, match="did not advertise its commands"):
+                await _write_automatic_compaction(child)
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    ("response_parts", "confirmed"),
+    [
+        (
+            (
+                "Context compressed: 40 -> ",
+                "12 messages\n~12,345 -> ",
+                "~4,321 tokens",
+            ),
+            True,
+        ),
+        (("Context compressed: forty -> 12 messages\n~12,345 -> ~4,321 tokens",), False),
+        (("Context compressed: 40 -> 40 messages\n~12,345 -> ~4,321 tokens",), False),
+        (("Context compressed: 40 -> 41 messages\n~12,345 -> ~4,321 tokens",), False),
+        (("Compression failed: provider unavailable",), False),
+        (("I compressed the context from 40 to 12 messages.",), False),
+        (("Context compressed: 40 -> 12 messages\n~12, -> ~4,321 tokens",), False),
+        (("Context compressed: 40 -> 12 messages\n~12345 -> ~4321 tokens",), False),
+        (
+            (
+                "Context compressed: "
+                + ("9" * 5_000)
+                + " -> 1 messages\n~1 -> ~1 tokens",
+            ),
+            False,
+        ),
+        ((), False),
+    ],
+    ids=(
+        "chunked-success",
+        "malformed-message-count",
+        "equal-message-count",
+        "larger-message-count",
+        "failure-text",
+        "ordinary-prose",
+        "malformed-token-count",
+        "ungrouped-large-token-count",
+        "oversized-message-count",
+        "absent-response",
+    ),
+)
+def test_only_the_complete_reducing_hermes_response_confirms_automatic_compaction(
+    tmp_path: Path, response_parts: tuple[str, ...], confirmed: bool
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            await _advertise_commands(control, sink, "compress")
+            await _write_automatic_compaction(child)
+            for part in response_parts:
+                await control.send(
+                    {
+                        "command": "emit_agent_message",
+                        "text": part,
+                        "message_id": "compression-response",
+                    }
+                )
+            await control.send({"command": "complete_turn"})
+            await sink.wait_for_the_turn_to_end()
+
+            assert sink.compactions == int(confirmed)
+
+    _run(exercise)
+
+
+def test_multiple_messages_do_not_confirm_automatic_compaction(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            await _advertise_commands(control, sink, "compress")
+            await _write_automatic_compaction(child)
+            await control.send(
+                {
+                    "command": "emit_agent_message",
+                    "text": HERMES_COMPACTION_SUCCESS,
+                    "message_id": "first",
+                }
+            )
+            await control.send(
+                {
+                    "command": "emit_agent_message",
+                    "text": "extra",
+                    "message_id": "second",
+                }
+            )
+            await control.send({"command": "complete_turn"})
+            await sink.wait_for_the_turn_to_end()
+
+            assert sink.compactions == 0
+
+    _run(exercise)
+
+
+def test_compaction_provenance_is_ignored_only_during_the_maintenance_turn(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            await _advertise_commands(control, sink, "compress")
+            await _write_automatic_compaction(child)
+            await control.send(
+                {"command": "emit_session_info_update", "compacted": True}
+            )
+            await control.send({"command": "complete_turn"})
+            await sink.wait_for_the_turn_to_end()
+            assert sink.compactions == 0
+
+            sink.expect_another_turn()
+            await _write_the_turns_prompt(child, 2)
+            await control.send(
+                {"command": "emit_session_info_update", "compacted": True}
+            )
+            await sink.wait_for_a_compaction()
+            assert sink.compactions == 1
+
+    _run(exercise)
+
+
+def test_a_matching_response_on_an_ordinary_turn_is_not_compaction_confirmation(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            await _write_the_turns_prompt(child, 1)
+            await control.send(
+                {"command": "emit_agent_message", "text": HERMES_COMPACTION_SUCCESS}
+            )
+            await control.send({"command": "complete_turn"})
+            await sink.wait_for_the_turn_to_end()
+            assert sink.compactions == 0
+
+    _run(exercise)
+
+
+class _CoreIntegrationClock:
+    def __init__(self) -> None:
+        self.now = 1_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+async def _start_a_due_hermes_conversation(
+    subject: ConversationSystemUnderTest,
+    workspace: Path,
+    clock: _CoreIntegrationClock,
+) -> int:
+    await subject.system.start_conversation(
+        ConversationStartRequest(
+            conversation_id="c",
+            model="a-model",
+            backend_key=ConversationBackendKey.hermes,
+            workspace_folder=workspace,
+        )
+    )
+    assert await subject.system.send(
+        "c", text_message_content("first"), sender_label="owner"
+    ) == PromptDeliveryStarted()
+    await subject.tell_agent(
+        "c", {"command": "emit_agent_message", "text": "first answer"}
+    )
+    await subject.complete_running_turn("c")
+    await subject.tell_agent(
+        "c",
+        {
+            "command": "emit_available_commands",
+            "commands": [
+                {"name": "compress", "description": "Compress conversation context"}
+            ],
+        },
+    )
+    before = await subject.conversation_record("c")
+    assert before is not None
+    assert before.latest_agent_activity_sequence > 0
+    clock.advance(50 * 60)
+    await subject.sweep_idle_children()
+    return before.latest_agent_activity_sequence
+
+
+def test_real_core_and_scripted_acp_persist_confirmed_compaction_and_release_the_queue(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        clock = _CoreIntegrationClock()
+        async with open_conversation_system_under_test(clock=clock) as subject:
+            activity_sequence = await _start_a_due_hermes_conversation(
+                subject, tmp_path, clock
+            )
+            assert [
+                write["text"] for write in (await subject.agent_account("c"))["prompt_writes"]
+            ] == ["first", "/compress"]
+
+            held = await subject.system.send(
+                "c", text_message_content("after maintenance"), sender_label="owner"
+            )
+            assert isinstance(held, PromptDeliveryQueued)
+            for part in (
+                "Context compressed: 40 -> ",
+                "12 messages\n~12,345 -> ",
+                "~4,321 tokens",
+            ):
+                await subject.tell_agent(
+                    "c",
+                    {
+                        "command": "emit_agent_message",
+                        "text": part,
+                        "message_id": "compression-response",
+                    },
+                )
+            await subject.complete_running_turn("c")
+
+            after = await subject.conversation_record("c")
+            assert after is not None
+            assert after.automatically_compacted_through_sequence == activity_sequence
+            events = await subject.recorded_events("c")
+            assert sum(
+                isinstance(event.payload, ContextCompactedEventPayload)
+                for event in events
+            ) == 1
+            assert [
+                message_content_text(event.payload.content)
+                for event in events
+                if isinstance(event.payload, PromptEventPayload)
+            ] == ["first", "/compact", "after maintenance"]
+            assert [
+                write["text"] for write in (await subject.agent_account("c"))["prompt_writes"]
+            ] == ["first", "/compress", "after maintenance"]
+            await subject.complete_running_turn("c")
+
+    _run(exercise)
+
+
+def test_real_core_and_scripted_acp_keep_the_watermark_on_unconfirmed_compaction(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        clock = _CoreIntegrationClock()
+        async with open_conversation_system_under_test(clock=clock) as subject:
+            activity_sequence = await _start_a_due_hermes_conversation(
+                subject, tmp_path, clock
+            )
+            held = await subject.system.send(
+                "c", text_message_content("released after failure"), sender_label="owner"
+            )
+            assert isinstance(held, PromptDeliveryQueued)
+            await subject.tell_agent(
+                "c",
+                {
+                    "command": "emit_agent_message",
+                    "text": "Compression failed: provider unavailable",
+                },
+            )
+            await subject.complete_running_turn("c")
+
+            after = await subject.conversation_record("c")
+            assert after is not None
+            assert after.latest_agent_activity_sequence == activity_sequence
+            assert after.automatically_compacted_through_sequence == 0
+            assert [
+                write["text"] for write in (await subject.agent_account("c"))["prompt_writes"]
+            ] == ["first", "/compress", "released after failure"]
+            endings = [
+                event.payload
+                for event in await subject.recorded_events("c")
+                if isinstance(event.payload, TurnEndedEventPayload)
+            ]
+            assert endings[-1].ending is ConversationTurnEnding.failed
+            await subject.complete_running_turn("c")
 
     _run(exercise)

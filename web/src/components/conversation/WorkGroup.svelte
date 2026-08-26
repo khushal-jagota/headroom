@@ -92,7 +92,7 @@
     padding: var(--space-1) var(--space-2);
     font-variant-numeric: tabular-nums;
   }
-  .c2-run-toggle:hover { color: var(--text-muted); background: var(--surface-overlay); }
+  .c2-run-toggle:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
   .c2-run-chevron {
     display: inline-block;
     transition: transform var(--motion-fast) var(--motion-ease);

@@ -51,6 +51,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from base64 import b64decode, b64encode
 from binascii import Error as BinasciiError
 from collections import deque
@@ -126,6 +127,7 @@ from planner.conversation.message_content import (
     MessageText,
     joined_runs_of_text,
     prefix_message_content_text,
+    text_message_content,
 )
 from planner.conversation.message_files import (
     ConversationMessageFiles,
@@ -159,6 +161,11 @@ CANCELLED_TURN_ENDING_TIMEOUT_SECONDS = 15.0
 # what it is instead of being waited on for good.
 ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS = 15.0
 
+# Hermes advertises commands after the session response. A maintenance write waits for
+# that first complete snapshot, but a child that never advertises one must not hold the
+# conversation forever.
+AVAILABLE_COMMANDS_WAIT_TIMEOUT_SECONDS = 15.0
+
 # Agent output arrives one JSON line at a time and a finished message can be long, so the
 # line limit is raised well past the stream default rather than left to be reassembled.
 CHILD_OUTPUT_LINE_LIMIT_BYTES = 50 * 1024 * 1024
@@ -183,6 +190,22 @@ HERMES_METADATA_KEY = "hermes"
 SESSION_PROVENANCE_METADATA_KEY = "sessionProvenance"
 SESSION_REPLACEMENT_REASON_KEY = "reason"
 COMPACTION_SESSION_REPLACEMENT_REASON = "compression"
+
+# Panels asks every backend for the same semantic action. Hermes calls that action
+# ``compress`` and accepts it only through the slash command it advertises.
+PANELS_AUTOMATIC_COMPACTION_PROMPT = "/compact"
+HERMES_COMPACTION_COMMAND_NAME = "compress"
+HERMES_COMPACTION_PROMPT = "/compress"
+
+# The complete response from Hermes' ACP host after a successful ``/compress`` command.
+# Matching the token line as well as the headline keeps model prose and partial output
+# outside the confirmation boundary. Only the message counts decide whether work occurred.
+_HERMES_FORMATTED_COUNT = r"(?:0|[1-9][0-9]{0,2}|[1-9][0-9]{0,2}(?:,[0-9]{3})+)"
+_HERMES_COMPACTION_RESPONSE = re.compile(
+    r"Context compressed: (?P<before>0|[1-9][0-9]*) -> "
+    r"(?P<after>0|[1-9][0-9]*) messages\n"
+    rf"~{_HERMES_FORMATTED_COUNT} -> ~{_HERMES_FORMATTED_COUNT} tokens"
+)
 
 # What hermes calls dollars when it states a cost. A cost in anything else is a true
 # number with nowhere to go — the record's field is dollars — and converting one at a rate
@@ -284,8 +307,10 @@ class _TurnInFlight:
     token: TurnToken
     prompt: asyncio.Task[Any]
     ending_reporter: asyncio.Task[None] | None = None
+    automatic_compaction: bool = False
     agent_message_pieces: list[MessagePiece] = field(default_factory=list)
     agent_message_id: str | None = None
+    completed_agent_messages: list[MessageContent] = field(default_factory=list)
     parked_asks: dict[str, _ParkedPermissionAsk] = field(default_factory=dict)
 
 
@@ -310,6 +335,8 @@ class HermesAcpBackendChild:
         self._session_configuration_options: tuple[Any, ...] = ()
         self._session_model: str | None = None
         self._session_reasoning_effort: str | None = None
+        self._available_commands: tuple[AvailableCommand, ...] | None = None
+        self._first_available_commands_arrived = asyncio.Event()
         self._turn: _TurnInFlight | None = None
         self._wire_broken = False
         self._standard_error: deque[str] = deque()
@@ -362,6 +389,7 @@ class HermesAcpBackendChild:
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
+        automatic_compaction: bool = False,
     ) -> None:
         """Put the session on any carried values and start a turn with this text.
 
@@ -371,7 +399,8 @@ class HermesAcpBackendChild:
         way to name that again — the child as it stands is no longer what the conversation
         is running on, and the honest answer is to start it again.
         """
-        del sender_content
+        if automatic_compaction:
+            content = await self._automatic_compaction_content(sender_content)
         previously = (self._session_model, self._session_reasoning_effort)
         try:
             await self._apply_values(model_change, reasoning_effort_change)
@@ -386,7 +415,33 @@ class HermesAcpBackendChild:
             if model_change is not None or reasoning_effort_change is not None:
                 await self._put_the_values_back(previously)
             raise
-        self._begin_turn(turn_token, prompt)
+        self._begin_turn(turn_token, prompt, automatic_compaction=automatic_compaction)
+
+    async def _automatic_compaction_content(
+        self, sender_content: MessageContent
+    ) -> MessageContent:
+        """Translate the core's maintenance request through Hermes' live command catalog."""
+        if sender_content != text_message_content(PANELS_AUTOMATIC_COMPACTION_PROMPT):
+            raise PromptWriteFailed(
+                "an automatic compaction write did not carry the canonical /compact request"
+            )
+        try:
+            await asyncio.wait_for(
+                self._first_available_commands_arrived.wait(),
+                AVAILABLE_COMMANDS_WAIT_TIMEOUT_SECONDS,
+            )
+        except TimeoutError as no_catalog:
+            raise PromptWriteFailed(
+                "this Hermes session did not advertise its commands"
+            ) from no_catalog
+        commands = self._available_commands
+        if commands is None or not any(
+            command.name == HERMES_COMPACTION_COMMAND_NAME for command in commands
+        ):
+            raise PromptWriteFailed(
+                "this Hermes session did not advertise the compress command"
+            )
+        return text_message_content(HERMES_COMPACTION_PROMPT)
 
     async def steer(self, content: MessageContent, *, sender_label: str) -> None:
         """Send hermes' steer command, which joins the turn instead of starting one.
@@ -873,8 +928,18 @@ class HermesAcpBackendChild:
 
     # --- the turn -----------------------------------------------------------------------
 
-    def _begin_turn(self, turn_token: TurnToken, prompt: asyncio.Task[Any]) -> None:
-        turn = _TurnInFlight(token=turn_token, prompt=prompt)
+    def _begin_turn(
+        self,
+        turn_token: TurnToken,
+        prompt: asyncio.Task[Any],
+        *,
+        automatic_compaction: bool = False,
+    ) -> None:
+        turn = _TurnInFlight(
+            token=turn_token,
+            prompt=prompt,
+            automatic_compaction=automatic_compaction,
+        )
         self._turn = turn
         turn.ending_reporter = asyncio.create_task(
             self._report_the_ending(turn),
@@ -940,6 +1005,12 @@ class HermesAcpBackendChild:
             return
         self._turn = None
         await self._complete_agent_message(turn)
+        if (
+            ending is ConversationTurnEnding.completed
+            and turn.automatic_compaction
+            and _confirms_hermes_compaction(turn.completed_agent_messages)
+        ):
+            await self._sink.context_compacted(turn.token)
         self._settle_parked_asks(turn)
         await self._sink.turn_ended(
             turn.token,
@@ -967,7 +1038,10 @@ class HermesAcpBackendChild:
         pieces = tuple(turn.agent_message_pieces)
         turn.agent_message_pieces.clear()
         turn.agent_message_id = None
-        await self._sink.agent_message_completed(turn.token, joined_runs_of_text(pieces))
+        content = joined_runs_of_text(pieces)
+        if turn.automatic_compaction:
+            turn.completed_agent_messages.append(content)
+        await self._sink.agent_message_completed(turn.token, content)
 
     def _settle_parked_asks(self, turn: _TurnInFlight) -> None:
         """A turn's asks die with it, and hermes is told so rather than left waiting."""
@@ -1003,8 +1077,10 @@ class HermesAcpBackendChild:
             # Answered above the turn, because hermes sends this when a session is
             # established — before there is a turn for it to belong to. Below the guard
             # every one of them would be dropped.
+            self._available_commands = tuple(update.available_commands)
+            self._first_available_commands_arrived.set()
             await self._sink.composer_catalog_reported(
-                _composer_catalog_entries(update.available_commands)
+                _composer_catalog_entries(self._available_commands)
             )
             return
         turn = self._turn
@@ -1063,7 +1139,7 @@ class HermesAcpBackendChild:
                 # this record has no field for, so it is left rather than converted.
                 await self._report_a_stated_cost(turn, update.cost)
             case SessionInfoUpdate():
-                if _names_a_compaction(update.field_meta):
+                if not turn.automatic_compaction and _names_a_compaction(update.field_meta):
                     await self._sink.context_compacted(turn.token)
             case _:
                 return
@@ -1316,6 +1392,24 @@ def _names_a_compaction(metadata: dict[str, Any] | None) -> bool:
         return False
     reason = provenance.get(SESSION_REPLACEMENT_REASON_KEY)
     return reason == COMPACTION_SESSION_REPLACEMENT_REASON
+
+
+def _confirms_hermes_compaction(messages: Sequence[MessageContent]) -> bool:
+    """Whether one complete maintenance response proves a lower message count."""
+    if len(messages) != 1:
+        return False
+    content = messages[0]
+    if len(content) != 1 or not isinstance(content[0], MessageText):
+        return False
+    matched = _HERMES_COMPACTION_RESPONSE.fullmatch(content[0].text)
+    if matched is None:
+        return False
+    try:
+        return int(matched.group("after")) < int(matched.group("before"))
+    except ValueError:
+        # Python bounds conversion of decimal strings. A hostile or malformed host
+        # response must remain unconfirmed without preventing the turn from ending.
+        return False
 
 
 def _text_of(content: Any) -> str | None:

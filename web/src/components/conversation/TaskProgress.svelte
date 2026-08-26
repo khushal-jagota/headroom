@@ -102,7 +102,7 @@
     gap: var(--space-2);
     border: var(--border-hairline) solid var(--border-color);
     border-radius: var(--radius-pill);
-    background: var(--surface-raised);
+    background: var(--surface-2);
     color: var(--text-muted);
     font-family: var(--font-mono);
     font-size: var(--type-xs);
@@ -138,7 +138,7 @@
     transform: translateX(-50%);
     min-width: 280px;
     max-width: 90vw;
-    background: var(--surface-raised);
+    background: var(--surface-2);
     border: var(--border-hairline) solid var(--border-color);
     border-radius: var(--radius-md);
     padding: var(--space-2) var(--space-3);

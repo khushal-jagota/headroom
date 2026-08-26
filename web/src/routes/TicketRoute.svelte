@@ -34,7 +34,6 @@
   import StageMark from "../components/StageMark.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import TicketPriorityControl from "../components/TicketPriorityControl.svelte";
-  import TicketConversationHistory from "../components/TicketConversationHistory.svelte";
   import TicketVerdict from "../components/TicketVerdict.svelte";
   import TicketTroubleNotes from "../components/TicketTroubleNotes.svelte";
   import FileDocument from "../components/FileDocument.svelte";
@@ -98,14 +97,6 @@
    * the conversation writes back here when they do.
    */
   let conversationState = $state<ConversationState>("rest");
-  /** Null means that this screen follows the Ticket's active conversation. An id means
-   *  that the person explicitly chose one durable history entry, so detail refreshes do
-   *  not move the transcript when the active pointer changes. */
-  let selectedPastConversationId = $state<string | null>(null);
-  let selectedConversationId = $derived(
-    selectedPastConversationId ?? ticket.data?.conversation_id ?? null
-  );
-
   /** Seed the conversation once from the status at the start of this Ticket visit.
    *
    * A live status change is not a new visit. After the seed, only the person's expand,
@@ -144,6 +135,8 @@
   let heldFile = $state<ManagedFileTarget | null>(null);
   let shownFile = $derived(onOpenFile ? openFile : heldFile);
   let shownFileLabel = $derived(shownFile ? resolvePreview(shownFile).label : "");
+  let shownFileIsHtml = $derived(shownFile ? resolvePreview(shownFile).kind === "html" : false);
+  let artifactReloadSignal = $state(0);
 
   /** Show a file on this screen, or close the one it is showing.
    *
@@ -777,15 +770,25 @@
         >
           <div class="ticket-artifact-bar">
             <span class="ticket-artifact-name">{shownFileLabel}</span>
-            <button
-              type="button"
-              class="ticket-artifact-close"
-              data-ticket-artifact-close
-              onclick={() => showFile(null)}
-            >Close</button>
+            <div class="ticket-artifact-actions">
+              {#if shownFileIsHtml}
+                <button
+                  type="button"
+                  class="ticket-artifact-action"
+                  data-ticket-artifact-refresh
+                  onclick={() => artifactReloadSignal += 1}
+                >Refresh</button>
+              {/if}
+              <button
+                type="button"
+                class="ticket-artifact-action"
+                data-ticket-artifact-close
+                onclick={() => showFile(null)}
+              >Close</button>
+            </div>
           </div>
           <div class="ticket-artifact-body">
-            <FileDocument target={shownFile} />
+            <FileDocument target={shownFile} reloadSignal={artifactReloadSignal} />
           </div>
         </aside>
       {/if}
@@ -796,17 +799,11 @@
         onclickcapture={dismissConversationOnAPressBesideTheCard}
       >
         <div class="conversation-column">
-          <TicketConversationHistory
-            history={detail.conversation_history}
-            activeConversationId={detail.conversation_id}
-            bind:selectedPastConversationId
-          />
           <LiveConversation
             bind:conversationState
-            conversationId={selectedConversationId}
+            conversationId={detail.conversation_id}
             persistenceKey={`owner:ticket:${detail.id}`}
             ticketId={detail.id}
-            readOnly={selectedPastConversationId !== null}
             label={conversationWorkerTypeLabel(detail)}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
             backends={conversationBackends}

@@ -168,8 +168,16 @@ class _FakeBackendChild:
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
+        automatic_compaction: bool = False,
     ) -> None:
-        del sender_content, sender_label, mode, model_change, reasoning_effort_change
+        del (
+            sender_content,
+            sender_label,
+            mode,
+            model_change,
+            reasoning_effort_change,
+            automatic_compaction,
+        )
         if self._backend.needs_failed_child_recovery_once:
             self._backend.needs_failed_child_recovery_once = False
             raise NeedsRebind(

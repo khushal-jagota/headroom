@@ -1,8 +1,8 @@
-"""A Ticket owns every conversation transcript, with only the active one writable.
+"""A Ticket shows its active conversation without a history selector.
 
 This is the one browser/server boundary for history. The focused component tests own the
 individual controls. Here a real Ticket detail and two real stored records prove that the
-selector changes the transcript, crosses the read-only boundary, and returns to current.
+Ticket route ignores the past record and keeps the active conversation writable.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def _store_conversation(
     )
 
 
-def test_ticket_history_opens_a_past_transcript_read_only_then_returns_to_current(
+def test_ticket_history_shows_only_the_active_writable_conversation(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
@@ -96,39 +96,18 @@ def test_ticket_history_opens_a_past_transcript_read_only_then_returns_to_curren
         f"#/workspace/{ticket_id}",
         f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
-    selector = page.get_by_label("Ticket conversation")
-    selector.wait_for(timeout=WAIT_MS)
-    assert selector.input_value() == "__current__"
+    assert page.get_by_label("Ticket conversation").count() == 0
+    assert page.get_by_text("Conversation", exact=True).count() == 0
+    assert page.locator("[data-ticket-conversation-history]").count() == 0
 
-    selector.select_option(past_id)
-    past_pane = page.locator('[data-conversation-read-only-boundary="true"]')
-    past_pane.wait_for(timeout=WAIT_MS)
-    past_pane.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
+    page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
     page.locator('[data-conversation-state="peeked"]').wait_for(timeout=WAIT_MS)
-    past_pane.locator('[data-conversation-row="agent_message"]').get_by_text(
-        "Past reply marker", exact=True
-    ).wait_for(timeout=WAIT_MS)
-    assert page.get_by_text("Current reply marker", exact=True).count() == 0
-    for mutation_control in (
-        "[data-conversation-input]",
-        "[data-conversation-send]",
-        "[data-conversation-picker-model]",
-        "[data-conversation-stop]",
-        "[data-conversation-held-discard]",
-        "[data-conversation-held-promote]",
-        "[data-conversation-new-arm]",
-    ):
-        assert past_pane.locator(mutation_control).count() == 0
-    assert past_pane.get_by_role("button", name="Conversation options").count() == 0
-
-    selector.select_option("__current__")
-    page.locator('[data-conversation-read-only-boundary="true"]').wait_for(
-        state="detached", timeout=WAIT_MS
-    )
     page.locator('[data-conversation-row="agent_message"]').get_by_text(
         "Current reply marker", exact=True
     ).wait_for(timeout=WAIT_MS)
     assert page.get_by_text("Past reply marker", exact=True).count() == 0
+    assert page.locator('[data-conversation-read-only-boundary="true"]').count() == 0
     page.locator("[data-conversation-input]").wait_for(timeout=WAIT_MS)
+    page.locator("[data-conversation-send]").wait_for(timeout=WAIT_MS)
     page.locator("[data-conversation-picker-model]").wait_for(timeout=WAIT_MS)
     page.get_by_role("button", name="Conversation options").wait_for(timeout=WAIT_MS)

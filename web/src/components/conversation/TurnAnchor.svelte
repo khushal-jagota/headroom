@@ -199,7 +199,7 @@
     margin-inline: calc(var(--space-2) * -1);
     font-variant-numeric: tabular-nums;
   }
-  .c2-turn-fold:hover { color: var(--text-muted); background: var(--surface-overlay); }
+  .c2-turn-fold:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
   /* Same line, same place, nothing to open: it keeps the geometry and drops the affordance. */
   .c2-turn-settled { cursor: default; }
   .c2-turn-settled:hover { color: var(--text-faintest); background: transparent; }

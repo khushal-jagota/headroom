@@ -1075,7 +1075,7 @@
   /* A message on its way out. The box is already empty and already typeable, so the arrow
      staying lit is the one thing on screen that says the send has not landed yet. */
   :global(.chat-send.is-sending:disabled) {
-    background: var(--surface-overlay);
+    background: var(--surface-2);
     color: var(--accent-bright);
     opacity: 1;
   }
@@ -1095,7 +1095,7 @@
     height: 1.5rem;
     border: 0;
     border-radius: var(--radius-pill);
-    background: var(--surface-overlay);
+    background: var(--surface-2);
     color: var(--text-muted);
     cursor: pointer;
   }

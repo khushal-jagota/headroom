@@ -19,7 +19,10 @@
     resolvePreview
   } from "../lib/filePreview";
 
-  let { target }: { target: FilePreviewTarget } = $props();
+  let {
+    target,
+    reloadSignal = 0
+  }: { target: FilePreviewTarget; reloadSignal?: number } = $props();
 
   let resolved = $derived(resolvePreview(target));
   let htmlFrameHref = $state<string | null>(null);
@@ -29,6 +32,7 @@
 
   $effect(() => {
     const current = resolved;
+    const currentReloadSignal = reloadSignal;
     htmlFrameHref = null;
     markdownSource = null;
     error = "";
@@ -36,7 +40,10 @@
 
     const controller = new AbortController();
     let objectUrl: string | null = null;
-    fetch(current.href, { signal: controller.signal })
+    fetch(current.href, {
+      signal: controller.signal,
+      cache: current.kind === "html" && currentReloadSignal > 0 ? "no-store" : "default"
+    })
       .then((response) => {
         if (!response.ok) throw new Error(`file fetch failed: ${response.status}`);
         return response.text();

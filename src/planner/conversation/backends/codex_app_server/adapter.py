@@ -349,6 +349,7 @@ class CodexAppServerBackendChild:
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
+        automatic_compaction: bool = False,
     ) -> None:
         """Start a turn with this message, on these values, and return when codex has it.
 
@@ -357,7 +358,7 @@ class CodexAppServerBackendChild:
         arrive. They are dropped here rather than encoded into the text, because text put
         in front of the agent is the agent's instructions and this is not that.
         """
-        del sender_label, mode
+        del sender_label, mode, automatic_compaction
         thread_id = self._bound_thread()
         model = self._model if model_change is None else model_change
         reasoning_effort = (
