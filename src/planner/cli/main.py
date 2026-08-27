@@ -522,7 +522,10 @@ def send_message(
     body_file: str | None,
     as_json: bool,
 ) -> None:
-    """Send one message to one Panels conversation owner. If you would like a reply, ask the recipient in the message text to send a message back with `panels send-message`."""
+    """Send one message to one Panels conversation owner.
+
+    To request a reply, ask the recipient to send one with `panels send-message`.
+    """
     targets = sum(
         1
         for selected in (
