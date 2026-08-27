@@ -35,7 +35,8 @@ RESOLVED_BY_SUPERVISOR: Final[str] = "sprint_item_supervisor"
 
 def _stage_change(old: str, new: str, cause: str) -> EventSpec:
     return EventSpec(
-        EventKind.stage_changed, {"from_stage": str(old), "to_stage": str(new), "cause": cause}
+        EventKind.stage_changed,
+        {"from_stage": str(old), "to_stage": str(new), "cause": cause},
     )
 
 
@@ -195,7 +196,9 @@ def decide_accept(
     edited = edited_body is not None
     if ticket.stage == "dropped":
         raise PlannerError(
-            ErrorCode.validation, "dropped tickets cannot be accepted", {"stage": "dropped"}
+            ErrorCode.validation,
+            "dropped tickets cannot be accepted",
+            {"stage": "dropped"},
         )
     slot = fields_codec.get_slot(ticket.fields, str(field))
     if slot.proposal is None:
@@ -224,7 +227,9 @@ def decide_accept(
             ticket,
             field,
             stored_body=stored_body,
-            resolved_by=(RESOLVED_BY_SUPERVISOR if supervisor_review else RESOLVED_BY_DIRECT),
+            resolved_by=(
+                RESOLVED_BY_SUPERVISOR if supervisor_review else RESOLVED_BY_DIRECT
+            ),
             edited=edited,
             scope=scope,
             cause=CAUSE_DIRECT_ACCEPT,
@@ -254,24 +259,45 @@ def decide_edit_value(
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
-    """§4.2 direct edit of an already-*passed* settled value. The value stays written
-    solely by the proposal resolver; this is a tightly-guarded direct write path that
-    never touches stage/ceiling. It rejects dropped tickets, an unset value, a field
-    carrying a live proposal, and the current gating or any future field."""
-    admission.require_direct_actor(actor, "edit_field_value")
+    """Edit a pending proposal or an already-passed settled field value.
+
+    A proposal edit replaces only its body and accepts every actor. A settled-value edit
+    retains the direct-only, non-terminal, and passed-field safeguards. Neither branch
+    changes Ticket workflow state.
+    """
     admission.validate_body(new_body, "field value")
+    slot = fields_codec.get_slot(ticket.fields, str(field))
+    if slot.proposal is not None:
+        new_slot = FieldSlot(
+            value=slot.value,
+            proposal=Proposal(
+                body=new_body,
+                proposed_by=slot.proposal.proposed_by,
+                created_at=slot.proposal.created_at,
+            ),
+            user_note=slot.user_note,
+        )
+        return Decision(
+            events=(
+                EventSpec(
+                    EventKind.proposal_edited,
+                    {"field": str(field), "body": new_body},
+                ),
+            ),
+            new_fields=fields_codec.with_slot(ticket.fields, str(field), new_slot),
+        )
+    admission.require_direct_actor(actor, "edit_field_value")
     if ticket.stage == "dropped":
         raise PlannerError(
-            ErrorCode.validation, "dropped tickets cannot be edited", {"stage": "dropped"}
+            ErrorCode.validation,
+            "dropped tickets cannot be edited",
+            {"stage": "dropped"},
         )
-    slot = fields_codec.get_slot(ticket.fields, str(field))
     if slot.value is None:
         raise PlannerError(
-            ErrorCode.validation, "field has no settled value to edit", {"field": str(field)}
-        )
-    if slot.proposal is not None:
-        raise PlannerError(
-            ErrorCode.validation, "field has a pending proposal", {"field": str(field)}
+            ErrorCode.validation,
+            "field has no settled value to edit",
+            {"field": str(field)},
         )
     if not machine.field_is_passed(
         field,
@@ -286,7 +312,11 @@ def decide_edit_value(
     new_slot = FieldSlot(value=new_body, proposal=None, user_note=slot.user_note)
     new_fields = fields_codec.with_slot(ticket.fields, str(field), new_slot)
     return Decision(
-        events=(EventSpec(EventKind.field_value_edited, {"field": str(field), "body": new_body}),),
+        events=(
+            EventSpec(
+                EventKind.field_value_edited, {"field": str(field), "body": new_body}
+            ),
+        ),
         new_fields=new_fields,
     )
 
@@ -332,7 +362,8 @@ def decide_return_for_revision(
         )
     new_slot = FieldSlot(value=slot.value, proposal=None, user_note=slot.user_note)
     return Decision(
-        events=(), new_fields=fields_codec.with_slot(ticket.fields, str(field), new_slot)
+        events=(),
+        new_fields=fields_codec.with_slot(ticket.fields, str(field), new_slot),
     )
 
 
@@ -364,7 +395,9 @@ def decide_drop(ticket: Ticket, actor: str) -> Decision:
             ErrorCode.validation, "done tickets cannot be dropped", {"stage": "done"}
         )
     if ticket.stage == "dropped":
-        raise PlannerError(ErrorCode.validation, "ticket is already dropped", {"stage": "dropped"})
+        raise PlannerError(
+            ErrorCode.validation, "ticket is already dropped", {"stage": "dropped"}
+        )
     events = (_stage_change(ticket.stage, "dropped", CAUSE_DROP),)
     return Decision(events=events, new_stage="dropped")
 
@@ -382,7 +415,11 @@ def decide_scope_change(
     events = (
         EventSpec(
             EventKind.scope_changed,
-            {"ceiling": str(ceiling), "at_cap": at_cap.value, "cause": CAUSE_DIRECT_SCOPE},
+            {
+                "ceiling": str(ceiling),
+                "at_cap": at_cap.value,
+                "cause": CAUSE_DIRECT_SCOPE,
+            },
         ),
     )
     return Decision(events=events, new_ceiling=str(ceiling), new_at_cap=at_cap)

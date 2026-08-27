@@ -396,6 +396,8 @@ has no usage source.
   separate source mode and no Edit/Save/Cancel control set. Browser edits may move an
   atomic block within the editable DOM; that move keeps its mounted component alive,
   while actual deletion still unmounts it and cancels pending work.
+  Saving an approval draft on either the Ticket or Review screen replaces the pending
+  proposal text immediately. Approval then uses that stored text without a second edit.
 - **Managed Markdown has one DOM owner.** `managedMarkdown.ts` alone renders Markdown,
   mounts and unmounts file previews, turns editable preview links into atomic blocks,
   reads edited Markdown, maintains empty state, and cleans up observers and components.

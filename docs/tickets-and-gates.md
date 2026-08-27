@@ -216,6 +216,11 @@ the only thing that can turn a proposal into a real value or advance the stage. 
 one proposal can be pending on a blank at a time — a newer one replaces the older,
 and the replacement is recorded.
 
+A pending proposal is directly editable through the same field edit used for a settled
+value. Any actor can replace its text. The proposal stays pending, and the edit keeps its
+author, creation time, note, settled value, Ticket status, Stage, and scope. Direct edits
+of settled values remain limited to passed fields and direct callers.
+
 Each field also has a **field user note**. It is step-specific user guidance, not
 agent scratchpad and not a canonical value. A worker may write one when the user gives
 guidance that should survive for the relevant step.

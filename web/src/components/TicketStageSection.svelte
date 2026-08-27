@@ -102,6 +102,7 @@
       {contextRow}
       disabled={approvalDisabled}
       onApprove={onAccept}
+      onProposalSave={onSaveValue}
     />
   {:else}
     {#if hasProposal && slot.proposal}
@@ -114,6 +115,7 @@
         newStage={nextStage}
         {lifecycle}
         onApprove={onAccept}
+        onProposalSave={onSaveValue}
       />
       {#if hasValue}<MarkdownBlock text={slot.value} />{/if}
     {:else if passed && editableValue && onSaveValue}

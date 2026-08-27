@@ -181,6 +181,14 @@
     });
   }
 
+  function saveProposal(raw: string): Promise<unknown> {
+    if (!acceptField) throw new Error("Review decision is not a Ticket field");
+    return mutateJson(`/api/tickets/${ticketId}/value/${acceptField}`, {
+      method: "PUT",
+      body: { body: raw }
+    });
+  }
+
   async function savePriority(
     priority: string,
     select: HTMLSelectElement,
@@ -315,6 +323,7 @@
             stageState={fieldStageVisualStateFor(lc, ticketDetail, acceptField)}
             approvalDisabled={acceptField === "kickoff" && priorityBusy}
             onAccept={(payload) => accept(payload)}
+            onSaveValue={saveProposal}
           />
         {/if}
       </div>
