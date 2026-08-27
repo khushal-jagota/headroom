@@ -210,9 +210,10 @@ _Code paths:_ `src/planner/tickets/logic/machine.py`, `src/planner/tickets/data.
 
 ## The one rule: proposals and the single door
 
-Workers never change the record directly. A worker that wants to move work forward
-files a **proposal** on the blank the current stage gates. The proposal resolver is
-the only thing that can turn a proposal into a real value or advance the stage. Only
+Workers never change settled values or advance Stages directly. A worker that wants to
+move work forward files a **proposal** on the blank the current Stage gates. The
+proposal resolver is the only thing that can turn a proposal into a real value or
+advance the Stage. Only
 one proposal can be pending on a blank at a time — a newer one replaces the older,
 and the replacement is recorded.
 
