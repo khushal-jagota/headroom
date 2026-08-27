@@ -506,7 +506,11 @@ main.add_command(environment_group)
     help="Send to a Sprint Item supervisor.",
 )
 @click.option("--agent", "agent_key", default=None, help="Send to a registered agent.")
-@click.option("--message", default=None, help="Message text.")
+@click.option(
+    "--message",
+    default=None,
+    help="Message text. If you would like a reply, ask the recipient to send a message back.",
+)
 @click.option("--body-file", default=None, help="Read message text from this file, or -.")
 @json_option
 def send_message(
@@ -518,7 +522,7 @@ def send_message(
     body_file: str | None,
     as_json: bool,
 ) -> None:
-    """Send one message to one Panels conversation owner."""
+    """Send one message to one Panels conversation owner. If you would like a reply, ask the recipient in the message text to send a message back with `panels send-message`."""
     targets = sum(
         1
         for selected in (
