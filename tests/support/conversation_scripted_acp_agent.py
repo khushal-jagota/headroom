@@ -62,8 +62,11 @@ from acp.schema import (
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
     SessionInfoUpdate,
+    SessionMode,
+    SessionModeState,
     SessionNotification,
     SetSessionConfigOptionResponse,
+    SetSessionModeResponse,
     TextContentBlock,
     ToolCallProgress,
     ToolCallStart,
@@ -90,6 +93,7 @@ LEGACY_SET_SESSION_MODEL_METHOD = "session/set_model"
 STEER_COMMAND_PREFIX = "/steer "
 REASONING_EFFORT_CONFIGURATION_OPTION_ID = "thought_level"
 REASONING_EFFORT_CONFIGURATION_CATEGORY = "thought_level"
+FULL_ACCESS_MODE_ID = "dont_ask"
 
 # The names of this process's environment a test reads back, to prove the values a
 # conversation was started with reached the agent rather than being dropped on the way.
@@ -178,6 +182,8 @@ class _Account:
     loaded_from: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
+    mode: str | None = None
+    mode_writes: list[str] = field(default_factory=list)
     agent_messages_emitted: int = 0
 
 
@@ -222,7 +228,9 @@ class ScriptedAcpAgent:
         if ARM_BREAK_WIRE_ON_SESSION in self._arms:
             self._break_wire_once_the_session_is_on_its_model = True
         return NewSessionResponse(
-            session_id=self.account.session_id, config_options=[self._reasoning_effort_option()]
+            session_id=self.account.session_id,
+            config_options=[self._reasoning_effort_option()],
+            modes=self._modes(),
         )
 
     async def load_session(self, cwd: str, session_id: str, **kwargs: Any) -> LoadSessionResponse:
@@ -234,7 +242,17 @@ class ScriptedAcpAgent:
         self.account.session_id = session_id
         if ARM_BREAK_WIRE_ON_SESSION in self._arms:
             self._break_wire_once_the_session_is_on_its_model = True
-        return LoadSessionResponse(config_options=[self._reasoning_effort_option()])
+        return LoadSessionResponse(
+            config_options=[self._reasoning_effort_option()], modes=self._modes()
+        )
+
+    async def set_session_mode(
+        self, mode_id: str, session_id: str, **kwargs: Any
+    ) -> SetSessionModeResponse:
+        del session_id, kwargs
+        self.account.mode = mode_id
+        self.account.mode_writes.append(mode_id)
+        return SetSessionModeResponse()
 
     async def set_config_option(
         self, config_id: str, session_id: str, value: Any, **kwargs: Any
@@ -311,6 +329,15 @@ class ScriptedAcpAgent:
             options=[
                 SessionConfigSelectOption(value=value, name=value)
                 for value in ("low", "medium", "high")
+            ],
+        )
+
+    def _modes(self) -> SessionModeState:
+        return SessionModeState(
+            current_mode_id="default",
+            available_modes=[
+                SessionMode(id="default", name="Default"),
+                SessionMode(id=FULL_ACCESS_MODE_ID, name="Don't Ask"),
             ],
         )
 
@@ -408,6 +435,8 @@ class ScriptedAcpAgent:
             "loaded_from": account.loaded_from,
             "model": account.model,
             "reasoning_effort": account.reasoning_effort,
+            "mode": account.mode,
+            "mode_writes": list(account.mode_writes),
             "working_directory": os.getcwd(),
             "environment": {
                 name: os.environ[name]

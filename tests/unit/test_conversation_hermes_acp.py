@@ -170,6 +170,7 @@ def test_the_start_requests_values_reach_the_child_process(tmp_path: Path) -> No
             assert Path(account["working_directory"]) == tmp_path.resolve()
             assert account["identity_environment"] == {IDENTITY_VARIABLE[0]: IDENTITY_VARIABLE[1]}
             assert account["environment"]["HERMES_YOLO_MODE"] == "1"
+            assert account["mode"] == "dont_ask"
 
     _run(exercise)
 
@@ -475,6 +476,7 @@ def test_a_change_that_cannot_be_put_back_starts_the_child_again(tmp_path: Path)
             assert account["sessions_loaded"] == 1
             assert account["loaded_from"] == "scripted-session-1"
             assert account["model"] == HERMES_OTHER_MODEL
+            assert account["mode_writes"] == ["dont_ask"]
             # The account is the conversation's, not the process's: the child that was
             # started again is the same agent on the same session, and it was told both.
             assert [write["text"] for write in account["prompt_writes"]] == ["one", "two"]

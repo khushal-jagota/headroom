@@ -139,6 +139,10 @@ LOGGER = logging.getLogger("planner.conversation.backends.hermes_acp")
 # What hermes reads as text meant for the turn that is already running.
 HERMES_STEER_COMMAND_PREFIX = "/steer "
 
+# Hermes' ACP mode that realizes Panels' full-access posture for file edits. Terminal
+# commands use HERMES_YOLO_MODE; ACP edits are a separate session-level permission surface.
+HERMES_FULL_ACCESS_MODE_ID = "dont_ask"
+
 # The retired ACP method hermes still answers for a mid-session model change.
 LEGACY_SET_SESSION_MODEL_METHOD = "session/set_model"
 
@@ -664,9 +668,24 @@ class HermesAcpBackendChild:
         to an agent running on something nobody asked for.
         """
         try:
+            await self._apply_access(resolved_start.access)
             await self._apply_values(resolved_start.model, resolved_start.reasoning_effort)
         except _ConfigurationNotApplied as not_applied:
             raise SessionLoadFailed(str(not_applied)) from not_applied
+
+    async def _apply_access(self, access: ConversationAccess) -> None:
+        if access is not ConversationAccess.full:
+            return
+        connection, session_id = self._bound_session_or_not_applied()
+        self._require_a_live_wire_or_not_applied()
+        try:
+            await self._guarded(
+                connection.set_session_mode(
+                    session_id=session_id, mode_id=HERMES_FULL_ACCESS_MODE_ID
+                )
+            )
+        except PromptWriteFailed as would_not_set:
+            raise _ConfigurationNotApplied(str(would_not_set)) from would_not_set
 
     # --- model and reasoning effort ------------------------------------------------------
 
