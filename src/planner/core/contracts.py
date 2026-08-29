@@ -48,6 +48,7 @@ class EventKind(StrEnum):
 
     # --- supplemental: proposals and fields ---
     proposal_filed = "proposal_filed"  # {field, body, proposed_by}
+    proposal_edited = "proposal_edited"  # {field, body}
     kickoff_proposal_filed = (
         "kickoff_proposal_filed"  # {title, kickoff_note, proposed_by}
     )

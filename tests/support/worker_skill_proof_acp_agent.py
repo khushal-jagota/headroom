@@ -31,7 +31,10 @@ from acp.schema import (
     PromptResponse,
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
+    SessionMode,
+    SessionModeState,
     SetSessionConfigOptionResponse,
+    SetSessionModeResponse,
     TextContentBlock,
 )
 
@@ -50,6 +53,7 @@ SESSION_ID = "worker-skill-proof-session"
 # says a model is chosen now.
 MODEL_CONFIGURATION_OPTION_ID = "model"
 MODEL = "proof-model"
+FULL_ACCESS_MODE_ID = "dont_ask"
 
 
 def _diagnostic(message: str) -> None:
@@ -61,6 +65,7 @@ class WorkerSkillProofAgent:
 
     def __init__(self) -> None:
         self._client: Any = None
+        self._mode: str | None = None
 
     def on_connect(self, client: Any) -> None:
         self._client = client
@@ -77,7 +82,24 @@ class WorkerSkillProofAgent:
 
     async def new_session(self, cwd: str, **kwargs: Any) -> NewSessionResponse:
         del cwd, kwargs
-        return NewSessionResponse(session_id=SESSION_ID, config_options=[self._model_option()])
+        return NewSessionResponse(
+            session_id=SESSION_ID,
+            config_options=[self._model_option()],
+            modes=SessionModeState(
+                current_mode_id="default",
+                available_modes=[
+                    SessionMode(id="default", name="Default"),
+                    SessionMode(id=FULL_ACCESS_MODE_ID, name="Don't Ask"),
+                ],
+            ),
+        )
+
+    async def set_session_mode(
+        self, mode_id: str, session_id: str, **kwargs: Any
+    ) -> SetSessionModeResponse:
+        del session_id, kwargs
+        self._mode = mode_id
+        return SetSessionModeResponse()
 
     async def set_config_option(
         self, config_id: str, session_id: str, value: Any, **kwargs: Any
@@ -97,6 +119,9 @@ class WorkerSkillProofAgent:
 
     async def prompt(self, session_id: str, prompt: list[Any], **kwargs: Any) -> PromptResponse:
         del kwargs
+        if self._mode != FULL_ACCESS_MODE_ID:
+            _diagnostic("the conversation's full-access mode never reached the agent")
+            raise RuntimeError("the conversation's full-access mode never reached the agent")
         delivered = "\n".join(
             block.text for block in prompt if isinstance(block, TextContentBlock)
         )

@@ -210,11 +210,17 @@ _Code paths:_ `src/planner/tickets/logic/machine.py`, `src/planner/tickets/data.
 
 ## The one rule: proposals and the single door
 
-Workers never change the record directly. A worker that wants to move work forward
-files a **proposal** on the blank the current stage gates. The proposal resolver is
-the only thing that can turn a proposal into a real value or advance the stage. Only
+Workers never change settled values or advance Stages directly. A worker that wants to
+move work forward files a **proposal** on the blank the current Stage gates. The
+proposal resolver is the only thing that can turn a proposal into a real value or
+advance the Stage. Only
 one proposal can be pending on a blank at a time — a newer one replaces the older,
 and the replacement is recorded.
+
+A pending proposal is directly editable through the same field edit used for a settled
+value. Any actor can replace its text. The proposal stays pending, and the edit keeps its
+author, creation time, note, settled value, Ticket status, Stage, and scope. Direct edits
+of settled values remain limited to passed fields and direct callers.
 
 Each field also has a **field user note**. It is step-specific user guidance, not
 agent scratchpad and not a canonical value. A worker may write one when the user gives

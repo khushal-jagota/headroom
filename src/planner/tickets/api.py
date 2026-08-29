@@ -1536,7 +1536,6 @@ async def put_value(
     clk: Clk,
 ) -> JsonDict:
     body = ValueEditBody(body=body_str(raw, "body"))
-    require_direct_write(ctx)
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(
         conn, ticket_id
     )

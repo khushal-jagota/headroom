@@ -1,7 +1,7 @@
-"""Pure-logic tests for resolution.decide_edit_value (the human edit of
-an already-passed settled field value) plus the decide_accept dropped-guard. Values
-stay written solely by the proposal resolver; these pin the tightly-guarded human
-write path and its rejections. Supporting tests, no §18.3 anchor.
+"""Pure-logic tests for resolution.decide_edit_value.
+
+The edit branches between role-neutral pending proposal edits and tightly guarded
+direct edits of already-passed settled values. Supporting tests, no §18.3 anchor.
 """
 
 from __future__ import annotations
@@ -169,20 +169,41 @@ def test_edit_unset_value_rejected() -> None:
     assert exc.value.detail == {"field": "success"}
 
 
-def test_edit_field_with_live_proposal_rejected() -> None:
+@pytest.mark.parametrize(
+    "actor", ["human", "agent", "worker", "sprint_item_supervisor"]
+)
+def test_edit_pending_proposal_preserves_its_state_for_every_actor(actor: str) -> None:
     ticket = _ticket(
         "needs_plan",
         _fields(
             success=FieldSlot(
                 value="settled",
-                proposal=Proposal(body="pending", proposed_by="agent", created_at=0),
+                proposal=Proposal(
+                    body="pending", proposed_by="original-worker", created_at=17
+                ),
+                user_note="keep this note",
             )
         ),
+        ceiling="needs_plan",
     )
-    with pytest.raises(PlannerError) as exc:
-        _decide_edit_value(ticket, "success", "x", "human")
-    assert exc.value.code is ErrorCode.validation
-    assert exc.value.detail == {"field": "success"}
+    decision = _decide_edit_value(ticket, "success", "edited proposal", actor)
+
+    assert decision.new_stage is None
+    assert decision.new_ceiling is None
+    assert decision.new_at_cap is None
+    assert len(decision.events) == 1
+    assert decision.events[0].kind is EventKind.proposal_edited
+    assert decision.events[0].payload == {
+        "field": "success",
+        "body": "edited proposal",
+    }
+    assert decision.new_fields is not None
+    slot = fields_codec.get_slot(decision.new_fields, "success")
+    assert slot.value == "settled"
+    assert slot.user_note == "keep this note"
+    assert slot.proposal == Proposal(
+        body="edited proposal", proposed_by="original-worker", created_at=17
+    )
 
 
 def test_edit_current_gating_field_rejected() -> None:
