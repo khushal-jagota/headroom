@@ -12,6 +12,7 @@
   } = $props();
 
   let normalizedPriority = $derived(priority.toLowerCase());
+  let visibleLabel = $derived(normalizedPriority === "p0" ? "!!!" : priority);
 </script>
 
 <span
@@ -23,4 +24,4 @@
   aria-label={decorative ? undefined : `Priority ${priority}`}
   aria-hidden={decorative ? "true" : undefined}
   {...rest}
->{priority}</span>
+>{visibleLabel}</span>

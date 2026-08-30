@@ -59,14 +59,16 @@ SEMANTIC_TOKENS = {
     "--accent-error": "#d85d5d",
 }
 PRIORITY_TOKENS = {
-    "--priority-p0-fill": "#7d2c26",
-    "--priority-p0-ink": "#ffe0db",
-    "--priority-p1-fill": "#512725",
-    "--priority-p1-ink": "#ecccc7",
-    "--priority-p2-fill": "#54331f",
-    "--priority-p2-ink": "#ecd8c6",
+    "--priority-p0-fill": "#c93b2c",
+    "--priority-p0-ink": "#fff4f1",
+    "--priority-p1-fill": "#a03429",
+    "--priority-p1-ink": "#ffe2dc",
+    "--priority-p2-fill": "#6d4526",
+    "--priority-p2-ink": "#f2e0cf",
     "--priority-p3-fill": "#534323",
     "--priority-p3-ink": "#e9e4c6",
+    "--priority-tile-standard-width": "27px",
+    "--priority-tile-height": "18px",
 }
 SCROLL_SURFACES = {
     ".markdown pre": "x",
@@ -136,10 +138,11 @@ def assert_brand(browser, mobile):
           <span class="stage-mark stage-mark--current-waiting"></span>
           <span class="stage-mark stage-mark--completed"></span>
           <span class="stage-mark stage-mark--errored"></span>
-          <span class="priority-tile priority-tile--p0">P0</span>
+          <span class="priority-tile priority-tile--p0">!!!</span>
           <span class="priority-tile priority-tile--p1">P1</span>
           <span class="priority-tile priority-tile--p2">P2</span>
           <span class="priority-tile priority-tile--p3">P3</span>
+          <span class="priority-tile priority-tile--p3" id="wide-priority">Priority ten</span>
         """)
         names = [*BRAND_TOKENS, *SURFACE_TOKENS, *SEMANTIC_TOKENS, *PRIORITY_TOKENS]
         tokens = page.evaluate("""names => {
@@ -179,13 +182,44 @@ def assert_brand(browser, mobile):
         assert colors(page, ".stage-mark--completed")["backgroundColor"] == "rgb(127, 165, 100)"
         assert colors(page, ".stage-mark--errored")["backgroundColor"] == "rgb(216, 93, 93)"
         for priority, expected in {
-            "p0": ("rgb(125, 44, 38)", "rgb(255, 224, 219)"),
-            "p1": ("rgb(81, 39, 37)", "rgb(236, 204, 199)"),
-            "p2": ("rgb(84, 51, 31)", "rgb(236, 216, 198)"),
+            "p0": ("rgb(201, 59, 44)", "rgb(255, 244, 241)"),
+            "p1": ("rgb(160, 52, 41)", "rgb(255, 226, 220)"),
+            "p2": ("rgb(109, 69, 38)", "rgb(242, 224, 207)"),
             "p3": ("rgb(83, 67, 35)", "rgb(233, 228, 198)"),
         }.items():
             tile = colors(page, f".priority-tile--{priority}")
             assert (tile["backgroundColor"], tile["color"]) == expected
+        geometry = page.evaluate("""() => {
+          const tiles = [...document.querySelectorAll('.priority-tile:not(#wide-priority)')];
+          const base = getComputedStyle(tiles[1]);
+          const urgent = getComputedStyle(tiles[0]);
+          const boxes = tiles.map(tile => tile.getBoundingClientRect());
+          const wide = document.querySelector('#wide-priority').getBoundingClientRect();
+          return {
+            boxes: boxes.map(box => ({ width: box.width, height: box.height })),
+            baseFontSize: base.fontSize,
+            urgentFontSize: urgent.fontSize,
+            baseFontWeight: base.fontWeight,
+            urgentFontWeight: urgent.fontWeight,
+            baseLetterSpacing: base.letterSpacing,
+            urgentLetterSpacing: urgent.letterSpacing,
+            wideWidth: wide.width,
+            wideHeight: wide.height,
+          };
+        }""")
+        assert geometry["boxes"] == [
+            {"width": 27, "height": 18},
+            {"width": 27, "height": 18},
+            {"width": 27, "height": 18},
+            {"width": 27, "height": 18},
+        ], geometry
+        assert geometry["baseFontSize"] == geometry["urgentFontSize"] == "11px", geometry
+        assert geometry["baseFontWeight"] == "700", geometry
+        assert geometry["urgentFontWeight"] == "800", geometry
+        assert geometry["baseLetterSpacing"] == "0.22px", geometry
+        assert geometry["urgentLetterSpacing"] == "0.66px", geometry
+        assert geometry["wideWidth"] > 27, geometry
+        assert geometry["wideHeight"] == 18, geometry
         assert page.viewport_size == (
             {"width": 390, "height": 844} if mobile else {"width": 1280, "height": 800}
         )

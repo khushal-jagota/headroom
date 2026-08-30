@@ -54,14 +54,16 @@
   /* Priority is strategic importance, not workflow state. These earthy fills and
    * their paired light inks stay distinct from the slate-blue human-attention
    * accent, the white needs-you dot, and the green completion signal. */
-  --priority-p0-fill: #7d2c26;
-  --priority-p0-ink: #ffe0db;
-  --priority-p1-fill: #512725;
-  --priority-p1-ink: #ecccc7;
-  --priority-p2-fill: #54331f;
-  --priority-p2-ink: #ecd8c6;
+  --priority-p0-fill: #c93b2c;
+  --priority-p0-ink: #fff4f1;
+  --priority-p1-fill: #a03429;
+  --priority-p1-ink: #ffe2dc;
+  --priority-p2-fill: #6d4526;
+  --priority-p2-ink: #f2e0cf;
   --priority-p3-fill: #534323;
   --priority-p3-ink: #e9e4c6;
+  --priority-tile-standard-width: 27px;
+  --priority-tile-height: 18px;
 
   /* Radius scale — even 4/8/12 progression */
   --radius-sm: 4px;
