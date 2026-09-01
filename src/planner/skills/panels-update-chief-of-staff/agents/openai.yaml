@@ -1,4 +1,0 @@
-interface:
-  display_name: "Panels Update Chief of Staff"
-  short_description: "Send updates to the Panels Chief of Staff"
-  default_prompt: "Use $panels-update-chief-of-staff to prepare and send this update to the Panels Chief of Staff."

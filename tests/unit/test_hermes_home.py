@@ -47,7 +47,6 @@ def test_provision_planner_home_skills_symlinks_packaged_skills_idempotently(
         "panels",
         "panels-worker",
         "panels-chief-of-staff",
-        "panels-update-chief-of-staff",
     )
     assert panels_skill_root() == Path(__file__).resolve().parents[2] / "src/planner/skills"
     provision_planner_home_skills(tmp_path / "home", names, configured_database_parent=tmp_path)
@@ -65,6 +64,10 @@ def test_default_hermes_skills_expose_general_from_managed_source(tmp_path: Path
     managed_source = tmp_path / "skills" / "panels-worker-general"
     assert target.is_symlink()
     assert target.resolve(strict=True) == managed_source.resolve(strict=True)
+
+
+def test_default_hermes_skills_exclude_retired_update_chief_of_staff() -> None:
+    assert "panels-update-chief-of-staff" not in PLANNER_SKILL_NAMES
 
 
 def test_provision_planner_home_skills_removes_retired_exposure_and_preserves_custom(

@@ -14,6 +14,7 @@ RETIRED_PANELS_SKILL_NAMES: Final = frozenset(
         "panels-rollover",
         "panels-sprint-planning",
         "panels-ticket-management",
+        "panels-update-chief-of-staff",
     }
 )
 
