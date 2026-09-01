@@ -139,7 +139,9 @@ class WorkerTypeDefinition:
         return self.ceiling_range()[0]
 
     def first_worker_stage(self) -> str:
-        return self.stage_ids()[1]
+        if self.stage_ids()[0] == "needs_kickoff":
+            return self.stage_ids()[1]
+        return self.stage_ids()[0]
 
     def completed_stage(self) -> str:
         for stage_definition in self.stages:

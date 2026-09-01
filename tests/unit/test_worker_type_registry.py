@@ -192,8 +192,8 @@ def test_registry_validation_order_and_messages() -> None:
     )
     assert_error(
         replace(base, stages=(replace(base.stages[0], id="start"), *base.stages[1:])),
-        "first stage must be needs_kickoff",
-        {"worker_type": "coding", "first": "start"},
+        "kickoff stage and field must be paired first",
+        {"worker_type": "coding"},
     )
     assert_error(
         replace(
@@ -282,8 +282,8 @@ def test_registry_validation_order_and_messages() -> None:
     )
     assert_error(
         replace(base, fields=(base.fields[1], base.fields[0], *base.fields[2:])),
-        "first field must be kickoff",
-        {"worker_type": "coding", "first_field": "success"},
+        "kickoff stage and field must be paired first",
+        {"worker_type": "coding"},
     )
     assert_error(
         replace(base, worker_profile=replace(base.worker_profile, specialist_skill="ghost")),
