@@ -27,6 +27,7 @@
   import {
     createVoiceCapture,
     formatVoiceTime,
+    voiceCaptureAvailable,
     voiceCaptureSupported,
     type VoiceCapture,
     type VoiceCaptureState
@@ -68,7 +69,6 @@
   // --- speaking a revision -----------------------------------------------------------------
   // Same machine as the composer's, worn lighter: no voice-first face — Approve is this
   // screen's primary action, so the mic is only an affordance on the revision box.
-  let coarsePointer = $state(false);
   let voiceSupported = $state(false);
   let voiceState = $state<VoiceCaptureState>({ phase: "idle" });
   let voice: VoiceCapture | null = null;
@@ -89,9 +89,7 @@
     typeof detail.data?.worker_type === "string" ? (detail.data.worker_type as string) : null
   );
   let lc = $derived(lifecycleFor(manifest.data, detailWorkerType));
-  let voiceAvailable = $derived(
-    coarsePointer && voiceSupported && Boolean(detail.data?.conversation_id)
-  );
+  let voiceAvailable = $derived(voiceCaptureAvailable(voiceSupported, true));
 
   let manifestMissingWorkerType = $derived(
     Boolean(
@@ -114,10 +112,8 @@
   }
 
   onMount(() => {
-    coarsePointer = window.matchMedia("(pointer: coarse)").matches;
     voiceSupported = voiceCaptureSupported();
     voice = createVoiceCapture({
-      conversationId: () => detail.data?.conversation_id ?? null,
       onState: (state) => (voiceState = state),
       onTranscript: landRevisionTranscript
     });

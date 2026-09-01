@@ -6,9 +6,8 @@
  * taps back in; the browser machinery (getUserMedia, MediaRecorder, the wake lock, the
  * interval, the fetch) all arrives through injectable dependencies with real defaults.
  *
- * Nothing spoken is ever lost silently: a failed transcription keeps the recording (and
- * the server-side stored_file_id when the failure answer carried one) so retry can re-run
- * from what is kept, and only an explicit cancel throws it away.
+ * Nothing spoken is ever lost silently: a failed transcription keeps the browser Blob,
+ * retry uploads it again, and only an explicit cancel throws it away.
  */
 
 import { CONVERSATION_BASE } from "./wire";
@@ -19,36 +18,28 @@ export type VoiceCaptureState =
   | { phase: "transcribing"; keptMs: number }
   | { phase: "failed"; keptMs: number };
 
-export type VoiceTranscriptionBody =
-  | { audio: string; media_type: string }
-  | { stored_file_id: string };
+export type VoiceTranscriptionBody = { audio: string; media_type: string };
 
 export type VoiceTranscriptionResult = {
   transcript: string;
-  stored_file_id: string | null;
 };
 
-/** A transcription the server refused. When its detail named the stored recording, the
- *  name rides along so a retry can point at the kept file instead of re-uploading. */
+/** A transcription request that the server refused. */
 export class VoiceTranscriptionError extends Error {
-  storedFileId: string | null;
-
-  constructor(message: string, storedFileId: string | null) {
+  constructor(message: string) {
     super(message);
     this.name = "VoiceTranscriptionError";
-    this.storedFileId = storedFileId;
   }
 }
 
 export async function postVoiceTranscription(
-  conversationId: string,
   body: VoiceTranscriptionBody,
   signal?: AbortSignal
 ): Promise<VoiceTranscriptionResult> {
   let response: Response;
   try {
     response = await fetch(
-      `${CONVERSATION_BASE}/conversations/${encodeURIComponent(conversationId)}/voice-transcriptions`,
+      `${CONVERSATION_BASE}/voice-transcriptions`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -58,19 +49,17 @@ export async function postVoiceTranscription(
     );
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
-    throw new VoiceTranscriptionError("The server could not be reached.", null);
+    throw new VoiceTranscriptionError("The server could not be reached.");
   }
   const raw = await response.text();
   if (response.ok) {
     try {
-      const parsed = JSON.parse(raw) as { transcript?: unknown; stored_file_id?: unknown };
+      const parsed = JSON.parse(raw) as { transcript?: unknown };
       return {
-        transcript: typeof parsed.transcript === "string" ? parsed.transcript : "",
-        stored_file_id:
-          typeof parsed.stored_file_id === "string" ? parsed.stored_file_id : null
+        transcript: typeof parsed.transcript === "string" ? parsed.transcript : ""
       };
     } catch {
-      throw new VoiceTranscriptionError("The server sent something that is not JSON.", null);
+      throw new VoiceTranscriptionError("The server sent something that is not JSON.");
     }
   }
   throw failureFrom(raw, response.status);
@@ -78,24 +67,16 @@ export async function postVoiceTranscription(
 
 function failureFrom(raw: string, status: number): VoiceTranscriptionError {
   let message = `The server answered ${status}.`;
-  let storedFileId: string | null = null;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (parsed && typeof parsed === "object" && "detail" in parsed) {
       const detail = (parsed as { detail: unknown }).detail;
       if (typeof detail === "string" && detail !== "") message = detail;
-      else if (detail && typeof detail === "object") {
-        const held = detail as Record<string, unknown>;
-        if (typeof held.stored_file_id === "string" && held.stored_file_id !== "") {
-          storedFileId = held.stored_file_id;
-        }
-        if (typeof held.message === "string" && held.message !== "") message = held.message;
-      }
     }
   } catch {
     // Not JSON. The status is all the server said.
   }
-  return new VoiceTranscriptionError(message, storedFileId);
+  return new VoiceTranscriptionError(message);
 }
 
 /** m:ss, the way a person reads a short recording's length. */
@@ -112,6 +93,31 @@ export function voiceCaptureSupported(): boolean {
     typeof MediaRecorder !== "undefined"
     && typeof navigator !== "undefined"
     && typeof navigator.mediaDevices?.getUserMedia === "function"
+  );
+}
+
+export function voiceCaptureAvailable(
+  supported: boolean,
+  transcriptAccepted: boolean
+): boolean {
+  return supported && transcriptAccepted;
+}
+
+export function voiceFirstComposer(input: {
+  available: boolean;
+  coarsePointer: boolean;
+  active: boolean;
+  keyboardPreferred: boolean;
+  disabled: boolean;
+  empty: boolean;
+}): boolean {
+  return (
+    input.available
+    && input.coarsePointer
+    && !input.active
+    && !input.keyboardPreferred
+    && !input.disabled
+    && input.empty
   );
 }
 
@@ -133,7 +139,6 @@ export type VoiceCaptureDeps = {
   getStream: () => Promise<VoiceStreamLike>;
   makeRecorder: (stream: VoiceStreamLike) => VoiceRecorderLike;
   transcribe: (
-    conversationId: string,
     body: VoiceTranscriptionBody,
     signal: AbortSignal
   ) => Promise<VoiceTranscriptionResult>;
@@ -184,8 +189,7 @@ function defaultDeps(): VoiceCaptureDeps {
   return {
     getStream: () => navigator.mediaDevices.getUserMedia({ audio: true }),
     makeRecorder: defaultMakeRecorder,
-    transcribe: (conversationId, body, signal) =>
-      postVoiceTranscription(conversationId, body, signal),
+    transcribe: (body, signal) => postVoiceTranscription(body, signal),
     now: () => Date.now(),
     startTicker: (tick) => {
       const timer = setInterval(tick, 250);
@@ -224,7 +228,6 @@ export type VoiceCapture = {
 
 export function createVoiceCapture(
   options: {
-    conversationId: () => string | null;
     onState: (state: VoiceCaptureState) => void;
     /** The transcript, trimmed, after a transcription lands — "" when the recording came
      *  back as nothing, which the caller treats as a no-op. */
@@ -244,7 +247,6 @@ export function createVoiceCapture(
   let kept: {
     blob: Blob;
     mediaType: string;
-    storedFileId: string | null;
     keptMs: number;
   } | null = null;
   let abort: AbortController | null = null;
@@ -267,7 +269,7 @@ export function createVoiceCapture(
   }
 
   async function startRecording(): Promise<void> {
-    if (state.phase !== "idle" || options.conversationId() === null) return;
+    if (state.phase !== "idle") return;
     let opened: VoiceStreamLike;
     try {
       opened = await deps.getStream();
@@ -317,16 +319,14 @@ export function createVoiceCapture(
     kept = {
       blob: new Blob(taken, { type: mediaType }),
       mediaType,
-      storedFileId: null,
       keptMs: state.keptMs
     };
     void transcribeKept();
   }
 
   async function transcribeKept(): Promise<void> {
-    const conversationId = options.conversationId();
     const holding = kept;
-    if (holding === null || conversationId === null) {
+    if (holding === null) {
       kept = null;
       setState({ phase: "idle" });
       return;
@@ -336,13 +336,12 @@ export function createVoiceCapture(
     }
     const controller = new AbortController();
     abort = controller;
-    let body: VoiceTranscriptionBody;
     try {
-      body =
-        holding.storedFileId !== null
-          ? { stored_file_id: holding.storedFileId }
-          : { audio: await blobToBase64(holding.blob), media_type: holding.mediaType };
-      const answer = await deps.transcribe(conversationId, body, controller.signal);
+      const body = {
+        audio: await blobToBase64(holding.blob),
+        media_type: holding.mediaType
+      };
+      const answer = await deps.transcribe(body, controller.signal);
       if (controller.signal.aborted) return;
       abort = null;
       kept = null;
@@ -351,9 +350,6 @@ export function createVoiceCapture(
     } catch (error) {
       if (controller.signal.aborted) return;
       abort = null;
-      if (error instanceof VoiceTranscriptionError && error.storedFileId !== null) {
-        holding.storedFileId = error.storedFileId;
-      }
       setState({ phase: "failed", keptMs: holding.keptMs });
     }
   }

@@ -108,7 +108,7 @@ def test_non_send_route_is_not_limited() -> None:
     middleware = ConversationSendBodyLimitMiddleware(downstream, max_bytes=5)
     asyncio.run(
         middleware(
-            _scope(path="/api/conversation/conversations/c/voice-transcriptions"),
+            _scope(path="/api/conversation/voice-transcriptions"),
             receive,
             send,
         )
