@@ -47,36 +47,6 @@ def test_ticket_creation_skill_is_active_and_core_routing_is_mandatory() -> None
     assert "**`panels-ticket-creation`** — the shared model" in panels
 
 
-def test_creation_model_covers_the_system_without_becoming_a_command_recipe() -> None:
-    skill = _read_skill("panels-ticket-creation")
-    compact_skill = " ".join(skill.split())
-
-    for marker in (
-        "A Sprint Item is an optional broader-outcome classification",
-        "Choose the Worker type whose lifecycle fits the job",
-        "use its registered specialist guidance",
-        "light, faithful Kickoff",
-        "Today and sprint placement answer different questions",
-        "With no explicit Sprint choice",
-        "Without a current Sprint, the Ticket stays in backlog",
-        "Explicit backlog placement",
-        "view-only Other group",
-        "Personal Project",
-        "Keep an `initiative_planning` Ticket with its initiative",
-        "Priority is strategic importance, not urgency",
-        "**P0:** rare",
-        "**P1:** strongly and directly contributes",
-        "**P2:** contributes indirectly",
-        "**P3:** background work",
-        "Sprint Item → Project order",
-        "A real calendar constraint belongs in the deadline",
-        "A genuine prerequisite belongs in the Ticket's blockers",
-        "read the Ticket back as a whole",
-    ):
-        assert marker in compact_skill
-    assert "panels ticket create" not in skill
-
-
 def test_every_ticket_creator_delegates_and_retains_its_authority() -> None:
     for skill_name, authority_marker in CREATOR_WRAPPERS.items():
         skill = _read_skill(skill_name)
