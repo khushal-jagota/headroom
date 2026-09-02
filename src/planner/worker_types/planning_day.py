@@ -14,23 +14,31 @@ PLANNING_DAY_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     worker_type="planning-day",
     label="Planning Day",
     stages=(
-        StageDefinition("needs_kickoff", "Kickoff", "kickoff", False, StageOwnershipMode.worker),
-        StageDefinition("needs_gather", "Gather", "gather", False, StageOwnershipMode.worker),
         StageDefinition(
-            "needs_planning",
-            "Planning",
-            "planning",
+            "needs_review", "Previous Day Review", "review", False, StageOwnershipMode.worker
+        ),
+        StageDefinition(
+            "needs_direction",
+            "Direction",
+            "direction",
             False,
             StageOwnershipMode.paired,
+        ),
+        StageDefinition(
+            "needs_day_changes",
+            "Day Changes",
+            "day_changes",
+            False,
+            StageOwnershipMode.worker,
         ),
         StageDefinition("needs_closeout", "Closeout", "closeout", False, StageOwnershipMode.worker),
         StageDefinition("done", "Done", None, True, None),
     ),
     dropped_stage=StageDefinition("dropped", "Dropped", None, True, None),
     fields=(
-        FieldDefinition("kickoff", "Kickoff"),
-        FieldDefinition("gather", "Gather"),
-        FieldDefinition("planning", "Planning"),
+        FieldDefinition("review", "Previous Day Review"),
+        FieldDefinition("direction", "Direction"),
+        FieldDefinition("day_changes", "Day Changes"),
         FieldDefinition("closeout", "Closeout"),
     ),
     worker_profile=WorkerProfile(

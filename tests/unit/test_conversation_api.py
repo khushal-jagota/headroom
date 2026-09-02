@@ -665,11 +665,6 @@ def test_every_conversation_mutation_rejects_a_tickets_past_conversation(
                         "sender_label": "owner",
                     },
                 ),
-                (
-                    "POST",
-                    "/api/conversation/conversations/past/voice-transcriptions",
-                    {"audio": base64.b64encode(b"audio").decode("ascii")},
-                ),
                 ("POST", "/api/conversation/conversations/past/interrupt", None),
                 ("POST", "/api/conversation/conversations/past/kill", None),
                 (

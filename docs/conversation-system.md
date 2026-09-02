@@ -67,6 +67,20 @@ attached document or data file.
 There is deliberately no sound. A voice note becomes words by speech-to-text
 before anything reaches a message, so nothing here ever sees one.
 
+The microphone appears in every composer and proposal revision box when the
+browser can record audio. A coarse pointer changes only the fresh, empty composer:
+that state shows voice as the first option. A computer and every other supported
+state keep the ordinary text box and offer the microphone beside it.
+
+Every clip uses one conversation-independent transcription route. The route accepts
+fresh audio only. It does not create, resolve, link, or store a conversation, and it
+does not keep an audio file. The browser retains the clip after a failure and sends
+the same bytes again on retry.
+
+The transcript returns to the same editable draft as typed text. Sending a first
+dictated message uses the normal first-message path. That send remains the only
+operation that creates and links its conversation.
+
 Nearly every message is one piece of written words, and that stays as simple as
 it sounds. A message that is only words is stored exactly the way it was before a
 message could be anything else, so every conversation already in the notebook

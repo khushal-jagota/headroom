@@ -49,7 +49,9 @@
   import {
     createVoiceCapture,
     formatVoiceTime,
+    voiceCaptureAvailable,
     voiceCaptureSupported,
+    voiceFirstComposer,
     type VoiceCapture,
     type VoiceCaptureState
   } from "../../lib/conversation/voiceCapture";
@@ -107,8 +109,7 @@
     onDiscardHeldPrompt,
     onPromoteHeldPrompt
   }: {
-    /** The conversation a voice recording would be transcribed against. Voice needs a
-     *  conversation to send audio to, so without one there is no voice UI. */
+    /** The current conversation, or none before the first message creates it. */
     conversationId?: string | null;
     /** The backend this conversation runs on — or, before there is one, the backend a
      *  message sent from here would create it on. */
@@ -218,23 +219,21 @@
 
   let takenOver = $derived(ask !== null || userInput !== null);
   let inputDisabled = $derived(disabled || takenOver || attachmentIntakesInFlight > 0);
-  /** Voice is offered at all only where a finger is the pointer, the browser can record,
-   *  nothing has taken the composer over, and there is a conversation to transcribe
-   *  against. The question panel and permission ask always outrank it. */
-  let voiceAvailable = $derived(
-    coarsePointer && voiceSupported && !takenOver && conversationId !== null && conversationId !== ""
-  );
+  /** Browser recording capability controls availability. The question panel and
+   *  permission ask always outrank voice. */
+  let voiceAvailable = $derived(voiceCaptureAvailable(voiceSupported, !takenOver));
   let voiceTakeover = $derived(voiceState.phase !== "idle");
   /** The empty composer on a phone leads with the mic. Anything composed, disabled, or
    *  remembered as keyboard-preferred yields to the normal composer. */
   let voiceFirstIdle = $derived(
-    voiceAvailable
-    && !voiceTakeover
-    && !keyboardPreferred
-    && !inputDisabled
-    && text === ""
-    && pendingImages.length === 0
-    && pendingFiles.length === 0
+    voiceFirstComposer({
+      available: voiceAvailable,
+      coarsePointer,
+      active: voiceTakeover,
+      keyboardPreferred,
+      disabled: inputDisabled,
+      empty: text === "" && pendingImages.length === 0 && pendingFiles.length === 0
+    })
   );
   let livePlaceholder = $derived(ask !== null ? askPlaceholder(ask) : placeholder);
   let runControlsInput = $derived<ComposerRunControlsInput>({
@@ -741,7 +740,6 @@
       keyboardPreferred = false;
     }
     voice = createVoiceCapture({
-      conversationId: () => (conversationId === "" ? null : conversationId),
       onState: (state) => (voiceState = state),
       onTranscript: (transcript) => void landTranscript(transcript)
     });

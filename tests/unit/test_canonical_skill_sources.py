@@ -170,6 +170,7 @@ def test_fresh_managed_skills_never_seed_retired_packaged_skill(tmp_path: Path) 
             "panels-rollover",
             "panels-sprint-planning",
             "panels-ticket-management",
+            "panels-update-chief-of-staff",
         }
     )
     for retired_skill_name in RETIRED_PANELS_SKILL_NAMES:

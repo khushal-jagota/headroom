@@ -27,8 +27,8 @@ Thirteen Worker types ship today:
   then creates the bounded Tickets that carry it.
 - **`product_design`** designs holistic product flows and implementation-ready interactive
   artifacts before handing implementation to a coding Ticket.
-- **`planning-day`** gathers the evidence for a morning planning conversation, plans the
-  Day with the user, and commits the agreement.
+- **`planning-day`** reviews the previous Day, agrees the top-level direction with the
+  user, shows the exact proposed Ticket changes, and commits the approved Day.
 - **`planning-midday-check`** compares the morning intent with current execution at
   14:30, agrees any useful intervention, carries it out, and records the result.
 - **`planning-sprint`** reviews the current sprint and plans the next at the final-day
@@ -75,8 +75,10 @@ ownership. `initiative_planning` uses paired ownership for Question Answers, whe
 consequential cross-Ticket choices are settled with the user; its other non-terminal
 Stages default to worker ownership. `product_design` uses paired ownership for Wireframe
 and Design, while its Direction and handoff are worker-owned. `planning-day` uses paired
-ownership for Planning, where the Worker and user settle the Day together; Gather and
-Closeout are worker-owned. `planning-midday-check` keeps its Stages worker-owned, but
+ownership for Direction, where the Worker and user agree on the most important work.
+Previous Day Review, Day Changes, and Closeout are worker-owned. The Worker derives Day
+overview fields without user input. `planning-midday-check` keeps its Stages worker-owned,
+but
 Action deliberately pauses through user-help before any approved intervention is
 performed in Closeout. `planning-sprint` also keeps its four non-terminal Stages
 worker-owned, but Review and Next Sprint deliberately pause through user-help until the
@@ -105,7 +107,8 @@ types and behavior. `src/planner/worker_types/coding.py`,
 ## Validation and the narrow registry
 
 `WorkerTypeRegistry` validates every definition when the registry is built. It checks the
-shared structural rules: kickoff comes first, `done` is the one linear terminal,
+shared structural rules: an optional Kickoff stage and field appear together first,
+`done` is the one linear terminal,
 `dropped` sits outside the line, every non-terminal Stage gates one declared field, every
 field is gated once, every non-terminal Stage declares a valid default ownership mode,
 terminal Stages declare none, worker skills and toolsets are known, and the default

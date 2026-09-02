@@ -420,6 +420,9 @@ def _seed_kickoff(
     follows.
     """
     fields = TicketFields.empty(worker_type_definition.field_ids())
+    if not worker_type_definition.has_field("kickoff"):
+        effective_ownership = ownership_mode or StageOwnershipMode.worker
+        return stage, fields, machine.resting_ticket_status(effective_ownership)
     if kickoff_note is None:
         return stage, fields, TicketStatus.empty
     effective_ownership = ownership_mode or StageOwnershipMode.worker
@@ -1154,11 +1157,13 @@ def create_ticket_from_external_work(
         conn, worker_type_definition, first_worker
     )
     ticket_id = new_id(ID_PREFIXES["ticket"])
-    initial_fields = fields_codec.with_slot(
-        TicketFields.empty(worker_type_definition.field_ids()),
-        "kickoff",
-        FieldSlot(value=kickoff_note),
-    )
+    initial_fields = TicketFields.empty(worker_type_definition.field_ids())
+    if worker_type_definition.has_field("kickoff"):
+        initial_fields = fields_codec.with_slot(
+            initial_fields,
+            "kickoff",
+            FieldSlot(value=kickoff_note),
+        )
     with _txn(conn):
         if sprint_item_id is not None and project_id is None and sprint_id is None:
             item = conn.execute(
@@ -2061,10 +2066,7 @@ def change_scope(
     now: int,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
-    if (
-        actor == admission.SPRINT_ITEM_SUPERVISOR_ACTOR
-        and supervisor_sprint_item_id is None
-    ):
+    if actor == admission.SPRINT_ITEM_SUPERVISOR_ACTOR and supervisor_sprint_item_id is None:
         raise PlannerError(
             ErrorCode.agent_forbidden,
             "change_scope requires the Sprint Item supervisor parent",
@@ -2226,10 +2228,7 @@ def edit_ticket(
     now: int,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
-    if (
-        actor == admission.SPRINT_ITEM_SUPERVISOR_ACTOR
-        and supervisor_sprint_item_id is None
-    ):
+    if actor == admission.SPRINT_ITEM_SUPERVISOR_ACTOR and supervisor_sprint_item_id is None:
         raise PlannerError(
             ErrorCode.agent_forbidden,
             "edit_ticket requires the Sprint Item supervisor parent",

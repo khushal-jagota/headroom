@@ -1,9 +1,9 @@
 """Voice input's server side: the transcription route and the module under it.
 
 The route tests drive the real router over a real store, with the transcription function
-itself patched — a route test proves parsing, keeping, and error mapping, not ffmpeg or a
-provider. The trim tests run the real ffmpeg on generated audio, because the trim's whole
-job is what ffmpeg actually does to bytes.
+itself patched. They prove parsing, validation, error mapping, and the absence of
+conversation storage. The trim tests run the real ffmpeg on generated audio, because the
+trim's whole job is what ffmpeg actually does to bytes.
 """
 
 from __future__ import annotations
@@ -26,11 +26,7 @@ from planner.conversation import api as conversation_api
 from planner.conversation.api import ConversationRuntime, router
 from planner.conversation.backend_lifecycle import BackendLifecycleCoordinator
 from planner.conversation.backend_usage import BackendUsageService
-from planner.conversation.contracts import (
-    ConversationAccess,
-    ConversationBackendKey,
-    ResolvedConversationStart,
-)
+from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.live_tail import ConversationLiveTail
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.snapshot import BackendSnapshotService
@@ -45,8 +41,6 @@ from planner.conversation.voice_transcription import (
 )
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
-
-CONVERSATION_ID = "c-voice"
 
 
 def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
@@ -227,19 +221,6 @@ class _Harness:
             transport=httpx.ASGITransport(app=self.app), base_url="http://conversation"
         )
 
-    async def create_conversation(self) -> None:
-        await self.store.create_conversation(
-            ResolvedConversationStart(
-                conversation_id=CONVERSATION_ID,
-                backend_key=ConversationBackendKey.hermes,
-                model="a-model",
-                reasoning_effort=None,
-                role_materials=None,
-                workspace_folder=Path("/tmp/workspace"),
-                access=ConversationAccess.full,
-            )
-        )
-
 
 @pytest.fixture
 def harness(tmp_path: Path) -> Iterator[_Harness]:
@@ -253,50 +234,104 @@ def harness(tmp_path: Path) -> Iterator[_Harness]:
 def _post(
     client: httpx.AsyncClient, body: dict[str, Any]
 ) -> Coroutine[Any, Any, httpx.Response]:
-    return client.post(
-        f"/api/conversation/conversations/{CONVERSATION_ID}/voice-transcriptions",
-        json=body,
-    )
+    return client.post("/api/conversation/voice-transcriptions", json=body)
 
 
 def _encoded(contents: bytes) -> str:
     return base64.b64encode(contents).decode("ascii")
 
 
-def test_fresh_audio_is_kept_first_and_answered_with_its_transcript(
+def test_audio_is_transcribed_without_a_conversation_or_file(
     harness: _Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     heard: list[bytes] = []
 
     async def fake_transcribe(audio: bytes, **_ignored: Any) -> str:
         heard.append(audio)
-        return "hello there"
+        return "editable first message"
 
     monkeypatch.setattr(
         conversation_api, "transcribe_conversation_audio", fake_transcribe
     )
 
     async def exercise() -> None:
-        await harness.create_conversation()
         async with harness.client() as client:
-            response = await _post(client, {"audio": _encoded(b"opus-bytes")})
+            response = await _post(
+                client,
+                {
+                    "audio": _encoded(b"browser-held-audio"),
+                    "media_type": "audio/webm;codecs=opus",
+                },
+            )
         assert response.status_code == 200
-        body = response.json()
-        assert body["transcript"] == "hello there"
-        stored_file_id = body["stored_file_id"]
-        assert heard == [b"opus-bytes"]
-        # The clip was kept before the provider was spoken to, under the id returned.
-        kept = await harness.message_files.read(CONVERSATION_ID, stored_file_id)
-        assert kept == b"opus-bytes"
-        media_type = await harness.message_files.media_type_of(
-            CONVERSATION_ID, stored_file_id
+        assert response.json() == {"transcript": "editable first message"}
+        assert heard == [b"browser-held-audio"]
+        conn = connect(harness.runtime.database_path)
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
+        finally:
+            conn.close()
+        files = list(
+            (Path(harness.runtime.database_path).parent / "files" / "conversations").rglob("*")
         )
-        assert media_type == "audio/webm"
+        assert files == []
 
     _run(exercise)
 
 
-def test_codec_qualified_mobile_audio_is_kept_under_its_canonical_media_type(
+def test_route_accepts_fresh_audio_only(harness: _Harness) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            stored_only = await _post(client, {"stored_file_id": "f_1"})
+            both = await _post(
+                client,
+                {"audio": _encoded(b"x"), "stored_file_id": "f_1"},
+            )
+        assert stored_only.status_code == 422
+        assert both.status_code == 422
+
+    _run(exercise)
+
+
+def test_there_is_no_conversation_scoped_voice_route(harness: _Harness) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            response = await client.post(
+                "/api/conversation/conversations/c-voice/voice-transcriptions",
+                json={"audio": _encoded(b"x")},
+            )
+        assert response.status_code == 404
+
+    _run(exercise)
+
+
+def test_provider_failure_does_not_name_or_store_a_file(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def failing_transcribe(audio: bytes, **_ignored: Any) -> str:
+        raise VoiceTranscriptionFailed("the transcription provider answered 500")
+
+    monkeypatch.setattr(
+        conversation_api, "transcribe_conversation_audio", failing_transcribe
+    )
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            response = await _post(
+                client, {"audio": _encoded(b"browser-held-audio")}
+            )
+        assert response.status_code == 502
+        assert response.json()["detail"] == "the transcription provider answered 500"
+        conn = connect(harness.runtime.database_path)
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
+        finally:
+            conn.close()
+
+    _run(exercise)
+
+
+def test_codec_qualified_mobile_audio_reaches_the_provider(
     harness: _Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     heard: list[bytes] = []
@@ -310,7 +345,6 @@ def test_codec_qualified_mobile_audio_is_kept_under_its_canonical_media_type(
     )
 
     async def exercise() -> None:
-        await harness.create_conversation()
         async with harness.client() as client:
             response = await _post(
                 client,
@@ -320,69 +354,8 @@ def test_codec_qualified_mobile_audio_is_kept_under_its_canonical_media_type(
                 },
             )
         assert response.status_code == 200
-        body = response.json()
-        assert body["transcript"] == "phone words"
+        assert response.json() == {"transcript": "phone words"}
         assert heard == [b"mobile-opus-bytes"]
-        media_type = await harness.message_files.media_type_of(
-            CONVERSATION_ID, body["stored_file_id"]
-        )
-        assert media_type == "audio/webm"
-
-    _run(exercise)
-
-
-def test_a_retry_reads_the_kept_clip_instead_of_carrying_bytes_again(
-    harness: _Harness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    heard: list[bytes] = []
-
-    async def fake_transcribe(audio: bytes, **_ignored: Any) -> str:
-        heard.append(audio)
-        return "again"
-
-    monkeypatch.setattr(
-        conversation_api, "transcribe_conversation_audio", fake_transcribe
-    )
-
-    async def exercise() -> None:
-        await harness.create_conversation()
-        kept = await harness.message_files.keep(
-            CONVERSATION_ID, b"kept-earlier", media_type="audio/webm"
-        )
-        async with harness.client() as client:
-            response = await _post(client, {"stored_file_id": kept.stored_file_id})
-        assert response.status_code == 200
-        assert response.json() == {
-            "transcript": "again",
-            "stored_file_id": kept.stored_file_id,
-        }
-        assert heard == [b"kept-earlier"]
-
-    _run(exercise)
-
-
-def test_a_provider_failure_is_a_502_naming_the_kept_clip(
-    harness: _Harness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def failing_transcribe(audio: bytes, **_ignored: Any) -> str:
-        raise VoiceTranscriptionFailed("the transcription provider answered 500")
-
-    monkeypatch.setattr(
-        conversation_api, "transcribe_conversation_audio", failing_transcribe
-    )
-
-    async def exercise() -> None:
-        await harness.create_conversation()
-        async with harness.client() as client:
-            response = await _post(client, {"audio": _encoded(b"opus-bytes")})
-        assert response.status_code == 502
-        detail = response.json()["detail"]
-        assert detail["message"] == "the transcription provider answered 500"
-        # The failure still names the kept clip, so the client retries with the id.
-        kept = await harness.message_files.read(
-            CONVERSATION_ID, detail["stored_file_id"]
-        )
-        assert kept == b"opus-bytes"
 
     _run(exercise)
 
@@ -393,7 +366,6 @@ def test_a_missing_key_is_a_503_naming_the_environment_variable(
     harness.app.state.config = load_config(path=None, env={})
 
     async def exercise() -> None:
-        await harness.create_conversation()
         async with harness.client() as client:
             response = await _post(client, {"audio": _encoded(b"opus-bytes")})
         assert response.status_code == 503
@@ -402,23 +374,8 @@ def test_a_missing_key_is_a_503_naming_the_environment_variable(
     _run(exercise)
 
 
-def test_neither_and_both_sources_are_refused(harness: _Harness) -> None:
-    async def exercise() -> None:
-        await harness.create_conversation()
-        async with harness.client() as client:
-            neither = await _post(client, {})
-            both = await _post(
-                client, {"audio": _encoded(b"x"), "stored_file_id": "f_1"}
-            )
-        assert neither.status_code == 422
-        assert both.status_code == 422
-
-    _run(exercise)
-
-
 def test_a_media_type_outside_the_allowlist_is_refused(harness: _Harness) -> None:
     async def exercise() -> None:
-        await harness.create_conversation()
         async with harness.client() as client:
             response = await _post(
                 client, {"audio": _encoded(b"x"), "media_type": "video/webm"}
@@ -434,28 +391,8 @@ def test_a_clip_past_the_provider_ceiling_is_refused(
     monkeypatch.setattr(conversation_api, "MAX_VOICE_AUDIO_BYTES", 16)
 
     async def exercise() -> None:
-        await harness.create_conversation()
         async with harness.client() as client:
             response = await _post(client, {"audio": _encoded(b"x" * 17)})
         assert response.status_code == 422
-
-    _run(exercise)
-
-
-def test_an_unknown_stored_file_is_a_404(harness: _Harness) -> None:
-    async def exercise() -> None:
-        await harness.create_conversation()
-        async with harness.client() as client:
-            response = await _post(client, {"stored_file_id": "f_missing"})
-        assert response.status_code == 404
-
-    _run(exercise)
-
-
-def test_an_unknown_conversation_is_a_404(harness: _Harness) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            response = await _post(client, {"audio": _encoded(b"x")})
-        assert response.status_code == 404
 
     _run(exercise)

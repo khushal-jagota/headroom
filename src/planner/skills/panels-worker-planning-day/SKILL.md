@@ -1,62 +1,73 @@
 ---
 name: panels-worker-planning-day
-description: Gather the evidence for a planning day, plan it with the user, and commit the agreed Day.
+description: Review the previous day, agree today's direction, show exact Day changes, and commit the approved Day.
 ---
 
 # Planning the day
 
-Help the user spend the day on what matters most, not merely what is already magnetic.
-Bring evidence and a point of view; priority remains the user's judgment.
+Help the user choose the most important and interesting direction for the day. Operate at
+the user's level. The agent owns the evidence, translation, and detailed Day operation.
 
 ## Day overview fields
 
-Use these fields to steer the user's attention, motivation, and behavior; do not make
-them literal summaries of the Tickets on the Day.
+Derive these fields as background agent work. Never ask the user to write or review them.
+Do not make them literal summaries of the Tickets on the Day.
 
-- **focus** — Tell the user what to keep their mind and attention on throughout the day.
-- **brief_take** — Give the shortest useful framing that makes the day feel clear, intentional, and manageable.
-- **watchout** — Name the psychological or behavioral trap most likely to pull the user off course, with the response that defeats it.
-- **if_today_lands** — Tell the user what they personally gain from completing the day—the extra human benefit, not the work completed or a system state.
+- **focus** — State where the user must keep attention throughout the day.
+- **brief_take** — Give the shortest framing that makes the day clear and manageable.
+- **watchout** — Name the likely behavioral trap and the response that defeats it.
+- **if_today_lands** — State the personal benefit from completing the day.
 
-### needs_kickoff
+Keep each field short. Use 5–10 words by default.
 
-Keep Kickoff factual: identify the planning date and that this Ticket owns its morning
-planning conversation. Scheduled and manually recovered Tickets follow the same workflow.
+### needs_review
 
-### needs_gather
+Read the current and previous Day, unfinished work, the current sprint, relevant Ticket
+state, and factual receipts about commitments and drift. Gather more evidence when it
+improves the review. Trust stored Panels state. Do not mine transcripts or treat message
+count as a conclusion about the user's contribution.
 
-Read the current and prior Day, unfinished work, current sprint, relevant Ticket state,
-and a few factual receipts about commitments and drift. Trust stored Panels state; do not
-mine transcripts or infer a priority for the user.
+Create a beautiful, concise HTML review as a Ticket artifact. Give a top-level opinion on
+how the previous day went. Show only the evidence that helps the user understand that
+opinion. End with the best evidence-backed guess for today's direction.
 
-Propose a concise `gather` record that makes the important evidence and open decisions
-easy to use in Planning.
+Propose `review` as a short orientation with the artifact link and direction guess.
 
-### needs_planning
+### needs_direction
 
-Open with one evidence-backed best guess of today's focus, phrased to invite correction.
-Do not dump the evidence or ask an empty question.
+Open from the direction guess in the review and invite correction. Discuss only whether
+the day attacks the most important and interesting work. Keep detailed Ticket operations
+and Day overview fields out of this conversation.
 
-Plan the day with the user: reconcile unfinished work without automatic carryover,
-pressure-test the day against the sprint and honest capacity, settle the focus and roster,
-create or reshape agreed Tickets, and name the main derailment as an if-then response.
-Ground challenges in receipts, respect Ticket gates, and keep a bad-morning path short.
+Pressure-test the direction against the sprint, unfinished commitments, and honest
+capacity. The user chooses the direction. The agent owns its detailed translation.
 
-Propose `planning` as the concise agreement and intended changes, not a transcript.
+Propose `direction` as the concise top-level agreement, not a transcript or change list.
+
+### needs_day_changes
+
+Translate the approved direction into an exact proposed difference from the current Day.
+Name every Ticket that comes on or off the Day. Name any Ticket creation or reshape that
+the direction requires. Preserve everything else without unnecessary discussion.
+
+Respect Ticket gates and do not apply changes in this stage. Present enough detail for
+the user to catch an unexpected addition, removal, creation, or reshape.
+
+Propose `day_changes` as the exact change list. Do not include Day overview fields.
 
 ### needs_closeout
 
-Apply the complete agreement through ordinary Panels planning surfaces. Make the four Day
-overview fields and roster exact, perform other agreed Ticket changes, then read the Day
-and affected Tickets back. Before creating an agreed Ticket, load and follow
-`panels-ticket-creation`; the user's Day agreement remains the authority for what may be
-created or reshaped, and this stage owns exact application of that agreement. Resolve
-ambiguity by readback and never bypass gates.
+The Day agreement authorizes only the approved change list.
 
-Propose a short verified `closeout`, and set a recap that tomorrow's Gather can understand
-without reading the conversation.
+Apply the approved change list through ordinary Panels planning surfaces. Before creating
+an approved Ticket, load and follow `panels-ticket-creation`. Derive the four Day overview
+fields from the agreed direction without user input. Then read the Day and affected
+Tickets back to verify the complete result. Never bypass Ticket gates.
+
+Propose a short verified `closeout`. Set a recap that the next Previous Day Review can
+understand without the conversation.
 
 ### done and dropped
 
-Done means the canonical Day matches the agreement. A missed or dropped session creates
-no backfill, guilt, streak, or rollover ceremony.
+Done means that the canonical Day matches the approved changes and direction. A missed or
+dropped session creates no backfill, guilt, streak, or rollover ceremony.

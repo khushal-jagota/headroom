@@ -143,9 +143,9 @@ with sync_playwright() as playwright:
     page.locator('[data-create="item"] > summary').click()
     priority_control = page.locator('[data-create="item"] [data-seg="priority"]')
     expected_colours = {
-        "P0": ("rgb(125, 44, 38)", "rgb(255, 224, 219)"),
-        "P1": ("rgb(81, 39, 37)", "rgb(236, 204, 199)"),
-        "P2": ("rgb(84, 51, 31)", "rgb(236, 216, 198)"),
+        "P0": ("rgb(201, 59, 44)", "rgb(255, 244, 241)"),
+        "P1": ("rgb(160, 52, 41)", "rgb(255, 226, 220)"),
+        "P2": ("rgb(109, 69, 38)", "rgb(242, 224, 207)"),
         "P3": ("rgb(83, 67, 35)", "rgb(233, 228, 198)"),
     }
     assert priority_control.locator("[data-priority-tile]").count() == 4
@@ -159,6 +159,7 @@ with sync_playwright() as playwright:
         ]
         assert tile.get_attribute("role") == "img"
         assert tile.get_attribute("aria-label") == f"Priority {priority}"
+        assert tile.inner_text() == ("!!!" if priority == "P0" else priority)
         assert option.get_attribute("aria-pressed") == (
             "true" if priority == "P3" else "false"
         )
@@ -183,11 +184,11 @@ with sync_playwright() as playwright:
             }"""
         )
         assert (presentation["background"], presentation["color"]) == expected
-        assert presentation["minWidth"] == "24px"
-        assert presentation["padding"] == ["1px", "5px", "1px", "5px"]
+        assert presentation["minWidth"] == "27px"
+        assert presentation["padding"] == ["0px", "4px", "0px", "4px"]
         assert presentation["lineHeight"] == "16.5px"
-        assert 24 <= presentation["width"] < 27, presentation
-        assert 18 <= presentation["height"] < 19, presentation
+        assert presentation["width"] == 27, presentation
+        assert presentation["height"] == 18, presentation
 
     page.locator('[data-create="item"] [data-input="title"]').fill("Wire the audit log")
     page.locator('[data-create="item"] [data-seg="project"] [data-value="project_tribe"]').click()

@@ -53,10 +53,21 @@ def _validate_definition(
     first = definition.stages[0]
     last = definition.stages[-1]
 
-    if first.id != "needs_kickoff" or first.gating_field != "kickoff":
+    kickoff_stage_indexes = [
+        index for index, stage in enumerate(definition.stages) if stage.id == "needs_kickoff"
+    ]
+    kickoff_field_indexes = [
+        index for index, field in enumerate(definition.fields) if field.id == "kickoff"
+    ]
+    if (
+        kickoff_stage_indexes not in ([], [0])
+        or kickoff_field_indexes not in ([], [0])
+        or bool(kickoff_stage_indexes) != bool(kickoff_field_indexes)
+        or (kickoff_stage_indexes and first.gating_field != "kickoff")
+    ):
         raise fail(
-            "first stage must be needs_kickoff",
-            {"worker_type": worker_type, "first": first.id},
+            "kickoff stage and field must be paired first",
+            {"worker_type": worker_type},
         )
 
     terminals = [stage for stage in definition.stages if stage.is_terminal is True]
@@ -165,12 +176,6 @@ def _validate_definition(
                 "declared field is never gated",
                 {"worker_type": worker_type, "field": field.id},
             )
-
-    if definition.fields[0].id != "kickoff":
-        raise fail(
-            "first field must be kickoff",
-            {"worker_type": worker_type, "first_field": definition.fields[0].id},
-        )
 
     if definition.worker_profile.specialist_skill not in known_skills:
         raise fail(
@@ -295,7 +300,5 @@ class WorkerTypeRegistry:
             "worker_profile_id": definition.worker_profile.specialist_skill,
             "default_backend": (definition.worker_profile.default_backend),
             "default_model": definition.worker_profile.default_model,
-            "default_reasoning_effort": (
-                definition.worker_profile.default_reasoning_effort
-            ),
+            "default_reasoning_effort": (definition.worker_profile.default_reasoning_effort),
         }

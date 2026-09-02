@@ -3621,8 +3621,9 @@ select {
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  min-width: var(--space-5);
-  padding: 1px 5px;
+  min-width: var(--priority-tile-standard-width);
+  height: var(--priority-tile-height);
+  padding: 0 var(--space-1);
   border-radius: var(--radius-sm);
   font-family: var(--font-ui);
   font-size: var(--type-xs);
@@ -3636,6 +3637,8 @@ select {
 .priority-tile--p0 {
   color: var(--priority-p0-ink);
   background: var(--priority-p0-fill);
+  font-weight: 800;
+  letter-spacing: 0.06em;
 }
 
 .priority-tile--p1 {

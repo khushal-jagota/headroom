@@ -52,9 +52,11 @@ Skill text is instruction for a capable agent, not documentation. Amending a ski
 4. Skill text, when it changed: the repo copy under `src/planner/skills/`, and the live managed copy. `./skills` is a symlink to the repo copy, so it needs nothing.
 5. `src/planner/worker_types/configuration.py` and `src/planner/environments/hermes_home.py` only when a skill is added or renamed. A pure stage change touches neither.
 6. Run `./verify`.
-7. Deploy, then reconcile anything the change stranded.
+7. Complete the repository-defined integration route without deploying: bring current `staging` into the Ticket branch, repair and verify the prospective result, advance `staging` only when it is green, push that exact revision to `origin/staging`, verify the remote ref, and ensure the single rolling `staging` → `main` pull request exists.
+8. Deployment from `main` is a later user action. Do not dispatch deployment, merge or push `main`, restart Panels, or modify the deployed application.
+9. Do not reconcile stranded live Tickets until the structural change is deployed. Record the exact post-deployment reconciliation that remains.
 
-A good closeout is short and verified: what changed, which copy took effect now and which one ships, which tickets were reconciled and where to.
+A good closeout is short and verified: what changed, which managed skill copy took effect now, which repo copy ships, the exact pushed `staging` revision, and what reconciliation waits for deployment.
 
 ## Boundaries
 

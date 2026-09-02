@@ -26,7 +26,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from planner.conversation.backend_lifecycle import BackendLifecycleCoordinator
 from planner.conversation.backend_state import (
@@ -347,17 +347,16 @@ def _canonical_voice_audio_media_type(value: str) -> str | None:
 
 
 class VoiceTranscriptionBody(BaseModel):
-    """One voice clip to turn into words, as JSON.
+    """Fresh browser-held voice bytes to turn into words.
 
-    Exactly one of ``audio`` and ``stored_file_id`` is given. Fresh audio arrives as
-    base64 bytes and is kept as a conversation file before the provider is spoken to, so
-    a recording is never lost to a transcription failure; a retry names the file that
-    first attempt kept instead of carrying the bytes again.
+    There is no stored-file alternative. The browser keeps the clip through a failed
+    request and sends the same bytes again on retry.
     """
 
-    audio: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    audio: str
     media_type: str = "audio/webm"
-    stored_file_id: str | None = None
 
 
 class PermissionAnswerBody(BaseModel):
@@ -527,44 +526,20 @@ async def read_conversation_message_file(
     )
 
 
-@router.post("/conversations/{conversation_id}/voice-transcriptions")
+@router.post("/voice-transcriptions")
 async def transcribe_voice_note(
-    conversation_id: str, body: VoiceTranscriptionBody, runtime: Runtime, request: Request
-) -> dict[str, Any]:
-    """Turn one voice clip into words, keeping the audio before anything can fail.
+    body: VoiceTranscriptionBody, request: Request
+) -> dict[str, str]:
+    """Turn browser-held audio into words without touching a conversation.
 
-    Fresh audio is kept as a conversation file first, so a provider that is down cannot
-    lose a recording. When the provider then fails, the 502's detail carries the
-    ``stored_file_id`` the clip was kept under, and the client retries with that id
-    instead of re-uploading the bytes.
+    This route does not resolve, create, link, or store a conversation. A failed request
+    leaves the sole copy with the browser, which retries by sending the same bytes again.
     """
-    await _require_conversation(runtime, conversation_id)
-    _require_mutable_conversation(runtime, conversation_id)
-    if (body.audio is None) == (body.stored_file_id is None):
-        raise HTTPException(
-            status_code=422,
-            detail="exactly one of audio and stored_file_id must be given",
-        )
-    media_type = _canonical_voice_audio_media_type(body.media_type)
-    if media_type is None:
+    if _canonical_voice_audio_media_type(body.media_type) is None:
         raise HTTPException(
             status_code=422, detail=f"unsupported voice media type {body.media_type}"
         )
-    if body.audio is not None:
-        contents = _decoded_voice_audio(body.audio)
-        kept = await runtime.message_files.keep(
-            conversation_id, contents, media_type=media_type
-        )
-        stored_file_id = kept.stored_file_id
-    else:
-        assert body.stored_file_id is not None
-        try:
-            contents = await runtime.message_files.read(
-                conversation_id, body.stored_file_id
-            )
-        except (MessageFileMissing, OSError) as gone:
-            raise HTTPException(status_code=404, detail="no such file") from gone
-        stored_file_id = body.stored_file_id
+    contents = _decoded_voice_audio(body.audio)
     config = request.app.state.config
     try:
         transcript = await transcribe_conversation_audio(
@@ -576,11 +551,8 @@ async def transcribe_voice_note(
     except VoiceTranscriptionUnconfigured as unconfigured:
         raise HTTPException(status_code=503, detail=str(unconfigured)) from unconfigured
     except VoiceTranscriptionFailed as failed:
-        raise HTTPException(
-            status_code=502,
-            detail={"message": str(failed), "stored_file_id": stored_file_id},
-        ) from failed
-    return {"transcript": transcript, "stored_file_id": stored_file_id}
+        raise HTTPException(status_code=502, detail=str(failed)) from failed
+    return {"transcript": transcript}
 
 
 @router.post("/conversations/{conversation_id}/interrupt", status_code=204)

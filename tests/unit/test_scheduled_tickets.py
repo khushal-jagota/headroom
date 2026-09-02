@@ -130,9 +130,7 @@ def _production_planning_schedules(
     }
 
 
-def _insert_current_sprint(
-    conn: Connection, *, date_end: str = "2026-07-28"
-) -> None:
+def _insert_current_sprint(conn: Connection, *, date_end: str = "2026-07-28") -> None:
     conn.execute(
         "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
         "VALUES ('sp_current', 'Current', '2026-07-20', ?, 0, 0)",
@@ -185,11 +183,15 @@ def test_approved_production_planning_schedule_definitions_are_exact(
         if schedule.id in schedule_ids.values()
     }
 
-    assert set(schedules) == set(schedule_ids) == {
-        "planning-day",
-        "planning-midday-check",
-        "planning-sprint",
-    }
+    assert (
+        set(schedules)
+        == set(schedule_ids)
+        == {
+            "planning-day",
+            "planning-midday-check",
+            "planning-sprint",
+        }
+    )
     assert {
         worker_type: (
             schedule.template.title,
@@ -218,10 +220,7 @@ def test_approved_production_planning_schedule_definitions_are_exact(
         assert schedule.enabled
         assert schedule.template.priority is Priority.P3
         assert schedule.template.project_id == "project_panels"
-        assert (
-            schedule.template.placement_mode
-            is ScheduledTicketPlacementMode.current_sprint
-        )
+        assert schedule.template.placement_mode is ScheduledTicketPlacementMode.current_sprint
         assert schedule.template.kickoff_note == ""
         assert schedule.template.deadline is None
         assert schedule.template.sprint_item_id is None
@@ -281,7 +280,12 @@ def test_production_planning_schedules_create_place_receipt_and_reach_handoff(
         assert ticket.priority is Priority.P3
         assert ticket.deadline is None
         assert ticket.ticket_status is TicketStatus.empty
-        assert fields_codec.get_slot(ticket.fields, "kickoff").proposal is None
+        definition = registry.require(ticket.worker_type)
+        if definition.has_field("kickoff"):
+            assert fields_codec.get_slot(ticket.fields, "kickoff").proposal is None
+        else:
+            assert ticket.stage == definition.default_ceiling()
+            assert tuple(ticket.fields.slots) == definition.field_ids()
         assert ticket.project_id == "project_personal"
         assert ticket.effective_sprint_id == "sp_current"
         assert ticket.sprint_item_id == "si_planning_current"
@@ -291,7 +295,7 @@ def test_production_planning_schedules_create_place_receipt_and_reach_handoff(
             tmp_db,
             ticket,
             planning_day_id="day_2026-07-28",
-            worker_type_definition=registry.require(ticket.worker_type),
+            worker_type_definition=definition,
         )
 
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 3
@@ -342,8 +346,7 @@ def test_production_planning_schedules_suppress_prelaid_tickets_without_backfill
             == []
         )
     assert all(
-        data.list_occurrences(tmp_db, schedule_id) == []
-        for schedule_id in schedule_ids.values()
+        data.list_occurrences(tmp_db, schedule_id) == [] for schedule_id in schedule_ids.values()
     )
 
     morning_results = actions.run_current_slot(
@@ -399,9 +402,7 @@ def test_production_sprint_schedule_only_qualifies_on_current_sprint_final_day(
     )
 
     assert before_results == []
-    assert data.list_occurrences(
-        tmp_db, schedule_ids["planning-sprint"]
-    ) == []
+    assert data.list_occurrences(tmp_db, schedule_ids["planning-sprint"]) == []
 
     final = _now("2026-07-28T17:00:00")
     final_results = actions.run_current_slot(
@@ -481,10 +482,7 @@ def test_scheduled_ticket_can_explicitly_remain_in_backlog(tmp_db: Connection) -
     assert ticket.effective_sprint_id is None
     assert ticket.project_id == "project_vylo"
     assert (
-        tmp_db.execute(
-            "SELECT count(*) FROM sprint_items WHERE kind = 'other'"
-        ).fetchone()[0]
-        == 0
+        tmp_db.execute("SELECT count(*) FROM sprint_items WHERE kind = 'other'").fetchone()[0] == 0
     )
 
 
@@ -607,9 +605,7 @@ def test_pre_five_am_occurrence_targets_the_previous_planning_day(
     )
 
     assert result[0].target_day_id == "day_2026-07-27"
-    assert tmp_db.execute(
-        "SELECT 1 FROM day_tickets WHERE day_id = 'day_2026-07-27'"
-    ).fetchone()
+    assert tmp_db.execute("SELECT 1 FROM day_tickets WHERE day_id = 'day_2026-07-27'").fetchone()
 
 
 def test_day_four_cadence_uses_the_pre_five_am_planning_day(
@@ -653,9 +649,7 @@ def test_seeded_checkpoint_creates_a_user_owned_personal_ticket_on_day_four(
         boundary_hour=5,
     )
 
-    assert [item.schedule_id for item in result] == [
-        "schedule_weekly_sprint_checkpoint"
-    ]
+    assert [item.schedule_id for item in result] == ["schedule_weekly_sprint_checkpoint"]
     assert result[0].ticket_id is not None
     ticket = tickets_data.read_ticket(tmp_db, result[0].ticket_id)
     assert ticket.title == "Checkpoint"
@@ -994,11 +988,6 @@ def test_runtime_loop_uses_injected_clock_and_restart_safe_receipt(
     check = connect(str(db_path))
     try:
         assert check.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
-        assert (
-            check.execute(
-                "SELECT count(*) FROM scheduled_ticket_occurrences"
-            ).fetchone()[0]
-            == 1
-        )
+        assert check.execute("SELECT count(*) FROM scheduled_ticket_occurrences").fetchone()[0] == 1
     finally:
         check.close()

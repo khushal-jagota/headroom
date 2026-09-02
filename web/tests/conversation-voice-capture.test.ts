@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   createVoiceCapture,
+  voiceCaptureAvailable,
+  voiceFirstComposer,
   VoiceTranscriptionError,
   type VoiceCaptureDeps,
   type VoiceCaptureState,
@@ -42,7 +44,10 @@ type Harness = {
   transcripts: string[];
   recorders: FakeRecorder[];
   stream: { stopped: number };
-  requests: { body: VoiceTranscriptionBody; signal: AbortSignal }[];
+  requests: {
+    body: VoiceTranscriptionBody;
+    signal: AbortSignal;
+  }[];
   wakeLocks: { held: number; released: number };
   tick: () => void;
   advance: (ms: number) => void;
@@ -60,7 +65,7 @@ function makeHarness(
   const transcripts: string[] = [];
   const recorders: FakeRecorder[] = [];
   const stream = { stopped: 0 };
-  const requests: { body: VoiceTranscriptionBody; signal: AbortSignal }[] = [];
+  const requests: Harness["requests"] = [];
   const wakeLocks = { held: 0, released: 0 };
   let ticker: (() => void) | null = null;
   const streamLike: VoiceStreamLike = {
@@ -73,7 +78,7 @@ function makeHarness(
       recorders.push(recorder);
       return recorder;
     },
-    transcribe: (_conversationId, body, signal) => {
+    transcribe: (body, signal) => {
       requests.push({ body, signal });
       return transcribe(body, signal);
     },
@@ -89,7 +94,6 @@ function makeHarness(
   };
   const capture = createVoiceCapture(
     {
-      conversationId: () => "conv-1",
       onState: (state) => states.push(state),
       onTranscript: (transcript) => transcripts.push(transcript)
     },
@@ -114,10 +118,7 @@ function settle(): Promise<void> {
 
 describe("voice capture machine", () => {
   it("runs idle → recording → transcribing → landed transcript", async () => {
-    const harness = makeHarness(async () => ({
-      transcript: "  move the retry logic  ",
-      stored_file_id: "sf-1"
-    }));
+    const harness = makeHarness(async () => ({ transcript: "  move the retry logic  " }));
     expect(harness.capture.state().phase).toBe("idle");
 
     await harness.capture.startRecording();
@@ -142,7 +143,7 @@ describe("voice capture machine", () => {
   });
 
   it("lands an empty transcript as a no-op, still returning to idle", async () => {
-    const harness = makeHarness(async () => ({ transcript: "   ", stored_file_id: null }));
+    const harness = makeHarness(async () => ({ transcript: "   " }));
     await harness.capture.startRecording();
     harness.capture.stopRecording();
     await settle();
@@ -152,7 +153,7 @@ describe("voice capture machine", () => {
 
   it("uploads the codec-qualified media type emitted by a mobile recorder", async () => {
     const harness = makeHarness(
-      async () => ({ transcript: "mobile words", stored_file_id: "sf-mobile" }),
+      async () => ({ transcript: "mobile words" }),
       "audio/webm;codecs=opus"
     );
     await harness.capture.startRecording();
@@ -202,34 +203,12 @@ describe("voice capture machine", () => {
     expect(harness.transcripts).toHaveLength(0);
   });
 
-  it("failure keeps the recording and retries with the stored_file_id the 502 carried", async () => {
+  it("failure keeps the browser Blob and retry uploads it again", async () => {
     let calls = 0;
     const harness = makeHarness(async () => {
       calls += 1;
-      if (calls === 1) throw new VoiceTranscriptionError("upstream busted", "kept-9");
-      return { transcript: "second time lucky", stored_file_id: "kept-9" };
-    });
-    await harness.capture.startRecording();
-    harness.advance(41_000);
-    harness.capture.stopRecording();
-    await settle();
-    expect(harness.capture.state()).toEqual({ phase: "failed", keptMs: 41_000 });
-
-    harness.capture.retry();
-    expect(harness.capture.state()).toEqual({ phase: "transcribing", keptMs: 41_000 });
-    await settle();
-    expect(harness.capture.state().phase).toBe("idle");
-    expect(harness.transcripts).toEqual(["second time lucky"]);
-    // The retry pointed at the kept server-side file rather than re-uploading.
-    expect(harness.requests[1]?.body).toEqual({ stored_file_id: "kept-9" });
-  });
-
-  it("failure without a stored_file_id retries by re-uploading the kept blob", async () => {
-    let calls = 0;
-    const harness = makeHarness(async () => {
-      calls += 1;
-      if (calls === 1) throw new VoiceTranscriptionError("nothing kept upstream", null);
-      return { transcript: "done", stored_file_id: null };
+      if (calls === 1) throw new VoiceTranscriptionError("provider unavailable");
+      return { transcript: "done" };
     });
     await harness.capture.startRecording();
     harness.capture.stopRecording();
@@ -237,14 +216,13 @@ describe("voice capture machine", () => {
     expect(harness.capture.state().phase).toBe("failed");
     harness.capture.retry();
     await settle();
-    const second = harness.requests[1]?.body;
-    expect(second && "audio" in second).toBe(true);
+    expect(harness.requests[1]?.body).toEqual(harness.requests[0]?.body);
     expect(harness.transcripts).toEqual(["done"]);
   });
 
   it("discarding a failure lands on idle with nothing kept", async () => {
     const harness = makeHarness(async () => {
-      throw new VoiceTranscriptionError("no", null);
+      throw new VoiceTranscriptionError("no");
     });
     await harness.capture.startRecording();
     harness.capture.stopRecording();
@@ -255,5 +233,31 @@ describe("voice capture machine", () => {
     harness.capture.retry();
     expect(harness.capture.state().phase).toBe("idle");
     expect(harness.requests).toHaveLength(1);
+  });
+});
+
+describe("voice presentation", () => {
+  it.each([
+    { supported: true, accepts: true, available: true },
+    { supported: true, accepts: false, available: false },
+    { supported: false, accepts: true, available: false },
+    { supported: false, accepts: false, available: false }
+  ])("uses capability and transcript acceptance only: $supported/$accepts", (example) => {
+    expect(voiceCaptureAvailable(example.supported, example.accepts)).toBe(example.available);
+  });
+
+  it("uses coarse pointer only to choose the empty voice-first presentation", () => {
+    const base = {
+      available: true,
+      active: false,
+      keyboardPreferred: false,
+      disabled: false,
+      empty: true
+    };
+    expect(voiceFirstComposer({ ...base, coarsePointer: true })).toBe(true);
+    expect(voiceFirstComposer({ ...base, coarsePointer: false })).toBe(false);
+    expect(voiceFirstComposer({ ...base, coarsePointer: true, empty: false })).toBe(false);
+    expect(voiceFirstComposer({ ...base, coarsePointer: true, disabled: true })).toBe(false);
+    expect(voiceFirstComposer({ ...base, coarsePointer: true, active: true })).toBe(false);
   });
 });

@@ -97,8 +97,14 @@ def test_production_worker_types_carry_their_distinct_workflow_and_runtime_contr
             ("panels-worker-product-design", "claude", "opus[1m]", "high"),
         ),
         "planning-day": (
-            ("needs_kickoff", "needs_gather", "needs_planning", "needs_closeout", "done"),
-            ("worker", "worker", "paired", "worker", None),
+            (
+                "needs_review",
+                "needs_direction",
+                "needs_day_changes",
+                "needs_closeout",
+                "done",
+            ),
+            ("worker", "paired", "worker", "worker", None),
             ("panels-worker-planning-day", "claude", "opus[1m]", "medium"),
         ),
         "planning-midday-check": (
@@ -143,9 +149,7 @@ def test_production_worker_types_carry_their_distinct_workflow_and_runtime_contr
             ),
         )
         assert actual == contract, worker_type
-        expected_fields = tuple(
-            stage_id.removeprefix("needs_") for stage_id in contract[0][:-1]
-        )
+        expected_fields = tuple(stage_id.removeprefix("needs_") for stage_id in contract[0][:-1])
         assert definition.field_ids() == expected_fields, worker_type
         assert tuple(stage.gating_field for stage in definition.stages) == (
             *expected_fields,
