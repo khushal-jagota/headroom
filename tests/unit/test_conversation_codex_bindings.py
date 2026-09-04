@@ -33,6 +33,16 @@ from planner.conversation.backends.codex_app_server.generate_bindings import (
     VENDORED_SUBSET_SCHEMA_PATH,
 )
 
+CODEX_EXECUTABLE = shutil.which("codex")
+PINNED_CODEX_AVAILABLE = (
+    CODEX_EXECUTABLE is not None
+    and generator._installed_codex_version(CODEX_EXECUTABLE) == PINNED_CODEX_CLI_VERSION
+)
+pinned_codex_only = pytest.mark.skipif(
+    not PINNED_CODEX_AVAILABLE,
+    reason="the pinned Codex binary is not installed",
+)
+
 
 def test_the_generated_bindings_say_which_codex_they_came_from() -> None:
     """The pin is written where a reader of the models will see it."""
@@ -168,12 +178,12 @@ def test_goal_requests_and_responses_match_the_pinned_protocol() -> None:
     assert bindings.ThreadGoalClearResponse.model_validate({"cleared": True}).cleared is True
 
 
+@pinned_codex_only
 def test_regeneration_from_the_pinned_binary_is_byte_deterministic(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    codex = shutil.which("codex")
-    if codex is None or generator._installed_codex_version(codex) != PINNED_CODEX_CLI_VERSION:
-        pytest.skip("the pinned Codex binary is not installed")
+    codex = CODEX_EXECUTABLE
+    assert codex is not None
     with tempfile.TemporaryDirectory(
         prefix="binding-test-", dir=GENERATED_BINDINGS_PATH.parent
     ) as temporary_directory:
