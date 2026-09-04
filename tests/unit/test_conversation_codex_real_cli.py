@@ -385,6 +385,90 @@ def test_real_codex_resumes_the_thread_after_the_child_is_stopped(tmp_path: Path
 
 
 @real_codex_only
+def test_real_codex_catalog_and_known_skill_work_on_start_and_resume(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        sink = _RecordingSink()
+        child = _real_child(tmp_path, sink)
+        await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+        try:
+            started_entries = sink.composer_catalog_reports[-1]
+            assert {entry.insertion_text for entry in started_entries} >= {
+                "/compact",
+                "/review ",
+                "/goal ",
+            }
+            skill = next(
+                entry for entry in started_entries if entry.insertion_text.startswith("$panels")
+            )
+            await _turn(
+                child,
+                sink,
+                1,
+                text_message_content(
+                    f"{skill.insertion_text}Reply with exactly: catalog-ready. No tools."
+                ),
+            )
+            assert sink.endings[-1] is ConversationTurnEnding.completed
+            cursor = sink.vendor_session_cursor
+            assert cursor is not None
+        finally:
+            await child.stop()
+
+        resumed_sink = _RecordingSink()
+        resumed = _real_child(tmp_path, resumed_sink)
+        await resumed.start(_resolved_start(tmp_path), vendor_session_cursor=cursor)
+        try:
+            resumed_entries = resumed_sink.composer_catalog_reports[-1]
+            assert any(entry.insertion_text.startswith("$panels") for entry in resumed_entries)
+            assert {entry.insertion_text for entry in resumed_entries} >= {
+                "/compact",
+                "/review ",
+                "/goal ",
+            }
+            print("REAL CODEX catalog entries on resume:", len(resumed_entries))
+        finally:
+            await resumed.stop()
+
+    _run(exercise)
+
+
+@real_codex_only
+def test_real_codex_goal_set_get_clear_never_calls_a_model(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        from planner.conversation.backends.contracts import TurnToken
+
+        sink = _RecordingSink()
+        child = _real_child(tmp_path, sink)
+        await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+        try:
+            for number, command in enumerate(
+                ("/goal set Prove direct goal controls", "/goal get", "/goal clear"), 1
+            ):
+                sink.expect_another_turn()
+                content = text_message_content(command)
+                await child.write_prompt(
+                    TurnToken(conversation_id="real-codex", turn_number=number),
+                    content,
+                    sender_content=content,
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.run_when_free,
+                    model_change=None,
+                    reasoning_effort_change=None,
+                )
+                await sink.wait_for_the_turn_to_end()
+            assert sink.endings == [ConversationTurnEnding.completed] * 3
+            assert sink.deltas == []
+            assert sink.thinking_pulses == 0
+            assert sink.agent_message_texts[0] == "Goal set: Prove direct goal controls"
+            assert sink.agent_message_texts[-1] == "Goal cleared."
+            print("REAL CODEX direct goal results:", sink.agent_message_texts)
+        finally:
+            await child.stop()
+
+    _run(exercise, seconds=120.0)
+
+
+@real_codex_only
 def test_real_codex_answers_the_snapshot_probes(tmp_path: Path) -> None:
     """``account/read`` and ``model/list`` — what the backend snapshot is built out of."""
 

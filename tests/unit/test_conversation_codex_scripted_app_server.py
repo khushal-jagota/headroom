@@ -61,6 +61,7 @@ class ScriptedAppServer:
         self._turn_tasks: set[asyncio.Task[None]] = set()
         self._catalog_reads: dict[str, int] = {}
         self._app_list_notifications = 0
+        self._goal: dict[str, Any] | None = script.get("goal")
 
     # --- running ------------------------------------------------------------------------
 
@@ -131,6 +132,12 @@ class ScriptedAppServer:
                 running = asyncio.create_task(self._run_turn(None, parameters))
                 self._turn_tasks.add(running)
                 running.add_done_callback(self._turn_tasks.discard)
+            case "thread/goal/get":
+                await self._answer_goal(request_id, "get", parameters)
+            case "thread/goal/set":
+                await self._answer_goal(request_id, "set", parameters)
+            case "thread/goal/clear":
+                await self._answer_goal(request_id, "clear", parameters)
             case "skills/list":
                 await self._catalog_answer(request_id, "skills", {"data": []})
             case "app/installed":
@@ -180,6 +187,7 @@ class ScriptedAppServer:
         return {
             "thread": {
                 **_THREAD_FILLER,
+                "ephemeral": self._script.get("ephemeral", False),
                 "id": thread_id,
                 "sessionId": thread_id,
                 "cwd": cwd,
@@ -191,6 +199,34 @@ class ScriptedAppServer:
             "model": parameters.get("model") or "gpt-5.4-mini",
             "modelProvider": "openai",
         }
+
+    async def _answer_goal(self, request_id: Any, action: str, parameters: dict[str, Any]) -> None:
+        configured = self._script.get(f"goal_{action}")
+        if configured == "error":
+            await self._respond_with_error(request_id, f"goal {action} failed")
+            return
+        if isinstance(configured, dict):
+            await self._respond(request_id, configured)
+            return
+        if action == "get":
+            await self._respond(request_id, {"goal": self._goal})
+            return
+        if action == "set":
+            self._goal = {
+                "threadId": self._thread_id,
+                "objective": parameters["objective"],
+                "status": parameters["status"],
+                "tokenBudget": parameters.get("tokenBudget"),
+                "tokensUsed": 0,
+                "timeUsedSeconds": 0,
+                "createdAt": 10,
+                "updatedAt": 10,
+            }
+            await self._respond(request_id, {"goal": self._goal})
+            return
+        cleared = self._goal is not None
+        self._goal = None
+        await self._respond(request_id, {"cleared": cleared})
 
     # --- the turn ---------------------------------------------------------------------------
 
@@ -215,7 +251,11 @@ class ScriptedAppServer:
         if isinstance(configured, list):
             cursor = parameters.get("cursor")
             page = int(cursor) if cursor is not None else 0
-            answer = dict(configured[page])
+            configured_page = configured[page]
+            if configured_page == "error":
+                await self._respond_with_error(request_id, "apps failed")
+                return
+            answer = dict(configured_page)
             if page + 1 < len(configured):
                 answer["nextCursor"] = str(page + 1)
             await self._respond(request_id, answer)

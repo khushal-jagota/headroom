@@ -11,8 +11,8 @@ The pin these models were generated under:
     from the dump's        codex_app_server_protocol.schemas.json
     dump digest (sha256)   684b49ae64bd09cb27dbf85b6d2ad0380d16d267307a9ec2eae27277045ff4c7
     pruned and vendored    schema/codex_app_server_protocol.subset.schema.json
-    subset digest (sha256) 8a2926d9f8fdee0de55dca762e852e4959d908f309bfa6fe41c5d900d134e92b
-    definitions generated  155
+    subset digest (sha256) 3f7d4cafcf87e6e7feb9d6c46ace86497cd4ff0b3b698575b5127554022fcc99
+    definitions generated  163
 
 The digests are taken over the JSON's meaning — keys sorted — so they change
 when the protocol changes and not when the dump is printed differently.
@@ -533,6 +533,18 @@ class ThreadCompactStartResponse(BaseModel):
     pass
 
 
+class ThreadGoalClearParams(BaseModel):
+    threadId: str
+
+
+class ThreadGoalClearResponse(BaseModel):
+    cleared: bool
+
+
+class ThreadGoalGetParams(BaseModel):
+    threadId: str
+
+
 class HookPromptThreadItem(BaseModel):
     fragments: list[HookPromptFragment]
     id: str
@@ -943,6 +955,34 @@ class ThreadSpawnSubAgentSource(BaseModel):
         extra="forbid",
     )
     thread_spawn: ThreadSpawn
+
+
+class ThreadGoal(BaseModel):
+    createdAt: int
+    objective: str
+    status: Literal["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"]
+    threadId: str
+    timeUsedSeconds: int
+    tokenBudget: int | None = None
+    tokensUsed: int
+    updatedAt: int
+
+
+class ThreadGoalGetResponse(BaseModel):
+    goal: ThreadGoal | None = None
+
+
+class ThreadGoalSetParams(BaseModel):
+    objective: str | None = None
+    status: (
+        Literal["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"] | None
+    ) = None
+    threadId: str
+    tokenBudget: int | None = None
+
+
+class ThreadGoalSetResponse(BaseModel):
+    goal: ThreadGoal
 
 
 class UserMessageThreadItem(BaseModel):
