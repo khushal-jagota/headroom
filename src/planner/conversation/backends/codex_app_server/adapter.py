@@ -1711,14 +1711,22 @@ def _catalog_snapshot(
         by_token.setdefault(candidate[0], []).append(candidate)
 
     executable: list[tuple[str, ComposerCatalogEntry, _CatalogInvocation]] = []
-    for token, colliding in by_token.items():
+    allocated_tokens = set(by_token)
+    for token in sorted(by_token, key=lambda value: (value.casefold(), value)):
+        colliding = by_token[token]
         if len(colliding) == 1:
             executable.append(colliding[0])
             continue
+        colliding.sort(
+            key=lambda candidate: (
+                str(candidate[2].kind),
+                candidate[2].name,
+                candidate[2].path or "",
+            )
+        )
         for _, entry, invocation in colliding:
-            identity_text = f"{invocation.kind}\0{invocation.name}\0{invocation.path or ''}"
-            suffix = hashlib.sha256(identity_text.encode("utf-8")).hexdigest()[:8]
-            alias = f"{token}~{suffix}"
+            alias = _collision_alias(token, invocation, allocated_tokens)
+            allocated_tokens.add(alias)
             executable.append(
                 (
                     alias,
@@ -1738,6 +1746,24 @@ def _catalog_snapshot(
         entries=CODEX_BUILT_IN_CATALOG_ENTRIES + tuple(entry for _, entry, _ in executable),
         invocations=tuple(invocations),
     )
+
+
+def _collision_alias(
+    canonical_token: str,
+    invocation: _CatalogInvocation,
+    allocated_tokens: set[str],
+) -> str:
+    """Allocate a deterministic alias outside every canonical and prior alias token."""
+    identity = f"{invocation.kind}\0{invocation.name}\0{invocation.path or ''}"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    for length in range(8, len(digest) + 1):
+        alias = f"{canonical_token}~{digest[:length]}"
+        if alias not in allocated_tokens:
+            return alias
+    serial = 2
+    while f"{canonical_token}~{digest}-{serial}" in allocated_tokens:
+        serial += 1
+    return f"{canonical_token}~{digest}-{serial}"
 
 
 def _goal_invocation(text: str) -> _CatalogInvocation:

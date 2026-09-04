@@ -14,6 +14,7 @@ ask still waiting when its turn dies is settled with codex instead of left hangi
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -751,20 +752,62 @@ def test_collision_aliases_are_order_independent_and_exact_identities_deduplicat
         ],
     }
 
-    def aliases(data: list[dict[str, Any]]) -> dict[str, str | None]:
+    first_identity = "skill\0ship-it\0/skills/ship-it/SKILL.md"
+    occupied_alias = hashlib.sha256(first_identity.encode("utf-8")).hexdigest()[:8]
+    canonical_collision = {
+        "cwd": "/canonical-collision",
+        "errors": [],
+        "skills": [
+            {
+                "name": f"ship-it~{occupied_alias}",
+                "description": "Owns the first alias candidate",
+                "enabled": True,
+                "path": "/canonical-collision/SKILL.md",
+                "scope": "user",
+            }
+        ],
+    }
+
+    def snapshot(data: list[dict[str, Any]]) -> Any:
         skills = adapter.bindings.SkillsListResponse.model_validate({"data": data})
-        snapshot = adapter._catalog_snapshot(skills, None, None, None)
+        return adapter._catalog_snapshot(skills, None, None, None)
+
+    def aliases(data: list[dict[str, Any]]) -> dict[str, str | None]:
+        catalog = snapshot(data)
         return {
             token: invocation.path
-            for token, invocation in snapshot.invocations
+            for token, invocation in catalog.invocations
             if invocation is not None and invocation.kind is ComposerCatalogEntryKind.skill
         }
 
-    forward = aliases([first, duplicate, other])
-    reverse = aliases([other, duplicate, first])
+    forward_data = [first, duplicate, other, canonical_collision]
+    reverse_data = [canonical_collision, other, duplicate, first]
+    forward = aliases(forward_data)
+    reverse = aliases(reverse_data)
     assert forward == reverse
-    assert len(forward) == 2
-    assert set(forward.values()) == {"/skills/ship-it/SKILL.md", "/other/SKILL.md"}
+    assert len(forward) == 3
+    assert set(forward.values()) == {
+        "/skills/ship-it/SKILL.md",
+        "/other/SKILL.md",
+        "/canonical-collision/SKILL.md",
+    }
+    canonical_token = f"$ship-it~{occupied_alias}"
+    assert forward[canonical_token] == "/canonical-collision/SKILL.md"
+    first_alias = next(
+        token for token, path in forward.items() if path == "/skills/ship-it/SKILL.md"
+    )
+    assert first_alias.startswith(f"{canonical_token}")
+    assert len(first_alias) > len(canonical_token)
+
+    catalog = snapshot(forward_data)
+    insertion_tokens = [entry.insertion_text.strip() for entry in catalog.entries]
+    invocation_tokens = [token for token, _ in catalog.invocations]
+    assert len(insertion_tokens) == len(set(insertion_tokens))
+    assert len(invocation_tokens) == len(set(invocation_tokens))
+    for token, path in forward.items():
+        invocation = catalog.resolve(token)
+        assert invocation is not None
+        assert invocation.path == path
 
 
 def test_compact_and_review_use_native_methods_and_the_normal_turn_lifecycle(
