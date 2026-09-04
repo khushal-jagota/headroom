@@ -28,6 +28,7 @@ import pytest
 from tests.unit.test_conversation_codex_scripted_app_server import scripted_app_server_launch
 
 from planner.conversation.backends.codex_app_server import adapter
+from planner.conversation.backends.codex_app_server import bindings_gen as bindings
 from planner.conversation.backends.codex_app_server.adapter import (
     WITHDRAWN_ASK_DECISION,
     CodexAppServerBackendChild,
@@ -769,7 +770,7 @@ def test_collision_aliases_are_order_independent_and_exact_identities_deduplicat
     }
 
     def snapshot(data: list[dict[str, Any]]) -> Any:
-        skills = adapter.bindings.SkillsListResponse.model_validate({"data": data})
+        skills = bindings.SkillsListResponse.model_validate({"data": data})
         return adapter._catalog_snapshot(skills, None, None, None)
 
     def aliases(data: list[dict[str, Any]]) -> dict[str, str | None]:
