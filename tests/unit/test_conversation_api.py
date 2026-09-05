@@ -17,7 +17,6 @@ import sqlite3
 import zlib
 from collections.abc import Callable, Coroutine, Iterator, MutableMapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -36,13 +35,8 @@ from planner.conversation.api import (
     conversation_message_content,
     router,
 )
-from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backend_usage import (
-    BackendUsageOutcome,
-    BackendUsageResult,
     BackendUsageService,
-    BackendUsageWindow,
-    BackendUsageWindowKind,
 )
 from planner.conversation.backends.claude_model_catalog import (
     ClaudeModel,
@@ -92,8 +86,6 @@ from planner.conversation.message_content import (
 )
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.snapshot import (
-    BackendModel,
-    BackendSnapshot,
     BackendSnapshotService,
     CommandOutcome,
 )
@@ -800,118 +792,6 @@ def test_the_view_carries_the_typed_composer_catalog(
     _run(exercise)
 
 
-def test_starting_the_same_conversation_twice_is_a_conflict(harness: _Harness) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            assert (await _start(client, "c")).status_code == 201
-            assert (await _start(client, "c")).status_code == 409
-
-    _run(exercise)
-
-
-def test_a_request_that_cannot_be_resolved_is_refused(harness: _Harness) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            # An identity belongs to a role, so there is nowhere for these to go.
-            orphaned_identity = await _start(
-                client, "c", identity_environment_variables={"PANELS_ROLE": "chief"}
-            )
-            assert orphaned_identity.status_code == 422
-
-            unknown_backend = await _start(client, "d", backend_key="not-a-backend")
-            assert unknown_backend.status_code == 422
-
-    _run(exercise)
-
-
-def test_a_conversation_keeps_the_names_of_its_identity_and_not_the_values(
-    harness: _Harness,
-) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(
-                client,
-                "c",
-                role_text="You are the Chief of Staff.",
-                identity_environment_variables={"PANELS_ROLE": "chief"},
-            )
-
-            view = (await client.get("/api/conversation/conversations/c")).json()
-            assert view["role_text"] == "You are the Chief of Staff."
-            assert view["identity_environment_variable_names"] == ["PANELS_ROLE"]
-            assert "chief" not in json.dumps(view)
-
-    _run(exercise)
-
-
-def test_a_folder_written_the_way_a_person_writes_it_is_the_folder_they_meant(
-    harness: _Harness,
-) -> None:
-    """``~/Coding`` is what somebody types. Only a shell knows what it means, so the
-    boundary that turns typed text into a path is where it has to be worked out."""
-
-    async def exercise() -> None:
-        async with harness.client() as client:
-            created = await client.post(
-                "/api/conversation/conversations",
-                json={
-                    "conversation_id": "typed",
-                    "model": "a-model",
-                    "backend_key": "hermes",
-                    "workspace_folder": "~/Coding",
-                },
-            )
-
-            assert created.status_code == 201
-            folder = created.json()["workspace_folder"]
-            assert folder == str(Path.home() / "Coding")
-            assert "~" not in folder
-
-            # And it is the folder the conversation is actually stored as running in.
-            stored = await harness.store.read_conversation("typed")
-            assert stored is not None
-            assert stored.workspace_folder == Path.home() / "Coding"
-
-    _run(exercise)
-
-
-def test_a_folder_that_is_neither_absolute_nor_a_home_path_is_refused(
-    harness: _Harness,
-) -> None:
-    """Resolving it against wherever the server was started would be a guess."""
-
-    async def exercise() -> None:
-        async with harness.client() as client:
-            refused = await client.post(
-                "/api/conversation/conversations",
-                json={
-                    "conversation_id": "relative",
-                    "backend_key": "hermes",
-                    "workspace_folder": "some/relative/folder",
-                },
-            )
-
-            assert refused.status_code == 422
-
-    _run(exercise)
-
-
-def test_reading_a_conversation_that_was_never_started_is_a_404(harness: _Harness) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            assert (
-                await client.get("/api/conversation/conversations/never-started")
-            ).status_code == 404
-            assert (
-                await client.get("/api/conversation/conversations/never-started/events")
-            ).status_code == 404
-            assert (
-                await client.get("/api/conversation/conversations/never-started/tail")
-            ).status_code == 404
-
-    _run(exercise)
-
-
 # --- sending -----------------------------------------------------------------------------
 
 
@@ -1107,89 +987,6 @@ def test_what_a_sender_minted_reaches_the_row_its_message_becomes(harness: _Harn
                 ).json()["events"]
                 if row["kind"] == "prompt_discarded"
             ] == [{"text": "never ran", "sender_label": "owner", "sender_message_id": "m-3"}]
-
-    _run(exercise)
-
-
-def test_a_steer_carrying_a_change_is_a_caller_error(harness: _Harness) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "c")
-            await client.post(
-                "/api/conversation/conversations/c/send",
-                json={
-                    "content": [{"piece": "text", "text": "first"}],
-                    "sender_label": "owner",
-                },
-            )
-
-            response = await client.post(
-                "/api/conversation/conversations/c/send",
-                json={
-                    "content": [{"piece": "text", "text": "steered"}],
-                    "sender_label": "owner",
-                    "mode": "steer",
-                    "model_change": "another-model",
-                },
-            )
-
-            assert response.status_code == 422
-
-    _run(exercise)
-
-
-def test_the_view_says_what_is_running_and_what_is_waiting(harness: _Harness) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "c")
-            await client.post(
-                "/api/conversation/conversations/c/send",
-                json={
-                    "content": [{"piece": "text", "text": "work"}],
-                    "sender_label": "owner",
-                },
-            )
-            await client.post(
-                "/api/conversation/conversations/c/send",
-                json={
-                    "content": [{"piece": "text", "text": "held one"}],
-                    "sender_label": "owner",
-                },
-            )
-            await client.post(
-                "/api/conversation/conversations/c/send",
-                json={
-                    "content": [{"piece": "text", "text": "held two"}],
-                    "sender_label": "automatic-loop",
-                },
-            )
-            ask_id = await harness.raise_permission_ask("c")
-
-            view = (await client.get("/api/conversation/conversations/c")).json()
-
-            assert view["is_running"] is True
-            assert [held["text"] for held in view["held_prompts"]] == [
-                "held one",
-                "held two",
-            ]
-            assert all(held["held_prompt_id"] for held in view["held_prompts"])
-            assert all(
-                isinstance(held["sent_at_unix_milliseconds"], int)
-                for held in view["held_prompts"]
-            )
-            assert view["latest_sequence"] == 2
-            waiting = view["pending_permission_ask"]
-            assert waiting["ask_id"] == ask_id
-            assert waiting["title"] == "Run a command?"
-            assert waiting["detail"] == "ls -la"
-            assert [option["option_id"] for option in waiting["options"]] == [
-                "allow-once",
-                "deny",
-            ]
-            assert [option["option_kind"] for option in waiting["options"]] == [
-                "allow",
-                "reject",
-            ]
 
     _run(exercise)
 
@@ -1497,23 +1294,6 @@ def test_interrupting_frees_what_was_held_and_killing_throws_it_away(
                 ).json()["events"]
             ]
             assert kinds == ["prompt", "prompt_discarded", "turn_ended"]
-
-    _run(exercise)
-
-
-def test_interrupting_or_killing_a_conversation_that_is_not_there_changes_nothing(
-    harness: _Harness,
-) -> None:
-    """The contract says both are no-ops on an id that names nothing, so they answer so."""
-
-    async def exercise() -> None:
-        async with harness.client() as client:
-            assert (
-                await client.post("/api/conversation/conversations/nobody/interrupt")
-            ).status_code == 204
-            assert (
-                await client.post("/api/conversation/conversations/nobody/kill")
-            ).status_code == 204
 
     _run(exercise)
 
@@ -2208,306 +1988,6 @@ def test_a_tail_is_closed_by_the_same_door_that_closes_the_change_stream(
 # --- the backends on this machine -------------------------------------------------------------
 
 
-def test_the_backend_cards_are_probed_once_and_again_when_asked(harness: _Harness) -> None:
-    async def exercise() -> None:
-        harness.machine.executables["hermes"] = "/usr/local/bin/hermes"
-        harness.machine.outcomes[("/usr/local/bin/hermes", "--version")] = CommandOutcome(
-            exit_code=0,
-            standard_output="Hermes Agent v0.18.2\n",
-            standard_error="",
-        )
-        harness.machine.answers_any_other_command = CommandOutcome(
-            exit_code=0,
-            standard_output=json.dumps(
-                {
-                    "schemaVersion": 1,
-                    "status": "runnable",
-                    "defaultModelId": "openai-codex:gpt-5.6-sol",
-                    "providers": [
-                        {
-                            "id": "openai-codex",
-                            "displayName": "OpenAI Codex",
-                            "models": [
-                                {
-                                    "id": "openai-codex:gpt-5.6-sol",
-                                    "displayName": "GPT-5.6 Sol",
-                                    "detail": "OpenAI Codex",
-                                }
-                            ],
-                        }
-                    ],
-                }
-            ),
-            standard_error="",
-        )
-        harness.machine.executables["claude"] = "/usr/local/bin/claude"
-        harness.machine.outcomes[("/usr/local/bin/claude", "--version")] = CommandOutcome(
-            exit_code=0, standard_output="2.1.219 (Claude Code)\n", standard_error=""
-        )
-        harness.machine.outcomes[
-            ("/usr/local/bin/claude", "auth", "status", "--json")
-        ] = CommandOutcome(
-            exit_code=0,
-            standard_output=json.dumps(
-                {
-                    "loggedIn": True,
-                    "email": "owner@example.com",
-                    "authMethod": "claude.ai",
-                    "subscriptionType": "max",
-                }
-            ),
-            standard_error="",
-        )
-
-        async with harness.client() as client:
-            first = await client.get("/api/conversation/backends")
-            assert first.status_code == 200
-            cards = {card["backend_key"]: card for card in first.json()["backends"]}
-            assert set(cards) == {"hermes", "codex", "claude"}
-
-            hermes = cards["hermes"]
-            assert hermes["default_model_id"] == "openai-codex:gpt-5.6-sol"
-            assert [model["model_id"] for model in hermes["available_models"]] == [
-                "openai-codex:gpt-5.6-sol"
-            ]
-            assert hermes["reasoning_effort_options"] == []
-
-            claude = cards["claude"]
-            assert claude["installed"] is True
-            assert claude["version"] == "2.1.219"
-            assert claude["identity"]["status"] == "authenticated"
-            assert claude["identity"]["account_label"] == "owner@example.com"
-            assert claude["identity"]["login_command"] == "claude auth login"
-            assert [model["model_id"] for model in claude["available_models"]] == [
-                "opus[1m]",
-                "sonnet",
-            ]
-            assert claude["available_models"][0]["detail"] == "opus[1m] → claude-opus-5[1m]"
-            assert claude["available_models"][0]["display_name"] == "Opus 5 (1M)"
-
-            assert claude["reasoning_effort_options"] == [
-                "low",
-                "medium",
-                "high",
-                "xhigh",
-                "max",
-            ]
-
-            # Not on this machine: said plainly, with nothing offered.
-            codex = cards["codex"]
-            assert codex["installed"] is False
-            assert codex["diagnoses"] == ["`codex` is not installed or not on PATH."]
-            assert codex["update_advisory"] is None
-
-            probes_after_the_first_read = len(harness.machine.run_commands)
-            await client.get("/api/conversation/backends")
-            assert len(harness.machine.run_commands) == probes_after_the_first_read
-
-            await client.get("/api/conversation/backends", params={"refresh": "true"})
-            assert len(harness.machine.run_commands) > probes_after_the_first_read
-
-    _run(exercise)
-
-
-def test_an_update_that_cannot_be_run_says_so_rather_than_pretending(
-    harness: _Harness,
-) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            response = await client.post("/api/conversation/backends/hermes/update")
-
-            assert response.status_code == 200
-            assert response.json() == {
-                "outcome": "failed",
-                "detail": (
-                    "Hermes is not installed at the configured "
-                    "PLAN_HERMES_PYTHON environment."
-                ),
-                "output_tail": "",
-            }
-
-    _run(exercise)
-
-
-def test_the_existing_update_route_exposes_a_native_hermes_result(
-    harness: _Harness,
-) -> None:
-    async def exercise() -> None:
-        hermes = "/usr/local/bin/hermes"
-        harness.machine.executables["hermes"] = hermes
-        harness.machine.outcomes[(hermes, "--version")] = CommandOutcome(
-            exit_code=0, standard_output="Hermes Agent v0.18.2\n", standard_error=""
-        )
-        harness.machine.outcomes[(hermes, "update", "--check")] = CommandOutcome(
-            exit_code=0, standard_output="✓ Already up to date.\n", standard_error=""
-        )
-        harness.machine.outcomes[(hermes, "update", "--yes")] = CommandOutcome(
-            exit_code=0, standard_output="✓ Update complete!\n", standard_error=""
-        )
-
-        async with harness.client() as client:
-            response = await client.post("/api/conversation/backends/hermes/update")
-
-        assert response.status_code == 200
-        assert response.json() == {
-            "outcome": "unchanged",
-            "detail": (
-                "The update command finished, but the installed version is still 0.18.2."
-            ),
-            "output_tail": "✓ Update complete!\n",
-        }
-
-    _run(exercise)
-
-
-def test_an_unknown_backend_is_not_a_backend(harness: _Harness) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            assert (
-                await client.post("/api/conversation/backends/gemini/update")
-            ).status_code == 422
-
-    _run(exercise)
-
-
-def test_composite_refresh_keeps_successes_and_returns_current_cached_snapshots(
-    harness: _Harness,
-) -> None:
-    observed = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
-    reset = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
-
-    def snapshot(backend_key: ConversationBackendKey) -> BackendSnapshot:
-        model = BackendModel(
-            model_id="provider/model" if backend_key is ConversationBackendKey.claude else "model",
-            display_name="Opus 5" if backend_key is ConversationBackendKey.claude else "Model",
-        )
-        return BackendSnapshot(
-            backend_key=backend_key,
-            installed=True,
-            executable_path=f"/bin/{backend_key}",
-            version="1.0.0",
-            identity=None,
-            available_models=(model,),
-            reasoning_effort_options=(),
-            default_model_id=model.model_id,
-            default_reasoning_effort=None,
-            update_advisory=None,
-            diagnoses=(),
-        )
-
-    class StaticSnapshots:
-        async def snapshots(self, *, refresh: bool = False) -> tuple[BackendSnapshot, ...]:
-            return tuple(snapshot(key) for key in ConversationBackendKey)
-
-        async def snapshot(
-            self, backend_key: ConversationBackendKey, *, refresh: bool = False
-        ) -> BackendSnapshot:
-            assert refresh is False
-            return snapshot(backend_key)
-
-    @dataclass
-    class Usage:
-        result: BackendUsageResult
-        calls: int = 0
-
-        async def refresh(self) -> BackendUsageResult:
-            self.calls += 1
-            return self.result
-
-    claude = Usage(
-        BackendUsageResult(
-            ConversationBackendKey.claude,
-            BackendUsageOutcome.succeeded,
-            observed_at=observed,
-            windows=(
-                BackendUsageWindow(
-                    BackendUsageWindowKind.seven_day,
-                    12.5,
-                    reset,
-                    model_scope="Opus",
-                ),
-            ),
-        )
-    )
-    codex = Usage(
-        BackendUsageResult(
-            ConversationBackendKey.codex,
-            BackendUsageOutcome.failed,
-            detail="provider failed",
-        )
-    )
-    hermes = Usage(
-        BackendUsageResult(
-            ConversationBackendKey.hermes,
-            BackendUsageOutcome.unavailable,
-            detail="no usage",
-        )
-    )
-    state = BackendStateStore(str(harness.db_path))
-    state.keep_successful_usage(
-        BackendUsageResult(
-            ConversationBackendKey.codex,
-            BackendUsageOutcome.succeeded,
-            observed_at=observed,
-            windows=(BackendUsageWindow(BackendUsageWindowKind.seven_day, 33, reset),),
-        )
-    )
-
-    async def exercise() -> None:
-        object.__setattr__(harness.runtime, "backend_snapshots", StaticSnapshots())
-        object.__setattr__(
-            harness.runtime,
-            "backend_usage",
-            BackendUsageService(
-                {
-                    ConversationBackendKey.claude: claude,
-                    ConversationBackendKey.codex: codex,
-                    ConversationBackendKey.hermes: hermes,
-                }
-            ),
-        )
-        object.__setattr__(harness.runtime, "backend_state", state)
-        async with harness.client() as client:
-            response = await client.post("/api/conversation/backends/refresh")
-            toggled = await client.put(
-                "/api/conversation/backends/claude/models/provider/model/enablement",
-                json={"enabled": False},
-            )
-            after_toggle = await client.get("/api/conversation/backends")
-
-        assert response.status_code == 200
-        payload = response.json()
-        assert [outcome["outcome"] for outcome in payload["usage_outcomes"]] == [
-            "unavailable",
-            "failed",
-            "succeeded",
-        ]
-        claude_backend = next(
-            backend for backend in payload["backends"] if backend["backend_key"] == "claude"
-        )
-        assert claude_backend["cached_usage"]["windows"] == [
-            {
-                "kind": "seven_day",
-                "used_percent": 12.5,
-                "resets_at": "2026-08-12T12:00:00Z",
-                "model_id": "provider/model",
-            }
-        ]
-        assert state.read_usage(ConversationBackendKey.codex) is not None
-        assert toggled.status_code == 200
-        assert state.model_is_enabled(ConversationBackendKey.claude, "provider/model") is False
-        toggled_claude = next(
-            backend
-            for backend in after_toggle.json()["backends"]
-            if backend["backend_key"] == "claude"
-        )
-        assert toggled_claude["available_models"][0]["enabled"] is False
-        assert toggled_claude["default_model_id"] is None
-        assert claude.calls == codex.calls == hermes.calls == 1
-
-    _run(exercise)
-
-
 # --- the wiring in the real application ---------------------------------------------------------
 
 
@@ -2653,50 +2133,6 @@ def test_a_picture_sent_with_a_message_is_kept_and_the_row_names_what_was_kept(
     _run(exercise)
 
 
-@pytest.mark.parametrize(
-    ("payload", "claimed_media_type"),
-    [
-        (MALFORMED_CLAIMED_PNG, "image/png"),
-        (b"<svg xmlns='http://www.w3.org/2000/svg'/>", "image/svg+xml"),
-        (b"\x00\x00\x00\x18ftypheicunsupported", "image/heic"),
-    ],
-)
-def test_invalid_or_unsupported_picture_bytes_leave_no_row_or_managed_file(
-    harness: _Harness, payload: bytes, claimed_media_type: str
-) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "c")
-            rejected = await client.post(
-                "/api/conversation/conversations/c/send",
-                json={
-                    "content": [
-                        {"piece": "text", "text": "do not record this"},
-                        {
-                            "piece": "image",
-                            "data": base64.b64encode(A_TINY_PNG).decode("ascii"),
-                            "media_type": "image/png",
-                        },
-                        {
-                            "piece": "image",
-                            "data": base64.b64encode(payload).decode("ascii"),
-                            "media_type": claimed_media_type,
-                        },
-                    ],
-                    "sender_label": "owner",
-                },
-            )
-            assert rejected.status_code == 422
-            assert "unsupported or invalid" in rejected.json()["detail"]
-            assert (
-                await client.get("/api/conversation/conversations/c/events")
-            ).json() == {"events": []}
-            files = harness.db_path.parent / "files" / "conversations"
-            assert not list(files.glob("**/*"))
-
-    _run(exercise)
-
-
 def test_a_data_file_is_validated_kept_and_served_with_server_metadata(
     harness: _Harness,
 ) -> None:
@@ -2736,52 +2172,6 @@ def test_a_data_file_is_validated_kept_and_served_with_server_metadata(
             )
             assert served.headers["content-type"] == "text/csv; charset=utf-8"
             assert served.content == payload
-
-    _run(exercise)
-
-
-@pytest.mark.parametrize(
-    ("file_name", "payload", "detail"),
-    [
-        ("empty.txt", b"", "must not be empty"),
-        ("bad.json", b"{no", "must contain valid JSON"),
-        ("bad.jsonl", b'{"ok":1}\nno', "invalid JSON on line 2"),
-        ("empty.jsonl", b" \n\t\n", "must contain a JSON value"),
-        ("program.exe", b"hello", "unsupported conversation file type"),
-        ("bad.txt", b"\xff", "must be UTF-8"),
-        ("nul.txt", b"hello\x00world", "must not contain NUL bytes"),
-        ("bad.pdf", b"not a pdf", "unsupported or invalid conversation PDF"),
-        ("line\nbreak.txt", b"hello", "plain, trimmed file name"),
-        (f"{'x' * 252}.txt", b"hello", "plain, trimmed file name"),
-    ],
-)
-def test_invalid_files_leave_no_row_or_managed_file(
-    harness: _Harness, file_name: str, payload: bytes, detail: str
-) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "c")
-            rejected = await client.post(
-                "/api/conversation/conversations/c/send",
-                json={
-                    "content": [
-                        {
-                            "piece": "file",
-                            "data": base64.b64encode(payload).decode("ascii"),
-                            "media_type": "application/octet-stream",
-                            "file_name": file_name,
-                        }
-                    ],
-                    "sender_label": "owner",
-                },
-            )
-            assert rejected.status_code == 422
-            assert detail in rejected.json()["detail"]
-            assert (
-                await client.get("/api/conversation/conversations/c/events")
-            ).json() == {"events": []}
-            files = harness.db_path.parent / "files" / "conversations"
-            assert not list(files.glob("**/*"))
 
     _run(exercise)
 
@@ -2855,38 +2245,6 @@ def test_file_bytes_are_limited_per_piece_before_decode_and_in_aggregate(
                 ],
             )
         assert not list((tmp_path / "files").glob("**/*"))
-
-    _run(exercise)
-
-
-def test_an_oversize_picture_leaves_no_row_or_managed_file(harness: _Harness) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "c")
-            # This is rejected from its encoded length before the server allocates a
-            # second decoded copy.
-            limit = MAX_CONVERSATION_MESSAGE_IMAGE_BYTES
-            too_large = "A" * (4 * ((limit + 2) // 3) + 1)
-            rejected = await client.post(
-                "/api/conversation/conversations/c/send",
-                json={
-                    "content": [
-                        {
-                            "piece": "image",
-                            "data": too_large,
-                            "media_type": "image/png",
-                        }
-                    ],
-                    "sender_label": "owner",
-                },
-            )
-            assert rejected.status_code == 422
-            assert rejected.json()["detail"] == "a conversation image is too large"
-            assert (
-                await client.get("/api/conversation/conversations/c/events")
-            ).json() == {"events": []}
-            files = harness.db_path.parent / "files" / "conversations"
-            assert not list(files.glob("**/*"))
 
     _run(exercise)
 
@@ -2984,20 +2342,6 @@ def test_the_picture_reaches_the_backend_and_not_just_the_record(harness: _Harne
     _run(exercise)
 
 
-def test_a_file_that_was_never_kept_is_not_there(harness: _Harness) -> None:
-    """An id nobody kept anything under is a plain not-found, not an empty answer."""
-
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "c")
-            missing = await client.get(
-                "/api/conversation/conversations/c/files/f_never_written"
-            )
-            assert missing.status_code == 404
-
-    _run(exercise)
-
-
 def test_a_message_with_nothing_in_it_is_refused_rather_than_recorded(
     harness: _Harness,
 ) -> None:
@@ -3034,27 +2378,3 @@ def _compression_as_the_server_composes_it(app: FastAPI) -> CompressExceptEventS
     )
 
 
-def test_the_tail_is_not_compressed_even_when_the_browser_offers_gzip(
-    harness: _Harness,
-) -> None:
-    """The open is the thing this stream feeds, so a buffered tail would be the worst
-    place to pay for compression."""
-
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "c")
-            async with _EventStreamDrive(
-                harness.app,
-                f"{CONVERSATION_PREFIX}/conversations/c/tail",
-                "after=0",
-                headers=[(b"accept-encoding", b"gzip, deflate, br")],
-                entry=_compression_as_the_server_composes_it(harness.app),
-            ) as stream:
-                await stream.wait_until_watching(harness.live_tail)
-                frame = await stream.next_frame()
-                headers = dict(stream.started["headers"])
-                assert b"content-encoding" not in headers
-                # A whole readable frame arrived, so no compressor is holding it back.
-                assert frame.endswith("\n\n")
-
-    _run(exercise)

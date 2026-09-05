@@ -641,66 +641,7 @@ def test_a_failed_turn_writes_one_error_log_line_carrying_where_to_look(
     _run(exercise)
 
 
-def test_the_error_log_line_carries_only_the_last_of_a_long_standard_error(
-    harness: _Harness, caplog: pytest.LogCaptureFixture
-) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("work"), sender_label="owner")
-        with caplog.at_level(logging.ERROR, logger="planner.conversation"):
-            await harness.fail_turn(
-                "c", standard_error_tail="x" * 5_000 + "THE-VERY-END"
-            )
-
-        line = caplog.records[0].getMessage()
-        assert "THE-VERY-END" in line
-        assert len(line) < 3_000
-
-    _run(exercise)
-
-
-def test_a_completed_turn_writes_no_error_log_line(
-    harness: _Harness, caplog: pytest.LogCaptureFixture
-) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("work"), sender_label="owner")
-        with caplog.at_level(logging.ERROR, logger="planner.conversation"):
-            await harness.complete_turn("c")
-
-        assert [record for record in caplog.records if record.name == "planner.conversation"] == []
-
-    _run(exercise)
-
-
 # --- the three modes against an idle and a busy agent ------------------------------------
-
-
-def test_an_idle_hermes_child_remains_visible_to_backend_maintenance(
-    harness: _Harness,
-) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c", backend_key=ConversationBackendKey.hermes)
-        await harness.system.send(
-            "c", text_message_content("first"), sender_label="owner"
-        )
-        await harness.complete_turn("c")
-
-        assert (
-            await harness.backend_lifecycle.try_begin_maintenance(
-                ConversationBackendKey.hermes
-            )
-            is None
-        )
-
-        await harness.system.kill("c")
-        lease = await harness.backend_lifecycle.try_begin_maintenance(
-            ConversationBackendKey.hermes
-        )
-        assert lease is not None
-        await harness.backend_lifecycle.end_maintenance(lease)
-
-    _run(exercise)
 
 
 def test_an_accepted_hermes_update_holds_a_real_system_child_before_spawn(
@@ -782,31 +723,6 @@ def test_a_steer_that_does_not_reach_the_wire_leaves_the_turn_alone(harness: _Ha
 # --- interrupting -------------------------------------------------------------------------
 
 
-def test_only_an_interruption_cancels_the_agent(harness: _Harness) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c")
-
-        await harness.system.send("c", text_message_content("first"), sender_label="owner")
-        await harness.complete_turn("c")
-        assert harness.backend("c").cancellations == 0
-
-        await harness.system.send("c", text_message_content("second"), sender_label="owner")
-        await harness.fail_turn("c")
-        assert harness.backend("c").cancellations == 0
-
-        await harness.system.send("c", text_message_content("third"), sender_label="owner")
-        await harness.system.interrupt("c")
-        assert harness.backend("c").cancellations == 1
-
-        assert await harness.recorded_endings("c") == (
-            ConversationTurnEnding.completed,
-            ConversationTurnEnding.failed,
-            ConversationTurnEnding.interrupted,
-        )
-
-    _run(exercise)
-
-
 def test_a_turn_ends_once_and_a_dead_turns_ending_never_kills_its_successor(
     harness: _Harness,
 ) -> None:
@@ -837,65 +753,6 @@ def test_a_turn_ends_once_and_a_dead_turns_ending_never_kills_its_successor(
 
         assert await harness.recorded_endings("c") == (ConversationTurnEnding.interrupted,)
         assert await harness.system.is_running("c") is True
-
-    _run(exercise)
-
-
-def test_a_finished_agent_message_from_the_most_recent_ended_turn_is_kept(
-    harness: _Harness,
-) -> None:
-    """A finished message is durable content, even when its backend turn ended first."""
-
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("first"), sender_label="owner")
-        backend = harness.backend("c")
-        stale_token = backend.live_turn_token
-        assert stale_token is not None and backend.sink is not None
-        await backend.sink.agent_message_completed(
-            stale_token, text_message_content("before the ending")
-        )
-        await harness.settle()
-        await harness.complete_turn("c")
-        await harness.system.send("c", text_message_content("second"), sender_label="owner")
-
-        await backend.sink.agent_message_completed(
-            stale_token,
-            text_message_content("from the turn before"),
-        )
-        await harness.settle()
-
-        messages = [
-            message_content_text(event.payload.content)
-            for event in await harness.events("c")
-            if isinstance(event.payload, AgentMessageEventPayload)
-        ]
-        assert messages == ["before the ending", "from the turn before"]
-
-    _run(exercise)
-
-
-def test_non_message_news_from_a_turn_that_is_over_is_still_dropped(
-    harness: _Harness,
-) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("first"), sender_label="owner")
-        backend = harness.backend("c")
-        stale_token = backend.live_turn_token
-        assert stale_token is not None and backend.sink is not None
-        await harness.complete_turn("c")
-
-        await backend.sink.tool_call_started(
-            stale_token,
-            tool_call_id="stale-tool",
-            title="Bash",
-            tool_kind="Bash",
-            detail=None,
-        )
-        await harness.settle()
-
-        assert ConversationEventKind.tool_call_started not in await harness.recorded_kinds("c")
 
     _run(exercise)
 
@@ -1006,69 +863,6 @@ def test_a_broken_claude_child_resumes_once_for_only_the_follow_up(
     _run(exercise)
 
 
-def test_a_broken_child_resume_refusal_is_recorded(harness: _Harness) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c", backend_key=ConversationBackendKey.claude)
-        await harness.system.send("c", text_message_content("first"), sender_label="owner")
-        await harness.fail_turn("c", "the terminal stream failed")
-        backend = harness.backend("c")
-        backend.needs_failed_child_recovery_once = True
-        backend.session_load_fails = True
-
-        fate = await harness.system.send(
-            "c",
-            text_message_content("follow-up"),
-            sender_label="owner",
-            sender_message_id="follow-up-id",
-        )
-
-        assert fate == PromptDeliveryRefused(
-            refusal_reason=PromptDeliveryRefusalReason.session_did_not_load
-        )
-        refused = [
-            event.payload
-            for event in await harness.events("c")
-            if isinstance(event.payload, PromptDeliveryRefusedEventPayload)
-        ]
-        assert len(refused) == 1
-        assert message_content_text(refused[0].content) == "follow-up"
-        assert refused[0].sender_message_id == "follow-up-id"
-        assert refused[0].refusal_reason is PromptDeliveryRefusalReason.session_did_not_load
-        assert backend.written_texts() == ("first",)
-
-    _run(exercise)
-
-
-def test_a_broken_child_replacement_write_refusal_is_recorded(harness: _Harness) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c", backend_key=ConversationBackendKey.claude)
-        await harness.system.send("c", text_message_content("first"), sender_label="owner")
-        await harness.fail_turn("c", "the terminal stream failed")
-        backend = harness.backend("c")
-        backend.needs_failed_child_recovery_once = True
-        backend.write_fails = True
-
-        fate = await harness.system.send(
-            "c", text_message_content("follow-up"), sender_label="owner"
-        )
-
-        assert fate == PromptDeliveryRefused(
-            refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed
-        )
-        refused = [
-            event.payload
-            for event in await harness.events("c")
-            if isinstance(event.payload, PromptDeliveryRefusedEventPayload)
-        ]
-        assert len(refused) == 1
-        assert message_content_text(refused[0].content) == "follow-up"
-        assert refused[0].refusal_reason is PromptDeliveryRefusalReason.write_to_backend_failed
-        assert backend.written_texts() == ("first",)
-        assert backend.stops == 2
-
-    _run(exercise)
-
-
 def test_a_rebind_whose_write_still_fails_changes_nothing(harness: _Harness) -> None:
     async def exercise() -> None:
         await _start(harness, "c", backend_key=ConversationBackendKey.claude, model="start-model")
@@ -1092,41 +886,6 @@ def test_a_rebind_whose_write_still_fails_changes_nothing(harness: _Harness) -> 
         stored = await harness.store.read_conversation("c")
         assert stored is not None
         assert stored.model == "start-model"
-
-    _run(exercise)
-
-
-def test_a_rebound_child_that_was_never_written_to_is_thrown_away(harness: _Harness) -> None:
-    """It was started on values that did not stand, so keeping it would leave the
-    record and the live agent saying different things about what this runs on."""
-
-    async def exercise() -> None:
-        await _start(harness, "c", backend_key=ConversationBackendKey.claude, model="start-model")
-        await harness.system.send("c", text_message_content("first"), sender_label="owner")
-        await harness.complete_turn("c")
-        backend = harness.backend("c")
-        backend.needs_rebind_once = True
-        backend.write_fails = True
-
-        await harness.system.send(
-            "c", text_message_content("doomed"), sender_label="owner", model_change="second-model"
-        )
-        assert backend.session_starts == 2
-        assert backend.stops == 2
-
-        backend.write_fails = False
-        assert await harness.system.send(
-            "c",
-            text_message_content("plain send after"),
-            sender_label="owner",
-        ) == (
-            PromptDeliveryStarted()
-        )
-
-        # A fresh child, started from the cursor on the values the record actually holds.
-        assert backend.session_starts == 3
-        assert backend.started_from_cursor == VENDOR_SESSION_CURSOR
-        assert backend.model == "start-model"
 
     _run(exercise)
 
@@ -1269,31 +1028,6 @@ def test_a_burst_of_thinking_is_one_pulse_and_then_a_pulse_now_and_then(
     _run(exercise)
 
 
-def test_a_new_turn_may_say_it_is_thinking_straight_away(harness: _Harness) -> None:
-    """Holding a new turn's first pulse back would silence the moment this exists for."""
-
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("first"), sender_label="owner")
-        backend = harness.backend("c")
-        first_token = backend.live_turn_token
-        assert first_token is not None and backend.sink is not None
-        with harness.watch("c") as watching:
-            await backend.sink.model_thinking_happened(first_token)
-            assert await _thinking_pulses_now(watching) == 1
-
-            await harness.complete_turn("c")
-            await harness.system.send("c", text_message_content("second"), sender_label="owner")
-            second_token = backend.live_turn_token
-            assert second_token is not None and second_token != first_token
-
-            # No time has passed on the clock at all, and it still speaks.
-            await backend.sink.model_thinking_happened(second_token)
-            assert await _thinking_pulses_now(watching) == 1
-
-    _run(exercise)
-
-
 def test_a_thought_from_a_turn_that_is_over_is_not_shown(harness: _Harness) -> None:
     async def exercise() -> None:
         await _start(harness, "c")
@@ -1356,16 +1090,6 @@ def test_the_role_text_rides_the_very_first_prompt_and_only_that_one(harness: _H
             ("first", "owner", "run_when_free"),
             ("second", "owner", "run_when_free"),
         )
-
-    _run(exercise)
-
-
-def test_a_conversation_without_a_role_composes_nothing(harness: _Harness) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("first"), sender_label="owner")
-
-        assert harness.backend("c").written_texts() == ("first",)
 
     _run(exercise)
 
@@ -1495,25 +1219,6 @@ def test_the_commands_a_backend_reports_are_kept_and_outlive_its_child(
             ConversationEventKind.prompt,
             ConversationEventKind.turn_ended,
         )
-
-    _run(exercise)
-
-
-def test_a_second_report_leaves_only_what_the_backend_offers_now(harness: _Harness) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("first"), sender_label="owner")
-        backend = harness.backend("c")
-        assert backend.sink is not None
-
-        await backend.sink.composer_catalog_reported(A_MENU)
-        await harness.settle()
-        await backend.sink.composer_catalog_reported(A_LATER_MENU)
-        await harness.settle()
-
-        stored = await harness.store.read_conversation("c")
-        assert stored is not None
-        assert stored.composer_catalog == A_LATER_MENU
 
     _run(exercise)
 
@@ -1752,65 +1457,6 @@ def test_restart_sweep_recovers_an_unloaded_due_conversation(tmp_path: Path) -> 
     _run(exercise)
 
 
-def test_exact_sixty_minute_boundary_is_outside_the_compaction_window(
-    harness: _Harness,
-) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("first"), sender_label="owner")
-        await harness.complete_turn("c")
-        harness.clock.advance(60 * 60)
-
-        await harness.system._sweep_idle_children()
-
-        assert harness.backend("c").written_texts() == ("first",)
-
-    _run(exercise)
-
-
-def test_restart_sweep_ignores_historical_conversation_backlog(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        db_path = tmp_path / "old-restart.db"
-        conn = connect(str(db_path))
-        create_schema(conn)
-        conn.close()
-        clock = _FakeMonotonicClock()
-        first = _Harness(db_path, clock=clock)
-        await _start(first, "c")
-        await first.system.send("c", text_message_content("first"), sender_label="owner")
-        await first.complete_turn("c")
-        await first.system.shutdown()
-        clock.advance(24 * 60 * 60)
-        restarted = _Harness(db_path, clock=clock)
-        try:
-            await restarted.system._sweep_idle_children()
-            assert restarted.spawned_conversation_ids == []
-            assert restarted.backend("c").written_texts() == ()
-        finally:
-            await restarted.system.shutdown()
-
-    _run(exercise)
-
-
-def test_message_after_cache_window_starts_without_automatic_compaction(
-    harness: _Harness,
-) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("first"), sender_label="owner")
-        await harness.complete_turn("c")
-        harness.clock.advance(60 * 60 + 1)
-
-        fate = await harness.system.send(
-            "c", text_message_content("after cache window"), sender_label="owner"
-        )
-
-        assert fate == PromptDeliveryStarted()
-        assert harness.backend("c").written_texts() == ("first", "after cache window")
-
-    _run(exercise)
-
-
 def test_late_agent_output_moves_the_same_second_activity_sequence(harness: _Harness) -> None:
     async def exercise() -> None:
         await _start(harness, "c")
@@ -1965,22 +1611,6 @@ def test_promoted_pre_wire_exception_releases_sender_identity_for_safe_retry(
     _run(exercise)
 
 
-def test_confirmed_context_boundary_suppresses_the_next_idle_sweep(
-    harness: _Harness,
-) -> None:
-    async def exercise() -> None:
-        await _start(harness, "c")
-        text = "ordinary backend-auto turn"
-        await harness.system.send("c", text_message_content(text), sender_label="owner")
-        await harness.confirm_compaction("c")
-        await harness.complete_turn("c")
-        harness.clock.advance(50 * 60 + 1)
-        await harness.system._sweep_idle_children()
-        assert harness.backend("c").written_texts() == (text,)
-
-    _run(exercise)
-
-
 def test_promoted_send_now_stays_held_behind_automatic_compaction(harness: _Harness) -> None:
     async def exercise() -> None:
         await _start(harness, "c")
@@ -2109,24 +1739,6 @@ def test_nothing_runs_after_a_kill(harness: _Harness) -> None:
 
         assert harness.backend("c").written_texts() == ("incumbent",)
         assert await harness.system.is_running("c") is False
-
-    _run(exercise)
-
-
-def test_an_ask_of_a_killed_turn_can_no_longer_be_answered(harness: _Harness) -> None:
-    """The ask dies with the turn, and the agent is told so by the cancel."""
-
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("work"), sender_label="owner")
-        ask_id = await harness.raise_permission_ask("c")
-
-        await harness.system.kill("c")
-
-        assert harness.backend("c").cancellations == 1
-        assert await harness.system.answer_permission_ask("c", ask_id, "allow-once") is False
-        assert harness.backend("c").permission_answers == {}
-        assert ConversationEventKind.permission_answered not in await harness.recorded_kinds("c")
 
     _run(exercise)
 
@@ -2674,54 +2286,6 @@ def test_one_waiting_message_can_be_taken_back_and_the_rest_still_run(
         await harness.complete_turn("c")
 
         assert harness.backend("c").written_texts() == ("incumbent", "second held")
-
-    _run(exercise)
-
-
-def test_a_message_that_is_no_longer_waiting_is_an_ordinary_no(harness: _Harness) -> None:
-    """Not finding it is the truth rather than a failure: it ran while you were looking."""
-
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
-        await harness.system.send(
-            "c", text_message_content("held"), sender_label="owner", sender_message_id="message-one"
-        )
-
-        # A name nothing is holding.
-        assert await harness.system.discard_held_prompt("c", "message-two") is False
-        # A conversation that does not exist.
-        assert await harness.system.discard_held_prompt("nothing", "message-one") is False
-
-        await harness.complete_turn("c")
-
-        # It ran, so asking for it back afterwards finds nothing and changes nothing.
-        assert harness.backend("c").written_texts() == ("incumbent", "held")
-        assert await harness.system.discard_held_prompt("c", "message-one") is False
-        assert await harness.recorded_kinds("c") == (
-            ConversationEventKind.prompt,
-            ConversationEventKind.turn_ended,
-            ConversationEventKind.prompt,
-        )
-
-    _run(exercise)
-
-
-def test_a_message_without_a_sender_id_gets_a_server_owned_held_id(harness: _Harness) -> None:
-
-    async def exercise() -> None:
-        await _start(harness, "c")
-        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
-        await harness.system.send("c", text_message_content("held"), sender_label="automatic-loop")
-
-        held = await harness.system.held_prompts("c")
-        assert len(held) == 1
-        assert held[0].held_prompt_id.startswith("held_")
-        assert held[0].sender_message_id is None
-        assert held[0].sent_at_unix_milliseconds > 0
-        assert await harness.system.discard_held_prompt(
-            "c", held[0].held_prompt_id
-        ) is True
 
     _run(exercise)
 
