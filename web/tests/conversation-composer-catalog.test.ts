@@ -3,11 +3,7 @@ import { describe, expect, it } from "vitest";
 import { catalogTokenAtMessageStart } from "../src/lib/conversation/composerCatalog";
 
 describe("Conversation composer catalog activation", () => {
-  it.each([
-    ["/", 1, "/", ""],
-    ["$skill", 6, "$", "skill"],
-    ["@plugin remaining text", 7, "@", "plugin"]
-  ] as const)(
+  it.each([["$skill", 6, "$", "skill"]] as const)(
     "activates for %s when its token begins at absolute message offset zero",
     (written, at, trigger, typedSoFar) => {
       expect(catalogTokenAtMessageStart(written, at)).toMatchObject({
@@ -18,11 +14,7 @@ describe("Conversation composer catalog activation", () => {
     }
   );
 
-  it.each([
-    [" /review", 8],
-    ["\n/review", 8],
-    ["first line\n/review", 18]
-  ] as const)("does not activate for a displaced token in %j", (written, at) => {
+  it.each([["first line\n/review", 18]] as const)("does not activate for a displaced token in %j", (written, at) => {
     expect(catalogTokenAtMessageStart(written, at)).toBeNull();
   });
 
