@@ -54,8 +54,8 @@ export type { WorkerTypesResponse } from "./lifecycle";
 export type SprintSummary = {
   id: string;
   name: string;
-  date_start?: string;
-  date_end?: string;
+  date_start: string;
+  date_end: string;
 };
 
 export type SprintsResponse = {
@@ -96,16 +96,18 @@ export type TicketSummariesResponse = {
   page: ListPageFacts;
 };
 
-export type SprintItemListSummary = {
+export type OutcomeSummary = {
   id: string;
   title: string;
-  status: string;
   priority: Priority;
   deadline: string | null;
   project_id: string;
   project: string;
-  sprint_id: string | null;
+  created_at: number;
+  updated_at: number;
 };
+
+export type SprintItemListSummary = OutcomeSummary;
 
 export type SprintItemSummariesResponse = {
   items: SprintItemListSummary[];
@@ -114,13 +116,9 @@ export type SprintItemSummariesResponse = {
 
 export type SprintItemKind = "normal";
 
-export type SprintItemSummary = AnyRecord & {
-  id: string;
-  title: string;
-  project_id: string;
-  project: string;
-  sprint_id: string | null;
+export type SprintItemSummary = OutcomeSummary & {
   kind: SprintItemKind;
+  committed_sprints: SprintSummary[];
 };
 
 export type SprintItemsResponse = {
@@ -145,7 +143,7 @@ export type ScheduleCadence =
   | "current_sprint_day_four"
   | "current_sprint_final_day";
 
-export type SchedulePlacementMode = "current_sprint" | "backlog" | "sprint_item";
+export type SchedulePlacementMode = "current_sprint" | "backlog";
 
 export type ScheduledTask = {
   id: string;
@@ -323,7 +321,7 @@ export type TicketDeletionResponse = {
   linked_entity_ids: string[];
 };
 
-export type CurrentSprint = {
+export type SprintWireBody = {
   id: string;
   name: string;
   date_start: string;
@@ -336,11 +334,44 @@ export type CurrentSprint = {
   updated_at: number;
 };
 
-export type CurrentSprintResponse = {
+export type CurrentSprint = SprintWireBody;
+
+export type SprintTicketSummary = {
+  id: string;
+  title: string;
+  stage: string;
+  priority: Priority;
+  ticket_status: string;
+  project_id: string | null;
+  sprint_item_id: string | null;
+  waiting_to_closeout: boolean;
+};
+
+export type SprintOutcomeGroup = {
+  outcome: OutcomeSummary;
+  committed: boolean;
+  tickets: SprintTicketSummary[];
+};
+
+export type SprintTrackingBody = {
   planning_date: string;
-  sprint: CurrentSprint | null;
-  groups: Record<string, AnyRecord[]>;
-  other_tickets: AnyRecord[];
+  sprint: SprintWireBody | null;
+  outcome_groups: SprintOutcomeGroup[];
+  unclassified_tickets: SprintTicketSummary[];
+};
+
+export type CurrentSprintResponse = SprintTrackingBody;
+
+export type CarryOutcomeBody = {
+  target_sprint_id: string;
+  ticket_ids: string[];
+};
+
+export type CarryOutcomeResult = {
+  source_sprint_id: string;
+  target_sprint_id: string;
+  outcome_id: string;
+  ticket_ids: string[];
 };
 
 export type SprintItemWorkspaceTicket = {
@@ -356,14 +387,14 @@ export type SprintItemWorkspaceTicket = {
   review_route: AtCap;
   worker_type: string;
   day_ids: string[];
+  sprint_id: string | null;
+  sprint_name: string | null;
 };
 
 export type SprintItemWorkspace = SprintItemSummary & {
   body: string;
-  status: string;
   priority: Priority;
   deadline: string | null;
-  rollup: Record<string, number>;
   supervisor: {
     agent_key: string;
     conversation_id: string | null;
