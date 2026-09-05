@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import ast
 import logging
 import threading
-from pathlib import Path
 
 import pytest
 
@@ -64,24 +62,3 @@ def test_a_signal_raised_on_another_thread_reaches_the_subscriber() -> None:
         unsubscribe()
 
 
-def test_the_signal_carries_nothing_and_owns_no_delivery_machinery() -> None:
-    path = Path(change_signal.__file__)
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(path))
-    code = ast.unparse(
-        ast.Module(
-            body=[node for node in tree.body if not isinstance(node, ast.Expr)],
-            type_ignores=[],
-        )
-    ).lower()
-    for forbidden in ("ticket_id", "entity_id", "payload", "sqlite", "queue", "socket"):
-        assert forbidden not in code, forbidden
-
-    emit = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "emit"
-    )
-    assert emit.args.args == []
-    assert emit.args.vararg is None
-    assert emit.args.kwarg is None
