@@ -42,5 +42,16 @@ approved the repair in report 17. No production implementation changed.
 
 The comparable inventory remains 1,155 cases (53.9% removed), including 19 E2E.
 The failed run is retained privately as
-`data/simplification-deeper/verify-deeper-attempt-1.log` until cleanup. A clean final
-repository verification and staging closeout remain pending below.
+`data/simplification-deeper/verify-deeper-attempt-1.log` until cleanup. The clean final
+run then passed all seven gates on settled source `fa917aca`; the complete output
+is [`verify-deeper.log`](verify-deeper.log). It includes 928 enabled unit cases,
+20 unchanged opt-in provider skips, 338 Vitest passes including its typecheck
+project, 11 standalone frontend scripts, eight integration cases and 19 E2E cases.
+The comparable runtime-only count remains 1,155, with 180 Vitest cases.
+
+No implementation changed after that passing run. The production bundle is the
+one emitted by that run. Staging integration uses this source and generated build;
+main deployment remains a later owner action. The local preview server was stopped
+and its port released after the combined app check. Private fixtures and owned
+feature worktrees are removed after remote staging confirmation. The actual desktop
+and mobile screenshots remain in the original checkout's local review artifact.

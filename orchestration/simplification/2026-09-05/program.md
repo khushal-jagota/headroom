@@ -74,10 +74,21 @@ is 1,155 collected cases, 53.9% below the 2,505 baseline, with E2E at its 19-cas
 ceiling. The post-inventory UI repairs expanded only existing standalone `.mjs`
 harnesses and did not change that count.
 
-The second pass is not closed out. Its single final `./verify`, incorporation of
-current `staging`, any resulting repair and verification, advancement and exact push
-of `origin/staging`, remote-ref confirmation, rolling-PR check, and task-owned cleanup
-remain pending with root.
+The final settled source `fa917aca` passed all seven `./verify` gates after the
+reviewed test-only integration repairs. Full output is in
+[`verify-deeper.log`](verify-deeper.log): Ruff, mypy over 359 files, 928 enabled unit
+cases, compile/CSS checks, Svelte checking, production build, 338 frontend passes
+including typecheck cases, 11 standalone frontend scripts, eight integration cases,
+and all 19 E2E cases. The existing 20 opt-in provider cases remain skipped in the
+normal run and counted in both inventories. Runtime-only Vitest remains 180 cases.
+
+Current `origin/staging` was incorporated before this final run. Integration is to
+staging and the existing rolling PR #58; deployment from main remains a later owner
+action. The portable visual review stays in the original checkout under
+`.lavish/panels-deeper-simplification/`. Task-owned worktrees, local services and
+private API rehearsal data are removed at closeout. Report 19 records the combined
+app check, integration repairs and final verification. Protected implementation is
+unchanged against the original fetched baseline.
 
 ## First-pass rehearsal on visible live records
 
