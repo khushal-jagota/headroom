@@ -91,8 +91,13 @@ O5 was delegated to a bounded Sol child in disjoint frontend files. Initial comm
 independent placement controls and workspace metadata. It passed 334 Vitest cases,
 Svelte checking and build, but root review found material interaction gaps.
 
-Plan addendum 16 now requires retained-ID retry without duplicate creation, explicit
-historical Sprint navigation, compact action/child disclosures, and named component
-proofs. The child is implementing those repairs in a separate commit. Initial O5 is
-not final acceptance; root should integrate backend independently while those repairs
-finish. This record will be updated with the repair commit and gates.
+Plan addendum 16 is implemented in `b7501dc4`: retry reuses the retained identity;
+historical Sprint links select explicit tracking and retain that Sprint in document/back
+links; Actions and Tickets disclosures stay compact; and the Backlog catalog actually
+unmounts while closed. Named mocked-browser harnesses prove one creation POST across a
+failed commitment and retry, initially unchecked exact carry selection, catalog query
+mounting only on expansion, historical navigation, and collapsed rows. These harnesses
+passed; Vitest passed **338 cases**; Svelte checking reported zero errors/warnings; the
+production build passed. Generated assets were restored. The owning agent spot-checked
+the retry guard, explicit tracking query and collapsed catalog mount against the addendum.
+Root's independent combined review and final verification remain the acceptance gate.
