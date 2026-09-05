@@ -72,7 +72,7 @@ def test_upgrade_removes_the_proposal_review_route_and_keeps_the_proposal(
     upgraded = connect(str(db_path))
     create_schema(upgraded)
     row = upgraded.execute(
-        "SELECT at_cap,ticket_status,fields,ticket_status_changed_at,"
+        "SELECT at_cap,ticket_status,fields,guidance,ticket_status_changed_at,"
         "ticket_status_revision FROM tickets WHERE id=?",
         ("t_stamped_route",),
     ).fetchone()
@@ -88,13 +88,12 @@ def test_upgrade_removes_the_proposal_review_route_and_keeps_the_proposal(
             "proposed_by": "worker-run",
             "created_at": 123,
         },
-        "user_note": "Keep the note.",
     }
     assert migrated_fields["kickoff"] == {
         "value": "Settled kickoff.",
         "proposal": None,
-        "user_note": None,
     }
+    assert row["guidance"] == "## success\n\nKeep the note."
     assert (row["ticket_status_changed_at"], row["ticket_status_revision"]) == (30, 7)
     assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
     upgraded.close()

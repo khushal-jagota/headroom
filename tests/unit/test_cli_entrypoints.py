@@ -10,6 +10,7 @@ from click.testing import CliRunner
 
 from planner.cli import http
 from planner.cli import main as cli_main
+from planner.cli.record_projection import project_record
 
 
 def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
@@ -256,10 +257,10 @@ def test_ticket_parts_expose_guidance_and_recap_without_expanding_default_manife
         "guidance": "  exact guidance\n",
     }
     header, parts = cli_main._ticket_record(data)
-    manifest = cli_main.project_record(header, parts, None)
+    manifest = project_record(header, parts, None)
     assert list(manifest["manifest"]) == ["kickoff", "recap", "guidance"]
     assert "parts" not in manifest
-    expanded = cli_main.project_record(header, parts, ("guidance", "recap"))
+    expanded = project_record(header, parts, ("guidance", "recap"))
     assert expanded["parts"] == {
         "guidance": {"value": data["guidance"], "proposal": None},
         "recap": {"value": "orientation", "proposal": None},

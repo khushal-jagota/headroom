@@ -72,7 +72,7 @@ def test_upgrade_maps_legacy_review_state_without_losing_proposal_or_control_met
     create_schema(upgraded)
     row = upgraded.execute(
         "SELECT stage,ceiling,at_cap,ticket_status,stage_ownership_overrides,"
-        "default_stage_ownership_mode,conversation_id,fields,"
+        "default_stage_ownership_mode,conversation_id,fields,guidance,"
         "ticket_status_changed_at,ticket_status_revision FROM tickets WHERE id=?",
         ("t_legacy_review",),
     ).fetchone()
@@ -94,9 +94,9 @@ def test_upgrade_maps_legacy_review_state_without_losing_proposal_or_control_met
             "proposed_by": "worker-run",
             "created_at": 123,
         },
-        "user_note": "Keep the note.",
     }
-    assert migrated_fields["approach"]["proposal"] is None
+    assert migrated_fields["approach"] == {"value": None, "proposal": None}
+    assert row["guidance"] == "## success\n\nKeep the note."
     assert (row["ticket_status_changed_at"], row["ticket_status_revision"]) == (30, 7)
     assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
     upgraded.close()

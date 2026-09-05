@@ -91,6 +91,7 @@ def _table_structure(conn: sqlite3.Connection, table: str) -> dict[str, object]:
 # default, primary-key position, in PRAGMA table_info's shape.
 STATUS_CHANGED_AT_COLUMN = ("ticket_status_changed_at", "INTEGER", 1, "0", 0)
 STATUS_REVISION_COLUMN = ("ticket_status_revision", "INTEGER", 1, "0", 0)
+GUIDANCE_COLUMN = ("guidance", "TEXT", 1, "''", 0)
 
 
 def _table_structure_before_status_changed_at(
@@ -98,6 +99,8 @@ def _table_structure_before_status_changed_at(
 ) -> dict[str, object]:
     """The tickets structure before its status-tracking columns were added."""
     columns = list(structure["columns"])  # type: ignore[call-overload]
+    guidance_column = columns.pop()
+    assert guidance_column == GUIDANCE_COLUMN
     sprint_column = columns.pop()
     assert sprint_column[:2] == ("sprint_id", "TEXT")
     assert columns[-2:] == [STATUS_CHANGED_AT_COLUMN, STATUS_REVISION_COLUMN]

@@ -111,7 +111,7 @@ def test_upgrade_preserves_the_parked_proposal_and_ticket_control_metadata(
     create_schema(upgraded)
     row = upgraded.execute(
         "SELECT stage,ceiling,stage_ownership_overrides,default_stage_ownership_mode,"
-        "conversation_id,fields,ticket_status_changed_at,ticket_status_revision "
+        "conversation_id,fields,guidance,ticket_status_changed_at,ticket_status_revision "
         "FROM tickets WHERE id=?",
         ("t_agent_routed",),
     ).fetchone()
@@ -134,9 +134,9 @@ def test_upgrade_preserves_the_parked_proposal_and_ticket_control_metadata(
             "proposed_by": "sprint_item_supervisor",
             "created_at": 123,
         },
-        "user_note": "Keep the note.",
     }
-    assert migrated_fields["approach"]["proposal"] is None
+    assert migrated_fields["approach"] == {"value": None, "proposal": None}
+    assert row["guidance"] == "## success\n\nKeep the note."
     upgraded.close()
 
 

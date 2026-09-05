@@ -12,23 +12,26 @@ The acceptance metric is runnable pytest and Vitest cases. Legacy Node scripts
 are reported separately because one script may contain many assertions and is
 not comparable to one collected test case.
 
-| Suite | Baseline | Pruning branch | Known integrated projection |
+| Suite | Baseline | Pruning branch | Final integrated tree |
 |---|---:|---:|---:|
-| Python unit | 1,924 | 935 | 937 after the Sprint feature's two new cases |
+| Python unit | 1,924 | 935 | 946 |
 | Python integration | 14 | 8 | 8 |
 | Playwright E2E | 39 | 19 | 19 |
-| Vitest runtime cases | 332 | 178 | 178 |
-| **Comparable total** | **2,309** | **1,140** | **1,142** |
+| Vitest runtime cases | 528 | 178 | 178 |
+| **Comparable total** | **2,505** | **1,140** | **1,151** |
 
-The branch removes 1,169 of 2,309 comparable cases, or 50.6%. The known
-integrated projection removes 1,167, or 50.5%, leaving twelve cases of margin
-under the required ceiling of 1,154. Root must recollect after integration;
-these figures do not assume that a definition with `it.each` is one case.
+The pruning branch removes 1,365 of 2,505 comparable cases, or 54.5%. The final
+integrated tree removes 1,354, or 54.1%, leaving 101 cases of margin under the
+required ceiling of 1,252. The original frontend audit undercounted the baseline
+as 332 definitions. A detached collection at the baseline revision found 528
+runtime cases after expanding `it.each`; typechecking was explicitly disabled so
+the typecheck project did not duplicate the runtime inventory.
 
 Legacy browser/Node scripts move from 12 to 9 on this branch: Atlas, the surface
 token source scan, and the exact-geometry CSS script are gone. The Sprint feature
-adds one new script, so the known integrated projection is 10. This separate
-journey count does not enter the 2,309-case denominator.
+adds one new script, so the final integrated tree has 10. These scripts are
+excluded from both the baseline and final comparable totals because a script may
+contain many assertions and is not one collected test case.
 
 The static surface moves from about 83,363 lines to about 50,975 lines:
 
@@ -246,10 +249,10 @@ No `./verify` or broad pytest suite ran. Focused gates completed during pruning:
 - Final changed frontend parameter cohort: 146 Vitest/typecheck executions
   passed; the later six-file buffer cohort passed 28 executions with no type
   errors.
-- Collection-only final branch counts: unit 935, integration 8, E2E 19; Vitest
-  runtime list 178.
+- Collection-only pruning branch counts: unit 935, integration 8, E2E 19;
+  Vitest runtime list 178.
 
-Root still owns the final integrated collection, the one final `./verify`, and
-the completeness claim. The only material count uncertainty is merge fallout:
-if an integrated feature adds more cases than the two already counted, root must
-recount against the 1,154 ceiling rather than relying on this projection.
+The later integrated collection found unit 946, integration 8, E2E 19, and
+Vitest runtime 178, for 1,151 comparable cases. The durable commands, counts, and
+log hashes are recorded in `08-final-measurements.md`. The pruning-stage checks
+above remain focused evidence rather than a repository-wide verification claim.

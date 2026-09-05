@@ -153,8 +153,8 @@ One screen per part of the system:
   The section stays absent when no trouble was recorded.
 
   The stages and their workflow remain the Ticket's Worker type's, derived from the
-  served manifest (see below and `worker-types.md`); the kickoff user note sits first in
-  that spine, collapsed. The current Stage mark speaks without a second status pill.
+  served manifest (see below and `worker-types.md`). One collapsed Guidance editor sits
+  above the stage history. The current Stage mark speaks without a second status pill.
   Its summary adds words only where the mark would otherwise be ambiguous:
   **you're on it** for user-owned or taken-over work, with **Release**, and
   **awaiting approval** for a parked proposal. Running,

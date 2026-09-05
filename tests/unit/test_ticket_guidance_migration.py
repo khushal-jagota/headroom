@@ -35,7 +35,7 @@ def test_cutover_preserves_both_note_sources_exactly_and_all_other_columns(tmp_p
     path = tmp_path / "guidance.db"
     _parent(path)
     conn = connect(str(path))
-    fields = {
+    fields: dict[str, dict[str, object]] = {
         "plan": {
             "value": "approved",
             "proposal": {"body": "pending", "proposed_by": "agent", "created_at": 9},

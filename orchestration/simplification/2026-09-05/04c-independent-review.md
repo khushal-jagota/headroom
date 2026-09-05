@@ -178,9 +178,13 @@ $ git diff --check -- tests/e2e/test_ticket_file_previews.py
 (no output; exit 0)
 ```
 
-Vitest reports both the runtime and typecheck projects; the restored file contains
-one `it` body and therefore adds one actual runnable case to the inventory. The
-first Ruff check caught a 101-character assertion; wrapping that assertion was the
-only edit after the passing behavioral checks. No full suite, build, or `./verify`
-was run. These focused passes resolve the two named missing proofs; the parent's
-independent patch review and final program gate remain separate.
+That focused Vitest command reported both the runtime and typecheck projects; its
+two executions were never used as the inventory count. The restored file contains
+one `it` body and therefore adds one runtime case. Final inventory collection used
+`vitest list --typecheck.enabled=false`, which expands parameterized cases without
+duplicating them through the typecheck project. It found 528 baseline Vitest cases
+and 178 in the integrated tree. The first Ruff check caught a 101-character
+assertion; wrapping that assertion was the only edit after the passing behavioral
+checks. No full suite, build, or `./verify` was run in this review. These focused
+passes resolve the two named missing proofs; the parent's independent patch review
+and final program gate remain separate.

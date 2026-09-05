@@ -12,7 +12,7 @@ from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 def _replace_editor_text(page: Page, selector: str, body: str) -> None:
     editor = page.locator(selector)
     editor.focus()
-    editor.press("Control+A")
+    editor.press("ControlOrMeta+A")
     editor.type(body)
     page.locator(f'{selector.rsplit(" ", 1)[0]} [data-accept]').focus()
 
@@ -102,7 +102,7 @@ def test_pending_proposal_edits_persist_on_ticket_and_review_before_approval(
     )
     editor = page.locator(review_editor)
     editor.focus()
-    editor.press("Control+A")
+    editor.press("ControlOrMeta+A")
     editor.type("Saved from Review.")
     page.click(approve_selector)
     page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)

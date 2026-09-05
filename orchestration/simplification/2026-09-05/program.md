@@ -11,7 +11,8 @@ backends, including their frontend implementation and contracts, are protected.
 Base: origin/staging b7ca8e047967e405feeebe058f5cd2ef82b2c2e5.
 Worktree: `/Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification`.
 Branch: `codex/panels-simplification`.
-The original checkout and its untracked uv.lock are left alone.
+Implementation used the isolated worktree. The original untracked uv.lock is
+preserved; the original staging checkout advances only at Closeout.
 
 The owner explicitly reserves `./verify` for the very end. Individual chunks use
 named focused gates. No broad baseline run. Audits count tests without running them.
@@ -48,8 +49,12 @@ and Review state in a separate 3D rendering without owning useful unique data.
 - Sprint documents implemented and independently reviewed (1c1e3b80): twelve prose fields become four.
 - Ticket guidance implemented and independently reviewed; the combined migrations pass focused checks.
 - Backlog is implemented and independently reviewed; unscheduled Tickets and briefs open in Workspace.
-- Test pruning remains in progress. E2E has reached 19 cases from 39.
-- No full verify run has occurred; the final settled tree owns it.
+- Test pruning is complete: 2,505 collected cases become 1,151 (54.1% removed),
+  including E2E from 39 to 19. Expanded runtime collection corrected the earlier
+  frontend estimate. See `08-final-measurements.md` for the comparable inventory.
+- Final `./verify` passed all seven gates after repairing the concrete failures
+  from its first attempt. Full output is in `verify.log`. No full run occurred
+  during the implementation chunks.
 
 ## Rehearsal on visible live records
 
@@ -64,3 +69,38 @@ This exercises visible exported prose, not a full production database backup. Ra
 dual-key historical notes and relationship preservation are covered by the separate
 populated migration fixtures. Private exports and rehearsal script stay under
 `data/simplification/`, outside git.
+
+## Final integration repairs
+
+The first final `./verify` found stale migration-to-HEAD expectations for retired
+field notes, a few strict-typing fixture references to the old API, one import
+format issue, and two macOS test assumptions. The historical migration seeds
+remain; their assertions now explicitly prove exact guidance preservation. The
+attachment assertion uses the canonical resolved path, and the proposal editor
+test uses the platform-aware Select All shortcut. Neither change loosens its
+exact outgoing content assertions. Focused checks passed, and the independent
+review in `07-test-integration-review.md` approved the repairs. Conversation and
+backend implementation code remains unchanged.
+
+The normal local suite retains 20 opt-in real-provider cases (seven Claude, nine
+Codex, four Hermes). These require their explicit `PANELS_REAL_*_TESTS=1` settings
+and provider setup, and are not enabled by this program. They are included in
+both collection inventories; the reduction is actual deletion, not new skips.
+
+## Verification result
+
+The final settled tree passed Ruff, strict mypy over 352 files, 926 enabled unit
+cases, the compile/CSS checks, Svelte checking, the production build, frontend
+tests, eight integration cases, and all 19 E2E cases. The 20 real-provider cases
+remain opt-in as described above. Vitest reports 334 passes when its typecheck
+project is included; the comparable runtime-only inventory is 178 cases. All
+11 standalone frontend scripts also passed. Full output: [`verify.log`](verify.log).
+
+Independent reviews have no unresolved findings. The protected conversation,
+backend, delivery, and conversation-start paths have no implementation diff
+against the fetched baseline. Existing migration files are unchanged; only the
+two new migration revisions are added. Integration ends at `origin/staging` and
+the existing rolling staging-to-main PR; main deployment remains a later owner
+action. Task-owned services, local state, worktrees, and branches are removed
+after the remote staging revision is confirmed. The visual before/after artifact
+is retained in the original checkout under `.lavish/panels-simplification/`.

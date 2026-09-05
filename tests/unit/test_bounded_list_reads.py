@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from sqlite3 import Connection
 
-
 from planner.core.clock import TestClock as ClockForTest
 from planner.list_reads.contracts import ListPageRequest
 from planner.tickets import data as tickets_data
