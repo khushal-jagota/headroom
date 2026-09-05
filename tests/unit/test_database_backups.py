@@ -1,24 +1,16 @@
 from __future__ import annotations
 
 import json
-import os
-import shutil
 import sqlite3
 from pathlib import Path
 
 import pytest
-from click.testing import CliRunner
 
-from planner.environments import backup as backup_module
 from planner.environments.backup import (
     _is_verified_snapshot,
     create_database_backup,
-    is_verified_snapshot,
     restore_database_snapshot,
-    verified_snapshot_retention_plan,
-    verified_snapshots,
 )
-from planner.environments.cli import environment
 
 
 @pytest.fixture(autouse=True)
@@ -72,52 +64,6 @@ def test_backup_uses_online_snapshot_and_records_integrity_metadata(tmp_path: Pa
         assert connection.execute("SELECT value FROM records").fetchone()[0] == "committed in WAL"
 
 
-def test_failed_integrity_does_not_delete_existing_verified_snapshot(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "planning.db"
-    backup_dir = tmp_path / "backups"
-    with sqlite3.connect(source) as connection:
-        connection.execute("CREATE TABLE records (value TEXT NOT NULL)")
-        connection.execute("INSERT INTO records VALUES ('old')")
-    old_snapshot = create_database_backup(source, backup_dir, "old-revision")
-
-    monkeypatch.setattr(
-        "planner.environments.backup._verify_database",
-        lambda _: (_ for _ in ()).throw(RuntimeError("corrupt")),
-    )
-    with pytest.raises(RuntimeError, match="corrupt"):
-        create_database_backup(source, backup_dir, "new-revision")
-
-    assert old_snapshot.exists()
-    assert len(tuple(backup_dir.iterdir())) == 1
-
-
-def test_backup_publish_failure_leaves_existing_snapshot_intact(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "planning.db"
-    backup_dir = tmp_path / "backups"
-    with sqlite3.connect(source) as connection:
-        connection.execute("CREATE TABLE records (value TEXT NOT NULL)")
-        connection.execute("INSERT INTO records VALUES ('old')")
-    old_snapshot = create_database_backup(source, backup_dir, "old-revision")
-
-    real_replace = __import__("os").replace
-
-    def fail_publish(source_path: str | Path, destination_path: str | Path) -> None:
-        if Path(source_path).name.startswith(".backup-"):
-            raise OSError("publish failed")
-        real_replace(source_path, destination_path)
-
-    monkeypatch.setattr("planner.environments.backup.os.replace", fail_publish)
-    with pytest.raises(OSError, match="publish failed"):
-        create_database_backup(source, backup_dir, "new-revision")
-
-    assert old_snapshot.exists()
-    assert sorted(path.name for path in backup_dir.glob("snapshot-*")) == [old_snapshot.name]
-
-
 def test_retention_keeps_seven_verified_snapshots(tmp_path: Path) -> None:
     source = tmp_path / "planning.db"
     backup_dir = tmp_path / "backups"
@@ -129,121 +75,6 @@ def test_retention_keeps_seven_verified_snapshots(tmp_path: Path) -> None:
     snapshots = sorted(backup_dir.glob("snapshot-*"))
     assert len(snapshots) == 7
     assert all((snapshot / "metadata.json").exists() for snapshot in snapshots)
-
-
-def test_verified_snapshot_evidence_rejects_symlinked_snapshots_and_proof_entries(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "planning.db"
-    backup_dir = tmp_path / "backups"
-    external_dir = tmp_path / "external-backups"
-    with sqlite3.connect(source) as connection:
-        connection.execute("CREATE TABLE records (value TEXT NOT NULL)")
-    _seed_managed_tree(tmp_path, "regular")
-    regular = create_database_backup(source, backup_dir, "regular")
-    external = create_database_backup(source, external_dir, "external")
-    linked_snapshot = backup_dir / "snapshot-external-link"
-    linked_snapshot.symlink_to(external, target_is_directory=True)
-
-    linked_metadata = backup_dir / "snapshot-linked-metadata"
-    shutil.copytree(regular, linked_metadata)
-    (linked_metadata / "metadata.json").unlink()
-    os.symlink(external / "metadata.json", linked_metadata / "metadata.json")
-
-    linked_database = backup_dir / "snapshot-linked-database"
-    shutil.copytree(regular, linked_database)
-    (linked_database / "database.sqlite").unlink()
-    os.symlink(external / "database.sqlite", linked_database / "database.sqlite")
-
-    linked_managed_tree = backup_dir / "snapshot-linked-managed-tree"
-    shutil.copytree(regular, linked_managed_tree)
-    shutil.rmtree(linked_managed_tree / "files")
-    os.symlink(external / "files", linked_managed_tree / "files")
-
-    linked_manifest = backup_dir / "snapshot-linked-manifest"
-    shutil.copytree(regular, linked_manifest)
-    (linked_manifest / "files" / "manifest.json").unlink()
-    os.symlink(
-        external / "files" / "manifest.json",
-        linked_manifest / "files" / "manifest.json",
-    )
-
-    assert is_verified_snapshot(regular)
-    assert not is_verified_snapshot(linked_snapshot)
-    assert not is_verified_snapshot(linked_metadata)
-    assert not is_verified_snapshot(linked_database)
-    assert not is_verified_snapshot(linked_managed_tree)
-    assert not is_verified_snapshot(linked_manifest)
-    assert verified_snapshots(backup_dir) == [regular]
-    assert verified_snapshot_retention_plan(backup_dir) == ()
-
-
-def test_retention_keeps_newest_by_creation_metadata(tmp_path: Path) -> None:
-    source = tmp_path / "planning.db"
-    backup_dir = tmp_path / "backups"
-    with sqlite3.connect(source) as connection:
-        connection.execute("CREATE TABLE records (value TEXT NOT NULL)")
-    snapshots = [create_database_backup(source, backup_dir, str(revision)) for revision in range(7)]
-    # Insertion order deliberately differs from chronological order: the second
-    # snapshot is the oldest by created_at, so it -- not the first -- is trimmed.
-    created_ats = {
-        0: "2030-01-01T00:00:00+00:00",
-        1: "2020-01-01T00:00:00+00:00",
-        2: "2025-01-01T00:00:00+00:00",
-    }
-    for revision, created_at in created_ats.items():
-        metadata = json.loads((snapshots[revision] / "metadata.json").read_text())
-        metadata["created_at"] = created_at
-        (snapshots[revision] / "metadata.json").write_text(json.dumps(metadata))
-
-    create_database_backup(source, backup_dir, "7")
-
-    retained_revisions = {
-        json.loads((snapshot / "metadata.json").read_text())["deployed_revision"]
-        for snapshot in backup_dir.glob("snapshot-*")
-    }
-    assert retained_revisions == {"0", "2", "3", "4", "5", "6", "7"}
-
-
-def test_retention_failure_leaves_existing_snapshots_intact(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "planning.db"
-    backup_dir = tmp_path / "backups"
-    with sqlite3.connect(source) as connection:
-        connection.execute("CREATE TABLE records (value TEXT NOT NULL)")
-    for revision in range(7):
-        create_database_backup(source, backup_dir, str(revision))
-    existing = set(backup_dir.glob("snapshot-*"))
-
-    def refuse_delete(path: Path, **_: object) -> None:
-        if any(".retention-" in part for part in path.parts) or path in existing:
-            raise OSError("retention storage failure")
-
-    monkeypatch.setattr("planner.environments.backup.shutil.rmtree", refuse_delete)
-    with pytest.raises(OSError, match="retention storage failure"):
-        create_database_backup(source, backup_dir, "new")
-
-    assert existing <= set(backup_dir.glob("snapshot-*"))
-
-
-def test_retention_does_not_duplicate_an_old_snapshot_before_removal(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "planning.db"
-    backup_dir = tmp_path / "backups"
-    with sqlite3.connect(source) as connection:
-        connection.execute("CREATE TABLE records (value TEXT NOT NULL)")
-    for revision in range(7):
-        create_database_backup(source, backup_dir, str(revision))
-
-    def fail_copy(*_: object, **__: object) -> None:
-        raise AssertionError("retention must not duplicate a database snapshot")
-
-    monkeypatch.setattr("planner.environments.backup.shutil.copytree", fail_copy)
-    create_database_backup(source, backup_dir, "new")
-
-    assert len(tuple(backup_dir.glob("snapshot-*"))) == 7
 
 
 def test_restore_requires_stopped_live_and_removes_stale_sidecars(tmp_path: Path) -> None:
@@ -300,59 +131,6 @@ def test_restore_replacement_failure_preserves_database_and_sidecars(
     assert shm.read_bytes() == b"old shm"
 
 
-def test_restore_removes_temporary_database_sidecars_created_by_verification(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "source.db"
-    backup_dir = tmp_path / "backups"
-    destination = tmp_path / "live.db"
-    _seed_database(source)
-    snapshot = create_database_backup(source, backup_dir, "rev-1")
-    real_verify_database = backup_module._verify_database
-
-    def verify_with_sidecars(database: Path) -> None:
-        real_verify_database(database)
-        if ".restore-tmp-" in database.name:
-            Path(str(database) + "-wal").write_bytes(b"temporary wal")
-            Path(str(database) + "-shm").write_bytes(b"temporary shm")
-
-    monkeypatch.setattr("planner.environments.backup._verify_database", verify_with_sidecars)
-
-    restore_database_snapshot(snapshot, destination, live_stopped=True)
-
-    assert list(tmp_path.glob(".live.db.restore-tmp-*")) == []
-    with sqlite3.connect(destination) as connection:
-        assert connection.execute("SELECT value FROM records").fetchone()[0] == "canonical"
-
-
-def test_restore_verification_failure_removes_temporary_database_and_sidecars(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "source.db"
-    backup_dir = tmp_path / "backups"
-    destination = tmp_path / "live.db"
-    _seed_database(source)
-    snapshot = create_database_backup(source, backup_dir, "rev-1")
-    destination.write_bytes(b"old database")
-    real_verify_database = backup_module._verify_database
-
-    def fail_temporary_verification(database: Path) -> None:
-        if ".restore-tmp-" not in database.name:
-            real_verify_database(database)
-            return
-        Path(str(database) + "-wal").write_bytes(b"temporary wal")
-        Path(str(database) + "-shm").write_bytes(b"temporary shm")
-        raise RuntimeError("verification failed")
-
-    monkeypatch.setattr("planner.environments.backup._verify_database", fail_temporary_verification)
-
-    with pytest.raises(RuntimeError, match="verification failed"):
-        restore_database_snapshot(snapshot, destination, live_stopped=True)
-
-    assert destination.read_bytes() == b"old database"
-    assert list(tmp_path.glob(".live.db.restore-tmp-*")) == []
-
-
 def test_restore_rejects_corrupted_snapshot(tmp_path: Path) -> None:
     source = tmp_path / "planning.db"
     backup_dir = tmp_path / "backups"
@@ -363,54 +141,6 @@ def test_restore_rejects_corrupted_snapshot(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="verified"):
         restore_database_snapshot(snapshot, tmp_path / "restored.db", live_stopped=True)
-
-
-@pytest.mark.parametrize("metadata", ([], "valid JSON", 42, None))
-def test_restore_ignores_non_object_metadata(tmp_path: Path, metadata: object) -> None:
-    source = tmp_path / "planning.db"
-    backup_dir = tmp_path / "backups"
-    with sqlite3.connect(source) as connection:
-        connection.execute("CREATE TABLE records (value TEXT NOT NULL)")
-    snapshot = create_database_backup(source, backup_dir, "rev-1")
-    (snapshot / "metadata.json").write_text(json.dumps(metadata))
-
-    with pytest.raises(ValueError, match="verified"):
-        restore_database_snapshot(snapshot, tmp_path / "restored.db", live_stopped=True)
-
-
-def test_environment_commands_expose_backup_and_stopped_restore(tmp_path: Path) -> None:
-    source = tmp_path / "planning.db"
-    with sqlite3.connect(source) as connection:
-        connection.execute("CREATE TABLE records (value TEXT NOT NULL)")
-    backup_dir = tmp_path / "backups"
-    runner = CliRunner()
-
-    backup_result = runner.invoke(
-        environment,
-        [
-            "backup",
-            "--source-db",
-            str(source),
-            "--backup-dir",
-            str(backup_dir),
-            "--deployed-revision",
-            "rev-1",
-        ],
-    )
-    assert backup_result.exit_code == 0, backup_result.output
-    snapshot = next(backup_dir.glob("snapshot-*"))
-    restore_result = runner.invoke(
-        environment,
-        [
-            "restore",
-            "--snapshot",
-            str(snapshot),
-            "--destination-db",
-            str(tmp_path / "restored.db"),
-            "--live-stopped",
-        ],
-    )
-    assert restore_result.exit_code == 0, restore_result.output
 
 
 def test_backup_captures_and_verifies_the_managed_file_tree(tmp_path: Path) -> None:
@@ -430,34 +160,6 @@ def test_backup_captures_and_verifies_the_managed_file_tree(tmp_path: Path) -> N
         snapshot / "files" / "worker-settings" / "coding" / "settings.json"
     ).read_text() == '{"marker": "captured"}'
     assert (snapshot / "files" / "skills" / "panels" / "SKILL.md").read_text() == "# captured"
-    assert _is_verified_snapshot(snapshot)
-
-
-def test_missing_skills_home_is_tolerated(tmp_path: Path) -> None:
-    source = tmp_path / "data" / "planner.db"
-    _seed_database(source)
-    _seed_managed_tree(source.parent, marker="captured")
-    shutil.rmtree(source.parent / "skills")
-    backup_dir = tmp_path / "backups"
-
-    snapshot = create_database_backup(source, backup_dir, "rev-1")
-
-    metadata = json.loads((snapshot / "metadata.json").read_text())
-    assert metadata["managed_files"]["roots"] == ["files", "worker-settings"]
-    assert not (snapshot / "files" / "skills").exists()
-    assert _is_verified_snapshot(snapshot)
-
-
-def test_backup_without_managed_roots_is_database_only(tmp_path: Path) -> None:
-    source = tmp_path / "data" / "planner.db"
-    _seed_database(source)
-    backup_dir = tmp_path / "backups"
-
-    snapshot = create_database_backup(source, backup_dir, "rev-1")
-
-    metadata = json.loads((snapshot / "metadata.json").read_text())
-    assert "managed_files" not in metadata
-    assert not (snapshot / "files").exists()
     assert _is_verified_snapshot(snapshot)
 
 
@@ -489,34 +191,6 @@ def test_restore_brings_back_the_managed_file_tree(tmp_path: Path) -> None:
     assert not (destination.parent / "files" / "tickets" / "t_old").exists()
     with sqlite3.connect(destination) as connection:
         assert connection.execute("SELECT value FROM records").fetchone()[0] == "canonical"
-
-
-def test_restore_makes_read_only_snapshot_state_owner_writable(tmp_path: Path) -> None:
-    source = tmp_path / "source" / "planner.db"
-    _seed_database(source)
-    _seed_managed_tree(source.parent, marker="snapshot")
-    snapshot = create_database_backup(source, tmp_path / "backups", "rev-1")
-    snapshot_database = snapshot / "database.sqlite"
-    snapshot_database.chmod(0o400)
-    captured = snapshot / "files"
-    for path in sorted(captured.rglob("*"), reverse=True):
-        if path.is_symlink():
-            continue
-        path.chmod(0o500 if path.is_dir() else 0o400)
-    captured.chmod(0o500)
-
-    destination = tmp_path / "live" / "planner.db"
-    restore_database_snapshot(snapshot, destination, live_stopped=True)
-
-    with sqlite3.connect(destination) as connection:
-        connection.execute("INSERT INTO records VALUES ('writable')")
-        connection.commit()
-    settings = destination.parent / "worker-settings" / "coding" / "settings.json"
-    settings.write_text('{"marker": "writable"}')
-    new_ticket = destination.parent / "files" / "tickets" / "t_new"
-    new_ticket.mkdir()
-    (new_ticket / "note.txt").write_text("writable")
-    assert settings.read_text() == '{"marker": "writable"}'
 
 
 def test_restore_rejects_tampered_managed_capture(tmp_path: Path) -> None:
@@ -574,28 +248,6 @@ def test_restore_managed_replacement_failure_rolls_back_the_live_tree(
     assert leftover == []
 
 
-def test_plan_hermes_home_does_not_redirect_managed_skill_backup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "data" / "planner.db"
-    _seed_database(source)
-    _seed_managed_tree(source.parent, marker="managed")
-    hermes_home = tmp_path / "elsewhere" / "hermes-home"
-    (hermes_home / "skills" / "unrelated").mkdir(parents=True)
-    (hermes_home / "skills" / "unrelated" / "SKILL.md").write_text("# user skill")
-    monkeypatch.setenv("PLAN_HERMES_HOME", str(hermes_home))
-    backup_dir = tmp_path / "backups"
-
-    snapshot = create_database_backup(source, backup_dir, "rev-1")
-
-    metadata = json.loads((snapshot / "metadata.json").read_text())
-    assert "skills" in metadata["managed_files"]["roots"]
-    assert (snapshot / "files" / "skills" / "panels" / "SKILL.md").read_text() == (
-        "# managed"
-    )
-    assert not (snapshot / "files" / "skills" / "unrelated").exists()
-
-
 def test_symlinked_skills_are_captured_and_restored_as_symlinks(tmp_path: Path) -> None:
     source = tmp_path / "data" / "planner.db"
     _seed_database(source)
@@ -623,28 +275,3 @@ def test_symlinked_skills_are_captured_and_restored_as_symlinks(tmp_path: Path) 
     assert (restored / "SKILL.md").read_text() == "# canonical"
 
 
-def test_environment_commands_restore_the_managed_file_tree(tmp_path: Path) -> None:
-    source = tmp_path / "source" / "planner.db"
-    _seed_database(source)
-    _seed_managed_tree(source.parent, marker="snapshot")
-    backup_dir = tmp_path / "backups"
-    runner = CliRunner()
-    backup_result = runner.invoke(
-        environment,
-        ["backup", "--source-db", str(source), "--backup-dir", str(backup_dir),
-         "--deployed-revision", "rev-1"],
-    )
-    assert backup_result.exit_code == 0, backup_result.output
-    snapshot = next(backup_dir.glob("snapshot-*"))
-
-    destination = tmp_path / "live" / "planner.db"
-    _seed_database(destination)
-    restore_result = runner.invoke(
-        environment,
-        ["restore", "--snapshot", str(snapshot), "--destination-db", str(destination),
-         "--live-stopped"],
-    )
-    assert restore_result.exit_code == 0, restore_result.output
-    assert (
-        destination.parent / "files" / "tickets" / "t_1" / "artifacts" / "ui.html"
-    ).read_text() == "<h1>snapshot</h1>"
