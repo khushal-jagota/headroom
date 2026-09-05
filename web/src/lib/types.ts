@@ -172,12 +172,13 @@ export type SchedulesResponse = {
   schedules: ScheduledTask[];
 };
 
-export type TicketField = {
-  value?: string | null;
-  proposal?: {
-    body: string;
-    proposed_by: string;
-  } | null;
+export type TicketFieldValues = Record<string, string>;
+
+export type PendingTicketProposal = {
+  field: string;
+  body: string;
+  proposed_by: string;
+  created_at: number;
 };
 
 export type AtCap = "stop" | "propose";
@@ -293,7 +294,9 @@ export type TicketDetail = {
   guidance: string;
   verdict: TicketVerdict | null;
   trouble_notes: TicketTroubleNote[];
-  fields: Record<string, TicketField>;
+  field_values: TicketFieldValues;
+  pending_proposal: PendingTicketProposal | null;
+  archived_field_content: string;
 };
 
 export type TicketVerdict = {

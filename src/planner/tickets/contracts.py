@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from types import MappingProxyType
 from typing import Final, Literal, NotRequired, Required, TypedDict
 
 from planner.core.contracts import Priority
@@ -122,48 +121,17 @@ class TicketListFilters:
     search: str | None = None
 
 
+TicketFieldValues = Mapping[str, str]
+
+
 @dataclass(frozen=True)
-class Proposal:  # §4.2 proposal slot
-    """A parked proposal, waiting for the user to approve it.
+class PendingTicketProposal:
+    """The one current result awaiting agreement on a Ticket."""
 
-    It carries no reviewer, because there is only one approval gate to carry.
-    """
-
+    field: str
     body: str
-    proposed_by: str  # actor string: "agent", run id context, or PLAN_ACTOR
+    proposed_by: str
     created_at: int
-
-
-@dataclass
-class FieldSlot:  # one ordinary field object
-    value: str | None = None  # canonical; proposal resolver is the only writer
-    proposal: Proposal | None = None
-
-
-@dataclass(frozen=True)
-class TicketFields:  # tickets.fields JSON column, generic over the type's fields
-    """An ordered, READ-ONLY map field_id -> FieldSlot. The key order is the definition's
-    declared field order; the codec relies on it for a stable, byte-identical JSON key
-    order.
-
-    ``slots`` is exposed as a ``MappingProxyType`` so the only way to change a slot is
-    through ``fields_codec.with_slot`` (copy-on-write) → the proposal resolver — the same
-    value-object boundary the old fixed struct enforced. The constructor accepts any
-    ``Mapping`` and wraps a private copy, so a caller cannot retain a mutable handle to
-    the backing dict. (FieldSlot's own field-level mutability is pre-existing and left
-    as-is; the boundary this enforces is against reassigning or inserting a slot.)"""
-
-    slots: Mapping[str, FieldSlot] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        # Wrap a fresh private copy in a read-only proxy: reassigning or inserting a slot
-        # on `.slots` raises, and the caller's dict cannot alias the stored mapping.
-        object.__setattr__(self, "slots", MappingProxyType(dict(self.slots)))
-
-    @classmethod
-    def empty(cls, field_ids: tuple[str, ...]) -> TicketFields:
-        """A fresh set of empty slots, one per declared field id, in declared order."""
-        return cls({fid: FieldSlot() for fid in field_ids})
 
 
 # --- the scope pair (§4.4.7) ---
@@ -237,10 +205,6 @@ class CreateTicketFromExternalWorkBody(ReconcileTicketFromExternalWorkBody):
     blocked_by_ticket_ids: NotRequired[list[str]]
 
 
-class ProposeBody(TypedDict, total=False):  # POST /tickets/{id}/propose/{field}
-    body: str  # default ""
-
-
 class ProposeWithRecapBody(TypedDict, total=False):  # POST /tickets/{id}/propose
     body: str  # default ""
     recap: str  # required non-empty by the writer
@@ -264,6 +228,11 @@ class ValueEditBody(TypedDict, total=False):  # PUT /tickets/{id}/value/{field}
     body: str  # default ""
 
 
+class PendingProposalEditBody(TypedDict):  # PUT /tickets/{id}/proposal
+    field: str  # Expected current field; rejects stale edits.
+    body: str
+
+
 class RevisionMessageBody(TypedDict, total=False):  # POST /tickets/{id}/return-for-revision
     message: str  # required non-empty by the writer
 
@@ -271,10 +240,6 @@ class RevisionMessageBody(TypedDict, total=False):  # POST /tickets/{id}/return-
 class ScopeBody(TypedDict, total=False):  # POST /tickets/{id}/scope
     ceiling: str | None  # Stage id; route requires it (scope_missing)
     at_cap: str | None  # AtCap value; route requires it (scope_missing)
-
-
-class StageBody(TypedDict, total=False):  # POST /tickets/{id}/stage
-    to_stage: str  # Stage id; required (default "" is rejected)
 
 
 class EmployeeConfigurationBody(TypedDict):
@@ -332,7 +297,9 @@ class Ticket:  # §3.3 — column names match exactly
     effective_stage_ownership_mode: StageOwnershipMode | None
     conversation_id: str | None  # the Ticket's conversation link (column name is frozen)
     alias: str | None  # migration "Ticket ID:" (§12), unique when present
-    fields: TicketFields
+    field_values: TicketFieldValues
+    pending_proposal: PendingTicketProposal | None
+    archived_field_content: str
     created_at: int
     updated_at: int
 
