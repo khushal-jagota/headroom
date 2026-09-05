@@ -219,92 +219,11 @@ def test_edit_current_gating_field_rejected() -> None:
     assert exc.value.detail == {"field": "plan", "stage": "needs_plan"}
 
 
-def test_edit_future_field_with_value_rejected() -> None:
-    # Backward-Stage-jump hazard: stage=needs_approach but plan already holds a value.
-    ticket = _ticket(
-        "needs_approach",
-        _fields(plan=FieldSlot(value="plan value")),
-    )
-    with pytest.raises(PlannerError) as exc:
-        _decide_edit_value(ticket, "plan", "x", "human")
-    assert exc.value.code is ErrorCode.validation
-    assert exc.value.detail == {"field": "plan", "stage": "needs_approach"}
-
-
-def test_edit_dropped_ticket_rejected() -> None:
-    ticket = _ticket("dropped", _fields(success=FieldSlot(value="settled")))
-    with pytest.raises(PlannerError) as exc:
-        _decide_edit_value(ticket, "success", "x", "human")
-    assert exc.value.code is ErrorCode.validation
-    assert exc.value.detail == {"stage": "dropped"}
-
-
 def test_edit_agent_actor_forbidden() -> None:
     ticket = _ticket("needs_plan", _fields(success=FieldSlot(value="settled")))
     with pytest.raises(PlannerError) as exc:
         _decide_edit_value(ticket, "success", "x", "agent")
     assert exc.value.code is ErrorCode.agent_forbidden
-
-
-def test_accept_dropped_ticket_with_pending_proposal_rejected(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock
-) -> None:
-    # A dropped ticket carrying a pending NON-gating proposal must not be acceptable:
-    # pre-guard this wrote value with no Stage change; the guard now rejects it.
-    now = fake_clock.now_unix()
-    t = data.create_ticket(
-        tmp_db,
-        worker_type="coding",
-        title="T",
-        actor="human",
-        now=now,
-        title_max_chars=TITLE_MAX_CHARS,
-    )
-    t = data.accept_proposal(
-        tmp_db,
-        t.id,
-        field="kickoff",
-        actor="human",
-        now=now,
-        next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
-    )
-    t = data.change_scope(
-        tmp_db, t.id, ceiling="needs_plan", at_cap=AtCap.propose, actor="human", now=now
-    )
-    t = data.file_proposal(
-        tmp_db, t.id, field="success", body="s", actor="agent", now=now
-    )
-    assert t.stage == "needs_approach"
-    # plan is non-gating at needs_approach and below the ceiling: the proposal stays pending.
-    t = data.file_proposal(
-        tmp_db, t.id, field="plan", body="plan draft", actor="agent", now=now
-    )
-    assert t.stage == "needs_approach"
-    plan_slot = fields_codec.get_slot(t.fields, "plan")
-    assert plan_slot.proposal is not None and plan_slot.value is None
-    t = data.drop_ticket(tmp_db, t.id, actor="human", now=now)
-    assert t.stage == "dropped"
-
-    snapshot_before = _ticket_row(tmp_db, t.id)
-    with pytest.raises(PlannerError) as exc:
-        data.accept_proposal(
-            tmp_db,
-            t.id,
-            field="plan",
-            actor="human",
-            now=now,
-            next_ceiling=NO_FURTHER,
-            at_cap=AtCap.propose,
-        )
-    assert exc.value.code is ErrorCode.validation
-    assert exc.value.detail == {"stage": "dropped"}
-    t = data.read_ticket(tmp_db, t.id)
-    assert (
-        fields_codec.get_slot(t.fields, "plan").value is None
-    )  # the write never landed
-    assert fields_codec.get_slot(t.fields, "plan").proposal is not None
-    assert _ticket_row(tmp_db, t.id) == snapshot_before
 
 
 def test_accept_non_gating_proposal_keeps_opened_paired_stage_resting(

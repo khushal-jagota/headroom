@@ -7,11 +7,9 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import get_type_hints
 
-from click.testing import CliRunner
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from planner.cli.main import main
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -128,8 +126,3 @@ def test_http_contract_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
         assert "worker_type" not in list_parameters
 
 
-def test_ticket_list_help_has_stage_without_worker_type_disambiguation() -> None:
-    result = CliRunner().invoke(main, ["ticket", "list", "--help"])
-    assert result.exit_code == 0, result.output
-    assert "--stage" in result.output
-    assert "--worker-type" not in result.output

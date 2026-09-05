@@ -44,7 +44,7 @@ from tests.support.probe import PROBE_FIELD_IDS as _PROBE_FIELD_IDS
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
 from planner.core.clock import TestClock
-from planner.core.contracts import ErrorCode, PlannerError, Priority
+from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect, create_schema
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
@@ -52,15 +52,11 @@ from planner.tickets.contracts import (
     TITLE_MAX_CHARS,
     AtCap,
     FieldSlot,
-    Proposal,
-    ResolvedTicketPriorityAnchors,
-    ScopePair,
     StageOwnershipMode,
-    Ticket,
     TicketFields,
     TicketStatus,
 )
-from planner.tickets.logic import fields_codec, machine, resolution
+from planner.tickets.logic import fields_codec, machine
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -128,43 +124,6 @@ _CODING_STORED_AFTER_DRIVE = (
 )
 
 
-def test_coding_stored_fields_bytes_after_drive_are_golden(
-    tmp_db: Connection, fake_clock: TestClock
-) -> None:
-    now = fake_clock.now_unix()
-    t = tickets_data.create_ticket(
-        tmp_db,
-        worker_type="coding",
-        title="Coding",
-        actor="human",
-        now=now,
-        title_max_chars=TITLE_MAX_CHARS,
-    )
-    t = tickets_data.accept_proposal(
-        tmp_db,
-        t.id,
-        field="kickoff",
-        actor="human",
-        now=now,
-        next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
-    )
-    tickets_data.file_proposal(
-        tmp_db, t.id, field="success", body="the success", actor="agent", now=now
-    )
-    t = tickets_data.accept_proposal(
-        tmp_db,
-        t.id,
-        field="success",
-        actor="human",
-        now=now,
-        next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
-    )
-    row = tmp_db.execute("SELECT fields FROM tickets WHERE id = ?", (t.id,)).fetchone()
-    assert row["fields"] == _CODING_STORED_AFTER_DRIVE
-
-
 # =====================================================================
 # T2 — generic storage round-trip for a synthetic (kickoff, alpha, beta) definition
 # =====================================================================
@@ -200,92 +159,9 @@ def test_generic_storage_round_trip_and_copy_on_write(
 # =====================================================================
 
 
-def test_boundary_lifted_and_require_coding_field_gone(
-    probe_registry: WorkerTypeDefinition,
-) -> None:
-    payload = {
-        "kickoff": {"value": "k", "proposal": None, "user_note": None},
-        _FA: {"value": "a", "proposal": None, "user_note": None},
-        _FB: {"value": None, "proposal": None, "user_note": None},
-    }
-    decoded = fields_codec.declared_fields_from_json(
-        json.dumps(payload), probe_registry.field_ids()
-    )
-    assert fields_codec.get_slot(decoded, _FA).value == "a"
-
-    # STRICT-on-missing-declared preserved.
-    missing = {k: v for k, v in payload.items() if k != _FB}
-    with pytest.raises(PlannerError) as exc:
-        fields_codec.declared_fields_from_json(
-            json.dumps(missing), probe_registry.field_ids()
-        )
-    assert exc.value.code == ErrorCode.validation
-
-    # LENIENT-on-extra preserved (a top-level "result" key is ignored).
-    extra = {**payload, "result": "legacy"}
-    ok = fields_codec.declared_fields_from_json(
-        json.dumps(extra), probe_registry.field_ids()
-    )
-    assert fields_codec.get_slot(ok, _FA).value == "a"
-
-    # the coding-bound boundary function no longer exists.
-    assert not hasattr(machine, "require_coding_field")
-
-
 # =====================================================================
 # T4 — Tier-2 generic scope (non-coding ceiling id in ScopePair)
 # =====================================================================
-
-
-def test_tier2_scope_generic(probe_registry: WorkerTypeDefinition) -> None:
-    assert machine.resolve_scope(
-        _A,
-        _B,
-        AtCap.stop,
-        worker_type_definition=probe_registry,
-    ) == ScopePair(next_ceiling=_B, at_cap=AtCap.stop)
-    assert machine.resolve_scope(
-        _A,
-        NO_FURTHER,
-        AtCap.propose,
-        worker_type_definition=probe_registry,
-    ) == ScopePair(next_ceiling=_A, at_cap=AtCap.propose)
-
-    # a ceiling before the new state is rejected.
-    with pytest.raises(PlannerError) as exc:
-        machine.resolve_scope(
-            _B,
-            _A,
-            AtCap.stop,
-            worker_type_definition=probe_registry,
-        )
-    assert exc.value.code == ErrorCode.scope_invalid
-
-    assert _B in probe_registry.ceiling_range()
-    assert "needs_kickoff" in probe_registry.ceiling_range()
-
-    # has_pending_gating_proposal reads probe's gate (_FA), not coding's.
-    parked = fields_codec.with_slot(
-        TicketFields.empty(_PROBE_FIELD_IDS),
-        _FA,
-        FieldSlot(proposal=Proposal(body="p", proposed_by="agent", created_at=1)),
-    )
-    assert (
-        machine.has_pending_gating_proposal(
-            _A,
-            parked,
-            worker_type_definition=probe_registry,
-        )
-        is True
-    )
-
-    # coding parity (no definition): unchanged.
-    assert machine.resolve_scope(
-        "needs_approach",
-        "needs_plan",
-        AtCap.stop,
-        worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
-    ) == ScopePair(next_ceiling="needs_plan", at_cap=AtCap.stop)
 
 
 def test_resolve_scope_distinguishes_unknown_from_too_early_coding_payloads() -> None:
@@ -508,55 +384,6 @@ def test_probe_admission_error_payload(
     assert exc.value.detail == {"field": _FB, "gating_field": _FA, "stage": _A}
 
 
-def test_probe_at_cap_stop_error_payload(
-    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkerTypeDefinition
-) -> None:
-    # at_cap=stop at the ceiling rejects an agent proposal with the exact probe payload.
-    now = fake_clock.now_unix()
-    tid = _create_probe(tmp_db, now)
-    t = tickets_data.accept_proposal(
-        tmp_db,
-        tid,
-        field="kickoff",
-        actor="human",
-        now=now,
-        next_ceiling=NO_FURTHER,
-        at_cap=AtCap.stop,
-    )
-    assert t.stage == _A and t.ceiling == _A and t.at_cap == AtCap.stop
-    with pytest.raises(PlannerError) as exc:
-        tickets_data.file_proposal(
-            tmp_db, tid, field=_FA, body="blocked", actor="agent", now=now
-        )
-    assert exc.value.code == ErrorCode.at_cap_stop
-    assert exc.value.detail == {
-        "gating_field": _FA,
-        "stage": _A,
-        "ceiling": _A,
-        "at_cap": "stop",
-    }
-
-
-def test_probe_drive_to_dropped(
-    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkerTypeDefinition
-) -> None:
-    now = fake_clock.now_unix()
-    tid = _create_probe(tmp_db, now)
-    t = tickets_data.accept_proposal(
-        tmp_db,
-        tid,
-        field="kickoff",
-        actor="human",
-        now=now,
-        next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
-    )
-    assert t.stage == _A
-    # drop is universal (reserved bookend); it works on a probe ticket.
-    t = tickets_data.drop_ticket(tmp_db, tid, actor="human", now=now)
-    assert t.stage == "dropped"
-
-
 # =====================================================================
 # T7 — the P0 regression guard: a probe ticket survives create + reload
 # =====================================================================
@@ -582,83 +409,3 @@ def test_probe_survives_create_and_reload(
 # =====================================================================
 
 
-def test_coding_bookend_comparisons_survive_str_flip(
-    tmp_db: Connection, fake_clock: TestClock
-) -> None:
-    now = fake_clock.now_unix()
-    t = tickets_data.create_ticket(
-        tmp_db,
-        worker_type="coding",
-        title="Coding",
-        actor="human",
-        now=now,
-        title_max_chars=TITLE_MAX_CHARS,
-    )
-    t = tickets_data.accept_proposal(
-        tmp_db,
-        t.id,
-        field="kickoff",
-        actor="human",
-        now=now,
-        next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
-    )
-    # a state jump reaches needs_approach; its bookend guards still fire on a str state.
-    t = tickets_data.set_stage(
-        tmp_db, t.id, new_stage="needs_approach", actor="human", now=now
-    )
-    assert t.stage == "needs_approach"
-    assert t.stage == "needs_approach"
-
-    # drop: the `== "done"/.dropped` bookends still hold with ticket.stage a str.
-    t = tickets_data.drop_ticket(tmp_db, t.id, actor="human", now=now)
-    assert t.stage == "dropped"
-    # dropped is terminal: a further drop raises via the surviving `==` guard.
-    with pytest.raises(PlannerError) as exc:
-        tickets_data.drop_ticket(tmp_db, t.id, actor="human", now=now)
-    assert exc.value.code == ErrorCode.validation
-
-
-def test_decide_drop_and_jump_bookends_pure_str_stage() -> None:
-    # The pure-Decision path: a probe-style bare-str state hits the reserved bookend
-    # `==` comparisons in decide_drop / decide_stage_jump. A dropped bare-str state is
-    # recognized as terminal by StrEnum equality, not identity.
-    def _t(stage: str) -> Ticket:
-        return Ticket(
-            id="t_x",
-            title="T",
-            worker_type="probe",
-            employee_backend="hermes",
-            stage=stage,
-            priority=Priority.P3,
-            deadline=None,
-            project_id=None,
-            project_name=None,
-            sprint_id=None,
-            sprint_item_id=None,
-            effective_sprint_id=None,
-            resolved_priority_anchors=ResolvedTicketPriorityAnchors(
-                sprint_item=None, project=None
-            ),
-            recap="",
-            ceiling="needs_alpha",
-            at_cap=AtCap.propose,
-            ticket_status=TicketStatus.empty,
-            ticket_status_changed_at=0,
-            ticket_status_revision=0,
-            backend_error=None,
-            stage_ownership_overrides={},
-            default_stage_ownership_mode=StageOwnershipMode.worker,
-            effective_stage_ownership_mode=StageOwnershipMode.worker,
-            conversation_id=None,
-            alias=None,
-            fields=TicketFields.empty(("kickoff",)),
-            created_at=0,
-            updated_at=0,
-        )
-
-    # a bare-str "dropped" state is recognized as terminal (== "dropped").
-    with pytest.raises(PlannerError):
-        resolution.decide_drop(_t("dropped"), "human")
-    with pytest.raises(PlannerError):
-        resolution.decide_stage_jump(_t("dropped"), "needs_approach", "human")

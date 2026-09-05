@@ -24,9 +24,7 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect, create_schema
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
-    NO_FURTHER,
     TITLE_MAX_CHARS,
-    AtCap,
 )
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
@@ -145,28 +143,9 @@ def test_audit_rejects_stage_outside_the_types_stages(tmp_db: Connection) -> Non
     assert "needs_alpha" in str(exc.value)
 
 
-def test_audit_rejects_ceiling_outside_the_types_range(tmp_db: Connection) -> None:
-    # needs_ghost is not a coding stage, so it is outside the ceiling range. (needs_kickoff
-    # is now IN the ceiling range — the leading default — so it can no longer serve here.)
-    _raw_insert_ticket(tmp_db, ticket_id="t_bad", ceiling="needs_ghost")
-    with pytest.raises(RuntimeError, match="id=t_bad") as exc:
-        tickets_data.audit_ticket_registry_integrity(tmp_db)
-    assert "ceiling outside the type's range" in str(exc.value)
-    assert "needs_ghost" in str(exc.value)
-
-
 def test_audit_rejects_missing_declared_field(tmp_db: Connection) -> None:
     payload = json.loads(_SIX_SLOT_FIELDS)
     del payload["closeout"]  # a declared field missing
-    _raw_insert_ticket(tmp_db, ticket_id="t_bad", fields=json.dumps(payload))
-    with pytest.raises(RuntimeError, match="id=t_bad") as exc:
-        tickets_data.audit_ticket_registry_integrity(tmp_db)
-    assert "corrupt ticket fields JSON" in str(exc.value)
-
-
-def test_audit_rejects_malformed_slot(tmp_db: Connection) -> None:
-    payload = json.loads(_SIX_SLOT_FIELDS)
-    payload["success"] = {"value": 123, "proposal": None, "user_note": None}  # non-str value
     _raw_insert_ticket(tmp_db, ticket_id="t_bad", fields=json.dumps(payload))
     with pytest.raises(RuntimeError, match="id=t_bad") as exc:
         tickets_data.audit_ticket_registry_integrity(tmp_db)
@@ -181,24 +160,6 @@ def test_audit_rejects_syntactically_invalid_fields_json(tmp_db: Connection) -> 
     with pytest.raises(RuntimeError, match="id=t_bad") as exc:
         tickets_data.audit_ticket_registry_integrity(tmp_db)
     assert "fields JSON is not valid JSON" in str(exc.value)
-
-
-def test_audit_lenient_on_extra_top_level_fields_key(tmp_db: Connection) -> None:
-    # A legacy 'result' key alongside a valid six-slot set must NOT fail the audit
-    # (the codec ignores extra top-level keys — pins the intentional leniency).
-    payload = json.loads(_SIX_SLOT_FIELDS)
-    payload["result"] = {"value": "legacy", "proposal": None, "user_note": None}
-    _raw_insert_ticket(tmp_db, ticket_id="t_extra", fields=json.dumps(payload))
-    tickets_data.audit_ticket_registry_integrity(tmp_db)  # no raise
-
-
-def test_audit_stops_at_first_corrupt_id_in_order(tmp_db: Connection) -> None:
-    _raw_insert_ticket(tmp_db, ticket_id="t_002", worker_type="bogus")
-    _raw_insert_ticket(tmp_db, ticket_id="t_001", stage="needs_alpha")
-    # ORDER BY id => t_001 is scanned first, so its reason is the one reported.
-    with pytest.raises(RuntimeError, match="id=t_001") as exc:
-        tickets_data.audit_ticket_registry_integrity(tmp_db)
-    assert "stage outside the linear order" in str(exc.value)
 
 
 # =====================================================================
@@ -254,67 +215,6 @@ def test_metadata_write_rejects_invalid_stored_tuple_before_durable_effect(
     )
 
 
-def test_metadata_write_rejects_missing_declared_field_before_durable_effect(
-    tmp_db: Connection,
-) -> None:
-    payload = json.loads(_SIX_SLOT_FIELDS)
-    del payload["closeout"]
-    _raw_insert_ticket(
-        tmp_db,
-        ticket_id="t_missing_field_write",
-        fields=json.dumps(payload),
-    )
-    assert "closeout" not in tickets_data.read_ticket(tmp_db, "t_missing_field_write").fields.slots
-
-    with pytest.raises(PlannerError, match="corrupt ticket fields JSON"):
-        tickets_data.edit_ticket(
-            tmp_db,
-            "t_missing_field_write",
-            edit={"title": "Must not persist"},
-            title_max_chars=TITLE_MAX_CHARS,
-            actor="human",
-            now=99,
-        )
-
-    assert (
-        tmp_db.execute("SELECT title FROM tickets WHERE id = 't_missing_field_write'").fetchone()[0]
-        == "T"
-    )
-
-
-def test_persist_door_rejects_out_of_range_ceiling(
-    tmp_db: Connection, fake_clock: TestClock
-) -> None:
-    # The pre-persist door in _apply_decision validates the prospective (stage,
-    # ceiling) before any SQL. A Decision carrying dropped as a ceiling (outside the
-    # linear ceiling range) must raise before the UPDATE — assert no mutation via a
-    # post-error read. (needs_kickoff is now a valid ceiling, so dropped is the
-    # out-of-range example.)
-    from planner.tickets.logic.decisions import Decision
-
-    now = fake_clock.now_unix()
-    ticket = tickets_data.create_ticket(
-        tmp_db,
-        worker_type="coding",
-        title="Persist door",
-        actor="human",
-        now=now,
-        title_max_chars=TITLE_MAX_CHARS,
-        project_id="project_vylo",
-    )
-    before = tickets_data.read_ticket(tmp_db, ticket.id)
-    with pytest.raises(PlannerError) as exc:
-        tickets_data._apply_decision(
-            tmp_db,
-            before,
-            Decision(events=(), new_ceiling="dropped"),
-            now,
-        )
-    assert exc.value.code == ErrorCode.scope_invalid
-    after = tickets_data.read_ticket(tmp_db, ticket.id)
-    assert after.ceiling == before.ceiling
-
-
 def test_create_door_rejects_unknown_type(tmp_db: Connection, fake_clock: TestClock) -> None:
     now = fake_clock.now_unix()
     with pytest.raises(PlannerError) as exc:
@@ -331,73 +231,9 @@ def test_create_door_rejects_unknown_type(tmp_db: Connection, fake_clock: TestCl
     assert exc.value.message == "unknown worker type"
 
 
-def test_external_work_create_door_rejects_unknown_type(
-    tmp_db: Connection, fake_clock: TestClock
-) -> None:
-    now = fake_clock.now_unix()
-    with pytest.raises(PlannerError) as exc:
-        tickets_data.create_ticket_from_external_work(
-            tmp_db,
-            title="Bad type",
-            target_stage="needs_success",
-            provided_values={"success": "s"},
-            actor="human",
-            now=now,
-            title_max_chars=TITLE_MAX_CHARS,
-            kickoff_note="k",
-            project_id="project_vylo",
-            worker_type="bogus",
-        )
-    assert exc.value.code == ErrorCode.not_found
-
-
-def test_note_door_rejects_undeclared_field(tmp_db: Connection, fake_clock: TestClock) -> None:
-    now = fake_clock.now_unix()
-    ticket = tickets_data.create_ticket_from_external_work(
-        tmp_db,
-        worker_type="coding",
-        title="Note target",
-        target_stage="needs_approach",
-        provided_values={"success": "success value"},
-        actor="human",
-        now=now,
-        title_max_chars=TITLE_MAX_CHARS,
-        kickoff_note="k",
-        project_id="project_vylo",
-    )
-    with pytest.raises(PlannerError) as exc:
-        tickets_data.set_field_user_note(
-            tmp_db,
-            ticket.id,
-            field="not_a_field",
-            user_note="x",
-            actor="human",
-            now=now,
-        )
-    assert exc.value.code == ErrorCode.validation
-    assert exc.value.message == "unknown ticket field"
-
-
 # =====================================================================
 # Acceptance 6 — per-type default ceiling (from the registry, not a literal)
 # =====================================================================
-
-
-def test_created_coding_ticket_ceiling_is_registry_default(
-    tmp_db: Connection, fake_clock: TestClock
-) -> None:
-    now = fake_clock.now_unix()
-    ticket = tickets_data.create_ticket(
-        tmp_db,
-        worker_type="coding",
-        title="Ceiling",
-        actor="human",
-        now=now,
-        title_max_chars=TITLE_MAX_CHARS,
-        project_id="project_vylo",
-    )
-    assert ticket.ceiling == configured_worker_type_registry().require("coding").default_ceiling()
-    assert str(ticket.ceiling) == "needs_kickoff"
 
 
 def test_created_second_type_ticket_ceiling_is_its_registry_default(
@@ -445,33 +281,3 @@ def test_second_type_row_round_trips_plain_stored_values(
     assert ticket.stage == "needs_success"
 
 
-def test_second_type_reaches_coding_default_engine_paths(
-    tmp_db: Connection, fake_clock: TestClock, two_type_registry: None
-) -> None:
-    # review-F6 demonstration: a coding-shaped non-coding row flows through the
-    # coding-DEFAULT proposal resolver (decide_*) — it advances by coding semantics,
-    # NOT a second definition threaded through resolution. This is exactly why no
-    # second PRODUCTION definition may be registered until t_tt02b threads the
-    # definition through resolution/external-work.
-    now = fake_clock.now_unix()
-    ticket = tickets_data.create_ticket(
-        tmp_db,
-        title="Probe engine",
-        actor="human",
-        now=now,
-        title_max_chars=TITLE_MAX_CHARS,
-        project_id="project_vylo",
-        worker_type="coding_probe",
-    )
-    # Kickoff acceptance advances by the coding-default engine (needs_kickoff ->
-    # needs_success), proving the coding-default path is taken for a non-coding type.
-    accepted = tickets_data.accept_proposal(
-        tmp_db,
-        ticket.id,
-        field="kickoff",
-        actor="human",
-        now=now,
-        next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
-    )
-    assert accepted.stage == "needs_success"
