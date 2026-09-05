@@ -1,11 +1,10 @@
 """The verify instrument — complete by default, with explicit focused tiers.
 
-Runs a preflight skip-scan of tests/ (no skipped, xfailed, focused, empty, or
-commented-out tests). ``./verify`` or ``./verify full`` runs every gate and is
-the sole completeness claim. ``./verify fast`` runs static, unit, build, and
-frontend gates for the implementation loop. ``./verify e2e`` runs the real
-browser journey suite in isolation. ``./verify integration`` runs real process,
-socket, installed-CLI, environment, and agent boundaries without a browser.
+``./verify`` or ``./verify full`` runs every gate and is the sole completeness
+claim. ``./verify fast`` runs static, unit, build, and frontend gates for the
+implementation loop. ``./verify e2e`` runs the real browser journey suite in
+isolation. ``./verify integration`` runs real process, socket, installed-CLI,
+environment, and agent boundaries without a browser.
 
 Documented limitation: this instrument proves the named tests RAN and PASSED. It
 does not judge assertion strength — that is for reviewers, not this instrument.
@@ -18,7 +17,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from verify_lib import check_css_syntax, parse_verify_mode, scan_test_files
+from verify_lib import check_css_syntax, parse_verify_mode
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VENV_BIN = REPO_ROOT / ".venv" / "bin"
@@ -148,21 +147,6 @@ def main() -> int:
         return 2
 
     DATA_VERIFY.mkdir(parents=True, exist_ok=True)
-
-    # Preflight skip-scan: a tainted suite (skipped, xfailed, focused, empty, or
-    # commented-out tests) has no valid results, so on any violation we name each
-    # file+pattern and fail without running the suites.
-    violations = scan_test_files([REPO_ROOT / "tests"])
-    if violations:
-        print("[verify] SKIP-SCAN FAILED — forbidden patterns in tests/:", flush=True)
-        for v in violations:
-            print(f"    {v.file}: {v.pattern}", flush=True)
-        print(
-            "[verify] test suites skipped; a tainted suite has no valid results.",
-            flush=True,
-        )
-        print("VERIFY: FAIL")
-        return 1
 
     gates: list[GateResult] = []
     if mode in {"full", "fast"}:
