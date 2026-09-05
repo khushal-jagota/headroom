@@ -67,11 +67,30 @@ def test_sprint_migration_preserves_all_prose_and_references(tmp_path: Path) -> 
             "INSERT INTO sprint_items (id, title, project_id, sprint_id, created_at, updated_at) "
             "VALUES ('si_kept', 'Item', 'project_personal', 'sp_full', 12, 34)"
         )
+        old_fields = {
+            "kickoff": {
+                "value": "Saved intake",
+                "proposal": {
+                    "body": "Current kickoff",
+                    "proposed_by": "human",
+                    "created_at": 56,
+                },
+            },
+            "success": {
+                "value": "Saved result",
+                "proposal": {
+                    "body": "Unapproved success",
+                    "proposed_by": "agent",
+                    "created_at": 78,
+                },
+            },
+        }
         conn.execute(
             "INSERT INTO tickets (id, title, worker_type, employee_backend, ceiling, fields, "
-            "project_id, sprint_id, sprint_item_id, created_at, updated_at) "
-            "VALUES ('t_kept', 'Ticket', 'coding', 'hermes', 'needs_kickoff', '{}', "
-            "'project_personal', 'sp_full', 'si_kept', 12, 34)"
+            "project_id, sprint_id, sprint_item_id, ticket_status, created_at, updated_at) "
+            "VALUES ('t_kept', 'Ticket', 'coding', 'hermes', 'needs_kickoff', ?, "
+            "'project_personal', 'sp_full', 'si_kept', 'awaiting_approval', 12, 34)",
+            (json.dumps(old_fields),),
         )
         item_before = dict(
             conn.execute("SELECT * FROM sprint_items WHERE id = 'si_kept'").fetchone()
@@ -109,8 +128,32 @@ def test_sprint_migration_preserves_all_prose_and_references(tmp_path: Path) -> 
         assert dict(conn.execute("SELECT * FROM sprint_items WHERE id = 'si_kept'").fetchone()) == {
             key: value for key, value in item_before.items() if key != "sprint_id"
         }
+        assert [
+            tuple(row)
+            for row in conn.execute(
+                "SELECT sprint_id, outcome_id FROM sprint_outcomes ORDER BY sprint_id, outcome_id"
+            )
+        ] == [("sp_full", "si_kept")]
         ticket_after = dict(conn.execute("SELECT * FROM tickets WHERE id = 't_kept'").fetchone())
         assert ticket_after.pop("guidance") == ""
+        assert json.loads(ticket_after.pop("field_values")) == {
+            "kickoff": "Saved intake",
+            "success": "Saved result",
+        }
+        assert json.loads(ticket_after.pop("pending_proposal")) == {
+            "field": "kickoff",
+            "body": "Current kickoff",
+            "proposed_by": "human",
+            "created_at": 56,
+        }
+        assert ticket_after.pop("archived_field_content") == (
+            "## Unapproved proposal\n\n"
+            'Field: ` "success" `\n\n'
+            'Author: ` "agent" `\n\n'
+            "Created at: 78\n\n"
+            "Unapproved success"
+        )
+        assert ticket_before.pop("fields") == json.dumps(old_fields)
         assert ticket_after == ticket_before
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:

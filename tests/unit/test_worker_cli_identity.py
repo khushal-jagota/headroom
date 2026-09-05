@@ -18,6 +18,7 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 
 # --- server: the by-ticket-id worker-self route ------------------------------
 
@@ -123,18 +124,22 @@ class _RecordingSend:
 
     def __call__(self, method: str, path: str, **_kwargs: Any) -> Any:
         self.paths.append(path)
+        if path == "/api/worker-types":
+            return {"worker_types": [PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")]}
         return self._body
 
 
-_DETAIL_BODY = {
+_DETAIL_BODY: dict[str, Any] = {
     "id": "t_abc",
     "worker_type": "coding",
-    "stage": "coding",
+    "stage": "needs_implementation",
     "ticket_status": "agent",
     "priority": "P1",
     "title": "Do the thing",
     "worker": "panels-worker-coding",
-    "fields": {"implementation": {"value": None, "proposal": None}},
+    "field_values": {},
+    "pending_proposal": None,
+    "archived_field_content": "",
 }
 
 
@@ -154,7 +159,7 @@ def test_worker_my_ticket_resolves_from_plan_ticket_id(
     result = CliRunner().invoke(cli_main, ["worker", "my-ticket", "--json"])
 
     assert result.exit_code == 0, result.output
-    assert recorder.paths == ["/api/tickets/t_abc/worker-self"]
+    assert recorder.paths == ["/api/tickets/t_abc/worker-self", "/api/worker-types"]
 
 
 def test_worker_my_ticket_no_identity_fails_validation(

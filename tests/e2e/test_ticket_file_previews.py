@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import base64
 import json
-import sqlite3
 import time
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
-from typing import Any
 
 from playwright.sync_api import (
     BrowserContext,
@@ -17,6 +16,10 @@ from playwright.sync_api import (
     Route,
 )
 from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
+
+from planner.core.db import connect
+from planner.tickets import data as tickets_data
+from planner.tickets.contracts import AtCap
 
 WAIT_MS = 10_000
 
@@ -73,19 +76,29 @@ def _links(ticket_id: str) -> str:
     return "\n".join(f"[{label}]({href})" for label, href in _expected_hrefs(ticket_id).items())
 
 
-def _set_fields(
-    server: ServerHandle, ticket_id: str, fields: dict[str, Any], stage: str = "dropped"
+def _settle_success(
+    server: ServerHandle, ticket_id: str, body: str, *, dropped: bool = False
 ) -> None:
-    if "kickoff" not in fields:
-        fields = {
-            "kickoff": {"value": "", "proposal": None, "user_note": None},
-            **fields,
-        }
-    with sqlite3.connect(server.db_path) as conn:
-        conn.execute(
-            "UPDATE tickets SET stage = ?, fields = ?, updated_at = 2 WHERE id = ?",
-            (stage, json.dumps(fields), ticket_id),
+    """Seed saved Markdown through the same proposal/accept writers as ordinary work."""
+    with closing(connect(str(server.db_path))) as conn:
+        ticket = tickets_data.file_current_proposal_with_recap(
+            conn, ticket_id, body=body, recap="Preview content ready.", actor="worker", now=2
         )
+        if ticket.pending_proposal is not None:
+            ticket = tickets_data.accept_proposal(
+                conn,
+                ticket_id,
+                field="success",
+                actor="human",
+                now=2,
+                next_ceiling="none",
+                at_cap=AtCap.propose,
+            )
+        assert ticket.stage == "needs_approach"
+        assert ticket.field_values["success"] == body
+        assert ticket.pending_proposal is None
+        if dropped:
+            tickets_data.drop_ticket(conn, ticket_id, actor="human", now=2)
 
 
 def _open_ticket_field(page: Page, field: str) -> None:
@@ -145,20 +158,11 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
         "</body></html>",
         encoding="utf-8",
     )
-    _set_fields(
+    _settle_success(
         server,
         ticket_id,
-        {
-            "success": {
-                "value": f"[HTML](/files/tickets/{ticket_id}/previews/index.html)",
-                "proposal": None,
-                "user_note": None,
-            },
-            "approach": {"value": None, "proposal": None, "user_note": None},
-            "plan": {"value": None, "proposal": None, "user_note": None},
-            "implementation": {"value": None, "proposal": None, "user_note": None},
-            "closeout": {"value": None, "proposal": None, "user_note": None},
-        },
+        f"[HTML](/files/tickets/{ticket_id}/previews/index.html)",
+        dropped=True,
     )
     ticket_selector = f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]'
     page = open_page(context_factory(), server, f"#/workspace/{ticket_id}", ticket_selector)
@@ -224,14 +228,7 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     body = (
         f"Intro\n\n{markdown_token}\n\n{image_token}\n\n{binary_token}\n\n{entity_token}\n\nOutro"
     )
-    fields = {
-        "success": {"value": body, "proposal": None, "user_note": None},
-        "approach": {"value": None, "proposal": None, "user_note": None},
-        "plan": {"value": None, "proposal": None, "user_note": None},
-        "implementation": {"value": None, "proposal": None, "user_note": None},
-        "closeout": {"value": None, "proposal": None, "user_note": None},
-    }
-    _set_fields(server, ticket_id, fields, stage="needs_approach")
+    _settle_success(server, ticket_id, body)
     page = open_page(
         context_factory(),
         server,
@@ -412,14 +409,7 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
     _write_ticket_files(server, ticket_id)
     image_token = f"[Image](/files/tickets/{ticket_id}/images/pic.png)"
     body = f"Before\n\n{image_token}"
-    fields = {
-        "success": {"value": body, "proposal": None, "user_note": None},
-        "approach": {"value": None, "proposal": None, "user_note": None},
-        "plan": {"value": None, "proposal": None, "user_note": None},
-        "implementation": {"value": None, "proposal": None, "user_note": None},
-        "closeout": {"value": None, "proposal": None, "user_note": None},
-    }
-    _set_fields(server, ticket_id, fields, stage="needs_approach")
+    _settle_success(server, ticket_id, body)
     page = open_page(
         context_factory(),
         server,
@@ -549,3 +539,4 @@ def test_loaded_preview_proposal_approves_without_edited_body(
     assert "edited_body" not in approval_payloads[0]
     ticket = api.get(server, f"/api/tickets/{ticket_id}")
     assert ticket["field_values"].get("success") == body
+    assert ticket["pending_proposal"] is None

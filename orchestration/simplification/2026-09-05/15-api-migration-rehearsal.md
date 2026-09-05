@@ -24,6 +24,7 @@ ordinary `db.create_schema` migration route, and established:
 - all 778 Ticket, 78 Outcome, seven Sprint, and six schedule identities survived;
 - 4,069 non-null saved values remained exact in the flat value map or, where the new
   model cannot keep them current, in the historical record;
+- all 642 nonempty guidance sections remained exact;
 - all 39 old proposals were accounted for: 36 current-gate proposals retained their
   exact field, body, author, and timestamp, while three off-stage proposals were
   preserved in history with an explicit unapproved label;

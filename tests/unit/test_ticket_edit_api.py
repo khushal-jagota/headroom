@@ -190,7 +190,7 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
             json={
                 "title": "Explicit backlog",
                 "worker_type": "coding",
-                "sprint_item_id": None,
+                "sprint_id": None,
             },
         )
         project_priority_default = client.post(
@@ -229,6 +229,9 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
     assert project_fallback.json()["project_id"] == "project_vylo"
     assert project_fallback.json()["effective_sprint_id"] == "sp_edit"
     assert explicit_backlog.json()["effective_sprint_id"] is None
+    assert explicit_backlog.json()["sprint_id"] is None
+    assert project_priority_default.json()["effective_sprint_id"] == "sp_edit"
+    assert project_priority_default.json()["sprint_item_id"] is None
     assert project_priority_default.json()["priority"] == "P1"
     assert explicit_priority.json()["priority"] == "P0"
     assert project_priority_default.json()["resolved_priority_anchors"] == {
@@ -285,7 +288,9 @@ def test_failed_creation_does_not_create_an_other_item(tmp_path: Path) -> None:
         conn.close()
 
 
-def test_planning_ticket_creation_uses_the_sprints_planning_item(tmp_path: Path) -> None:
+def test_planning_ticket_creation_uses_regular_placement_without_manufacturing_an_item(
+    tmp_path: Path,
+) -> None:
     app, db_path = _make_app(tmp_path)
     conn = connect(str(db_path))
     try:
@@ -313,12 +318,20 @@ def test_planning_ticket_creation_uses_the_sprints_planning_item(tmp_path: Path)
 
     for response in (defaulted, explicit):
         assert response.status_code == 200
-        assert response.json()["project_id"] == "project_personal"
+        assert response.json()["project_id"] == "project_other"
         assert response.json()["sprint_id"] == "sp_edit"
-        assert response.json()["sprint_item_id"] == "si_planning_edit"
+        assert response.json()["sprint_item_id"] is None
     assert initiative.status_code == 200
     assert initiative.json()["project_id"] == "project_other"
+    assert initiative.json()["sprint_id"] == "sp_edit"
     assert initiative.json()["sprint_item_id"] is None
+
+    conn = connect(str(db_path))
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM sprint_items").fetchone()[0] == 0
+    finally:
+        conn.close()
+
 
 def test_employee_configuration_endpoint_allows_pristine_statuses(
     tmp_path: Path,

@@ -6,7 +6,7 @@ not fewer worker types or an arbitrary line-count target. Remove first; deepen a
 module only after removal exposes a real need. The conversation system and agent
 backends, including their frontend implementation and contracts, are protected.
 
-## Execution
+## First-pass execution
 
 Base: origin/staging b7ca8e047967e405feeebe058f5cd2ef82b2c2e5.
 Worktree: `/Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification`.
@@ -39,7 +39,7 @@ Initial parallel audits cover ticket/sprint semantics, tooling/UX, and tests.
 Atlas is the first confirmed removal candidate: it duplicates canonical Workspace
 and Review state in a separate 3D rendering without owning useful unique data.
 
-## Progress
+## First-pass progress
 
 - Current remote baseline fetched; local staging was 66 commits behind and was not
   used as the audit baseline.
@@ -79,7 +79,7 @@ current `staging`, any resulting repair and verification, advancement and exact 
 of `origin/staging`, remote-ref confirmation, rolling-PR check, and task-owned cleanup
 remain pending with root.
 
-## Rehearsal on visible live records
+## First-pass rehearsal on visible live records
 
 Ran both migrations in sequence on a private temporary database seeded from the
 read-only live API exports: 778 Ticket records and seven Sprints. All 642 nonempty
@@ -93,7 +93,7 @@ dual-key historical notes and relationship preservation are covered by the separ
 populated migration fixtures. Private exports and rehearsal script stay under
 `data/simplification/`, outside git.
 
-## Final integration repairs
+## First-pass final integration repairs
 
 The first final `./verify` found stale migration-to-HEAD expectations for retired
 field notes, a few strict-typing fixture references to the old API, one import
@@ -110,7 +110,7 @@ Codex, four Hermes). These require their explicit `PANELS_REAL_*_TESTS=1` settin
 and provider setup, and are not enabled by this program. They are included in
 both collection inventories; the reduction is actual deletion, not new skips.
 
-## Verification result
+## First-pass verification result
 
 The final settled tree passed Ruff, strict mypy over 352 files, 926 enabled unit
 cases, the compile/CSS checks, Svelte checking, the production build, frontend

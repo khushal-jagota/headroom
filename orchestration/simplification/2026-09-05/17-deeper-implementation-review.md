@@ -146,3 +146,37 @@ Today, including completed history; the new label describes its existing content
 without implying unfinished work. No selection, grouping or conversation logic changed.
 The approval remains unchanged: no unresolved findings. No additional test was needed
 for this text-only correction; final verification remains root-owned.
+
+### Final-verification fixture recheck
+
+The first canonical verification attempt exposed ten unit fixture failures and three
+file-preview E2E setup failures. Independently compared each failing assumption with
+the approved contracts before inspecting the authors' six-file repair. No production
+defect was identified: these tests still supplied nested fields, mocked only the Ticket
+instead of its declared Worker manifest, expected the previous Alembic head/schema
+count, treated null Outcome as Backlog, or expected automatic Planning containers.
+
+The five unit-file repairs preserve their behavioral ownership. CLI tests supply the
+new flat Ticket and real declaration manifest and still verify the identity request and
+unexpanded record parts. Database tests name `durable_outcomes` and its actual schema.
+The Sprint prose migration fixture now asserts semantic JSON equality for saved values
+and the current proposal,
+unapproved historical text, all other Ticket columns and the old Item's exact
+commitment, rather than ignoring migrated columns. Placement tests explicitly request
+Backlog with null Sprint and prove ordinary planning creation manufactures no Item.
+
+The file-preview E2E repair removes the old raw-slot setup helper. Canonical proposal,
+acceptance and optional Drop now establish the fixture, with exact stage, saved text and
+no-pending-proposal assertions. The existing four browser cases and their actual
+preview/edit/retry/approval boundaries remain intact; no case was added or removed.
+
+Inspected the complete repair diff and saved focused outputs:
+
+- `data/simplification-deeper/final-repairs-unit.log`: 41 passed.
+- `data/simplification-deeper/final-repairs-e2e.log`: four passing cases at 100%;
+  author confirmed the command exited successfully.
+
+Authors also reported scoped Ruff/mypy and diff checks passing. The reviewer did not
+repeat those tests or run broad verification. These are test-only adaptations with
+unchanged case count and no weakened behavioral assertion. Approval stands with no
+unresolved findings; the root still owns a clean final canonical verification run.

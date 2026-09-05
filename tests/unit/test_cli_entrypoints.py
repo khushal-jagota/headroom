@@ -11,6 +11,7 @@ from click.testing import CliRunner
 from planner.cli import http
 from planner.cli import main as cli_main
 from planner.cli.record_projection import project_record
+from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 
 
 def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
@@ -20,6 +21,10 @@ def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
 
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         requested_paths.append(path)
+        if path == "/api/worker-types":
+            return {
+                "worker_types": [PRODUCTION_WORKER_TYPE_REGISTRY.manifest("exploration")]
+            }
         return {
             "id": "t_correct",
             "worker_type": "exploration",
@@ -28,7 +33,9 @@ def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
             "priority": "P1",
             "title": "Correct ticket",
             "worker": "panels-worker-exploration",
-            "fields": {"understanding": {"value": None, "proposal": None}},
+            "field_values": {},
+            "pending_proposal": None,
+            "archived_field_content": "",
         }
 
     monkeypatch.setattr(http, "send", fake_send)
@@ -39,7 +46,10 @@ def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
     )
 
     assert result.exit_code == 0, result.output
-    assert requested_paths == ["/api/tickets/t_correct/worker-self"]
+    assert requested_paths == [
+        "/api/tickets/t_correct/worker-self",
+        "/api/worker-types",
+    ]
     assert "id: t_correct" in result.output
     assert "stage: needs_understanding" in result.output
 
@@ -249,16 +259,37 @@ def test_worker_note_writes_stdin_once_without_a_field_or_type_read(
     assert calls == [(method, "/api/tickets/t_direct/guidance" + suffix, {"body": body})]
 
 
-def test_ticket_parts_expose_guidance_and_recap_without_expanding_default_manifest() -> None:
+def test_ticket_parts_expose_guidance_and_recap_without_expanding_default_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        assert (method, path) == ("GET", "/api/worker-types")
+        return {"worker_types": [PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")]}
+
+    monkeypatch.setattr(http, "send", fake_send)
     data = {
         "id": "t_parts",
-        "fields": {"kickoff": {"value": "request", "proposal": None}},
+        "worker_type": "coding",
+        "field_values": {"kickoff": "request"},
+        "pending_proposal": None,
+        "archived_field_content": "",
         "recap": "orientation",
         "guidance": "  exact guidance\n",
     }
     header, parts = cli_main._ticket_record(data)
     manifest = project_record(header, parts, None)
-    assert list(manifest["manifest"]) == ["kickoff", "recap", "guidance"]
+    assert list(manifest["manifest"]) == [
+        "kickoff",
+        "success",
+        "approach",
+        "plan",
+        "implementation",
+        "closeout",
+        "proposal",
+        "archive",
+        "recap",
+        "guidance",
+    ]
     assert "parts" not in manifest
     expanded = project_record(header, parts, ("guidance", "recap"))
     assert expanded["parts"] == {

@@ -31,4 +31,16 @@ the original fetched baseline `b7ca8e047967e405feeebe058f5cd2ef82b2c2e5`.
 The original untracked uv.lock still has SHA-256
 `9265b9678c009c5c8a5c032fb7ac7e0c4cd3223890bdd2c4622526ebe82ca929`.
 
-Final repository verification and staging closeout are pending below.
+The first final verification passed Ruff, mypy over 359 files, build checks,
+frontend checks (338 including typecheck cases plus 11 standalone scripts), and
+all eight integration cases. Ten unit fixtures and three file-preview E2E fixtures
+still described removed storage or planning semantics. The six-file test-only
+repair preserves the existing cases, uses canonical preview setup, and proves the
+new migration mapping without weakening preservation assertions. Focused checks
+passed 41 unit cases and all four file-preview E2E cases; the independent reviewer
+approved the repair in report 17. No production implementation changed.
+
+The comparable inventory remains 1,155 cases (53.9% removed), including 19 E2E.
+The failed run is retained privately as
+`data/simplification-deeper/verify-deeper-attempt-1.log` until cleanup. A clean final
+repository verification and staging closeout remain pending below.
