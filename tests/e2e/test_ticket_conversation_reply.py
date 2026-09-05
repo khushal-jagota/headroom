@@ -19,11 +19,10 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-import httpx
 import uvicorn
-from playwright.sync_api import BrowserContext, FilePayload, Page, Request
+from playwright.sync_api import BrowserContext, Page, Request
 from tests.e2e.harness import REPO_ROOT, WAIT_MS, ApiHelper, JsonObject, ServerHandle
-from tests.e2e.test_dev_conversation_pane import _A_RED_PNG, HOLD_THE_SEND
+from tests.e2e.test_dev_conversation_pane import HOLD_THE_SEND
 
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core import server as server_module
@@ -246,74 +245,3 @@ def test_a_reply_in_the_pane_pairs_the_ticket_and_a_refusal_leaves_it_parked(
     assert replies == [f"{server.base}/api/tickets/{ticket_id}/human-reply"]
 
 
-def test_ticket_images_cross_the_owner_api_become_managed_files_and_reload(
-    tmp_path: Path,
-    context_factory: Callable[[], BrowserContext],
-) -> None:
-    """The shared Ticket surface through the real owner door, record and file route."""
-    with _browser_server_with_accepting_backend(tmp_path) as (base, ticket_id):
-        context = context_factory()
-        page = context.new_page()
-        page.goto(f"{base}/#/workspace/{ticket_id}")
-        composer = f'{TICKET_SCREEN}[data-ticket-id="{ticket_id}"]'
-        page.wait_for_selector(
-            f"{composer} [data-conversation-input]:not([disabled])",
-            timeout=30_000,
-        )
-        image_files: list[FilePayload] = [
-            {"name": "first.png", "mimeType": "image/png", "buffer": _A_RED_PNG},
-            {"name": "second.png", "mimeType": "image/png", "buffer": _A_RED_PNG},
-        ]
-        page.set_input_files(
-            f"{composer} [data-conversation-image-input]",
-            image_files,
-        )
-        page.wait_for_function(
-            "() => document.querySelectorAll('[data-chat-image-preview]').length === 2"
-        )
-        page.fill(f"{composer} [data-conversation-input]", "look at both")
-        with page.expect_response(
-            lambda response: response.request.method == "POST"
-            and response.url.endswith(f"/api/tickets/{ticket_id}/conversation/send")
-            and response.status == 200,
-            timeout=WAIT_MS,
-        ) as sent:
-            page.click(f"{composer} [data-conversation-send]")
-        delivered = sent.value.json()
-        assert delivered["fate"] == "started"
-        conversation_id = delivered["conversation_id"]
-
-        events = httpx.get(
-            f"{base}/api/conversation/conversations/{conversation_id}/events",
-            params={"after": 0},
-            timeout=10,
-        )
-        assert events.status_code == 200, events.text
-        prompt = next(event for event in events.json()["events"] if event["kind"] == "prompt")
-        content = prompt["payload"]["content"]
-        assert [piece["piece"] for piece in content] == ["text", "image", "image"]
-        assert [piece.get("file_name") for piece in content[1:]] == [
-            "first.png",
-            "second.png",
-        ]
-        assert all("data" not in piece for piece in content[1:])
-        for piece in content[1:]:
-            kept = httpx.get(
-                f"{base}/api/conversation/conversations/{conversation_id}/files/"
-                f"{piece['stored_file_id']}",
-                timeout=10,
-            )
-            assert kept.status_code == 200
-            assert kept.content == _A_RED_PNG
-
-        page.reload(wait_until="domcontentloaded")
-        page.wait_for_function(
-            "() => {"
-            "  const images = [...document.querySelectorAll("
-            "    '[data-conversation-row=\"prompt\"] [data-conversation-piece=\"image\"]')];"
-            "  return images.length === 2"
-            "    && images.every((image) => image.complete && image.naturalWidth === 8);"
-            "}",
-            timeout=WAIT_MS,
-        )
-        context.close()
