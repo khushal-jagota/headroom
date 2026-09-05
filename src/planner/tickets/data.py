@@ -1421,7 +1421,7 @@ def claim_ticket_for_worker_step(
     final — two racing callers both re-check under the same write lock and only the one
     that finds the Ticket still at ``empty`` writes.
 
-    Returns the claimed Ticket, whose ``ticket_status`` and ``ticket_status_changed_at``
+    Returns the claimed Ticket, whose ``ticket_status`` and ``ticket_status_revision``
     are what ``release_worker_step_claim`` must be given to give the claim back.
     """
     with _txn(conn):
@@ -1462,14 +1462,14 @@ def release_worker_step_claim(
     ticket_id: str,
     *,
     expected_status: TicketStatus,
-    expected_status_changed_at: int,
+    expected_status_revision: int,
     now: int,
 ) -> bool:
     """Give a worker-step claim back, but only if the Ticket has not moved on since.
 
-    Both halves of the claim have to still match: the departure status AND the moment it
-    was written. Comparing the status alone would let a late release erase a later,
-    legitimate transition that happened to land on the same status value.
+    Both the departure status and its monotonic revision must still match. A later
+    transition can return to the same status within the same second; its revision
+    still differs, so an old release cannot erase the fresh claim.
 
     Reports whether the release actually fired. The flip goes back through the one status
     write door, so a Ticket that has since acquired a live blocker lands on ``blocked``
@@ -1479,7 +1479,7 @@ def release_worker_step_claim(
         ticket = _load_ticket_for_write(conn, ticket_id)
         if ticket.ticket_status is not expected_status:
             return False
-        if ticket.ticket_status_changed_at != expected_status_changed_at:
+        if ticket.ticket_status_revision != expected_status_revision:
             return False
         _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
         return True

@@ -207,11 +207,8 @@ def test_two_racing_claimers_on_one_database_produce_exactly_one_winner(
 def test_a_release_does_not_fire_once_the_status_has_been_written_again(
     tmp_path: Path,
 ) -> None:
-    # A delayed release carries the status AND the moment it was written. The status can
-    # legitimately come back to the same value; the moment cannot — unless both flips land
-    # in the same second, which is the accepted limitation of this guard: the stamp has
-    # one-second resolution, so a claim and a later re-claim inside the same second are
-    # indistinguishable to it. Recorded, and not worth a wider clock to close.
+    # A delayed release carries the transition revision. A release and re-claim
+    # inside one second share a timestamp and status but have distinct revisions.
     world = _World(tmp_path)
     ticket_id = world.ready_ticket()
     conn = world.connect()
@@ -225,32 +222,34 @@ def test_a_release_does_not_fire_once_the_status_has_been_written_again(
         )
         assert claimed is not None
 
-        # Someone else takes the Ticket away and hands it back to the worker later.
+        # Someone else takes the Ticket away and hands it back to the worker in the same second.
         assert tickets_data.release_worker_step_claim(
             conn,
             ticket_id,
             expected_status=claimed.ticket_status,
-            expected_status_changed_at=claimed.ticket_status_changed_at,
-            now=110,
+            expected_status_revision=claimed.ticket_status_revision,
+            now=100,
         )
         reclaimed = tickets_data.claim_ticket_for_worker_step(
             conn,
             ticket_id,
             planning_day_id_resolver=lambda: TODAY_DAY_ID,
             readiness_check=worker_step_readiness.is_ready_for_worker_step,
-            now=120,
+            now=100,
         )
         assert reclaimed is not None
         assert reclaimed.ticket_status is claimed.ticket_status
+        assert reclaimed.ticket_status_changed_at == claimed.ticket_status_changed_at
+        assert reclaimed.ticket_status_revision > claimed.ticket_status_revision
 
-        # The first claim's late release finds the same status and a different moment.
+        # The first claim's late release finds a different revision despite the same clock.
         assert (
             tickets_data.release_worker_step_claim(
                 conn,
                 ticket_id,
                 expected_status=claimed.ticket_status,
-                expected_status_changed_at=claimed.ticket_status_changed_at,
-                now=130,
+                expected_status_revision=claimed.ticket_status_revision,
+                now=100,
             )
             is False
         )
@@ -329,7 +328,7 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
             conn,
             ticket_id,
             expected_status=claimed.ticket_status,
-            expected_status_changed_at=claimed.ticket_status_changed_at,
+            expected_status_revision=claimed.ticket_status_revision,
             now=2,
         )
     finally:

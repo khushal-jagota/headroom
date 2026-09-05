@@ -99,7 +99,7 @@ async def start_ready_worker_step(
         if claimed is None:
             return False
         departure_status = claimed.ticket_status
-        departure_status_changed_at = claimed.ticket_status_changed_at
+        departure_status_revision = claimed.ticket_status_revision
         sender_message_id = f"worker_step_message_{uuid4().hex}"
 
         def give_the_claim_back() -> None:
@@ -107,7 +107,7 @@ async def start_ready_worker_step(
                 conn,
                 ticket_id,
                 expected_status=departure_status,
-                expected_status_changed_at=departure_status_changed_at,
+                expected_status_revision=departure_status_revision,
                 now=now(),
             )
 

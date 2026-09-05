@@ -319,12 +319,10 @@ class Ticket:  # §3.3 — column names match exactly
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     at_cap: AtCap  # default propose
     ticket_status: TicketStatus  # durable state-of-control; transition functions write it
-    # When ticket_status last actually changed. Claiming a Ticket for a worker step
-    # captures it, and giving that claim back compares it, so a late release cannot erase
-    # a later transition that happens to have landed on the same status value.
+    # When ticket_status last actually changed, for display and elapsed-time facts.
     ticket_status_changed_at: int
-    # Monotonic identity for a real status transition. Notifications use it as a natural
-    # fact key; unlike a timestamp it cannot collide when a Ticket moves twice in a second.
+    # Monotonic status-transition identity used by notifications and worker claims.
+    # Unlike the timestamp, it cannot collide when two transitions share a second.
     ticket_status_revision: int
     backend_error: str | None  # concrete confirmed backend Worker failure, else NULL
     stage_ownership_overrides: Mapping[str, StageOwnershipMode]

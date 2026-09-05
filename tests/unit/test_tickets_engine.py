@@ -447,7 +447,7 @@ def test_ticket_status_transitions(
             tmp_db,
             t.id,
             expected_status=claimed.ticket_status,
-            expected_status_changed_at=claimed.ticket_status_changed_at,
+            expected_status_revision=claimed.ticket_status_revision,
             now=now,
         )
         is True
@@ -518,7 +518,7 @@ def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(
         tmp_db,
         t.id,
         expected_status=claimed.ticket_status,
-        expected_status_changed_at=claimed.ticket_status_changed_at,
+        expected_status_revision=claimed.ticket_status_revision,
         now=now,
     )
     reclaimed = _claim_ready_worker_step(tmp_db, t.id, now=now + 5)
@@ -531,7 +531,7 @@ def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(
             tmp_db,
             t.id,
             expected_status=claimed.ticket_status,
-            expected_status_changed_at=claimed.ticket_status_changed_at,
+            expected_status_revision=claimed.ticket_status_revision,
             now=now + 6,
         )
         is False
@@ -561,7 +561,7 @@ def test_a_paired_owned_stage_departs_at_paired_and_returns_to_empty(
         tmp_db,
         t.id,
         expected_status=claimed.ticket_status,
-        expected_status_changed_at=claimed.ticket_status_changed_at,
+        expected_status_revision=claimed.ticket_status_revision,
         now=now + 1,
     )
     assert data.read_ticket(tmp_db, t.id).ticket_status is TicketStatus.empty
