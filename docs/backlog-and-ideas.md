@@ -14,7 +14,8 @@ Ideas:   remembered possibility                    ──► stays an Idea
 Backlog shows committed work that has no sprint. Active unscheduled Tickets are the
 main list. They are fetched as bounded summaries and sorted into P0–P3 groups. Each
 row opens the canonical Ticket in Workspace and shows its title, short recap, Project,
-state, and Worker type. Page controls state which rows are visible and how many match.
+state, and Worker type. A list that spans pages shows its range and page controls;
+a complete list needs only its total.
 
 Unscheduled Sprint Items remain below as **Unscheduled briefs**. They are planning
 documents rather than a second kind of Ticket. Each row opens the canonical Sprint

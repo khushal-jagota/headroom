@@ -13,7 +13,6 @@
   import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import ListRow from "../components/ListRow.svelte";
-  import Pill from "../components/Pill.svelte";
   import PriorityTile from "../components/PriorityTile.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import ScreenHeader from "../components/ScreenHeader.svelte";
@@ -114,11 +113,7 @@
 
 <section class="backlog-screen" data-screen="backlog">
   <div class="doc">
-    <ScreenHeader title="Backlog">
-      {#snippet meta()}
-        <Pill keyLabel="tickets">{tickets.data?.page.match_count || 0}</Pill>
-      {/snippet}
-    </ScreenHeader>
+    <ScreenHeader title="Backlog" />
     <div class="col">
       <Disclosure variant="make" chevron="none" data-create="ticket">
         {#snippet summary()}<span class="plus">+</span> New ticket{/snippet}
@@ -156,7 +151,7 @@
             {#each PRIORITY_ORDER as value}
               {#if ticketGroups[value]?.length}
                 <div class="grp" data-priority-group={value}>
-                  <SectionHeading count={ticketGroups[value].length}>
+                  <SectionHeading>
                     {#snippet labelContent()}<PriorityTile priority={value} />{/snippet}
                   </SectionHeading>
                   {#each ticketGroups[value] as ticket (ticket.id)}
@@ -180,7 +175,7 @@
             {/each}
           {/if}
         </ResourceState>
-        {#if tickets.data?.page}
+        {#if tickets.data?.page && !tickets.data.page.complete}
           {@const page = tickets.data.page}
           <div class="form" data-pagination="tickets">
             <div class="foot">
@@ -220,7 +215,7 @@
             </div>
           {/if}
         </ResourceState>
-        {#if items.data?.page}
+        {#if items.data?.page && !items.data.page.complete}
           {@const page = items.data.page}
           <div class="form" data-pagination="items">
             <div class="foot">

@@ -106,7 +106,8 @@ offset because there is no reason for paging Tickets to move the briefs list.
    Project, priority, and deadline from the summary response. The brief body remains
    in its canonical Workspace screen.
 
-Both sections always show the current returned range and total from `page`. Previous
+Both sections show the total from `page`. When a list spans pages, show its current
+range and paging controls; a complete list needs neither. Previous
 is available when `offset > 0`; Next uses `next_offset` and is unavailable when null.
 Changing page updates only that section. Empty, loading, and error states remain
 separate so one failed resource does not hide the other. The headline count names the
@@ -217,3 +218,15 @@ per-color/class/pixel assertions were removed; its creation/navigation proof rem
 
 Integrated Svelte check: zero errors and warnings. Updated Backlog/Ideas fixture:
 all assertions passed. No unresolved review findings.
+
+### Final visual simplification
+
+The local screen with two Tickets and one brief repeated totals in four places and
+showed four disabled paging buttons. Root removed the header count pill, per-priority
+counts, and complete-list paging controls. Section totals remain; multi-page lists
+keep the tested range and navigation. This changes the earlier always-show-range
+choice because it added no useful information to a complete list.
+
+After this visual removal, Svelte check again found zero errors/warnings and the
+existing Backlog/Ideas paging and creation fixture passed. The local frontend and
+backend used an isolated fictional database; their services were stopped after capture.
