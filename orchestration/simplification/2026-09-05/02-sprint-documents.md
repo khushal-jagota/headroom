@@ -255,3 +255,16 @@ migration above it. Twelve pre-existing migration test modules pin the old globa
 root was notified to update those together after the final order settles, rather than
 rewriting them in competing branches. `docs/cli.md` and CLI implementation overlap with
 the separate ticket-guidance change and require normal serial merge review.
+
+## Independent implementation review — root
+
+Reviewed 6fa58273..1c1e3b80 against this plan and the root-owned contracts.
+Checked the frozen migration mapping and byte preservation, unchanged identity and
+relationships, transactional create/patch validation, CLI projection, four-editor
+screen, and focused evidence. No unresolved findings. Root clarified the request-body
+comment to name Sprint creation’s strict unknown-field policy. The migration proof
+compares whole Ticket rows and will need to compare the existing columns after the
+separate guidance migration adds its column; root will resolve that integration overlap.
+
+Accepted gates: 79 focused backend cases; final two-case admission rerun; real editor
+fixture; Svelte check with zero errors/warnings; Ruff. No broad rerun needed here.

@@ -15,8 +15,9 @@ The original checkout and its untracked uv.lock are left alone.
 
 The owner explicitly reserves `./verify` for the very end. Individual chunks use
 named focused gates. No broad baseline run. Audits count tests without running them.
-The test reduction target is at least half where redundant proof can be removed,
-including about half of E2E. Critical behavior must still have credible proof;
+The owner clarified that removing at least 50% of actual test cases is a firm
+acceptance criterion, including at least half of E2E (at most 19 of the baseline 39).
+New tests count against the final inventory. Critical behavior must still have credible proof;
 deletions will name what is retained and why, not manipulate collection counts.
 
 Root owns contracts, decisions, integration, and final verification. Agents own
@@ -42,4 +43,8 @@ and Review state in a separate 3D rendering without owning useful unique data.
 - Current remote baseline fetched; local staging was 66 commits behind and was not
   used as the audit baseline.
 - Final-only verification guidance updated before implementation.
-- Audits in progress; scoped tickets and review decisions follow here.
+- Read-only live evidence informed the decisions; aggregate counts are in the scoped plans.
+- Atlas removed and independently reviewed (58b161a6).
+- Sprint documents implemented and independently reviewed (1c1e3b80): twelve prose fields become four.
+- Ticket guidance, Backlog, and test pruning are in isolated implementation worktrees.
+- No full verify run has occurred; the final settled tree owns it.

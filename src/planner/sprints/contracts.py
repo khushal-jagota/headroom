@@ -92,7 +92,8 @@ class SprintItemDeletion:
 
 # --- request bodies (§9 wire shapes) ---
 # Every key is optional on the wire: an absent key takes the documented default,
-# unknown keys are ignored. The api layer marshals the raw JSON dict into these
+# unknown keys are ignored except for Sprint creation, which rejects them.
+# The api layer marshals the raw JSON dict into these
 # shapes; a null or wrong-typed value raises ErrorCode.validation. Enum-valued
 # keys carry the string form and are parsed against the contract enums in api.
 
