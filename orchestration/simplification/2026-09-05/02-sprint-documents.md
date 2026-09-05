@@ -268,3 +268,11 @@ separate guidance migration adds its column; root will resolve that integration 
 
 Accepted gates: 79 focused backend cases; final two-case admission rerun; real editor
 fixture; Svelte check with zero errors/warnings; Ruff. No broad rerun needed here.
+
+### Follow-up finding resolved during integration
+
+A spot-check of environment provisioning found three stale Sprint field uses in the
+fake fixture: `supports`, `premortem`, and `outcomes`. This would break isolated
+environment creation. Root made the small call-site repair: the supporting paragraphs
+join the kickoff document and the outcome goes into review. All six existing
+`test_environment_fake_fixture.py` cases pass. No new test or mechanism was added.
