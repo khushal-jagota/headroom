@@ -37,6 +37,7 @@
   let kickoffNote = $state("");
   let createError = $state<unknown>(null);
   let creating = $state(false);
+  let outcomesOpen = $state(false);
 
   let ticketGroups = $derived.by(() => {
     const byPriority: Record<string, TicketSummary[]> = {};
@@ -189,9 +190,9 @@
         {/if}
       </section>
 
-      <details class="groups backlog-outcomes" data-backlog-outcomes>
+      <details class="groups backlog-outcomes" bind:open={outcomesOpen} data-backlog-outcomes>
         <summary><SectionHeading label="Outcomes" /></summary>
-        <OutcomePicker projects={projects.data?.projects || []} chooseLabel="Open" onChoose={openOutcome} />
+        {#if outcomesOpen}<OutcomePicker projects={projects.data?.projects || []} chooseLabel="Open" onChoose={openOutcome} />{/if}
       </details>
     </div>
   </div>

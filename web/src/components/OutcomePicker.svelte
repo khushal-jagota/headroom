@@ -39,7 +39,7 @@
   }
 
   async function createOutcome(): Promise<void> {
-    if (!title.trim() || !projectId) return;
+    if (!title.trim() || !projectId || createdOutcome) return;
     creating = true;
     error = null;
     try {
@@ -53,6 +53,10 @@
       error = caught;
     } finally { creating = false; }
   }
+
+  function retryCreatedOutcome(): void {
+    if (createdOutcome) void choose(createdOutcome);
+  }
 </script>
 
 <div class="outcome-picker" data-outcome-picker>
@@ -65,7 +69,8 @@
     </select>
   </div>
   {#if createdOutcome}
-    <div class="quiet-line" data-created-outcome-id={createdOutcome.id}>Created “{createdOutcome.title}”. Retry {chooseLabel.toLowerCase()} if needed.</div>
+    <div class="quiet-line" data-created-outcome-id={createdOutcome.id}>Created “{createdOutcome.title}”.</div>
+    <Button disabled={choosingId !== null} onclick={retryCreatedOutcome} data-retry-created-outcome>Retry {chooseLabel.toLowerCase()}</Button>
   {/if}
   <ResourceState error={outcomes.error} loading={outcomes.isFetching} hasData={Boolean(outcomes.data)} loadingText="Loading outcomes...">
     <div class="outcome-picker-list">
@@ -94,7 +99,7 @@
           <option value="">Choose a project</option>
           {#each projects as project}<option value={project.id}>{project.name}</option>{/each}
         </select>
-        <Button variant="primary" disabled={creating || !title.trim() || !projectId} onclick={() => void createOutcome()}>Create and {chooseLabel.toLowerCase()}</Button>
+        <Button variant="primary" disabled={creating || createdOutcome !== null || !title.trim() || !projectId} onclick={() => void createOutcome()}>Create and {chooseLabel.toLowerCase()}</Button>
       </div>
     </details>
   {/if}

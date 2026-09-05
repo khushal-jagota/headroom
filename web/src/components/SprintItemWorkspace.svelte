@@ -159,7 +159,7 @@
               <span>·</span><span>{workspaceProgress(item)}</span>
               {#if item.committed_sprints.length}
                 <span>·</span><span class="sprint-workspace-commitments">
-                  {#each item.committed_sprints as sprint, index (sprint.id)}{#if index}, {/if}<a href="#/sprint">{sprint.name}</a>{/each}
+                  {#each item.committed_sprints as sprint, index (sprint.id)}{#if index}, {/if}<a href={`#/sprint?sprint=${encodeURIComponent(sprint.id)}`}>{sprint.name}</a>{/each}
                 </span>
               {/if}
             </div>

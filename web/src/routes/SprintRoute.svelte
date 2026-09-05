@@ -28,10 +28,11 @@
 
   let {
     sub = "tracking",
-    selectedItemId = null
-  }: { sub?: string; selectedItemId?: string | null } = $props();
+    selectedItemId = null,
+    sprintId = null
+  }: { sub?: string; selectedItemId?: string | null; sprintId?: string | null } = $props();
 
-  const current = createQuery(() => queries.currentSprint());
+  const current = createQuery(() => sprintId ? queries.sprintTracking(sprintId) : queries.currentSprint());
   const projects = createQuery(() => queries.projects());
   const today = createQuery(() => queries.todayDay());
   const sprintSummaries = createQuery(() => queries.sprintSummaries());
@@ -117,6 +118,9 @@
     const parsed = Date.parse(`${iso}T00:00:00`);
     return Number.isNaN(parsed) ? iso : shortMonthDayLabel(new Date(parsed));
   }
+  function sprintHref(sprintId: string, suffix = ""): string {
+    return `#/sprint${suffix}?sprint=${encodeURIComponent(sprintId)}`;
+  }
 </script>
 
 {#snippet ticketRows(tickets: SprintTicket[])}
@@ -154,12 +158,12 @@
     {:else}
       {@const sprint = current.data.sprint}
       {#if selectedItemId}
-        <SprintItemWorkspace itemId={selectedItemId} sprintName={sprint.name} />
+        <SprintItemWorkspace itemId={selectedItemId} sprintName={sprint.name} backHref={sprintHref(sprint.id)} />
       {:else}
         <div class="doc">
           <div class="col">
           {#if documents}
-            <a class="sprint-back" href="#/sprint">‹ {sprint.name}</a>
+            <a class="sprint-back" href={sprintHref(sprint.id)}>‹ {sprint.name}</a>
             <header class="sprint-docs-head">
               <h1 class="sprint-docs-title">Sprint documents</h1>
               <div class="sprint-docs-sub">Kickoff, Checkpoint, and sprint review — the sprint's written record.</div>
@@ -236,7 +240,7 @@
                 <span>{sprintDayLabel(sprint, current.data.planning_date)}</span>
                 <span class="sep">·</span>
                 <span>{current.data.outcome_groups.filter((group) => group.committed).length} committed outcomes</span>
-                <a class="sprint-docs-link" href="#/sprint/documents">Sprint documents ›</a>
+                <a class="sprint-docs-link" href={sprintHref(sprint.id, "/documents")}>Sprint documents ›</a>
               </div>
             </header>
 
@@ -263,15 +267,15 @@
                     {#each group.outcomes as outcomeGroup (outcomeGroup.outcome.id)}
                       {@const outcome = outcomeGroup.outcome}
                       <div class="sprint-outcome-block" data-outcome-id={outcome.id} data-committed={outcomeGroup.committed}>
-                        <a class="list-row sprint-item-row" href={`#/sprint?item=${encodeURIComponent(outcome.id)}`}>
+                        <a class="list-row sprint-item-row" href={`${sprintHref(sprint.id)}&item=${encodeURIComponent(outcome.id)}`}>
                           <PriorityTile priority={outcome.priority} /><span class="list-row-title">{outcome.title}</span>
                           <span class="sprint-item-rollup">{outcomeTicketProgress(outcomeGroup)}</span>
                         </a>
                         <div class="sprint-outcome-meta">{outcomeGroup.committed ? "Committed outcome" : "Other work"}</div>
                         {#if outcomeGroup.committed}
-                          <div class="sprint-outcome-menu"><Button onclick={() => void removeOutcome(sprint.id, outcome.id)}>Remove from Sprint</Button><Button onclick={() => openCarry(outcomeGroup)}>Carry forward</Button></div>
+                          <details class="sprint-outcome-menu"><summary>Actions</summary><div><Button onclick={() => void removeOutcome(sprint.id, outcome.id)}>Remove from Sprint</Button><Button onclick={() => openCarry(outcomeGroup)}>Carry forward</Button></div></details>
                         {/if}
-                        <div class="sprint-project-items">{@render ticketRows(outcomeGroup.tickets)}</div>
+                        {#if outcomeGroup.tickets.length}<details class="sprint-outcome-tickets"><summary>{outcomeGroup.tickets.length} Tickets</summary><div class="sprint-project-items">{@render ticketRows(outcomeGroup.tickets)}</div></details>{/if}
                       </div>
                     {/each}
                   </div>

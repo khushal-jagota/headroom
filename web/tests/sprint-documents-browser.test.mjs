@@ -27,28 +27,41 @@ try {
     created_at: 1, updated_at: 1
   };
   const writes: object[] = [];
+  const requests: Array<{ path: string; method: string; body: any }> = [];
+  let commitmentAttempts = 0;
+  const outcome = { id: "outcome_existing", title: "Ship it", priority: "P1", deadline: null, project_id: "project_one", project: "One", created_at: 1, updated_at: 1 };
   const json = (value: unknown) => new Response(JSON.stringify(value), {
     headers: { "Content-Type": "application/json" }
   });
   globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const path = String(input);
+    const method = init.method || "GET";
+    const body = init.body ? JSON.parse(String(init.body)) : null;
+    requests.push({ path, method, body });
     if (path === "/api/sprints/sp_test" && init.method === "PATCH") {
-      const body = JSON.parse(String(init.body));
       writes.push(body);
       sprint = { ...sprint, ...body };
       return json(sprint);
     }
-    if (path === "/api/sprint/current") return json({
-      sprint, planning_date: "2026-09-05", groups: {}, other_tickets: []
+    if (path === "/api/sprints/sp_test/tracking") return json({
+      sprint, planning_date: "2026-09-05", outcome_groups: [{ outcome, committed: true, tickets: [
+        { id: "t_one", title: "Move me", stage: "needs_plan", priority: "P1", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false },
+        { id: "t_done", title: "Leave done", stage: "done", priority: "P2", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false }
+      ] }], unclassified_tickets: []
     });
-    if (path === "/api/projects") return json({ projects: [] });
+    if (path === "/api/projects") return json({ projects: [{ id: "project_one", name: "One", summary: "", priority: "P1", created_at: 1, updated_at: 1 }] });
     if (path === "/api/day/today") return json({ tickets: [] });
+    if (path === "/api/sprints") return json({ sprints: [sprint, { ...sprint, id: "sp_next", name: "Next" }] });
+    if (path.startsWith("/api/sprint-item-summaries?")) return json({ items: [outcome], page: { match_count: 1, return_count: 1, limit: 30, offset: 0, omitted_before: 0, omitted_after: 0, complete: true, next_offset: null } });
+    if (path === "/api/items" && method === "POST") return json({ ...outcome, id: "outcome_created", title: body.title });
+    if (path.includes("/outcomes/outcome_created") && method === "PUT") { commitmentAttempts += 1; if (commitmentAttempts === 1) return new Response(JSON.stringify({ error: { code: "failed", message: "Try again" } }), { status: 500, headers: { "Content-Type": "application/json" } }); return json({ sprint_id: "sp_test", outcome_id: "outcome_created" }); }
+    if (path.endsWith("/outcomes/outcome_existing/carry") && method === "POST") return json(body);
     throw new Error("Unexpected request: " + path);
   }) as typeof fetch;
-  (window as any).saved = () => ({ sprint, writes });
+  (window as any).saved = () => ({ sprint, writes, requests });
 </script>
 <button onclick={() => sub = sub === "documents" ? "tracking" : "documents"}>Switch view</button>
-<QueryClientProvider client={queryClient}><SprintRoute {sub} /></QueryClientProvider>
+<QueryClientProvider client={queryClient}><SprintRoute {sub} sprintId="sp_test" /></QueryClientProvider>
 `);
   await writeFile(mainPath, `
 import { mount } from "svelte";
@@ -91,6 +104,7 @@ with sync_playwright() as playwright:
         page = browser.new_page()
         page.goto(sys.argv[1], wait_until="networkidle")
         page.get_by_role("heading", name="Sprint documents").wait_for()
+        assert page.locator("a.sprint-back").get_attribute("href") == "#/sprint?sprint=sp_test"
         assert page.locator('[data-field]').count() == 4
         for field, label, text in [
             ("primary_bet", "Primary bet", "Updated summary."),
@@ -111,6 +125,35 @@ with sync_playwright() as playwright:
         assert saved["sprint"]["name"] == "A useful sprint"
         page.get_by_role("button", name="Switch view").click()
         expect(page.locator("[data-sprint-bet]")).to_have_text("Updated summary.")
+        assert page.locator("a.sprint-docs-link").get_attribute("href") == "#/sprint/documents?sprint=sp_test"
+        outcome = page.locator('[data-outcome-id="outcome_existing"]')
+        assert not outcome.locator('[data-sprint-ticket-id]').first.is_visible()
+        outcome.locator('details.sprint-outcome-tickets > summary').click()
+        assert outcome.locator('[data-sprint-ticket-id]:visible').count() == 2
+        outcome.locator('details.sprint-outcome-menu > summary').click()
+        outcome.get_by_role("button", name="Carry forward").click()
+        carry = page.locator('[data-carry-outcome="outcome_existing"]')
+        assert carry.locator('input[type="checkbox"]').count() == 1
+        assert not carry.locator('input[type="checkbox"]').is_checked()
+        carry.get_by_role("combobox").select_option("sp_next")
+        carry.locator('input[type="checkbox"]').check()
+        carry.get_by_role("button", name="Carry selected").click()
+        page.wait_for_function("() => window.saved().requests.some(request => request.path.endsWith('/carry'))")
+        carry_request = page.evaluate("window.saved().requests.find(request => request.path.endsWith('/carry'))")
+        assert carry_request["body"] == {"target_sprint_id": "sp_next", "ticket_ids": ["t_one"]}
+        page.get_by_role("button", name="Add outcome").click()
+        picker = page.locator('[data-outcome-picker]')
+        picker.locator('[data-new-outcome] > summary').click()
+        picker.locator('[data-new-outcome] input').fill("Created once")
+        picker.locator('[data-new-outcome] textarea').fill("Keep this brief")
+        picker.locator('[data-new-outcome] select').select_option("project_one")
+        picker.get_by_role("button", name="Create and add").click()
+        picker.locator('[data-retry-created-outcome]').wait_for()
+        post_count = page.evaluate("window.saved().requests.filter(request => request.path === '/api/items' && request.method === 'POST').length")
+        assert post_count == 1
+        picker.locator('[data-retry-created-outcome]').click()
+        page.wait_for_function("() => window.saved().requests.filter(request => request.path.includes('/outcomes/outcome_created') && request.method === 'PUT').length === 2")
+        assert page.evaluate("window.saved().requests.filter(request => request.path === '/api/items' && request.method === 'POST').length") == 1
         page.get_by_role("button", name="Switch view").click()
         # Remount reads the persisted document through the real query path.
         expect(page.get_by_role("textbox", name="Sprint Review", exact=True)).to_have_text("Updated review.")

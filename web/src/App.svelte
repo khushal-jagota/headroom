@@ -169,6 +169,9 @@
     if (name === "sprint" && search.has("item")) {
       params.item = search.get("item") || "";
     }
+    if (name === "sprint" && search.has("sprint")) {
+      params.sprint = search.get("sprint") || "";
+    }
     const screenKey = segments.join("/") || "day";
     return { name, params, key: query ? `${screenKey}${query}` : screenKey };
   }
@@ -347,7 +350,7 @@
           {:else if route.name === "workspace" && route.workspace}
             <BoardRoute address={route.workspace} />
           {:else if route.name === "sprint"}
-            <SprintRoute sub={route.params.sub || "tracking"} selectedItemId={route.params.item || null} />
+            <SprintRoute sub={route.params.sub || "tracking"} selectedItemId={route.params.item || null} sprintId={route.params.sprint || null} />
           {:else if route.name === "backlog"}
             <BacklogRoute />
           {:else if route.name === "ideas"}

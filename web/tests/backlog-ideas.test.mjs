@@ -113,10 +113,10 @@ try {
     if (path === "/api/ticket-summaries?sprint_id=null&limit=30&offset=30") {
       return json({ tickets: [ticket("ticket_last", "P1")], page: page(1, backlogTickets.length + 1, 30) });
     }
-    if (path === "/api/sprint-item-summaries?sprint_id=null&limit=30&offset=0") {
+    if (path === "/api/sprint-item-summaries?limit=30&offset=0") {
       return json({ items: firstItemPage, page: page(30, 31, 0) });
     }
-    if (path === "/api/sprint-item-summaries?sprint_id=null&limit=30&offset=30") {
+    if (path === "/api/sprint-item-summaries?limit=30&offset=30") {
       return json({ items: [finalItem], page: page(1, 31, 30) });
     }
     if (path === "/api/tickets" && method === "POST") {
@@ -150,7 +150,7 @@ try {
         ...finalItem,
         kind: "normal",
         body: "The off-board brief remains readable.",
-        rollup: {},
+        committed_sprints: [],
         supervisor: {
           agent_key: "sprint_item:item_offboard",
           conversation_id: null,
@@ -243,7 +243,10 @@ with sync_playwright() as playwright:
     page.locator('section[data-screen="backlog"]').wait_for()
 
     assert page.locator('[data-pagination="tickets"] [data-page-range]').inner_text() == "1–30 of 31"
-    assert page.locator('[data-pagination="items"] [data-page-range]').inner_text() == "1–30 of 31"
+    assert not any("sprint-item-summaries" in request["path"] for request in page.evaluate("window.__requests()"))
+    page.locator('[data-backlog-outcomes] > summary').click()
+    page.locator('[data-outcome-picker]').wait_for()
+    page.wait_for_function("() => window.__requests().some(request => request.path.includes('sprint-item-summaries'))")
     first_ticket = page.locator('[data-ticket-id="ticket_0"]')
     assert first_ticket.get_attribute("href") == "#/workspace/ticket_0"
     assert "A bounded recap for ticket_0" in first_ticket.inner_text()
@@ -252,16 +255,10 @@ with sync_playwright() as playwright:
     page.locator('[data-pagination="tickets"] button', has_text="Next").click()
     page.locator('[data-ticket-id="ticket_last"]').wait_for()
     assert page.locator('[data-pagination="tickets"] [data-page-range]').inner_text() == "31–31 of 31"
-    assert page.locator('[data-pagination="items"] [data-page-range]').inner_text() == "1–30 of 31"
     page.locator('[data-pagination="tickets"] button', has_text="Previous").click()
     page.locator('[data-ticket-id="ticket_0"]').wait_for()
 
-    page.locator('[data-pagination="items"] button', has_text="Next").click()
-    offboard_item = page.locator('[data-item-id="item_offboard"]')
-    offboard_item.wait_for()
-    assert page.locator('[data-pagination="items"] [data-page-range]').inner_text() == "31–31 of 31"
-    assert page.locator('[data-pagination="tickets"] [data-page-range]').inner_text() == "1–30 of 31"
-    assert offboard_item.get_attribute("href") == "#/workspace/item/item_offboard"
+    page.locator('[data-backlog-outcomes] > summary').click()
 
     # The dormant compose writes an ordinary explicitly unscheduled Ticket through
     # the real mutation/query invalidation path.
@@ -296,7 +293,7 @@ with sync_playwright() as playwright:
 
     # A canonical direct Item address survives the empty board response and mounts
     # the real Item workspace, even though the board rail has no row for it.
-    offboard_item.click()
+    page.evaluate("window.location.hash = '#/workspace/item/item_offboard'")
     page.locator('[data-sprint-item-workspace="item_offboard"] [data-sprint-item-brief]').wait_for()
     assert page.locator('[data-sprint-item-brief]').inner_text() == "The off-board brief remains readable."
     page.wait_for_function(
