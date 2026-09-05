@@ -139,9 +139,31 @@ Ticket presentation projection; do not introduce a second readiness calculation.
 
 Item detail/workspace responses retain their existing identity, body, supervisor,
 artifact, child-Ticket and blocker fields, remove `sprint_id`, `status`, and the always-
-empty `status_proposal`, and add `committed_sprints: list[SprintSummary]` in date order.
+empty `status_proposal`, remove `rollup`, and add
+`committed_sprints: list[SprintSummary]` in date order.
 Reuse the existing Sprint-summary fields and make their dates required in TypeScript,
 matching the actual server projection. This response never duplicates Sprint documents.
+
+Each `SprintItemWorkspaceTicket` adds these exact wire fields in both the Python
+workspace-child contract and `web/src/lib/types.ts`:
+
+```python
+sprint_id: str | None
+sprint_name: str | None
+```
+
+```typescript
+sprint_id: string | null;
+sprint_name: string | null;
+```
+
+`sprint_id` is the child's own `tickets.sprint_id`, never an Outcome commitment or a
+current-Sprint default. A left join to that Ticket's Sprint resolves `sprint_name` in
+the same workspace read; both are null for backlog. Preserve an empty stored Sprint
+name as empty rather than synthesizing a name in the API. This lightweight name field
+earns its existence by avoiding a new catalog query or a false lookup through only
+`committed_sprints`: a child's historical Sprint need not remain committed. All other
+workspace-child fields and every supervisor/conversation payload remain unchanged.
 
 `ItemRead` retains `.item`, `blocking_ticket_ids`, and `blockers_cleared`, and drops its
 aggregate `status`. Remove `ItemStatus`, `ITEM_STATUS_ORDER`, the Item status derivation,
@@ -149,6 +171,15 @@ and status filters. Keep direct Item blocking links and Ticket blocker semantics
 this program removes an unsupported outcome-completion claim, not blocking behavior.
 Ticket progress is explicitly labeled “n/m Tickets done,” with dropped Tickets excluded
 from the denominator. Zero children says “No Tickets”; it never says Outcome done.
+This also applies when all children are dropped: zero non-dropped children means
+“No Tickets.” Counts come from the loaded Ticket arrays: the full children in the
+Outcome workspace, and that Sprint's group children in Sprint tracking. The existing
+`workspaceProgress` already follows this child-based calculation. Delete
+`sprints.views.item_rollup`, its separate aggregate SQL, Coding-stage zero filling, all
+wire `rollup` fields/types and the CLI Item `rollup` record part. Do not replace it with
+another stored or separately fetched aggregate. `panels sprint item show` continues to
+show the Outcome record and blockers; detailed Ticket listing remains the existing
+child/workspace reads. Keep `read_item(...).item` and its blocker fields as specified.
 
 `SprintItemDeletion.sprint_ids` is the tuple of all commitment Sprint IDs, captured
 before deletion, rather than a zero-or-one value. Existing deletion still refuses an
@@ -371,6 +402,13 @@ the exact movement reviewable. Submission sends selected IDs once; no default �
 Removing a commitment leaves scheduled work visible under Other work. Clicking the
 Outcome opens its existing workspace: full brief/artifacts and all its Tickets across
 Sprints with existing Today/remaining grouping, plus concise committed-Sprint links.
+Every visible child row also shows its own Sprint in quiet metadata beside the Ticket
+title: `Backlog` for a null `sprint_id`, otherwise its `sprint_name`, with the actual
+`sprint_id` as the fallback for an unnamed Sprint. Do not infer this label from the
+workspace's current Sprint or committed-Sprint list. Keep Ticket rows as links to their
+canonical Ticket; avoid nested links in the row. This metadata remains legible on phone
+by wrapping below the title. Changing or removing an Outcome commitment must not relabel
+the historical Tickets beneath it.
 The conversation pane and behavior remain unchanged.
 
 Backlog keeps unscheduled active Tickets as the main list. Replace its Unscheduled
@@ -443,7 +481,10 @@ change contracts or touch protected files to make imports pass.
   uncommitted work remains visible, create/reuse failures retain the returned ID, and
   carry sends exactly the checked unfinished IDs. Backlog's Outcomes browser starts
   collapsed without a mounted catalog query, opens the bounded catalog on expansion,
-  and opens existing/new identities without implying they are unfinished. Verify the changed document/controls
+  and opens existing/new identities without implying they are unfinished. The two-Sprint
+  fixture also proves workspace rows label each child's actual Sprint (including one
+  without a commitment), backlog rows say Backlog, and Ticket-derived progress excludes
+  dropped children without requiring a rollup response. Verify the changed document/controls
   fit existing desktop and mobile layout in `web/tests`, using the existing browser
   component harness if needed. No live-server Playwright E2E: the risks are server
   transaction/query contracts and frontend selection/rendering, covered separately.
