@@ -95,12 +95,12 @@ def fake_clock() -> TestClock:
 
 
 _CODING_GOLDEN_SUCCESS_S = (
-    '{"kickoff": {"value": null, "proposal": null, "user_note": null}, '
-    '"success": {"value": "s", "proposal": null, "user_note": null}, '
-    '"approach": {"value": null, "proposal": null, "user_note": null}, '
-    '"plan": {"value": null, "proposal": null, "user_note": null}, '
-    '"implementation": {"value": null, "proposal": null, "user_note": null}, '
-    '"closeout": {"value": null, "proposal": null, "user_note": null}}'
+    '{"kickoff": {"value": null, "proposal": null}, '
+    '"success": {"value": "s", "proposal": null}, '
+    '"approach": {"value": null, "proposal": null}, '
+    '"plan": {"value": null, "proposal": null}, '
+    '"implementation": {"value": null, "proposal": null}, '
+    '"closeout": {"value": null, "proposal": null}}'
 )
 
 
@@ -119,12 +119,12 @@ def test_coding_fields_to_json_bytes_are_golden() -> None:
 # so a writer that constructs coding slots in a different insertion order fails here even
 # while the standalone codec golden (above) stays green (review F6).
 _CODING_STORED_AFTER_DRIVE = (
-    '{"kickoff": {"value": "", "proposal": null, "user_note": null}, '
-    '"success": {"value": "the success", "proposal": null, "user_note": null}, '
-    '"approach": {"value": null, "proposal": null, "user_note": null}, '
-    '"plan": {"value": null, "proposal": null, "user_note": null}, '
-    '"implementation": {"value": null, "proposal": null, "user_note": null}, '
-    '"closeout": {"value": null, "proposal": null, "user_note": null}}'
+    '{"kickoff": {"value": "", "proposal": null}, '
+    '"success": {"value": "the success", "proposal": null}, '
+    '"approach": {"value": null, "proposal": null}, '
+    '"plan": {"value": null, "proposal": null}, '
+    '"implementation": {"value": null, "proposal": null}, '
+    '"closeout": {"value": null, "proposal": null}}'
 )
 
 
@@ -204,9 +204,9 @@ def test_boundary_lifted_and_require_coding_field_gone(
     probe_registry: WorkerTypeDefinition,
 ) -> None:
     payload = {
-        "kickoff": {"value": "k", "proposal": None, "user_note": None},
-        _FA: {"value": "a", "proposal": None, "user_note": None},
-        _FB: {"value": None, "proposal": None, "user_note": None},
+        "kickoff": {"value": "k", "proposal": None},
+        _FA: {"value": "a", "proposal": None},
+        _FB: {"value": None, "proposal": None},
     }
     decoded = fields_codec.declared_fields_from_json(
         json.dumps(payload), probe_registry.field_ids()

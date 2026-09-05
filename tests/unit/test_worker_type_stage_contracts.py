@@ -21,12 +21,12 @@ from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 
 _EMPTY_FIELDS_DEFAULT = (
-    '{"kickoff":{"value":null,"proposal":null,"user_note":null},'
-    '"success":{"value":null,"proposal":null,"user_note":null},'
-    '"approach":{"value":null,"proposal":null,"user_note":null},'
-    '"plan":{"value":null,"proposal":null,"user_note":null},'
-    '"implementation":{"value":null,"proposal":null,"user_note":null},'
-    '"closeout":{"value":null,"proposal":null,"user_note":null}}'
+    '{"kickoff":{"value":null,"proposal":null},'
+    '"success":{"value":null,"proposal":null},'
+    '"approach":{"value":null,"proposal":null},'
+    '"plan":{"value":null,"proposal":null},'
+    '"implementation":{"value":null,"proposal":null},'
+    '"closeout":{"value":null,"proposal":null}}'
 )
 
 

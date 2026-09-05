@@ -147,7 +147,7 @@ def test_put_value_agent_edits_pending_proposal_in_place(tmp_path: Path) -> None
         "created_at": original.created_at,
     }
     assert body["fields"]["plan"]["value"] is None
-    assert body["fields"]["plan"]["user_note"] is None
+    assert body["guidance"] == ""
     assert body["stage"] == "needs_plan"
     assert body["ceiling"] == "needs_plan"
     assert body["at_cap"] == "propose"

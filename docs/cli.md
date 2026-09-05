@@ -5,9 +5,9 @@ machine-readable JSON with `--json`.
 
 Single-record reads use one grammar. With no part list, a read returns an identity and
 state header plus a manifest. The manifest lists every authored part in stable order,
-including empty parts. It reports the Unicode character count and `has_user_note` for
+including empty parts. It reports the Unicode character count for
 each part. Pass one optional comma-separated positional list to expand only those parts.
-Each expanded part contains `value`, `user_note`, and `proposal`:
+Each expanded part contains `value` and `proposal`:
 
 ```sh
 panels ticket show t_example
@@ -126,7 +126,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   filter types use AND, and exclusions apply last. A terminal `--stage` also requires
   `--include-terminal`. An unknown Stage produces no matches.
   `--search` performs a case-insensitive substring match across the title, recap, field
-  values, proposal bodies, and user notes. Search keeps stable Ticket order and combines
+  values, proposal bodies, and Ticket guidance. Search keeps stable Ticket order and combines
   with placement filters and page controls. Results include Ticket state, placement, and
   a short recap preview. Search does not rank matches or return snippets.
   `ticket create` uses Today and the current Sprint when placement is omitted.
@@ -208,10 +208,10 @@ record shapes. Direct `show` commands also keep their full record shapes.
   `propose`, `recap`, `note`, and `trouble` take their text on stdin only; there is no
   file-path option, so no shared `/tmp` file can carry one Ticket's text onto another.
   `worker propose` infers the current gating field from the Ticket Stage and requires a
-  short recap on `--recap TEXT` in the same request. `worker note` replaces field
-  guidance by default and accepts `--append` for additive guidance without changing
-  the field's value. `--replace` names the default operation when an explicit flag helps
-  a caller. `worker my-ticket`
+  short recap on `--recap TEXT` in the same request. `worker note <id>` replaces the
+  Ticket guidance document and accepts `--append` to add text with one blank line.
+  Empty replacement clears guidance; empty append does nothing. No field argument
+  or type lookup is needed. Ticket reads offer `recap` and `guidance` parts. `worker my-ticket`
   reports the current Ticket, and names the **specialist skill** for its Worker type —
   the one the base worker loads to learn that Worker type's Stages (see
   `worker-types.md`). `worker trouble` appends one short trouble note, read from stdin,

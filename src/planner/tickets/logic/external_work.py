@@ -86,7 +86,7 @@ def decide_external_work(
             new_fields = fields_codec.with_slot(
                 new_fields,
                 field,
-                FieldSlot(value=final_value, proposal=None, user_note=slot.user_note),
+                FieldSlot(value=final_value, proposal=None),
             )
             value_events.append(
                 EventSpec(

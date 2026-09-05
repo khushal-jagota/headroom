@@ -17,44 +17,37 @@ def test_manifest_preserves_declared_order_and_counts_unicode_characters() -> No
         {"id": "t_one", "stage": "needs_success"},
         {
             "empty": part(""),
-            "brief": part("A🌱é", user_note="Keep this."),
+            "brief": part("A🌱é"),
         },
         None,
     )
 
     assert list(projected["manifest"]) == ["empty", "brief"]
     assert projected["manifest"] == {
-        "empty": {"character_count": 0, "has_user_note": False},
-        "brief": {"character_count": 3, "has_user_note": True},
+        "empty": {"character_count": 0},
+        "brief": {"character_count": 3},
     }
     text = render_text(projected)
     assert "character_count: 3" in text
-    assert "has_user_note: true" in text
 
 
 def test_selection_returns_only_requested_parts_in_caller_order() -> None:
     parts = {
         "kickoff": part("why"),
-        "success": part(
-            "done", user_note="Do less.", proposal={"body": "proposed"}
-        ),
+        "success": part("done", proposal={"body": "proposed"}),
         "approach": part(None),
     }
 
-    projected = project_record(
-        {"id": "t_one"}, parts, parse_part_names("success,kickoff")
-    )
+    projected = project_record({"id": "t_one"}, parts, parse_part_names("success,kickoff"))
 
     assert list(projected["parts"]) == ["success", "kickoff"]
     assert projected["parts"]["success"] == {
         "value": "done",
-        "user_note": "Do less.",
         "proposal": {"body": "proposed"},
     }
     assert "manifest" not in projected
     text = render_text(projected)
     assert "value: done" in text
-    assert "user_note: Do less." in text
     assert 'proposal: {"body": "proposed"}' in text
 
 

@@ -52,8 +52,7 @@ def _accept_gating_proposal(
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
-    slot = fields_codec.get_slot(ticket.fields, str(field))
-    new_slot = FieldSlot(value=stored_body, proposal=None, user_note=slot.user_note)
+    new_slot = FieldSlot(value=stored_body, proposal=None)
     new_fields = fields_codec.with_slot(ticket.fields, str(field), new_slot)
     new_stage = worker_type_definition.advance_target(ticket.stage)
     if new_stage is None:
@@ -160,7 +159,6 @@ def decide_file_proposal(
             proposed_by=actor,
             created_at=now,
         ),
-        user_note=slot.user_note,
     )
     new_fields = fields_codec.with_slot(ticket.fields, str(field), new_slot)
     events: list[EventSpec] = []
@@ -235,7 +233,7 @@ def decide_accept(
             cause=CAUSE_DIRECT_ACCEPT,
             worker_type_definition=worker_type_definition,
         )
-    new_slot = FieldSlot(value=stored_body, proposal=None, user_note=slot.user_note)
+    new_slot = FieldSlot(value=stored_body, proposal=None)
     new_fields = fields_codec.with_slot(ticket.fields, str(field), new_slot)
     events = (
         EventSpec(
@@ -275,7 +273,6 @@ def decide_edit_value(
                 proposed_by=slot.proposal.proposed_by,
                 created_at=slot.proposal.created_at,
             ),
-            user_note=slot.user_note,
         )
         return Decision(
             events=(
@@ -309,7 +306,7 @@ def decide_edit_value(
             "field is not yet passed",
             {"field": str(field), "stage": str(ticket.stage)},
         )
-    new_slot = FieldSlot(value=new_body, proposal=None, user_note=slot.user_note)
+    new_slot = FieldSlot(value=new_body, proposal=None)
     new_fields = fields_codec.with_slot(ticket.fields, str(field), new_slot)
     return Decision(
         events=(
@@ -360,7 +357,7 @@ def decide_return_for_revision(
             "no pending proposal to return",
             {"ticket_id": ticket.id, "field": str(field)},
         )
-    new_slot = FieldSlot(value=slot.value, proposal=None, user_note=slot.user_note)
+    new_slot = FieldSlot(value=slot.value, proposal=None)
     return Decision(
         events=(),
         new_fields=fields_codec.with_slot(ticket.fields, str(field), new_slot),

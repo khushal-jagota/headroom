@@ -25,7 +25,7 @@ from planner.tickets.data import (
     accept_proposal,
     create_ticket,
     file_proposal,
-    set_field_user_note,
+    replace_guidance,
 )
 from planner.tickets.views import copy_text
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -40,19 +40,20 @@ _CODING_COPY_TEXT_GOLDEN = (
     "employee_backend: codex\n"
     "owner: worker\n"
     "\n"
-    "kickoff:\nkickoff body\nkickoff_user_note:\n(none)\n"
+    "kickoff:\nkickoff body\n"
     "\n"
-    "success:\n(none)\nsuccess_user_note:\nsuccess note\n"
+    "success:\n(none)\n"
     "\n"
-    "approach:\n(none)\napproach_user_note:\n(none)\n"
+    "approach:\n(none)\n"
     "\n"
-    "plan:\n(none)\nplan_user_note:\n(none)\n"
+    "plan:\n(none)\n"
     "\n"
-    "implementation:\n(none)\nimplementation_user_note:\n(none)\n"
+    "implementation:\n(none)\n"
     "\n"
-    "closeout:\n(none)\ncloseout_user_note:\n(none)\n"
+    "closeout:\n(none)\n"
     "\n"
     "recap:\n(none)\n"
+    "\nguidance:\nsuccess note\n"
     "\n"
     "blocked_by:\n(none)\n"
 )
@@ -89,8 +90,8 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
         next_ceiling="needs_success",
         at_cap=AtCap.propose,
     )
-    set_field_user_note(
-        tmp_db, ticket.id, field="success", user_note="success note", actor="human", now=4
+    replace_guidance(
+        tmp_db, ticket.id, body="success note", actor="human", now=4
     )
     assert copy_text(tmp_db, ticket.id) == _CODING_COPY_TEXT_GOLDEN
 
@@ -108,12 +109,10 @@ def test_copy_text_probe_renders_own_fields(
     )
     text = copy_text(tmp_db, ticket.id)
 
-    # Probe renders its own three field blocks (kickoff/alpha/beta) with user-notes.
+    # Probe renders its own field blocks plus one separate guidance document.
     assert "kickoff:\n" in text
     assert f"{FIELD_ALPHA}:\n" in text
-    assert f"{FIELD_ALPHA}_user_note:\n" in text
     assert f"{FIELD_BETA}:\n" in text
-    assert f"{FIELD_BETA}_user_note:\n" in text
 
     # No coding-only field appears (success/approach/plan/implementation/closeout).
     for coding_field in ("success", "approach", "plan", "implementation", "closeout"):

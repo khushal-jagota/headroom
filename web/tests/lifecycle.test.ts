@@ -198,6 +198,7 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     verdict: null,
     trouble_notes: [],
     fields: {},
+    guidance: "",
     ...overrides
   };
 }

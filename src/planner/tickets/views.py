@@ -94,6 +94,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
             ),
         },
         "recap": ticket.recap,
+        "guidance": ticket.guidance,
         "ceiling": str(ticket.ceiling),
         "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
@@ -180,9 +181,7 @@ def _ticket_search_text(row: sqlite3.Row) -> str:
             field_text.append(slot.value)
         if slot.proposal is not None:
             field_text.append(slot.proposal.body)
-        if slot.user_note:
-            field_text.append(slot.user_note)
-    return "\n".join((str(row["title"]), str(row["recap"]), *field_text))
+    return "\n".join((str(row["title"]), str(row["recap"]), str(row["guidance"]), *field_text))
 
 
 def _recap_preview(recap: str) -> str:
@@ -261,7 +260,7 @@ def list_ticket_summaries(
     searchable_fields = "tickets.fields" if filters.search else "NULL"
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.worker_type, tickets.stage, "
-        "tickets.ticket_status, tickets.priority, tickets.recap, "
+        "tickets.ticket_status, tickets.priority, tickets.recap, tickets.guidance, "
         + searchable_fields
         + " AS fields, "
         "tickets.project_id AS effective_project_id, "
@@ -389,7 +388,6 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
     )
     field_blocks = "".join(
         f"{field_id}:\n{show(slot(field_id).value)}\n"
-        f"{field_id}_user_note:\n{show(slot(field_id).user_note)}\n"
         f"\n"
         for field_id in worker_type_definition.field_ids()
     )
@@ -403,6 +401,7 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"\n"
         f"{field_blocks}"
         f"recap:\n{show(ticket.recap)}\n"
+        f"\nguidance:\n{show(ticket.guidance)}\n"
         f"\n"
         f"blocked_by:\n{blocked_by_block}\n"
     )

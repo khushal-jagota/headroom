@@ -28,6 +28,7 @@
   } from "../lib/conversation/wire";
   import WorkerConfigurationSetup from "../components/WorkerConfigurationSetup.svelte";
   import ClampedText from "../components/ClampedText.svelte";
+  import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
   import ResourceState from "../components/ResourceState.svelte";
@@ -331,10 +332,10 @@
     );
   }
 
-  function replaceNote(field: string, note: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/notes/${field}`, {
+  function replaceGuidance(body: string): Promise<unknown> {
+    return mutateJson(`/api/tickets/${stableId}/guidance`, {
       method: "PUT",
-      body: { user_note: note }
+      body: { body }
     });
   }
 
@@ -665,6 +666,9 @@
         <div class="ticket-col">
           <TicketVerdict stage={detail.stage} verdict={detail.verdict} onSave={saveVerdict} />
           <TicketTroubleNotes notes={detail.trouble_notes} />
+          <Disclosure title="Guidance" variant="support" defaultOpen={false} data-ticket-guidance>
+            <InlineEdit value={detail.guidance} markdown multiline placeholder="Guidance..." onSave={replaceGuidance} />
+          </Disclosure>
           <div class="fields">
             {#snippet kickoffContextRow()}
               {#if detail.employee_configuration_editable}
@@ -710,7 +714,6 @@
                           ? kickoffContextRow
                           : undefined}
                         onAccept={(payload) => acceptField(name, payload)}
-                        onReplaceNote={(raw) => replaceNote(name, raw)}
                         onSaveValue={(raw) => saveValue(name, raw)}
                       />
                     {/each}
@@ -747,7 +750,6 @@
                     ? kickoffContextRow
                     : undefined}
                   onAccept={(payload) => acceptField(name, payload)}
-                  onReplaceNote={(raw) => replaceNote(name, raw)}
                   onSaveValue={(raw) => saveValue(name, raw)}
                 />
               {/each}

@@ -80,10 +80,10 @@ def test_foreign_definition_drives_machine_semantics() -> None:
 def test_stored_decode_is_registry_free_and_declared_validation_is_explicit() -> None:
     raw = json.dumps(
         {
-            "kickoff": {"value": "k", "proposal": None, "user_note": None},
-            FIELD_ALPHA: {"value": None, "proposal": None, "user_note": None},
-            FIELD_BETA: {"value": None, "proposal": None, "user_note": None},
-            "legacy": {"value": "kept", "proposal": None, "user_note": None},
+            "kickoff": {"value": "k", "proposal": None},
+            FIELD_ALPHA: {"value": None, "proposal": None},
+            FIELD_BETA: {"value": None, "proposal": None},
+            "legacy": {"value": "kept", "proposal": None},
         }
     )
     stored = fields_codec.fields_from_json(raw)
@@ -94,6 +94,6 @@ def test_stored_decode_is_registry_free_and_declared_validation_is_explicit() ->
     assert tuple(declared.slots) == ("kickoff", FIELD_ALPHA, FIELD_BETA)
     with pytest.raises(PlannerError):
         fields_codec.declared_fields_from_json(
-            json.dumps({"kickoff": {"value": None, "proposal": None, "user_note": None}}),
+            json.dumps({"kickoff": {"value": None, "proposal": None}}),
             SYNTHETIC_WORKER_TYPE_DEFINITION.field_ids(),
         )

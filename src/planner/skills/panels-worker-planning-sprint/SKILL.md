@@ -30,7 +30,7 @@ carry-forward, but never turn a recommendation into an approved decision.
 
 Panels is canonical. Use supported `panels sprint`, `panels sprint item`, and
 `panels ticket` surfaces; never edit the database or legacy planning files. Keep working
-detail in Ticket Chat. Use field notes only for direct user guidance, and a ticket-owned
+detail in Ticket Chat. Use Ticket guidance only for direct user direction, and a ticket-owned
 artifact only when an evidence packet would otherwise overwhelm the conversation.
 
 ### needs_kickoff — bind the boundary

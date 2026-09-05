@@ -320,7 +320,7 @@ has no usage source.
   scrollbar appears. On a mouse or trackpad the thumb stays quiet until hover, focus,
   or active use. Touch and forced-colors modes keep the platform's visible scrollbar
   behavior.
-- **Ticket files are linked, not stored in fields.** Canonical notes, fields,
+- **Ticket files are linked, not stored in fields.** Ticket guidance, fields,
   proposals, and results stay as database text. Standalone files for a ticket
   live beside the database under `files/tickets/<ticket_id>/`, so the default local
   path is `data/files/tickets/<ticket_id>/...`. The browser reads them through
@@ -383,7 +383,7 @@ has no usage source.
   the Ticket, so a reload, Back, and a shared link all show it. The
   `#/preview` address remains the way in from anywhere else — a shared link, a
   notification, or another screen — and it draws the same document.
-- **Editable Markdown stays one surface.** Ticket notes, recaps, passed fields,
+- **Editable Markdown stays one surface.** Ticket guidance, recaps, passed fields,
   approval drafts, and future Markdown surfaces remain directly editable with their
   existing focus, blur/save, keyboard, paste, and Escape behavior. What is being typed
   belongs to the editor, not to the cache: a refetch that lands mid-composition never
@@ -410,7 +410,7 @@ The screens are assembled from a small kit of shared pieces rather than
 hand-rolling the same shapes per screen. Each does one job:
 
 - **Disclosure** — the one expand/collapse surface (a native details/summary with a
-  chevron): ticket notes and recaps, sprint phases and items, ideas with bodies, the
+  chevron): Ticket guidance and recaps, sprint phases and items, ideas with bodies, the
   backlog compose form, board project sections.
 - **ListRow** — the one row shape (title on the left, metadata on the right, hover):
   sprint tickets, backlog items, flat ideas, board cards. Renders as a link, a button,
