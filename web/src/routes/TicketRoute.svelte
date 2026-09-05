@@ -68,6 +68,7 @@
   );
   const projects = createQuery(() => queries.projects());
   const sprintItems = createQuery(() => queries.sprintItems());
+  const sprintSummaries = createQuery(() => queries.sprintSummaries());
   const manifest = createQuery(() => queries.workerTypeManifests());
 
   // Derive the per-Worker-type lifecycle from the QUERY (ticket.data?.worker_type), not
@@ -275,10 +276,7 @@
     const requestedItemId =
       changes.sprint_item_id !== undefined ? changes.sprint_item_id : detail.sprint_item_id ?? null;
     const requestedItem = (sprintItems.data?.items || []).find((item) => item.id === requestedItemId);
-    const sprintItemId =
-      requestedItem?.project_id === projectId && requestedItem?.sprint_id === sprintId
-        ? requestedItem.id
-        : null;
+    const sprintItemId = requestedItem?.project_id === projectId ? requestedItem.id : null;
     headerError = null;
     try {
       await patch({ project_id: projectId, sprint_id: sprintId, sprint_item_id: sprintItemId });
@@ -521,16 +519,22 @@
                   {/each}
                 </select>
               </span>
-              {#if detail.sprint_item_id}
-                <span class="ticket-identity-separator" aria-hidden="true">·</span>
-                <a
-                  class="ticket-identity-fact ticket-identity-link"
-                  data-sprint-item-control
-                  href={workspaceAddress({ kind: "item", id: detail.sprint_item_id })}
-                >
-                  {sprintItemTitle(detail.sprint_item_id)}
-                </a>
-              {/if}
+              <span class="ticket-identity-separator" aria-hidden="true">·</span>
+              <span class="ticket-identity-fact" data-outcome-control>
+                {detail.sprint_item_id ? sprintItemTitle(detail.sprint_item_id) : "No outcome"}
+                <select aria-label="Ticket outcome" value={detail.sprint_item_id || ""} onchange={(event) => void patchPlacement(detail, { sprint_item_id: event.currentTarget.value || null })}>
+                  <option value="">No outcome</option>
+                  {#each (sprintItems.data?.items || []).filter((item) => item.project_id === detail.project_id) as item}<option value={item.id}>{item.title}</option>{/each}
+                </select>
+              </span>
+              <span class="ticket-identity-separator" aria-hidden="true">·</span>
+              <span class="ticket-identity-fact" data-sprint-control>
+                {detail.sprint_id ? (sprintSummaries.data?.sprints || []).find((entry) => entry.id === detail.sprint_id)?.name || detail.sprint_id : "Backlog"}
+                <select aria-label="Ticket Sprint" value={detail.sprint_id || ""} onchange={(event) => void patchPlacement(detail, { sprint_id: event.currentTarget.value || null })}>
+                  <option value="">Backlog</option>
+                  {#each sprintSummaries.data?.sprints || [] as sprint}<option value={sprint.id}>{sprint.name}</option>{/each}
+                </select>
+              </span>
             </span>
             {#if lc}
               <span class="ticket-identity-group">

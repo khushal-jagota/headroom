@@ -4,10 +4,7 @@
   import { queries } from "../lib/queryCatalogue";
   import { labelize, PRIORITY_ORDER } from "../lib/ui";
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import type {
-    ListPageFacts,
-    TicketSummary
-  } from "../lib/types";
+  import type { ListPageFacts, OutcomeSummary, TicketSummary } from "../lib/types";
   import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
@@ -18,13 +15,12 @@
   import ScreenHeader from "../components/ScreenHeader.svelte";
   import SectionHeading from "../components/SectionHeading.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
+  import OutcomePicker from "../components/OutcomePicker.svelte";
 
   const PAGE_SIZE = 30;
 
   let ticketOffset = $state(0);
-  let itemOffset = $state(0);
   const tickets = createQuery(() => queries.backlogTicketSummaries(ticketOffset, PAGE_SIZE));
-  const items = createQuery(() => queries.backlogSprintItemSummaries(itemOffset, PAGE_SIZE));
   const projects = createQuery(() => queries.projects());
   const workerTypes = createQuery(() => queries.workerTypeManifests());
 
@@ -109,6 +105,10 @@
       creating = false;
     }
   }
+
+  function openOutcome(outcome: OutcomeSummary): void {
+    window.location.hash = workspaceAddress({ kind: "item", id: outcome.id }).slice(1);
+  }
 </script>
 
 <section class="backlog-screen" data-screen="backlog">
@@ -189,45 +189,10 @@
         {/if}
       </section>
 
-      <section class="groups" data-backlog-items>
-        <SectionHeading label="Unscheduled briefs" count={items.data?.page.match_count || 0} />
-        <ResourceState error={items.error} loading={items.isFetching} hasData={Boolean(items.data)} loadingText="Loading briefs...">
-          {#if !(items.data?.items || []).length}
-            <div class="quiet-line">No unscheduled briefs.</div>
-          {:else}
-            <div class="grp">
-              {#each items.data?.items || [] as item (item.id)}
-                <ListRow
-                  variant="backlog"
-                  title={item.title}
-                  href={workspaceAddress({ kind: "item", id: item.id })}
-                  data-item-id={item.id}
-                >
-                  {#snippet leading()}<PriorityTile priority={item.priority} />{/snippet}
-                  {#snippet trailing()}
-                    <span class="chips">
-                      <Chip variant="project" value={item.project} />
-                      {#if item.deadline}<Chip variant="deadline" value={item.deadline} />{/if}
-                    </span>
-                  {/snippet}
-                </ListRow>
-              {/each}
-            </div>
-          {/if}
-        </ResourceState>
-        {#if items.data?.page && !items.data.page.complete}
-          {@const page = items.data.page}
-          <div class="form" data-pagination="items">
-            <div class="foot">
-              <Button disabled={page.offset === 0} onclick={() => (itemOffset = previousOffset(page))}>Previous</Button>
-              <span class="quiet-line" data-page-range>{pageRange(page)}</span>
-              <Button disabled={page.next_offset === null} onclick={() => {
-                if (page.next_offset !== null) itemOffset = page.next_offset;
-              }}>Next</Button>
-            </div>
-          </div>
-        {/if}
-      </section>
+      <details class="groups backlog-outcomes" data-backlog-outcomes>
+        <summary><SectionHeading label="Outcomes" /></summary>
+        <OutcomePicker projects={projects.data?.projects || []} chooseLabel="Open" onChoose={openOutcome} />
+      </details>
     </div>
   </div>
 </section>
