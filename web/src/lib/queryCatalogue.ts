@@ -17,6 +17,7 @@ import type {
   SprintItemsResponse,
   SprintItemSummariesResponse,
   SprintItemWorkspace,
+  SprintTrackingBody,
   TicketDetail,
   TicketSummariesResponse,
   VpsStatusSummary,
@@ -52,10 +53,10 @@ export const queries = {
       ["tickets", "backlog", { limit, offset }],
       `/api/ticket-summaries?sprint_id=null&limit=${limit}&offset=${offset}`
     ),
-  backlogSprintItemSummaries: (offset: number, limit = 30) =>
+  outcomeSummaries: (offset: number, limit = 30, projectId = "", search = "") =>
     jsonQuery<SprintItemSummariesResponse>(
-      ["sprint-items", "backlog", { limit, offset }],
-      `/api/sprint-item-summaries?sprint_id=null&limit=${limit}&offset=${offset}`
+      ["outcomes", { limit, offset, projectId, search }],
+      `/api/sprint-item-summaries?limit=${limit}&offset=${offset}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""}${search ? `&search=${encodeURIComponent(search)}` : ""}`
     ),
   ideas: () => jsonQuery<IdeasResponse>(["ideas"], "/api/ideas"),
   projects: () => jsonQuery<ProjectsResponse>(["projects"], "/api/projects"),
@@ -64,6 +65,11 @@ export const queries = {
   sprintItems: () => jsonQuery<SprintItemsResponse>(["items"], "/api/items"),
   currentSprint: () =>
     jsonQuery<CurrentSprintResponse>(["sprint", "current"], "/api/sprint/current"),
+  sprintTracking: (sprintId: string) =>
+    jsonQuery<SprintTrackingBody>(
+      ["sprint", sprintId, "tracking"],
+      `/api/sprints/${encodeURIComponent(sprintId)}/tracking`
+    ),
   sprintItemWorkspace: (itemId: string) =>
     jsonQuery<SprintItemWorkspace>(
       ["sprint-item", itemId, "workspace"],

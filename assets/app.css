@@ -616,6 +616,19 @@ textarea {
   }
 }
 
+.sprint-outcome-actions, .sprint-outcome-menu, .outcome-picker-filters,
+.outcome-picker-pages, .carry-outcome .foot { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+.outcome-picker, .carry-outcome { padding: var(--space-4); background: var(--surface-2); border-radius: var(--radius-sm); }
+.outcome-picker-list, .sprint-outcome-block { display: grid; gap: var(--space-1); }
+.outcome-picker-row { width: 100%; border: 0; color: inherit; text-align: left; cursor: pointer; }
+.sprint-outcome-block { padding-block: var(--space-2); }
+.sprint-outcome-meta, .ticket-row-sprint { color: var(--text-muted); font-size: var(--type-sm); }
+.sprint-outcome-menu { justify-content: flex-end; }
+.carry-ticket { display: block; padding-block: var(--space-1); }
+.backlog-outcomes > summary { cursor: pointer; }
+.ticket-row-sprint { margin-left: auto; padding-left: var(--space-2); }
+@media (max-width: 640px) { .ticket-row-sprint { width: 100%; margin-left: var(--space-5); } }
+
 @media (max-width: 390px) {
   .vps-status-popover {
     position: fixed;

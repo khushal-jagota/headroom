@@ -73,7 +73,7 @@ def test_sprint_migration_preserves_all_prose_and_references(tmp_path: Path) -> 
             "VALUES ('t_kept', 'Ticket', 'coding', 'hermes', 'needs_kickoff', '{}', "
             "'project_personal', 'sp_full', 'si_kept', 12, 34)"
         )
-        item_before = tuple(
+        item_before = dict(
             conn.execute("SELECT * FROM sprint_items WHERE id = 'si_kept'").fetchone()
         )
         ticket_before = dict(conn.execute("SELECT * FROM tickets WHERE id = 't_kept'").fetchone())
@@ -106,10 +106,9 @@ def test_sprint_migration_preserves_all_prose_and_references(tmp_path: Path) -> 
         ).fetchone()
         assert tuple(empty) == ("", "", "")
         assert not set(old_prose) & {r["name"] for r in conn.execute("PRAGMA table_info(sprints)")}
-        assert (
-            tuple(conn.execute("SELECT * FROM sprint_items WHERE id = 'si_kept'").fetchone())
-            == item_before
-        )
+        assert dict(conn.execute("SELECT * FROM sprint_items WHERE id = 'si_kept'").fetchone()) == {
+            key: value for key, value in item_before.items() if key != "sprint_id"
+        }
         ticket_after = dict(conn.execute("SELECT * FROM tickets WHERE id = 't_kept'").fetchone())
         assert ticket_after.pop("guidance") == ""
         assert ticket_after == ticket_before

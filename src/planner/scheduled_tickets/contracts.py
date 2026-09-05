@@ -23,7 +23,6 @@ class OccurrenceOutcome(StrEnum):
 class ScheduledTicketPlacementMode(StrEnum):
     current_sprint = "current_sprint"
     backlog = "backlog"
-    sprint_item = "sprint_item"
 
 
 @dataclass(frozen=True)

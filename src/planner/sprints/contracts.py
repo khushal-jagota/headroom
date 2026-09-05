@@ -1,4 +1,4 @@
-"""Sprint domain shapes: sprints, sprint items, ideas, and derived item status."""
+"""Sprint domain shapes: Sprints, durable Outcomes, commitments, and ideas."""
 
 from __future__ import annotations
 
@@ -8,13 +8,6 @@ from typing import Final, TypedDict
 
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core.contracts import Priority
-
-
-class ItemStatus(StrEnum):
-    todo = "todo"
-    in_progress = "in_progress"
-    blocked = "blocked"
-    done = "done"
 
 
 class SprintItemKind(StrEnum):
@@ -37,13 +30,6 @@ SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS: Final = SprintItemSupervisorLaunchConfig
     employee_launch_reasoning_effort="medium",
 )
 
-
-ITEM_STATUS_ORDER: Final[tuple[ItemStatus, ...]] = (
-    ItemStatus.todo,
-    ItemStatus.in_progress,
-    ItemStatus.blocked,
-    ItemStatus.done,
-)
 
 # Editable documents; their internal headings are prose, not stored fields.
 SPRINT_DOCUMENT_FIELDS: Final[tuple[str, ...]] = ("kickoff", "checkpoint", "review")
@@ -72,7 +58,6 @@ class SprintItem:  # §3.2
     deadline: str | None
     project_id: str
     project_name: str
-    sprint_id: str | None  # NULL = backlog/deferred
     supervisor_agent_key: str
     supervisor_launch_configuration: SprintItemSupervisorLaunchConfiguration
     kind: SprintItemKind = SprintItemKind.normal
@@ -105,11 +90,6 @@ class CreateItemBody(TypedDict, total=False):  # POST /items
     body: str  # default ""
     priority: str | None  # Priority value; default P3
     deadline: str | None  # ISO date
-    sprint_id: str | None  # null/absent = backlog
-
-
-class MoveItemTicketBody(TypedDict, total=False):  # POST /items/{id}/tickets
-    ticket_id: str
 
 
 class CreateSprintBody(TypedDict, total=False):  # POST /sprints
@@ -138,3 +118,72 @@ class Idea:  # §3.5
     project_name: str | None
     created_at: int
     updated_at: int
+
+
+@dataclass(frozen=True)
+class SprintOutcomeCommitment:
+    sprint_id: str
+    outcome_id: str
+
+
+class SprintSummary(TypedDict):
+    id: str
+    name: str
+    date_start: str
+    date_end: str
+
+
+class SprintWireBody(SprintSummary):
+    primary_bet: str
+    kickoff: str
+    checkpoint: str
+    review: str
+    created_at: int
+    updated_at: int
+
+
+class CarryOutcomeBody(TypedDict):
+    target_sprint_id: str
+    ticket_ids: list[str]
+
+
+class CarryOutcomeResult(TypedDict):
+    source_sprint_id: str
+    target_sprint_id: str
+    outcome_id: str
+    ticket_ids: list[str]
+
+
+class OutcomeSummary(TypedDict):
+    id: str
+    title: str
+    priority: str
+    deadline: str | None
+    project_id: str
+    project: str
+    created_at: int
+    updated_at: int
+
+
+class SprintTicketSummary(TypedDict):
+    id: str
+    title: str
+    stage: str
+    priority: str
+    ticket_status: str
+    project_id: str | None
+    sprint_item_id: str | None
+    waiting_to_closeout: bool
+
+
+class SprintOutcomeGroup(TypedDict):
+    outcome: OutcomeSummary
+    committed: bool
+    tickets: list[SprintTicketSummary]
+
+
+class SprintTrackingBody(TypedDict):
+    planning_date: str
+    sprint: SprintWireBody | None
+    outcome_groups: list[SprintOutcomeGroup]
+    unclassified_tickets: list[SprintTicketSummary]

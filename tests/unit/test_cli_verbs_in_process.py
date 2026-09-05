@@ -208,12 +208,14 @@ def test_record_reads_share_manifests_selection_and_identity(
         "Record reads",
         "--project-id",
         "project_other",
-        "--sprint",
-        sprint["id"],
         "--body-file",
         "-",
         stdin="Show one part. 🌱",
     )
+    cli(server, "sprint", "outcome", "add", sprint["id"], item["id"])
+    empty = cli(server, "sprint", "outcome", "list", sprint["id"])
+    assert empty["outcome_groups"][0]["committed"] is True
+    assert empty["outcome_groups"][0]["tickets"] == []
     ticket = cli(
         server,
         "ticket",
@@ -264,12 +266,41 @@ def test_record_reads_share_manifests_selection_and_identity(
     assert sprint_manifest["header"]["id"] == sprint["id"]
     assert list(sprint_manifest["manifest"]) == ["primary_bet", "kickoff", "checkpoint", "review"]
     assert item_part["parts"]["body"]["value"] == "Show one part. 🌱"
-    assert sum(item_part["header"]["rollup"].values()) == 1
+    assert "rollup" not in item_part["header"]
     assert "tickets" not in day_manifest
     assert "tickets" not in day_manifest["header"]
     assert "tickets" not in day_manifest["manifest"]
     assert list(day_part["parts"]) == ["notes", "focus"]
     assert project_part["parts"]["summary"]["value"] == "Shared work."
+
+    next_sprint = cli(
+        server,
+        "sprint",
+        "create",
+        "--name",
+        "Next sprint",
+        "--date-start",
+        "2026-07-13",
+        "--date-end",
+        "2026-07-26",
+    )
+    carried = cli(
+        server,
+        "sprint",
+        "outcome",
+        "carry",
+        sprint["id"],
+        item["id"],
+        "--to",
+        next_sprint["id"],
+        "--ticket",
+        ticket["id"],
+    )
+    assert carried["ticket_ids"] == [ticket["id"]]
+    cli(server, "sprint", "outcome", "remove", next_sprint["id"], item["id"])
+    tracking = cli(server, "sprint", "outcome", "list", next_sprint["id"])
+    assert tracking["outcome_groups"][0]["committed"] is False
+    assert [t["id"] for t in tracking["outcome_groups"][0]["tickets"]] == [ticket["id"]]
 
     human = CliRunner().invoke(
         cli_main,
@@ -497,7 +528,7 @@ def test_schedule_cli_creates_lists_updates_and_shows_run_state(
         "--value",
         item_id,
     )
-    assert exact["placement_mode"] == "sprint_item"
+    assert exact["placement_mode"] == "current_sprint"
     assert exact["sprint_item_id"] == item_id
     assert exact["project_id"] == "project_vylo"
     updated = cli(
@@ -510,6 +541,7 @@ def test_schedule_cli_creates_lists_updates_and_shows_run_state(
         "backlog",
     )
     assert updated["placement_mode"] == "backlog"
+    assert updated["sprint_item_id"] == item_id
     assert updated["project_id"] == "project_vylo"
 
     shown = cli(server, "schedule", "show", created["id"])
@@ -653,11 +685,9 @@ def test_sprint_item_ticket_commands_move_atomically_and_to_backlog(
         "CLI item",
         "--project-id",
         "project_other",
-        "--sprint",
-        "current",
     )
 
-    cli(server, "sprint", "item", "move-ticket", item["id"], tid)
+    cli(server, "sprint", "item", "add-ticket", item["id"], tid)
     detail = api.get(server, f"/api/tickets/{tid}")
     assert detail["sprint_item_id"] == item["id"]
     assert detail["effective_sprint_id"] == sprint["id"]
@@ -666,10 +696,10 @@ def test_sprint_item_ticket_commands_move_atomically_and_to_backlog(
     assert renamed["id"] == sprint["id"]
     assert renamed["name"] == "Renamed CLI sprint"
 
-    cli(server, "sprint", "item", "move-ticket-to-backlog", item["id"], tid)
+    cli(server, "sprint", "item", "remove-ticket", item["id"], tid)
     detail = api.get(server, f"/api/tickets/{tid}")
     assert detail["sprint_item_id"] is None
-    assert detail["effective_sprint_id"] is None
+    assert detail["effective_sprint_id"] == sprint["id"]
 
 
 def test_ticket_place_sends_one_coherent_placement_patch(
@@ -695,8 +725,6 @@ def test_ticket_place_sends_one_coherent_placement_patch(
         "Placement item",
         "--project-id",
         "project_vylo",
-        "--sprint",
-        "current",
     )
     ticket_id = cli(
         server,

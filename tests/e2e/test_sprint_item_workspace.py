@@ -81,9 +81,12 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
             "body": "The shared brief stays editable and live.",
             "priority": "P2",
             "project_id": project["id"],
-            "sprint_id": sprint["id"],
         },
     )
+    committed = httpx.put(
+        f"{server.base}/api/sprints/{sprint['id']}/outcomes/{item['id']}", timeout=10.0
+    )
+    assert committed.status_code < 300, committed.text
     today_ticket = _post(
         server,
         "/api/tickets",
@@ -92,6 +95,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
             "worker_type": "coding",
             "kickoff_note": "Start.",
             "sprint_item_id": item["id"],
+            "sprint_id": sprint["id"],
         },
     )
     review_ticket = _post(
@@ -102,6 +106,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
             "worker_type": "coding",
             "kickoff_note": "Start.",
             "sprint_item_id": item["id"],
+            "sprint_id": sprint["id"],
         },
     )
     removed = httpx.delete(

@@ -45,13 +45,12 @@ gathers current evidence, plans the four morning fields with the user, and write
 agreed Day only at Closeout. At 14:30, a
 `planning-midday-check` Ticket compares that intent with current execution, agrees any
 useful intervention, carries it out, and records the reconciliation. Each planning
-Ticket uses the Personal Project and that Sprint's Planning Item. Repeat or pre-laid
+Ticket uses the Personal Project and direct current-Sprint placement. Repeat or pre-laid
 matching Tickets suppress duplicates.
 
 If a scheduled run is missed, recovery is ordinary creation of the intended planning
 Ticket with `panels ticket create --worker-type planning-day` or
-`--worker-type planning-midday-check`, with the Personal Project and current Planning
-Item selected. There is no backfill and no rollover fallback.
+`--worker-type planning-midday-check`, with the Personal Project and intended Sprint selected. There is no backfill and no rollover fallback.
 
 ## Quick capture
 

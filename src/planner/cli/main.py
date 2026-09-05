@@ -73,7 +73,6 @@ _ITEM_FIELDS = {
     "deadline": "deadline",
     "project": "project",
     "project-id": "project_id",
-    "sprint": "sprint_id",
 }
 
 _SUPERVISOR_ITEM_FIELDS = {
@@ -275,15 +274,13 @@ def _sprint_item_record(
     header_keys = (
         "id",
         "title",
-        "status",
-        "sprint_id",
+        "committed_sprints",
         "project_id",
         "project",
         "priority",
         "deadline",
         "kind",
         "blocked_by",
-        "rollup",
         "blockers_cleared",
     )
     return (
@@ -638,8 +635,8 @@ def schedule_create(
 ) -> None:
     if kickoff_note is not None and kickoff_note_file is not None:
         http.fail_validation("kickoff note accepts only one note option", as_json)
-    if backlog and (sprint_item is not None or sprint_id is not None):
-        http.fail_validation("--backlog cannot be combined with --sprint or --sprint-item", as_json)
+    if backlog and sprint_id is not None:
+        http.fail_validation("--backlog cannot be combined with --sprint", as_json)
     body: dict[str, Any] = {
         "title": title,
         "worker_type": worker_type,
@@ -662,8 +659,9 @@ def schedule_create(
         body["sprint_id"] = sprint_value_for_write(sprint_id, as_json)
     if sprint_item is not None:
         body["sprint_item_id"] = sprint_item
-    elif backlog:
-        body["sprint_item_id"] = None
+    if backlog:
+        body["sprint_id"] = None
+        body["placement_mode"] = "backlog"
     if employee_backend is not None:
         body["employee_backend"] = employee_backend
     if employee_launch_model is not None:
@@ -1133,12 +1131,12 @@ def ticket_create(
     )
     if sprint_id is not None:
         body["sprint_id"] = sprint_value_for_write(sprint_id, as_json)
-    if backlog and (sprint_item is not None or sprint_id is not None):
-        http.fail_validation("--backlog cannot be combined with --sprint or --sprint-item", as_json)
+    if backlog and sprint_id is not None:
+        http.fail_validation("--backlog cannot be combined with --sprint", as_json)
     if sprint_item is not None:
         body["sprint_item_id"] = sprint_item
-    elif backlog:
-        body["sprint_item_id"] = None
+    if backlog:
+        body["sprint_id"] = None
     if blocked_by_ticket_ids:
         body["blocked_by_ticket_ids"] = list(blocked_by_ticket_ids)
     data = http.send(
@@ -1665,7 +1663,6 @@ def sprint_item() -> None:
 @click.option("--body-file", default=None, help="Optional body file, or - for stdin.")
 @click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label.")
 @click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
-@click.option("--sprint", default=None, help="Sprint id, current, or none.")
 @json_option
 def sprint_item_create(
     title: str,
@@ -1674,7 +1671,6 @@ def sprint_item_create(
     body_file: str | None,
     priority: str | None,
     deadline: str | None,
-    sprint: str | None,
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {
@@ -1688,36 +1684,31 @@ def sprint_item_create(
         body["priority"] = priority
     if deadline is not None:
         body["deadline"] = deadline
-    if sprint is not None:
-        body["sprint_id"] = sprint_value_for_write(sprint, as_json)
     data = http.send(
         "POST", "/api/items", as_json=as_json, json_body=body, request_actor="ordinary"
     )
-    http.emit(data, as_json, f"{data['id']} {data['status']}")
+    http.emit(data, as_json, f"{data['id']}")
 
 
 @sprint_item.command("list")
-@click.option("--status", default=None, help="Only show items with this status.")
+@click.option("--search", default=None, help="Find an Outcome by title.")
 @click.option("--project", default=None, help="Only show project name.")
 @click.option("--project-id", default=None, help="Only show project id.")
-@click.option("--sprint", default=None, help="Sprint id, current, or none.")
 @bounded_options
 @json_option
 def sprint_item_list(
-    status: str | None,
+    search: str | None,
     project: str | None,
     project_id: str | None,
-    sprint: str | None,
     limit: int,
     offset: int,
     as_json: bool,
 ) -> None:
     params = _drop_none(
         {
-            "status": status,
+            "search": search,
             "project": project,
             "project_id": project_id,
-            "sprint_id": sprint_value_for_filter(sprint, as_json),
             "limit": limit,
             "offset": offset,
         }
@@ -1735,7 +1726,7 @@ def sprint_item_list(
         _format_bounded(
             _lines(
                 data["items"],
-                lambda i: f"{i['id']} {i['status']} {i['priority']} {i['title']}",
+                lambda i: f"{i['id']} {i['priority']} {i['title']}",
             ),
             data["page"],
         ),
@@ -1790,8 +1781,6 @@ def sprint_item_set(
         http.fail_validation(f"{field} cannot be cleared", as_json)
     if field == "priority" and new_value not in _PRIORITIES:
         http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
-    if field == "sprint" and new_value is not None:
-        new_value = sprint_value_for_write(new_value, as_json)
     data = http.send(
         "PATCH",
         f"/api/items/{item_id}",
@@ -1802,26 +1791,25 @@ def sprint_item_set(
     http.emit(data, as_json, f"{data['id']} {field} set")
 
 
-@sprint_item.command("move-ticket")
+@sprint_item.command("add-ticket")
 @click.argument("item_id")
 @click.argument("ticket_id")
 @json_option
-def sprint_item_move_ticket(item_id: str, ticket_id: str, as_json: bool) -> None:
+def sprint_item_add_ticket(item_id: str, ticket_id: str, as_json: bool) -> None:
     data = http.send(
-        "POST",
-        f"/api/items/{item_id}/tickets",
+        "PUT",
+        f"/api/items/{item_id}/tickets/{ticket_id}",
         as_json=as_json,
-        json_body={"ticket_id": ticket_id},
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} added to {item_id}")
 
 
-@sprint_item.command("move-ticket-to-backlog")
+@sprint_item.command("remove-ticket")
 @click.argument("item_id")
 @click.argument("ticket_id")
 @json_option
-def sprint_item_move_ticket_to_backlog(item_id: str, ticket_id: str, as_json: bool) -> None:
+def sprint_item_remove_ticket(item_id: str, ticket_id: str, as_json: bool) -> None:
     data = http.send(
         "DELETE",
         f"/api/items/{item_id}/tickets/{ticket_id}",
@@ -2533,12 +2521,12 @@ def chief_create_ticket_from_external_work(
     )
     if sprint_id is not None:
         body["sprint_id"] = sprint_value_for_write(sprint_id, as_json)
-    if backlog and (sprint_item is not None or sprint_id is not None):
-        http.fail_validation("--backlog cannot be combined with --sprint or --sprint-item", as_json)
+    if backlog and sprint_id is not None:
+        http.fail_validation("--backlog cannot be combined with --sprint", as_json)
     if sprint_item is not None:
         body["sprint_item_id"] = sprint_item
-    elif backlog:
-        body["sprint_item_id"] = None
+    if backlog:
+        body["sprint_id"] = None
     if blocked_by_ticket_ids:
         body["blocked_by_ticket_ids"] = list(blocked_by_ticket_ids)
     data = http.send(
@@ -2666,6 +2654,94 @@ def worker_note(ticket_id: str | None, append_note: bool, as_json: bool) -> None
         json_body={"body": body},
     )
     http.emit(data, as_json, f"guidance written on {data['id']}")
+
+
+@sprint.group("outcome")
+def sprint_outcome() -> None:
+    """Choose shared Outcomes for a Sprint without moving their history."""
+
+
+def _commit_outcome(method: str, sprint_id: str, outcome_id: str, as_json: bool) -> None:
+    sid = sprint_value_for_write(sprint_id, as_json)
+    if sid is None:
+        http.fail_validation("a commitment requires a Sprint", as_json)
+    result = http.send(
+        method,
+        f"/api/sprints/{sid}/outcomes/{outcome_id}",
+        as_json=as_json,
+        request_actor="ordinary",
+    )
+    http.emit(result, as_json, f"{outcome_id} commitment updated for {sid}")
+
+
+@sprint_outcome.command("add")
+@click.argument("sprint_id")
+@click.argument("outcome_id")
+@json_option
+def sprint_outcome_add(sprint_id: str, outcome_id: str, as_json: bool) -> None:
+    _commit_outcome("PUT", sprint_id, outcome_id, as_json)
+
+
+@sprint_outcome.command("remove")
+@click.argument("sprint_id")
+@click.argument("outcome_id")
+@json_option
+def sprint_outcome_remove(sprint_id: str, outcome_id: str, as_json: bool) -> None:
+    _commit_outcome("DELETE", sprint_id, outcome_id, as_json)
+
+
+@sprint_outcome.command("list")
+@click.argument("sprint_id")
+@json_option
+def sprint_outcome_list(sprint_id: str, as_json: bool) -> None:
+    sid = sprint_value_for_write(sprint_id, as_json)
+    if sid is None:
+        http.fail_validation("tracking requires a Sprint", as_json)
+    result = http.send(
+        "GET", f"/api/sprints/{sid}/tracking", as_json=as_json, request_actor="ordinary"
+    )
+    http.emit(
+        result,
+        as_json,
+        _lines(
+            result["outcome_groups"],
+            lambda group: f"{group['outcome']['id']} {group['outcome']['title']}",
+        ),
+    )
+
+
+@sprint_outcome.command("carry")
+@click.argument("source_sprint_id")
+@click.argument("outcome_id")
+@click.option("--to", "target_sprint_id", required=True)
+@click.option(
+    "--ticket",
+    "ticket_ids",
+    multiple=True,
+    help="Exact unfinished Ticket to carry; repeat to select more.",
+)
+@json_option
+def sprint_outcome_carry(
+    source_sprint_id: str,
+    outcome_id: str,
+    target_sprint_id: str,
+    ticket_ids: tuple[str, ...],
+    as_json: bool,
+) -> None:
+    source = sprint_value_for_write(source_sprint_id, as_json)
+    target = sprint_value_for_write(target_sprint_id, as_json)
+    if source is None or target is None:
+        http.fail_validation("carry requires source and target Sprints", as_json)
+    result = http.send(
+        "POST",
+        f"/api/sprints/{source}/outcomes/{outcome_id}/carry",
+        as_json=as_json,
+        json_body={"target_sprint_id": target, "ticket_ids": list(ticket_ids)},
+        request_actor="ordinary",
+    )
+    http.emit(
+        result, as_json, f"{outcome_id} committed to {target}; {len(ticket_ids)} Tickets selected"
+    )
 
 
 if __name__ == "__main__":

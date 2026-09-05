@@ -110,7 +110,7 @@ def _validate_ticket_creation_placement(
                 {"sprint_item_id": sprint_item_id},
             )
         item = conn.execute(
-            "SELECT project_id, sprint_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
+            "SELECT project_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
         ).fetchone()
         if item is None:
             raise PlannerError(
@@ -118,7 +118,7 @@ def _validate_ticket_creation_placement(
                 "sprint item not found",
                 {"sprint_item_id": sprint_item_id},
             )
-        if project_id != item["project_id"] or sprint_id != item["sprint_id"]:
+        if project_id != item["project_id"]:
             raise PlannerError(ErrorCode.validation, "ticket placement does not match sprint item")
     if project_id is not None:
         if conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
@@ -248,12 +248,11 @@ def validate_ticket_creation_context(
     )
     if sprint_item_id is not None:
         item = conn.execute(
-            "SELECT project_id, sprint_id FROM sprint_items WHERE id = ?",
+            "SELECT project_id FROM sprint_items WHERE id = ?",
             (sprint_item_id,),
         ).fetchone()
-        if item is not None:
+        if item is not None and project_id is None:
             project_id = str(item["project_id"])
-            sprint_id = item["sprint_id"]
     _validate_ticket_creation_placement(
         conn,
         project_id=project_id,
@@ -1009,14 +1008,13 @@ def create_ticket(
     )
     ticket_id = new_id(ID_PREFIXES["ticket"])
     with _txn(conn):
-        if sprint_item_id is not None and project_id is None and sprint_id is None:
+        if sprint_item_id is not None and project_id is None:
             item = conn.execute(
-                "SELECT project_id, sprint_id FROM sprint_items WHERE id = ?",
+                "SELECT project_id FROM sprint_items WHERE id = ?",
                 (sprint_item_id,),
             ).fetchone()
             if item is not None:
                 project_id = str(item["project_id"])
-                sprint_id = item["sprint_id"]
         _validate_ticket_creation_placement(
             conn,
             project_id=project_id,
@@ -1148,14 +1146,13 @@ def create_ticket_from_external_work(
         {"kickoff": kickoff_note} if worker_type_definition.has_field("kickoff") else {}
     )
     with _txn(conn):
-        if sprint_item_id is not None and project_id is None and sprint_id is None:
+        if sprint_item_id is not None and project_id is None:
             item = conn.execute(
-                "SELECT project_id, sprint_id FROM sprint_items WHERE id = ?",
+                "SELECT project_id FROM sprint_items WHERE id = ?",
                 (sprint_item_id,),
             ).fetchone()
             if item is not None:
                 project_id = str(item["project_id"])
-                sprint_id = item["sprint_id"]
         _validate_ticket_creation_placement(
             conn,
             project_id=project_id,
@@ -2115,7 +2112,7 @@ def write_recap(
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def move_ticket_to_sprint_item(
+def classify_ticket(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
@@ -2129,7 +2126,7 @@ def move_ticket_to_sprint_item(
             admit()
         ticket = _load_ticket_for_write(conn, ticket_id)
         item = conn.execute(
-            "SELECT project_id, sprint_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
+            "SELECT project_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
         ).fetchone()
         if item is None:
             raise PlannerError(
@@ -2140,15 +2137,14 @@ def move_ticket_to_sprint_item(
         if ticket.sprint_item_id == sprint_item_id:
             return ticket
         conn.execute(
-            "UPDATE tickets SET sprint_item_id = ?, project_id = ?, sprint_id = ?, "
-            "updated_at = ? WHERE id = ?",
-            (sprint_item_id, str(item["project_id"]), item["sprint_id"], now, ticket_id),
+            "UPDATE tickets SET sprint_item_id = ?, project_id = ?, updated_at = ? WHERE id = ?",
+            (sprint_item_id, str(item["project_id"]), now, ticket_id),
         )
         ticket_worker_context.set_ticket_placement_changed(conn, ticket_id)
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def move_ticket_to_backlog(
+def unclassify_ticket(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
@@ -2173,12 +2169,13 @@ def move_ticket_to_backlog(
         # Removal is a compare-and-clear operation. A retry after the first removal is a
         # no-op, and a stale retry after another request moved the ticket elsewhere must
         # not detach that newer membership.
-        if ticket.sprint_item_id != sprint_item_id:
+        if ticket.sprint_item_id is None:
             return ticket
+        if ticket.sprint_item_id != sprint_item_id:
+            raise PlannerError(ErrorCode.validation, "Ticket has a different Outcome")
         conn.execute(
-            "UPDATE tickets SET sprint_item_id = NULL, sprint_id = NULL, project_id = ?, "
-            "updated_at = ? WHERE id = ?",
-            (str(item["project_id"]), now, ticket_id),
+            "UPDATE tickets SET sprint_item_id = NULL, updated_at = ? WHERE id = ?",
+            (now, ticket_id),
         )
         ticket_worker_context.set_ticket_placement_changed(conn, ticket_id)
         return _load_ticket_for_write(conn, ticket_id)

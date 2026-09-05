@@ -1,5 +1,5 @@
 import type { FieldStageVisualState } from "./ui";
-import type { Priority, ProjectSummary } from "./types";
+import type { Priority, ProjectSummary, SprintOutcomeGroup } from "./types";
 
 export type SprintTicket = {
   id: string;
@@ -11,24 +11,11 @@ export type SprintTicket = {
   has_pending_proposal?: boolean;
 };
 
-export type SprintItem = {
-  id: string;
-  title: string;
-  body?: string | null;
-  priority: Priority;
-  deadline?: string | null;
-  project_id?: string | null;
-  project?: string | null;
-  kind: string;
-  status: string;
-  tickets?: SprintTicket[];
-};
-
 export type SprintProjectGroup = {
   key: string;
   label: string;
   priority: Priority | null;
-  items: SprintItem[];
+  outcomes: SprintOutcomeGroup[];
 };
 
 export type SprintTicketCondition = {
@@ -98,10 +85,6 @@ function rankPriority(priority: Priority | null | undefined): number {
   return priority ? (priorityRank.get(priority) ?? priorityRank.size) : priorityRank.size;
 }
 
-export function sprintItems(groups: Record<string, SprintItem[]>): SprintItem[] {
-  return Object.values(groups || {}).flat();
-}
-
 export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicketCondition {
   if (ticket.stage === "done") return { mark: "completed", word: "done" };
   // Two states, one mark, two words. Errored is a worker that broke; blocked is a
@@ -155,17 +138,10 @@ export function sprintTicketSectionsForTickets(
   };
 }
 
-export function sprintItemRollup(item: SprintItem): string {
-  const tickets = (item.tickets || []).filter((ticket) => ticket.stage !== "dropped");
+export function outcomeTicketProgress(item: SprintOutcomeGroup): string {
+  const tickets = item.tickets.filter((ticket) => ticket.stage !== "dropped");
   const done = tickets.filter((ticket) => ticket.stage === "done").length;
-  if (tickets.length === 0 || done === 0) return "to do";
-  if (done === tickets.length) return "done";
-  return `${done}/${tickets.length}`;
-}
-
-export function sprintItemIsDone(item: SprintItem): boolean {
-  const tickets = (item.tickets || []).filter((ticket) => ticket.stage !== "dropped");
-  return tickets.length > 0 && tickets.every((ticket) => ticket.stage === "done");
+  return tickets.length ? `${done}/${tickets.length} Tickets done` : "No Tickets";
 }
 
 function fallbackProjectRank(label: string): number {
@@ -175,26 +151,26 @@ function fallbackProjectRank(label: string): number {
 }
 
 export function sprintProjectGroups(
-  items: SprintItem[],
+  items: SprintOutcomeGroup[],
   projects: ProjectSummary[]
 ): SprintProjectGroup[] {
   const projectsById = new Map(projects.map((project) => [project.id, project]));
   const grouped = new Map<string, SprintProjectGroup>();
   for (const item of items) {
-    const key = item.project_id || "__other__";
-    const project = item.project_id ? projectsById.get(item.project_id) : undefined;
-    const label = item.project || project?.name || "Other";
-    const group = grouped.get(key) || { key, label, priority: project?.priority || null, items: [] };
-    group.items.push(item);
+    const outcome = item.outcome;
+    const key = outcome.project_id;
+    const project = projectsById.get(outcome.project_id);
+    const label = outcome.project || project?.name || "Other";
+    const group = grouped.get(key) || { key, label, priority: project?.priority || null, outcomes: [] };
+    group.outcomes.push(item);
     grouped.set(key, group);
   }
 
   for (const group of grouped.values()) {
-    group.items.sort((left, right) =>
-      Number(sprintItemIsDone(left)) - Number(sprintItemIsDone(right)) ||
-      rankPriority(left.priority) - rankPriority(right.priority) ||
-      left.title.localeCompare(right.title, undefined, { sensitivity: "base" }) ||
-      left.id.localeCompare(right.id)
+    group.outcomes.sort((left, right) =>
+      rankPriority(left.outcome.priority) - rankPriority(right.outcome.priority) ||
+      left.outcome.created_at - right.outcome.created_at ||
+      left.outcome.id.localeCompare(right.outcome.id)
     );
   }
 

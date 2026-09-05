@@ -1,19 +1,4 @@
-"""Acceptance items 10 and 20 for the sprints domain.
-
-The §18.3 fence is 1:1 — one named test per item — so test_a10_* and test_a20_*
-each exist exactly once and assert their item's full statement. Supplementary
-coverage runs under the unanchored test_x06_* names.
-
-Item 10 — sprint-item status is derived from child tickets and blocking links:
-done has precedence when all non-dropped children are done; in_progress follows
-running/control states or active ticket lifecycle states; blocked follows open
-blocking links, blocked children, or errored child runtime; dropped children are
-ignored and all-dropped/no-children items are todo.
-
-Item 20 — sprint overlap: freeze and weekly_addenda are retired (rev6), so every
-sprint text field is always-editable and nothing latches; the remaining rule is
-sprint overlap rejection (inclusive ranges).
-"""
+"""Sprint date integrity and Outcome blocker facts."""
 
 from __future__ import annotations
 
@@ -26,10 +11,9 @@ import pytest
 from planner.core import links as core_links
 from planner.core.authctx import _classify, require_planning_write
 from planner.core.clock import TestClock
-from planner.core.contracts import BlockerSummary, LinkKind
+from planner.core.contracts import LinkKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
-from planner.sprints.contracts import ItemStatus
 from planner.sprints.data import (
     create_idea,
     create_item,
@@ -71,68 +55,6 @@ def _set_ticket_state(conn: Connection, ticket_id: str, stage: str) -> None:
 
 
 # --- item 10: sprint-item permissions (single anchored test) ----------------------
-
-
-def test_a10_sprint_item_permissions(tmp_db: Connection, fake_clock: TestClock) -> None:
-    empty = create_item(tmp_db, title="empty", project_id="project_vylo", clock=fake_clock)
-    assert read_item(tmp_db, empty.id).status is ItemStatus.todo
-
-    done = create_item(tmp_db, title="done", project_id="project_vylo", clock=fake_clock)
-    _insert_ticket(tmp_db, "t_done_a", "done", sprint_item_id=done.id)
-    _insert_ticket(tmp_db, "t_done_b", "dropped", sprint_item_id=done.id)
-    assert read_item(tmp_db, done.id).status is ItemStatus.done
-
-    running = create_item(tmp_db, title="running", project_id="project_vylo", clock=fake_clock)
-    _insert_ticket(
-        tmp_db,
-        "t_running",
-        "needs_success",
-        sprint_item_id=running.id,
-        ticket_status="agent",
-    )
-    assert read_item(tmp_db, running.id).status is ItemStatus.in_progress
-
-    shaped = create_item(tmp_db, title="shaped", project_id="project_vylo", clock=fake_clock)
-    _insert_ticket(tmp_db, "t_shaped", "needs_plan", sprint_item_id=shaped.id)
-    assert read_item(tmp_db, shaped.id).status is ItemStatus.in_progress
-
-    blocked = create_item(tmp_db, title="blocked", project_id="project_vylo", clock=fake_clock)
-    _insert_ticket(tmp_db, "t_a", "needs_implementation")
-    _insert_ticket(tmp_db, "t_b", "done")
-    core_links.add_link(tmp_db, "t_a", blocked.id, LinkKind.blocks, fake_clock.now_unix())
-    core_links.add_link(tmp_db, "t_b", blocked.id, LinkKind.blocks, fake_clock.now_unix())
-    blocked_read = read_item(tmp_db, blocked.id)
-    assert blocked_read.status is ItemStatus.blocked
-    assert blocked_read.blocking_ticket_ids == ["t_a", "t_b"]
-    assert blocked_read.blockers_cleared is False
-    _set_ticket_state(tmp_db, "t_a", "done")
-    cleared_read = read_item(tmp_db, blocked.id)
-    assert cleared_read.blockers_cleared is True
-    assert cleared_read.status is ItemStatus.todo
-
-    child_blocked = create_item(
-        tmp_db, title="child blocked", project_id="project_vylo", clock=fake_clock
-    )
-    _insert_ticket(tmp_db, "t_child", "needs_success", sprint_item_id=child_blocked.id)
-    _insert_ticket(tmp_db, "t_child_blocker", "needs_success")
-    core_links.add_link(
-        tmp_db, "t_child_blocker", "t_child", LinkKind.blocks, fake_clock.now_unix()
-    )
-    assert read_item(tmp_db, child_blocked.id).status is ItemStatus.blocked
-
-    errored = create_item(tmp_db, title="errored", project_id="project_vylo", clock=fake_clock)
-    _insert_ticket(
-        tmp_db,
-        "t_errored_child",
-        "needs_success",
-        sprint_item_id=errored.id,
-        ticket_status="errored",
-    )
-    assert read_item(tmp_db, errored.id).status is ItemStatus.blocked
-
-    all_dropped = create_item(tmp_db, title="dropped", project_id="project_vylo", clock=fake_clock)
-    _insert_ticket(tmp_db, "t_dropped", "dropped", sprint_item_id=all_dropped.id)
-    assert read_item(tmp_db, all_dropped.id).status is ItemStatus.todo
 
 
 # --- item 20: sprint overlap (single anchored test) -------------------------------
@@ -177,7 +99,7 @@ def test_x06_current_sprint_selection() -> None:
     assert current_sprint_id("2026-06-30", [a, d]) is None
 
 
-def test_x06_sprint_item_blocked_status_uses_active_blocker_summary(
+def test_outcome_retains_direct_blockers_and_cleared_facts(
     tmp_db: Connection, fake_clock: TestClock
 ) -> None:
     directly_blocked = create_item(
@@ -192,7 +114,6 @@ def test_x06_sprint_item_blocked_status_uses_active_blocker_summary(
 
     assert direct_read.blocking_ticket_ids == ["t_done_direct", "t_dropped_direct"]
     assert direct_read.blockers_cleared is True
-    assert direct_read.status is ItemStatus.todo
 
     child_blocked = create_item(
         tmp_db, title="child cleared", project_id="project_vylo", clock=fake_clock
@@ -200,31 +121,6 @@ def test_x06_sprint_item_blocked_status_uses_active_blocker_summary(
     _insert_ticket(tmp_db, "t_child_cleared", "needs_success", sprint_item_id=child_blocked.id)
     _insert_ticket(tmp_db, "t_done_child_blocker", "done")
     core_links.add_link(tmp_db, "t_done_child_blocker", "t_child_cleared", LinkKind.blocks, 1)
-
-    assert read_item(tmp_db, child_blocked.id).status is ItemStatus.todo
-
-
-def test_x06_child_ticket_blocked_status_uses_canonical_blocker_summary(
-    tmp_db: Connection, fake_clock: TestClock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    item = create_item(
-        tmp_db, title="child summary item", project_id="project_vylo", clock=fake_clock
-    )
-    _insert_ticket(tmp_db, "t_child", "needs_success", sprint_item_id=item.id)
-    _insert_ticket(tmp_db, "t_child_blocker", "needs_success")
-    core_links.add_link(tmp_db, "t_child_blocker", "t_child", LinkKind.blocks, 1)
-    original_blocker_summary = core_links.blocker_summary
-    summary_calls: list[str] = []
-
-    def tracked_blocker_summary(conn: Connection, entity_id: str) -> BlockerSummary:
-        summary_calls.append(entity_id)
-        return original_blocker_summary(conn, entity_id)
-
-    monkeypatch.setattr(core_links, "blocker_summary", tracked_blocker_summary)
-
-    assert read_item(tmp_db, item.id).status is ItemStatus.blocked
-    assert item.id in summary_calls
-    assert "t_child" in summary_calls
 
 
 def test_x06_create_idea_writer_logs_event(tmp_db: Connection, fake_clock: TestClock) -> None:

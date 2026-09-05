@@ -95,24 +95,14 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
             "placement_mode",
         )
         if placement_mode_raw is not None
-        else (
-            ScheduledTicketPlacementMode.current_sprint
-            if "sprint_item_id" not in raw
-            else (
-                ScheduledTicketPlacementMode.backlog
-                if sprint_item_id is None
-                else ScheduledTicketPlacementMode.sprint_item
-            )
-        )
+        else ScheduledTicketPlacementMode.current_sprint
     )
     return ScheduledTicketTemplate(
         title=body_str(raw, "title"),
         worker_type=worker_type,
         kickoff_note=body_str(raw, "kickoff_note"),
         priority=(
-            Priority.P3
-            if priority_raw is None
-            else parse_enum(Priority, priority_raw, "priority")
+            Priority.P3 if priority_raw is None else parse_enum(Priority, priority_raw, "priority")
         ),
         deadline=body_opt_str(raw, "deadline"),
         project_id=None if project is None else project.id,
@@ -145,9 +135,7 @@ async def create_schedule(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDi
 
 @router.get("/schedules")
 async def list_schedules(conn: DbConn) -> JsonDict:
-    return {
-        "schedules": [views.schedule_json(item) for item in data.list_schedules(conn)]
-    }
+    return {"schedules": [views.schedule_json(item) for item in data.list_schedules(conn)]}
 
 
 @router.get("/schedules/{schedule_id}")
@@ -159,9 +147,7 @@ async def get_schedule(schedule_id: str, conn: DbConn) -> JsonDict:
 
 
 @router.patch("/schedules/{schedule_id}")
-async def patch_schedule(
-    schedule_id: str, raw: dict[str, Any], conn: DbConn, clk: Clk
-) -> JsonDict:
+async def patch_schedule(schedule_id: str, raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
     _reject_unknown(raw, _PATCH_KEYS)
     if not raw:
         raise PlannerError(ErrorCode.validation, "no schedule fields to update", {})
@@ -169,18 +155,14 @@ async def patch_schedule(
     if "enabled" in raw:
         changes["enabled"] = _body_bool(raw, "enabled", True)
     if "cadence" in raw:
-        changes["cadence"] = parse_enum(
-            ScheduleCadence, body_str(raw, "cadence"), "cadence"
-        )
+        changes["cadence"] = parse_enum(ScheduleCadence, body_str(raw, "cadence"), "cadence")
     for key in ("local_time", "title", "worker_type", "kickoff_note"):
         if key in raw:
             changes[key] = body_str(raw, key)
     if "worker_type" in changes:
         changes["worker_type"] = _require_worker_type(str(changes["worker_type"]))
     if "priority" in raw:
-        changes["priority"] = parse_enum(
-            Priority, body_str(raw, "priority"), "priority"
-        )
+        changes["priority"] = parse_enum(Priority, body_str(raw, "priority"), "priority")
     for key in (
         "deadline",
         "project_id",
@@ -191,28 +173,13 @@ async def patch_schedule(
     ):
         if key in raw:
             changes[key] = body_opt_str(raw, key)
-    if "sprint_item_id" in raw:
-        changes["placement_mode"] = (
-            ScheduledTicketPlacementMode.backlog
-            if changes["sprint_item_id"] is None
-            else ScheduledTicketPlacementMode.sprint_item
-        )
     if "placement_mode" in raw:
         changes["placement_mode"] = parse_enum(
             ScheduledTicketPlacementMode,
             body_str(raw, "placement_mode"),
             "placement_mode",
         )
-        if changes["placement_mode"] is not ScheduledTicketPlacementMode.sprint_item:
-            changes["sprint_item_id"] = None
-        if changes["placement_mode"] in {
-            ScheduledTicketPlacementMode.current_sprint,
-            ScheduledTicketPlacementMode.backlog,
-        } and "sprint_id" not in raw:
-            changes["sprint_id"] = None
     if "blocked_by_ticket_ids" in raw:
-        changes["blocked_by_ticket_ids"] = tuple(
-            body_str_list(raw, "blocked_by_ticket_ids")
-        )
+        changes["blocked_by_ticket_ids"] = tuple(body_str_list(raw, "blocked_by_ticket_ids"))
     schedule = actions.update_schedule(conn, schedule_id, changes, now=clk.now_unix())
     return views.schedule_json(schedule, data.list_occurrences(conn, schedule_id))

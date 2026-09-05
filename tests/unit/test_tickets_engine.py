@@ -841,28 +841,9 @@ def test_a08_recap_rules(tmp_db: Connection, cfg: Config, fake_clock: TestClock)
     assert t.recap == "post-drop recap"
 
 
-def test_a13_sprint_placement_is_derived_from_item_membership(
+def test_a36_onward_scope(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
-    now = fake_clock.now_unix()
-    tmp_db.execute(
-        "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
-        "VALUES ('sp_test', 'Test sprint', '2026-07-01', '2026-07-12', ?, ?)",
-        (now, now),
-    )
-
-    tmp_db.execute(
-        "INSERT INTO sprint_items (id, title, project_id, sprint_id, created_at, updated_at) "
-        "VALUES ('si_test', 'Parent item', 'project_vylo', 'sp_test', ?, ?)",
-        (now, now),
-    )
-    parented = _create(tmp_db, cfg, fake_clock, sprint_item_id="si_test")
-    backlog = _create(tmp_db, cfg, fake_clock)
-    assert data.get_effective_sprint_id(tmp_db, parented.id) == "sp_test"
-    assert data.get_effective_sprint_id(tmp_db, backlog.id) is None
-
-
-def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
     now = fake_clock.now_unix()
 
     t = _create(tmp_db, cfg, fake_clock)
