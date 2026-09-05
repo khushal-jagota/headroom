@@ -74,8 +74,7 @@ def test_review_shortcuts_do_not_escape_editable_controls(
     page.evaluate("async () => { await (await fetch('/api/review')).text(); }")
     assert approve_requests == []
     assert all(
-        api.get(server, f"/api/tickets/{ticket}")["fields"]["success"]["proposal"]
-        is not None
+        api.get(server, f"/api/tickets/{ticket}")["pending_proposal"] is not None
         for ticket in tickets
     )
     assert page.get_attribute(card, "data-ticket-id") == ticket_before
@@ -110,4 +109,4 @@ def test_review_shortcuts_do_not_escape_editable_controls(
         timeout=WAIT_MS,
     )
     approved = api.get(server, f"/api/tickets/{approved_ticket}")
-    assert approved["fields"]["success"]["proposal"] is None
+    assert approved["pending_proposal"] is None

@@ -26,7 +26,6 @@ from planner.sprints.logic import DateRange
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, TicketStatus
-from planner.tickets.logic import fields_codec
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
@@ -167,8 +166,6 @@ def test_exact_time_and_cadence_rules_are_planning_neutral() -> None:
     )
 
 
-
-
 def test_production_planning_schedules_create_place_receipt_and_reach_handoff(
     tmp_db: Connection,
 ) -> None:
@@ -222,10 +219,11 @@ def test_production_planning_schedules_create_place_receipt_and_reach_handoff(
         assert ticket.ticket_status is TicketStatus.empty
         definition = registry.require(ticket.worker_type)
         if definition.has_field("kickoff"):
-            assert fields_codec.get_slot(ticket.fields, "kickoff").proposal is None
+            assert ticket.pending_proposal is None
         else:
             assert ticket.stage == definition.default_ceiling()
-            assert tuple(ticket.fields.slots) == definition.field_ids()
+            assert dict(ticket.field_values) == {}
+            assert ticket.pending_proposal is None
         assert ticket.project_id == "project_personal"
         assert ticket.effective_sprint_id == "sp_current"
         assert ticket.sprint_item_id == "si_planning_current"
@@ -386,7 +384,7 @@ def test_due_occurrence_creates_and_places_one_ordinary_ticket(
     assert ticket.title == "Planned session"
     assert ticket.worker_type == "coding"
     assert ticket.ticket_status is TicketStatus.awaiting_approval
-    kickoff_proposal = fields_codec.get_slot(ticket.fields, "kickoff").proposal
+    kickoff_proposal = ticket.pending_proposal
     assert kickoff_proposal is not None
     assert kickoff_proposal.body == "Gather evidence first."
     assert tmp_db.execute(
@@ -394,12 +392,6 @@ def test_due_occurrence_creates_and_places_one_ordinary_ticket(
         (ticket_id,),
     ).fetchone()
     assert len(data.list_occurrences(tmp_db, schedule_id)) == 1
-
-
-
-
-
-
 
 
 def test_pre_five_am_occurrence_targets_the_previous_planning_day(
@@ -417,24 +409,6 @@ def test_pre_five_am_occurrence_targets_the_previous_planning_day(
 
     assert result[0].target_day_id == "day_2026-07-27"
     assert tmp_db.execute("SELECT 1 FROM day_tickets WHERE day_id = 'day_2026-07-27'").fetchone()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def test_failure_is_recorded_once_and_does_not_stop_another_schedule(
@@ -471,8 +445,6 @@ def test_failure_is_recorded_once_and_does_not_stop_another_schedule(
     assert failure.outcome is OccurrenceOutcome.failed
     assert "from_id must be an existing ticket" in (failure.error or "")
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
-
-
 
 
 def test_runtime_loop_uses_injected_clock_and_restart_safe_receipt(

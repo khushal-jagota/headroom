@@ -12,14 +12,12 @@ from planner.tickets.contracts import (
     NextCeiling,
     ScopePair,
     StageOwnershipMode,
-    TicketFields,
     TicketStatus,
 )
-from planner.tickets.logic import fields_codec
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 if TYPE_CHECKING:
-    from planner.tickets.contracts import Ticket
+    pass
 
 
 def field_is_passed(
@@ -99,30 +97,6 @@ def resolve_scope(
             {"next_ceiling": ceiling_id, "new_stage": new_stage},
         )
     return ScopePair(next_ceiling=ceiling_id, at_cap=at_cap)
-
-
-def has_pending_gating_proposal(
-    stage: str,
-    fields: TicketFields,
-    *,
-    worker_type_definition: WorkerTypeDefinition,
-) -> bool:
-    field = worker_type_definition.gating_field(stage)
-    if field is None:
-        return False
-    return fields_codec.get_slot(fields, field).proposal is not None
-
-
-def has_pending_parked_proposal(
-    ticket: Ticket,
-    *,
-    worker_type_definition: WorkerTypeDefinition,
-) -> bool:
-    return has_pending_gating_proposal(
-        ticket.stage,
-        ticket.fields,
-        worker_type_definition=worker_type_definition,
-    )
 
 
 def effective_stage_ownership_mode(

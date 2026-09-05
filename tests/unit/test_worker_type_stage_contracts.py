@@ -78,8 +78,8 @@ def test_fresh_schema_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
     assert "stage" in columns
     assert columns["stage"][3] == 1
     assert columns["stage"][4] == "'needs_kickoff'"
-    assert columns["fields"][3] == 1
-    assert columns["fields"][4] is None
+    assert columns["field_values"][3] == 1
+    assert columns["field_values"][4] is None
     assert "ticket_type" not in columns
     assert "state" not in columns
     assert "conversation_id" in columns

@@ -14,7 +14,7 @@ from planner.sprints import data as sprints_data
 from planner.sprints.contracts import ItemStatus, Sprint, SprintItem
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets.contracts import AtCap, TicketStatus
-from planner.tickets.logic import fields_codec, machine
+from planner.tickets.logic import machine
 from planner.worker_types.configuration import configured_worker_type_registry
 
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
@@ -121,7 +121,7 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
     the condition alone cannot see. Without them the Sprint Item page and the workspace
     rail would sort the same Ticket into different groups."""
     rows = conn.execute(
-        "SELECT id, title, stage, priority, ticket_status, fields, worker_type, at_cap, "
+        "SELECT id, title, stage, priority, ticket_status, pending_proposal, worker_type, at_cap, "
         "ceiling, employee_backend FROM tickets "
         "WHERE sprint_item_id = ? ORDER BY created_at, id",
         (item_id,),
@@ -133,9 +133,6 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
         stage = str(r["stage"])
         ticket_status = str(r["ticket_status"])
         worker_type_definition = registry.require(str(r["worker_type"]))
-        fields = fields_codec.declared_fields_from_json(
-            str(r["fields"]), worker_type_definition.field_ids()
-        )
         gating_field = worker_type_definition.gating_field(stage)
         stopped_at_current_stage = str(
             r["at_cap"]
@@ -155,11 +152,7 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
                 "title": str(r["title"]),
                 "stage": stage,
                 "priority": str(r["priority"]),
-                "has_pending_proposal": machine.has_pending_gating_proposal(
-                    stage,
-                    fields,
-                    worker_type_definition=worker_type_definition,
-                ),
+                "has_pending_proposal": r["pending_proposal"] is not None,
                 "ticket_status": ticket_status,
                 "waiting_to_closeout": waiting_to_closeout,
                 "gating_field": gating_field,
@@ -215,26 +208,21 @@ def item_ticket_overview(conn: sqlite3.Connection, item_id: str) -> list[JsonDic
 
 def unclassified_sprint_tickets(conn: sqlite3.Connection, sprint_id: str) -> list[JsonDict]:
     rows = conn.execute(
-        "SELECT id, title, stage, priority, ticket_status, fields, worker_type, "
+        "SELECT id, title, stage, priority, ticket_status, pending_proposal, worker_type, "
         "employee_backend FROM tickets WHERE sprint_id = ? AND sprint_item_id IS NULL "
         "ORDER BY created_at, id",
         (sprint_id,),
     ).fetchall()
     result: list[JsonDict] = []
-    registry = configured_worker_type_registry()
     for row in rows:
         stage = str(row["stage"])
-        definition = registry.require(str(row["worker_type"]))
-        fields = fields_codec.declared_fields_from_json(str(row["fields"]), definition.field_ids())
         result.append(
             {
                 "id": str(row["id"]),
                 "title": str(row["title"]),
                 "stage": stage,
                 "priority": str(row["priority"]),
-                "has_pending_proposal": machine.has_pending_gating_proposal(
-                    stage, fields, worker_type_definition=definition
-                ),
+                "has_pending_proposal": row["pending_proposal"] is not None,
                 "ticket_status": str(row["ticket_status"]),
                 "employee_backend": str(row["employee_backend"]),
             }
@@ -326,14 +314,10 @@ def item_workspace(conn: sqlite3.Connection, item_id: str, planning_day_id: str)
             "planning_day_id": planning_day_id,
             "tickets": tickets,
             "today_ticket_ids": [
-                str(ticket["id"])
-                for ticket in tickets
-                if planning_day_id in ticket["day_ids"]
+                str(ticket["id"]) for ticket in tickets if planning_day_id in ticket["day_ids"]
             ],
             "conversation_history": (
-                conversation_start.read_sprint_item_supervisor_conversation_history(
-                    conn, item_id
-                )
+                conversation_start.read_sprint_item_supervisor_conversation_history(conn, item_id)
             ),
         }
     )

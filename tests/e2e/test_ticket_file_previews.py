@@ -106,12 +106,12 @@ def _wait_for_field_text(
     deadline = time.monotonic() + WAIT_MS / 1000
     while time.monotonic() < deadline:
         ticket = api.get(server, f"/api/tickets/{ticket_id}")
-        value: str = ticket["fields"][field]["value"]
+        value: str = ticket["field_values"].get(field)
         if expected_fragment in value:
             return value
         time.sleep(0.1)
     ticket = api.get(server, f"/api/tickets/{ticket_id}")
-    value = ticket["fields"][field]["value"]
+    value = ticket["field_values"].get(field)
     assert expected_fragment in value
     return value
 
@@ -141,8 +141,8 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     document.write_text(
         '<!doctype html><html><head><link rel="stylesheet" href="style.css"></head>'
         '<body><h1>Initial artifact</h1><img src="../images/pic.png" alt="Sibling image">'
-        '<button onclick="this.textContent=\'Clicked\'">Try interaction</button>'
-        '</body></html>',
+        "<button onclick=\"this.textContent='Clicked'\">Try interaction</button>"
+        "</body></html>",
         encoding="utf-8",
     )
     _set_fields(
@@ -175,16 +175,19 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     frame = artifact.frame_locator("iframe[data-file-preview-html]")
     frame.get_by_role("heading", name="Initial artifact").wait_for(timeout=WAIT_MS)
     assert iframe.get_attribute("sandbox") == "allow-scripts"
-    assert frame.locator("h1").evaluate(
-        "node => getComputedStyle(node).color"
-    ) == "rgb(13, 71, 161)"
-    assert frame.get_by_alt_text("Sibling image").evaluate(
-        "image => new Promise(resolve => {"
-        "const done = () => resolve(image.naturalWidth);"
-        "if (image.complete) done();"
-        "else { image.addEventListener('load', done, {once: true});"
-        "image.addEventListener('error', done, {once: true}); } })"
-    ) == 64
+    assert (
+        frame.locator("h1").evaluate("node => getComputedStyle(node).color") == "rgb(13, 71, 161)"
+    )
+    assert (
+        frame.get_by_alt_text("Sibling image").evaluate(
+            "image => new Promise(resolve => {"
+            "const done = () => resolve(image.naturalWidth);"
+            "if (image.complete) done();"
+            "else { image.addEventListener('load', done, {once: true});"
+            "image.addEventListener('error', done, {once: true}); } })"
+        )
+        == 64
+    )
     frame.get_by_role("button", name="Try interaction").click(timeout=WAIT_MS)
     frame.get_by_role("button", name="Clicked").wait_for(timeout=WAIT_MS)
 
@@ -219,12 +222,7 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     binary_token = f"[Binary](/files/tickets/{ticket_id}/archive.bin)"
     entity_token = "[**Entity & label**](https://example.org/path?x=1&y=2#part)"
     body = (
-        "Intro\n\n"
-        f"{markdown_token}\n\n"
-        f"{image_token}\n\n"
-        f"{binary_token}\n\n"
-        f"{entity_token}\n\n"
-        "Outro"
+        f"Intro\n\n{markdown_token}\n\n{image_token}\n\n{binary_token}\n\n{entity_token}\n\nOutro"
     )
     fields = {
         "success": {"value": body, "proposal": None, "user_note": None},
@@ -280,9 +278,7 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     )
     page.keyboard.type(" after preview")
 
-    image_slot = page.locator(
-        f"{editable} [data-markdown-source-token='{image_token}']"
-    ).first
+    image_slot = page.locator(f"{editable} [data-markdown-source-token='{image_token}']").first
     image_slot.locator(
         "xpath=following-sibling::*[@data-markdown-caret-guard='after'][1]"
     ).evaluate(
@@ -336,7 +332,9 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     page.keyboard.press("Delete")
     page.locator(editable).blur()
     page.wait_for_function("f0 => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
-    stored_after_delete = api.get(server, f"/api/tickets/{ticket_id}")["fields"]["success"]["value"]
+    stored_after_delete = api.get(server, f"/api/tickets/{ticket_id}")["field_values"].get(
+        "success"
+    )
     assert markdown_token not in stored_after_delete
     assert image_token in stored_after_delete
 
@@ -345,9 +343,7 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
     )
     _open_ticket_field(page, "success")
-    image_slot = page.locator(
-        f"{editable} [data-markdown-source-token='{image_token}']"
-    ).first
+    image_slot = page.locator(f"{editable} [data-markdown-source-token='{image_token}']").first
     page.locator(editable).focus()
     image_slot.locator(
         "xpath=following-sibling::*[@data-markdown-caret-guard='after'][1]"
@@ -365,9 +361,9 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     page.keyboard.press("Backspace")
     page.locator(editable).blur()
     page.wait_for_function("f0 => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
-    stored_after_backspace = api.get(server, f"/api/tickets/{ticket_id}")["fields"]["success"][
-        "value"
-    ]
+    stored_after_backspace = api.get(server, f"/api/tickets/{ticket_id}")["field_values"].get(
+        "success"
+    )
     assert image_token not in stored_after_backspace
     assert binary_token in stored_after_backspace
 
@@ -376,9 +372,7 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
     )
     _open_ticket_field(page, "success")
-    binary_slot = page.locator(
-        f"{editable} [data-markdown-source-token='{binary_token}']"
-    ).first
+    binary_slot = page.locator(f"{editable} [data-markdown-source-token='{binary_token}']").first
     page.locator(editable).focus()
     binary_slot.evaluate(
         """(slot) => {
@@ -393,9 +387,9 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     page.keyboard.press("Delete")
     page.locator(editable).blur()
     page.wait_for_function("f0 => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
-    stored_after_selected_delete = api.get(server, f"/api/tickets/{ticket_id}")["fields"][
+    stored_after_selected_delete = api.get(server, f"/api/tickets/{ticket_id}")["field_values"].get(
         "success"
-    ]["value"]
+    )
     assert binary_token not in stored_after_selected_delete
 
 
@@ -469,9 +463,7 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
     page.keyboard.press("Enter")
     page.keyboard.type("Retry me exactly.")
     page.locator(editable).blur()
-    page.locator(".error-line", has_text="save failed").wait_for(
-        state="visible", timeout=WAIT_MS
-    )
+    page.locator(".error-line", has_text="save failed").wait_for(state="visible", timeout=WAIT_MS)
     page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => resolve()))")
     assert len(attempts) == 1
     attempted_source = attempts[0]
@@ -493,9 +485,10 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
     page.locator(f"{editable} [data-file-preview-kind='image'] img").wait_for(
         state="visible", timeout=WAIT_MS
     )
-    assert api.get(server, f"/api/tickets/{ticket_id}")["fields"]["success"][
-        "value"
-    ] == attempted_source
+    assert (
+        api.get(server, f"/api/tickets/{ticket_id}")["field_values"].get("success")
+        == attempted_source
+    )
 
 
 def test_loaded_preview_proposal_approves_without_edited_body(
@@ -555,4 +548,4 @@ def test_loaded_preview_proposal_approves_without_edited_body(
     assert len(approval_payloads) == 1
     assert "edited_body" not in approval_payloads[0]
     ticket = api.get(server, f"/api/tickets/{ticket_id}")
-    assert ticket["fields"]["success"]["value"] == body
+    assert ticket["field_values"].get("success") == body

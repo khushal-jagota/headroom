@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from sqlite3 import Connection
 
 from alembic import command
 
 from planner.core import db as db_module
-from planner.core.db import connect, create_schema
+from planner.core.db import connect
 
 PREVIOUS_REVISION = "conversation_automatic_compaction"
 
@@ -91,7 +92,7 @@ def test_upgrade_reconciles_removed_stages_and_preserves_old_content(tmp_path: P
     conn.close()
 
     upgraded = connect(str(db_path))
-    create_schema(upgraded)
+    _upgrade_legacy(upgraded)
 
     stranded = upgraded.execute(
         "SELECT stage, ceiling, ticket_status, default_stage_ownership_mode, fields, guidance "
@@ -130,3 +131,13 @@ def test_upgrade_reconciles_removed_stages_and_preserves_old_content(tmp_path: P
     assert done["guidance"] == "## planning\n\n  Old note\n"
     assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
     upgraded.close()
+
+
+def _upgrade_legacy(conn: Connection) -> None:
+    path = conn.execute("PRAGMA database_list").fetchone()[2]
+    engine = db_module._migration_engine(str(path), 5000)
+    try:
+        with engine.begin() as connection:
+            command.upgrade(db_module._alembic_config(connection), "ticket_guidance")
+    finally:
+        engine.dispose()

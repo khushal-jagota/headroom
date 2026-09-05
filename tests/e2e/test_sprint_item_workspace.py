@@ -114,9 +114,9 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
         {"next_ceiling": "needs_success", "at_cap": "propose"},
     )
     proposed = httpx.post(
-        f"{server.base}/api/tickets/{review_ticket['id']}/propose/success",
+        f"{server.base}/api/tickets/{review_ticket['id']}/propose",
         headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(review_ticket["id"])},
-        json={"body": "The outcome is proven."},
+        json={"recap": "Ready for review", "body": "The outcome is proven."},
         timeout=10.0,
     )
     assert proposed.status_code < 300, proposed.text
@@ -159,9 +159,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
         f"#/sprint?item={item['id']}",
         f'[data-sprint-item-view="{item["id"]}"]',
     )
-    page.locator(f'[data-sprint-ticket-id="{today_ticket["id"]}"]').wait_for(
-        timeout=WAIT_MS
-    )
+    page.locator(f'[data-sprint-ticket-id="{today_ticket["id"]}"]').wait_for(timeout=WAIT_MS)
     # Remaining Tickets starts collapsed, and its rows carry the shared row grammar:
     # the condition is the stage mark's label, not a separate word.
     remaining = page.locator('[data-workspace-section="remaining"]')
@@ -194,7 +192,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     )
 
     page.set_viewport_size({"width": 390, "height": 844})
-    page.locator('[data-sprint-item-view]').wait_for(timeout=WAIT_MS)
+    page.locator("[data-sprint-item-view]").wait_for(timeout=WAIT_MS)
     assert page.locator("[data-conversation-input]").is_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= 390") is True
 
@@ -226,8 +224,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     # above would read 16px from an unconditional rule even with every query dead.
     assert (
         page.evaluate(
-            "() => getComputedStyle(document.querySelector("
-            "'.conversation-column')).paddingLeft"
+            "() => getComputedStyle(document.querySelector('.conversation-column')).paddingLeft"
         )
         == "16px"
     )
@@ -246,9 +243,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     assert ticket_wide == [False, "48px", "48px"], ticket_wide
     page.goto(f"{server.base}/#/workspace/item/{item['id']}")
     page.locator(f'[data-sprint-item-view="{item["id"]}"]').wait_for(timeout=WAIT_MS)
-    assert ticket_wide == page.evaluate(
-        column, [".sprint-item-column", ".sprint-item-doc"]
-    )
+    assert ticket_wide == page.evaluate(column, [".sprint-item-column", ".sprint-item-doc"])
 
     # A window this wide keeps the rail, so the pane beside it is narrow while the window
     # is not. Both panes must read their own width here. This is the only band that tells

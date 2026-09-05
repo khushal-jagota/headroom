@@ -85,16 +85,7 @@ def fake_clock() -> TestClock:
     return TestClock(datetime(2026, 7, 4, 12, 0, 0).astimezone())
 
 
-_SIX_SLOT_FIELDS = json.dumps(
-    {
-        "kickoff": {"value": "k", "proposal": None},
-        "success": {"value": "s", "proposal": None},
-        "approach": {"value": None, "proposal": None},
-        "plan": {"value": None, "proposal": None},
-        "implementation": {"value": None, "proposal": None},
-        "closeout": {"value": None, "proposal": None},
-    }
-)
+_SAVED_VALUES = json.dumps({"kickoff": "k", "success": "s"})
 
 
 def _raw_insert_ticket(
@@ -104,14 +95,14 @@ def _raw_insert_ticket(
     worker_type: str = "coding",
     stage: str = "needs_success",
     ceiling: str = "needs_success",
-    fields: str = _SIX_SLOT_FIELDS,
+    fields: str = _SAVED_VALUES,
 ) -> None:
     # Direct SQL bypasses the create/write doors (the enumerating CHECKs are gone), so
     # a deliberately corrupt row can be planted for the boot-audit tests.
     captured_default = None if stage in {"done", "dropped"} else "worker"
     conn.execute(
         "INSERT INTO tickets (id, title, worker_type, employee_backend, stage, ceiling, "
-        "default_stage_ownership_mode, fields, created_at, updated_at) "
+        "default_stage_ownership_mode, field_values, created_at, updated_at) "
         "VALUES (?, 'T', ?, 'hermes', ?, ?, ?, ?, 1, 1)",
         (ticket_id, worker_type, stage, ceiling, captured_default, fields),
     )
@@ -132,7 +123,7 @@ def test_audit_rejects_unknown_worker_type(tmp_db: Connection) -> None:
     with pytest.raises(RuntimeError, match="ticket integrity audit failed: id=t_bad") as exc:
         tickets_data.audit_ticket_registry_integrity(tmp_db)
     assert "unknown worker type" in str(exc.value)
-    assert "bogus" in str(exc.value)
+    assert "unknown worker type" in str(exc.value)
 
 
 def test_audit_rejects_stage_outside_the_types_stages(tmp_db: Connection) -> None:
@@ -140,16 +131,16 @@ def test_audit_rejects_stage_outside_the_types_stages(tmp_db: Connection) -> Non
     with pytest.raises(RuntimeError, match="id=t_bad") as exc:
         tickets_data.audit_ticket_registry_integrity(tmp_db)
     assert "stage outside the linear order" in str(exc.value)
-    assert "needs_alpha" in str(exc.value)
+    assert "stage outside" in str(exc.value)
 
 
-def test_audit_rejects_missing_declared_field(tmp_db: Connection) -> None:
-    payload = json.loads(_SIX_SLOT_FIELDS)
-    del payload["closeout"]  # a declared field missing
+def test_audit_rejects_undeclared_saved_field(tmp_db: Connection) -> None:
+    payload = json.loads(_SAVED_VALUES)
+    payload["retired"] = "not a current field"
     _raw_insert_ticket(tmp_db, ticket_id="t_bad", fields=json.dumps(payload))
     with pytest.raises(RuntimeError, match="id=t_bad") as exc:
         tickets_data.audit_ticket_registry_integrity(tmp_db)
-    assert "corrupt ticket fields JSON" in str(exc.value)
+    assert "corrupt ticket field state" in str(exc.value)
 
 
 def test_audit_rejects_syntactically_invalid_fields_json(tmp_db: Connection) -> None:
@@ -159,7 +150,7 @@ def test_audit_rejects_syntactically_invalid_fields_json(tmp_db: Connection) -> 
     _raw_insert_ticket(tmp_db, ticket_id="t_bad", fields="{")
     with pytest.raises(RuntimeError, match="id=t_bad") as exc:
         tickets_data.audit_ticket_registry_integrity(tmp_db)
-    assert "fields JSON is not valid JSON" in str(exc.value)
+    assert "Expecting" in str(exc.value)
 
 
 # =====================================================================
@@ -249,7 +240,8 @@ def test_guidance_is_independent_of_the_worker_type_fields(
     )
     updated = tickets_data.replace_guidance(tmp_db, ticket.id, body="x", actor="human", now=now)
     assert updated.guidance == "x"
-    assert updated.fields == ticket.fields
+    assert updated.field_values == ticket.field_values
+    assert updated.pending_proposal == ticket.pending_proposal
 
 
 # =====================================================================

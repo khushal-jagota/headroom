@@ -103,10 +103,7 @@ def worker_step_blocker(
         return f"the Ticket is at {ticket.ticket_status.value}, so no worker step is due"
     if worker_type_definition.gating_field(ticket.stage) is None:
         return f"the Stage {ticket.stage} has no field for a worker to fill"
-    if machine.has_pending_parked_proposal(
-        ticket,
-        worker_type_definition=worker_type_definition,
-    ):
+    if ticket.pending_proposal is not None:
         return "a proposal is parked for the user"
     if (
         machine.at_or_beyond_ceiling(

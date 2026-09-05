@@ -197,7 +197,9 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     conversation_history: [],
     verdict: null,
     trouble_notes: [],
-    fields: {},
+    field_values: {},
+    pending_proposal: null,
+    archived_field_content: "",
     guidance: "",
     ...overrides
   };
@@ -276,18 +278,16 @@ describe("coding lifecycle", () => {
     ]);
   });
 
-  it("reads proposal state from the Ticket field slot", () => {
+  it("reads the Ticket's one pending proposal", () => {
     expect(
       fieldStageVisualStateFor(
         codingLifecycle,
         ticketDetail({
-          fields: {
-            success: {
-              proposal: {
-                body: "Proposed success",
-                proposed_by: "worker"
-              }
-            }
+          pending_proposal: {
+            field: "success",
+            body: "Proposed success",
+            proposed_by: "worker",
+            created_at: 1
           }
         }),
         "success"

@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 
-from planner.core.contracts import ErrorCode, EventKind, PlannerError
-from planner.tickets.contracts import FieldSlot, Ticket
-from planner.tickets.logic import admission, fields_codec
-from planner.tickets.logic.decisions import Decision, EventSpec
+from planner.core.contracts import ErrorCode, PlannerError
+from planner.tickets.contracts import Ticket
+from planner.tickets.logic import admission
+from planner.tickets.logic.decisions import Decision
 from planner.worker_types.contracts import WorkerTypeDefinition
-
-CAUSE_EXTERNAL_WORK: str = "external_work"
 
 
 def _prefix_count(worker_type_definition: WorkerTypeDefinition, target_stage: str) -> int:
@@ -23,8 +22,8 @@ def decide_external_work(
     provided_values: Mapping[str, str],
     *,
     worker_type_definition: WorkerTypeDefinition,
-) -> tuple[Decision, Decision]:
-    """Return the value and position decisions in their canonical event order."""
+) -> Decision:
+    """Validate the exact saved prefix and return its complete prospective state."""
     if not worker_type_definition.supports_prefix_reconciliation:
         raise PlannerError(
             ErrorCode.validation,
@@ -49,24 +48,20 @@ def decide_external_work(
             {"from_stage": ticket.stage, "to_stage": target_stage},
         )
 
-    for field in field_order:
-        if fields_codec.get_slot(ticket.fields, field).proposal is not None:
-            raise PlannerError(
-                ErrorCode.validation,
-                "external work reconciliation rejects pending proposals",
-                {"field": field},
-            )
+    if ticket.pending_proposal is not None:
+        raise PlannerError(
+            ErrorCode.validation, "external work reconciliation rejects pending proposals"
+        )
 
     expected_count = _prefix_count(worker_type_definition, target_stage)
-    new_fields = ticket.fields
-    value_events: list[EventSpec] = []
+    new_fields = dict(ticket.field_values)
     for index, field in enumerate(field_order):
-        slot = fields_codec.get_slot(ticket.fields, field)
+        value = ticket.field_values.get(field)
         provided = provided_values.get(field)
         if provided is not None:
             admission.validate_body(provided, f"{field} value")
         if index < expected_count:
-            final_value = provided if provided is not None else slot.value
+            final_value = provided if provided is not None else value
             if final_value is None:
                 raise PlannerError(
                     ErrorCode.validation,
@@ -75,59 +70,20 @@ def decide_external_work(
                 )
             admission.validate_body(final_value, f"{field} value")
         else:
-            if provided is not None or slot.value is not None:
+            if provided is not None or value is not None:
                 raise PlannerError(
                     ErrorCode.validation,
                     "target stage forbids settled values beyond its prefix",
                     {"stage": target_stage, "field": field},
                 )
             final_value = None
-        if final_value != slot.value:
-            new_fields = fields_codec.with_slot(
-                new_fields,
-                field,
-                FieldSlot(value=final_value, proposal=None),
-            )
-            value_events.append(
-                EventSpec(
-                    EventKind.field_value_edited,
-                    {"field": field, "body": final_value},
-                )
-            )
-
-    position_events: list[EventSpec] = []
-    new_stage: str | None = None
-    if target_stage != ticket.stage:
-        new_stage = target_stage
-        position_events.append(
-            EventSpec(
-                EventKind.stage_changed,
-                {
-                    "from_stage": ticket.stage,
-                    "to_stage": target_stage,
-                    "cause": CAUSE_EXTERNAL_WORK,
-                },
-            )
-        )
-    scope_changes = ticket.ceiling != target_stage
-    if scope_changes:
-        position_events.append(
-            EventSpec(
-                EventKind.scope_changed,
-                {
-                    "ceiling": target_stage,
-                    "at_cap": ticket.at_cap.value,
-                    "cause": CAUSE_EXTERNAL_WORK,
-                },
-            )
-        )
-
-    return (
-        Decision(events=tuple(value_events), new_fields=new_fields),
-        Decision(
-            events=tuple(position_events),
-            new_stage=new_stage,
-            new_ceiling=target_stage if scope_changes else None,
-            new_at_cap=None,
-        ),
+        if final_value is not None:
+            new_fields[field] = final_value
+        else:
+            new_fields.pop(field, None)
+    return replace(
+        Decision.from_ticket(ticket),
+        field_values=new_fields,
+        stage=target_stage,
+        ceiling=target_stage,
     )

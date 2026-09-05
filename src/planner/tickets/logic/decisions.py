@@ -1,26 +1,29 @@
-"""Internal decision shapes: a Decision is what a resolution function returns —
-the replacement fields/stage/scope plus the engine's own ordered statement of what
-the write does, which the write path reads to settle the consequences. These are
-logic-layer only, never exposed over the wire."""
+"""The complete prospective Ticket state owned by resolution."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 
-from planner.core.contracts import EventKind, JsonDict
-from planner.tickets.contracts import AtCap, TicketFields
-
-
-@dataclass(frozen=True)
-class EventSpec:
-    kind: EventKind
-    payload: JsonDict
+from planner.tickets.contracts import AtCap, PendingTicketProposal, Ticket, TicketFieldValues
 
 
 @dataclass(frozen=True)
 class Decision:
-    events: tuple[EventSpec, ...]
-    new_fields: TicketFields | None = None  # replacement fields object; None = untouched
-    new_stage: str | None = None  # Stage id; None = no transition
-    new_ceiling: str | None = None  # ceiling id; None = scope untouched
-    new_at_cap: AtCap | None = None  # None = scope untouched
+    field_values: TicketFieldValues
+    pending_proposal: PendingTicketProposal | None
+    archived_field_content: str
+    stage: str
+    ceiling: str
+    at_cap: AtCap
+
+    @classmethod
+    def from_ticket(cls, ticket: Ticket) -> Decision:
+        return cls(
+            field_values=MappingProxyType(dict(ticket.field_values)),
+            pending_proposal=ticket.pending_proposal,
+            archived_field_content=ticket.archived_field_content,
+            stage=ticket.stage,
+            ceiling=ticket.ceiling,
+            at_cap=ticket.at_cap,
+        )

@@ -19,8 +19,8 @@ from planner.runtime.logic.worker_step_prompt import revision_guidance_prompt
 from planner.sprints import data as sprints_data
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, Proposal, Ticket
-from planner.tickets.logic import admission, fields_codec, resolution
+from planner.tickets.contracts import AtCap, Ticket
+from planner.tickets.logic import admission, resolution
 from planner.worker_context.contracts import WorkerContextService
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -289,10 +289,7 @@ async def return_ticket_for_revision(
         actor,
         worker_type_definition=worker_type_definition,
     )
-    field = worker_type_definition.gating_field(ticket.stage)
-    expected_proposal: Proposal | None = (
-        fields_codec.get_slot(ticket.fields, field).proposal if field is not None else None
-    )
+    expected_proposal = ticket.pending_proposal
     prepared = worker_context_service.prepare(
         ticket_id,
         revision_guidance_prompt(message.strip()),

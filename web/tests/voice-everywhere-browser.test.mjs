@@ -154,8 +154,9 @@ TICKET = {
   "stage_ownership_overrides": {}, "default_stage_ownership_mode": "worker",
   "effective_stage_ownership_mode": "worker", "conversation_id": None,
   "conversation_history": [], "verdict": None, "trouble_notes": [],
-  "guidance": "",
-  "fields": {"implementation": {"value": None, "proposal": {"body": "Done", "proposed_by": "worker"}}}
+  "guidance": "", "field_values": {},
+  "pending_proposal": {"field": "implementation", "body": "Done", "proposed_by": "worker", "created_at": 1},
+  "archived_field_content": ""
 }
 
 with sync_playwright() as playwright:

@@ -40,11 +40,8 @@ from planner.sprints.data import (
     update_sprint,
 )
 from planner.sprints.logic import DateRange, current_sprint_id
-from planner.tickets.contracts import TicketFields
-from planner.tickets.logic.fields_codec import fields_to_json
-from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 
-_EMPTY_CODING_FIELDS = fields_to_json(TicketFields.empty(CODING_WORKER_TYPE_DEFINITION.field_ids()))
+_EMPTY_CODING_FIELDS = "{}"
 
 
 def _insert_ticket(
@@ -61,7 +58,7 @@ def _insert_ticket(
     conn.execute(
         "INSERT INTO tickets (id, title, worker_type, employee_backend, stage, "
         "sprint_item_id, ceiling, "
-        "ticket_status, fields, created_at, updated_at) "
+        "ticket_status, field_values, created_at, updated_at) "
         "VALUES (?, ?, 'coding', 'hermes', ?, ?, 'needs_success', ?, ?, 0, 0)",
         (ticket_id, "child", stage, sprint_item_id, ticket_status, _EMPTY_CODING_FIELDS),
     )

@@ -18,6 +18,7 @@ from time import monotonic, sleep
 from typing import cast
 
 import pytest
+from tests.support.ticket_progress import advance_ticket
 
 from planner.conversation.contracts import (
     ConversationStartRequest,
@@ -644,8 +645,10 @@ def test_the_poll_schedules_every_ready_ticket_and_skips_the_rest(world: _World)
         scheduled = readiness_loop.poll_once()
         assert sorted(scheduled) == sorted([ready_one, ready_two])
         assert _waited_for(
-            lambda: world.ticket(ready_one).conversation_id is not None
-            and world.ticket(ready_two).conversation_id is not None
+            lambda: (
+                world.ticket(ready_one).conversation_id is not None
+                and world.ticket(ready_two).conversation_id is not None
+            )
         )
         assert world.ticket(ready_one).ticket_status is TicketStatus.agent
         assert world.ticket(ready_two).ticket_status is TicketStatus.agent
@@ -661,9 +664,7 @@ def test_one_closeout_lane_takes_one_ticket_per_pass(world: _World) -> None:
     second = world.ready_ticket(title="Closeout two")
     with world.connect() as conn:
         for ticket_id in (first, second):
-            tickets_data.set_stage(
-                conn, ticket_id, new_stage="needs_closeout", actor="human", now=0
-            )
+            advance_ticket(conn, ticket_id, new_stage="needs_closeout", actor="human", now=0)
         conn.execute("UPDATE tickets SET updated_at = 10 WHERE id = ?", (first,))
         conn.execute("UPDATE tickets SET updated_at = 20 WHERE id = ?", (second,))
     readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)

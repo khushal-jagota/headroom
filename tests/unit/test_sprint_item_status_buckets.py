@@ -25,7 +25,6 @@ from sqlite3 import Connection
 
 import pytest
 from tests.support.probe import (
-    FIELD_ALPHA,
     NEEDS_BETA,
     install_probe_registry,
     uninstall_probe_registry,
@@ -36,7 +35,7 @@ from planner.sprints.contracts import ItemStatus
 from planner.sprints.data import _child_stage_in_progress, create_item, read_item
 from planner.sprints.logic import SprintItemChildStatus, derive_sprint_item_status
 from planner.tickets.contracts import AtCap
-from planner.tickets.data import accept_proposal, create_ticket, file_proposal
+from planner.tickets.data import accept_proposal, create_ticket, file_current_proposal_with_recap
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -164,7 +163,9 @@ def test_rollup_probe_child_via_read_item(
         next_ceiling=NEEDS_BETA,
         at_cap=AtCap.propose,
     )
-    file_proposal(tmp_db, probe.id, field=FIELD_ALPHA, body="alpha", actor="agent", now=3)
+    file_current_proposal_with_recap(
+        tmp_db, probe.id, body="alpha", actor="agent", now=3, recap="Current work"
+    )
 
     assert read_item(tmp_db, item.id).status is ItemStatus.in_progress
 
@@ -195,6 +196,8 @@ def test_rollup_coding_child_via_read_item_unchanged(
         next_ceiling="needs_approach",
         at_cap=AtCap.propose,
     )
-    file_proposal(tmp_db, child.id, field="success", body="s", actor="agent", now=3)
+    file_current_proposal_with_recap(
+        tmp_db, child.id, body="s", actor="agent", now=3, recap="Current work"
+    )
 
     assert read_item(tmp_db, item.id).status is ItemStatus.in_progress

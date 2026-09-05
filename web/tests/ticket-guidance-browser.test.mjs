@@ -37,7 +37,7 @@ let review = $state(false);
 import json, sys
 from playwright.sync_api import sync_playwright, expect
 
-ticket = dict(id='t_guidance', title='Guidance ticket', worker_type='coding', employee_backend='codex', employee_launch_model=None, employee_launch_reasoning_effort=None, employee_configuration_editable=False, stage='needs_success', ceiling='needs_success', at_cap='propose', suggested_next_ceiling='done', priority='P2', resolved_priority_anchors={}, ticket_status='awaiting_approval', backend_error=None, stage_ownership_overrides={}, default_stage_ownership_mode='worker', effective_stage_ownership_mode='worker', conversation_id=None, conversation_history=[], day_ids=[], blocked=False, blocker_summary={'blocked_by': [], 'is_blocked': False}, recap='Orientation', guidance='Original **constraint**', verdict=None, trouble_notes=[], fields={'kickoff': {'value': 'Request', 'proposal': None}, 'success': {'value': None, 'proposal': {'body': 'A result', 'proposed_by': 'agent', 'created_at': 1}}})
+ticket = dict(id='t_guidance', title='Guidance ticket', worker_type='coding', employee_backend='codex', employee_launch_model=None, employee_launch_reasoning_effort=None, employee_configuration_editable=False, stage='needs_success', ceiling='needs_success', at_cap='propose', suggested_next_ceiling='done', priority='P2', resolved_priority_anchors={}, ticket_status='awaiting_approval', backend_error=None, stage_ownership_overrides={}, default_stage_ownership_mode='worker', effective_stage_ownership_mode='worker', conversation_id=None, conversation_history=[], day_ids=[], blocked=False, blocker_summary={'blocked_by': [], 'is_blocked': False}, recap='Orientation', guidance='Original **constraint**', verdict=None, trouble_notes=[], field_values={'kickoff': 'Request'}, pending_proposal={'field': 'success', 'body': 'A result', 'proposed_by': 'agent', 'created_at': 1}, archived_field_content='Old **unapproved** draft')
 stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, default_ownership_mode='worker' if f else None) for s,l,f in [('needs_kickoff','Kickoff','kickoff'),('needs_success','Success','success'),('done','Done',None)]]
 manifest = {'worker_types': [dict(worker_type='coding', label='Coding', stages=stages, dropped=dict(id='dropped', label='Dropped', gating_field=None, is_terminal=True, default_ownership_mode=None), advance={'needs_kickoff': 'needs_success', 'needs_success': 'done'}, ceiling_range=['needs_kickoff','needs_success','done'], default_ceiling='needs_success', worker_profile_id='panels-worker-coding', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'kickoff','label':'Kickoff'}, {'id':'success','label':'Success'}])]}
 writes=[]
@@ -49,6 +49,20 @@ def respond(route):
         assert set(body) == {'body'}
         writes.append(body)
         ticket['guidance']=body['body']
+        result=ticket
+    elif path == 'tickets/t_guidance/proposal':
+        assert route.request.method == 'PUT'
+        body=route.request.post_data_json
+        assert set(body) == {'field', 'body'}
+        writes.append({'proposal': body})
+        ticket['pending_proposal']['body']=body['body']
+        result=ticket
+    elif path == 'tickets/t_guidance/value/kickoff':
+        assert route.request.method == 'PUT'
+        body=route.request.post_data_json
+        assert set(body) == {'body'}
+        writes.append({'value': body})
+        ticket['field_values']['kickoff']=body['body']
         result=ticket
     elif path == 'tickets/t_guidance': result=ticket
     elif path == 'worker-types': result=manifest
@@ -67,19 +81,44 @@ with sync_playwright() as p:
     expect(guidance).to_have_count(1)
     guidance.locator('summary').click()
     expect(guidance).to_contain_text('Original constraint')
+    history=page.locator('[data-ticket-history]')
+    expect(history).to_have_count(1)
+    assert not history.get_by_text('Old unapproved draft').is_visible()
+    history.locator('summary').click()
+    expect(history).to_contain_text('Old unapproved draft')
+    assert history.locator('[contenteditable]').count() == 0
+    assert page.locator('[data-accept]').count() == 1
+    proposal=page.locator('[data-field="success"] [contenteditable]')
+    proposal.click()
+    proposal.fill('Edited pending result')
+    page.locator('[data-field="success"] summary').click()
+    page.wait_for_function("document.body.textContent.includes('Edited pending result')")
+    page.locator('[data-stage-fold]').evaluate('(element) => element.open = true')
+    page.locator('[data-field="kickoff"]').evaluate('(element) => element.open = true')
+    saved=page.locator('[data-field="kickoff"] [contenteditable]')
+    saved.click()
+    saved.fill('Edited saved kickoff')
+    saved.press('Tab')
+    page.wait_for_function("document.body.textContent.includes('kickoff')")
     assert page.locator('summary').filter(has_text='Notes').count() == 0
     editor=guidance.locator('[contenteditable]')
     editor.click()
     editor.fill('Updated boundary')
     guidance.locator('summary').click()
     page.wait_for_function("document.querySelector('[data-ticket-guidance]').textContent.includes('Updated boundary')")
-    assert writes == [{'body': 'Updated boundary'}]
+    assert writes == [
+        {'proposal': {'field': 'success', 'body': 'Edited pending result'}},
+        {'value': {'body': 'Edited saved kickoff'}},
+        {'body': 'Updated boundary'},
+    ]
     page.evaluate('window.__showReview()')
     expect(page.locator('[data-ticket-guidance]')).to_have_count(1)
     guidance=page.locator('[data-ticket-guidance]')
     guidance.locator('summary').click()
     expect(guidance).to_contain_text('Updated boundary')
     assert guidance.locator('[contenteditable]').count() == 0
+    expect(page.locator('[data-approval-block][data-field="success"]')).to_contain_text('Edited pending result')
+    assert page.locator('[data-accept]').count() == 1
     browser.close()
 `;
   const child = spawn(join(root, '..', '.venv', 'bin', 'python'), ['-c', script, `http://127.0.0.1:${address.port}/tests/${stem}.html`], { stdio: 'inherit' });

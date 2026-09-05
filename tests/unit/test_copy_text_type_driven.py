@@ -24,7 +24,8 @@ from planner.tickets.contracts import AtCap
 from planner.tickets.data import (
     accept_proposal,
     create_ticket,
-    file_proposal,
+    drop_ticket,
+    file_current_proposal_with_recap,
     replace_guidance,
 )
 from planner.tickets.views import copy_text
@@ -52,7 +53,9 @@ _CODING_COPY_TEXT_GOLDEN = (
     "\n"
     "closeout:\n(none)\n"
     "\n"
-    "recap:\n(none)\n"
+    "pending proposal:\n(none)\n"
+    "\nhistorical record:\n(none)\n"
+    "recap:\nCurrent work\n"
     "\nguidance:\nsuccess note\n"
     "\n"
     "blocked_by:\n(none)\n"
@@ -77,7 +80,9 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
         now=1,
         title_max_chars=200,
     )
-    file_proposal(tmp_db, ticket.id, field="kickoff", body="kickoff body", actor="agent", now=2)
+    file_current_proposal_with_recap(
+        tmp_db, ticket.id, body="kickoff body", actor="agent", now=2, recap="Current work"
+    )
     # Accept kickoff so its value settles and the ticket advances to needs_success (the
     # default ceiling is now needs_kickoff, so kickoff parks until accepted — the golden
     # pins a SETTLED kickoff value, so we accept and expand the ceiling onward).
@@ -90,9 +95,7 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
         next_ceiling="needs_success",
         at_cap=AtCap.propose,
     )
-    replace_guidance(
-        tmp_db, ticket.id, body="success note", actor="human", now=4
-    )
+    replace_guidance(tmp_db, ticket.id, body="success note", actor="human", now=4)
     assert copy_text(tmp_db, ticket.id) == _CODING_COPY_TEXT_GOLDEN
 
 
@@ -107,7 +110,10 @@ def test_copy_text_probe_renders_own_fields(
         title_max_chars=200,
         worker_type="probe",
     )
+    dropped = drop_ticket(tmp_db, ticket.id, actor="human", now=2)
     text = copy_text(tmp_db, ticket.id)
+    assert dropped.archived_field_content in text
+    assert "Unapproved proposal" in text
 
     # Probe renders its own field blocks plus one separate guidance document.
     assert "kickoff:\n" in text
