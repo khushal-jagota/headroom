@@ -13,13 +13,11 @@ from typing import Any, TypedDict
 
 class RecordPart(TypedDict):
     value: Any
-    user_note: Any
     proposal: Any
 
 
 class ManifestEntry(TypedDict):
     character_count: int
-    has_user_note: bool
 
 
 def part(

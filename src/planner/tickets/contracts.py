@@ -138,7 +138,6 @@ class Proposal:  # §4.2 proposal slot
 class FieldSlot:  # one ordinary field object
     value: str | None = None  # canonical; proposal resolver is the only writer
     proposal: Proposal | None = None
-    user_note: str | None = None  # preserved user guidance for this field / step
 
 
 @dataclass(frozen=True)
@@ -253,14 +252,8 @@ class AcceptBody(TypedDict, total=False):  # POST /tickets/{id}/accept/{field}
     at_cap: str | None  # AtCap value; scope pair (§4.4.7)
 
 
-class NoteBody(TypedDict, total=False):  # PUT /tickets/{id}/notes/{field}
-    note: str | None  # legacy key; null clears the user note
-    user_note: str | None  # preferred key; null clears the user note
-
-
-class AppendNoteBody(TypedDict, total=False):  # POST /tickets/{id}/notes/{field}/append
-    note: str  # legacy key; absent means an empty append
-    user_note: str  # preferred key; absent means an empty append
+class GuidanceBody(TypedDict):  # PUT /tickets/{id}/guidance; POST .../guidance/append
+    body: str  # required; empty replaces with an empty document or appends nothing
 
 
 class RecapBody(TypedDict, total=False):  # PUT /tickets/{id}/recap
@@ -322,6 +315,7 @@ class Ticket:  # §3.3 — column names match exactly
     effective_sprint_id: str | None  # compatibility alias for sprint_id
     resolved_priority_anchors: ResolvedTicketPriorityAnchors
     recap: str  # writable only past the type's first worker Stage
+    guidance: str = field(default="", kw_only=True)  # durable instructions for the Ticket
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     at_cap: AtCap  # default propose
     ticket_status: TicketStatus  # durable state-of-control; transition functions write it
