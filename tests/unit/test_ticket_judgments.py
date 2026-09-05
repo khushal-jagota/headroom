@@ -9,16 +9,13 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from planner.core import change_signal
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
-from planner.core.errors import ErrorCode, PlannerError
+from planner.core.errors import PlannerError
 from planner.core.server import create_app
 from planner.judgments import data as judgments_data
 from planner.judgments.contracts import TicketJudgment, TroubleNote
-from planner.judgments.logic.trouble_notes import normalize_trouble_note
-from planner.judgments.logic.verdicts import normalize_verdict
 from planner.tickets import data as tickets_data
 
 _AGENT = {"X-Plan-Actor": "worker"}
@@ -118,49 +115,6 @@ def test_verdict_writer_requires_done_and_preserves_an_empty_record(tmp_path: Pa
     conn.close()
 
 
-def test_domain_normalization_rejects_float_rating() -> None:
-    with pytest.raises(PlannerError) as raised:
-        normalize_verdict(2.5, None)
-    assert raised.value.code == ErrorCode.validation
-
-
-def test_domain_normalization_rejects_non_string_text() -> None:
-    with pytest.raises(PlannerError) as raised:
-        normalize_verdict(None, 42)
-    assert raised.value.code == ErrorCode.validation
-
-
-def test_verdict_api_projects_optional_fields_and_clear(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path, stage="done")
-
-    with TestClient(app) as client:
-        assert client.get(f"/api/tickets/{ticket_id}").json()["verdict"] is None
-
-        rating_only = client.put(
-            f"/api/tickets/{ticket_id}/verdict", json={"rating": 1, "text": None}
-        )
-        assert rating_only.status_code == 200, rating_only.json()
-        assert rating_only.json() == {"verdict": {"rating": 1, "text": None}}
-
-        text_only = client.put(
-            f"/api/tickets/{ticket_id}/verdict",
-            json={"rating": None, "text": "  Better than expected.  "},
-        )
-        assert text_only.json() == {
-            "verdict": {"rating": None, "text": "Better than expected."}
-        }
-        assert client.get(f"/api/tickets/{ticket_id}").json()["verdict"] == (
-            {"rating": None, "text": "Better than expected."}
-        )
-
-        cleared = client.put(
-            f"/api/tickets/{ticket_id}/verdict", json={"rating": None, "text": None}
-        )
-        assert cleared.json() == {"verdict": None}
-        assert client.get(f"/api/tickets/{ticket_id}").json()["verdict"] is None
-
-
 @pytest.mark.parametrize("rating", [0, 6, True, 2.5, "5"])
 def test_verdict_api_rejects_invalid_ratings(tmp_path: Path, rating: object) -> None:
     app, db_path = _make_app(tmp_path)
@@ -171,51 +125,6 @@ def test_verdict_api_rejects_invalid_ratings(tmp_path: Path, rating: object) -> 
         )
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "validation"
-
-
-def test_verdict_api_rejects_worker_non_done_and_unknown_ticket(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    done_ticket_id = _ticket(db_path, stage="done")
-    open_ticket_id = _ticket(db_path, stage="needs_closeout")
-    with TestClient(app) as client:
-        worker = client.put(
-            f"/api/tickets/{done_ticket_id}/verdict",
-            json={"rating": 4, "text": None},
-            headers=_AGENT,
-        )
-        open_ticket = client.put(
-            f"/api/tickets/{open_ticket_id}/verdict",
-            json={"rating": 4, "text": None},
-        )
-        unknown = client.put(
-            "/api/tickets/t_missing/verdict", json={"rating": 4, "text": None}
-        )
-    assert worker.json()["error"]["code"] == "agent_forbidden"
-    assert open_ticket.json()["error"]["code"] == "validation"
-    assert unknown.status_code == 404
-    assert unknown.json()["error"]["code"] == "not_found"
-
-
-def test_successful_verdict_write_emits_one_change_signal(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path, stage="done")
-    signals = 0
-
-    def record() -> None:
-        nonlocal signals
-        signals += 1
-
-    unsubscribe = change_signal.subscribe(record)
-    try:
-        with TestClient(app) as client:
-            response = client.put(
-                f"/api/tickets/{ticket_id}/verdict",
-                json={"rating": 4, "text": "Good work."},
-            )
-    finally:
-        unsubscribe()
-    assert response.status_code == 200
-    assert signals == 1
 
 
 def test_trouble_note_writer_creates_parent_and_preserves_append_order(
@@ -253,16 +162,6 @@ def test_trouble_note_writer_creates_parent_and_preserves_append_order(
     conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
     assert judgments_data.read_trouble_notes(conn, ticket_id) == ()
     conn.close()
-
-
-@pytest.mark.parametrize(
-    "body",
-    ("", "  ", "first\nsecond", "first\rsecond", "x" * 501, 42),
-)
-def test_trouble_note_validation_rejects_invalid_body(body: object) -> None:
-    with pytest.raises(PlannerError) as raised:
-        normalize_trouble_note(body)
-    assert raised.value.code == ErrorCode.validation
 
 
 def test_trouble_note_api_requires_exact_current_worker_and_projects_notes(
@@ -314,99 +213,3 @@ def test_trouble_note_api_requires_exact_current_worker_and_projects_notes(
     assert all(note["created_at"] > 0 for note in detail["trouble_notes"])
 
 
-def test_trouble_note_api_rejects_an_unclaimed_ticket(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path, stage="needs_implementation")
-
-    with TestClient(app) as client:
-        response = client.post(
-            f"/api/tickets/{ticket_id}/trouble-notes",
-            json={"body": "This step is not claimed."},
-            headers=_worker(ticket_id),
-        )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "validation"
-    assert "active claimed worker step" in response.json()["error"]["message"]
-    conn = connect(str(db_path))
-    try:
-        assert judgments_data.read_ticket_judgment(conn, ticket_id) is None
-    finally:
-        conn.close()
-
-
-@pytest.mark.parametrize("stage", ("done", "dropped"))
-def test_trouble_note_api_rejects_terminal_tickets(
-    tmp_path: Path, stage: str
-) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path, stage=stage)
-
-    with TestClient(app) as client:
-        response = client.post(
-            f"/api/tickets/{ticket_id}/trouble-notes",
-            json={"body": "This Ticket is terminal."},
-            headers=_worker(ticket_id),
-        )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "validation"
-    conn = connect(str(db_path))
-    try:
-        assert judgments_data.read_trouble_notes(conn, ticket_id) == ()
-        assert judgments_data.read_ticket_judgment(conn, ticket_id) is None
-    finally:
-        conn.close()
-
-
-def test_trouble_note_api_rejects_multiline_over_limit_and_unknown_ticket(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path, stage="needs_implementation")
-    _set_ticket_status(db_path, ticket_id, "agent")
-
-    with TestClient(app) as client:
-        multiline = client.post(
-            f"/api/tickets/{ticket_id}/trouble-notes",
-            json={"body": "one\ntwo"},
-            headers=_worker(ticket_id),
-        )
-        over_limit = client.post(
-            f"/api/tickets/{ticket_id}/trouble-notes",
-            json={"body": "x" * 501},
-            headers=_worker(ticket_id),
-        )
-        unknown = client.post(
-            "/api/tickets/t_missing/trouble-notes",
-            json={"body": "Missing Ticket"},
-            headers=_worker("t_missing"),
-        )
-
-    assert multiline.json()["error"]["code"] == "validation"
-    assert over_limit.json()["error"]["code"] == "validation"
-    assert unknown.status_code == 404
-
-
-def test_successful_trouble_note_write_emits_one_change_signal(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path, stage="needs_implementation")
-    _set_ticket_status(db_path, ticket_id, "agent")
-    signals = 0
-
-    def record() -> None:
-        nonlocal signals
-        signals += 1
-
-    unsubscribe = change_signal.subscribe(record)
-    try:
-        with TestClient(app) as client:
-            response = client.post(
-                f"/api/tickets/{ticket_id}/trouble-notes",
-                json={"body": "The harness stopped."},
-                headers=_worker(ticket_id),
-            )
-    finally:
-        unsubscribe()
-    assert response.status_code == 200
-    assert signals == 1

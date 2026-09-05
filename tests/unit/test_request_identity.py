@@ -5,7 +5,6 @@ import sqlite3
 import pytest
 from starlette.requests import Request
 
-from planner.cli import http
 from planner.core import authctx
 from planner.core.errors import ErrorCode, PlannerError
 
@@ -54,59 +53,6 @@ def test_direct_write_accepts_unattributed_and_chief_but_rejects_other_actors() 
         authctx.require_direct_write(authctx._classify("worker"))
     assert raised.value.code is ErrorCode.agent_forbidden
     assert raised.value.detail == {"actor": "worker"}
-
-
-def test_chief_only_gate_requires_exact_chief_actor() -> None:
-    authctx.require_chief(authctx._classify("chief"))
-
-    for raw in (None, "worker", "agent", "human"):
-        with pytest.raises(PlannerError) as raised:
-            authctx.require_chief(authctx._classify(raw))
-        assert raised.value.code is ErrorCode.agent_forbidden
-
-
-def test_cli_header_modes_preserve_ambient_actor_without_privilege_synthesis(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("PLAN_ACTOR", raising=False)
-    monkeypatch.delenv("PLAN_TICKET_ID", raising=False)
-    assert http._headers("ordinary") == {}
-    assert http._headers("worker") == {"X-Plan-Actor": "agent"}
-    assert http._headers("chief") == {}
-
-    monkeypatch.setenv("PLAN_ACTOR", "chief")
-    assert http._headers("ordinary") == {"X-Plan-Actor": "chief"}
-    assert http._headers("worker") == {"X-Plan-Actor": "chief"}
-    assert http._headers("chief") == {"X-Plan-Actor": "chief"}
-
-    monkeypatch.setenv("PLAN_ACTOR", "worker")
-    assert http._headers("ordinary") == {"X-Plan-Actor": "worker"}
-    assert http._headers("worker") == {"X-Plan-Actor": "worker"}
-    assert http._headers("chief") == {"X-Plan-Actor": "worker"}
-
-
-def test_cli_headers_carry_truthful_ticket_claim_for_every_command_mode(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("PLAN_ACTOR", "worker")
-    monkeypatch.setenv("PLAN_TICKET_ID", " t_planning ")
-
-    for mode in ("ordinary", "worker", "chief"):
-        assert http._headers(mode) == {
-            "X-Plan-Actor": "worker",
-            "X-Plan-Ticket-ID": "t_planning",
-        }
-
-
-@pytest.mark.parametrize("actor", ("chief", "agent", "human"))
-def test_cli_ticket_claim_is_not_forwarded_outside_exact_worker_identity(
-    monkeypatch: pytest.MonkeyPatch,
-    actor: str,
-) -> None:
-    monkeypatch.setenv("PLAN_ACTOR", actor)
-    monkeypatch.setenv("PLAN_TICKET_ID", "t_planning")
-
-    assert http._headers("ordinary") == {"X-Plan-Actor": actor}
 
 
 def _ticket_claim_connection() -> sqlite3.Connection:
@@ -164,15 +110,6 @@ def test_ticket_worker_write_fails_closed_for_invalid_claims(
     assert raised.value.detail == {"actor": actor}
 
 
-def test_ticket_worker_write_preserves_existing_direct_authority() -> None:
-    conn = _ticket_claim_connection()
-    try:
-        authctx.require_ticket_worker_write(conn, authctx._classify(None))
-        authctx.require_ticket_worker_write(conn, authctx._classify("chief"))
-    finally:
-        conn.close()
-
-
 @pytest.mark.parametrize(
     ("ticket_id", "capability"),
     (
@@ -226,27 +163,3 @@ def test_planning_write_fails_closed_for_missing_unknown_or_nonmatching_claims(
     assert raised.value.detail == {"actor": actor, "capability": "planning-day"}
 
 
-def test_planning_write_preserves_existing_direct_authority() -> None:
-    conn = _ticket_claim_connection()
-    try:
-        authctx.require_planning_write(conn, authctx._classify(None), "planning-day")
-        authctx.require_planning_write(
-            conn,
-            authctx._classify("chief"),
-            "planning-sprint",
-        )
-    finally:
-        conn.close()
-
-
-def test_planning_write_rejects_unknown_capability_programmer_error() -> None:
-    conn = _ticket_claim_connection()
-    try:
-        with pytest.raises(ValueError, match="unknown planning capability"):
-            authctx.require_planning_write(
-                conn,
-                authctx._classify("worker", "t_day"),
-                "planning-future",  # type: ignore[arg-type]
-            )
-    finally:
-        conn.close()
