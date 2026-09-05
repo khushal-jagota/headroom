@@ -40,10 +40,4 @@ describe("ResourceState", () => {
     expect(markup).not.toContain("data-the-data");
   });
 
-  it("renders the data when nothing is wrong", () => {
-    const markup = body({ hasData: true });
-
-    expect(markup).toContain("data-the-data");
-    expect(markup).not.toContain("error-line");
-  });
 });

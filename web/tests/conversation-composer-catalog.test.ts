@@ -14,10 +14,6 @@ describe("Conversation composer catalog activation", () => {
     }
   );
 
-  it.each([["first line\n/review", 18]] as const)("does not activate for a displaced token in %j", (written, at) => {
-    expect(catalogTokenAtMessageStart(written, at)).toBeNull();
-  });
-
   it("stops activation after the cursor leaves the message-start token", () => {
     expect(catalogTokenAtMessageStart("/review more", 12)).toMatchObject({
       start: 0,

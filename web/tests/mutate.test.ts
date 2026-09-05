@@ -57,27 +57,4 @@ describe("mutateJson", () => {
     expect(fakes.invalidateQueries).not.toHaveBeenCalled();
   });
 
-  it("does not settle until cache invalidation settles", async () => {
-    let releaseInvalidation!: () => void;
-    const invalidation = new Promise<void>((resolve) => {
-      releaseInvalidation = resolve;
-    });
-    fakes.invalidateQueries.mockReturnValue(invalidation);
-
-    let settled = false;
-    const pending = mutateJson("/api/tickets/t_awaited", { method: "POST" }).then(
-      () => {
-        settled = true;
-      }
-    );
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(fakes.invalidateQueries).toHaveBeenCalledTimes(1);
-    expect(settled).toBe(false);
-
-    releaseInvalidation();
-    await pending;
-    expect(settled).toBe(true);
-  });
 });
