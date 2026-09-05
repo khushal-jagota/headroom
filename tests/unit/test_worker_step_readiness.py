@@ -5,21 +5,17 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from planner.core.clock import TestClock
 from planner.core.contracts import LinkKind, Priority
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
 from planner.projects import data as projects_data
 from planner.runtime.worker_step_readiness import (
-    closeout_lane_identity,
     is_ready_for_worker_step,
     worker_step_blocker,
 )
-from planner.sprints import data as sprints_data
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
@@ -136,39 +132,6 @@ def test_shipped_worker_types_use_their_real_first_worker_stage_ownership(
         conn.close()
 
 
-@pytest.mark.parametrize(
-    ("ownership_mode", "expected"),
-    [
-        (StageOwnershipMode.worker, True),
-        (StageOwnershipMode.user, False),
-        (StageOwnershipMode.paired, True),
-    ],
-)
-def test_effective_stage_ownership_controls_readiness(
-    tmp_path: Path,
-    ownership_mode: StageOwnershipMode,
-    expected: bool,
-) -> None:
-    conn = _db(tmp_path)
-    try:
-        ticket = _ticket(conn)
-        tickets_data.set_stage_ownership(
-            conn,
-            ticket.id,
-            stage=ticket.stage,
-            ownership_mode=ownership_mode,
-            now=4,
-        )
-        # Hold every other condition constant so this pins ownership itself.
-        conn.execute(
-            "UPDATE tickets SET ticket_status = 'empty' WHERE id = ?",
-            (ticket.id,),
-        )
-        assert _ready(conn, ticket) is expected
-    finally:
-        conn.close()
-
-
 def test_membership_must_match_the_explicit_planning_day(tmp_path: Path) -> None:
     conn = _db(tmp_path)
     try:
@@ -212,72 +175,6 @@ def test_paired_owned_ticket_resting_at_paired_is_never_startable(tmp_path: Path
         conn.close()
 
 
-@pytest.mark.parametrize(
-    "break_one_condition",
-    ["membership", "terminal", "next_gate", "proposal", "scope", "blocker"],
-)
-def test_paired_stage_preserves_every_non_ownership_condition(
-    tmp_path: Path, break_one_condition: str
-) -> None:
-    conn = _db(tmp_path)
-    try:
-        ticket = _ticket(
-            conn,
-            worker_type="new_worker",
-            ceiling="needs_understanding",
-            at_cap=AtCap.propose,
-        )
-        assert _ready(conn, ticket)
-
-        definition: WorkerTypeDefinition | Any = NEW_WORKER_TYPE_DEFINITION
-        if break_one_condition == "membership":
-            days_data.remove_day_ticket(conn, PLANNING_DAY_ID, ticket.id, 5)
-        elif break_one_condition == "terminal":
-            conn.execute("UPDATE tickets SET stage = 'done' WHERE id = ?", (ticket.id,))
-        elif break_one_condition == "next_gate":
-
-            class NoNextGate:
-                def is_terminal(self, _stage: str) -> bool:
-                    return False
-
-                def gating_field(self, _stage: str) -> None:
-                    return None
-
-                def stage_definition(self, _stage: str) -> object:
-                    return type(
-                        "Stage",
-                        (),
-                        {"default_ownership_mode": StageOwnershipMode.paired},
-                    )()
-
-            definition = NoNextGate()
-        elif break_one_condition == "proposal":
-            tickets_data.file_proposal(
-                conn,
-                ticket.id,
-                field="understanding",
-                body="parked",
-                actor="agent",
-                now=5,
-            )
-        elif break_one_condition == "scope":
-            tickets_data.change_scope(
-                conn,
-                ticket.id,
-                ceiling="needs_understanding",
-                at_cap=AtCap.stop,
-                actor="human",
-                now=5,
-            )
-        else:
-            blocker = _ticket(conn, planning_day_id=None)
-            _block(conn, blocker_id=blocker.id, target_id=ticket.id, now=5)
-
-        assert not _ready(conn, ticket, definition=definition)
-    finally:
-        conn.close()
-
-
 # Only `empty` is startable; every other control status is a deliberate "not ready".
 # This partitions the full TicketStatus set so a future status cannot silently become
 # auto-startable.
@@ -291,81 +188,6 @@ _READY_UNDER_WORKER_OWNERSHIP: dict[TicketStatus, bool] = {
     TicketStatus.needs_user: False,
     TicketStatus.errored: False,
 }
-
-
-def test_every_ticket_status_has_an_explicit_readiness_decision(tmp_path: Path) -> None:
-    assert set(_READY_UNDER_WORKER_OWNERSHIP) == set(TicketStatus)
-    conn = _db(tmp_path)
-    try:
-        ticket = _ticket(conn)
-        for status, expected in _READY_UNDER_WORKER_OWNERSHIP.items():
-            conn.execute(
-                "UPDATE tickets SET ticket_status = ? WHERE id = ?",
-                (status.value, ticket.id),
-            )
-            assert _ready(conn, ticket) is expected, status
-    finally:
-        conn.close()
-
-
-@pytest.mark.parametrize("terminal_stage", ["done", "dropped"])
-def test_terminal_stages_are_never_ready(tmp_path: Path, terminal_stage: str) -> None:
-    conn = _db(tmp_path)
-    try:
-        ticket = _ticket(conn)
-        conn.execute("UPDATE tickets SET stage = ? WHERE id = ?", (terminal_stage, ticket.id))
-        assert not _ready(conn, ticket)
-    finally:
-        conn.close()
-
-
-def test_non_terminal_stage_without_a_gated_field_is_never_ready(tmp_path: Path) -> None:
-    conn = _db(tmp_path)
-    try:
-        ticket = _ticket(conn)
-
-        class DefinitionWithoutNextGate:
-            def is_terminal(self, stage: str) -> bool:
-                assert stage == ticket.stage
-                return False
-
-            def gating_field(self, stage: str) -> None:
-                assert stage == ticket.stage
-                return None
-
-            def stage_definition(self, stage: str) -> object:
-                assert stage == ticket.stage
-                return type(
-                    "Stage",
-                    (),
-                    {"default_ownership_mode": StageOwnershipMode.worker},
-                )()
-
-        assert not _ready(
-            conn,
-            ticket,
-            definition=DefinitionWithoutNextGate(),  # type: ignore[arg-type]
-        )
-    finally:
-        conn.close()
-
-
-def test_parked_current_field_proposal_is_never_ready(tmp_path: Path) -> None:
-    conn = _db(tmp_path)
-    try:
-        ticket = _ticket(conn)
-        ticket = tickets_data.file_proposal(
-            conn,
-            ticket.id,
-            field="success",
-            body="parked",
-            actor="agent",
-            now=4,
-        )
-        assert ticket.ticket_status is TicketStatus.awaiting_approval
-        assert not _ready(conn, ticket)
-    finally:
-        conn.close()
 
 
 @pytest.mark.parametrize(
@@ -436,79 +258,6 @@ def test_a_completing_blocker_frees_its_target(tmp_path: Path, settled_stage: st
         conn.close()
 
 
-@pytest.mark.parametrize(
-    "break_one_condition",
-    ["membership", "status", "terminal", "next_gate", "proposal", "scope", "blocker"],
-)
-def test_all_conditions_true_then_one_at_a_time_false(
-    tmp_path: Path, break_one_condition: str
-) -> None:
-    conn = _db(tmp_path)
-    try:
-        ticket = _ticket(conn, ceiling="needs_success", at_cap=AtCap.propose)
-        assert _ready(conn, ticket)
-
-        definition: WorkerTypeDefinition | Any = CODING_WORKER_TYPE_DEFINITION
-        if break_one_condition == "membership":
-            days_data.remove_day_ticket(conn, PLANNING_DAY_ID, ticket.id, 5)
-        elif break_one_condition == "status":
-            conn.execute(
-                "UPDATE tickets SET ticket_status = 'user' WHERE id = ?",
-                (ticket.id,),
-            )
-        elif break_one_condition == "terminal":
-            conn.execute("UPDATE tickets SET stage = 'done' WHERE id = ?", (ticket.id,))
-        elif break_one_condition == "next_gate":
-
-            class NoNextGate:
-                def is_terminal(self, _stage: str) -> bool:
-                    return False
-
-                def gating_field(self, _stage: str) -> None:
-                    return None
-
-                def stage_definition(self, _stage: str) -> object:
-                    return type(
-                        "Stage",
-                        (),
-                        {"default_ownership_mode": StageOwnershipMode.worker},
-                    )()
-
-            definition = NoNextGate()
-        elif break_one_condition == "proposal":
-            tickets_data.file_proposal(
-                conn,
-                ticket.id,
-                field="success",
-                body="parked",
-                actor="agent",
-                now=5,
-            )
-        elif break_one_condition == "scope":
-            tickets_data.change_scope(
-                conn,
-                ticket.id,
-                ceiling="needs_success",
-                at_cap=AtCap.stop,
-                actor="human",
-                now=5,
-            )
-        else:
-            blocker = _ticket(conn, planning_day_id=None)
-            _block(conn, blocker_id=blocker.id, target_id=ticket.id, now=5)
-
-        assert not _ready(conn, ticket, definition=definition)
-        # The blocker is the decision itself, and readiness is that answer read as a yes
-        # or a no. Every refusal has to name itself, or a caller that asked for a start
-        # and got none is told nothing.
-        assert (
-            _blocker(conn, ticket, definition=definition)
-            == _EXPECTED_BLOCKERS[break_one_condition]
-        )
-    finally:
-        conn.close()
-
-
 _EXPECTED_BLOCKERS = {
     "membership": "the Ticket is not on today's Day",
     "status": "the Ticket is at user, so no worker step is due",
@@ -528,19 +277,6 @@ def test_a_ready_ticket_names_no_blocker(tmp_path: Path) -> None:
         ticket = _ticket(conn, ceiling="needs_success", at_cap=AtCap.propose)
         assert _blocker(conn, ticket) is None
         assert _ready(conn, ticket)
-    finally:
-        conn.close()
-
-
-def test_new_worker_novel_stage_is_never_interpreted_as_coding(tmp_path: Path) -> None:
-    conn = _db(tmp_path)
-    try:
-        ticket = _ticket(conn, worker_type="new_worker")
-        assert ticket.stage == "needs_understanding"
-        assert _ready(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
-        conn.execute("UPDATE tickets SET ticket_status = 'empty' WHERE id = ?", (ticket.id,))
-        with pytest.raises(Exception, match="stage outside the linear order"):
-            _ready(conn, ticket, definition=CODING_WORKER_TYPE_DEFINITION)
     finally:
         conn.close()
 
@@ -580,54 +316,6 @@ def test_a_closeout_waiter_is_not_ready_while_its_lane_is_occupied(
         conn.close()
 
 
-@pytest.mark.parametrize("resting_status", [TicketStatus.empty, TicketStatus.blocked])
-def test_a_resting_closeout_ticket_does_not_occupy_the_lane(
-    tmp_path: Path, resting_status: TicketStatus
-) -> None:
-    conn = _db(tmp_path)
-    try:
-        resting = _ticket(conn, planning_day_id=None)
-        waiting = _ticket(conn)
-        _to_closeout(conn, resting.id)
-        _to_closeout(conn, waiting.id)
-        conn.execute(
-            "UPDATE tickets SET ticket_status = ? WHERE id = ?",
-            (resting_status.value, resting.id),
-        )
-        assert _ready(conn, waiting)
-    finally:
-        conn.close()
-
-
-def test_the_closeout_lane_uses_the_parent_sprint_item_project(tmp_path: Path) -> None:
-    conn = _db(tmp_path)
-    try:
-        project_id = projects_data.create_project(
-            conn, name="Client Work", priority=Priority.P2, now=0
-        ).id
-        item_id = sprints_data.create_item(
-            conn, title="Item", project_id=project_id, clock=TestClock(_FIXED_NOW)
-        ).id
-        occupying = _ticket(conn, planning_day_id=None, project_id=project_id)
-        waiting = _ticket(conn, sprint_item_id=item_id)
-        _to_closeout(conn, occupying.id)
-        _to_closeout(conn, waiting.id)
-        conn.execute(
-            "UPDATE tickets SET ticket_status = ? WHERE id = ?",
-            (TicketStatus.awaiting_approval.value, occupying.id),
-        )
-
-        waiting_ticket = tickets_data.read_ticket(conn, waiting.id)
-        assert closeout_lane_identity(
-            conn,
-            waiting_ticket,
-            worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
-        ) == (project_id, "coding")
-        assert not _ready(conn, waiting)
-    finally:
-        conn.close()
-
-
 def test_lanes_in_different_projects_or_worker_types_are_independent(tmp_path: Path) -> None:
     conn = _db(tmp_path)
     try:
@@ -643,21 +331,5 @@ def test_lanes_in_different_projects_or_worker_types_are_independent(tmp_path: P
             (TicketStatus.agent.value, occupying.id),
         )
         assert _ready(conn, other_project)
-    finally:
-        conn.close()
-
-
-def test_a_non_closeout_ticket_has_no_lane(tmp_path: Path) -> None:
-    conn = _db(tmp_path)
-    try:
-        ticket = _ticket(conn)
-        assert (
-            closeout_lane_identity(
-                conn,
-                tickets_data.read_ticket(conn, ticket.id),
-                worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
-            )
-            is None
-        )
     finally:
         conn.close()

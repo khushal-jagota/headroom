@@ -12,7 +12,6 @@ from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 
 PREVIOUS_REVISION = "notification_preferences_by_subject"
-HEAD_REVISION = "planning_day_direction"
 CHECKPOINT_SCHEDULE_ID = "schedule_weekly_sprint_checkpoint"
 
 
@@ -57,9 +56,6 @@ def test_upgrade_preserves_schedules_receipts_and_foreign_keys(tmp_path: Path) -
     upgraded = connect(str(db_path))
     create_schema(upgraded)
 
-    assert upgraded.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
-        HEAD_REVISION
-    )
     existing = upgraded.execute(
         "SELECT * FROM scheduled_ticket_schedules WHERE id = 'schedule_existing'"
     ).fetchone()

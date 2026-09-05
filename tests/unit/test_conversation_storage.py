@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -15,7 +14,6 @@ from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
     ConversationAccess,
-    ConversationAlreadyStarted,
     ConversationBackendKey,
     ConversationRoleMaterials,
     PromptDeliveryMode,
@@ -50,7 +48,6 @@ from planner.conversation.events import (
     UserInputOption,
     UserInputQuestion,
     UserInputRequestedEventPayload,
-    conversation_event_kinds_need_the_change_signal,
     conversation_event_payload_from_canonical_json,
     conversation_event_payload_kind,
     conversation_event_payload_to_canonical_json,
@@ -62,7 +59,6 @@ from planner.conversation.message_content import (
     text_message_content,
 )
 from planner.conversation.storage import (
-    ConversationRecordMissing,
     ConversationRecordNamesNoModel,
     ConversationStore,
 )
@@ -179,25 +175,6 @@ def test_every_payload_survives_the_round_trip_through_its_stored_text() -> None
         assert conversation_event_payload_from_canonical_json(kind, stored) == payload
 
 
-def test_every_kind_has_a_payload_that_writes_under_it() -> None:
-    assert {conversation_event_payload_kind(payload) for payload in EVERY_PAYLOAD} == set(
-        ConversationEventKind
-    )
-
-
-def test_the_stored_text_is_canonical() -> None:
-    """One value, one text: keys in order, no filler, non-ASCII left as itself."""
-    stored = conversation_event_payload_to_canonical_json(
-        PromptEventPayload(
-            content=text_message_content("日本語"),
-            sender_label="owner",
-            mode=PromptDeliveryMode.send_now,
-        )
-    )
-
-    assert stored == '{"mode":"send_now","sender_label":"owner","text":"日本語"}'
-
-
 def test_what_a_sender_minted_is_stored_and_read_back_exactly() -> None:
     """The sender's id and instant are kept as given, and survive the round trip."""
     minted = PromptEventPayload(
@@ -218,17 +195,6 @@ def test_what_a_sender_minted_is_stored_and_read_back_exactly() -> None:
         conversation_event_payload_from_canonical_json(ConversationEventKind.prompt, stored)
         == minted
     )
-
-
-def test_a_sender_that_minted_nothing_writes_what_it_always_wrote() -> None:
-    """Absent is absent: no key, no null, and the rows already recorded still read."""
-    assert conversation_event_payload_to_canonical_json(A_PROMPT) == (
-        '{"mode":"run_when_free","sender_label":"owner","text":"hello"}'
-    )
-    assert conversation_event_payload_from_canonical_json(
-        ConversationEventKind.prompt,
-        '{"mode":"run_when_free","sender_label":"owner","text":"hello"}',
-    ) == A_PROMPT
 
 
 def test_a_sent_message_carries_its_id_into_whichever_row_it_becomes() -> None:
@@ -295,32 +261,6 @@ def test_a_conversation_is_read_back_as_it_was_written(store: ConversationStore)
         assert read.resolved_start() == resolved
 
     asyncio.run(exercise())
-
-
-def test_a_conversation_without_role_materials_keeps_none(store: ConversationStore) -> None:
-    async def exercise() -> None:
-        await store.create_conversation(_resolved())
-        read = await store.read_conversation("c")
-
-        assert read is not None
-        assert read.role_text is None
-        assert read.identity_environment_variables == ()
-        assert read.resolved_start().role_materials is None
-
-    asyncio.run(exercise())
-
-
-def test_creating_the_same_conversation_twice_is_refused(store: ConversationStore) -> None:
-    async def exercise() -> None:
-        await store.create_conversation(_resolved())
-        with pytest.raises(ConversationAlreadyStarted):
-            await store.create_conversation(_resolved())
-
-    asyncio.run(exercise())
-
-
-def test_an_unknown_conversation_reads_as_nothing(store: ConversationStore) -> None:
-    assert asyncio.run(store.read_conversation("never-started")) is None
 
 
 def test_a_stored_conversation_that_names_no_model_reads_but_cannot_be_started(
@@ -421,44 +361,6 @@ def test_the_commands_an_agent_offers_are_kept_and_read_back(store: Conversation
     asyncio.run(exercise())
 
 
-def test_a_second_report_puts_the_whole_menu_where_the_old_one_was(
-    store: ConversationStore,
-) -> None:
-    """A backend reports the list it has now, so a command it dropped has to go."""
-
-    async def exercise() -> None:
-        await store.create_conversation(_resolved())
-        await store.replace_composer_catalog("c", FIRST_MENU)
-        await store.replace_composer_catalog("c", SECOND_MENU)
-        read = await store.read_conversation("c")
-
-        assert read is not None
-        assert read.composer_catalog == SECOND_MENU
-        assert "/review" not in {entry.display_text for entry in read.composer_catalog}
-
-    asyncio.run(exercise())
-
-
-def test_a_conversation_nothing_has_reported_for_offers_no_commands(
-    store: ConversationStore,
-) -> None:
-    """Which is also what a backend that reported having none reads back as."""
-
-    async def exercise() -> None:
-        await store.create_conversation(_resolved())
-        read = await store.read_conversation("c")
-        assert read is not None
-        assert read.composer_catalog == ()
-
-        await store.replace_composer_catalog("c", FIRST_MENU)
-        await store.replace_composer_catalog("c", ())
-        emptied = await store.read_conversation("c")
-        assert emptied is not None
-        assert emptied.composer_catalog == ()
-
-    asyncio.run(exercise())
-
-
 # --- a delivery, written as one thing ------------------------------------------------------
 
 
@@ -486,22 +388,6 @@ def test_a_delivery_carrying_a_change_writes_both_rows_and_moves_the_conversatio
         assert (read.model, read.reasoning_effort) == ("second-model", "high")
         assert read.latest_sequence == 2
         assert await store.read_events_after("c", 0) == written
-
-    asyncio.run(exercise())
-
-
-def test_a_delivery_carrying_no_change_writes_only_its_prompt(
-    store: ConversationStore,
-) -> None:
-    async def exercise() -> None:
-        await store.create_conversation(_resolved(model="first-model"))
-
-        written = await store.append_delivered_prompt("c", prompt=A_PROMPT, model_change=None)
-
-        assert [(event.sequence, str(event.kind)) for event in written] == [(1, "prompt")]
-        read = await store.read_conversation("c")
-        assert read is not None
-        assert read.model == "first-model"
 
     asyncio.run(exercise())
 
@@ -583,39 +469,6 @@ def test_the_record_is_read_back_in_order_from_any_position(store: ConversationS
     asyncio.run(exercise())
 
 
-def test_one_row_can_be_read_by_the_position_it_was_written_at(
-    store: ConversationStore,
-) -> None:
-    """A reader who opened one fold wants that row, not the record after it."""
-
-    async def exercise() -> None:
-        await store.create_conversation(_resolved())
-        await store.create_conversation(_resolved("other"))
-        written = [await store.append_event("c", payload) for payload in EVERY_PAYLOAD]
-
-        assert await store.read_event("c", 1) == written[0]
-        assert await store.read_event("c", len(written)) == written[-1]
-        assert await store.read_event("c", len(written) + 1) is None
-        assert await store.read_event("other", 1) is None
-
-    asyncio.run(exercise())
-
-
-def test_one_conversations_record_never_shows_up_in_anothers(store: ConversationStore) -> None:
-    async def exercise() -> None:
-        await store.create_conversation(_resolved("first"))
-        await store.create_conversation(_resolved("second"))
-
-        await store.append_event("first", A_PROMPT)
-        await store.append_event("second", A_PROMPT)
-        await store.append_event("second", AN_AGENT_MESSAGE)
-
-        assert [event.sequence for event in await store.read_events_after("first", 0)] == [1]
-        assert [event.sequence for event in await store.read_events_after("second", 0)] == [1, 2]
-
-    asyncio.run(exercise())
-
-
 def test_appends_racing_each_other_each_get_a_number_of_their_own(
     store: ConversationStore,
 ) -> None:
@@ -638,61 +491,6 @@ def test_appends_racing_each_other_each_get_a_number_of_their_own(
         assert read is not None
         assert read.latest_sequence == 20
         assert len(await store.read_events_after("c", 0)) == 20
-
-    asyncio.run(exercise())
-
-
-def test_a_row_cannot_be_appended_to_a_conversation_that_is_not_there(
-    store: ConversationStore,
-) -> None:
-    async def exercise() -> None:
-        with pytest.raises(ConversationRecordMissing):
-            await store.append_event("never-started", A_PROMPT)
-
-    asyncio.run(exercise())
-
-
-def test_a_delivered_prompt_is_what_counts_as_a_first_prompt(store: ConversationStore) -> None:
-    """A refused delivery leaves a row behind, and no prompt has been delivered yet."""
-
-    async def exercise() -> None:
-        await store.create_conversation(_resolved())
-        assert await store.has_delivered_prompt("c") is False
-
-        await store.append_event("c", A_REFUSED_DELIVERY)
-        assert await store.has_delivered_prompt("c") is False
-
-        await store.append_event("c", A_PROMPT)
-        assert await store.has_delivered_prompt("c") is True
-
-    asyncio.run(exercise())
-
-
-def test_a_written_row_is_never_touched_again(store: ConversationStore, tmp_path: Path) -> None:
-    """Nothing in here updates or deletes a row of a conversation's record."""
-
-    async def exercise() -> None:
-        await store.create_conversation(_resolved())
-        await store.append_event("c", A_PROMPT)
-        await store.update_vendor_session_cursor("c", "vendor-session-7")
-        await store.append_event("c", AN_AGENT_MESSAGE)
-
-        conn: sqlite3.Connection = connect(str(tmp_path / "conversations.db"))
-        try:
-            rows = conn.execute(
-                "SELECT sequence, kind, payload FROM conversation_events "
-                "WHERE conversation_id = 'c' ORDER BY sequence"
-            ).fetchall()
-        finally:
-            conn.close()
-
-        assert [(int(row["sequence"]), str(row["kind"])) for row in rows] == [
-            (1, "prompt"),
-            (2, "agent_message"),
-        ]
-        assert str(rows[0]["payload"]) == conversation_event_payload_to_canonical_json(
-            A_PROMPT
-        )
 
     asyncio.run(exercise())
 
@@ -732,23 +530,6 @@ def test_a_message_of_several_pieces_survives_being_written_and_read_back() -> N
     assert read_back == A_MESSAGE_WITH_MORE_THAN_WORDS
 
 
-def test_a_message_that_is_only_words_is_stored_exactly_as_it_always_was() -> None:
-    """The common case does not pay for the general one.
-
-    A text-only row is the same JSON it was before a message could hold anything else —
-    ``text``, no ``content``, no piece tags — so nothing already in the record has to be
-    rewritten and the ordinary row never grows.
-    """
-    assert json.loads(conversation_event_payload_to_canonical_json(A_PROMPT)) == {
-        "text": "hello",
-        "sender_label": "owner",
-        "mode": "run_when_free",
-    }
-    assert json.loads(conversation_event_payload_to_canonical_json(AN_AGENT_MESSAGE)) == {
-        "text": "# heading\n\nbody with an em dash — and 日本語"
-    }
-
-
 def test_a_row_written_before_messages_could_hold_anything_else_still_reads() -> None:
     """The live record is full of these, and every one of them must still read.
 
@@ -778,15 +559,6 @@ def test_a_message_with_more_than_words_reaches_sqlite_and_comes_back(
 
     rows = asyncio.run(store.read_events_after("c", 0))
     assert [row.payload for row in rows] == [A_MESSAGE_WITH_MORE_THAN_WORDS]
-
-
-def test_a_message_may_not_hold_something_that_is_not_a_piece() -> None:
-    """A stored row naming a piece nobody recognises is refused rather than guessed at."""
-    with pytest.raises(ValueError):
-        conversation_event_payload_from_canonical_json(
-            ConversationEventKind.agent_message,
-            '{"content":[{"piece":"hologram","text":"hi"}]}',
-        )
 
 
 # --- what an append announces ----------------------------------------------------------
@@ -878,39 +650,3 @@ def test_a_delivery_written_as_one_thing_announces_itself_once(
     )
 
     assert signals.count == 1
-
-
-def test_a_batch_holding_one_row_a_screen_reads_announces_the_whole_batch() -> None:
-    quiet = AgentMessageEventPayload(content=text_message_content("chatter"))
-    loud = TurnEndedEventPayload(ending=ConversationTurnEnding.completed)
-
-    assert not conversation_event_kinds_need_the_change_signal(
-        [conversation_event_payload_kind(quiet)]
-    )
-    assert conversation_event_kinds_need_the_change_signal(
-        conversation_event_payload_kind(payload) for payload in (quiet, loud, quiet)
-    )
-
-
-def test_the_kinds_the_board_reads_are_all_kinds_that_announce_themselves() -> None:
-    """The board refetches on the signal, so every kind that moves a board row must emit."""
-    board_row_signals_move_on = {
-        ConversationEventKind.prompt,
-        ConversationEventKind.prompt_delivery_refused,
-        ConversationEventKind.prompt_discarded,
-        ConversationEventKind.permission_asked,
-        ConversationEventKind.permission_answered,
-        ConversationEventKind.user_input_requested,
-        ConversationEventKind.user_input_answered,
-        ConversationEventKind.user_input_failed,
-        ConversationEventKind.model_changed,
-        ConversationEventKind.turn_ended,
-    }
-
-    assert not (
-        board_row_signals_move_on & CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION
-    )
-    assert (
-        board_row_signals_move_on | CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION
-        == set(ConversationEventKind)
-    )

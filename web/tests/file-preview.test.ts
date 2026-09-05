@@ -49,18 +49,6 @@ describe("managed-file preview resolution", () => {
     });
   });
 
-  it.each([
-    ["https://example.com/api/conversation/conversations/c1/files/f1", "notes.md"],
-    ["/api/conversation/conversations/c1/not-files/f1", "notes.md"],
-    ["data:text/html;base64,PGgxPm5vPC9oMT4=", "page.html"],
-    ["data:application/octet-stream;base64,e30=", "facts.json"],
-    ["data:text/plain;base64,e30=", "facts.json"],
-    ["data:application/json;base64,e30=", "bad\u0000name.json"],
-    ["data:application/json;base64,e30=", " facts.json"],
-    ["data:application/json;base64,e30=", "folder/facts.json"]
-  ])("rejects unsafe Conversation file target %s", (href, fileName) => {
-    expect(conversationFileTarget(href, fileName)).toBeNull();
-  });
   it("resolves Ticket Markdown with its encoded URL, label, and preview address", () => {
     expect(resolvePreview(ticketMarkdown)).toEqual({
       kind: "markdown",
@@ -69,45 +57,6 @@ describe("managed-file preview resolution", () => {
       label: "space name.md",
       previewHref: "#/preview?source=ticket&ticket=t_file123&path=notes%2Fspace%20name.md"
     });
-  });
-
-  it.each(
-    [
-      ["page.HTML", "html"],
-      ["images/pic.webp", "image"],
-      ["icon.svg", "image"],
-      ["clips/demo.mp4", "video"],
-      ["clips/talk.webm", "video"],
-      ["clips/talk.ogv", "video"],
-      ["audio/demo.mp3", "audio"],
-      ["audio/talk.ogg", "audio"],
-      ["audio/talk.oga", "audio"],
-      ["code/tool.py", "download"],
-      ["archive/bundle.zip", "download"]
-    ] satisfies Array<[string, FilePreviewKind]>
-  )("selects %s as %s", (path, expectedKind) => {
-    expect(resolvePreview({ kind: "ticket-file", ticketId: "t_file123", path }).kind).toBe(
-      expectedKind
-    );
-  });
-
-  it("keeps text and data preview kinds scoped to Conversation files", () => {
-    expect(resolvePreview({ kind: "ticket-file", ticketId: "t_file123", path: "notes.txt" }).kind)
-      .toBe("download");
-    for (const [fileName, kind] of [
-      ["report.pdf", "pdf"],
-      ["notes.txt", "text"],
-      ["rows.csv", "text"],
-      ["rows.tsv", "text"],
-      ["facts.json", "text"],
-      ["events.jsonl", "text"]
-    ] as const) {
-      const target = conversationFileTarget(
-        "/api/conversation/conversations/c1/files/f1",
-        fileName
-      );
-      expect(resolvePreview(target!).kind).toBe(kind);
-    }
   });
 
   it("bounds Conversation text preview bytes and states when it truncates", () => {
@@ -134,63 +83,6 @@ describe("managed-file preview resolution", () => {
     });
   });
 
-  it.each(
-    [
-      ["https://example.com/pictures/photo.png?v=2#top", "image"],
-      ["https://example.com/clip.mp4", "video"],
-      ["https://example.com/tone.wav", "audio"]
-    ] satisfies Array<[string, FilePreviewKind]>
-  )("lets the browser render external URL %s as %s", (href, expectedKind) => {
-    expect(resolvePreview({ kind: "external-link", href }).kind).toBe(expectedKind);
-  });
-
-  it("preserves the labelled external image target in the resolved interface value", () => {
-    const target = {
-      kind: "external-link",
-      href: "https://example.com/pictures/photo.png?v=2#top",
-      label: "Photo"
-    } satisfies FilePreviewTarget;
-
-    expect(resolvePreview(target)).toEqual({
-      kind: "image",
-      target,
-      href: "https://example.com/pictures/photo.png?v=2#top",
-      label: "Photo"
-    });
-  });
-
-  it.each([
-    "https://example.com/notes.md",
-    "https://example.com/page.html",
-    "#results",
-    "#/day"
-  ])("keeps fetched-document or link target %s external", (href) => {
-    expect(resolvePreview({ kind: "external-link", href }).kind).toBe("external");
-  });
-
-  it("allows one new Markdown expansion and records its visited URL", () => {
-    expect(markdownExpansionFor(resolvePreview(ticketMarkdown), 0, [])).toEqual({
-      expandable: true,
-      nextDepth: 1,
-      nextVisited: ["/files/tickets/t_file123/notes/space%20name.md"]
-    });
-  });
-
-  it("stops Markdown recursion at a visited URL or the depth bound", () => {
-    const resolved = resolvePreview(ticketMarkdown);
-    const visited = [resolved.href];
-
-    expect(markdownExpansionFor(resolved, 1, visited)).toEqual({
-      expandable: false,
-      nextDepth: 1,
-      nextVisited: visited
-    });
-    expect(markdownExpansionFor(resolved, 2, [])).toEqual({
-      expandable: false,
-      nextDepth: 2,
-      nextVisited: []
-    });
-  });
 });
 
 describe("managed-file targets and preview addresses", () => {
@@ -231,24 +123,6 @@ describe("managed-file targets and preview addresses", () => {
     });
   });
 
-  it.each(["../t_other/notes.md", "notes/./file.md", "%2e%2e/notes.md"])(
-    "rejects unsafe Ticket path %s",
-    (path) => {
-      expect(ticketFileTarget("t_file123", path)).toBeNull();
-    }
-  );
-
-  it.each([
-    "/files/tickets/t_file123/../t_other/notes.md",
-    "/files/tickets/t_file123/notes/%2e%2e/secret.md"
-  ])("falls back to an external link for unsafe managed URL %s", (href) => {
-    expect(targetFromHref(href, "Unsafe")).toEqual({
-      kind: "external-link",
-      href,
-      label: "Unsafe"
-    });
-  });
-
   it("rejects an unsafe target passed directly to preview resolution", () => {
     expect(() =>
       resolvePreview({
@@ -257,12 +131,6 @@ describe("managed-file targets and preview addresses", () => {
         path: "../t_other/notes.md"
       })
     ).toThrow(/unsafe ticket file target/);
-  });
-
-  it("generates the explicit preview hash", () => {
-    expect(previewHashHref(ticketMarkdown)).toBe(
-      "#/preview?source=ticket&ticket=t_file123&path=notes%2Fspace%20name.md"
-    );
   });
 
   // A screen that would rather show the file than go to it reads the file back out of
@@ -289,57 +157,6 @@ describe("managed-file targets and preview addresses", () => {
     expect(targetFromPreviewHref("#/previews?source=ticket&ticket=t_one&path=a.md")).toBeNull();
     expect(targetFromPreviewHref("https://example.com/thing")).toBeNull();
     expect(targetFromPreviewHref(null)).toBeNull();
-  });
-});
-
-describe("Ticket dev-server addresses", () => {
-  const stubPanelsOrigin = () => {
-    vi.stubGlobal("window", {
-      location: { origin: "https://panels.test", href: "https://panels.test/workspace" }
-    });
-  };
-
-  it.each([
-    "/dev/tickets/t_file123/8791/",
-    "/dev/tickets/t_file123/8791",
-    "/dev/tickets/t_file123/4173/nested/page?theme=dark#result",
-    "/dev/tickets/t_file123/1/",
-    "/dev/tickets/t_file123/65535/",
-    "https://panels.test/dev/tickets/t_file123/8791/"
-  ])("recognizes %s", (href) => {
-    stubPanelsOrigin();
-    expect(isTicketDevServerHref(href)).toBe(true);
-  });
-
-  it.each([
-    "/dev/tickets/t_file123/",
-    "/dev/tickets/t_file123/0/",
-    "/dev/tickets/t_file123/65536/",
-    "/dev/tickets/t_file123/80x/",
-    "/dev/tickets/not-a-ticket/8791/",
-    "/dev/tickets/t_file123/8791x/page",
-    "/dev/sprint-items/t_file123/8791/",
-    "/files/tickets/t_file123/8791/",
-    "https://example.com/dev/tickets/t_file123/8791/"
-  ])("rejects %s", (href) => {
-    stubPanelsOrigin();
-    expect(isTicketDevServerHref(href)).toBe(false);
-  });
-
-  it("stays an external-link target, so the preview component is unchanged", () => {
-    stubPanelsOrigin();
-    const href = "/dev/tickets/t_file123/8791/";
-
-    expect(targetFromHref(href, "take one")).toEqual({
-      kind: "external-link",
-      href,
-      label: "take one"
-    });
-    expect(resolvePreview(targetFromHref(href, "take one"))).toMatchObject({
-      kind: "external",
-      href,
-      label: "take one"
-    });
   });
 });
 

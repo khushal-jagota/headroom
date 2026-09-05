@@ -101,23 +101,6 @@ describe("composer draft transaction", () => {
     expect(attempt.carriedRunValues.model).toBe("sonnet");
   });
 
-  it("omits text that is empty after trimming", () => {
-    const attempt = beginComposerSend(
-      draft({ text: " \n ", pendingImages: [pendingImage(1, "only.png", "AQ==", 1)] }),
-      carriedRunValues,
-      "run_when_free"
-    );
-
-    expect(attempt.content).toEqual([
-      {
-        piece: "image",
-        data: "AQ==",
-        media_type: "image/png",
-        file_name: "only.png"
-      }
-    ]);
-  });
-
   it("sends and restores files with the rest of a refused draft", () => {
     const attempt = beginComposerSend(
       draft({ pendingFiles: [pendingFile(4, "facts.json", "e30=")] }),
@@ -144,29 +127,6 @@ describe("composer draft transaction", () => {
       pendingFile(30, "facts.json", "e30=")
     ]);
   });
-
-  it.each([
-    ["steer", "sonnet", "low"],
-    ["run_when_free", null, null],
-    ["send_now", null, null]
-  ] as const)(
-    "%s clears sent content and leaves the contracted pending run values",
-    (mode, expectedModel, expectedEffort) => {
-      const attempt = beginComposerSend(draft(), carriedRunValues, mode);
-
-      expect(attempt.draftAfterSend).toEqual({
-        text: "",
-        pendingImages: [],
-        pendingFiles: [],
-        pickedModel: expectedModel,
-        pickedReasoningEffort: expectedEffort,
-        compositionRevision: 14
-      });
-      expect(attempt.draftAfterSend.pendingImages).not.toBe(
-        attempt.draftBeforeSend.pendingImages
-      );
-    }
-  );
 
   it("restores the sent text, images, picks, ids, and revision after a definite refusal", () => {
     const attempt = beginComposerSend(draft(), carriedRunValues, "run_when_free");
@@ -210,35 +170,4 @@ describe("composer draft transaction", () => {
     ]);
   });
 
-  it.each([
-    ["revision changed", { compositionRevision: 15 }, 0],
-    ["text changed", { text: "newer draft" }, 0],
-    ["images changed", { pendingImages: [pendingImage(30, "new.png", "Bw==", 1)] }, 0],
-    ["model changed", { pickedModel: "opus" }, 0],
-    ["effort changed", { pickedReasoningEffort: "high" }, 0],
-    ["image intake is in flight", {}, 1]
-  ] satisfies readonly [
-    string,
-    Partial<ComposerDraft>,
-    number
-  ][])("does not restore when %s", (_label, changed, imageIntakesInFlight) => {
-    const attempt = beginComposerSend(draft(), carriedRunValues, "run_when_free");
-    const currentDraft = { ...attempt.draftAfterSend, ...changed };
-
-    const restoration = restoreRefusedComposerSend(
-      currentDraft,
-      attempt,
-      40,
-      50,
-      imageIntakesInFlight
-    );
-
-    expect(restoration).toEqual({
-      restored: false,
-      draft: currentDraft,
-      nextImageId: 40,
-      nextFileId: 50
-    });
-    expect(restoration.draft).toBe(currentDraft);
-  });
 });

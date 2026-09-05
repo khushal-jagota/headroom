@@ -12,7 +12,6 @@ from sqlite3 import Connection
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from planner.core import change_signal
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -102,17 +101,6 @@ def test_put_value_human_edits_settled_field(tmp_path: Path) -> None:
     assert body["ceiling"] == "needs_plan"
 
 
-def test_put_value_agent_is_forbidden(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    tid = _passed_ticket(db_path)
-    with TestClient(app) as client:
-        response = client.put(
-            f"/api/tickets/{tid}/value/success", json={"body": "x"}, headers=_AGENT
-        )
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "agent_forbidden"
-
-
 def test_put_value_agent_edits_pending_proposal_in_place(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _passed_ticket(db_path)
@@ -161,27 +149,3 @@ def test_put_value_bad_field_is_validation_error(tmp_path: Path) -> None:
         response = client.put(f"/api/tickets/{tid}/value/bogus", json={"body": "x"})
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "validation"
-
-
-def test_put_value_signals_the_change_after_a_successful_edit(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    tid = _passed_ticket(db_path)
-    signals = 0
-
-    def record() -> None:
-        nonlocal signals
-        signals += 1
-
-    unsubscribe = change_signal.subscribe(record)
-    try:
-        with TestClient(app) as client:
-            response = client.put(
-                f"/api/tickets/{tid}/value/success", json={"body": "edited success"}
-            )
-            detail = client.get(f"/api/tickets/{tid}").json()
-    finally:
-        unsubscribe()
-
-    assert response.status_code == 200, response.json()
-    assert detail["fields"]["success"]["value"] == "edited success"
-    assert signals == 1

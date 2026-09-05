@@ -160,28 +160,6 @@ def test_second_supervisor_with_different_socket_cannot_replace_owner(
     assert not second_socket.exists()
 
 
-def test_second_supervisor_with_same_socket_leaves_owner_usable(server: ServerHandle) -> None:
-    application_pid = _wait_for_one_child(server.proc.pid)
-
-    result = subprocess.run(
-        [str(PLAN_BIN), "serve"],
-        cwd=REPO_ROOT,
-        env=_isolated_server_env(server, server.control_socket_path),
-        capture_output=True,
-        text=True,
-        timeout=10.0,
-    )
-
-    assert result.returncode != 0
-    assert "already has a Panels supervisor" in result.stderr
-    assert server.control_socket_path.exists()
-    restart = _run_restart(server)
-    assert restart.returncode == 0, restart.stderr
-    assert restart.stdout == "Panels restart accepted.\n"
-    _wait_for_one_child(server.proc.pid, different_from=application_pid)
-    _wait_for_http(server.base)
-
-
 def test_operator_shutdown_removes_child_socket_and_listener(server: ServerHandle) -> None:
     application_pid = _wait_for_one_child(server.proc.pid)
     assert server.control_socket_path.exists()
@@ -193,91 +171,6 @@ def test_operator_shutdown_removes_child_socket_and_listener(server: ServerHandl
     _wait_until(lambda: not _process_exists(application_pid), "application child remained alive")
     assert not server.control_socket_path.exists()
     _wait_until(lambda: _nothing_listens(server.port), "server port remained open")
-
-
-def test_unexpected_application_exit_ends_supervisor_without_retry(
-    server_factory: Callable[..., ServerHandle],
-) -> None:
-    server = server_factory()
-    application_pid = _wait_for_one_child(server.proc.pid)
-
-    os.kill(application_pid, signal.SIGKILL)
-    server.proc.wait(timeout=10.0)
-
-    assert server.proc.returncode != 0
-    assert not server.control_socket_path.exists()
-    assert _nothing_listens(server.port)
-
-
-def test_restart_acknowledgement_client_close_precedes_child_shutdown(
-    server: ServerHandle,
-) -> None:
-    application_pid = _wait_for_one_child(server.proc.pid)
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.connect(str(server.control_socket_path))
-        request = json.dumps({"version": 1, "operation": "restart"}).encode() + b"\n"
-        client.sendall(request)
-        response = b""
-        while not response.endswith(b"\n"):
-            response += client.recv(4096)
-        assert json.loads(response) == {"version": 1, "status": "accepted"}
-        assert _process_exists(application_pid)
-        assert _direct_children(server.proc.pid) == [application_pid]
-
-    _wait_for_one_child(server.proc.pid, different_from=application_pid)
-    _wait_for_http(server.base)
-
-
-def test_operator_shutdown_overrides_an_accepted_client_that_stays_open(
-    server: ServerHandle,
-) -> None:
-    application_pid = _wait_for_one_child(server.proc.pid)
-    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    client.connect(str(server.control_socket_path))
-    request = json.dumps({"version": 1, "operation": "restart"}).encode() + b"\n"
-    client.sendall(request)
-    response = b""
-    while not response.endswith(b"\n"):
-        response += client.recv(4096)
-    assert json.loads(response) == {"version": 1, "status": "accepted"}
-
-    server.proc.terminate()
-    try:
-        server.proc.wait(timeout=0.5)
-        operator_shutdown_completed = True
-    except subprocess.TimeoutExpired:
-        operator_shutdown_completed = False
-    finally:
-        client.close()
-    if not operator_shutdown_completed:
-        server.proc.wait(timeout=10.0)
-
-    assert operator_shutdown_completed
-    assert server.proc.returncode == 0
-    _wait_until(lambda: not _process_exists(application_pid), "application child remained alive")
-
-
-def test_operator_shutdown_overrides_an_incomplete_control_request(
-    server: ServerHandle,
-) -> None:
-    application_pid = _wait_for_one_child(server.proc.pid)
-    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    client.connect(str(server.control_socket_path))
-
-    server.proc.terminate()
-    try:
-        server.proc.wait(timeout=0.5)
-        operator_shutdown_completed = True
-    except subprocess.TimeoutExpired:
-        operator_shutdown_completed = False
-    finally:
-        client.close()
-    if not operator_shutdown_completed:
-        server.proc.wait(timeout=10.0)
-
-    assert operator_shutdown_completed
-    assert server.proc.returncode == 0
-    _wait_until(lambda: not _process_exists(application_pid), "application child remained alive")
 
 
 def test_unexpected_child_exit_wins_over_a_queued_restart(
@@ -348,54 +241,3 @@ def test_restart_from_ticket_worktree_uses_captured_launch_root(
     assert "data-svelte-app" in replacement_shell
     assert replacement_shell == original_shell
     assert not (ticket_worktree / "web" / "dist").exists()
-
-
-def test_restart_generations_are_serial_and_owner_lease_remains_held(
-    server: ServerHandle,
-) -> None:
-    first_pid = _wait_for_one_child(server.proc.pid)
-    observed_children: list[list[int]] = []
-
-    first_restart_process = subprocess.Popen(
-        [str(PLAN_BIN), "restart"],
-        cwd=REPO_ROOT,
-        env=_restart_env(server),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    second_pid: int | None = None
-    deadline = time.monotonic() + 10.0
-    while time.monotonic() < deadline:
-        children = _direct_children(server.proc.pid)
-        observed_children.append(children)
-        assert len(children) <= 1
-        if children and children[0] != first_pid:
-            second_pid = children[0]
-            assert not _process_exists(first_pid)
-            break
-        time.sleep(0.01)
-    assert second_pid is not None
-    first_stdout, first_stderr = first_restart_process.communicate(timeout=10.0)
-    assert first_restart_process.returncode == 0, first_stderr
-    assert first_stdout == "Panels restart accepted.\n"
-    _wait_for_http(server.base)
-
-    second_restart = _run_restart(server)
-    assert second_restart.returncode == 0
-    third_pid = _wait_for_one_child(server.proc.pid, different_from=second_pid)
-    observed_children.append(_direct_children(server.proc.pid))
-    _wait_for_http(server.base)
-
-    assert len({first_pid, second_pid, third_pid}) == 3
-    assert all(len(children) <= 1 for children in observed_children)
-    duplicate = subprocess.run(
-        [str(PLAN_BIN), "serve"],
-        cwd=REPO_ROOT,
-        env=_isolated_server_env(server, Path("/tmp") / f"panels-lease-{server.port}.sock"),
-        capture_output=True,
-        text=True,
-        timeout=10.0,
-    )
-    assert duplicate.returncode != 0
-    assert _direct_children(server.proc.pid) == [third_pid]

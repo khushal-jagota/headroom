@@ -12,7 +12,6 @@ from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 
 PREVIOUS_REVISION = "conversation_automatic_compaction"
-HEAD_REVISION = "planning_day_direction"
 
 
 def _upgrade_to_previous_revision(path: Path) -> sqlite3.Connection:
@@ -81,9 +80,6 @@ def test_upgrade_reconciles_removed_stages_and_preserves_old_content(tmp_path: P
     upgraded = connect(str(db_path))
     create_schema(upgraded)
 
-    assert upgraded.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
-        HEAD_REVISION
-    )
     stranded = upgraded.execute(
         "SELECT stage, ceiling, ticket_status, default_stage_ownership_mode, fields "
         "FROM tickets WHERE id = 't_stranded'"

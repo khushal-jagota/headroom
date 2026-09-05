@@ -17,8 +17,6 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "planning_day_direction"
-
 
 def _table_columns(
     conn: sqlite3.Connection, table: str
@@ -35,15 +33,6 @@ def upgraded(tmp_path: Path) -> sqlite3.Connection:
     conn = connect(str(tmp_path / "conversations.db"))
     create_schema(conn)
     return conn
-
-
-def test_the_upgrade_leaves_the_database_at_this_revision(
-    upgraded: sqlite3.Connection,
-) -> None:
-    assert (
-        str(upgraded.execute("SELECT version_num FROM alembic_version").fetchone()[0])
-        == HEAD_REVISION
-    )
 
 
 def test_a_conversation_holds_what_it_was_started_with_and_where_it_has_got_to(

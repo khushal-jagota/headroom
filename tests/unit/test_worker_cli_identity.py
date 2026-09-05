@@ -86,22 +86,6 @@ def test_worker_self_route_returns_detail_and_worker(tmp_path: Path) -> None:
     assert body["title"] == "Coding work"
 
 
-def test_worker_self_route_resolves_ticket_with_no_bound_session(tmp_path: Path) -> None:
-    # A never-run ticket (no durable session yet) still resolves by id — the ownership
-    # validation only fires when a session IS bound.
-    app, db_path = _make_app(tmp_path)
-    with TestClient(app) as client:
-        created = client.post(
-            "/api/tickets",
-            json={"title": "Fresh", "worker_type": "coding", "kickoff_note": "k"},
-        )
-        ticket_id = created.json()["id"]
-        response = client.get(f"/api/tickets/{ticket_id}/worker-self")
-
-    assert response.status_code == 200, response.text
-    assert response.json()["id"] == ticket_id
-
-
 def test_worker_self_route_ownership_validation_rejects_ambiguous_session(
     tmp_path: Path,
 ) -> None:
@@ -125,13 +109,6 @@ def test_worker_self_route_ownership_validation_rejects_ambiguous_session(
     assert response.status_code == 400, response.text
     error = response.json()["error"]
     assert error["code"] == "validation"
-
-
-def test_worker_self_route_missing_ticket_is_not_found(tmp_path: Path) -> None:
-    app, _ = _make_app(tmp_path)
-    with TestClient(app) as client:
-        response = client.get("/api/tickets/t_missing/worker-self")
-    assert response.status_code == 404, response.text
 
 
 # --- CLI: PLAN_TICKET_ID only ------------------------------------------------

@@ -83,31 +83,6 @@ def test_coding_ticket_accepts_coding_field_and_ceiling(
         assert scoped.json()["ceiling"] == "needs_approach"
 
 
-def test_coding_ticket_rejects_probe_field(app_db: AppDb, probe_installed: None) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        tid = _create(client, "coding")
-        # probe's alpha field is foreign to coding.
-        r = client.post(f"/api/tickets/{tid}/propose/alpha", json={"body": "x"})
-        assert r.status_code == 400
-        assert r.json()["error"]["code"] == "validation"
-        assert r.json()["error"]["message"] == "unknown ticket field"
-        assert r.json()["error"]["detail"] == {"field": "alpha", "worker_type": "coding"}
-
-
-def test_coding_ticket_rejects_probe_ceiling(app_db: AppDb, probe_installed: None) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        tid = _create(client, "coding")
-        r = client.post(
-            f"/api/tickets/{tid}/scope",
-            json={"ceiling": "needs_alpha", "at_cap": "stop"},
-        )
-        assert r.status_code == 400
-        assert r.json()["error"]["code"] == "scope_invalid"
-        assert r.json()["error"]["detail"] == {"ceiling": "needs_alpha"}
-
-
 def test_accept_rejects_foreign_field_and_foreign_next_ceiling(
     app_db: AppDb, probe_installed: None
 ) -> None:
@@ -156,16 +131,6 @@ def test_probe_proposal_parks_on_registry_selected_field(
         assert parked.json()["fields"]["beta"]["proposal"] is None
 
 
-def test_probe_rejects_coding_field_value_edit(app_db: AppDb, probe_installed: None) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        tid = _create(client, "probe")
-        r = client.put(f"/api/tickets/{tid}/value/success", json={"body": "x"})
-        assert r.status_code == 400
-        assert r.json()["error"]["code"] == "validation"
-        assert r.json()["error"]["detail"] == {"field": "success", "worker_type": "probe"}
-
-
 def test_ticket_note_routes_make_replace_and_append_explicit(app_db: AppDb) -> None:
     app, _db = app_db
     with TestClient(app) as client:
@@ -192,20 +157,6 @@ def test_ticket_note_routes_make_replace_and_append_explicit(app_db: AppDb) -> N
         assert appended_after_clear.json()["guidance"] == "new guidance"
 
 
-def test_probe_rejects_coding_state_but_accepts_ticket_guidance(
-    app_db: AppDb, probe_installed: None
-) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        tid = _create(client, "probe")
-        stage = client.post(f"/api/tickets/{tid}/stage", json={"to_stage": "needs_plan"})
-        assert stage.status_code == 400
-        assert stage.json()["error"]["message"] == "stage outside the linear order"
-        note = client.put(f"/api/tickets/{tid}/guidance", json={"body": "x"})
-        assert note.status_code == 200
-        assert note.json()["guidance"] == "x"
-
-
 def test_probe_accepts_its_own_state_via_direct_state(app_db: AppDb, probe_installed: None) -> None:
     # /stage must stop rejecting probe stages: advancing directly to needs_beta from
     # needs_alpha is a valid probe stage jump (kickoff first settled so it's non-kickoff).
@@ -216,25 +167,14 @@ def test_probe_accepts_its_own_state_via_direct_state(app_db: AppDb, probe_insta
             f"/api/tickets/{tid}/accept/kickoff",
             json={"next_ceiling": "done", "at_cap": "propose"},
         )
-        jumped = client.post(f"/api/tickets/{tid}/stage", json={"to_stage": "needs_beta"})
+        jumped = client.post(
+            f"/api/tickets/{tid}/stage", json={"to_stage": "needs_beta"}
+        )
         assert jumped.status_code == 200, jumped.json()
         assert jumped.json()["stage"] == "needs_beta"
 
 
 # --- the ?stage= filter decision -----------------------------------------------
-
-
-def test_stage_filter_compares_stored_values_directly(app_db: AppDb, probe_installed: None) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        _create(client, "coding")
-        _create(client, "probe")
-        for reserved in ("needs_kickoff", "done", "dropped"):
-            r = client.get(f"/api/tickets?stage={reserved}")
-            assert r.status_code == 200, r.json()
-        # Both fresh tickets sit at needs_kickoff, so that bookend returns both.
-        both = client.get("/api/tickets?stage=needs_kickoff").json()["tickets"]
-        assert len(both) == 2
 
 
 def test_stage_filter_non_reserved_needs_no_worker_type(

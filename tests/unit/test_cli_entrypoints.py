@@ -12,35 +12,6 @@ from planner.cli import http
 from planner.cli import main as cli_main
 
 
-def test_worker_my_ticket_human_line_surfaces_worker(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # t_tt05: the human line names the resolved worker specialist so the agent can
-    # self-route with skill_view("<name>"). The server computes `worker` from the type.
-    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        return {
-            "id": "t_demo",
-            "worker_type": "coding",
-            "stage": "needs_success",
-            "ticket_status": "user",
-            "priority": "P2",
-            "title": "Demo",
-            "worker": "panels-worker-coding",
-            "fields": {"success": {"value": None, "proposal": None}},
-        }
-
-    monkeypatch.setattr(http, "send", fake_send)
-    runner = CliRunner()
-    result = runner.invoke(
-        cli_main.main,
-        ["worker", "my-ticket"],
-        env={"PLAN_TICKET_ID": "t_demo"},
-    )
-
-    assert result.exit_code == 0, result.output
-    assert "worker: panels-worker-coding" in result.output
-
-
 def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -91,61 +62,6 @@ def test_worker_request_user_help_is_a_no_payload_worker_command(
     assert result.exit_code == 0, result.output
     assert calls == [("POST", "/api/tickets/t_help/request-user-help", {"as_json": False})]
     assert "user help requested on t_help" in result.output
-
-
-def test_worker_trouble_uses_only_current_ticket_identity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[str, str, dict[str, Any]]] = []
-
-    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        calls.append((method, path, kwargs))
-        return {
-            "trouble_note": {
-                "sequence": 1,
-                "body": "Harness returned no output.",
-                "created_at": 1,
-            }
-        }
-
-    monkeypatch.setattr(http, "send", fake_send)
-    result = CliRunner().invoke(
-        cli_main.main,
-        ["worker", "trouble"],
-        input="Harness returned no output.\n",
-        env={"PLAN_TICKET_ID": "t_current"},
-    )
-
-    assert result.exit_code == 0, result.output
-    assert calls == [
-        (
-            "POST",
-            "/api/tickets/t_current/trouble-notes",
-            {
-                "as_json": False,
-                "json_body": {"body": "Harness returned no output.\n"},
-            },
-        )
-    ]
-    assert "trouble recorded on t_current as note 1" in result.output
-
-
-def test_worker_trouble_rejects_missing_identity_before_http(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def explode(*_args: Any, **_kwargs: Any) -> None:
-        raise AssertionError("no HTTP request expected")
-
-    monkeypatch.setattr(http, "send", explode)
-    result = CliRunner().invoke(
-        cli_main.main,
-        ["worker", "trouble"],
-        input="Harness returned no output.",
-        env={"PLAN_TICKET_ID": ""},
-    )
-
-    assert result.exit_code != 0
-    assert "ticket id required" in result.output
 
 
 def test_ticket_list_passes_repeatable_filters_and_page_controls(

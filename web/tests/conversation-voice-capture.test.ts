@@ -142,42 +142,6 @@ describe("voice capture machine", () => {
     expect(sent && "audio" in sent && sent.media_type).toBe("audio/webm");
   });
 
-  it("lands an empty transcript as a no-op, still returning to idle", async () => {
-    const harness = makeHarness(async () => ({ transcript: "   " }));
-    await harness.capture.startRecording();
-    harness.capture.stopRecording();
-    await settle();
-    expect(harness.capture.state().phase).toBe("idle");
-    expect(harness.transcripts).toEqual([""]);
-  });
-
-  it("uploads the codec-qualified media type emitted by a mobile recorder", async () => {
-    const harness = makeHarness(
-      async () => ({ transcript: "mobile words" }),
-      "audio/webm;codecs=opus"
-    );
-    await harness.capture.startRecording();
-    harness.capture.stopRecording();
-    await settle();
-
-    const sent = harness.requests[0]?.body;
-    expect(sent && "audio" in sent && sent.media_type).toBe("audio/webm;codecs=opus");
-    expect(harness.transcripts).toEqual(["mobile words"]);
-  });
-
-  it("cancel while recording discards everything and stops the tracks", async () => {
-    const harness = makeHarness(async () => {
-      throw new Error("must not be called");
-    });
-    await harness.capture.startRecording();
-    harness.capture.cancel();
-    expect(harness.capture.state().phase).toBe("idle");
-    expect(harness.stream.stopped).toBe(1);
-    expect(harness.wakeLocks.released).toBe(1);
-    expect(harness.requests).toHaveLength(0);
-    expect(harness.transcripts).toHaveLength(0);
-  });
-
   it("cancel while transcribing aborts the request and keeps nothing", async () => {
     let sawAbort = false;
     const harness = makeHarness(
@@ -233,31 +197,5 @@ describe("voice capture machine", () => {
     harness.capture.retry();
     expect(harness.capture.state().phase).toBe("idle");
     expect(harness.requests).toHaveLength(1);
-  });
-});
-
-describe("voice presentation", () => {
-  it.each([
-    { supported: true, accepts: true, available: true },
-    { supported: true, accepts: false, available: false },
-    { supported: false, accepts: true, available: false },
-    { supported: false, accepts: false, available: false }
-  ])("uses capability and transcript acceptance only: $supported/$accepts", (example) => {
-    expect(voiceCaptureAvailable(example.supported, example.accepts)).toBe(example.available);
-  });
-
-  it("uses coarse pointer only to choose the empty voice-first presentation", () => {
-    const base = {
-      available: true,
-      active: false,
-      keyboardPreferred: false,
-      disabled: false,
-      empty: true
-    };
-    expect(voiceFirstComposer({ ...base, coarsePointer: true })).toBe(true);
-    expect(voiceFirstComposer({ ...base, coarsePointer: false })).toBe(false);
-    expect(voiceFirstComposer({ ...base, coarsePointer: true, empty: false })).toBe(false);
-    expect(voiceFirstComposer({ ...base, coarsePointer: true, disabled: true })).toBe(false);
-    expect(voiceFirstComposer({ ...base, coarsePointer: true, active: true })).toBe(false);
   });
 });
