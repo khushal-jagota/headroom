@@ -47,9 +47,8 @@
   let {
     id,
     // The artifact this screen is showing, when the host keeps that in its address, and
-    // the way to write it there. The Workspace does; Atlas, which keeps what it is
-    // showing in memory rather than in the address, gives neither and the screen holds
-    // the value itself.
+    // the way to write it there. The Workspace supplies both; without them, the screen
+    // holds the value itself.
     openFile = null,
     onOpenFile = null
   }: {
@@ -194,8 +193,7 @@
   /** Escape closes the artifact, and belongs to it before anything else on the page.
    *
    * The conversation steps back a state on Escape too, so the press is claimed here to
-   * keep one press to one thing. The Atlas panel asks the page the same question before
-   * it closes itself, because its own handler runs before this one.
+   * keep one press to one thing.
    */
   function closeFileOnEscape(event: KeyboardEvent): void {
     if (event.key !== "Escape" || event.defaultPrevented) return;

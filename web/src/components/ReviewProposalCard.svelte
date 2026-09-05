@@ -8,8 +8,7 @@
    * wants shown. Everything about *which* decision is current — walking, skipping,
    * keyboard shortcuts — belongs to the caller.
    *
-   * Callers: the Review screen (`ReviewRoute`) and Atlas's review walk
-   * (`AtlasReviewStop`).
+   * The Review screen (`ReviewRoute`) mounts the card.
    */
   import { onMount, type Snippet } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
@@ -46,10 +45,9 @@
     /** The Ticket field the proposal is filed against. */
     field: string;
     /** The queue's own title for the Ticket, shown only when the detail cannot be
-     *  fetched. A caller that does not have one (Atlas knows only an id) omits it. */
+     *  fetched. A caller without one omits it. */
     title?: string | null;
-    /** Given, the card carries its own Skip control. A caller whose own chrome
-     *  owns skipping (Atlas's walk bar) leaves it out. */
+    /** Given, the card carries its own Skip control. */
     onSkip?: () => void;
     /** The decision has left the queue: approved, sent back, or found already
      *  gone. Fires at most once per proposal. */

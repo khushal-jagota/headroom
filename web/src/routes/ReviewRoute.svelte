@@ -10,8 +10,8 @@
 
   let skipped = $state<Record<string, boolean>>({});
   // The route's own element. The approve shortcut's lookup is scoped to it, so a
-  // card mounted by another screen at the same time — Atlas raises the same card
-  // over its world — can never be the one a Review keystroke reaches.
+  // card mounted by another screen at the same time can never be the one a Review
+  // keystroke reaches.
   let screenElement = $state<HTMLElement | null>(null);
 
   function itemKey(item: ReviewItem): string {

@@ -31,8 +31,7 @@
     itemId,
     sprintName,
     backHref = "#/sprint"
-    // A host that is already a way back needs no link back. Atlas raises this over
-    // the world with its own close, so it passes null and the line is not drawn.
+    // A host that is already a way back can pass null so the line is not drawn.
   }: { itemId: string; sprintName: string; backHref?: string | null } = $props();
 
   const workspace = createQuery(() => queries.sprintItemWorkspace(itemId));

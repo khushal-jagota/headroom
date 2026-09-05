@@ -10,7 +10,6 @@
     type WorkspaceAddress,
     type WorkspaceSelection
   } from "./lib/workspaceAddress";
-  import AtlasRoute from "./routes/AtlasRoute.svelte";
   import BacklogRoute from "./routes/BacklogRoute.svelte";
   import BackendsRoute from "./routes/BackendsRoute.svelte";
   import BoardRoute from "./routes/BoardRoute.svelte";
@@ -193,7 +192,6 @@
       "day",
       "review",
       "workspace",
-      "atlas",
       "backlog",
       "ideas",
       "scheduled-tasks",
@@ -204,7 +202,7 @@
   }
 
   function secondaryRouteActive(): boolean {
-    return ["atlas", "sprint", "backlog", "ideas", "scheduled-tasks", "config", "backends", "notifications"].includes(
+    return ["sprint", "backlog", "ideas", "scheduled-tasks", "config", "backends", "notifications"].includes(
       route.name
     );
   }
@@ -296,9 +294,6 @@
           >
             <div class="shell-more-grab" aria-hidden="true"></div>
             <div class="shell-more-group">Planning</div>
-            <a class:active={currentNav("atlas")} data-screen="atlas" href="#/atlas" onclick={closeMore}>
-              Atlas
-            </a>
             <a class:active={currentNav("sprint")} href="#/sprint" onclick={closeMore}>Sprint</a>
             <a class:active={currentNav("backlog")} href="#/backlog" onclick={closeMore}>Backlog</a>
             <a class:active={currentNav("ideas")} href="#/ideas" onclick={closeMore}>Ideas</a>
@@ -351,8 +346,6 @@
             <ReviewRoute />
           {:else if route.name === "workspace" && route.workspace}
             <BoardRoute address={route.workspace} />
-          {:else if route.name === "atlas"}
-            <AtlasRoute />
           {:else if route.name === "sprint"}
             <SprintRoute sub={route.params.sub || "tracking"} selectedItemId={route.params.item || null} />
           {:else if route.name === "backlog"}

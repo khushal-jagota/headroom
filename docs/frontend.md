@@ -377,14 +377,12 @@ has no usage source.
   back the page the reader left, and the conversation keeps its own section at the bottom
   of the page — the artifact and the worker are on screen together, which is the point.
   An opened conversation is the whole page, so opening a file steps it back to peeked.
-  Escape closes the file, and inside Atlas the panel gives Escape to the file before
-  itself. This is the same on every screen width. A click asking for a new tab or window
-  is left alone, and so is a link to a Ticket's dev server, which is a page rather than a
-  file. On the Workspace the open file rides in the address beside the Ticket, so a
-  reload, Back, and a shared link all show it; Atlas keeps what it is showing in memory
-  rather than in the address, so a file opened there closes with the panel. The
+  Escape closes the file. This is the same on every screen width. A click asking for a
+  new tab or window is left alone, and so is a link to a Ticket's dev server, which is a
+  page rather than a file. On the Workspace the open file rides in the address beside
+  the Ticket, so a reload, Back, and a shared link all show it. The
   `#/preview` address remains the way in from anywhere else — a shared link, a
-  notification, or another screen — and both draw the same document.
+  notification, or another screen — and it draws the same document.
 - **Editable Markdown stays one surface.** Ticket notes, recaps, passed fields,
   approval drafts, and future Markdown surfaces remain directly editable with their
   existing focus, blur/save, keyboard, paste, and Escape behavior. What is being typed
@@ -433,7 +431,7 @@ hand-rolling the same shapes per screen. Each does one job:
   the kickoff priority, the approval control, and the send-back box. It is named by a
   ticket id and a field and reads that ticket itself, so any screen can raise the same
   ask. Which ask is current — walking, skipping, the keyboard shortcuts — stays with the
-  screen. The Review screen and Atlas's review walk both mount it.
+  screen. The Review screen mounts it.
 - **ResourceState** — the shared error / loading scaffold. It asks what the screen has
   to show before it asks what went wrong: a screen that has data keeps showing it and
   puts a failed read as a line above it, and only a screen with nothing yet is given

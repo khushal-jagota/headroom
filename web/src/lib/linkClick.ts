@@ -1,10 +1,8 @@
 /** Whether a click on a link is the app's to take over.
  *
- * Two screens catch clicks on links inside them and do something other than navigate:
- * the Atlas panel moves the world, and the Ticket screen opens an artifact in place.
- * Both answer the same question first, and both must answer it the same way — a click
- * asking for a new tab or a new window stays the reader's, so the ordinary address still
- * opens there.
+ * The Ticket screen catches clicks on links inside it to open an artifact in place.
+ * It first answers whether the click is the app's to handle: a click asking for a new
+ * tab or window stays the reader's, so the ordinary address still opens there.
  *
  * Nothing here touches the DOM, so it is testable without a browser.
  */
