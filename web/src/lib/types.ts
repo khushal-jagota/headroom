@@ -64,6 +64,54 @@ export type SprintsResponse = {
 
 export type Priority = "P0" | "P1" | "P2" | "P3";
 
+export type ListPageFacts = {
+  match_count: number;
+  return_count: number;
+  limit: number;
+  offset: number;
+  omitted_before: number;
+  omitted_after: number;
+  complete: boolean;
+  next_offset: number | null;
+};
+
+export type TicketSummary = {
+  id: string;
+  title: string;
+  worker_type: string;
+  stage: string;
+  ticket_status: string;
+  priority: Priority;
+  project_id: string | null;
+  project: string | null;
+  sprint_item_id: string | null;
+  sprint_item: string | null;
+  sprint_id: string | null;
+  effective_sprint_id: string | null;
+  recap_preview: string;
+};
+
+export type TicketSummariesResponse = {
+  tickets: TicketSummary[];
+  page: ListPageFacts;
+};
+
+export type SprintItemListSummary = {
+  id: string;
+  title: string;
+  status: string;
+  priority: Priority;
+  deadline: string | null;
+  project_id: string;
+  project: string;
+  sprint_id: string | null;
+};
+
+export type SprintItemSummariesResponse = {
+  items: SprintItemListSummary[];
+  page: ListPageFacts;
+};
+
 export type SprintItemKind = "normal";
 
 export type SprintItemSummary = AnyRecord & {

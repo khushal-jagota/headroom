@@ -1,6 +1,6 @@
 # Make Backlog show the work that is actually waiting
 
-Status: design for root review; implementation not yet dispatched.
+Status: independently reviewed by root; approved for implementation.
 
 ## Intent and evidence
 
@@ -166,4 +166,4 @@ protected.
 
 ## Review
 
-Pending root review.
+Root independently checked the wire serializers, pagination facts, current Backlog and Workspace address handling. Approved: bounded lists match existing APIs; distinct Item list shape correctly omits `kind`; direct Item navigation preserves the existing conversation host. The fixture must assert the Item pane after the empty board response settles, because the removed redirect only runs then. No new backend or record system is needed.
