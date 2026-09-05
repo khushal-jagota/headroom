@@ -1,10 +1,9 @@
 """The verify instrument — complete by default, with explicit focused tiers.
 
 ``./verify`` or ``./verify full`` runs every gate and is the sole completeness
-claim. ``./verify fast`` runs static, unit, build, and frontend gates for the
-implementation loop. ``./verify e2e`` runs the real browser journey suite in
-isolation. ``./verify integration`` runs real process, socket, installed-CLI,
-environment, and agent boundaries without a browser.
+claim. During implementation, run focused gates for the behavior being changed.
+The explicit ``fast``, ``e2e``, and ``integration`` modes remain available for
+bounded suite runs when their whole surface is relevant.
 
 Documented limitation: this instrument proves the named tests RAN and PASSED. It
 does not judge assertion strength — that is for reviewers, not this instrument.
