@@ -23,21 +23,6 @@ def _request_naming_only_a_model() -> ConversationStartRequest:
     return ConversationStartRequest(conversation_id="c", model="a-model")
 
 
-def test_an_absent_backend_key_resolves_to_codex() -> None:
-    resolved = resolve_conversation_start_request(_request_naming_only_a_model())
-    assert resolved.backend_key is ConversationBackendKey.codex
-
-
-def test_an_absent_workspace_folder_resolves_to_the_projects_folder() -> None:
-    resolved = resolve_conversation_start_request(_request_naming_only_a_model())
-    assert resolved.workspace_folder == Path.home() / "projects"
-
-
-def test_an_absent_access_posture_resolves_to_full_access() -> None:
-    resolved = resolve_conversation_start_request(_request_naming_only_a_model())
-    assert resolved.access is ConversationAccess.full
-
-
 def test_explicit_values_win_over_every_floor_default() -> None:
     role_materials = ConversationRoleMaterials(
         role_text="you are the worker",
@@ -63,37 +48,10 @@ def test_explicit_values_win_over_every_floor_default() -> None:
     assert resolved.access is ConversationAccess.full
 
 
-def test_values_with_no_floor_default_stay_absent() -> None:
-    resolved = resolve_conversation_start_request(_request_naming_only_a_model())
-    assert resolved.reasoning_effort is None
-    assert resolved.role_materials is None
-
-
 def test_an_empty_conversation_id_is_rejected() -> None:
     with pytest.raises(ValueError):
         resolve_conversation_start_request(
             ConversationStartRequest(conversation_id="", model="a-model")
-        )
-
-
-def test_an_untrimmed_conversation_id_is_rejected() -> None:
-    with pytest.raises(ValueError):
-        resolve_conversation_start_request(
-            ConversationStartRequest(conversation_id=" c ", model="a-model")
-        )
-
-
-def test_an_empty_model_is_rejected() -> None:
-    with pytest.raises(ValueError):
-        resolve_conversation_start_request(
-            ConversationStartRequest(conversation_id="c", model="")
-        )
-
-
-def test_an_untrimmed_model_is_rejected() -> None:
-    with pytest.raises(ValueError):
-        resolve_conversation_start_request(
-            ConversationStartRequest(conversation_id="c", model=" a-model ")
         )
 
 

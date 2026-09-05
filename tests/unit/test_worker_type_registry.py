@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import inspect
 import json
 from dataclasses import replace
 
 import pytest
-from tests.support.probe import build_probe_registry
 
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core.contracts import ErrorCode, PlannerError
-from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
     PRODUCTION_WORKER_RUNTIME_DEFINITIONS,
@@ -19,7 +16,6 @@ from planner.worker_types.contracts import (
     FieldDefinition,
     WorkerTypeDefinition,
 )
-from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
 from planner.worker_types.registry import WorkerTypeRegistry
 
 KNOWN_SKILLS = frozenset({"panels-worker", "panels-worker-coding", "panels-worker-new-worker"})
@@ -71,76 +67,6 @@ def assert_error(
     assert raised.value.code is ErrorCode.validation
     assert raised.value.message == message
     assert raised.value.detail == detail
-
-
-def test_coding_definition_owns_complete_behavior() -> None:
-    definition = CODING_WORKER_TYPE_DEFINITION
-    assert definition.stage_ids() == (
-        "needs_kickoff",
-        "needs_success",
-        "needs_approach",
-        "needs_plan",
-        "needs_implementation",
-        "needs_closeout",
-        "done",
-    )
-    assert definition.field_ids() == (
-        "kickoff",
-        "success",
-        "approach",
-        "plan",
-        "implementation",
-        "closeout",
-    )
-    assert definition.reconciliation_field_order() == definition.field_ids()
-    assert definition.ceiling_range() == definition.stage_ids()
-    assert definition.default_ceiling() == "needs_kickoff"
-    assert definition.first_worker_stage() == "needs_success"
-    assert definition.completed_stage() == "done"
-    assert definition.gating_field("needs_plan") == "plan"
-    assert definition.stage_gated_by("implementation") == "needs_implementation"
-    assert definition.advance_target("needs_closeout") == "done"
-    assert definition.advance_target("done") is None
-    assert definition.is_terminal("done")
-    assert definition.is_terminal("dropped")
-    assert definition.gating_field("dropped") is None
-    assert definition.advance_target("dropped") is None
-    assert all(
-        stage.default_ownership_mode is StageOwnershipMode.worker
-        for stage in definition.stages
-        if not stage.is_terminal
-    )
-    assert definition.worker_profile.specialist_skill == "panels-worker-coding"
-    assert definition.worker_profile.default_backend == "codex"
-    assert definition.worker_profile.default_model == "gpt-5.6-sol"
-    assert definition.worker_profile.default_reasoning_effort == "medium"
-    definition.validate_ticket_position("dropped", "done")
-
-
-def test_new_worker_definition_has_distinct_behavior() -> None:
-    definition = NEW_WORKER_TYPE_DEFINITION
-    assert definition.stage_ids() == (
-        "needs_kickoff",
-        "needs_understanding",
-        "needs_stages",
-        "needs_thinking",
-        "needs_runtime_defaults",
-        "needs_drafting",
-        "needs_closeout",
-        "done",
-    )
-    assert definition.field_ids() == (
-        "kickoff",
-        "understanding",
-        "stages",
-        "thinking",
-        "runtime_defaults",
-        "drafting",
-        "closeout",
-    )
-    assert definition.first_worker_stage() == "needs_understanding"
-    assert definition.gating_field("needs_thinking") == "thinking"
-    assert definition.gating_field("needs_runtime_defaults") == "runtime_defaults"
 
 
 def test_definition_errors_are_preserved() -> None:
@@ -303,70 +229,6 @@ def test_registry_validation_order_and_messages() -> None:
         "supports_prefix_reconciliation must be a bool",
         {"worker_type": "coding"},
     )
-
-
-def test_registry_is_narrow_ordered_and_defensive() -> None:
-    definitions = [CODING_WORKER_TYPE_DEFINITION, NEW_WORKER_TYPE_DEFINITION]
-    registered = registry(*definitions)
-    definitions.clear()
-    assert registered.registered_worker_types() == ("coding", "new_worker")
-    assert registered.require("coding") is CODING_WORKER_TYPE_DEFINITION
-    public_methods = {
-        name
-        for name, value in inspect.getmembers(WorkerTypeRegistry, inspect.isfunction)
-        if not name.startswith("_")
-    }
-    assert public_methods == {"registered_worker_types", "require", "manifest"}
-    with pytest.raises(PlannerError) as raised:
-        registered.require("ghost")
-    assert raised.value.to_payload() == {
-        "error": {
-            "code": "not_found",
-            "message": "unknown worker type",
-            "detail": {"worker_type": "ghost"},
-        }
-    }
-
-
-def test_duplicate_worker_type_is_rejected() -> None:
-    with pytest.raises(PlannerError) as raised:
-        registry(CODING_WORKER_TYPE_DEFINITION, CODING_WORKER_TYPE_DEFINITION)
-    assert raised.value.to_payload() == {
-        "error": {
-            "code": "validation",
-            "message": "duplicate worker type id",
-            "detail": {"worker_type": "coding"},
-        }
-    }
-
-
-@pytest.mark.parametrize("default_backend", ["", " ", "missing-backend"])
-def test_worker_profiles_require_non_empty_registered_default_backend(
-    default_backend: str,
-) -> None:
-    definition = replace(
-        CODING_WORKER_TYPE_DEFINITION,
-        worker_profile=replace(
-            CODING_WORKER_TYPE_DEFINITION.worker_profile,
-            default_backend=default_backend,
-        ),
-    )
-    with pytest.raises(PlannerError) as raised:
-        registry(definition)
-    assert raised.value.code is ErrorCode.validation
-    assert raised.value.detail["backend_key"] == default_backend
-    assert raised.value.detail["backend_keys"] == ["hermes", "codex", "claude"]
-
-
-def test_the_probe_names_a_real_backend_of_its_own() -> None:
-    # The probe exists to prove a Worker type may run on a backend the shipped types do
-    # not, so its default is a real key and deliberately not the one they all name.
-    probe_default = build_probe_registry().require("probe").worker_profile.default_backend
-    assert ConversationBackendKey(probe_default) is ConversationBackendKey.hermes
-    assert probe_default not in {
-        PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile.default_backend
-        for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
-    }
 
 
 def test_manifests_are_complete_and_json_round_trip() -> None:

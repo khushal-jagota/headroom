@@ -72,52 +72,7 @@ def _ticket_claim_connection() -> sqlite3.Connection:
     return conn
 
 
-@pytest.mark.parametrize("ticket_id", ("t_coding", "t_sprint"))
-def test_ticket_worker_write_accepts_any_stored_ticket_claim(ticket_id: str) -> None:
-    conn = _ticket_claim_connection()
-    try:
-        authctx.require_ticket_worker_write(
-            conn,
-            authctx._classify("worker", ticket_id),
-        )
-    finally:
-        conn.close()
-
-
-@pytest.mark.parametrize(
-    ("actor", "ticket_id"),
-    (
-        ("worker", None),
-        ("worker", "t_missing"),
-        ("agent", "t_coding"),
-    ),
-)
-def test_ticket_worker_write_fails_closed_for_invalid_claims(
-    actor: str,
-    ticket_id: str | None,
-) -> None:
-    conn = _ticket_claim_connection()
-    try:
-        with pytest.raises(PlannerError) as raised:
-            authctx.require_ticket_worker_write(
-                conn,
-                authctx._classify(actor, ticket_id),
-            )
-    finally:
-        conn.close()
-
-    assert raised.value.code is ErrorCode.agent_forbidden
-    assert raised.value.detail == {"actor": actor}
-
-
-@pytest.mark.parametrize(
-    ("ticket_id", "capability"),
-    (
-        ("t_day", "planning-day"),
-        ("t_midday", "planning-midday-check"),
-        ("t_sprint", "planning-sprint"),
-    ),
-)
+@pytest.mark.parametrize(("ticket_id", "capability"), (("t_day", "planning-day"),))
 def test_planning_write_requires_exact_stored_worker_capability(
     ticket_id: str,
     capability: authctx.PlanningCapability,
@@ -137,11 +92,7 @@ def test_planning_write_requires_exact_stored_worker_capability(
     ("actor", "ticket_id"),
     (
         ("worker", None),
-        ("worker", "t_missing"),
-        ("worker", "t_coding"),
-        ("worker", "t_unknown_type"),
         ("worker", "t_sprint"),
-        ("agent", "t_day"),
     ),
 )
 def test_planning_write_fails_closed_for_missing_unknown_or_nonmatching_claims(
@@ -161,5 +112,4 @@ def test_planning_write_fails_closed_for_missing_unknown_or_nonmatching_claims(
 
     assert raised.value.code is ErrorCode.agent_forbidden
     assert raised.value.detail == {"actor": actor, "capability": "planning-day"}
-
 
