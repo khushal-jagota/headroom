@@ -126,7 +126,6 @@ export type SchedulesResponse = {
 
 export type TicketField = {
   value?: string | null;
-  user_note?: string | null;
   proposal?: {
     body: string;
     proposed_by: string;
@@ -243,6 +242,7 @@ export type TicketDetail = {
   blocked?: boolean;
   blocker_summary?: BlockerSummary;
   recap?: string | null;
+  guidance: string;
   verdict: TicketVerdict | null;
   trouble_notes: TicketTroubleNote[];
   fields: Record<string, TicketField>;

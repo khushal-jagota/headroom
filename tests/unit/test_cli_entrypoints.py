@@ -26,7 +26,7 @@ def test_worker_my_ticket_human_line_surfaces_worker(
             "priority": "P2",
             "title": "Demo",
             "worker": "panels-worker-coding",
-            "fields": {"success": {"value": None, "user_note": None, "proposal": None}},
+            "fields": {"success": {"value": None, "proposal": None}},
         }
 
     monkeypatch.setattr(http, "send", fake_send)
@@ -56,7 +56,7 @@ def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
             "priority": "P1",
             "title": "Correct ticket",
             "worker": "panels-worker-exploration",
-            "fields": {"understanding": {"value": None, "user_note": None, "proposal": None}},
+            "fields": {"understanding": {"value": None, "proposal": None}},
         }
 
     monkeypatch.setattr(http, "send", fake_send)
@@ -311,3 +311,40 @@ def test_bounded_list_commands_report_page_facts_in_text_and_json(
     assert json_result.exit_code == 0, json_result.output
     assert json.loads(json_result.output)["page"] == response["page"]
     assert requested_paths == [path, path]
+
+
+@pytest.mark.parametrize(
+    ("options", "method", "suffix"), [([], "PUT", ""), (["--append"], "POST", "/append")]
+)
+def test_worker_note_writes_stdin_once_without_a_field_or_type_read(
+    monkeypatch: pytest.MonkeyPatch, options: list[str], method: str, suffix: str
+) -> None:
+    calls: list[tuple[str, str, Any]] = []
+
+    def fake_send(verb: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((verb, path, kwargs.get("json_body")))
+        return {"id": "t_direct", "guidance": kwargs["json_body"]["body"]}
+
+    monkeypatch.setattr(http, "send", fake_send)
+    body = "  Exact stdin\n\n"
+    result = CliRunner().invoke(cli_main.main, ["worker", "note", "t_direct", *options], input=body)
+    assert result.exit_code == 0, result.output
+    assert calls == [(method, "/api/tickets/t_direct/guidance" + suffix, {"body": body})]
+
+
+def test_ticket_parts_expose_guidance_and_recap_without_expanding_default_manifest() -> None:
+    data = {
+        "id": "t_parts",
+        "fields": {"kickoff": {"value": "request", "proposal": None}},
+        "recap": "orientation",
+        "guidance": "  exact guidance\n",
+    }
+    header, parts = cli_main._ticket_record(data)
+    manifest = cli_main.project_record(header, parts, None)
+    assert list(manifest["manifest"]) == ["kickoff", "recap", "guidance"]
+    assert "parts" not in manifest
+    expanded = cli_main.project_record(header, parts, ("guidance", "recap"))
+    assert expanded["parts"] == {
+        "guidance": {"value": data["guidance"], "proposal": None},
+        "recap": {"value": "orientation", "proposal": None},
+    }

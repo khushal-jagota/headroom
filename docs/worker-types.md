@@ -414,8 +414,8 @@ One new Worker type needs one definition and one production registration path:
 4. Add the skill directory name to `PLANNER_SKILL_NAMES` in
    `src/planner/environments/hermes_home.py`, so startup provisions it into the
    worker's Hermes home.
-5. Announce the Worker type at both agent front doors: add the specialist to
-   `panels-worker` and describe the new type in `panels-chief-of-staff`.
+5. Describe the new type in `panels-chief-of-staff`. The base Worker discovers its
+   specialist through `panels worker my-ticket`; it has no manual specialist list.
 6. Restart Panels and provision the production skill homes. Composition validates the
    registry before the Worker type becomes live.
 

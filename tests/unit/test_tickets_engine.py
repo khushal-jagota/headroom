@@ -113,7 +113,7 @@ def _ticket_row(conn: Connection, ticket_id: str) -> tuple[object, ...]:
     return tuple(row)
 
 
-def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
+def test_ticket_guidance_round_trip_keeps_kickoff_separate(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     t = _create(tmp_db, cfg, fake_clock, kickoff_note="intake direction")
@@ -127,109 +127,67 @@ def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
         actor="human",
         now=fake_clock.now_unix(),
     )
-    assert (
-        fields_codec.get_slot(t.fields, "kickoff").value == "updated intake direction"
-    )
+    assert fields_codec.get_slot(t.fields, "kickoff").value == "updated intake direction"
 
-    t = data.set_field_user_note(
+    t = data.replace_guidance(
         tmp_db,
         t.id,
-        field="approach",
-        user_note="approach guidance",
+        body="approach guidance",
         actor="agent",
         now=fake_clock.now_unix(),
     )
-    assert fields_codec.get_slot(t.fields, "approach").user_note == "approach guidance"
-
-    legacy = json.dumps(
-        {
-            "kickoff": {
-                "value": None,
-                "proposal": None,
-                "notes": "legacy kickoff guidance",
-            },
-            "success": {"value": None, "proposal": None, "notes": "legacy guidance"},
-            "approach": {"value": None, "proposal": None, "user_note": "new guidance"},
-            "plan": {"value": None, "proposal": None, "notes": None},
-            "implementation": {"value": None, "proposal": None, "notes": None},
-            "closeout": {"value": None, "proposal": None, "notes": None},
-        }
-    )
-    parsed = fields_codec.fields_from_json(legacy)
-    assert (
-        fields_codec.get_slot(parsed, "kickoff").user_note == "legacy kickoff guidance"
-    )
-    assert fields_codec.get_slot(parsed, "success").user_note == "legacy guidance"
-    assert fields_codec.get_slot(parsed, "approach").user_note == "new guidance"
-    assert json.loads(fields_codec.fields_to_json(parsed))["success"] == {
-        "value": None,
-        "proposal": None,
-        "user_note": "legacy guidance",
-    }
+    assert t.guidance == "approach guidance"
 
 
-def test_ticket_user_note_replace_and_append_are_explicit(
+def test_ticket_guidance_replace_and_append_are_explicit(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     t = _create(tmp_db, cfg, fake_clock, kickoff_note="keep this value")
 
-    replaced = data.replace_field_user_note(
+    replaced = data.replace_guidance(
         tmp_db,
         t.id,
-        field="approach",
-        user_note="first guidance",
+        body="first guidance",
         actor="human",
         now=fake_clock.now_unix(),
     )
-    appended = data.append_field_user_note(
+    appended = data.append_guidance(
         tmp_db,
         t.id,
-        field="approach",
-        user_note="second guidance",
+        body="second guidance",
         actor="agent",
         now=fake_clock.now_unix(),
     )
-    empty_append = data.append_field_user_note(
+    empty_append = data.append_guidance(
         tmp_db,
         t.id,
-        field="approach",
-        user_note="",
+        body="",
         actor="agent",
         now=fake_clock.now_unix(),
     )
 
-    assert fields_codec.get_slot(replaced.fields, "approach").user_note == "first guidance"
-    assert (
-        fields_codec.get_slot(appended.fields, "approach").user_note
-        == "first guidance\n\nsecond guidance"
-    )
-    assert fields_codec.get_slot(empty_append.fields, "approach").user_note == (
-        "first guidance\n\nsecond guidance"
-    )
+    assert replaced.guidance == "first guidance"
+    assert appended.guidance == "first guidance\n\nsecond guidance"
+    assert empty_append.guidance == ("first guidance\n\nsecond guidance")
     assert fields_codec.get_slot(empty_append.fields, "kickoff").value == "keep this value"
 
-    cleared = data.replace_field_user_note(
+    cleared = data.replace_guidance(
         tmp_db,
         t.id,
-        field="approach",
-        user_note=None,
+        body="",
         actor="human",
         now=fake_clock.now_unix(),
     )
-    appended_after_clear = data.append_field_user_note(
+    appended_after_clear = data.append_guidance(
         tmp_db,
         t.id,
-        field="approach",
-        user_note="new guidance",
+        body="new guidance",
         actor="agent",
         now=fake_clock.now_unix(),
     )
 
-    assert fields_codec.get_slot(cleared.fields, "approach").user_note is None
-    assert (
-        fields_codec.get_slot(appended_after_clear.fields, "approach").user_note
-        == "new guidance"
-    )
+    assert cleared.guidance == ""
+    assert appended_after_clear.guidance == "new guidance"
 
 
 def test_ordinary_create_parks_ordinary_kickoff_field_proposal(
@@ -820,6 +778,7 @@ def test_paired_exit_accept_rests_the_ticket(
 ) -> None:
     now = fake_clock.now_unix()
     t = _park_paired(tmp_db, cfg, fake_clock, now)
+    data.replace_guidance(tmp_db, t.id, body="Keep this boundary", actor="human", now=now)
     t = data.accept_proposal(
         tmp_db,
         t.id,
@@ -831,22 +790,23 @@ def test_paired_exit_accept_rests_the_ticket(
     )
     assert t.ticket_status is TicketStatus.empty
 
+    assert t.guidance == "Keep this boundary"
+
 
 def test_paired_exit_send_back_reopens_and_clears_proposal(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
     t = _park_paired(tmp_db, cfg, fake_clock, now)
-    t = data.return_for_revision(
-        tmp_db, t.id, message="please revise", actor="human", now=now
-    )
+    data.replace_guidance(tmp_db, t.id, body="Keep this boundary", actor="human", now=now)
+    t = data.return_for_revision(tmp_db, t.id, message="please revise", actor="human", now=now)
     assert t.ticket_status is TicketStatus.agent
     fields = json.loads(
-        tmp_db.execute("SELECT fields FROM tickets WHERE id = ?", (t.id,)).fetchone()[
-            "fields"
-        ]
+        tmp_db.execute("SELECT fields FROM tickets WHERE id = ?", (t.id,)).fetchone()["fields"]
     )
     assert fields["success"]["proposal"] is None
+
+    assert t.guidance == "Keep this boundary"
 
 
 def test_take_over_from_paired_re_derives_the_user_status(

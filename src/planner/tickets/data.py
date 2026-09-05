@@ -339,6 +339,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
             ),
         ),
         recap=row["recap"],
+        guidance=row["guidance"],
         ceiling=str(row["ceiling"]),
         at_cap=AtCap(row["at_cap"]),
         ticket_status=TicketStatus(row["ticket_status"]),
@@ -435,7 +436,7 @@ def _seed_kickoff(
     )
     if settled_stage is not None:
         fields = fields_codec.with_slot(
-            fields, "kickoff", FieldSlot(value=kickoff_note, proposal=None, user_note=None)
+            fields, "kickoff", FieldSlot(value=kickoff_note, proposal=None)
         )
         return settled_stage, fields, machine.resting_ticket_status(effective_ownership)
     fields = fields_codec.with_slot(
@@ -448,7 +449,6 @@ def _seed_kickoff(
                 proposed_by=actor,
                 created_at=now,
             ),
-            user_note=None,
         ),
     )
     return stage, fields, TicketStatus.awaiting_approval
@@ -2101,121 +2101,45 @@ def change_scope(
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def replace_field_user_note(
+def replace_guidance(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    field: str,
-    user_note: str | None,
+    body: str,
     actor: str,
     now: int,
 ) -> Ticket:
+    """Replace the Ticket's durable guidance without changing its workflow."""
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
-        )
-        if not worker_type_definition.has_field(field):
-            raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": str(field)})
-        slot = fields_codec.get_slot(ticket.fields, str(field))
-        new_slot = FieldSlot(value=slot.value, proposal=slot.proposal, user_note=user_note)
-        new_fields = fields_codec.with_slot(ticket.fields, str(field), new_slot)
+        _load_ticket_for_write(conn, ticket_id)
         conn.execute(
-            "UPDATE tickets SET fields = ?, updated_at = ? WHERE id = ?",
-            (fields_codec.fields_to_json(new_fields), now, ticket_id),
+            "UPDATE tickets SET guidance = ?, updated_at = ? WHERE id = ?",
+            (body, now, ticket_id),
         )
         ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def append_field_user_note(
+def append_guidance(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    field: str,
-    user_note: str,
+    body: str,
     actor: str,
     now: int,
 ) -> Ticket:
-    """Append field user guidance without replacing the existing note.
-
-    Empty appends are no-ops. Non-empty notes use one blank line as the separator.
-    The read and write stay in one transaction so concurrent append callers do not
-    lose a note that they read before their own write.
-    """
+    """Append in one transaction; an empty append changes nothing."""
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
-        )
-        if not worker_type_definition.has_field(field):
-            raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": str(field)})
-        slot = fields_codec.get_slot(ticket.fields, str(field))
-        if not user_note:
+        ticket = _load_ticket_for_write(conn, ticket_id)
+        if not body:
             return ticket
-        existing_note = slot.user_note
-        combined_note = user_note if not existing_note else f"{existing_note}\n\n{user_note}"
-        new_slot = FieldSlot(value=slot.value, proposal=slot.proposal, user_note=combined_note)
-        new_fields = fields_codec.with_slot(ticket.fields, str(field), new_slot)
+        guidance = f"{ticket.guidance}\n\n{body}" if ticket.guidance else body
         conn.execute(
-            "UPDATE tickets SET fields = ?, updated_at = ? WHERE id = ?",
-            (fields_codec.fields_to_json(new_fields), now, ticket_id),
+            "UPDATE tickets SET guidance = ?, updated_at = ? WHERE id = ?",
+            (guidance, now, ticket_id),
         )
         ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket_for_write(conn, ticket_id)
-
-
-def replace_note(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    field: str,
-    note: str | None,
-    actor: str,
-    now: int,
-) -> Ticket:
-    return replace_field_user_note(
-        conn, ticket_id, field=field, user_note=note, actor=actor, now=now
-    )
-
-
-def append_note(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    field: str,
-    note: str,
-    actor: str,
-    now: int,
-) -> Ticket:
-    return append_field_user_note(
-        conn, ticket_id, field=field, user_note=note, actor=actor, now=now
-    )
-
-
-# Backwards-compatible names for existing data-layer callers.
-def set_field_user_note(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    field: str,
-    user_note: str | None,
-    actor: str,
-    now: int,
-) -> Ticket:
-    return replace_field_user_note(
-        conn, ticket_id, field=field, user_note=user_note, actor=actor, now=now
-    )
-
-
-def set_note(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    field: str,
-    note: str | None,
-    actor: str,
-    now: int,
-) -> Ticket:
-    return replace_note(conn, ticket_id, field=field, note=note, actor=actor, now=now)
 
 
 def edit_ticket(

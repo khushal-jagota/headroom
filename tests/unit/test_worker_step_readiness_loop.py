@@ -572,6 +572,9 @@ def test_a_step_that_fails_outside_the_flows_own_handling_is_still_reported(
 def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _World) -> None:
     ticket_id = world.ready_ticket(title="Ship it", conversation_id="conv-opener")
     world.start_conversation("conv-opener")
+    guidance = "Keep the owner’s boundary.\n\n  Exact whitespace stays.  "
+    with world.connect() as conn:
+        tickets_data.replace_guidance(conn, ticket_id, body=guidance, actor="human", now=0)
     world.add_pending_context(ticket_id, "ticket_changed", "The user renamed the ticket.")
 
     assert world.start_step(ticket_id) is True
@@ -585,6 +588,8 @@ def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _Worl
     assert f"Work ticket {ticket_id} — Ship it" in writes[0].text
     assert "propose the 'success' field for approval" in writes[0].text
     assert "Stage owner: worker" in writes[0].text
+    assert f"[Ticket guidance]\n{guidance}\n[/Ticket guidance]" in writes[0].text
+    assert world.pending_context_keys(ticket_id) == []
     assert "The user renamed the ticket." in writes[0].text
     bindings = world.skill_bindings()
     assert len(bindings) == 3

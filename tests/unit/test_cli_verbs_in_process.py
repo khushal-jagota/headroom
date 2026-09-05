@@ -787,7 +787,6 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "worker",
         "note",
         tid,
-        "approach",
         stdin="approach note",
     )
     cli(
@@ -795,13 +794,12 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "worker",
         "note",
         tid,
-        "approach",
         "--append",
         stdin="additional approach note",
     )
     appended_detail = api.get(server, f"/api/tickets/{tid}")
     assert (
-        appended_detail["fields"]["approach"]["user_note"]
+        appended_detail["guidance"]
         == "approach note\n\nadditional approach note"
     )
     cli(
@@ -809,12 +807,10 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "worker",
         "note",
         tid,
-        "approach",
-        "--replace",
         stdin="replaced approach note",
     )
     detail = api.get(server, f"/api/tickets/{tid}")
-    assert detail["fields"]["approach"]["user_note"] == "replaced approach note"
+    assert detail["guidance"] == "replaced approach note"
 
     new_worker_id = cli(
         server,
@@ -830,11 +826,10 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "worker",
         "note",
         new_worker_id,
-        "stages",
         stdin="stages note",
     )
     new_worker_detail = api.get(server, f"/api/tickets/{new_worker_id}")
-    assert new_worker_detail["fields"]["stages"]["user_note"] == "stages note"
+    assert new_worker_detail["guidance"] == "stages note"
 
     copied = cli(server, "ticket", "copy", tid)
     assert "CLI approve ticket" in copied["text"]
@@ -891,12 +886,11 @@ def test_worker_write_commands_take_text_on_stdin_only(
 
     refused_note = CliRunner().invoke(
         cli_main,
-        ["worker", "note", tid, "approach", "--body-file", "/tmp/whatever.md", "--json"],
+        ["worker", "note", tid, "--body-file", "/tmp/whatever.md", "--json"],
         env=env,
     )
     assert refused_note.exit_code != 0
-    error = json.loads(refused_note.stderr)["error"]
-    assert "stdin" in error["message"]
+    assert "No such option '--body-file'" in refused_note.output
 
     cli(
         server,

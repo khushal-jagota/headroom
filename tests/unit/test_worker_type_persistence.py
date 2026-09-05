@@ -67,7 +67,7 @@ def two_type_registry() -> Iterator[None]:
     persistence doors, then restore production composition after the test."""
     registry = _two_type_registry()
     previous_definitions = install_worker_runtime_definitions_for_test(
-ConfiguredWorkerRuntimeDefinitions(registry)
+        ConfiguredWorkerRuntimeDefinitions(registry)
     )
     try:
         yield
@@ -89,12 +89,12 @@ def fake_clock() -> TestClock:
 
 _SIX_SLOT_FIELDS = json.dumps(
     {
-        "kickoff": {"value": "k", "proposal": None, "user_note": None},
-        "success": {"value": "s", "proposal": None, "user_note": None},
-        "approach": {"value": None, "proposal": None, "user_note": None},
-        "plan": {"value": None, "proposal": None, "user_note": None},
-        "implementation": {"value": None, "proposal": None, "user_note": None},
-        "closeout": {"value": None, "proposal": None, "user_note": None},
+        "kickoff": {"value": "k", "proposal": None},
+        "success": {"value": "s", "proposal": None},
+        "approach": {"value": None, "proposal": None},
+        "plan": {"value": None, "proposal": None},
+        "implementation": {"value": None, "proposal": None},
+        "closeout": {"value": None, "proposal": None},
     }
 )
 
@@ -166,7 +166,7 @@ def test_audit_rejects_missing_declared_field(tmp_db: Connection) -> None:
 
 def test_audit_rejects_malformed_slot(tmp_db: Connection) -> None:
     payload = json.loads(_SIX_SLOT_FIELDS)
-    payload["success"] = {"value": 123, "proposal": None, "user_note": None}  # non-str value
+    payload["success"] = {"value": 123, "proposal": None}  # non-str value
     _raw_insert_ticket(tmp_db, ticket_id="t_bad", fields=json.dumps(payload))
     with pytest.raises(RuntimeError, match="id=t_bad") as exc:
         tickets_data.audit_ticket_registry_integrity(tmp_db)
@@ -187,7 +187,7 @@ def test_audit_lenient_on_extra_top_level_fields_key(tmp_db: Connection) -> None
     # A legacy 'result' key alongside a valid six-slot set must NOT fail the audit
     # (the codec ignores extra top-level keys — pins the intentional leniency).
     payload = json.loads(_SIX_SLOT_FIELDS)
-    payload["result"] = {"value": "legacy", "proposal": None, "user_note": None}
+    payload["result"] = {"value": "legacy", "proposal": None}
     _raw_insert_ticket(tmp_db, ticket_id="t_extra", fields=json.dumps(payload))
     tickets_data.audit_ticket_registry_integrity(tmp_db)  # no raise
 
@@ -351,7 +351,9 @@ def test_external_work_create_door_rejects_unknown_type(
     assert exc.value.code == ErrorCode.not_found
 
 
-def test_note_door_rejects_undeclared_field(tmp_db: Connection, fake_clock: TestClock) -> None:
+def test_guidance_is_independent_of_the_worker_type_fields(
+    tmp_db: Connection, fake_clock: TestClock
+) -> None:
     now = fake_clock.now_unix()
     ticket = tickets_data.create_ticket_from_external_work(
         tmp_db,
@@ -365,17 +367,9 @@ def test_note_door_rejects_undeclared_field(tmp_db: Connection, fake_clock: Test
         kickoff_note="k",
         project_id="project_vylo",
     )
-    with pytest.raises(PlannerError) as exc:
-        tickets_data.set_field_user_note(
-            tmp_db,
-            ticket.id,
-            field="not_a_field",
-            user_note="x",
-            actor="human",
-            now=now,
-        )
-    assert exc.value.code == ErrorCode.validation
-    assert exc.value.message == "unknown ticket field"
+    updated = tickets_data.replace_guidance(tmp_db, ticket.id, body="x", actor="human", now=now)
+    assert updated.guidance == "x"
+    assert updated.fields == ticket.fields
 
 
 # =====================================================================

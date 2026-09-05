@@ -39,14 +39,13 @@ def _ticket(conn: Connection, clock: ClockForTest, title: str) -> str:
     ).id
 
 
-def _search_fields(*, value: str = "", proposal: str = "", note: str = "") -> str:
+def _search_fields(*, value: str = "", proposal: str = "") -> str:
     slots = {
         field_id: FieldSlot() for field_id in CODING_WORKER_TYPE_DEFINITION.field_ids()
     }
     slots["success"] = FieldSlot(
         value=value or None,
         proposal=(Proposal(proposal, "agent", 1) if proposal else None),
-        user_note=note or None,
     )
     return fields_to_json(TicketFields(slots))
 
@@ -88,11 +87,11 @@ def test_ticket_summary_filters_search_and_bounds_before_selection(
     for ticket_id, fields in (
         (value_id, _search_fields(value="Value Needle")),
         (proposal_id, _search_fields(proposal="Proposal Needle")),
-        (note_id, _search_fields(note="Note Needle")),
     ):
         tmp_db.execute(
             "UPDATE tickets SET fields = ? WHERE id = ?", (fields, ticket_id)
         )
+    tmp_db.execute("UPDATE tickets SET guidance = ? WHERE id = ?", ("Note Needle", note_id))
     tmp_db.execute(
         "UPDATE tickets SET stage = 'done', ticket_status = 'empty' WHERE id = ?",
         (terminal_id,),

@@ -46,5 +46,6 @@ and Review state in a separate 3D rendering without owning useful unique data.
 - Read-only live evidence informed the decisions; aggregate counts are in the scoped plans.
 - Atlas removed and independently reviewed (58b161a6).
 - Sprint documents implemented and independently reviewed (1c1e3b80): twelve prose fields become four.
-- Ticket guidance, Backlog, and test pruning are in isolated implementation worktrees.
+- Ticket guidance implemented and independently reviewed; the combined migrations pass focused checks.
+- Backlog and test pruning remain in isolated implementation worktrees. E2E has reached 19 cases from39.
 - No full verify run has occurred; the final settled tree owns it.

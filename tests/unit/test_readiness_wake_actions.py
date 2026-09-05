@@ -1120,10 +1120,10 @@ def test_every_committed_ticket_and_day_write_signals(tmp_path: Path) -> None:
         assert ordinary.json()["fields"]["kickoff"]["value"] == "ordinary edit"
 
         note = client.put(
-            f"/api/tickets/{ticket_id}/notes/success", json={"user_note": "field note"}
+            f"/api/tickets/{ticket_id}/guidance", json={"body": "field note"}
         )
         assert note.status_code == 200, note.text
-        assert note.json()["fields"]["success"]["user_note"] == "field note"
+        assert note.json()["guidance"] == "field note"
 
         recap = client.put(f"/api/tickets/{recap_ticket.id}/recap", json={"body": "recap"})
         assert recap.status_code == 200, recap.text

@@ -76,7 +76,7 @@ def test_sprint_migration_preserves_all_prose_and_references(tmp_path: Path) -> 
         item_before = tuple(
             conn.execute("SELECT * FROM sprint_items WHERE id = 'si_kept'").fetchone()
         )
-        ticket_before = tuple(conn.execute("SELECT * FROM tickets WHERE id = 't_kept'").fetchone())
+        ticket_before = dict(conn.execute("SELECT * FROM tickets WHERE id = 't_kept'").fetchone())
         create_schema(conn)
         full = dict(conn.execute("SELECT * FROM sprints WHERE id = 'sp_full'").fetchone())
         assert full == {
@@ -110,10 +110,9 @@ def test_sprint_migration_preserves_all_prose_and_references(tmp_path: Path) -> 
             tuple(conn.execute("SELECT * FROM sprint_items WHERE id = 'si_kept'").fetchone())
             == item_before
         )
-        assert (
-            tuple(conn.execute("SELECT * FROM tickets WHERE id = 't_kept'").fetchone())
-            == ticket_before
-        )
+        ticket_after = dict(conn.execute("SELECT * FROM tickets WHERE id = 't_kept'").fetchone())
+        assert ticket_after.pop("guidance") == ""
+        assert ticket_after == ticket_before
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         conn.close()

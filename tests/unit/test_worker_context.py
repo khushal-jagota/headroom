@@ -126,11 +126,10 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(
         actor="agent",
         now=2,
     )
-    tickets_data.set_field_user_note(
+    tickets_data.replace_guidance(
         tmp_db,
         ticket.id,
-        field="success",
-        user_note="agent note",
+        body="agent note",
         actor="agent",
         now=3,
     )
@@ -151,11 +150,10 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(
         actor="human",
         now=5,
     )
-    tickets_data.set_field_user_note(
+    tickets_data.replace_guidance(
         tmp_db,
         ticket.id,
-        field="success",
-        user_note="field guidance",
+        body="field guidance",
         actor="human",
         now=6,
     )

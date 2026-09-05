@@ -59,6 +59,7 @@ def _ticket(stage: str, fields: TicketFields, *, ceiling: str = "done") -> Ticke
             sprint_item=None, project=None
         ),
         recap="",
+        guidance="keep this guidance",
         ceiling=ceiling,
         at_cap=AtCap.propose,
         ticket_status=TicketStatus.empty,
@@ -134,7 +135,7 @@ def test_edit_passed_field_succeeds(
     # Decision shape: exactly one field_value_edited event; Stage/ceiling/at_cap left None.
     ticket = _ticket(
         "needs_plan",
-        _fields(success=FieldSlot(value="old success", user_note="keep me")),
+        _fields(success=FieldSlot(value="old success")),
         ceiling="needs_plan",
     )
     decision = _decide_edit_value(ticket, "success", "new success", "human")
@@ -147,7 +148,7 @@ def test_edit_passed_field_succeeds(
     assert decision.new_fields is not None
     edited_slot = fields_codec.get_slot(decision.new_fields, "success")
     assert edited_slot.value == "new success"
-    assert edited_slot.user_note == "keep me"  # user note preserved
+    assert ticket.guidance == "keep this guidance"
 
     # End-to-end through the sole writer: value persists, Stage/ceiling untouched.
     now = fake_clock.now_unix()
@@ -181,7 +182,6 @@ def test_edit_pending_proposal_preserves_its_state_for_every_actor(actor: str) -
                 proposal=Proposal(
                     body="pending", proposed_by="original-worker", created_at=17
                 ),
-                user_note="keep this note",
             )
         ),
         ceiling="needs_plan",
@@ -200,7 +200,7 @@ def test_edit_pending_proposal_preserves_its_state_for_every_actor(actor: str) -
     assert decision.new_fields is not None
     slot = fields_codec.get_slot(decision.new_fields, "success")
     assert slot.value == "settled"
-    assert slot.user_note == "keep this note"
+    assert ticket.guidance == "keep this guidance"
     assert slot.proposal == Proposal(
         body="edited proposal", proposed_by="original-worker", created_at=17
     )

@@ -69,14 +69,13 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AcceptBody,
-    AppendNoteBody,
     AtCap,
     CreateTicketBody,
     CreateTicketFromExternalWorkBody,
     EmployeeConfigurationBody,
     EmployeeLaunchConfiguration,
+    GuidanceBody,
     LinkBody,
-    NoteBody,
     ProposeBody,
     ProposeWithRecapBody,
     RecapBody,
@@ -336,6 +335,12 @@ def _validate_field(worker_type_definition: WorkerTypeDefinition, field: str) ->
 
 
 # --- request-body marshallers (contract shapes in tickets/contracts.py) ---------
+
+
+def _marshal_guidance(raw: dict[str, Any]) -> GuidanceBody:
+    if set(raw) != {"body"} or not isinstance(raw["body"], str):
+        raise PlannerError(ErrorCode.validation, "guidance requires a string body", {})
+    return GuidanceBody(body=raw["body"])
 
 
 def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
@@ -1464,54 +1469,26 @@ async def reset_ticket_conversation(
     return tickets_views.ticket_json(tickets_data.read_ticket(conn, ticket_id), now)
 
 
-@router.put("/tickets/{ticket_id}/notes/{field}")
-async def put_notes(
-    ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+@router.put("/tickets/{ticket_id}/guidance")
+async def put_guidance(
+    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
-    body = NoteBody(
-        note=body_opt_str(raw, "note"), user_note=body_opt_str(raw, "user_note")
+    body = _marshal_guidance(raw)
+    ticket = tickets_data.replace_guidance(
+        conn, ticket_id, body=body["body"], actor=ctx.actor, now=clk.now_unix()
     )
-    if "note" in raw and "user_note" in raw:
-        raise PlannerError(ErrorCode.validation, "use note or user_note, not both", {})
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
-        conn, ticket_id
-    )
-    _validate_field(worker_type_definition, field)
-    now = clk.now_unix()
-    ticket = tickets_data.replace_note(
-        conn,
-        ticket_id,
-        field=field,
-        note=body["user_note"] if "user_note" in raw else body["note"],
-        actor=ctx.actor,
-        now=now,
-    )
-    return tickets_views.ticket_json(ticket, now)
+    return tickets_views.ticket_json(ticket, clk.now_unix())
 
 
-@router.post("/tickets/{ticket_id}/notes/{field}/append")
-async def append_notes(
-    ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+@router.post("/tickets/{ticket_id}/guidance/append")
+async def append_guidance(
+    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
-    body = AppendNoteBody(
-        note=body_str(raw, "note"), user_note=body_str(raw, "user_note")
+    body = _marshal_guidance(raw)
+    ticket = tickets_data.append_guidance(
+        conn, ticket_id, body=body["body"], actor=ctx.actor, now=clk.now_unix()
     )
-    if "note" in raw and "user_note" in raw:
-        raise PlannerError(ErrorCode.validation, "use note or user_note, not both", {})
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
-        conn, ticket_id
-    )
-    _validate_field(worker_type_definition, field)
-    now = clk.now_unix()
-    ticket = tickets_data.append_note(
-        conn,
-        ticket_id,
-        field=field,
-        note=body["user_note"] if "user_note" in raw else body["note"],
-        actor=ctx.actor,
-        now=now,
-    )
-    return tickets_views.ticket_json(ticket, now)
+    return tickets_views.ticket_json(ticket, clk.now_unix())
 
 
 @router.put("/tickets/{ticket_id}/recap")

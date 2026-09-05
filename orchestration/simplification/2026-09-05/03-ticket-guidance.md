@@ -83,3 +83,87 @@ Independent reviewer accepted the revised design in 00-review-first-chunks.md.
 Findings addressed: manifest-first CLI reads retained; both legacy note keys are
 preserved; no unsupported claim that normal chat sends inject saved guidance; no
 new pending-guidance state or stale-guidance race. No unresolved design findings.
+
+## Implementation and focused evidence
+
+Implemented on `codex/panels-simplification-guidance` against root's contract commit
+`6b2b8f1a`. The migration follows `planning_day_direction` in this isolated branch;
+root will sequence it after `sprint_documents` during serial integration.
+
+The replacement removes six note-writer names, both field-specific HTTP routes,
+field/dual-key selection, stage Notes editors, and the base Worker's manual
+specialist list. Ticket guidance is exposed by detail/worker reads, supervisor
+context (through its existing Ticket detail producer), copy text, search, CLI
+explicit parts, and the current automatic step prompt. The generic context service
+and every conversation/backend/send implementation are unchanged.
+
+Migration evidence covers two nonempty sources with equal content, null-masked
+legacy notes, whitespace-only content, unknown historical fields/metadata, values,
+proposals, unchanged Ticket columns/timestamps, populated Project/Sprint/Item/Day
+placement, and conversation links. Corrupt content in a later row leaves the parent
+schema and every earlier row intact. Startup after migration is unchanged.
+
+Focused Python cohorts:
+
+- `test_ticket_guidance_migration`, `test_tickets_engine`, `test_worker_context`,
+  `test_worker_step_readiness_loop`, `test_type_driven_ingress`,
+  `test_cli_entrypoints`, `test_cli_record_projection`, `test_cli_verbs_in_process`,
+  `test_copy_text_type_driven`, `test_value_edit_logic`, `test_value_edit_api`,
+  `test_bounded_list_reads`, and `test_worker_type_persistence`: 178 cases exercised.
+  176 passed initially; two CLI test expectations were corrected (projection helper
+  returns header/parts; Click's option-error punctuation), and both passed in the
+  targeted repair run.
+- Direct shape fallout: `test_db_ticket_status_changed_at`,
+  `test_engine_parameterization`, `test_generic_field_storage`,
+  `test_readiness_wake_actions`, `test_worker_cli_identity`, and
+  `test_worker_type_stage_contracts`, plus the two CLI repairs: 58 cases exercised.
+  57 passed initially; the current-schema HEAD assertion was updated and passed in
+  the targeted repair run. Unrelated historical migration HEAD assertions are left
+  for the integration/pruning owner.
+- Final changed-proof run: both populated/corrupt migration cases, approval and
+  return-for-revision preserving guidance, and the repaired HEAD assertion: all
+  five passed. Existing refused-send proof retains pending-context receipts, while
+  the amended opener proof asserts exact guidance in actual backend-bound text.
+
+`node web/tests/ticket-guidance-browser.test.mjs` passed. It mounts the actual
+Ticket route and Review card against HTTP fixtures: one guidance editor, no stage
+Notes disclosures, one body-only PUT, and the saved guidance rendered once in
+Review. This is frontend testing with mocked HTTP, not a live-backend E2E. Its
+script is included in the existing frontend legacy test gate. Initial fixture
+omissions were repaired before the passing run; production behavior was not
+changed to accommodate the fixture.
+
+`npm run check` passed with zero Svelte errors or warnings. Frontend test fixture
+`tsc --project web/tests/tsconfig.json --noEmit` passed after adding required
+`guidance` to the lifecycle fixture. The voice-everywhere fixture received only the
+same Ticket JSON shape correction. Ruff on changed Python and new migration/tests
+passed, `mypy src/planner` passed across 227 source files, and `git diff --check`
+passed. No `./verify`, production build, or `web/dist` write was performed.
+
+Additional direct-consumer scope: current field JSON fixtures in the named suites;
+`docs/frontend.md`, `docs/worker-types.md`; new-worker and planning-sprint skill
+references to the removed manual catalogue/field notes; frontend lifecycle and
+voice fixture shapes; one frontend test script registration. No unrelated tests
+were pruned. The former live codec legacy-note assertion is replaced by the
+populated historical migration proof, because there is no live legacy-read alias.
+
+Status: implementation and focused gates complete; independent diff review and
+root integration pending. Repository completeness remains the program's one final
+canonical `./verify`.
+
+## Independent implementation review — root
+
+Reviewed the completed diff against the approved contract. Spot-checked the proposal
+resolver, atomic append, full historical conversion validation, actual automatic-step
+prompt, manifest-first CLI projection, Ticket/Review editors, and protected paths.
+The send/receipt service and conversation/backend implementations have no changes.
+
+One finding resolved: ordinary bounded Ticket summary reads were selecting the whole
+guidance document even without search. Root made guidance selection conditional on
+search, matching the existing field-prose policy. No summary response includes it.
+
+Integration sequences the new migration after `sprint_documents`, retains both new
+frontend proof scripts, and adjusts the Sprint migration fixture to account explicitly
+for the new empty guidance column while comparing every prior Ticket column. All seven
+combined migration, Sprint API/CLI, and bounded-list cases pass. No unresolved findings.
+No full verification was run at this stage.

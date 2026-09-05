@@ -31,7 +31,6 @@
     onRelease,
     contextRow,
     onAccept,
-    onReplaceNote,
     onSaveValue
   }: {
     name: string;
@@ -50,7 +49,6 @@
     onRelease?: () => void;
     contextRow?: Snippet;
     onAccept: (payload: Record<string, unknown>) => Promise<unknown>;
-    onReplaceNote?: (raw: string) => Promise<unknown>;
     onSaveValue?: (raw: string) => Promise<unknown>;
   } = $props();
 
@@ -60,7 +58,6 @@
   let isGating = $derived(gatingFieldFor(lifecycle, ticketStage) === name);
   let passed = $derived(fieldIsPassedFor(lifecycle, name, ticketStage));
   let hasValue = $derived(hasText(slot.value));
-  let hasNotes = $derived(hasText(slot.user_note));
   let hasProposal = $derived(Boolean(slot.proposal));
   let nextStage = $derived(advanceTargetFor(lifecycle, ticketStage, ceiling));
   let defaultOpen = $derived(isGating);
@@ -71,12 +68,6 @@
 </script>
 
 {#snippet stageBody()}
-  {#if reviewVariant && hasNotes}
-    <Disclosure title="Notes" variant="support" defaultOpen={false} data-content-section="notes">
-      <MarkdownBlock text={slot.user_note} />
-    </Disclosure>
-  {/if}
-
   {#if isDropped}
     <MarkdownBlock text={slot.value} quiet={emptyText} />
     {#if slot.proposal}
@@ -127,11 +118,6 @@
     {/if}
   {/if}
 
-  {#if !reviewVariant && onReplaceNote}
-    <Disclosure title="Notes" variant="support" defaultOpen={hasNotes} data-content-section="note">
-      <InlineEdit value={slot.user_note} markdown multiline placeholder="Note..." onSave={onReplaceNote} />
-    </Disclosure>
-  {/if}
 {/snippet}
 
 {#if reviewVariant}

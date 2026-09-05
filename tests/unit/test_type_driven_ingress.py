@@ -171,49 +171,39 @@ def test_ticket_note_routes_make_replace_and_append_explicit(app_db: AppDb) -> N
     with TestClient(app) as client:
         tid = _create(client, "coding")
 
-        replaced = client.put(
-            f"/api/tickets/{tid}/notes/plan", json={"user_note": "first guidance"}
-        )
+        replaced = client.put(f"/api/tickets/{tid}/guidance", json={"body": "first guidance"})
         assert replaced.status_code == 200, replaced.json()
 
         appended = client.post(
-            f"/api/tickets/{tid}/notes/plan/append",
-            json={"user_note": "second guidance"},
+            f"/api/tickets/{tid}/guidance/append",
+            json={"body": "second guidance"},
         )
         assert appended.status_code == 200, appended.json()
-        assert (
-            appended.json()["fields"]["plan"]["user_note"]
-            == "first guidance\n\nsecond guidance"
-        )
+        assert appended.json()["guidance"] == "first guidance\n\nsecond guidance"
 
-        cleared = client.put(
-            f"/api/tickets/{tid}/notes/plan", json={"user_note": None}
-        )
+        cleared = client.put(f"/api/tickets/{tid}/guidance", json={"body": ""})
         assert cleared.status_code == 200, cleared.json()
 
         appended_after_clear = client.post(
-            f"/api/tickets/{tid}/notes/plan/append",
-            json={"user_note": "new guidance"},
+            f"/api/tickets/{tid}/guidance/append",
+            json={"body": "new guidance"},
         )
         assert appended_after_clear.status_code == 200, appended_after_clear.json()
-        assert (
-            appended_after_clear.json()["fields"]["plan"]["user_note"]
-            == "new guidance"
-        )
+        assert appended_after_clear.json()["guidance"] == "new guidance"
 
 
-def test_probe_rejects_coding_state_and_note_field(app_db: AppDb, probe_installed: None) -> None:
+def test_probe_rejects_coding_state_but_accepts_ticket_guidance(
+    app_db: AppDb, probe_installed: None
+) -> None:
     app, _db = app_db
     with TestClient(app) as client:
         tid = _create(client, "probe")
         stage = client.post(f"/api/tickets/{tid}/stage", json={"to_stage": "needs_plan"})
         assert stage.status_code == 400
         assert stage.json()["error"]["message"] == "stage outside the linear order"
-        note = client.put(
-            f"/api/tickets/{tid}/notes/plan", json={"user_note": "x"}
-        )
-        assert note.status_code == 400
-        assert note.json()["error"]["detail"] == {"field": "plan", "worker_type": "probe"}
+        note = client.put(f"/api/tickets/{tid}/guidance", json={"body": "x"})
+        assert note.status_code == 200
+        assert note.json()["guidance"] == "x"
 
 
 def test_probe_accepts_its_own_state_via_direct_state(app_db: AppDb, probe_installed: None) -> None:
@@ -226,9 +216,7 @@ def test_probe_accepts_its_own_state_via_direct_state(app_db: AppDb, probe_insta
             f"/api/tickets/{tid}/accept/kickoff",
             json={"next_ceiling": "done", "at_cap": "propose"},
         )
-        jumped = client.post(
-            f"/api/tickets/{tid}/stage", json={"to_stage": "needs_beta"}
-        )
+        jumped = client.post(f"/api/tickets/{tid}/stage", json={"to_stage": "needs_beta"})
         assert jumped.status_code == 200, jumped.json()
         assert jumped.json()["stage"] == "needs_beta"
 
@@ -271,3 +259,32 @@ def test_stage_filter_non_reserved_needs_no_worker_type(
         unknown = client.get("/api/tickets?stage=needs_ghost")
         assert unknown.status_code == 200
         assert unknown.json()["tickets"] == []
+
+
+def test_guidance_round_trip_validation_and_retired_field_routes(app_db: AppDb) -> None:
+    app, _db = app_db
+    with TestClient(app) as client:
+        ticket_id = _create(client, "coding")
+        path = f"/api/tickets/{ticket_id}/guidance"
+        original = "  Scope boundary\n\nKeep this.  "
+        saved = client.put(path, json={"body": original})
+        assert saved.status_code == 200
+        assert saved.json()["guidance"] == original
+        assert all(set(slot) == {"value", "proposal"} for slot in saved.json()["fields"].values())
+        for body in (
+            {},
+            {"body": None},
+            {"body": 3},
+            {"body": "lost", "field": "plan"},
+            {"key": "plan", "body": "lost"},
+        ):
+            assert client.put(path, json=body).status_code == 400
+            assert client.get(f"/api/tickets/{ticket_id}").json()["guidance"] == original
+        assert client.post(path + "/append", json={"body": ""}).json() == saved.json()
+        appended = client.post(path + "/append", json={"body": "\nNew direction  "})
+        assert appended.json()["guidance"] == original + "\n\n\nNew direction  "
+        assert client.put(path, json={"body": ""}).json()["guidance"] == ""
+        assert (
+            client.put(f"/api/tickets/{ticket_id}/notes/plan", json={"body": "old"}).status_code
+            == 404
+        )

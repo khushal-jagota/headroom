@@ -263,11 +263,12 @@ def _ticket_record(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Reco
     parts = {
         name: part(
             field.get("value"),
-            user_note=field.get("user_note"),
             proposal=field.get("proposal"),
         )
         for name, field in data["fields"].items()
     }
+    parts["recap"] = part(data.get("recap", ""))
+    parts["guidance"] = part(data.get("guidance", ""))
     return header, parts
 
 
@@ -2801,84 +2802,22 @@ def worker_recap(ticket_id: str | None, body_file: str | None, as_json: bool) ->
 
 
 @worker.command("note")
-@click.argument("args", nargs=-1)
-@click.option(
-    "--body-file",
-    default=None,
-    help="Removed: pipe field user guidance text on stdin instead.",
-)
-@click.option(
-    "--append",
-    "append_note",
-    is_flag=True,
-    help="Append the body to the existing field user note.",
-)
-@click.option(
-    "--replace",
-    "replace_note",
-    is_flag=True,
-    help="Replace the complete field user note. This is the default.",
-)
+@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
+@click.option("--append", "append_note", is_flag=True, help="Append to Ticket guidance.")
 @json_option
-def worker_note(
-    args: tuple[str, ...],
-    body_file: str | None,
-    append_note: bool,
-    replace_note: bool,
-    as_json: bool,
-) -> None:
-    if append_note and replace_note:
-        http.fail_validation("use --append or --replace, not both", as_json)
-    if len(args) == 1:
-        ticket_id: str | None = None
-        field = args[0]
-    elif len(args) == 2:
-        ticket_id = args[0]
-        field = args[1]
-    else:
-        http.fail_validation("usage: worker note [ticket-id] <field>", as_json)
+def worker_note(ticket_id: str | None, append_note: bool, as_json: bool) -> None:
+    """Write Ticket guidance from stdin; no field selection is needed."""
     tid = resolve_ticket_id(ticket_id, as_json)
-    detail = http.send("GET", f"/api/tickets/{tid}", as_json=as_json)
-    manifests = http.send("GET", "/api/worker-types", as_json=as_json)
-    worker_type = detail.get("worker_type")
-    manifest = next(
-        (
-            candidate
-            for candidate in manifests.get("worker_types", [])
-            if candidate.get("worker_type") == worker_type
-        ),
-        None,
-    )
-    fields = (
-        [
-            candidate.get("id")
-            for candidate in manifest.get("fields", [])
-            if candidate.get("id") != "kickoff"
-        ]
-        if isinstance(manifest, dict)
-        else []
-    )
-    if field not in fields:
-        http.fail_validation(
-            f"field must be {', '.join(str(candidate) for candidate in fields[:-1])}"
-            f"{', or ' if len(fields) > 1 else ''}{fields[-1] if fields else ''}",
-            as_json,
-        )
-    refuse_worker_body_file(body_file, as_json, "pipe field user guidance text on stdin instead")
-    body = read_worker_stdin_body(as_json, "field user guidance")
+    body = sys.stdin.read()
     method = "POST" if append_note else "PUT"
-    path = (
-        f"/api/tickets/{tid}/notes/{field}/append"
-        if append_note
-        else f"/api/tickets/{tid}/notes/{field}"
-    )
+    suffix = "/append" if append_note else ""
     data = http.send(
         method,
-        path,
+        f"/api/tickets/{tid}/guidance{suffix}",
         as_json=as_json,
-        json_body={"user_note": body},
+        json_body={"body": body},
     )
-    http.emit(data, as_json, f"user note {field} written on {data['id']}")
+    http.emit(data, as_json, f"guidance written on {data['id']}")
 
 
 if __name__ == "__main__":

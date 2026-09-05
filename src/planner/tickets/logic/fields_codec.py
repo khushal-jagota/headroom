@@ -1,7 +1,7 @@
 """The tickets.fields (de)serializer and slot accessors. Pure: json + contracts.
 The stored JSON shape has field keys, each containing a slot of
-{value, proposal, user_note}, proposal being {body, proposed_by, created_at} or null.
-Legacy rows using {notes} are accepted on read. with_slot is copy-on-write so decision
+{value, proposal}, proposal being {body, proposed_by, created_at} or null.
+with_slot is copy-on-write so decision
 functions never mutate their input."""
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ def _slot_to_dict(slot: FieldSlot) -> dict[str, Any]:
             "proposed_by": slot.proposal.proposed_by,
             "created_at": slot.proposal.created_at,
         }
-    return {"value": slot.value, "proposal": proposal, "user_note": slot.user_note}
+    return {"value": slot.value, "proposal": proposal}
 
 
 def fields_to_json(fields: TicketFields) -> str:
@@ -58,13 +58,10 @@ def _proposal_from_obj(obj: Any) -> Proposal | None:
 def _slot_from_obj(obj: Any) -> FieldSlot:
     _require(isinstance(obj, dict))
     value = obj.get("value")
-    user_note = obj.get("user_note", obj.get("notes"))
     _require(value is None or isinstance(value, str))
-    _require(user_note is None or isinstance(user_note, str))
     return FieldSlot(
         value=value,
         proposal=_proposal_from_obj(obj.get("proposal")),
-        user_note=user_note,
     )
 
 

@@ -219,14 +219,23 @@ and the replacement is recorded.
 
 A pending proposal is directly editable through the same field edit used for a settled
 value. Any actor can replace its text. The proposal stays pending, and the edit keeps its
-author, creation time, note, settled value, Ticket status, Stage, and scope. Direct edits
+author, creation time, settled value, Ticket status, Stage, and scope. Direct edits
 of settled values remain limited to passed fields and direct callers.
 
-Each field also has a **field user note**. It is step-specific user guidance, not
-agent scratchpad and not a canonical value. A worker may write one when the user gives
-guidance that should survive for the relevant step.
+Each Ticket has one **guidance** document for durable user corrections and constraints.
+It is separate from settled field values and is never approved as a proposal. The Ticket
+screen offers one editor; Review shows this same document once. The CLI reads it with
+`panels worker my-ticket guidance` and writes it with `panels worker note <id>` from
+stdin; `--append` preserves the existing text. Copy text, Ticket search, and supervisor
+context include it too.
 
-The **recap** is different from both kinds of user note. It is a short cold-reader
+The next automatic Worker step includes current guidance in its actual prompt. A direct
+edit keeps the existing generic Ticket-changed notice. Saving guidance is not an
+immediate conversation intervention: ordinary chat and return-for-revision keep their
+existing send behavior. A Worker continuing those conversations can read current
+guidance from the Ticket.
+
+The **recap** is a short cold-reader
 orientation line that works beside the title: what the ticket is, where it stands now,
 and the key fact for the current step. It is not a detailed log. It can be written or
 updated at any stage — recap is never gated.

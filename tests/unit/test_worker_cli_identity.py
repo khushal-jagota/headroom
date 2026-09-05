@@ -157,7 +157,7 @@ _DETAIL_BODY = {
     "priority": "P1",
     "title": "Do the thing",
     "worker": "panels-worker-coding",
-    "fields": {"implementation": {"value": None, "user_note": None, "proposal": None}},
+    "fields": {"implementation": {"value": None, "proposal": None}},
 }
 
 

@@ -14,22 +14,6 @@ Which Stages a Ticket has, and what each needs, depend on its Worker type. Run
 `panels worker my-ticket` — it names your worker skill and reports the current
 Stage, effective ownership, and scope. Invoke that skill.
 
-Worker skills:
-- `panels-worker-coding` — coding tickets.
-- `panels-worker-general` — general tickets (a catch-all worker for arbitrary work with a minimal lifecycle).
-- `panels-worker-debugging` — debugging tickets (understanding a reported bug, diagnosing its structural cause, and defining the implementation handoff).
-- `panels-worker-new-worker` — new_worker tickets (designing another worker).
-- `panels-worker-amend-worker` — amend_worker tickets (changing an existing worker).
-- `panels-worker-exploration` — exploration tickets.
-- `panels-worker-research` — research tickets (answering a framed question with evidence).
-- `panels-worker-initiative-planning` — initiative_planning tickets (planning a confirmed direction across multiple Tickets).
-- `panels-worker-product-design` — product_design tickets (designing holistic product flows and implementation-ready interactive artifacts).
-- `panels-worker-planning-day` — planning-day tickets (planning the morning's Day with the user).
-- `panels-worker-planning-midday-check` — planning-midday-check tickets (checking execution against the morning intent and carrying out any agreed intervention).
-- `panels-worker-planning-sprint` — planning-sprint tickets (reviewing the current sprint and planning the next).
-- `panels-worker-personal-task` — personal task tickets owned by the user, with optional explicit agent support.
-- `probe-worker` — the probe fixture Worker type (test genericity proof).
-
 ### Who owns the current Stage
 
 Every non-terminal Stage has a default ownership mode. A Ticket can override that
@@ -56,10 +40,10 @@ ownership. Do not treat Take over, Release, or an owner change as a scope change
 Everything runs through the `panels` command — `panels --help` for full usage. The tools you use:
 
 - **`panels worker my-ticket [part,part]`** — read your Ticket header and part
-  manifest, or expand only the named fields. The header says who you are, the current
+  manifest, or expand named fields, `recap`, and `guidance`. The header says who you are, the current
   Stage, effective ownership, and scope.
 - **`panels ticket show <id> [part,part]`** — read another Ticket's header and part
-  manifest, or expand only the named fields.
+  manifest, or expand named fields, `recap`, and `guidance`.
 - **`panels ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** —
   set or clear a Stage ownership override when the user directly instructs that change.
 - **`panels worker propose <id> --recap "…"`**, piping the proposal text on stdin — propose the ticket's current gated field; the body arrives on stdin only, and every proposal must also set a recap with `--recap TEXT`.
@@ -69,7 +53,7 @@ Everything runs through the `panels` command — `panels --help` for full usage.
   Ticket problem that did not go well. Record only trouble that you encountered. Do not
   grade yourself or record what went well.
 - **`panels worker request-user-help [ticket-id]`** — use this only when you cannot responsibly continue without important user input. Put the free-form request in your ordinary Ticket Chat response, then call this no-payload command. The Ticket enters `needs_user`: automatic work stays paused and Chat remains available until the user explicitly releases it. Do not use this for ordinary discussion, proposals or approvals, permission prompts, Stop, or confirmed Worker errors.
-- **`panels worker note <id> <field>`**, piping the guidance text on stdin — replace user guidance next to a field without touching its value. Add `--append` to preserve the existing guidance and add new text.
+- **`panels worker note <id>`**, piping the guidance text on stdin — replace the Ticket’s durable guidance document. Add `--append` to preserve the existing guidance and add new text.
 
 All four write commands take their text on stdin only; there is no file-path option, since it once let two Workers sharing one `/tmp` overwrite each other's text before it reached the ticket. Pipe or redirect text in, for example `echo "…" | panels worker propose <id> --recap "…"` or a heredoc into stdin.
 - **`panels ticket create --worker-type <id> --title "…"`** — create a Ticket when the
@@ -90,7 +74,7 @@ All four write commands take their text on stdin only; there is no file-path opt
 - **Do not over-specify fields.** 
 - **Explain your proposal judgment in chat.** After you propose a gated field, your chat reply should very briefly explain why you shaped the proposal that way. Do not merely announce that the field is ready, repeat which field you proposed, or restate approval/status details, the UI already shows this. 
 - **Use recap as cold-user orientation.** The recap is not a work log. Keep it short and scannable, so a cold user can read it alongside the title and understand what the ticket is and what was done before this proposal to refresh their mind before reviewing this proposal.
-- **Preserve direct user guidance with field notes.** When the user gives direction during a worker step that should survive the turn, write it to the relevant field with `panels worker note` and phrase it as user-directed guidance.
+- **Preserve direct user guidance.** When the user gives direction during a worker step that should survive the turn, add it to the Ticket guidance with `panels worker note <id> --append`. Keep this document for user direction, not a work log. Automatic step prompts include current guidance; saving it does not send a chat message. Read it with `panels worker my-ticket guidance` when continuing another conversation turn.
 
 ### Ticket-owned planning artifacts
 
