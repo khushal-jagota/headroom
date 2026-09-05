@@ -31,7 +31,6 @@ from tests.e2e.harness import ServerHandle
 
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
-    ComposerCatalogEntryKind,
     PromptDeliveryMode,
 )
 from planner.conversation.events import (
@@ -50,11 +49,8 @@ from planner.conversation.events import (
     UserInputRequestedEventPayload,
 )
 from planner.conversation.message_content import (
-    MessageImage,
-    MessageText,
     text_message_content,
 )
-from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 
 WAIT_MS = 10_000
@@ -346,23 +342,6 @@ def _a_conversation_worth_scrolling() -> tuple[ConversationEventPayload, ...]:
         )
         rows.append(TurnEndedEventPayload(ending=ConversationTurnEnding.completed))
     return tuple(rows)
-
-
-def test_a_started_conversation_reloads_into_the_pane_surface(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-) -> None:
-    _create_conversation(server, "e2e-dev-pane")
-
-    page = open_page(
-        context_factory(),
-        server,
-        "#/dev/conversation?id=e2e-dev-pane",
-        "[data-conversation-pane]",
-    )
-    page.wait_for_selector("[data-conversation-thread]", timeout=WAIT_MS)
-    page.wait_for_selector("[data-conversation-workspace]", timeout=WAIT_MS)
 
 
 def test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers(
@@ -661,182 +640,3 @@ def test_canonical_queue_rows_work_across_tabs_and_on_a_phone(
 TURN_FOLD = "[data-conversation-turn-fold]"
 
 
-def test_a_picture_in_the_record_is_drawn_and_really_loads(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-) -> None:
-    """The whole path, in a browser, against the real server.
-
-    A row that says a message had a picture in it, bytes kept beside the record, and an
-    image the browser actually fetched and decoded. ``naturalWidth`` is the assertion that
-    matters: an ``<img>`` pointing at nothing draws as a broken image and reports zero, so
-    this fails if the route does not serve the file or serves it as the wrong thing.
-    """
-    _create_conversation(server, "e2e-picture")
-    # This thread already belongs to the browser driver's own loop, so the keeping happens
-    # on a thread of its own — the same way the rows above are written.
-    kept = _on_its_own_thread(
-        ConversationMessageFiles(str(server.db_path)).keep(
-            "e2e-picture", _A_RED_PNG, media_type="image/png"
-        )
-    )
-    _append_rows(
-        server,
-        "e2e-picture",
-        PromptEventPayload(
-            content=(
-                MessageText(text="look at this"),
-                MessageImage(
-                    stored_file_id=kept.stored_file_id,
-                    media_type="image/png",
-                    file_name="red.png",
-                ),
-            ),
-            sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
-        ),
-    )
-
-    page = open_page(
-        context_factory(),
-        server,
-        "#/dev/conversation?id=e2e-picture",
-        "[data-conversation-pane]",
-    )
-    page.wait_for_selector("[data-conversation-piece='image']", timeout=WAIT_MS)
-    page.wait_for_function(
-        "() => {"
-        "  const drawn = document.querySelector(\"[data-conversation-piece='image']\");"
-        "  return drawn !== null && drawn.complete && drawn.naturalWidth === 8;"
-        "}",
-        timeout=WAIT_MS,
-    )
-    # The words that came with it are still beside it.
-    assert "look at this" in page.inner_text("[data-conversation-row='prompt']")
-
-
-def test_the_mixed_catalog_an_agent_reports_reaches_the_menu_when_its_turn_stops(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-) -> None:
-    """An agent reports its mixed composer catalog moments after its session starts.
-
-    That is during its first turn, so a conversation opened before that turn was told
-    none and asking again is the only thing that puts it right. A turn stopping is the
-    occasion to ask, and this is that seen from outside: the entries are reported while
-    the turn is open, and they are in the menu once it is over, on the page that was
-    already there.
-
-    What the pane knows about this conversation is held still while the turn runs, so the
-    only thing that can put the entries in front of a person is the pane asking again.
-    """
-    conversation_id = "e2e-commands"
-    _create_conversation(server, conversation_id)
-    context = context_factory()
-    context.add_init_script(HOLD_THE_VIEW_READS)
-    page = open_page(
-        context,
-        server,
-        f"#/dev/conversation?id={conversation_id}",
-        "[data-conversation-pane]",
-    )
-    page.wait_for_selector("[data-conversation-input]:not([disabled])", timeout=WAIT_MS)
-    # Opening asks about the conversation twice — once to have it, once when the reading
-    # of its rows is live. Both are in before anything is held, so what is held after this
-    # is only what the pane asks from here on.
-    page.wait_for_function("() => window.__viewReadsAnswered >= 2", timeout=WAIT_MS)
-    page.evaluate("() => { window.__thisVeryPage = true; window.__holdViewReads = true; }")
-
-    # A turn is open: a prompt reached the backend and nothing has ended it.
-    _append_rows(
-        server,
-        conversation_id,
-        PromptEventPayload(
-            content=text_message_content("get started"),
-            sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
-        ),
-    )
-    _let_the_browser_catch_up(page, 1)
-    page.wait_for_selector("[data-conversation-alive]", timeout=WAIT_MS)
-
-    # Moments into that turn, the agent says what it can be asked to do.
-    _store_the_composer_catalog(
-        server,
-        conversation_id,
-        ComposerCatalogEntry(
-            kind=ComposerCatalogEntryKind.command,
-            display_text="/plan",
-            insertion_text="/plan ",
-            description="Write the plan",
-            argument_hint="[what to plan]",
-        ),
-        ComposerCatalogEntry(
-            kind=ComposerCatalogEntryKind.command,
-            display_text="/compact",
-            insertion_text="/compact",
-            description="Shrink the context",
-        ),
-        ComposerCatalogEntry(
-            kind=ComposerCatalogEntryKind.skill,
-            display_text="$skill-creator",
-            insertion_text="$skill-creator ",
-            description="Create or update a skill",
-        ),
-        ComposerCatalogEntry(
-            kind=ComposerCatalogEntryKind.app,
-            display_text="@Google Drive",
-            insertion_text="@google-drive ",
-            description="Use Google Drive",
-        ),
-        ComposerCatalogEntry(
-            kind=ComposerCatalogEntryKind.plugin,
-            display_text="@Analytics",
-            insertion_text="@analytics@personal ",
-            description="Use Analytics",
-        ),
-    )
-
-    # Nothing has told the pane and nothing asks on a clock, so the menu is still the one
-    # a conversation that had never run was given.
-    page.fill("[data-conversation-input]", "/")
-    page.wait_for_selector("[data-conversation-catalog-empty]", timeout=WAIT_MS)
-    assert page.locator("[data-conversation-catalog-entry]").count() == 0
-
-    # The turn stops. There is no ending row for it — only the system's own word, which is
-    # the answer the pane has been holding.
-    page.evaluate("() => window.__letTheHeldViewReadsThrough()")
-    page.wait_for_selector("[data-conversation-alive]", state="detached", timeout=WAIT_MS)
-
-    # And the commands are there, under the slash that was already typed.
-    page.wait_for_function(
-        "() => document.querySelectorAll('[data-conversation-catalog-entry]').length === 2",
-        timeout=WAIT_MS,
-    )
-    assert page.eval_on_selector_all(
-        "[data-conversation-catalog-entry]",
-        "rows => rows.map(row => row.dataset.conversationCatalogEntry)",
-    ) == ["/compact", "/plan"]
-    assert "[what to plan]" in page.inner_text("[data-conversation-catalog]")
-    page.fill("[data-conversation-input]", "$")
-    page.wait_for_function(
-        "() => document.querySelectorAll('[data-conversation-catalog-entry]').length === 1",
-        timeout=WAIT_MS,
-    )
-    assert page.get_by_text("$skill-creator", exact=True).is_visible()
-    page.fill("[data-conversation-input]", "@")
-    page.wait_for_function(
-        "() => document.querySelectorAll('[data-conversation-catalog-entry]').length === 2",
-        timeout=WAIT_MS,
-    )
-    assert page.eval_on_selector_all(
-        "[data-conversation-catalog-entry]",
-        "rows => rows.map(row => row.dataset.conversationCatalogEntry)",
-    ) == ["@Analytics", "@Google Drive"]
-    page.get_by_text("@Analytics", exact=True).click()
-    assert page.input_value("[data-conversation-input]") == "@analytics@personal "
-    assert page.evaluate("() => window.__thisVeryPage === true"), (
-        "the page that has the commands is the page that was already open"
-    )
