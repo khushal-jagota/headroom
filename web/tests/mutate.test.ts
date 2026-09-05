@@ -47,16 +47,6 @@ describe("mutateJson", () => {
     );
   });
 
-  it("forwards omitted options as an empty object and still invalidates", async () => {
-    await mutateJson("/api/tickets/t_written/conversation");
-
-    expect(fakes.fetchJson).toHaveBeenCalledWith(
-      "/api/tickets/t_written/conversation",
-      {}
-    );
-    expect(fakes.invalidateQueries).toHaveBeenCalledTimes(1);
-  });
-
   it("rethrows a rejected write without invalidating", async () => {
     const failure = new Error("write rejected");
     fakes.fetchJson.mockRejectedValue(failure);

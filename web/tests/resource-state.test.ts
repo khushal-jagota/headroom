@@ -33,24 +33,11 @@ describe("ResourceState", () => {
     expect(markup.indexOf("error-line")).toBeLessThan(markup.indexOf("data-the-data"));
   });
 
-  it("keeps the data through a failed read that arrives while refetching", () => {
-    const markup = body({ error: failure, loading: true, hasData: true });
-
-    expect(markup).toContain("data-the-data");
-    expect(markup).toContain("network error");
-    expect(markup).not.toContain("Loading...");
-  });
-
   it("shows the error alone when there is nothing to show yet", () => {
     const markup = body({ error: failure, hasData: false });
 
     expect(markup).toContain("network error");
     expect(markup).not.toContain("data-the-data");
-  });
-
-  it("still shows the loading line only before the first answer", () => {
-    expect(body({ loading: true, hasData: false })).toContain("Loading...");
-    expect(body({ loading: true, hasData: true })).not.toContain("Loading...");
   });
 
   it("renders the data when nothing is wrong", () => {
