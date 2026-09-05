@@ -3,7 +3,6 @@ import { fetchJson } from "./api";
 import type { ConversationStartValues } from "./conversation/wire";
 import type { WorkerTypesResponse } from "./lifecycle";
 import type {
-  BacklogResponse,
   BoardResponse,
   CurrentSprintResponse,
   DayResponse,
@@ -16,8 +15,10 @@ import type {
   SkillsHomeResponse,
   SprintsResponse,
   SprintItemsResponse,
+  SprintItemSummariesResponse,
   SprintItemWorkspace,
   TicketDetail,
+  TicketSummariesResponse,
   VpsStatusSummary,
   WorkerManagementDetail,
   WorkersResponse
@@ -46,8 +47,16 @@ export const queries = {
   board: () => jsonQuery<BoardResponse>(["board"], "/api/board"),
   review: () => jsonQuery<ReviewResponse>(["review"], "/api/review"),
   todayDay: () => jsonQuery<DayResponse>(["day", "today"], "/api/day/today"),
-  backlogSprintItems: () =>
-    jsonQuery<BacklogResponse>(["items", "backlog"], "/api/items?sprint_id=null"),
+  backlogTicketSummaries: (offset: number, limit = 30) =>
+    jsonQuery<TicketSummariesResponse>(
+      ["tickets", "backlog", { limit, offset }],
+      `/api/ticket-summaries?sprint_id=null&limit=${limit}&offset=${offset}`
+    ),
+  backlogSprintItemSummaries: (offset: number, limit = 30) =>
+    jsonQuery<SprintItemSummariesResponse>(
+      ["sprint-items", "backlog", { limit, offset }],
+      `/api/sprint-item-summaries?sprint_id=null&limit=${limit}&offset=${offset}`
+    ),
   ideas: () => jsonQuery<IdeasResponse>(["ideas"], "/api/ideas"),
   projects: () => jsonQuery<ProjectsResponse>(["projects"], "/api/projects"),
   schedules: () => jsonQuery<SchedulesResponse>(["schedules"], "/api/schedules"),

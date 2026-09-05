@@ -47,5 +47,20 @@ and Review state in a separate 3D rendering without owning useful unique data.
 - Atlas removed and independently reviewed (58b161a6).
 - Sprint documents implemented and independently reviewed (1c1e3b80): twelve prose fields become four.
 - Ticket guidance implemented and independently reviewed; the combined migrations pass focused checks.
-- Backlog and test pruning remain in isolated implementation worktrees. E2E has reached 19 cases from39.
+- Backlog is implemented and independently reviewed; unscheduled Tickets and briefs open in Workspace.
+- Test pruning remains in progress. E2E has reached 19 cases from 39.
 - No full verify run has occurred; the final settled tree owns it.
+
+## Rehearsal on visible live records
+
+Ran both migrations in sequence on a private temporary database seeded from the
+read-only live API exports: 778 Ticket records and seven Sprints. All 642 nonempty
+visible note sections (605,070 UTF-8 bytes) matched the new guidance documents exactly.
+All 22,349 UTF-8 bytes of consolidated Sprint prose matched their new documents;
+primary bets, identities, dates, and timestamps were unchanged. SQLite integrity and
+foreign-key checks passed. No live records were written.
+
+This exercises visible exported prose, not a full production database backup. Raw
+dual-key historical notes and relationship preservation are covered by the separate
+populated migration fixtures. Private exports and rehearsal script stay under
+`data/simplification/`, outside git.

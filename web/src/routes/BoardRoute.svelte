@@ -47,27 +47,12 @@
   let selectedCard = $derived(
     allCards.find((card) => card.id === opening.markedTicketId) ?? null
   );
-  let openItem = $derived(rail.items.find((item) => item.id === opening.openItemId) ?? null);
-  let itemPane = $derived(Boolean(opening.markedItemId) && Boolean(openItem));
+  // A direct Item address is enough to open its canonical workspace. The rail is only
+  // today's index, so an unscheduled Item can be absent there and still be a real Item.
+  let itemPane = $derived(opening.markedItemId !== null);
   let nothingWaits = $derived(
     opening.view === "tickets" ? rail.groups.length === 0 : rail.items.length === 0
   );
-
-  // An Item that is not on the board cannot be drawn open. The address gives it up once
-  // the board has settled, and a Ticket in the pane keeps its own address.
-  $effect(() => {
-    const staleItem = opening.openItemId && !openItem;
-    if (staleItem && board.data && !board.isFetching && !board.isError) {
-      const kept = opening.markedTicketId
-        ? workspaceAddress(
-            { kind: "ticket", id: opening.markedTicketId },
-            undefined,
-            address.openFile
-          )
-        : workspaceAddress({ kind: "none" });
-      window.location.replace(kept);
-    }
-  });
 
   // The artifact a Ticket in the pane opened. It rides in the address beside everything
   // else the screen draws, so a reload, Back, and a shared link all show the same thing,
@@ -374,9 +359,9 @@
                 onOpenFile={openFileOnTicket}
               />
             {/key}
-          {:else if itemPane && openItem}
-            {#key openItem.id}
-              <SprintItemWorkspace itemId={openItem.id} sprintName="Workspace" backHref="#/workspace" />
+          {:else if itemPane && opening.openItemId}
+            {#key opening.openItemId}
+              <SprintItemWorkspace itemId={opening.openItemId} sprintName="Workspace" backHref="#/workspace" />
             {/key}
           {:else}
             <div class="board-workspace-empty-inspector">

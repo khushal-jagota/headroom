@@ -1,6 +1,6 @@
 # Make Backlog show the work that is actually waiting
 
-Status: design for root review; implementation not yet dispatched.
+Status: independently reviewed by root; approved for implementation.
 
 ## Intent and evidence
 
@@ -166,4 +166,54 @@ protected.
 
 ## Review
 
-Pending root review.
+Root independently checked the wire serializers, pagination facts, current Backlog and Workspace address handling. Approved: bounded lists match existing APIs; distinct Item list shape correctly omits `kind`; direct Item navigation preserves the existing conversation host. The fixture must assert the Item pane after the empty board response settles, because the removed redirect only runs then. No new backend or record system is needed.
+
+## Implementation
+
+Backlog now loads active unscheduled Ticket summaries and unscheduled Sprint Item
+summaries as separate bounded resources. Each section reports its own range and total,
+pages independently, and links its records to their canonical Workspace addresses.
+The compact creation form now submits an explicitly unscheduled Ticket using the
+served Worker type and Project choices. Direct Item addresses mount the Item workspace
+without requiring that Item to appear on today's board rail.
+
+The existing Backlog/Ideas browser fixture covers the bounded request URLs, independent
+pagination, canonical Ticket and Item links, the Ticket creation body, and the direct
+off-board Item pane after the empty board response has settled. No CSS, backend,
+conversation, contract, generated distribution, or agent-backend files changed.
+
+Focused evidence on the completed source:
+
+```text
+$ npm --prefix web run check
+svelte-check found 0 errors and 0 warnings
+
+$ node web/tests/backlog-ideas.test.mjs
+backlog-ideas.test.mjs: all assertions passed
+
+$ cd web && npm exec -- vitest run tests/query-catalogue.test.ts
+Test Files  2 passed (2)
+Tests  26 passed (26)
+Type Errors  no errors
+```
+
+The final program integration owns `./verify`, the production build, and broad
+frontend coverage as reserved above.
+
+## Independent implementation review — root
+
+Reviewed the completed diff and actual bounded wire shapes. Direct off-board Item
+addresses mount the same existing workspace host after the board settles; neither
+the conversation components nor their implementation change. Lists have independent
+page facts, errors, and canonical links. The old Backlog-only response alias is removed.
+
+Resolved one creation-policy finding: preselecting explicit P3 would bypass the
+canonical Project priority default. Root's small integration repair selects “Project
+default” initially and lets an explicit priority override it. The existing form
+fixture proves default selection and an explicit P1 request. Root also reports catalog
+errors in the existing error surface and handles an empty current page without an
+impossible range. No new system or test case was added. The fixture's duplicated
+per-color/class/pixel assertions were removed; its creation/navigation proof remains.
+
+Integrated Svelte check: zero errors and warnings. Updated Backlog/Ideas fixture:
+all assertions passed. No unresolved review findings.
