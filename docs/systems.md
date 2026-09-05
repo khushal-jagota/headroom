@@ -52,10 +52,11 @@ _Code paths:_ `src/planner/core/db.py`, `src/planner/core/migrations/`, and
 ### 2. The planning domains
 
 Days orient one planning date. Tickets carry bounded work and own their Project and
-optional Sprint placement. Sprint Items optionally classify Tickets under an outcome,
-and their placement must match each classified Ticket. Backlog items are Sprint Items
-without a sprint. Ideas remember possibilities. Projects classify Tickets, Items, and
-Ideas.
+optional Sprint placement. Outcomes hold shared context and their supervisor across
+Sprints. A commitment chooses an Outcome for a Sprint before Tickets exist. Carrying
+selected unfinished Tickets never moves completed history. Backlog lists unscheduled
+Tickets and offers a collapsed Outcome browser. Ideas remember possibilities. Projects
+classify Tickets, Outcomes and Ideas.
 
 Each domain owns its contracts, rules, writers, views, and HTTP routes. Cross-domain
 actions use those owners. The planning date changes at 05:00 local time. Stored Sprint

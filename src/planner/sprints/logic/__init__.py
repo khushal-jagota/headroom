@@ -1,4 +1,4 @@
-"""Pure sprint logic: derived item status and sprint-range overlap / current-sprint
+"""Pure sprint logic: sprint-range overlap / current-sprint
 selection. Stdlib + contracts only; zero side effects. Data-layer writers import
 from here."""
 
@@ -10,13 +10,10 @@ from planner.sprints.logic.ranges import (
     find_overlap,
     ranges_overlap,
 )
-from planner.sprints.logic.status import SprintItemChildStatus, derive_sprint_item_status
 
 __all__ = [
     "DateRange",
-    "SprintItemChildStatus",
     "current_sprint_id",
-    "derive_sprint_item_status",
     "find_overlap",
     "ranges_overlap",
 ]

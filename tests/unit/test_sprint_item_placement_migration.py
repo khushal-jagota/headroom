@@ -207,7 +207,7 @@ def test_migration_moves_direct_placements_to_shared_other_items_and_preserves_s
         "project_vylo",
         "sp_one",
         "si_normal",
-        "sprint_item",
+        "current_sprint",
     )
     assert schedule_rows["schedule_project_template"] == (
         "project_tribe",
@@ -243,7 +243,8 @@ def test_migration_moves_direct_placements_to_shared_other_items_and_preserves_s
     item_indexes = {
         str(row["name"]) for row in upgraded.execute("PRAGMA index_list(sprint_items)")
     }
-    assert "idx_sprint_items_one_other_per_sprint_project" in item_indexes
+    assert "idx_sprint_items_one_other_per_sprint_project" not in item_indexes
+    assert "idx_sprint_items_supervisor_agent_key" in item_indexes
 
     with pytest.raises(sqlite3.IntegrityError):
         upgraded.execute("UPDATE sprint_items SET kind = 'catch_all' WHERE id = 'si_normal'")

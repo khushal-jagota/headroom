@@ -19,11 +19,15 @@ created Ticket ──commit signal──► Worker readiness
 A schedule uses one of three cadences: every planning day, day four of the current
 sprint, or the current sprint's final day. It stores an exact local time, title, Worker
 type, priority, optional Kickoff context, launch choice, blockers, and placement.
-Placement can resolve the current Sprint, name one coherent Sprint Item classification,
-or keep the Ticket in backlog. The scheduled planning Worker types use the Personal
-Project and that Sprint's Planning Item. Other schedules retain their selected Project.
-A migrated legacy schedule can retain a fixed Sprint through its canonical `sprint_id`.
-New current-Sprint schedules leave that field empty and resolve the Sprint at occurrence time.
+Placement resolves the current Sprint, selects one fixed Sprint, or keeps the Ticket
+in backlog. Optional Outcome context is independent of that choice and supplies its
+Project. Planning schedule templates use Personal; they do not create Planning Items.
+A fixed Sprint remains fixed when editing another template field. Clearing the explicit
+Sprint while choosing Current Sprint restores resolution at occurrence time.
+
+The stored placement modes are `current_sprint` and `backlog`. A non-null `sprint_id`
+in the former is an explicit fixed destination. Migrated Item-derived templates retain
+their former fixed Sprint or backlog destination and their shared Outcome context.
 
 The Scheduled tasks screen lists schedules and opens the create or edit form. It can
 change the reusable template and enable or disable future occurrences. The CLI also

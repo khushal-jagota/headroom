@@ -85,7 +85,7 @@ def _production_planning_schedules(
     conn.execute(
         "INSERT OR IGNORE INTO projects "
         "(id, name, summary, created_at, updated_at) "
-        "VALUES ('project_panels', 'Panels', '', 0, 0)"
+        "VALUES ('project_personal', 'Panels', '', 0, 0)"
     )
     definitions = (
         (
@@ -116,7 +116,7 @@ def _production_planning_schedules(
                 title=title,
                 worker_type=worker_type,
                 kickoff_note="",
-                project_id="project_panels",
+                project_id="project_personal",
                 placement_mode=ScheduledTicketPlacementMode.current_sprint,
             ),
         )
@@ -165,8 +165,6 @@ def test_exact_time_and_cadence_rules_are_planning_neutral() -> None:
         planning_day="2026-08-02",
         sprint_ranges=ranges,
     )
-
-
 
 
 def test_production_planning_schedules_create_place_receipt_and_reach_handoff(
@@ -228,7 +226,7 @@ def test_production_planning_schedules_create_place_receipt_and_reach_handoff(
             assert tuple(ticket.fields.slots) == definition.field_ids()
         assert ticket.project_id == "project_personal"
         assert ticket.effective_sprint_id == "sp_current"
-        assert ticket.sprint_item_id == "si_planning_current"
+        assert ticket.sprint_item_id is None
         assert data.list_occurrences(tmp_db, result.schedule_id) == [result]
 
         assert worker_step_readiness.is_ready_for_worker_step(
@@ -239,14 +237,7 @@ def test_production_planning_schedules_create_place_receipt_and_reach_handoff(
         )
 
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 3
-    assert (
-        tmp_db.execute(
-            "SELECT count(*) FROM sprint_items "
-            "WHERE sprint_id = 'sp_current' "
-            "AND project_id = 'project_personal' AND title = 'Planning'"
-        ).fetchone()[0]
-        == 1
-    )
+    assert tmp_db.execute("SELECT count(*) FROM sprint_items").fetchone()[0] == 0
 
 
 def test_production_planning_schedules_suppress_prelaid_tickets_without_backfill(
@@ -264,7 +255,7 @@ def test_production_planning_schedules_suppress_prelaid_tickets_without_backfill
             now=int(morning.timestamp()) - 60,
             title_max_chars=TITLE_MAX_CHARS,
             worker_type=worker_type,
-            project_id="project_panels",
+            project_id="project_personal",
             planning_now=morning,
             boundary_hour=5,
         )
@@ -396,12 +387,6 @@ def test_due_occurrence_creates_and_places_one_ordinary_ticket(
     assert len(data.list_occurrences(tmp_db, schedule_id)) == 1
 
 
-
-
-
-
-
-
 def test_pre_five_am_occurrence_targets_the_previous_planning_day(
     tmp_db: Connection,
 ) -> None:
@@ -417,24 +402,6 @@ def test_pre_five_am_occurrence_targets_the_previous_planning_day(
 
     assert result[0].target_day_id == "day_2026-07-27"
     assert tmp_db.execute("SELECT 1 FROM day_tickets WHERE day_id = 'day_2026-07-27'").fetchone()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def test_failure_is_recorded_once_and_does_not_stop_another_schedule(
@@ -473,8 +440,6 @@ def test_failure_is_recorded_once_and_does_not_stop_another_schedule(
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
 
 
-
-
 def test_runtime_loop_uses_injected_clock_and_restart_safe_receipt(
     tmp_path: Path,
 ) -> None:
@@ -498,3 +463,62 @@ def test_runtime_loop_uses_injected_clock_and_restart_safe_receipt(
         assert check.execute("SELECT count(*) FROM scheduled_ticket_occurrences").fetchone()[0] == 1
     finally:
         check.close()
+
+
+def test_outcome_context_is_independent_of_current_fixed_and_backlog_destinations(
+    tmp_db: Connection,
+) -> None:
+    from planner.sprints.data import create_item
+
+    _insert_current_sprint(tmp_db)
+    now = _now("2026-07-28T12:00:00")
+    clock = MutableClock(now)
+    outcome = create_item(
+        tmp_db, title="Shared context", project_id="project_personal", clock=clock
+    )
+    with pytest.raises(PlannerError, match="does not match"):
+        _schedule(
+            tmp_db,
+            template=_template(project_id="project_vylo", sprint_item_id=outcome.id),
+        )
+    fixed = _schedule(
+        tmp_db,
+        local_time="12:00",
+        template=_template(
+            worker_type="personal", title="Fixed", sprint_id="sp_current", sprint_item_id=outcome.id
+        ),
+    )
+    backlog = _schedule(
+        tmp_db,
+        local_time="12:00",
+        template=_template(
+            title="Backlog",
+            worker_type="personal",
+            placement_mode=ScheduledTicketPlacementMode.backlog,
+            sprint_item_id=outcome.id,
+        ),
+    )
+    rolling = _schedule(
+        tmp_db,
+        local_time="12:00",
+        template=_template(worker_type="personal", title="Rolling", sprint_item_id=outcome.id),
+    )
+    results = actions.run_current_slot(
+        tmp_db, planning_now=now, now=int(now.timestamp()), boundary_hour=5
+    )
+    actual = {r.schedule_id: tickets_data.read_ticket(tmp_db, str(r.ticket_id)) for r in results}
+    assert actual[fixed].sprint_id == "sp_current"
+    assert actual[backlog].sprint_id is None
+    assert actual[rolling].sprint_id == "sp_current"
+    assert {t.sprint_item_id for t in actual.values()} == {outcome.id}
+    actions.update_schedule(tmp_db, fixed, {"title": "Renamed only"}, now=20)
+    assert data.read_schedule(tmp_db, fixed).template.sprint_id == "sp_current"
+    actions.update_schedule(tmp_db, rolling, {"placement_mode": "backlog"}, now=21)
+    assert data.read_schedule(tmp_db, rolling).template.sprint_item_id == outcome.id
+    assert data.read_schedule(tmp_db, rolling).template.sprint_id is None
+    assert (
+        actions.run_current_slot(
+            tmp_db, planning_now=now, now=int(now.timestamp()) + 1, boundary_hour=5
+        )
+        == results
+    )

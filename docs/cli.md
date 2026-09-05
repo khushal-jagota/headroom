@@ -102,10 +102,10 @@ record shapes. Direct `show` commands also keep their full record shapes.
   context, the created Ticket has no pending proposal, so readiness can start its
   Worker-owned Kickoff. Supplying kickoff context creates the ordinary proposed Kickoff
   and waits for approval. By default each
-  occurrence resolves direct placement in the current Sprint; `--sprint-item`
-  selects an exact coherent Item classification and `--backlog` keeps occurrences out
-  of a Sprint. The three planning Worker types use the Personal Project and that
-  Sprint's Planning Item. Use
+  occurrence resolves direct placement in the current Sprint; `--sprint` selects a fixed
+  Sprint, `--backlog` leaves it unscheduled, and independent `--sprint-item` supplies
+  Outcome context. Planning templates use the Personal Project without manufacturing
+  containers. Use
   `schedule set … placement --value current-sprint|backlog` to switch the reusable
   placement mode. `show` includes its durable created, suppressed, or failed occurrence
   receipts. These commands
@@ -157,16 +157,18 @@ record shapes. Direct `show` commands also keep their full record shapes.
 - **`ticket copy`** — copy one ticket's plain-text packet.
 - **`sprint create / list / show / set`** — plan sprints. `current` resolves through
   `/api/sprint/current`; `none` means the backlog where a list supports it.
-- **`sprint item create / list / show / set / move-ticket / move-ticket-to-backlog / block / unblock / delete`**
-  — manage Sprint Items and Ticket classification. Creating a Ticket is still `ticket
-  create`. `sprint item move-ticket <item-id> <ticket-id>` classifies an existing Ticket
-  and aligns its Project and Sprint. `sprint item move-ticket-to-backlog <item-id>
-  <ticket-id>` compares the named current Item before it moves the Ticket to backlog, so
-  a stale command cannot move a Ticket that was since reclassified.
-  `sprint item block <item-id> --by <ticket-id>` records a Ticket blocking an item.
-  Item status is read-only and derived from child tickets and active blocking links.
-  `sprint item delete <item-id> --yes` permanently removes a childless item. An item
-  with child tickets must have that work explicitly moved or removed first.
+- **`sprint item create / list / show / set / add-ticket / remove-ticket / block / unblock / delete`**
+  — manage durable Outcome context through the existing Item identity. Item records
+  have no single Sprint and no derived Outcome status. Classification aligns the
+  Ticket's Project and preserves its Sprint; removal preserves Project and Sprint.
+  A stale removal cannot detach a different current Outcome. Ordinary Ticket placement
+  owns scheduling. `list --search` searches the bounded Project catalog. Deleting an
+  Outcome still requires `--yes` and refuses children.
+- **`sprint outcome add / remove / list / carry`** — choose Outcomes for a Sprint,
+  including before Tickets exist. Add/remove changes the commitment only. Carry takes
+  source Sprint and Outcome, `--to` target Sprint, and repeatable `--ticket` IDs. It
+  atomically commits the Outcome and moves only that explicit unfinished selection;
+  no IDs means commitment only. The source commitment and completed history stay put.
 - **`sprint item supervisor show / context / send / reset`** — inspect the supervisor
   and launch configuration, read its scoped brief and current Tickets, send a direct
   user message, or reset its current conversation.

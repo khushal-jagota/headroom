@@ -5,7 +5,7 @@ are two different things: one is committed work without a sprint, and the other 
 thought you do not want to lose.
 
 ```
-Backlog: unscheduled Tickets + unscheduled briefs ──► plan into a sprint
+Backlog: unscheduled Tickets ──► plan into a sprint
 Ideas:   remembered possibility                    ──► stays an Idea
 ```
 
@@ -17,10 +17,11 @@ row opens the canonical Ticket in Workspace and shows its title, short recap, Pr
 state, and Worker type. A list that spans pages shows its range and page controls;
 a complete list needs only its total.
 
-Unscheduled Sprint Items remain below as **Unscheduled briefs**. They are planning
-documents rather than a second kind of Ticket. Each row opens the canonical Sprint
-Item workspace, where its brief, Tickets, artifacts, and supervisor remain together.
-This list is bounded and paged independently from Tickets.
+A secondary **Outcomes** browser arrives collapsed and loads its bounded catalog only
+while open. Search or filter by Project to find shared context, including historical
+Outcomes. Selecting one opens its existing workspace; creating one opens the returned
+identity without adding a Sprint commitment. This catalog does not describe every
+Outcome as unfinished. It uses the same picker as Add outcome on Sprint tracking.
 
 A faint "+ New ticket" sits at the top, closed and out of the way. It opens a compact
 form for title, kickoff context, Worker type, Project, priority, and optional deadline.
@@ -40,14 +41,14 @@ Below, the ideas are listed newest first. An idea with no note is one line. An i
 with a note gets a small arrow that opens its detail.
 
 _Code paths:_ `web/src/routes/BacklogRoute.svelte`,
-`web/src/routes/IdeasRoute.svelte`. Tickets live in `src/planner/tickets/`. Briefs are
-Sprint Items with no sprint; briefs and ideas live in `src/planner/sprints/`.
+`web/src/routes/IdeasRoute.svelte`. Tickets live in `src/planner/tickets/`. Outcomes hold shared context independently of Sprint commitments. Outcomes and ideas
+live in `src/planner/sprints/`.
 
 ## Handoffs
 
 - **Days** (`days.md`) — the Day page is only the daily overview right now; loose
   capture is not wired there.
-- **Sprints** (`sprints.md`) — where Tickets and briefs are planned into a sprint.
+- **Sprints** (`sprints.md`) — where Tickets are scheduled and Outcomes are chosen for a Sprint.
 - **Projects** (`projects.md`) — where the project list comes from.
 
 ## Deferred
