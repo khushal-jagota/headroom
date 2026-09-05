@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from sqlite3 import Connection
 
 from planner.core.clock import TestClock as ClockForTest
@@ -9,14 +10,9 @@ from planner.list_reads.contracts import ListPageRequest
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
 from planner.tickets.contracts import (
-    FieldSlot,
-    Proposal,
-    TicketFields,
     TicketListFilters,
     TicketStatus,
 )
-from planner.tickets.logic.fields_codec import fields_to_json
-from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 
 
 def _ticket(conn: Connection, clock: ClockForTest, title: str) -> str:
@@ -30,19 +26,6 @@ def _ticket(conn: Connection, clock: ClockForTest, title: str) -> str:
     ).id
 
 
-def _search_fields(*, value: str = "", proposal: str = "") -> str:
-    slots = {
-        field_id: FieldSlot() for field_id in CODING_WORKER_TYPE_DEFINITION.field_ids()
-    }
-    slots["success"] = FieldSlot(
-        value=value or None,
-        proposal=(Proposal(proposal, "agent", 1) if proposal else None),
-    )
-    return fields_to_json(TicketFields(slots))
-
-
-
-
 def test_ticket_summary_filters_search_and_bounds_before_selection(
     tmp_db: Connection, fake_clock: ClockForTest
 ) -> None:
@@ -51,28 +34,37 @@ def test_ticket_summary_filters_search_and_bounds_before_selection(
     value_id = _ticket(tmp_db, fake_clock, "Value source")
     proposal_id = _ticket(tmp_db, fake_clock, "Proposal source")
     note_id = _ticket(tmp_db, fake_clock, "Note source")
-    terminal_id = _ticket(tmp_db, fake_clock, "Terminal Needle")
+    archive_id = _ticket(tmp_db, fake_clock, "Historical record")
     tmp_db.execute(
-        "UPDATE tickets SET recap = ? WHERE id = ?", ("Recap Needle", recap_id)
+        "UPDATE tickets SET archived_field_content=? WHERE id=?", ("Archive Needle", archive_id)
     )
-    for ticket_id, fields in (
-        (value_id, _search_fields(value="Value Needle")),
-        (proposal_id, _search_fields(proposal="Proposal Needle")),
-    ):
-        tmp_db.execute(
-            "UPDATE tickets SET fields = ? WHERE id = ?", (fields, ticket_id)
-        )
+    terminal_id = _ticket(tmp_db, fake_clock, "Terminal Needle")
+    tmp_db.execute("UPDATE tickets SET recap = ? WHERE id = ?", ("Recap Needle", recap_id))
+    tmp_db.execute(
+        "UPDATE tickets SET field_values=? WHERE id=?",
+        (json.dumps({"success": "Value Needle"}), value_id),
+    )
+    tmp_db.execute(
+        "UPDATE tickets SET pending_proposal=? WHERE id=?",
+        (
+            json.dumps(
+                {
+                    "field": "success",
+                    "body": "Proposal Needle",
+                    "proposed_by": "agent",
+                    "created_at": 1,
+                }
+            ),
+            proposal_id,
+        ),
+    )
     tmp_db.execute("UPDATE tickets SET guidance = ? WHERE id = ?", ("Note Needle", note_id))
     tmp_db.execute(
         "UPDATE tickets SET stage = 'done', ticket_status = 'empty' WHERE id = ?",
         (terminal_id,),
     )
-    tmp_db.execute(
-        "UPDATE tickets SET stage = 'needs_success' WHERE id = ?", (proposal_id,)
-    )
-    tmp_db.execute(
-        "UPDATE tickets SET ticket_status = 'errored' WHERE id = ?", (note_id,)
-    )
+    tmp_db.execute("UPDATE tickets SET stage = 'needs_success' WHERE id = ?", (proposal_id,))
+    tmp_db.execute("UPDATE tickets SET ticket_status = 'errored' WHERE id = ?", (note_id,))
 
     for needle, expected in (
         ("title needle", title_id),
@@ -80,6 +72,7 @@ def test_ticket_summary_filters_search_and_bounds_before_selection(
         ("value needle", value_id),
         ("proposal needle", proposal_id),
         ("note needle", note_id),
+        ("archive needle", archive_id),
     ):
         page = tickets_views.list_ticket_summaries(
             tmp_db,
@@ -140,9 +133,7 @@ def test_ticket_summary_filters_search_and_bounds_before_selection(
     terminal_page = tickets_views.list_ticket_summaries(
         tmp_db,
         page_request=ListPageRequest(),
-        filters=TicketListFilters(
-            stages=("done",), include_terminal=True, search="needle"
-        ),
+        filters=TicketListFilters(stages=("done",), include_terminal=True, search="needle"),
         project_id=None,
         sprint_id=None,
         sprint_item_id=None,

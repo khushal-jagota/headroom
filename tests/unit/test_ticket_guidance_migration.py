@@ -10,7 +10,7 @@ import pytest
 from alembic import command
 
 from planner.core import db as db_module
-from planner.core.db import connect, create_schema
+from planner.core.db import connect
 
 
 def _parent(path: Path) -> None:
@@ -79,7 +79,7 @@ def test_cutover_preserves_both_note_sources_exactly_and_all_other_columns(tmp_p
     )
     before = dict(conn.execute("SELECT * FROM tickets WHERE id = 't_old'").fetchone())
     _insert(conn, "t_empty", {})
-    create_schema(conn)
+    _upgrade_legacy(conn)
     after = dict(conn.execute("SELECT * FROM tickets WHERE id = 't_old'").fetchone())
     assert after.pop("guidance") == (
         "## plan\n\n### user_note\n\n  same\n\n\n### notes\n\n  same\n"
@@ -99,7 +99,7 @@ def test_cutover_preserves_both_note_sources_exactly_and_all_other_columns(tmp_p
     assert conn.execute("SELECT guidance FROM tickets WHERE id = 't_empty'").fetchone()[0] == ""
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     # An already upgraded database is unchanged on startup.
-    create_schema(conn)
+    _upgrade_legacy(conn)
     assert (
         json.loads(conn.execute("SELECT fields FROM tickets WHERE id = 't_old'").fetchone()[0])
         == converted
@@ -115,7 +115,7 @@ def test_corrupt_later_row_keeps_earlier_content_and_parent_schema(tmp_path: Pat
     _insert(conn, "z_corrupt", {"plan": {"notes": 42}})
     before = [tuple(row) for row in conn.execute("SELECT * FROM tickets ORDER BY id")]
     with pytest.raises(ValueError, match="corrupt ticket guidance"):
-        create_schema(conn)
+        _upgrade_legacy(conn)
     assert [tuple(row) for row in conn.execute("SELECT * FROM tickets ORDER BY id")] == before
     assert "guidance" not in {row["name"] for row in conn.execute("PRAGMA table_info(tickets)")}
     assert (
@@ -123,3 +123,13 @@ def test_corrupt_later_row_keeps_earlier_content_and_parent_schema(tmp_path: Pat
         == "planning_day_direction"
     )
     conn.close()
+
+
+def _upgrade_legacy(conn: Connection) -> None:
+    path = conn.execute("PRAGMA database_list").fetchone()[2]
+    engine = db_module._migration_engine(str(path), 5000)
+    try:
+        with engine.begin() as connection:
+            command.upgrade(db_module._alembic_config(connection), "ticket_guidance")
+    finally:
+        engine.dispose()

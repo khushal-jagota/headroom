@@ -127,8 +127,8 @@ def test_probe_proposal_parks_on_registry_selected_field(
             f"/api/tickets/{tid}/propose", json={"body": "alpha body", "recap": "r"}
         )
         assert parked.status_code == 200, parked.json()
-        assert parked.json()["fields"]["alpha"]["proposal"]["body"] == "alpha body"
-        assert parked.json()["fields"]["beta"]["proposal"] is None
+        assert parked.json()["pending_proposal"]["body"] == "alpha body"
+        assert parked.json()["pending_proposal"]["field"] == "alpha"
 
 
 def test_ticket_note_routes_make_replace_and_append_explicit(app_db: AppDb) -> None:
@@ -157,9 +157,8 @@ def test_ticket_note_routes_make_replace_and_append_explicit(app_db: AppDb) -> N
         assert appended_after_clear.json()["guidance"] == "new guidance"
 
 
-def test_probe_accepts_its_own_state_via_direct_state(app_db: AppDb, probe_installed: None) -> None:
-    # /stage must stop rejecting probe stages: advancing directly to needs_beta from
-    # needs_alpha is a valid probe stage jump (kickoff first settled so it's non-kickoff).
+def test_arbitrary_stage_jump_route_is_removed(app_db: AppDb, probe_installed: None) -> None:
+    # Even declared worker stages have no arbitrary transition route.
     app, _db = app_db
     with TestClient(app) as client:
         tid = _create(client, "probe")
@@ -167,11 +166,10 @@ def test_probe_accepts_its_own_state_via_direct_state(app_db: AppDb, probe_insta
             f"/api/tickets/{tid}/accept/kickoff",
             json={"next_ceiling": "done", "at_cap": "propose"},
         )
-        jumped = client.post(
-            f"/api/tickets/{tid}/stage", json={"to_stage": "needs_beta"}
-        )
-        assert jumped.status_code == 200, jumped.json()
-        assert jumped.json()["stage"] == "needs_beta"
+        jumped = client.post(f"/api/tickets/{tid}/stage", json={"to_stage": "needs_beta"})
+        assert jumped.status_code == 404, jumped.json()
+        arbitrary = client.post(f"/api/tickets/{tid}/propose/beta", json={"body": "skip ahead"})
+        assert arbitrary.status_code == 404, arbitrary.json()
 
 
 # --- the ?stage= filter decision -----------------------------------------------
@@ -210,7 +208,8 @@ def test_guidance_round_trip_validation_and_retired_field_routes(app_db: AppDb) 
         saved = client.put(path, json={"body": original})
         assert saved.status_code == 200
         assert saved.json()["guidance"] == original
-        assert all(set(slot) == {"value", "proposal"} for slot in saved.json()["fields"].values())
+        assert saved.json()["field_values"] == {}
+        assert saved.json()["pending_proposal"]["field"] == "kickoff"
         for body in (
             {},
             {"body": None},

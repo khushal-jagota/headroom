@@ -7,7 +7,9 @@ Single-record reads use one grammar. With no part list, a read returns an identi
 state header plus a manifest. The manifest lists every authored part in stable order,
 including empty parts. It reports the Unicode character count for
 each part. Pass one optional comma-separated positional list to expand only those parts.
-Each expanded part contains `value` and `proposal`:
+Each expanded part contains `value` and `proposal`. Ticket field parts contain saved
+values; the separate `proposal` part contains the one current draft and `archive` contains
+the Historical record:
 
 ```sh
 panels ticket show t_example
@@ -17,7 +19,7 @@ panels sprint item show si_example body
 panels day show 2026-08-10 focus,watchout
 panels day show --date 2026-08-10 focus
 panels project show project_panels summary
-panels worker my-ticket plan,implementation
+panels worker my-ticket plan,implementation,proposal
 ```
 
 The same projection serves text and JSON. An unknown or duplicate part name fails and
@@ -126,7 +128,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   filter types use AND, and exclusions apply last. A terminal `--stage` also requires
   `--include-terminal`. An unknown Stage produces no matches.
   `--search` performs a case-insensitive substring match across the title, recap, field
-  values, proposal bodies, and Ticket guidance. Search keeps stable Ticket order and combines
+  values, the pending proposal, Ticket guidance, and the Historical record. Search keeps stable Ticket order and combines
   with placement filters and page controls. Results include Ticket state, placement, and
   a short recap preview. Search does not rank matches or return snippets.
   `ticket create` uses Today and the current Sprint when placement is omitted.

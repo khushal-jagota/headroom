@@ -73,9 +73,11 @@ def _passed_ticket(db_path: Path) -> str:
             now=0,
         )
         file_current_proposal_with_recap(
-            conn, ticket.id, body="success v1", recap="r", actor="agent", now=0)
+            conn, ticket.id, body="success v1", recap="r", actor="agent", now=0
+        )
         file_current_proposal_with_recap(
-            conn, ticket.id, body="approach v1", recap="r", actor="agent", now=0)
+            conn, ticket.id, body="approach v1", recap="r", actor="agent", now=0
+        )
     finally:
         conn.close()
     return ticket.id
@@ -85,9 +87,7 @@ def test_put_value_human_edits_settled_field(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _passed_ticket(db_path)
     with TestClient(app) as client:
-        response = client.put(
-            f"/api/tickets/{tid}/value/success", json={"body": "edited success"}
-        )
+        response = client.put(f"/api/tickets/{tid}/value/success", json={"body": "edited success"})
     assert response.status_code == 200, response.json()
     body = response.json()
     assert body["field_values"]["success"] == "edited success"
@@ -101,7 +101,8 @@ def test_put_proposal_agent_edits_pending_proposal_in_place(tmp_path: Path) -> N
     conn = connect(str(db_path))
     try:
         ticket = file_current_proposal_with_recap(
-            conn, tid, body="plan draft", recap="r", actor="original-worker", now=23)
+            conn, tid, body="plan draft", recap="r", actor="original-worker", now=23
+        )
         original = ticket.pending_proposal
         assert original is not None
     finally:

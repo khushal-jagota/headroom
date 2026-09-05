@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from tests.support.ticket_progress import advance_ticket
 
 from planner.core.contracts import LinkKind, Priority
 from planner.core.db import connect, create_schema
@@ -212,13 +213,8 @@ def test_scope_permission_uses_the_ticket_worker_type_definition(
     try:
         ticket = _ticket(conn, worker_type=worker_type, ceiling=ceiling, at_cap=at_cap)
         if worker_type == "new_worker":
-            tickets_data.file_proposal(
-                conn,
-                ticket.id,
-                field="understanding",
-                body="understanding",
-                actor="agent",
-                now=3,
+            tickets_data.file_current_proposal_with_recap(
+                conn, ticket.id, body="understanding", actor="agent", now=3, recap="Current work"
             )
             ticket = tickets_data.accept_proposal(
                 conn,
@@ -248,7 +244,7 @@ def test_a_completing_blocker_frees_its_target(tmp_path: Path, settled_stage: st
         assert not _ready(conn, target)
 
         if settled_stage == "done":
-            tickets_data.set_stage(conn, blocker.id, new_stage="done", actor="human", now=5)
+            advance_ticket(conn, blocker.id, new_stage="done", actor="human", now=5)
         else:
             tickets_data.drop_ticket(conn, blocker.id, actor="human", now=5)
 
@@ -285,7 +281,7 @@ def test_a_ready_ticket_names_no_blocker(tmp_path: Path) -> None:
 
 
 def _to_closeout(conn: sqlite3.Connection, ticket_id: str) -> None:
-    tickets_data.set_stage(conn, ticket_id, new_stage="needs_closeout", actor="human", now=5)
+    advance_ticket(conn, ticket_id, new_stage="needs_closeout", actor="human", now=5)
 
 
 @pytest.mark.parametrize(

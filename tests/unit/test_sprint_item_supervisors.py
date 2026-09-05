@@ -25,8 +25,10 @@ from planner.runtime import conversation_start
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
 from planner.sprints import supervisor_service
+from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
+from planner.worker_context import data as context_data
 
 
 def _app(tmp_path: Path, *, fake_now: str | None = None) -> tuple[FastAPI, Path]:
@@ -74,8 +76,8 @@ def _park_a_proposal(client: TestClient, item_id: str) -> dict[str, Any]:
     )
     assert kickoff.status_code == 200, kickoff.text
     proposed = client.post(
-        f"/api/tickets/{ticket_id}/propose/success",
-        json={"body": "The result is verified."},
+        f"/api/tickets/{ticket_id}/propose",
+        json={"body": "The result is verified.", "recap": "Ready for review"},
         headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
     )
     assert proposed.status_code == 200, proposed.text
@@ -187,9 +189,7 @@ def test_supervisor_context_and_history_use_only_the_current_child_conversation(
             unsubscribe()
 
     assert context.status_code == 200, context.text
-    assert context.json()["triggering_worker_message"]["payload"]["text"] == (
-        "Exact Worker update"
-    )
+    assert context.json()["triggering_worker_message"]["payload"]["text"] == ("Exact Worker update")
     assert context.json()["conversation_id"] == conversation_id
     assert context_without_trigger.json()["triggering_worker_message"] is None
     assert quiet_context.status_code == 200, quiet_context.text
@@ -230,9 +230,7 @@ def test_ticket_context_serializes_a_concurrent_child_move(
                 moving.commit()
             move_finished.set()
 
-        def ticket_detail_during_move(
-            conn: Any, ticket_id: str, now: int
-        ) -> dict[str, Any]:
+        def ticket_detail_during_move(conn: Any, ticket_id: str, now: int) -> dict[str, Any]:
             nonlocal move_thread
             move_thread = threading.Thread(target=move_child)
             move_thread.start()
@@ -320,9 +318,7 @@ def test_history_serializes_a_concurrent_conversation_reset(
             assert reset_finished.wait(1)
             return ticket_result
 
-        monkeypatch.setattr(
-            supervisor_service, "require_current_child", require_child_during_reset
-        )
+        monkeypatch.setattr(supervisor_service, "require_current_child", require_child_during_reset)
         history = client.get(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/history",
             headers=_supervisor_headers(str(item["id"])),
@@ -335,9 +331,7 @@ def test_history_serializes_a_concurrent_conversation_reset(
     assert history.json()["conversation_id"] == conversation_id
     assert history.json()["events"][0]["payload"]["text"] == "History before reset"
     with connect(str(db_path)) as conn:
-        assert tickets_data.read_ticket(conn, str(ticket["id"])).conversation_id == (
-            replacement_id
-        )
+        assert tickets_data.read_ticket(conn, str(ticket["id"])).conversation_id == (replacement_id)
 
 
 def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
@@ -382,9 +376,9 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
     assert sent.json()["sender"] == item["supervisor"]["agent_key"]
     for field in ("stage", "ceiling", "at_cap", "ticket_status", "day_ids"):
         assert after[field] == before[field]
-    write = cast(
-        InMemoryConversationSystem, app.state.conversation_system
-    ).backend_prompt_writes(conversation_id)[0]
+    write = cast(InMemoryConversationSystem, app.state.conversation_system).backend_prompt_writes(
+        conversation_id
+    )[0]
     assert write.sender_label == item["supervisor"]["agent_key"]
     assert write.text == "Check the acceptance evidence."
 
@@ -411,43 +405,94 @@ def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> Non
     assert cross.json()["error"]["code"] == "agent_forbidden"
     assert approved.status_code == 200, approved.text
     assert approved.json()["stage"] == "needs_approach"
-    assert approved.json()["fields"]["success"]["value"] == "The result is verified."
+    assert approved.json()["field_values"].get("success") == "The result is verified."
 
 
-def test_supervisor_rejection_delivers_before_it_mutates(tmp_path: Path) -> None:
+@pytest.mark.parametrize("outcome", ["refused", "delivered", "superseded"])
+def test_supervisor_rejection_delivers_before_it_mutates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
     app, db_path = _app(tmp_path)
     conversation_id = "conv-supervisor-reject"
     with TestClient(app) as client:
         item = _create_item(client)
+        other = _create_item(client, "Other")
         ticket = _park_a_proposal(client, str(item["id"]))
         with connect(str(db_path)) as conn:
             conn.execute(
                 "UPDATE tickets SET conversation_id = ? WHERE id = ?",
                 (conversation_id, ticket["id"]),
             )
+            context_data.set_context(
+                conn, str(ticket["id"]), "ticket_changed", "Read exact guidance."
+            )
             conn.commit()
         asyncio.run(
             app.state.conversation_system.start_conversation(
-                ConversationStartRequest(
-                    conversation_id=conversation_id,
-                    model="test-model",
-                )
+                ConversationStartRequest(conversation_id=conversation_id, model="test-model")
             )
         )
         system = cast(InMemoryConversationSystem, app.state.conversation_system)
-        system.arm_backend_write_failure(conversation_id)
+        path = f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/reject"
+        cross = client.post(
+            path,
+            json={"message": "Not your Ticket."},
+            headers=_supervisor_headers(str(other["id"])),
+        )
+        assert cross.status_code == 400
+        assert cross.json()["error"]["code"] == "agent_forbidden"
+        assert system.backend_prompt_writes(conversation_id) == ()
+        if outcome == "refused":
+            system.arm_backend_write_failure(conversation_id)
+        original_send = conversation_start.send_to_ticket_conversation
+
+        async def send_then_replace(
+            *args: Any, **kwargs: Any
+        ) -> conversation_start.DeliveredMessage:
+            result = await original_send(*args, **kwargs)
+            if outcome == "superseded":
+                with connect(str(db_path)) as conn:
+                    tickets_data.edit_pending_proposal(
+                        conn,
+                        str(ticket["id"]),
+                        field="success",
+                        new_body="A newer pending draft",
+                        actor="human",
+                        now=5,
+                    )
+            return result
+
+        monkeypatch.setattr(tickets_actions, "send_to_ticket_conversation", send_then_replace)
         rejected = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/reject",
+            path,
             json={"message": "State the verification evidence."},
             headers=_supervisor_headers(str(item["id"])),
         )
 
-    assert rejected.status_code == 503
-    assert rejected.json()["error"]["code"] == "gateway_offline"
     with connect(str(db_path)) as conn:
-        unchanged = tickets_data.read_ticket(conn, str(ticket["id"]))
-    assert unchanged.ticket_status.value == "awaiting_approval"
-    assert unchanged.fields.slots["success"].proposal is not None
+        after = tickets_data.read_ticket(conn, str(ticket["id"]))
+        pending_context = context_data.snapshot(conn, str(ticket["id"])).items
+    if outcome == "refused":
+        assert rejected.status_code == 503
+        assert rejected.json()["error"]["code"] == "gateway_offline"
+        assert after.ticket_status.value == "awaiting_approval"
+        assert after.pending_proposal is not None
+        assert any(item.text == "Read exact guidance." for item in pending_context)
+    else:
+        write = system.backend_prompt_writes(conversation_id)[0]
+        assert "State the verification evidence." in write.text
+        assert "Read exact guidance." in write.text
+        assert all(item.text != "Read exact guidance." for item in pending_context)
+        if outcome == "superseded":
+            assert rejected.status_code == 400
+            assert "proposal changed" in rejected.json()["error"]["message"]
+            assert after.pending_proposal is not None
+            assert after.pending_proposal.body == "A newer pending draft"
+            assert after.ticket_status.value == "awaiting_approval"
+        else:
+            assert rejected.status_code == 200, rejected.text
+            assert after.pending_proposal is None
+            assert after.ticket_status.value == "agent"
 
 
 def test_first_message_creates_the_conversation_and_reset_preserves_history(
@@ -604,7 +649,7 @@ def test_supervisor_creates_and_approves_a_ticket_under_its_own_item(tmp_path: P
     assert created.json()["ticket_status"] == "awaiting_approval"
     assert approved.status_code == 200, approved.text
     assert approved.json()["stage"] == "needs_success"
-    assert approved.json()["fields"]["kickoff"]["value"] == "Do the work."
+    assert approved.json()["field_values"].get("kickoff") == "Do the work."
 
 
 def _child_ticket(client: TestClient, item_id: str, title: str = "Child of the Item") -> str:

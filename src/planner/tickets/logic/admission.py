@@ -66,6 +66,12 @@ def check_agent_proposal(
             "ticket stage has no proposal field",
             {"stage": stage},
         )
+    if field != gating:
+        raise PlannerError(
+            ErrorCode.validation,
+            "agents may propose only the current gating field",
+            {"field": field, "gating_field": gating, "stage": stage},
+        )
     if not machine.at_or_beyond_ceiling(
         stage,
         ceiling,
@@ -82,12 +88,6 @@ def check_agent_proposal(
                 "ceiling": ceiling,
                 "at_cap": "stop",
             },
-        )
-    if field != gating:
-        raise PlannerError(
-            ErrorCode.validation,
-            "at the ceiling agents may propose only the current gating field",
-            {"field": field, "gating_field": gating, "stage": stage},
         )
 
 

@@ -97,9 +97,7 @@ def cli_app(
                 env["PLAN_TICKET_ID"] = ticket_id
             if actor is not None:
                 env["PLAN_ACTOR"] = actor
-            result = CliRunner().invoke(
-                cli_main, [*args, "--json"], input=stdin, env=env
-            )
+            result = CliRunner().invoke(cli_main, [*args, "--json"], input=stdin, env=env)
             assert result.exit_code == 0, result.output
             return cast(JsonObject, json.loads(result.stdout))
 
@@ -172,10 +170,7 @@ def test_day_cli_round_trips_midday_reconciliation(
     )
 
     assert updated["midday_reconciliation"] == "The morning bet still holds."
-    assert (
-        shown["parts"]["midday_reconciliation"]["value"]
-        == "The morning bet still holds."
-    )
+    assert shown["parts"]["midday_reconciliation"]["value"] == "The morning bet still holds."
 
 
 def test_record_reads_share_manifests_selection_and_identity(
@@ -293,9 +288,7 @@ def test_record_reads_share_manifests_selection_and_identity(
     )
     assert invalid.exit_code == 1
     error = json.loads(invalid.stderr)["error"]
-    assert error["message"] == (
-        "unknown part names: missing; valid part names: summary"
-    )
+    assert error["message"] == ("unknown part names: missing; valid part names: summary")
 
 
 def test_planning_worker_cli_claims_authorize_day_midday_and_sprint_writes(
@@ -376,10 +369,7 @@ def test_planning_worker_cli_claims_authorize_day_midday_and_sprint_writes(
 
     assert day["focus"] == "Ship the planning boundary."
     assert midday["midday_reconciliation"] == "The morning bet still holds."
-    assert (
-        sprint_readback["parts"]["primary_bet"]["value"]
-        == "Use one canonical sprint."
-    )
+    assert sprint_readback["parts"]["primary_bet"]["value"] == "Use one canonical sprint."
 
 
 def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
@@ -543,9 +533,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
     )["id"]
     created = api.get(server, f"/api/tickets/{tid}")
     assert created["stage"] == "needs_kickoff"
-    assert (
-        created["fields"]["kickoff"]["proposal"]["body"] == "intake context from user"
-    )
+    assert created["pending_proposal"]["body"] == "intake context from user"
 
     accepted_kickoff = cli(
         server,
@@ -563,7 +551,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
     assert accepted_kickoff["stage"] == "needs_success"
     assert accepted_kickoff["ceiling"] == "needs_success"
     assert accepted_kickoff["at_cap"] == "propose"
-    assert accepted_kickoff["fields"]["kickoff"]["value"] == "updated intake"
+    assert accepted_kickoff["field_values"].get("kickoff") == "updated intake"
 
     cli(
         server,
@@ -574,11 +562,9 @@ def test_ticket_approval_copy_and_worker_note_shape(
         ticket_id=tid,
         stdin="success body",
     )
-    approved = cli(
-        server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose"
-    )
+    approved = cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose")
     assert approved["stage"] == "needs_approach"
-    assert approved["fields"]["success"]["value"] == "success body"
+    assert approved["field_values"].get("success") == "success body"
 
     cli(
         server,
@@ -631,7 +617,6 @@ def test_ticket_approval_copy_and_worker_note_shape(
     assert "updated intake" in copied["text"]
     assert "replaced approach note" in copied["text"]
 
-
     # `trouble` only accepts writes during an active claimed worker step. The refusal
     # assertion above covers its argument parsing. Writer tests cover the active path.
 
@@ -677,9 +662,7 @@ def test_sprint_item_ticket_commands_move_atomically_and_to_backlog(
     assert detail["sprint_item_id"] == item["id"]
     assert detail["effective_sprint_id"] == sprint["id"]
 
-    renamed = cli(
-        server, "sprint", "set", "current", "name", "--value", "Renamed CLI sprint"
-    )
+    renamed = cli(server, "sprint", "set", "current", "name", "--value", "Renamed CLI sprint")
     assert renamed["id"] == sprint["id"]
     assert renamed["name"] == "Renamed CLI sprint"
 

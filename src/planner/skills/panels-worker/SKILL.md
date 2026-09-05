@@ -40,10 +40,10 @@ ownership. Do not treat Take over, Release, or an owner change as a scope change
 Everything runs through the `panels` command — `panels --help` for full usage. The tools you use:
 
 - **`panels worker my-ticket [part,part]`** — read your Ticket header and part
-  manifest, or expand named fields, `recap`, and `guidance`. The header says who you are, the current
+  manifest, or expand named saved fields, `proposal`, `recap`, `guidance`, and `archive`. The header says who you are, the current
   Stage, effective ownership, and scope.
 - **`panels ticket show <id> [part,part]`** — read another Ticket's header and part
-  manifest, or expand named fields, `recap`, and `guidance`.
+  manifest, or expand named saved fields, `proposal`, `recap`, `guidance`, and `archive`.
 - **`panels ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** —
   set or clear a Stage ownership override when the user directly instructs that change.
 - **`panels worker propose <id> --recap "…"`**, piping the proposal text on stdin — propose the ticket's current gated field; the body arrives on stdin only, and every proposal must also set a recap with `--recap TEXT`.
