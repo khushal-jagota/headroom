@@ -272,15 +272,13 @@
     detail: TicketDetail,
     changes: Partial<Pick<TicketDetail, "project_id" | "sprint_id" | "sprint_item_id">>
   ): Promise<void> {
-    const projectId = changes.project_id !== undefined ? changes.project_id : detail.project_id ?? null;
-    const sprintId = changes.sprint_id !== undefined ? changes.sprint_id : detail.sprint_id ?? null;
-    const requestedItemId =
-      changes.sprint_item_id !== undefined ? changes.sprint_item_id : detail.sprint_item_id ?? null;
-    const requestedItem = (sprintItems.data?.items || []).find((item) => item.id === requestedItemId);
-    const sprintItemId = requestedItem?.project_id === projectId ? requestedItem.id : null;
+    const placement = { ...changes };
+    if (changes.project_id !== undefined && changes.project_id !== (detail.project_id ?? null)) {
+      placement.sprint_item_id = null;
+    }
     headerError = null;
     try {
-      await patch({ project_id: projectId, sprint_id: sprintId, sprint_item_id: sprintItemId });
+      await patch(placement);
     } catch (err) {
       headerError = err;
     }
@@ -518,8 +516,7 @@
                   aria-label={detail.project_id ? "Ticket project" : "Add ticket project"}
                   value={detail.project_id || ""}
                   onchange={(event) => void patchPlacement(detail, {
-                    project_id: event.currentTarget.value || null,
-                    sprint_item_id: null
+                    project_id: event.currentTarget.value || null
                   })}
                 >
                   {#each projectOptions as option}

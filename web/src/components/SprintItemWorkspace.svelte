@@ -220,7 +220,7 @@
 
           <details class="sprint-workspace-section" data-workspace-section="remaining">
             <summary>
-              <span class="sprint-workspace-section-label">Remaining Tickets</span>
+              <span class="sprint-workspace-section-label">Other Tickets</span>
               <span class="sprint-workspace-count">
                 {remainingGroups.reduce((sum, group) => sum + group.tickets.length, 0)}
               </span>

@@ -17,5 +17,29 @@ prove unknown JSON metadata, agent/conversation references, receipts and rollbac
 No live rows were written. Private exports/fixtures remain gitignored and will be removed
 with the task's local worktree at closeout.
 
-The upgrade and preservation comparison are pending until both feature migrations are
-integrated. Do not describe this preparation as a passed migration test.
+The combined upgrade and preservation comparison passed after both feature migrations
+were integrated. The check copied the legacy fixture to a fresh local database, ran the
+ordinary `db.create_schema` migration route, and established:
+
+- all 778 Ticket, 78 Outcome, seven Sprint, and six schedule identities survived;
+- 4,069 non-null saved values remained exact in the flat value map or, where the new
+  model cannot keep them current, in the historical record;
+- all 39 old proposals were accounted for: 36 current-gate proposals retained their
+  exact field, body, author, and timestamp, while three off-stage proposals were
+  preserved in history with an explicit unapproved label;
+- the 75 expected Sprint commitments exactly matched the old non-null Item-to-Sprint
+  placements, while Outcome identity and every other exported Item column stayed exact;
+- Sprint identity, dates, primary bet, timestamps, and the source text consolidated
+  into each new document were preserved;
+- schedules matched the explicit migration mapping, and exported agent rows stayed
+  byte-for-byte equal;
+- `PRAGMA foreign_key_check` returned no rows, `PRAGMA integrity_check` returned `ok`,
+  and a second `db.create_schema` call left the complete database dump unchanged.
+
+The machine-readable result is
+`data/simplification-deeper/combined-rehearsal-result.json`; the private fixture,
+upgraded copy, and checking script remain gitignored. This is a passed rehearsal of
+the API-visible projection only. It is not a raw production-backup rehearsal and does
+not cover the omitted unknown field keys, status bookkeeping, occurrence receipts, or
+supervisor conversation links. The populated synthetic migration tests remain the
+evidence for those raw database states, relationships, and rollback behavior.

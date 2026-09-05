@@ -37,10 +37,12 @@ let review = $state(false);
 import json, sys
 from playwright.sync_api import sync_playwright, expect
 
-ticket = dict(id='t_guidance', title='Guidance ticket', worker_type='coding', employee_backend='codex', employee_launch_model=None, employee_launch_reasoning_effort=None, employee_configuration_editable=False, stage='needs_success', ceiling='needs_success', at_cap='propose', suggested_next_ceiling='done', priority='P2', resolved_priority_anchors={}, ticket_status='awaiting_approval', backend_error=None, stage_ownership_overrides={}, default_stage_ownership_mode='worker', effective_stage_ownership_mode='worker', conversation_id=None, conversation_history=[], day_ids=[], blocked=False, blocker_summary={'blocked_by': [], 'is_blocked': False}, recap='Orientation', guidance='Original **constraint**', verdict=None, trouble_notes=[], field_values={'kickoff': 'Request'}, pending_proposal={'field': 'success', 'body': 'A result', 'proposed_by': 'agent', 'created_at': 1}, archived_field_content='Old **unapproved** draft')
+ticket = dict(project_id='project_one', sprint_id='sp_old', sprint_item_id='outcome_kept', id='t_guidance', title='Guidance ticket', worker_type='coding', employee_backend='codex', employee_launch_model=None, employee_launch_reasoning_effort=None, employee_configuration_editable=False, stage='needs_success', ceiling='needs_success', at_cap='propose', suggested_next_ceiling='done', priority='P2', resolved_priority_anchors={}, ticket_status='awaiting_approval', backend_error=None, stage_ownership_overrides={}, default_stage_ownership_mode='worker', effective_stage_ownership_mode='worker', conversation_id=None, conversation_history=[], day_ids=[], blocked=False, blocker_summary={'blocked_by': [], 'is_blocked': False}, recap='Orientation', guidance='Original **constraint**', verdict=None, trouble_notes=[], field_values={'kickoff': 'Request'}, pending_proposal={'field': 'success', 'body': 'A result', 'proposed_by': 'agent', 'created_at': 1}, archived_field_content='Old **unapproved** draft')
 stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, default_ownership_mode='worker' if f else None) for s,l,f in [('needs_kickoff','Kickoff','kickoff'),('needs_success','Success','success'),('done','Done',None)]]
 manifest = {'worker_types': [dict(worker_type='coding', label='Coding', stages=stages, dropped=dict(id='dropped', label='Dropped', gating_field=None, is_terminal=True, default_ownership_mode=None), advance={'needs_kickoff': 'needs_success', 'needs_success': 'done'}, ceiling_range=['needs_kickoff','needs_success','done'], default_ceiling='needs_success', worker_profile_id='panels-worker-coding', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'kickoff','label':'Kickoff'}, {'id':'success','label':'Success'}])]}
 writes=[]
+placement_writes=[]
+held_items=[]
 def respond(route):
     path=route.request.url.split('/api/',1)[1]
     if path == 'tickets/t_guidance/guidance':
@@ -64,10 +66,19 @@ def respond(route):
         writes.append({'value': body})
         ticket['field_values']['kickoff']=body['body']
         result=ticket
-    elif path == 'tickets/t_guidance': result=ticket
+    elif path == 'tickets/t_guidance':
+        if route.request.method == 'PATCH':
+            body=route.request.post_data_json
+            placement_writes.append(body)
+            ticket.update(body)
+        result=ticket
     elif path == 'worker-types': result=manifest
     elif path == 'conversations/backends': result={'backends': []}
-    elif path == 'projects': result={'projects': []}
+    elif path == 'projects': result={'projects': [dict(id='project_one', name='One', priority='P2')]}
+    elif path == 'items':
+        held_items.append(route)
+        return
+    elif path == 'sprints': result={'sprints': [dict(id='sp_old', name='Old sprint'), dict(id='sp_new', name='Next sprint')]}
     elif path.startswith('sprint-items'): result={'items': []}
     else: result={}
     route.fulfill(status=200, content_type='application/json', body=json.dumps(result))
@@ -79,6 +90,16 @@ with sync_playwright() as p:
     page.goto(sys.argv[1])
     guidance=page.locator('[data-ticket-guidance]')
     expect(guidance).to_have_count(1)
+    assert held_items
+    with page.expect_response(lambda response: response.url.endswith('/api/tickets/t_guidance') and response.request.method == 'PATCH'):
+        page.get_by_label('Ticket Sprint', exact=True).select_option('sp_new')
+    assert placement_writes == [{'sprint_id': 'sp_new'}]
+    assert ticket['sprint_item_id'] == 'outcome_kept'
+    held_items.pop().fulfill(status=500, content_type='application/json', body='{"error":{"message":"Items unavailable"}}')
+    with page.expect_response(lambda response: response.url.endswith('/api/tickets/t_guidance') and response.request.method == 'PATCH'):
+        page.get_by_label('Ticket Sprint', exact=True).select_option('')
+    assert placement_writes == [{'sprint_id': 'sp_new'}, {'sprint_id': None}]
+    assert ticket['project_id'] == 'project_one' and ticket['sprint_item_id'] == 'outcome_kept'
     guidance.locator('summary').click()
     expect(guidance).to_contain_text('Original constraint')
     history=page.locator('[data-ticket-history]')

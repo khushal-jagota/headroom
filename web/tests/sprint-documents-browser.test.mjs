@@ -46,6 +46,7 @@ try {
     if (path === "/api/sprints/sp_test/tracking") return json({
       sprint, planning_date: "2026-09-05", outcome_groups: [{ outcome, committed: true, tickets: [
         { id: "t_one", title: "Move me", stage: "needs_plan", priority: "P1", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false },
+        { id: "t_dropped", title: "Abandoned work", stage: "dropped", priority: "P2", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false },
         { id: "t_done", title: "Leave done", stage: "done", priority: "P2", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false }
       ] }], unclassified_tickets: []
     });
@@ -128,6 +129,8 @@ with sync_playwright() as playwright:
         assert page.locator("a.sprint-docs-link").get_attribute("href") == "#/sprint/documents?sprint=sp_test"
         outcome = page.locator('[data-outcome-id="outcome_existing"]')
         assert not outcome.locator('[data-sprint-ticket-id]').first.is_visible()
+        expect(outcome.locator('details.sprint-outcome-tickets > summary')).to_have_text("2 Tickets")
+        assert outcome.locator('[data-sprint-ticket-id="t_dropped"]').count() == 0
         outcome.locator('details.sprint-outcome-tickets > summary').click()
         assert outcome.locator('[data-sprint-ticket-id]:visible').count() == 2
         outcome.locator('details.sprint-outcome-menu > summary').click()

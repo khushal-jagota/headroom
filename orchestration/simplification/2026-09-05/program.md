@@ -56,6 +56,29 @@ and Review state in a separate 3D rendering without owning useful unique data.
   from its first attempt. Full output is in `verify.log`. No full run occurred
   during the implementation chunks.
 
+## Second-pass status
+
+The deeper simplification is implemented in the isolated
+`panels-simplification-deeper` worktree. Per-field proposal slots are replaced by flat
+saved values plus one current proposal. Durable Outcomes are separated from explicit
+Sprint commitments and Ticket scheduling, with reviewed carry and placement behavior
+and the Outcome interface follow-through. The three concrete UI findings from the
+combined review are repaired in the affected routes and their existing browser
+harnesses.
+
+The independent combined implementation review is approved with no unresolved
+findings. The combined migration rehearsal passed on the read-only API projection;
+`15-api-migration-rehearsal.md` records its exact preservation results and the raw
+production facts that the API fixture cannot establish. The final comparable inventory
+is 1,155 collected cases, 53.9% below the 2,505 baseline, with E2E at its 19-case
+ceiling. The post-inventory UI repairs expanded only existing standalone `.mjs`
+harnesses and did not change that count.
+
+The second pass is not closed out. Its single final `./verify`, incorporation of
+current `staging`, any resulting repair and verification, advancement and exact push
+of `origin/staging`, remote-ref confirmation, rolling-PR check, and task-owned cleanup
+remain pending with root.
+
 ## Rehearsal on visible live records
 
 Ran both migrations in sequence on a private temporary database seeded from the

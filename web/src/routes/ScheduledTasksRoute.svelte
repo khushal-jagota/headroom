@@ -96,7 +96,9 @@
   }
 
   function setProject(event: Event): void {
-    draft.project_id = selectValue(event) || null;
+    const projectId = selectValue(event) || null;
+    if (projectId !== draft.project_id) draft.sprint_item_id = null;
+    draft.project_id = projectId;
   }
 
   function setPlacement(event: Event): void {

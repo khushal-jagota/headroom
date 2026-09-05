@@ -266,6 +266,7 @@
                   <div class="sprint-project-items">
                     {#each group.outcomes as outcomeGroup (outcomeGroup.outcome.id)}
                       {@const outcome = outcomeGroup.outcome}
+                      {@const visibleTickets = outcomeGroup.tickets.filter((ticket) => ticket.stage !== "dropped")}
                       <div class="sprint-outcome-block" data-outcome-id={outcome.id} data-committed={outcomeGroup.committed}>
                         <a class="list-row sprint-item-row" href={`${sprintHref(sprint.id)}&item=${encodeURIComponent(outcome.id)}`}>
                           <PriorityTile priority={outcome.priority} /><span class="list-row-title">{outcome.title}</span>
@@ -275,7 +276,7 @@
                         {#if outcomeGroup.committed}
                           <details class="sprint-outcome-menu"><summary>Actions</summary><div><Button onclick={() => void removeOutcome(sprint.id, outcome.id)}>Remove from Sprint</Button><Button onclick={() => openCarry(outcomeGroup)}>Carry forward</Button></div></details>
                         {/if}
-                        {#if outcomeGroup.tickets.length}<details class="sprint-outcome-tickets"><summary>{outcomeGroup.tickets.length} Tickets</summary><div class="sprint-project-items">{@render ticketRows(outcomeGroup.tickets)}</div></details>{/if}
+                        {#if visibleTickets.length}<details class="sprint-outcome-tickets"><summary>{visibleTickets.length} Tickets</summary><div class="sprint-project-items">{@render ticketRows(visibleTickets)}</div></details>{/if}
                       </div>
                     {/each}
                   </div>
