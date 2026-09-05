@@ -5,7 +5,7 @@
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import { atCapLabel, fieldSlot, labelize, stageLabel } from "../lib/ui";
+  import { atCapLabel, labelize, stageLabel } from "../lib/ui";
   import {
     ceilingOptionsFor,
     fieldStageVisualStateFor,
@@ -31,6 +31,7 @@
   import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
+  import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import StageMark from "../components/StageMark.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
@@ -346,6 +347,13 @@
     });
   }
 
+  function saveProposal(field: string, body: string): Promise<unknown> {
+    return mutateJson(`/api/tickets/${stableId}/proposal`, {
+      method: "PUT",
+      body: { field, body }
+    });
+  }
+
   function saveVerdict(verdict: { rating: number | null; text: string | null }): Promise<unknown> {
     return mutateJson(`/api/tickets/${stableId}/verdict`, {
       method: "PUT",
@@ -442,7 +450,7 @@
   // always stay in the masthead instead of moving into a stage card.
   let kickoffCardShowsContextRow = $derived(
     gatingFieldFor(lc, ticket.data?.stage ?? "") === "kickoff" &&
-      Boolean(ticket.data?.fields.kickoff.proposal) &&
+      ticket.data?.pending_proposal?.field === "kickoff" &&
       Boolean(ticket.data?.employee_configuration_editable)
   );
 
@@ -694,11 +702,11 @@
                   </summary>
                   <div class="stage-fold-rows">
                     {#each settledFields as name}
-                      {@const slot = fieldSlot(detail, name)}
                       {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
                       <TicketStageSection
                         {name}
-                        {slot}
+                        value={detail.field_values[name] ?? ""}
+                        pendingProposal={detail.pending_proposal?.field === name ? detail.pending_proposal : null}
                         {stageState}
                         lifecycle={lc}
                         ticketStage={detail.stage}
@@ -714,6 +722,7 @@
                           ? kickoffContextRow
                           : undefined}
                         onAccept={(payload) => acceptField(name, payload)}
+                        onSaveProposal={(raw) => saveProposal(name, raw)}
                         onSaveValue={(raw) => saveValue(name, raw)}
                       />
                     {/each}
@@ -730,11 +739,11 @@
                 </details>
               {/if}
               {#each lc.fieldIds.filter((name) => !settledFields.includes(name)) as name}
-                {@const slot = fieldSlot(detail, name)}
                 {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
                 <TicketStageSection
                   {name}
-                  {slot}
+                  value={detail.field_values[name] ?? ""}
+                  pendingProposal={detail.pending_proposal?.field === name ? detail.pending_proposal : null}
                   {stageState}
                   lifecycle={lc}
                   ticketStage={detail.stage}
@@ -750,11 +759,17 @@
                     ? kickoffContextRow
                     : undefined}
                   onAccept={(payload) => acceptField(name, payload)}
+                  onSaveProposal={(raw) => saveProposal(name, raw)}
                   onSaveValue={(raw) => saveValue(name, raw)}
                 />
               {/each}
             {/if}
           </div>
+          {#if detail.archived_field_content}
+            <Disclosure title="Historical record" variant="support" defaultOpen={false} data-ticket-history>
+              <MarkdownBlock text={detail.archived_field_content} />
+            </Disclosure>
+          {/if}
         </div>
       </main>
       {#if shownFile}

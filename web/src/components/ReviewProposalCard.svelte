@@ -124,7 +124,7 @@
 
   function isStale(ticketDetail: TicketDetail): boolean {
     if (!acceptField) return true;
-    if (!ticketDetail.fields?.[acceptField]?.proposal) return true;
+    if (ticketDetail.pending_proposal?.field !== acceptField) return true;
     return gatingFieldFor(lc, String(ticketDetail.stage)) !== acceptField;
   }
 
@@ -178,9 +178,9 @@
 
   function saveProposal(raw: string): Promise<unknown> {
     if (!acceptField) throw new Error("Review decision is not a Ticket field");
-    return mutateJson(`/api/tickets/${ticketId}/value/${acceptField}`, {
+    return mutateJson(`/api/tickets/${ticketId}/proposal`, {
       method: "PUT",
-      body: { body: raw }
+      body: { field: acceptField, body: raw }
     });
   }
 
@@ -315,7 +315,8 @@
           <TicketStageSection
             variant="review"
             name={acceptField}
-            slot={ticketDetail.fields[acceptField]}
+            value={ticketDetail.field_values[acceptField] ?? ""}
+            pendingProposal={ticketDetail.pending_proposal}
             lifecycle={lc}
             ticketStage={ticketDetail.stage}
             ceiling={ticketDetail.ceiling}
@@ -323,7 +324,7 @@
             stageState={fieldStageVisualStateFor(lc, ticketDetail, acceptField)}
             approvalDisabled={acceptField === "kickoff" && priorityBusy}
             onAccept={(payload) => accept(payload)}
-            onSaveValue={saveProposal}
+            onSaveProposal={saveProposal}
           />
         {/if}
       </div>
