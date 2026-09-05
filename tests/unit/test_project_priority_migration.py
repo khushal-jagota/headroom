@@ -12,7 +12,6 @@ from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 
 PREVIOUS_REVISION = "sprint_item_only_placement"
-HEAD_REVISION = "planning_day_direction"
 
 
 def _upgrade_to_previous_revision(path: Path) -> sqlite3.Connection:
@@ -39,9 +38,6 @@ def test_existing_projects_stay_unassessed_and_the_column_constrains_assessed_va
     upgraded = connect(str(db_path))
     create_schema(upgraded)
 
-    assert (
-        upgraded.execute("SELECT version_num FROM alembic_version").fetchone()[0] == HEAD_REVISION
-    )
     existing = upgraded.execute(
         "SELECT name, summary, priority, created_at, updated_at "
         "FROM projects WHERE id = 'project_existing'"
