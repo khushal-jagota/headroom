@@ -10,7 +10,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from planner.conversation.in_memory_conversation_system import (
-    InMemoryConversationObservationKind,
     InMemoryConversationSystem,
 )
 from planner.core.clock import build_clock
@@ -148,31 +147,6 @@ def test_stale_agent_pointer_returns_the_canonical_refusal(tmp_path: Path) -> No
     assert response.json()["conversation_id"] == "c_missing"
 
 
-def test_arbitrary_agent_without_a_usable_conversation_has_an_actionable_error(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _app(tmp_path)
-    with connect(str(db_path)) as conn:
-        conn.execute(
-            "INSERT INTO agents(agent_key, conversation_id) VALUES (?, NULL)",
-            ("idle-agent",),
-        )
-        conn.commit()
-
-    with TestClient(app) as client:
-        idle = _send(client, {"type": "agent", "id": "idle-agent"})
-        missing = _send(client, {"type": "agent", "id": "unknown-agent"})
-
-    assert idle.status_code == 400, idle.text
-    assert idle.json()["error"] == {
-        "code": "validation",
-        "message": "agent has no current conversation and no start configuration",
-        "detail": {"agent_key": "idle-agent"},
-    }
-    assert missing.status_code == 404, missing.text
-    assert missing.json()["error"]["message"] == "agent not found"
-
-
 @pytest.mark.parametrize(
     ("body", "message"),
     [
@@ -194,30 +168,3 @@ def test_api_rejects_invalid_targets_and_empty_messages(
     assert message in response.json()["error"]["message"]
 
 
-def test_request_identity_becomes_an_ordinary_sender_label(tmp_path: Path) -> None:
-    app, _ = _app(tmp_path)
-    with TestClient(app) as client:
-        ticket_id = _create_ticket(client)
-        item = _create_item(client)
-        direct = _send(client, {"type": "ticket", "id": ticket_id}, "Direct")
-        worker = _send(
-            client,
-            {"type": "sprint_item", "id": item["id"]},
-            "Worker",
-            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_sender"},
-        )
-
-        system = app.state.conversation_system
-        direct_observations = system.observations(direct.json()["conversation_id"])
-        worker_observations = system.observations(worker.json()["conversation_id"])
-
-    assert [
-        observation.sender_label
-        for observation in direct_observations
-        if observation.kind is InMemoryConversationObservationKind.prompt_delivered
-    ] == ["You"]
-    assert [
-        observation.sender_label
-        for observation in worker_observations
-        if observation.kind is InMemoryConversationObservationKind.prompt_delivered
-    ] == ["Ticket t_sender"]

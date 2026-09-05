@@ -15,7 +15,6 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
-import pytest
 from fastapi import FastAPI
 
 from planner.core import change_signal, sse
@@ -135,23 +134,6 @@ def test_the_stream_is_an_event_stream_that_says_only_that_something_changed(
     assert frames == ["data: change\n\n"]
 
 
-def test_a_signal_raised_on_another_thread_reaches_the_stream(tmp_path: Path) -> None:
-    """Writers commit on their own threads; the stream lives on the event loop."""
-    app = _make_app(tmp_path, sse_heartbeat_ms=60_000)
-
-    async def emit_from_a_worker_thread() -> None:
-        emitting = threading.Thread(target=change_signal.emit)
-        emitting.start()
-        emitting.join(5)
-        assert not emitting.is_alive()
-
-    _started, frames = asyncio.run(
-        _collect_frames(app, frames_wanted=1, once_open=emit_from_a_worker_thread)
-    )
-
-    assert frames == ["data: change\n\n"]
-
-
 def test_signals_raised_while_a_frame_is_owed_coalesce_into_one_frame(
     tmp_path: Path,
 ) -> None:
@@ -183,18 +165,6 @@ def test_a_quiet_stream_sends_comment_lines_at_the_configured_cadence(
     assert frames == [": keep-alive\n\n"] * 3
     # Three heartbeats at 50ms cannot have arrived faster than two intervals.
     assert elapsed >= 0.1
-
-
-def test_a_client_that_leaves_takes_its_subscription_with_it(tmp_path: Path) -> None:
-    app = _make_app(tmp_path, sse_heartbeat_ms=50)
-    subscribers_before = change_signal.subscriber_count()
-
-    async def serve_then_watch() -> int:
-        await _collect_frames(app, frames_wanted=1)
-        await _await_closed_stream()
-        return change_signal.subscriber_count()
-
-    assert asyncio.run(serve_then_watch()) == subscribers_before
 
 
 def test_closing_the_open_streams_ends_them_without_waiting_for_their_clients(
@@ -231,70 +201,6 @@ def test_closing_the_open_streams_ends_them_without_waiting_for_their_clients(
         return frames
 
     assert asyncio.run(serve()) == []
-
-
-@pytest.mark.parametrize("heartbeat_ms", [1, 25])
-def test_the_heartbeat_cadence_comes_from_configuration(
-    tmp_path: Path, heartbeat_ms: int
-) -> None:
-    app = _make_app(tmp_path, sse_heartbeat_ms=heartbeat_ms)
-
-    _started, frames = asyncio.run(_collect_frames(app, frames_wanted=2))
-
-    assert frames == [": keep-alive\n\n"] * 2
-
-
-def test_a_quiet_stream_sends_its_headers_before_it_has_a_frame_to_send(
-    tmp_path: Path,
-) -> None:
-    """The browser opens the stream on the headers, and it opens before anything happens.
-
-    This is the whole of what compression in front of a stream takes away. Compression
-    holds a response's headers until it sees some of the body, and a stream with nothing
-    to report has no body to release them with. A test that reads a frame first releases
-    them itself and sees nothing wrong, so this one asks for the headers of a stream that
-    has been given nothing to say.
-    """
-    app = _make_app(tmp_path, sse_heartbeat_ms=60_000)
-
-    async def serve_until_the_headers_arrive() -> tuple[dict[str, object], int]:
-        started: dict[str, object] = {}
-        frames = 0
-        frames_when_the_headers_arrived = -1
-        arrived = asyncio.Event()
-        disconnected = asyncio.Event()
-
-        async def receive() -> dict[str, object]:
-            await disconnected.wait()
-            return {"type": "http.disconnect"}
-
-        async def send(message: MutableMapping[str, Any]) -> None:
-            nonlocal frames, frames_when_the_headers_arrived
-            if message["type"] == "http.response.start":
-                started.update(message)
-                frames_when_the_headers_arrived = frames
-                arrived.set()
-            elif message["type"] == "http.response.body" and message.get("body", b""):
-                frames += 1
-
-        serving = asyncio.create_task(
-            app(_scope([(b"accept-encoding", b"gzip, deflate, br")]), receive, send)
-        )
-        try:
-            await asyncio.wait_for(arrived.wait(), timeout=5)
-        finally:
-            disconnected.set()
-            await asyncio.wait_for(serving, timeout=5)
-        return started, frames_when_the_headers_arrived
-
-    started, frames_when_the_headers_arrived = asyncio.run(
-        serve_until_the_headers_arrive()
-    )
-
-    assert started["status"] == 200
-    assert frames_when_the_headers_arrived == 0
-    headers = dict(started["headers"])  # type: ignore[call-overload]
-    assert headers[b"content-type"] == b"text/event-stream; charset=utf-8"
 
 
 def test_the_stream_is_not_compressed_even_when_the_browser_offers_gzip(

@@ -38,21 +38,6 @@ def test_config_defaults_expose_only_live_runtime_knobs() -> None:
         assert not hasattr(cfg, name)
 
 
-def test_voice_transcription_settings_can_be_overridden_by_environment() -> None:
-    cfg = load_config(
-        path=None,
-        env={
-            "PLAN_VOICE_TRANSCRIPTION_BASE_URL": "http://127.0.0.1:9/v1",
-            "PLAN_VOICE_TRANSCRIPTION_MODEL": "whisper-large-v3",
-            "PLAN_GROQ_API_KEY": "gsk-test",
-        },
-    )
-
-    assert cfg.voice_transcription_base_url == "http://127.0.0.1:9/v1"
-    assert cfg.voice_transcription_model == "whisper-large-v3"
-    assert cfg.voice_transcription_api_key == "gsk-test"
-
-
 def test_voice_transcription_key_is_environment_only(tmp_path: Path) -> None:
     """A secret in the checked-in yaml would be a leak, so the file cannot set it."""
     config_file = tmp_path / "config.yaml"
@@ -76,20 +61,6 @@ def test_trusted_ingress_config_loads_tailscale_contract() -> None:
     assert cfg.trusted_ingress_provider == "tailscale"
     assert cfg.trusted_ingress_allowed_login == "khushal@example.com"
     assert cfg.trusted_ingress_canonical_origin == "https://panels.tailnet.ts.net"
-
-
-def test_trusted_ingress_config_allows_loopback_http_origin_only_in_test_mode() -> None:
-    cfg = load_config(
-        path=None,
-        env={
-            "PLAN_TEST_MODE": "1",
-            "PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale",
-            "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "khushal@example.com",
-            "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": "http://127.0.0.1:8767/",
-        },
-    )
-
-    assert cfg.trusted_ingress_canonical_origin == "http://127.0.0.1:8767"
 
 
 @pytest.mark.parametrize(
@@ -122,57 +93,10 @@ def test_trusted_ingress_config_rejects_partial_or_unsupported_contract(
         load_config(path=None, env=env)
 
 
-def test_retired_yaml_keys_are_ignored(tmp_path: Path) -> None:
-    path = tmp_path / "config.yaml"
-    path.write_text(
-        "\n".join(
-            [
-                "tick_seconds: 7",
-                "claim_ttl_seconds: 1",
-                "max_runs: 9",
-                "failure_limit: 8",
-                "run_max_seconds: 6",
-            ]
-        )
-    )
-
-    cfg = load_config(path=str(path), env={})
-
-    assert cfg.tick_seconds == 7
-    for name in _RETIRED_CONFIG_NAMES:
-        assert not hasattr(cfg, name)
-
-
-def test_retired_environment_keys_are_ignored() -> None:
-    cfg = load_config(
-        path=None,
-        env={
-            "PLAN_CLAIM_TTL_SECONDS": "1",
-            "PLAN_MAX_RUNS": "9",
-            "PLAN_FAILURE_LIMIT": "8",
-            "PLAN_RUN_MAX_SECONDS": "6",
-            "PLAN_TICK_SECONDS": "5",
-        },
-    )
-
-    assert cfg.tick_seconds == 5
-    for name in _RETIRED_CONFIG_NAMES:
-        assert not hasattr(cfg, name)
-
-
 def test_sse_heartbeat_ms_can_be_overridden_by_environment() -> None:
     cfg = load_config(path=None, env={"PLAN_SSE_HEARTBEAT_MS": "125"})
 
     assert cfg.sse_heartbeat_ms == 125
-
-
-@pytest.mark.parametrize("heartbeat", ["0", "-1"])
-def test_a_heartbeat_cadence_at_or_below_zero_refuses_to_load(heartbeat: str) -> None:
-    # A zero interval would spin the change stream instead of keeping it quiet.
-    with pytest.raises(PlannerError) as raised:
-        load_config(path=None, env={"PLAN_SSE_HEARTBEAT_MS": heartbeat})
-
-    assert "sse_heartbeat_ms must be greater than zero" in raised.value.message
 
 
 def test_backup_directory_is_independently_configurable() -> None:

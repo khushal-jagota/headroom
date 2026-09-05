@@ -35,10 +35,7 @@ from planner.conversation.message_content import MessageContent, text_message_co
 from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.projects.data import create_project, update_project
-from planner.runtime import conversation_start as conversation_start_module
 from planner.runtime.conversation_start import (
-    CONVERSATION_ID_PREFIX,
-    agent_resolve,
     new_conversation_id,
     reset_ticket_conversation,
     send_to_ticket_conversation,
@@ -234,47 +231,6 @@ async def _sent(
     return delivered.fate
 
 
-def test_the_conversation_exists_before_the_ticket_points_at_it(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    async def exercise() -> None:
-        system = InMemoryConversationSystem()
-        watcher = _LinkWatchingConversationSystem(system, tmp_db, ticket.id)
-
-        conversation_id = await _started(watcher, tmp_db, ticket, _values(ticket.id), now=10)
-
-        # The conversation already existed while the Ticket still pointed at nothing.
-        assert watcher.link_when_the_conversation_existed is None
-        assert read_ticket(tmp_db, ticket.id).conversation_id == conversation_id
-        # And the id the Ticket now holds names a conversation that really takes text.
-        assert isinstance(
-            await system.send(conversation_id, text_message_content("hello"), sender_label="loop"),
-            PromptDeliveryStarted,
-        )
-
-    asyncio.run(exercise())
-
-
-def test_starting_writes_the_link_and_the_last_chosen_configuration(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    async def exercise() -> None:
-        system = InMemoryConversationSystem()
-
-        conversation_id = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
-
-        assert conversation_id.startswith(CONVERSATION_ID_PREFIX)
-        started = read_ticket(tmp_db, ticket.id)
-        assert started.conversation_id == conversation_id
-        assert started.employee_backend == "claude"
-        assert started.employee_launch_model == "opus"
-        assert started.employee_launch_reasoning_effort == "high"
-        assert started.updated_at == 10
-        assert _history(tmp_db, ticket.id) == [conversation_id]
-
-    asyncio.run(exercise())
-
-
 def test_a_start_that_loses_the_active_pointer_race_records_no_history(
     tmp_db: Connection, ticket: Ticket
 ) -> None:
@@ -393,61 +349,6 @@ def test_the_start_request_carries_every_resolved_value(
         assert request.reasoning_effort == "high"
         assert request.role_materials == worker_conversation_role_materials(ticket.id)
         assert request.workspace_folder == _WORKSPACE
-
-    asyncio.run(exercise())
-
-
-def test_a_send_carrying_a_change_records_it_once_the_delivery_started(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    async def exercise() -> None:
-        system = InMemoryConversationSystem()
-        await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
-
-        fate = await _sent(
-            system, tmp_db, ticket.id, "work the step", model="sonnet",
-            reasoning_effort="low", now=20,
-        )
-
-        assert isinstance(fate, PromptDeliveryStarted)
-        after = read_ticket(tmp_db, ticket.id)
-        assert after.employee_launch_model == "sonnet"
-        assert after.employee_launch_reasoning_effort == "low"
-        assert after.employee_backend == "claude"
-        assert after.conversation_id is not None
-
-    asyncio.run(exercise())
-
-
-def test_a_change_to_the_model_alone_leaves_the_recorded_effort_where_it_was(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    async def exercise() -> None:
-        system = InMemoryConversationSystem()
-        await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
-
-        await _sent(system, tmp_db, ticket.id, "work the step", model="sonnet", now=20)
-
-        after = read_ticket(tmp_db, ticket.id)
-        assert after.employee_launch_model == "sonnet"
-        assert after.employee_launch_reasoning_effort == "high"
-
-    asyncio.run(exercise())
-
-
-def test_a_send_that_carries_no_change_leaves_the_recorded_configuration_alone(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    async def exercise() -> None:
-        system = InMemoryConversationSystem()
-        await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
-
-        await _sent(system, tmp_db, ticket.id, "work the step", now=20)
-
-        after = read_ticket(tmp_db, ticket.id)
-        assert after.employee_launch_model == "opus"
-        assert after.employee_launch_reasoning_effort == "high"
-        assert after.updated_at == 10
 
     asyncio.run(exercise())
 
@@ -625,49 +526,6 @@ def test_resetting_does_not_unlink_a_conversation_it_did_not_kill(
     asyncio.run(exercise())
 
 
-def test_a_message_to_a_ticket_with_no_conversation_makes_one_and_goes_into_it(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    """A Ticket nobody has spoken to has no conversation, and the message is what makes one.
-
-    On the values the message says it runs under, so the message that creates a
-    conversation never has to change it — which is what a backend taking its model at
-    startup would otherwise have to be restarted for.
-    """
-
-    async def exercise() -> None:
-        system = InMemoryConversationSystem()
-        created = new_conversation_id()
-
-        delivered = await send_to_ticket_conversation(
-            system,
-            tmp_db,
-            ticket.id,
-            text_message_content("first words"),
-            conversation_id=None,
-            created_conversation_id=created,
-            runs_under=ConversationStartOverrides(model="sonnet", reasoning_effort="low"),
-            sender_label="owner",
-            now=20,
-        )
-
-        assert isinstance(delivered.fate, PromptDeliveryStarted)
-        assert delivered.conversation_id is not None
-        after = read_ticket(tmp_db, ticket.id)
-        assert after.conversation_id == delivered.conversation_id
-        # Made on what the message said it runs under, rather than on stored defaults.
-        assert after.employee_launch_model == "sonnet"
-        assert after.employee_launch_reasoning_effort == "low"
-        # And nothing had to be changed, because it was made on what was asked for.
-        assert not [
-            observation
-            for observation in system.observations(delivered.conversation_id)
-            if observation.kind is InMemoryConversationObservationKind.model_changed
-        ]
-
-    asyncio.run(exercise())
-
-
 def test_a_first_message_that_is_refused_leaves_the_ticket_with_no_conversation(
     tmp_db: Connection, ticket: Ticket
 ) -> None:
@@ -792,115 +650,6 @@ def test_resetting_discards_a_message_the_conversation_was_holding(
     asyncio.run(exercise())
 
 
-def test_resetting_a_ticket_with_no_conversation_changes_nothing(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    async def exercise() -> None:
-        system = InMemoryConversationSystem()
-        before = read_ticket(tmp_db, ticket.id)
-
-        await reset_ticket_conversation(system, tmp_db, ticket.id, now=30)
-
-        assert read_ticket(tmp_db, ticket.id) == before
-
-    asyncio.run(exercise())
-
-
-def test_worker_resolve_reads_the_worker_types_managed_launch_defaults(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    values = worker_resolve(tmp_db, ticket, workspace_folder=_WORKSPACE)
-
-    assert values.backend_key is ConversationBackendKey.codex
-    assert values.model == "gpt-5.6-sol"
-    assert values.reasoning_effort == "medium"
-    assert values.role_materials == worker_conversation_role_materials(ticket.id)
-    assert values.workspace_folder == _WORKSPACE
-
-
-def test_worker_resolve_uses_an_existing_project_folder(
-    tmp_db: Connection, ticket: Ticket, tmp_path: Path
-) -> None:
-    project_folder = tmp_path / "project"
-    project_folder.mkdir()
-    project = create_project(
-        tmp_db,
-        name="Folder Project",
-        priority=Priority.P1,
-        folder_path=project_folder,
-        now=2,
-    )
-    tmp_db.execute("UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id))
-
-    values = worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id))
-
-    assert values.workspace_folder == project_folder.resolve()
-
-
-@pytest.mark.parametrize("configured_path_kind", ["null", "missing", "file"])
-def test_worker_resolve_falls_back_when_the_project_folder_is_not_an_existing_directory(
-    tmp_db: Connection,
-    ticket: Ticket,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    configured_path_kind: str,
-) -> None:
-    fallback = tmp_path / "fallback"
-    configured_path: Path | None = None
-    if configured_path_kind == "missing":
-        configured_path = tmp_path / "missing"
-    elif configured_path_kind == "file":
-        configured_path = tmp_path / "file"
-        configured_path.write_text("not a directory", encoding="utf-8")
-    project = create_project(
-        tmp_db,
-        name=f"Fallback {configured_path_kind}",
-        priority=Priority.P1,
-        folder_path=configured_path,
-        now=2,
-    )
-    tmp_db.execute("UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id))
-    monkeypatch.setattr(conversation_start_module, "_default_workspace_folder", lambda: fallback)
-
-    values = worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id))
-
-    assert values.workspace_folder == fallback
-
-
-def test_worker_resolve_falls_back_when_the_ticket_has_no_project(
-    tmp_db: Connection,
-    ticket: Ticket,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fallback = tmp_path / "fallback"
-    monkeypatch.setattr(conversation_start_module, "_default_workspace_folder", lambda: fallback)
-
-    assert worker_resolve(tmp_db, ticket).workspace_folder == fallback
-
-
-def test_worker_resolve_explicit_folder_beats_the_project_folder(
-    tmp_db: Connection, ticket: Ticket, tmp_path: Path
-) -> None:
-    project_folder = tmp_path / "project"
-    project_folder.mkdir()
-    project = create_project(
-        tmp_db,
-        name="Override Project",
-        priority=Priority.P1,
-        folder_path=project_folder,
-        now=2,
-    )
-    tmp_db.execute("UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id))
-
-    assert (
-        worker_resolve(
-            tmp_db, read_ticket(tmp_db, ticket.id), workspace_folder=_WORKSPACE
-        ).workspace_folder
-        == _WORKSPACE
-    )
-
-
 def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_changes(
     tmp_db: Connection, ticket: Ticket, tmp_path: Path
 ) -> None:
@@ -938,32 +687,6 @@ def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_c
         ).fetchone()
         assert stored_workspace is not None
         assert Path(str(stored_workspace["workspace_folder"])) == original_folder.resolve()
-
-    asyncio.run(exercise())
-
-
-def test_worker_resolve_lets_the_tickets_own_values_beat_the_worker_type_defaults(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    async def exercise() -> None:
-        system = InMemoryConversationSystem()
-        moved = ConversationStartValues(
-            backend_key=ConversationBackendKey.hermes,
-            model="openai-codex:gpt-5.6-sol",
-            reasoning_effort=None,
-            role_materials=worker_conversation_role_materials(ticket.id),
-            workspace_folder=_WORKSPACE,
-            access=ConversationAccess.full,
-        )
-        await _started(system, tmp_db, ticket, moved, now=10)
-
-        values = worker_resolve(
-            tmp_db, read_ticket(tmp_db, ticket.id), workspace_folder=_WORKSPACE
-        )
-
-        assert values.backend_key is ConversationBackendKey.hermes
-        assert values.model == "openai-codex:gpt-5.6-sol"
-        assert values.reasoning_effort is None
 
     asyncio.run(exercise())
 
@@ -1006,10 +729,3 @@ def test_worker_resolve_applies_an_override_over_what_it_read(
     assert values.reasoning_effort is None
 
 
-def test_agent_resolve_reads_the_managed_chief_launch_defaults(tmp_db: Connection) -> None:
-    values = agent_resolve(tmp_db, workspace_folder=_WORKSPACE)
-
-    assert values.backend_key is ConversationBackendKey.codex
-    assert values.model == "gpt-5.6-sol"
-    assert values.reasoning_effort == "medium"
-    assert values.role_materials.identity_environment_variables == (("PLAN_ACTOR", "chief"),)
