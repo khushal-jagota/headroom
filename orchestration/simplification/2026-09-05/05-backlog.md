@@ -167,3 +167,35 @@ protected.
 ## Review
 
 Root independently checked the wire serializers, pagination facts, current Backlog and Workspace address handling. Approved: bounded lists match existing APIs; distinct Item list shape correctly omits `kind`; direct Item navigation preserves the existing conversation host. The fixture must assert the Item pane after the empty board response settles, because the removed redirect only runs then. No new backend or record system is needed.
+
+## Implementation
+
+Backlog now loads active unscheduled Ticket summaries and unscheduled Sprint Item
+summaries as separate bounded resources. Each section reports its own range and total,
+pages independently, and links its records to their canonical Workspace addresses.
+The compact creation form now submits an explicitly unscheduled Ticket using the
+served Worker type and Project choices. Direct Item addresses mount the Item workspace
+without requiring that Item to appear on today's board rail.
+
+The existing Backlog/Ideas browser fixture covers the bounded request URLs, independent
+pagination, canonical Ticket and Item links, the Ticket creation body, and the direct
+off-board Item pane after the empty board response has settled. No CSS, backend,
+conversation, contract, generated distribution, or agent-backend files changed.
+
+Focused evidence on the completed source:
+
+```text
+$ npm --prefix web run check
+svelte-check found 0 errors and 0 warnings
+
+$ node web/tests/backlog-ideas.test.mjs
+backlog-ideas.test.mjs: all assertions passed
+
+$ cd web && npm exec -- vitest run tests/query-catalogue.test.ts
+Test Files  2 passed (2)
+Tests  26 passed (26)
+Type Errors  no errors
+```
+
+The final program integration owns `./verify`, the production build, and broad
+frontend coverage as reserved above.

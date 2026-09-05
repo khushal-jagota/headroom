@@ -52,10 +52,16 @@ describe("query catalogue", () => {
     ["review", () => queries.review(), ["review"], "/api/review"],
     ["today's day", () => queries.todayDay(), ["day", "today"], "/api/day/today"],
     [
-      "backlog sprint items",
-      () => queries.backlogSprintItems(),
-      ["items", "backlog"],
-      "/api/items?sprint_id=null"
+      "backlog tickets",
+      () => queries.backlogTicketSummaries(30, 12),
+      ["tickets", "backlog", { limit: 12, offset: 30 }],
+      "/api/ticket-summaries?sprint_id=null&limit=12&offset=30"
+    ],
+    [
+      "backlog Sprint Items",
+      () => queries.backlogSprintItemSummaries(60, 15),
+      ["sprint-items", "backlog", { limit: 15, offset: 60 }],
+      "/api/sprint-item-summaries?sprint_id=null&limit=15&offset=60"
     ],
     ["ideas", () => queries.ideas(), ["ideas"], "/api/ideas"],
     ["projects", () => queries.projects(), ["projects"], "/api/projects"],

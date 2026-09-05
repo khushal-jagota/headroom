@@ -177,8 +177,10 @@ One screen per part of the system:
   to split its Tickets into on-today, off-today, and folded done work. Project priority
   orders the Project folds. The documents page presents Kickoff, Checkpoint, and Sprint
   Review. See `sprints.md`.
-- **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
-  unboxed serif idiom (see `backlog-and-ideas.md`).
+- **Backlog** — active unscheduled Tickets as bounded summaries, followed by separately
+  paged unscheduled Sprint Item briefs. Both open their canonical Workspace screens.
+  Its compact form creates an ordinary explicitly unscheduled Ticket. **Ideas** keeps
+  the separate loose-capture surface (see `backlog-and-ideas.md`).
 - **Chief of Staff** — the Chief is the first row in Workspace. On wide screens,
   selecting it opens the canonical Chief conversation beside the Workspace rail at
   `#/workspace/chief-of-staff`. On narrow screens, the same address opens the focused
@@ -411,10 +413,10 @@ hand-rolling the same shapes per screen. Each does one job:
 
 - **Disclosure** — the one expand/collapse surface (a native details/summary with a
   chevron): ticket notes and recaps, sprint phases and items, ideas with bodies, the
-  backlog compose form, board project sections.
+  Backlog Ticket form, board project sections.
 - **ListRow** — the one row shape (title on the left, metadata on the right, hover):
-  sprint tickets, backlog items, flat ideas, board cards. Renders as a link, a button,
-  or a plain non-interactive row.
+  sprint tickets, Backlog Tickets and briefs, flat ideas, board cards. Renders as a
+  link, a button, or a plain non-interactive row.
 - **SectionHeading** — a quiet "Label · count" group heading.
 - **ScreenHeader** — a screen's title row plus an optional meta pill.
 - **Button** — the one button (or link), in a primary, quiet, or pill look.
@@ -479,7 +481,7 @@ hand-rolling the same shapes per screen. Each does one job:
   that text at its adapter boundary. The browser does not store vendor identifiers or
   construct structured Codex input.
 - **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
-- **SegmentedControl** — a small set of toggle options (backlog project/priority).
+- **SegmentedControl** — a small set of toggle options (Backlog Project/priority).
 - **ScopePairPicker** — the "approve until … then …" scope control.
 - **ErrorLine** — a single error message line.
 

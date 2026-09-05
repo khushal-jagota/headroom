@@ -21,7 +21,36 @@ try {
 <script lang="ts">
   import AppWithQueryClient from "../src/AppWithQueryClient.svelte";
 
-  let backlogItems: any[] = [];
+  const ticket = (id: string, priority = "P3") => ({
+    id,
+    title: "Ticket " + id,
+    worker_type: "coding",
+    stage: "needs_plan",
+    ticket_status: "empty",
+    priority,
+    project_id: "project_vylo",
+    project: "Vylo",
+    sprint_item_id: null,
+    sprint_item: null,
+    sprint_id: null,
+    effective_sprint_id: null,
+    recap_preview: "A bounded recap for " + id
+  });
+  const item = (id: string) => ({
+    id,
+    title: "Brief " + id,
+    status: "active",
+    priority: "P2",
+    deadline: null,
+    project_id: "project_tribe",
+    project: "Tribe",
+    sprint_id: null
+  });
+  let backlogTickets = Array.from({ length: 30 }, (_, index) =>
+    ticket("ticket_" + index, index === 0 ? "P0" : "P3")
+  );
+  const firstItemPage = Array.from({ length: 30 }, (_, index) => item("item_" + index));
+  const finalItem = item("item_offboard");
   let ideas: any[] = [];
   const projects = [
     { id: "project_vylo", name: "Vylo" },
@@ -44,6 +73,20 @@ try {
       headers: { "Content-Type": "application/json" }
     });
   }
+  function page(returnCount: number, matchCount: number, offset: number) {
+    const omittedBefore = Math.min(offset, matchCount);
+    const omittedAfter = Math.max(matchCount - omittedBefore - returnCount, 0);
+    return {
+      match_count: matchCount,
+      return_count: returnCount,
+      limit: 30,
+      offset,
+      omitted_before: omittedBefore,
+      omitted_after: omittedAfter,
+      complete: omittedBefore === 0 && omittedAfter === 0,
+      next_offset: omittedAfter === 0 ? null : omittedBefore + returnCount
+    };
+  }
   globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const path = String(input);
     const method = init.method || "GET";
@@ -53,22 +96,82 @@ try {
       return json({ running_worker_count: 0, awaiting_approval_count: 0 });
     }
     if (path === "/api/projects") return json({ projects });
-    if (path === "/api/items?sprint_id=null" && method === "GET") {
-      return json({ items: backlogItems });
+    if (path === "/api/worker-types") {
+      return json({
+        worker_types: [
+          { worker_type: "coding", label: "Coding" },
+          { worker_type: "exploration", label: "Exploration" }
+        ]
+      });
     }
-    if (path === "/api/items" && method === "POST") {
+    if (path === "/api/ticket-summaries?sprint_id=null&limit=30&offset=0") {
+      return json({
+        tickets: backlogTickets,
+        page: page(backlogTickets.length, backlogTickets.length + 1, 0)
+      });
+    }
+    if (path === "/api/ticket-summaries?sprint_id=null&limit=30&offset=30") {
+      return json({ tickets: [ticket("ticket_last", "P1")], page: page(1, backlogTickets.length + 1, 30) });
+    }
+    if (path === "/api/sprint-item-summaries?sprint_id=null&limit=30&offset=0") {
+      return json({ items: firstItemPage, page: page(30, 31, 0) });
+    }
+    if (path === "/api/sprint-item-summaries?sprint_id=null&limit=30&offset=30") {
+      return json({ items: [finalItem], page: page(1, 31, 30) });
+    }
+    if (path === "/api/tickets" && method === "POST") {
       const project = projects.find((entry) => entry.id === body.project_id);
-      const item = {
-        id: "item_" + (backlogItems.length + 1),
+      const created = {
+        ...ticket("ticket_created", body.priority),
         title: body.title,
-        body: body.body,
-        priority: body.priority,
-        deadline: body.deadline ?? null,
         project_id: body.project_id,
         project: project?.name ?? null
       };
-      backlogItems = [item, ...backlogItems];
-      return json(item);
+      backlogTickets = [created, ...backlogTickets].slice(0, 30);
+      return json(created);
+    }
+    if (path === "/api/board") {
+      return json({ columns: [], sprint_items: [] });
+    }
+    if (path === "/api/workers") {
+      return json({
+        workers: [],
+        chief_of_staff: {
+          label: "Chief of Staff",
+          conversation_id: null,
+          needs_me: false,
+          agent_working: false,
+          latest_turn_ended_sequence: 0
+        }
+      });
+    }
+    if (path === "/api/items/item_offboard/workspace") {
+      return json({
+        ...finalItem,
+        kind: "normal",
+        body: "The off-board brief remains readable.",
+        rollup: {},
+        supervisor: {
+          agent_key: "sprint_item:item_offboard",
+          conversation_id: null,
+          launch_configuration: {
+            employee_backend: "codex",
+            employee_launch_model: "gpt-5",
+            employee_launch_reasoning_effort: null
+          }
+        },
+        planning_day_id: "2026-09-05",
+        today_ticket_ids: [],
+        tickets: [],
+        artifacts: [],
+        conversation_history: []
+      });
+    }
+    if (path === "/api/items/item_offboard/supervisor/conversation/start-values") {
+      return json({ backend_key: "codex", model: "gpt-5", reasoning_effort: null });
+    }
+    if (path === "/api/conversation/backends") {
+      return json({ backends: [] });
     }
     if (path === "/api/ideas" && method === "GET") return json({ ideas });
     if (path === "/api/ideas" && method === "POST") {
@@ -139,9 +242,32 @@ with sync_playwright() as playwright:
     page.goto(sys.argv[1] + "#/backlog", wait_until="networkidle")
     page.locator('section[data-screen="backlog"]').wait_for()
 
-    # The dormant compose writes through the real mutation/query invalidation path.
-    page.locator('[data-create="item"] > summary').click()
-    priority_control = page.locator('[data-create="item"] [data-seg="priority"]')
+    assert page.locator('[data-pagination="tickets"] [data-page-range]').inner_text() == "1–30 of 31"
+    assert page.locator('[data-pagination="items"] [data-page-range]').inner_text() == "1–30 of 31"
+    first_ticket = page.locator('[data-ticket-id="ticket_0"]')
+    assert first_ticket.get_attribute("href") == "#/workspace/ticket_0"
+    assert "A bounded recap for ticket_0" in first_ticket.inner_text()
+
+    # Each bounded list moves by its own page facts.
+    page.locator('[data-pagination="tickets"] button', has_text="Next").click()
+    page.locator('[data-ticket-id="ticket_last"]').wait_for()
+    assert page.locator('[data-pagination="tickets"] [data-page-range]').inner_text() == "31–31 of 31"
+    assert page.locator('[data-pagination="items"] [data-page-range]').inner_text() == "1–30 of 31"
+    page.locator('[data-pagination="tickets"] button', has_text="Previous").click()
+    page.locator('[data-ticket-id="ticket_0"]').wait_for()
+
+    page.locator('[data-pagination="items"] button', has_text="Next").click()
+    offboard_item = page.locator('[data-item-id="item_offboard"]')
+    offboard_item.wait_for()
+    assert page.locator('[data-pagination="items"] [data-page-range]').inner_text() == "31–31 of 31"
+    assert page.locator('[data-pagination="tickets"] [data-page-range]').inner_text() == "1–30 of 31"
+    assert offboard_item.get_attribute("href") == "#/workspace/item/item_offboard"
+
+    # The dormant compose writes an ordinary explicitly unscheduled Ticket through
+    # the real mutation/query invalidation path.
+    page.locator('[data-create="ticket"] > summary').click()
+    assert page.locator('[data-create="ticket"] [data-input="worker-type"]').input_value() == "coding"
+    priority_control = page.locator('[data-create="ticket"] [data-seg="priority"]')
     expected_colours = {
         "P0": ("rgb(201, 59, 44)", "rgb(255, 244, 241)"),
         "P1": ("rgb(160, 52, 41)", "rgb(255, 226, 220)"),
@@ -190,21 +316,40 @@ with sync_playwright() as playwright:
         assert presentation["width"] == 27, presentation
         assert presentation["height"] == 18, presentation
 
-    page.locator('[data-create="item"] [data-input="title"]').fill("Wire the audit log")
-    page.locator('[data-create="item"] [data-seg="project"] [data-value="project_tribe"]').click()
-    page.locator('[data-create="item"] [data-seg="priority"] [data-value="P1"]').click()
+    page.locator('[data-create="ticket"] [data-input="title"]').fill("Wire the audit log")
+    page.locator('[data-create="ticket"] [data-input="kickoff-note"]').fill("Keep the receipts.")
+    page.locator('[data-create="ticket"] [data-seg="project"] [data-value="project_tribe"]').click()
+    page.locator('[data-create="ticket"] [data-seg="priority"] [data-value="P1"]').click()
     assert priority_control.locator('[data-value="P1"]').get_attribute("aria-pressed") == "true"
     assert priority_control.locator('[data-value="P3"]').get_attribute("aria-pressed") == "false"
-    page.locator('[data-create="item"] [data-commit]').click()
-    item = page.locator('[data-priority-group="P1"] [data-item-id]')
-    item.wait_for()
-    assert item.locator(".list-row-title").inner_text() == "Wire the audit log"
-    assert "Tribe" in item.inner_text()
-    assert "P1" not in item.inner_text()
-    group = page.locator('[data-priority-group="P1"]')
-    assert group.locator('.section-heading [data-priority-tile="P1"]').count() == 1
-    assert item.locator("[data-priority-tile]").count() == 0
-    assert page.locator("[data-backlog-items] [data-item-id]").count() == 1
+    page.locator('[data-create="ticket"] [data-commit]').click()
+    created = page.locator('[data-ticket-id="ticket_created"]')
+    created.wait_for()
+    assert "Wire the audit log" in created.inner_text()
+    assert "Tribe" in created.inner_text()
+    create_request = page.evaluate("""() => window.__requests().find(
+      request => request.path === "/api/tickets" && request.method === "POST"
+    )""")
+    assert create_request["body"] == {
+        "worker_type": "coding",
+        "title": "Wire the audit log",
+        "kickoff_note": "Keep the receipts.",
+        "project_id": "project_tribe",
+        "priority": "P1",
+        "sprint_id": None,
+        "sprint_item_id": None,
+    }
+
+    # A canonical direct Item address survives the empty board response and mounts
+    # the real Item workspace, even though the board rail has no row for it.
+    offboard_item.click()
+    page.locator('[data-sprint-item-workspace="item_offboard"] [data-sprint-item-brief]').wait_for()
+    assert page.locator('[data-sprint-item-brief]').inner_text() == "The off-board brief remains readable."
+    page.wait_for_function(
+        """() => window.__requests().some(request => request.path === "/api/board")"""
+    )
+    page.wait_for_timeout(50)
+    assert page.evaluate("window.location.hash") == "#/workspace/item/item_offboard"
 
     page.evaluate("window.location.hash = '#/ideas'")
     page.locator('section[data-screen="ideas"]').wait_for()
