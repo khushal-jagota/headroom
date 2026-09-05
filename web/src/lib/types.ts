@@ -275,9 +275,17 @@ export type TicketDeletionResponse = {
   linked_entity_ids: string[];
 };
 
-export type CurrentSprint = AnyRecord & {
+export type CurrentSprint = {
+  id: string;
+  name: string;
   date_start: string;
   date_end: string;
+  primary_bet: string;
+  kickoff: string;
+  checkpoint: string;
+  review: string;
+  created_at: number;
+  updated_at: number;
 };
 
 export type CurrentSprintResponse = {

@@ -45,29 +45,8 @@ ITEM_STATUS_ORDER: Final[tuple[ItemStatus, ...]] = (
     ItemStatus.done,
 )
 
-# Sprint text-field groups: the kickoff and review sub-fields. Freeze is retired,
-# so these no longer gate writes — they only enumerate the always-editable sprint
-# text fields (reused by _SPRINT_TEXT_FIELDS in data.py + api.py).
-KICKOFF_FIELDS: Final[tuple[str, ...]] = (
-    "limiting_factor",
-    "primary_bet",
-    "supports",
-    "premortem",
-)
-REVIEW_FIELDS: Final[tuple[str, ...]] = (
-    "outcomes",
-    "solo_reflection",
-    "joint_discussion",
-    "updates_to_thinking",
-    "carry_forward",
-)
-# Checkpoint (rev6): three headed markdown sub-fields on the sprint, edited per-field
-# in place. The historical mid_* identifiers remain. All sprint text fields stay editable.
-MID_SPRINT_FIELDS: Final[tuple[str, ...]] = (
-    "mid_where_we_stand",
-    "mid_whats_changed",
-    "mid_what_to_adjust",
-)
+# Editable documents; their internal headings are prose, not stored fields.
+SPRINT_DOCUMENT_FIELDS: Final[tuple[str, ...]] = ("kickoff", "checkpoint", "review")
 
 
 @dataclass
@@ -76,18 +55,10 @@ class Sprint:  # §3.1
     name: str
     date_start: str  # ISO, inclusive
     date_end: str  # ISO, inclusive
-    limiting_factor: str
-    primary_bet: str
-    supports: str
-    premortem: str
-    mid_where_we_stand: str = ""  # Checkpoint sub-fields; historical mid_* identifiers
-    mid_whats_changed: str = ""
-    mid_what_to_adjust: str = ""
-    outcomes: str = ""
-    solo_reflection: str = ""
-    joint_discussion: str = ""
-    updates_to_thinking: str = ""
-    carry_forward: str = ""
+    primary_bet: str = ""  # summary also displayed above Sprint tracking
+    kickoff: str = ""
+    checkpoint: str = ""
+    review: str = ""
     created_at: int = 0
     updated_at: int = 0
 
@@ -144,10 +115,10 @@ class CreateSprintBody(TypedDict, total=False):  # POST /sprints
     name: str  # default ""
     date_start: str  # ISO date; required (default "" is rejected)
     date_end: str  # ISO date; required (default "" is rejected)
-    limiting_factor: str  # default ""
     primary_bet: str  # default ""
-    supports: str  # default ""
-    premortem: str  # default ""
+    kickoff: str  # default ""
+    checkpoint: str  # default ""
+    review: str  # default ""
 
 
 class CreateIdeaBody(TypedDict, total=False):  # POST /ideas
