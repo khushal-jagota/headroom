@@ -56,7 +56,7 @@ def build_fake_environment_database(db_path: Path, *, now: int) -> FakeFixtureRe
             name="Fictional July Systems Sprint",
             date_start="2026-07-06",
             date_end="2026-07-17",
-            limiting_factor="Keep the fake workspace small enough to inspect.",
+            kickoff="## Limiting factor\n\nKeep the fake workspace small enough to inspect.",
             primary_bet="Prove isolated environments without touching live state.",
             supports="Representative tickets, day placement, and managed files.",
             premortem="The useful failure is accidental coupling between instances.",

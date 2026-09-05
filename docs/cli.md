@@ -12,7 +12,7 @@ Each expanded part contains `value`, `user_note`, and `proposal`:
 ```sh
 panels ticket show t_example
 panels ticket show t_example success,approach --json
-panels sprint show current primary_bet
+panels sprint show current primary_bet,kickoff
 panels sprint item show si_example body
 panels day show 2026-08-10 focus,watchout
 panels day show --date 2026-08-10 focus
@@ -301,6 +301,13 @@ one worker step at a time and writes the Ticket's status itself (see
   this tool gets started.
 - **Worker types** (`worker-types.md`) — the registry `worker my-ticket` reads the
   ticket's specialist skill from.
+
+Sprint writing has four parts: `primary_bet`, `kickoff`, `checkpoint`, and `review`.
+The primary bet is the short summary shown above Sprint tracking; the others are complete
+Markdown documents. For example, `panels sprint set current review --body-file review.md`
+replaces the review document. Sprint creation accepts `--primary-bet`, `--kickoff`,
+`--checkpoint`, and `--review`; omitted text starts empty. The old per-heading fields
+and creation options have been removed.
 
 ---
 

@@ -304,20 +304,7 @@ def test_record_reads_share_manifests_selection_and_identity(
     assert worker_manifest["header"]["worker"] == "panels-worker-coding"
     assert worker_manifest["header"]["id"] == ticket["id"]
     assert sprint_manifest["header"]["id"] == sprint["id"]
-    assert list(sprint_manifest["manifest"]) == [
-        "limiting_factor",
-        "primary_bet",
-        "supports",
-        "premortem",
-        "mid_where_we_stand",
-        "mid_whats_changed",
-        "mid_what_to_adjust",
-        "outcomes",
-        "solo_reflection",
-        "joint_discussion",
-        "updates_to_thinking",
-        "carry_forward",
-    ]
+    assert list(sprint_manifest["manifest"]) == ["primary_bet", "kickoff", "checkpoint", "review"]
     assert item_part["parts"]["body"]["value"] == "Show one part. 🌱"
     assert sum(item_part["header"]["rollup"].values()) == 1
     assert "tickets" not in day_manifest
@@ -415,14 +402,11 @@ def test_planning_worker_cli_claims_authorize_day_midday_and_sprint_writes(
         "2026-07-06",
         "--date-end",
         "2026-07-19",
-        "--limiting-factor",
-        "No durable plan.",
+        "--kickoff",
+        "No durable plan. Keep it small and watch for drift.",
         "--primary-bet",
         "Use one canonical sprint.",
-        "--supports",
-        "Keep it small.",
-        "--premortem",
-        "The plan drifts.",
+
         ticket_id=sprint_ticket["id"],
         actor="worker",
     )

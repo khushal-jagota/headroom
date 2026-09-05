@@ -19,9 +19,7 @@ from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.sprints.contracts import (
-    KICKOFF_FIELDS,
-    MID_SPRINT_FIELDS,
-    REVIEW_FIELDS,
+    SPRINT_DOCUMENT_FIELDS,
     SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS,
     ItemStatus,
     Sprint,
@@ -53,7 +51,7 @@ _ITEM_PLAIN_FIELDS: frozenset[str] = frozenset(
     {"title", "body", "priority", "deadline", "project_id"}
 )
 _SPRINT_TEXT_FIELDS: frozenset[str] = frozenset(
-    KICKOFF_FIELDS + REVIEW_FIELDS + MID_SPRINT_FIELDS + ("name",)
+    SPRINT_DOCUMENT_FIELDS + ("primary_bet", "name")
 )
 PERSONAL_PROJECT_ID = "project_personal"
 
@@ -141,18 +139,10 @@ def _row_to_sprint(row: sqlite3.Row) -> Sprint:
         name=row["name"],
         date_start=row["date_start"],
         date_end=row["date_end"],
-        limiting_factor=row["limiting_factor"],
         primary_bet=row["primary_bet"],
-        supports=row["supports"],
-        premortem=row["premortem"],
-        mid_where_we_stand=row["mid_where_we_stand"],
-        mid_whats_changed=row["mid_whats_changed"],
-        mid_what_to_adjust=row["mid_what_to_adjust"],
-        outcomes=row["outcomes"],
-        solo_reflection=row["solo_reflection"],
-        joint_discussion=row["joint_discussion"],
-        updates_to_thinking=row["updates_to_thinking"],
-        carry_forward=row["carry_forward"],
+        kickoff=row["kickoff"],
+        checkpoint=row["checkpoint"],
+        review=row["review"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -222,10 +212,10 @@ def create_sprint(
     name: str,
     date_start: str,
     date_end: str,
-    limiting_factor: str = "",
     primary_bet: str = "",
-    supports: str = "",
-    premortem: str = "",
+    kickoff: str = "",
+    checkpoint: str = "",
+    review: str = "",
     clock: Clock,
     admit: Callable[[], None] | None = None,
 ) -> Sprint:
@@ -259,19 +249,17 @@ def create_sprint(
             )
         conn.execute(
             "INSERT INTO sprints ("
-            "id, name, date_start, date_end, limiting_factor, primary_bet, supports, "
-            "premortem, outcomes, solo_reflection, joint_discussion, updates_to_thinking, "
-            "carry_forward, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', '', '', '', '', ?, ?)",
+            "id, name, date_start, date_end, primary_bet, kickoff, checkpoint, review, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 sprint_id,
                 name,
                 date_start,
                 date_end,
-                limiting_factor,
                 primary_bet,
-                supports,
-                premortem,
+                kickoff,
+                checkpoint,
+                review,
                 now,
                 now,
             ),

@@ -21,16 +21,17 @@ separate documents page holds the sprint's written record.
 
 ## Sprint documents — the thinking
 
-The documents page has three headed sections you read top to bottom: **Kickoff** (why this
-sprint, the bet, what it rests on, what could go wrong), **Checkpoint** (where we stand,
-what's changed, and what to adjust on day four), and **Sprint Review** (how it went, at
-the end). Every section is headed writing you edit in place — click a line, type, click
-away, and it saves on its own. Kickoff opens for a new sprint. Checkpoint opens when it
-contains text. Sprint Review also opens when it contains text, so both later sections
-can be open near the end. The stored field names still use their historical `mid_*`
-identifiers.
+The documents page has a short **Primary bet** summary and three editable Markdown
+documents: **Kickoff**, **Checkpoint**, and **Sprint Review**. The same Primary bet appears
+above Sprint tracking so the sprint's direction stays visible beside the work.
 
-Nothing on this page locks a section. Each edit writes its document field directly.
+Each document is one piece of writing. Use headings when they help; there is no list of
+blanks to fill. Kickoff explains the plan, Checkpoint revisits it on day four, and Sprint
+Review records what happened and what to learn. Click the text to edit and click away to
+save. All four values remain editable. Existing writing keeps its original headings.
+
+Kickoff opens for a new sprint. Checkpoint opens when it or the review contains text;
+Sprint Review opens when it contains text. Both later documents can be open near the end.
 
 The sprint day changes at 05:00 local time. Panels uses that canonical day to decide
 which sprint is current and which numbered day the sprint page shows. Existing sprint

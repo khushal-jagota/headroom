@@ -60,18 +60,10 @@ _SPRINT_FIELDS = {
     "name": "name",
     "date-start": "date_start",
     "date-end": "date_end",
-    "limiting-factor": "limiting_factor",
     "primary-bet": "primary_bet",
-    "supports": "supports",
-    "premortem": "premortem",
-    "mid-where-we-stand": "mid_where_we_stand",
-    "mid-whats-changed": "mid_whats_changed",
-    "mid-what-to-adjust": "mid_what_to_adjust",
-    "outcomes": "outcomes",
-    "solo-reflection": "solo_reflection",
-    "joint-discussion": "joint_discussion",
-    "updates-to-thinking": "updates_to_thinking",
-    "carry-forward": "carry_forward",
+    "kickoff": "kickoff",
+    "checkpoint": "checkpoint",
+    "review": "review",
 }
 
 _ITEM_FIELDS = {
@@ -281,20 +273,7 @@ def _ticket_record(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Reco
 
 def _sprint_record(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, RecordPart]]:
     header = {key: data[key] for key in ("id", "name", "date_start", "date_end")}
-    part_names = (
-        "limiting_factor",
-        "primary_bet",
-        "supports",
-        "premortem",
-        "mid_where_we_stand",
-        "mid_whats_changed",
-        "mid_what_to_adjust",
-        "outcomes",
-        "solo_reflection",
-        "joint_discussion",
-        "updates_to_thinking",
-        "carry_forward",
-    )
+    part_names = ("primary_bet", "kickoff", "checkpoint", "review")
     return header, {name: part(data[name]) for name in part_names}
 
 
@@ -1636,29 +1615,29 @@ def sprint() -> None:
 @click.option("--name", required=True, help="Sprint name.")
 @click.option("--date-start", required=True, help="YYYY-MM-DD.")
 @click.option("--date-end", required=True, help="YYYY-MM-DD.")
-@click.option("--limiting-factor", default="", help="Kickoff limiting factor.")
-@click.option("--primary-bet", default="", help="Kickoff primary bet.")
-@click.option("--supports", default="", help="Kickoff supports.")
-@click.option("--premortem", default="", help="Kickoff premortem.")
+@click.option("--primary-bet", default="", help="Short sprint summary.")
+@click.option("--kickoff", default="", help="Kickoff document.")
+@click.option("--checkpoint", default="", help="Checkpoint document.")
+@click.option("--review", default="", help="Sprint review document.")
 @json_option
 def sprint_create(
     name: str,
     date_start: str,
     date_end: str,
-    limiting_factor: str,
     primary_bet: str,
-    supports: str,
-    premortem: str,
+    kickoff: str,
+    checkpoint: str,
+    review: str,
     as_json: bool,
 ) -> None:
     body = {
         "name": name,
         "date_start": date_start,
         "date_end": date_end,
-        "limiting_factor": limiting_factor,
         "primary_bet": primary_bet,
-        "supports": supports,
-        "premortem": premortem,
+        "kickoff": kickoff,
+        "checkpoint": checkpoint,
+        "review": review,
     }
     data = http.send(
         "POST",

@@ -683,22 +683,22 @@ def test_patch_sprint_marshals_bad_field_types(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     sid = _sprint(db_path)
     with TestClient(app) as client:
-        bad = client.patch(f"/api/sprints/{sid}", json={"outcomes": ["nope"]})
+        bad = client.patch(f"/api/sprints/{sid}", json={"review": ["nope"]})
         assert bad.status_code == 400
         assert bad.json()["error"]["code"] == "validation"
-        assert _col(db_path, "sprints", sid, "outcomes") == ""  # unchanged, no crash
+        assert _col(db_path, "sprints", sid, "review") == ""  # unchanged, no crash
 
-        nul = client.patch(f"/api/sprints/{sid}", json={"premortem": None})
+        nul = client.patch(f"/api/sprints/{sid}", json={"kickoff": None})
         assert nul.status_code == 400
         assert nul.json()["error"]["code"] == "validation"
-        assert _col(db_path, "sprints", sid, "premortem") == ""  # unchanged, no crash
+        assert _col(db_path, "sprints", sid, "kickoff") == ""  # unchanged, no crash
 
         ok = client.patch(
-            f"/api/sprints/{sid}", json={"mid_where_we_stand": "Halfway, tracking."}
+            f"/api/sprints/{sid}", json={"checkpoint": "Halfway, tracking."}
         )
     assert ok.status_code == 200
-    assert ok.json()["mid_where_we_stand"] == "Halfway, tracking."
-    assert _col(db_path, "sprints", sid, "mid_where_we_stand") == "Halfway, tracking."
+    assert ok.json()["checkpoint"] == "Halfway, tracking."
+    assert _col(db_path, "sprints", sid, "checkpoint") == "Halfway, tracking."
 
 
 # --- PATCH /day/{date}: direct-only (§8) ----------------------------------------

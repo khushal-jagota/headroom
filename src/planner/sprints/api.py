@@ -38,9 +38,7 @@ from planner.sprints import service as sprints_service
 from planner.sprints import supervisor_service
 from planner.sprints import views as sprints_views
 from planner.sprints.contracts import (
-    KICKOFF_FIELDS,
-    MID_SPRINT_FIELDS,
-    REVIEW_FIELDS,
+    SPRINT_DOCUMENT_FIELDS,
     CreateIdeaBody,
     CreateItemBody,
     CreateSprintBody,
@@ -73,7 +71,7 @@ from planner.worker_types.configuration import configured_worker_type_registry
 
 router = APIRouter()
 
-_SPRINT_TEXT_FIELDS = ("name",) + KICKOFF_FIELDS + MID_SPRINT_FIELDS + REVIEW_FIELDS
+_SPRINT_TEXT_FIELDS = ("name", "primary_bet") + SPRINT_DOCUMENT_FIELDS
 _ITEM_PLAIN_FIELDS = ("title", "body", "priority", "deadline", "project_id")
 
 
@@ -93,14 +91,18 @@ def _marshal_create_item(raw: JsonDict) -> CreateItemBody:
 
 
 def _marshal_create_sprint(raw: JsonDict) -> CreateSprintBody:
+    recognized = set(_SPRINT_TEXT_FIELDS) | {"date_start", "date_end"}
+    for field in raw:
+        if field not in recognized:
+            raise PlannerError(ErrorCode.validation, "unknown sprint field", {"field": field})
     return CreateSprintBody(
         name=body_str(raw, "name"),
         date_start=body_str(raw, "date_start"),
         date_end=body_str(raw, "date_end"),
-        limiting_factor=body_str(raw, "limiting_factor"),
         primary_bet=body_str(raw, "primary_bet"),
-        supports=body_str(raw, "supports"),
-        premortem=body_str(raw, "premortem"),
+        kickoff=body_str(raw, "kickoff"),
+        checkpoint=body_str(raw, "checkpoint"),
+        review=body_str(raw, "review"),
     )
 
 
@@ -903,10 +905,10 @@ async def create_sprint(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -
         name=body["name"],
         date_start=body["date_start"],
         date_end=body["date_end"],
-        limiting_factor=body["limiting_factor"],
         primary_bet=body["primary_bet"],
-        supports=body["supports"],
-        premortem=body["premortem"],
+        kickoff=body["kickoff"],
+        checkpoint=body["checkpoint"],
+        review=body["review"],
         clock=clk,
         admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
     )

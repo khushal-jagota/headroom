@@ -306,7 +306,7 @@ def test_summary_endpoints_are_bounded_and_rich_browser_reads_stay_rich(
         rich_day = client.get("/api/day/2026-07-04").json()["tickets"][0]
 
     assert "fields" in rich_ticket
-    assert "limiting_factor" in rich_sprint
+    assert "kickoff" in rich_sprint
     assert "body" in rich_item
     assert "summary" in rich_project
     assert "agent_working" in rich_day

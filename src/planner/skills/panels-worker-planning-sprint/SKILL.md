@@ -44,7 +44,7 @@ inventing strategy. Scheduling and activation are upstream concerns.
 Before asking the user anything, resolve the sprint being reviewed and classify the run
 as normal, stale, or first-sprint. Read:
 
-- the sprint and its strategic fields;
+- the sprint's primary bet, kickoff, checkpoint, and review documents;
 - its Sprint Items and any loose sprint Tickets;
 - every Sprint Item's child Tickets;
 - backlog Sprint Items; and
@@ -52,20 +52,16 @@ as normal, stale, or first-sprint. Read:
 
 Inspect individual records only where their detail can change the judgment. Turn the
 evidence into a decision-ready opening, not a ticket ledger. Compare actual outcomes
-with the limiting factor, primary bet, supports, and pre-mortem. Distinguish completed,
+with the primary bet and the plan recorded in kickoff. Distinguish completed,
 moved-but-incomplete, blocked or displaced, and materially unplanned work. Flag
 contradictions; an implementation report is evidence, not automatic proof of its parent
 outcome.
 
 Show the factual picture, then ask for the user's reflection before giving the final
 worker interpretation. Send that bounded opening in Ticket Chat and call
-`panels worker request-user-help <ticket-id>`. Work through:
-
-1. outcomes;
-2. the user's solo reflection;
-3. joint discussion of the sprint's judgment;
-4. updates to thinking; and
-5. carry-forward candidates.
+`panels worker request-user-help <ticket-id>`. Useful questions include what happened,
+what the user learned, which assumptions changed, and what deserves to carry forward.
+Use the questions that can change the next decision; do not fill a questionnaire.
 
 Carry-forward is a candidate pool, not an entitlement. For a stale sprint, prefer a thin
 truthful review over reconstructing fictional precision. For a genuine first sprint,
@@ -73,8 +69,8 @@ state that no prior review exists and obtain the user's agreement before skippin
 
 Preserve direct guidance as it settles. Do not propose while strategic questions remain
 open. After the user explicitly Releases the Ticket, synthesize one concise **review**
-mapped to `outcomes`, `solo_reflection`, `joint_discussion`, `updates_to_thinking`, and
-`carry_forward`. Explain the important judgment rather than replaying status history.
+document. Use headings when they help. Explain the important judgment rather than
+replaying status history.
 
 ### needs_next_sprint — choose the next commitment
 
@@ -83,13 +79,10 @@ then prepare a bounded opening with plausible constraints and material candidate
 not a predetermined sprint. Send it in Ticket Chat and call
 `panels worker request-user-help <ticket-id>`.
 
-Settle the decisions in order:
-
-1. one underlying limiting factor rather than several symptoms;
-2. one concrete primary bet and its hypothesis;
-3. a small set of supports that justify protected capacity;
-4. a pre-mortem capable of changing a weak plan; and
-5. only then, outcome-shaped Sprint Items that earn their place.
+Start with the constraint and a concrete primary bet. Discuss supporting work and what
+could make the plan fail when those questions can change the commitment. Then choose
+outcome-shaped Sprint Items that earn their place. Preserve the useful reasoning in one
+kickoff document; headings are optional, not fields that must all be filled.
 
 Consider approved carry-forward candidates, backlog items, outcomes required by the bet
 and supports, and genuinely new work. Reuse an existing backlog item where it already
@@ -97,9 +90,9 @@ represents the outcome; create one only when it does not. Do not create child Ti
 put sprint work onto today, or let backlog volume choose the strategy.
 
 After explicit Release, propose one concise **next sprint** package. Give a start date
-and an end date that define exactly seven inclusive dates. Include the name, limiting
-factor, primary bet, supports, pre-mortem, and exact intended Sprint Item moves or
-creations with supported fields. Existing historical sprint ranges remain unchanged.
+and an end date that define exactly seven inclusive dates. Include the name, a short
+primary bet, the kickoff document, and exact intended Sprint Item moves or creations
+with supported fields. Existing historical sprint ranges remain unchanged.
 
 ### needs_closeout — write and verify
 
@@ -107,10 +100,12 @@ Closeout is the only canonical-write phase. Refresh affected records and compare
 with the approved Review and Next Sprint packages. If material drift makes either unsafe,
 request user help rather than improvising.
 
-For a normal or stale boundary, write the current-sprint review first and read it back.
+For a normal or stale boundary, write the current sprint's `review` document first and
+read it back through `panels sprint show <id> review`.
 For a genuine first sprint, verify the approved no-review result and perform no review
-write. Then create the next (or first) sprint, retain its returned id, move or create only
-the approved Sprint Items, and read the final sprint and item list back. Use explicit ids,
+write. Then create the next (or first) sprint with the approved `primary_bet` and `kickoff`,
+retain its returned id, move or create only the approved Sprint Items, and read the final
+sprint and item list back. Use explicit ids,
 avoid duplicate creates on retry, and leave the exact continuation point visible after a
 partial failure.
 

@@ -35,25 +35,6 @@
   const projects = createQuery(() => queries.projects());
   const today = createQuery(() => queries.todayDay());
 
-  const kickoff = [
-    ["limiting_factor", "Limiting factor"],
-    ["primary_bet", "Primary bet"],
-    ["supports", "Supports"],
-    ["premortem", "Premortem"]
-  ];
-  const mid = [
-    ["mid_where_we_stand", "Where we stand"],
-    ["mid_whats_changed", "What's changed"],
-    ["mid_what_to_adjust", "What to adjust"]
-  ];
-  const review = [
-    ["outcomes", "Outcomes"],
-    ["solo_reflection", "Solo reflection"],
-    ["joint_discussion", "Joint discussion"],
-    ["updates_to_thinking", "Updates to thinking"],
-    ["carry_forward", "Carry forward"]
-  ];
-
   let documents = $derived(sub === "documents");
   let resource = $derived(
     documents
@@ -112,10 +93,6 @@
     const parsed = Date.parse(`${iso}T00:00:00`);
     return Number.isNaN(parsed) ? iso : shortMonthDayLabel(new Date(parsed));
   }
-
-  function sectionHasContent(sprint: AnyRecord, fields: string[][]): boolean {
-    return fields.some((field) => String(sprint[field[0]] || "").trim() !== "");
-  }
 </script>
 
 {#snippet ticketRows(tickets: SprintTicket[])}
@@ -164,33 +141,41 @@
               <h1 class="sprint-docs-title">Sprint documents</h1>
               <div class="sprint-docs-sub">Kickoff, Checkpoint, and sprint review — the sprint's written record.</div>
             </header>
-            {@const reviewHas = sectionHasContent(sprint, review)}
-            {@const midHas = sectionHasContent(sprint, mid)}
+            <div class="field" data-field="primary_bet">
+              <div class="flabel">Primary bet</div>
+              <div class="fval">
+                <InlineEdit
+                  value={sprint.primary_bet}
+                  markdown
+                  multiline
+                  ariaLabel="Primary bet"
+                  placeholder="What matters this sprint?"
+                  onSave={(raw) => saveSprint(sprint.id, "primary_bet", raw)}
+                />
+              </div>
+            </div>
+            {@const reviewHas = sprint.review.trim() !== ""}
+            {@const checkpointHas = sprint.checkpoint.trim() !== ""}
             {#each [
-              { kind: "kickoff", name: "Kickoff", meta: "set at the start", open: !reviewHas && !midHas, fields: kickoff, refline: "" },
-              { kind: "mid", name: "Checkpoint", meta: "day four", open: reviewHas || midHas, fields: mid, refline: "" },
-              { kind: "review", name: "Sprint Review", meta: "end of sprint", open: reviewHas, fields: review, refline: "Written with the Checkpoint above in view — it is the raw material for this retrospective." }
-            ] as phase}
-              <Disclosure variant="phase" data-phase={phase.kind} defaultOpen={phase.open}>
+              { field: "kickoff" as const, name: "Kickoff", meta: "set at the start", open: !reviewHas && !checkpointHas },
+              { field: "checkpoint" as const, name: "Checkpoint", meta: "day four", open: reviewHas || checkpointHas },
+              { field: "review" as const, name: "Sprint Review", meta: "end of sprint", open: reviewHas }
+            ] as document}
+              <Disclosure variant="phase" data-phase={document.field} defaultOpen={document.open}>
                 {#snippet summary()}
-                  <span class="pnm">{phase.name}</span>
-                  <span class="pmeta">{phase.meta}</span>
+                  <span class="pnm">{document.name}</span>
+                  <span class="pmeta">{document.meta}</span>
                 {/snippet}
-                {#if phase.refline}<div class="refline">{phase.refline}</div>{/if}
-                {#each phase.fields as field}
-                  <div class="field" data-field={field[0]}>
-                    <div class="flabel">{field[1]}</div>
-                    <div class="fval">
-                      <InlineEdit
-                        value={sprint[field[0]]}
-                        markdown
-                        multiline
-                        placeholder="(none)"
-                        onSave={(raw) => saveSprint(sprint.id, field[0], raw)}
-                      />
-                    </div>
-                  </div>
-                {/each}
+                <div class="field" data-field={document.field}>
+                  <InlineEdit
+                    value={sprint[document.field]}
+                    markdown
+                    multiline
+                    ariaLabel={document.name}
+                    placeholder="Write here..."
+                    onSave={(raw) => saveSprint(sprint.id, document.field, raw)}
+                  />
+                </div>
               </Disclosure>
             {/each}
           {:else}

@@ -803,11 +803,8 @@ def test_missed_slot_is_not_scanned_or_backfilled(tmp_db: Connection) -> None:
 
 def test_final_sprint_day_uses_canonical_sprint_range(tmp_db: Connection) -> None:
     tmp_db.execute(
-        "INSERT INTO sprints (id, name, date_start, date_end, limiting_factor, primary_bet, "
-        "supports, premortem, outcomes, solo_reflection, joint_discussion, "
-        "updates_to_thinking, carry_forward, created_at, updated_at) "
-        "VALUES ('sp_current', 'Current', '2026-07-20', '2026-07-28', '', '', '', '', "
-        "'', '', '', '', '', 0, 0)"
+        "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
+        "VALUES ('sp_current', 'Current', '2026-07-20', '2026-07-28', 0, 0)"
     )
     schedule_id = _schedule(tmp_db, cadence=ScheduleCadence.current_sprint_final_day)
     before = _now("2026-07-27T14:30:00")

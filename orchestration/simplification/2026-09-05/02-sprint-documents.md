@@ -1,6 +1,7 @@
 # Sprint documents: three documents and the useful summary
 
-Status: implementation plan for independent review. No implementation or checks have run.
+Status: implemented on `codex/panels-simplification-sprints`; focused gates passed; awaiting
+independent implementation review and serial integration by root.
 
 ## Problem and intended result
 
@@ -53,9 +54,9 @@ In `src/planner/sprints/contracts.py`:
   update coherent without a special checkpoint/review initialization rule.
 - Sprint PATCH recognizes name, dates, primary_bet, and the three documents. Existing
   null/wrong-type/atomic-write semantics remain. Removed keys are rejected by PATCH.
-  Creation must also reject the eleven removed keys explicitly rather than silently
-  accepting a stale agent request and dropping its content. Other unknown-key behavior
-  is outside this ticket.
+  Creation rejects unknown keys using the same allowed-field vocabulary as PATCH. This
+  prevents silently dropping stale prose without keeping a catalogue of retired names.
+  Root approved this broader, simpler rule during implementation review on 2026-09-05.
 
 In `web/src/lib/types.ts`, replace the permissive `CurrentSprint = AnyRecord & {...}`
 with the explicit final Sprint wire shape: id, name, date_start, date_end, primary_bet,
@@ -166,3 +167,91 @@ Do not run `./verify` for this ticket. The program reserves one final settled-tr
 Record focused outputs here, obtain independent diff review, address every finding, and
 let root integrate serially. This ticket is done when those focused gates and review pass;
 repository completeness remains the final program gate.
+
+## Implementation evidence — 2026-09-05
+
+Implemented against root's contract commit `6fa58273` in the isolated sprint worktree.
+The resulting schema has primary_bet plus kickoff/checkpoint/review. The migration
+preserves every old value under its heading, leaves primary_bet separate, and removes
+eleven old columns. The document screen now has four editors; the primary bet remains
+visible on tracking. CLI creation/read/edit and the planning skill use the new documents.
+
+Root's implementation spot-check approved rejecting all unknown create keys, using the
+same allowed set as PATCH. Applied that decision and added an unknown-key rejection to
+the existing behavioral test, then reran only the affected two-test module.
+
+The frontend fixture mounts SprintRoute with the existing QueryClient and mocked fetch;
+it uses Node's built-in HTTP server bound to port zero for static assets. It closes that
+server and Chromium in cleanup and removes its generated temporary files. It starts no
+Panels server and generates no web/dist. No runtime contract or conversation/backend
+file was modified by this implementation agent.
+
+### Focused backend gate
+
+Command: `.venv/bin/python -m pytest -q tests/unit/test_sprint_documents.py tests/unit/test_sprints.py tests/unit/test_sprint_current_api.py tests/unit/test_authctx_routes.py tests/unit/test_bounded_list_reads.py tests/unit/test_cli_verbs_in_process.py tests/unit/test_scheduled_tickets.py`
+
+Exit 0; all 79 selected tests passed. Full output:
+
+```text
+........................................................................ [ 91%]
+.......                                                                  [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.14/site-packages/fastapi/testclient.py:1
+  /Users/khushaljagota/Coding/planning-v2-worktrees/simplification-sprints/.venv/lib/python3.14/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient  # noqa
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/Coding/planning-v2-worktrees/simplification-sprints/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_sprints.py)
+    class TestClock:
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+```
+
+After the approved unknown-key policy change, command:
+`.venv/bin/python -m pytest -q tests/unit/test_sprint_documents.py`.
+Exit 0. Full output:
+
+```text
+..                                                                       [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.14/site-packages/fastapi/testclient.py:1
+  /Users/khushaljagota/Coding/planning-v2-worktrees/simplification-sprints/.venv/lib/python3.14/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+```
+
+### Frontend gate
+
+Command: `node web/tests/sprint-documents-browser.test.mjs`. Exit 0. Full output:
+
+```text
+sprint document editing and summary readback passed
+```
+
+Its first attempt compiled successfully but could not launch the absent Playwright
+Chromium revision 1228. Installed that browser prerequisite using the worktree's
+Playwright, then reran this gate successfully. Python/npm dependency trees were unchanged.
+
+Command: `npm --prefix web run check`. Exit 0. Full output:
+
+```text
+> check
+> svelte-check --tsconfig ./tsconfig.json
+
+Loading svelte-check in workspace: /Users/khushaljagota/Coding/planning-v2-worktrees/simplification-sprints/web
+Getting Svelte diagnostics...
+
+svelte-check found 0 errors and 0 warnings
+```
+
+Ruff on all modified Python implementation/test files reported `All checks passed!`.
+`git diff --check` was clean. No `./verify` was run.
+
+### Integration follow-up
+
+The migration retains parent `planning_day_direction`; root serializes any later program
+migration above it. Twelve pre-existing migration test modules pin the old global head;
+root was notified to update those together after the final order settles, rather than
+rewriting them in competing branches. `docs/cli.md` and CLI implementation overlap with
+the separate ticket-guidance change and require normal serial merge review.
