@@ -99,9 +99,9 @@ The conversation system reports one of three fates:
   done being started.
 - **Refused** — nothing was delivered. The claim is given back and one line is logged.
 
-Giving a claim back checks both halves of what it took: the status it wrote **and** the
-moment it wrote it. Comparing the status alone would let a late release erase a
-later, legitimate move that happened to land on the same word.
+Giving a claim back checks the status it wrote and the revision of that status change.
+Every actual change advances the revision, even when two changes share a second. An
+old release therefore cannot erase a newer claim that happens to use the same status.
 
 Once a send reports started or queued, it cannot be taken back, so nothing after that
 point reverts. A failure to tick off the delivered context there is logged and left

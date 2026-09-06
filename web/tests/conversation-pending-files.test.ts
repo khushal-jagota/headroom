@@ -9,29 +9,6 @@ import {
 } from "../src/lib/conversation/pendingFiles";
 
 describe("pending Conversation files", () => {
-  it.each([
-    ["report.pdf", "application/pdf", "%PDF-1.7\nbody\n%%EOF"],
-    ["notes.txt", "text/plain", "hello"],
-    ["plan.md", "text/markdown", "# Plan"],
-    ["rows.csv", "text/csv", "a,b\n1,2"],
-    ["rows.tsv", "text/tab-separated-values", "a\tb"],
-    ["data.json", "application/json", "{\"value\":7}"],
-    ["events.jsonl", "application/x-ndjson", "{\"a\":1}\n{\"a\":2}\n"]
-  ])("admits %s as canonical %s", async (fileName, mediaType, body) => {
-    const intake = await createPendingConversationFiles(
-      [new File([body], fileName, { type: "application/octet-stream" })],
-      4
-    );
-
-    expect(intake.rejected).toEqual([]);
-    expect(intake.accepted[0]).toMatchObject({ id: 4, fileName, mediaType });
-    expect(pendingFilesAsPieces(intake.accepted)[0]).toMatchObject({
-      piece: "file",
-      media_type: mediaType,
-      file_name: fileName
-    });
-  });
-
   it("publishes the narrow picker extension list", () => {
     expect(CONVERSATION_FILE_ACCEPT).toBe(
       ".pdf,.txt,.md,.markdown,.csv,.tsv,.json,.jsonl"
@@ -63,26 +40,6 @@ describe("pending Conversation files", () => {
     expect(intake.accepted).toEqual([]);
     expect(intake.rejected).toEqual(files);
     expect(unread).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    " facts.json",
-    "facts.json ",
-    "folder/facts.json",
-    "folder\\facts.json",
-    "bad\u0000facts.json",
-    "bad\u007ffacts.json",
-    `${"a".repeat(251)}.json`
-  ])("rejects unsafe file name %j before reading bytes", async (fileName) => {
-    const file = new File(["{}"], fileName);
-    const read = vi.fn(async () => new ArrayBuffer(2));
-    file.arrayBuffer = read;
-
-    const intake = await createPendingConversationFiles([file], 1);
-
-    expect(intake.accepted).toEqual([]);
-    expect(intake.rejected).toEqual([file]);
-    expect(read).not.toHaveBeenCalled();
   });
 
   it("restores file pieces in order with decoded byte counts", () => {

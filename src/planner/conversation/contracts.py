@@ -112,8 +112,8 @@ class ComposerCatalogEntry:
 
     ``display_text`` is the label a person sees. It can include its trigger, but the
     composer does not require that prefix. ``insertion_text`` is the exact text that
-    replaces the active catalog token. Panels does not interpret that text after
-    insertion. It follows the ordinary plain-text delivery path.
+    replaces the active catalog token. The owning backend can resolve that token to its
+    structured protocol input when the message is delivered.
     """
 
     kind: ComposerCatalogEntryKind
@@ -316,10 +316,7 @@ class PromptDeliveryRefused:
 # the running turn's wire, refused means impossible. No member carries a turn outcome,
 # because a turn's ending is an event and never a return value.
 type PromptDeliveryFate = (
-    PromptDeliveryStarted
-    | PromptDeliveryQueued
-    | PromptDeliveryInjected
-    | PromptDeliveryRefused
+    PromptDeliveryStarted | PromptDeliveryQueued | PromptDeliveryInjected | PromptDeliveryRefused
 )
 
 
@@ -477,9 +474,7 @@ class ConversationSystem(Protocol):
         """Deliver one held message now, or return ``None`` if it is no longer held."""
         ...
 
-    async def discard_held_prompt(
-        self, conversation_id: str, held_prompt_id: str
-    ) -> bool:
+    async def discard_held_prompt(self, conversation_id: str, held_prompt_id: str) -> bool:
         """Discard one held message, or return false if it is no longer held."""
         ...
 

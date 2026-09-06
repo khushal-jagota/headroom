@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from sqlite3 import Connection
 
 from alembic import command
 
 from planner.core import db as db_module
-from planner.core.db import connect, create_schema
+from planner.core.db import connect
 
 PREVIOUS_REVISION = "sprint_item_supervisors"
 
@@ -69,10 +70,10 @@ def test_upgrade_maps_legacy_review_state_without_losing_proposal_or_control_met
     conn.close()
 
     upgraded = connect(str(db_path))
-    create_schema(upgraded)
+    _upgrade_legacy(upgraded)
     row = upgraded.execute(
         "SELECT stage,ceiling,at_cap,ticket_status,stage_ownership_overrides,"
-        "default_stage_ownership_mode,conversation_id,fields,"
+        "default_stage_ownership_mode,conversation_id,fields,guidance,"
         "ticket_status_changed_at,ticket_status_revision FROM tickets WHERE id=?",
         ("t_legacy_review",),
     ).fetchone()
@@ -94,9 +95,19 @@ def test_upgrade_maps_legacy_review_state_without_losing_proposal_or_control_met
             "proposed_by": "worker-run",
             "created_at": 123,
         },
-        "user_note": "Keep the note.",
     }
-    assert migrated_fields["approach"]["proposal"] is None
+    assert migrated_fields["approach"] == {"value": None, "proposal": None}
+    assert row["guidance"] == "## success\n\nKeep the note."
     assert (row["ticket_status_changed_at"], row["ticket_status_revision"]) == (30, 7)
     assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
     upgraded.close()
+
+
+def _upgrade_legacy(conn: Connection) -> None:
+    path = conn.execute("PRAGMA database_list").fetchone()[2]
+    engine = db_module._migration_engine(str(path), 5000)
+    try:
+        with engine.begin() as connection:
+            command.upgrade(db_module._alembic_config(connection), "ticket_guidance")
+    finally:
+        engine.dispose()

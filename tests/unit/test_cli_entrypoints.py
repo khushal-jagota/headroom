@@ -10,35 +10,8 @@ from click.testing import CliRunner
 
 from planner.cli import http
 from planner.cli import main as cli_main
-
-
-def test_worker_my_ticket_human_line_surfaces_worker(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # t_tt05: the human line names the resolved worker specialist so the agent can
-    # self-route with skill_view("<name>"). The server computes `worker` from the type.
-    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        return {
-            "id": "t_demo",
-            "worker_type": "coding",
-            "stage": "needs_success",
-            "ticket_status": "user",
-            "priority": "P2",
-            "title": "Demo",
-            "worker": "panels-worker-coding",
-            "fields": {"success": {"value": None, "user_note": None, "proposal": None}},
-        }
-
-    monkeypatch.setattr(http, "send", fake_send)
-    runner = CliRunner()
-    result = runner.invoke(
-        cli_main.main,
-        ["worker", "my-ticket"],
-        env={"PLAN_TICKET_ID": "t_demo"},
-    )
-
-    assert result.exit_code == 0, result.output
-    assert "worker: panels-worker-coding" in result.output
+from planner.cli.record_projection import project_record
+from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 
 
 def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
@@ -48,6 +21,10 @@ def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
 
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         requested_paths.append(path)
+        if path == "/api/worker-types":
+            return {
+                "worker_types": [PRODUCTION_WORKER_TYPE_REGISTRY.manifest("exploration")]
+            }
         return {
             "id": "t_correct",
             "worker_type": "exploration",
@@ -56,7 +33,9 @@ def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
             "priority": "P1",
             "title": "Correct ticket",
             "worker": "panels-worker-exploration",
-            "fields": {"understanding": {"value": None, "user_note": None, "proposal": None}},
+            "field_values": {},
+            "pending_proposal": None,
+            "archived_field_content": "",
         }
 
     monkeypatch.setattr(http, "send", fake_send)
@@ -67,7 +46,10 @@ def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
     )
 
     assert result.exit_code == 0, result.output
-    assert requested_paths == ["/api/tickets/t_correct/worker-self"]
+    assert requested_paths == [
+        "/api/tickets/t_correct/worker-self",
+        "/api/worker-types",
+    ]
     assert "id: t_correct" in result.output
     assert "stage: needs_understanding" in result.output
 
@@ -91,61 +73,6 @@ def test_worker_request_user_help_is_a_no_payload_worker_command(
     assert result.exit_code == 0, result.output
     assert calls == [("POST", "/api/tickets/t_help/request-user-help", {"as_json": False})]
     assert "user help requested on t_help" in result.output
-
-
-def test_worker_trouble_uses_only_current_ticket_identity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[str, str, dict[str, Any]]] = []
-
-    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        calls.append((method, path, kwargs))
-        return {
-            "trouble_note": {
-                "sequence": 1,
-                "body": "Harness returned no output.",
-                "created_at": 1,
-            }
-        }
-
-    monkeypatch.setattr(http, "send", fake_send)
-    result = CliRunner().invoke(
-        cli_main.main,
-        ["worker", "trouble"],
-        input="Harness returned no output.\n",
-        env={"PLAN_TICKET_ID": "t_current"},
-    )
-
-    assert result.exit_code == 0, result.output
-    assert calls == [
-        (
-            "POST",
-            "/api/tickets/t_current/trouble-notes",
-            {
-                "as_json": False,
-                "json_body": {"body": "Harness returned no output.\n"},
-            },
-        )
-    ]
-    assert "trouble recorded on t_current as note 1" in result.output
-
-
-def test_worker_trouble_rejects_missing_identity_before_http(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def explode(*_args: Any, **_kwargs: Any) -> None:
-        raise AssertionError("no HTTP request expected")
-
-    monkeypatch.setattr(http, "send", explode)
-    result = CliRunner().invoke(
-        cli_main.main,
-        ["worker", "trouble"],
-        input="Harness returned no output.",
-        env={"PLAN_TICKET_ID": ""},
-    )
-
-    assert result.exit_code != 0
-    assert "ticket id required" in result.output
 
 
 def test_ticket_list_passes_repeatable_filters_and_page_controls(
@@ -311,3 +238,61 @@ def test_bounded_list_commands_report_page_facts_in_text_and_json(
     assert json_result.exit_code == 0, json_result.output
     assert json.loads(json_result.output)["page"] == response["page"]
     assert requested_paths == [path, path]
+
+
+@pytest.mark.parametrize(
+    ("options", "method", "suffix"), [([], "PUT", ""), (["--append"], "POST", "/append")]
+)
+def test_worker_note_writes_stdin_once_without_a_field_or_type_read(
+    monkeypatch: pytest.MonkeyPatch, options: list[str], method: str, suffix: str
+) -> None:
+    calls: list[tuple[str, str, Any]] = []
+
+    def fake_send(verb: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((verb, path, kwargs.get("json_body")))
+        return {"id": "t_direct", "guidance": kwargs["json_body"]["body"]}
+
+    monkeypatch.setattr(http, "send", fake_send)
+    body = "  Exact stdin\n\n"
+    result = CliRunner().invoke(cli_main.main, ["worker", "note", "t_direct", *options], input=body)
+    assert result.exit_code == 0, result.output
+    assert calls == [(method, "/api/tickets/t_direct/guidance" + suffix, {"body": body})]
+
+
+def test_ticket_parts_expose_guidance_and_recap_without_expanding_default_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        assert (method, path) == ("GET", "/api/worker-types")
+        return {"worker_types": [PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")]}
+
+    monkeypatch.setattr(http, "send", fake_send)
+    data = {
+        "id": "t_parts",
+        "worker_type": "coding",
+        "field_values": {"kickoff": "request"},
+        "pending_proposal": None,
+        "archived_field_content": "",
+        "recap": "orientation",
+        "guidance": "  exact guidance\n",
+    }
+    header, parts = cli_main._ticket_record(data)
+    manifest = project_record(header, parts, None)
+    assert list(manifest["manifest"]) == [
+        "kickoff",
+        "success",
+        "approach",
+        "plan",
+        "implementation",
+        "closeout",
+        "proposal",
+        "archive",
+        "recap",
+        "guidance",
+    ]
+    assert "parts" not in manifest
+    expanded = project_record(header, parts, ("guidance", "recap"))
+    assert expanded["parts"] == {
+        "guidance": {"value": data["guidance"], "proposal": None},
+        "recap": {"value": "orientation", "proposal": None},
+    }

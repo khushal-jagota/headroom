@@ -14,8 +14,8 @@
    * unless something else has been composed in the meantime, in which case that draft is
    * what matters and the error under the box is the whole of the news.
    *
-   * Writing a catalog token starts a line with slash, dollar, or at. While the cursor is
-   * still inside that first word the eligible catalog entries are offered under it.
+   * Writing a catalog token starts the message with slash, dollar, or at. While the cursor
+   * is still inside that first word the eligible catalog entries are offered under it.
    * Choosing one inserts its exact text. The message still goes as ordinary text.
    */
   import { onMount, tick } from "svelte";
@@ -44,6 +44,7 @@
   } from "../../lib/conversation/runControls/contracts";
   import { askPlaceholder } from "../../lib/conversation/composer";
   import type { RunValues } from "../../lib/conversation/composer";
+  import { catalogTokenAtMessageStart } from "../../lib/conversation/composerCatalog";
   import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
   import { COMPOSITION_STATE_EVENT } from "../../lib/releaseMonitor";
   import {
@@ -275,7 +276,7 @@
   });
 
   // --- the catalog token being written ----------------------------------------------------
-  let catalogTokenUnderway = $derived(catalogTokenOnTheCursorsLine(text, cursorAt));
+  let catalogTokenUnderway = $derived(catalogTokenAtMessageStart(text, cursorAt));
   let typedCatalogText = $derived(catalogTokenUnderway?.typedSoFar ?? null);
   let catalogMenuIsOpen = $derived(
     !inputDisabled
@@ -601,24 +602,6 @@
     readWhereTheCursorIs();
   }
 
-  /** The line-start catalog token under the cursor. */
-  function catalogTokenOnTheCursorsLine(
-    written: string,
-    at: number
-  ): { start: number; end: number; trigger: "/" | "$" | "@"; typedSoFar: string | null } | null {
-    const lineStart = at === 0 ? 0 : written.lastIndexOf("\n", at - 1) + 1;
-    const trigger = written[lineStart];
-    if (trigger !== "/" && trigger !== "$" && trigger !== "@") return null;
-    let end = lineStart + 1;
-    while (end < written.length && !/\s/.test(written[end] ?? "")) end += 1;
-    return {
-      start: lineStart,
-      end,
-      trigger,
-      typedSoFar: at > lineStart && at <= end ? written.slice(lineStart + 1, at) : null
-    };
-  }
-
   function catalogEntriesForTrigger(
     entries: readonly ComposerCatalogEntry[],
     trigger: "/" | "$" | "@" | null
@@ -679,7 +662,7 @@
 
   /** Start writing a command at the front of this message.
    *
-   * A command is written by starting the line with a slash, so this puts one there and
+   * A command is written by starting the message with a slash, so this puts one there and
    * hands the box straight back with the cursor just after it — which is where the name
    * goes, and is exactly where a person who typed the slash themselves would be. So the
    * menu opens by the one rule that opens it, and what command, and everything after it,

@@ -1,4 +1,4 @@
-import type { AtCap, TicketDetail, TicketField } from "./types";
+import type { AtCap } from "./types";
 
 export const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const PRIORITY_ORDER = ["P0", "P1", "P2", "P3"];
@@ -35,10 +35,6 @@ export function labelize(value: string, options?: { capitalize?: boolean }): str
   const text = String(value).replace(/_/g, " ").trim();
   if (!text) return "";
   return text[0].toUpperCase() + text.slice(1);
-}
-
-export function fieldSlot(detail: TicketDetail, name: string): TicketField {
-  return detail.fields?.[name] || {};
 }
 
 // The per-field visual-state input. The classifier that consumes it now lives in

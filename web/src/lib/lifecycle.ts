@@ -4,14 +4,9 @@
 // variants so stage rendering + the scope leash are driven by the served manifest,
 // keyed by each Ticket's own worker_type, instead of a hardcoded coding table.
 //
-// stageLabel/fieldSlot and the FieldStageVisualState type are imported FROM ui.ts;
+// stageLabel and the FieldStageVisualState type are imported FROM ui.ts;
 // ui.ts must NOT import from here (no cycle).
-import {
-  fieldSlot,
-  stageLabel,
-  type FieldStageVisualState,
-  type TicketStageVisualInput
-} from "./ui";
+import { stageLabel, type FieldStageVisualState, type TicketStageVisualInput } from "./ui";
 import type { StageOwnershipMode, TicketDetail } from "./types";
 
 // --- served worker_types manifest shapes ----------------------------------------
@@ -184,7 +179,7 @@ export function fieldStageVisualStateFor(
     ticketStage: detail.stage,
     ticketStatus: detail.ticket_status,
     fieldName,
-    fieldHasProposal: Boolean(fieldSlot(detail, fieldName).proposal)
+    fieldHasProposal: detail.pending_proposal?.field === fieldName
   });
 }
 

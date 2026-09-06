@@ -83,31 +83,6 @@ def test_coding_ticket_accepts_coding_field_and_ceiling(
         assert scoped.json()["ceiling"] == "needs_approach"
 
 
-def test_coding_ticket_rejects_probe_field(app_db: AppDb, probe_installed: None) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        tid = _create(client, "coding")
-        # probe's alpha field is foreign to coding.
-        r = client.post(f"/api/tickets/{tid}/propose/alpha", json={"body": "x"})
-        assert r.status_code == 400
-        assert r.json()["error"]["code"] == "validation"
-        assert r.json()["error"]["message"] == "unknown ticket field"
-        assert r.json()["error"]["detail"] == {"field": "alpha", "worker_type": "coding"}
-
-
-def test_coding_ticket_rejects_probe_ceiling(app_db: AppDb, probe_installed: None) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        tid = _create(client, "coding")
-        r = client.post(
-            f"/api/tickets/{tid}/scope",
-            json={"ceiling": "needs_alpha", "at_cap": "stop"},
-        )
-        assert r.status_code == 400
-        assert r.json()["error"]["code"] == "scope_invalid"
-        assert r.json()["error"]["detail"] == {"ceiling": "needs_alpha"}
-
-
 def test_accept_rejects_foreign_field_and_foreign_next_ceiling(
     app_db: AppDb, probe_installed: None
 ) -> None:
@@ -152,18 +127,8 @@ def test_probe_proposal_parks_on_registry_selected_field(
             f"/api/tickets/{tid}/propose", json={"body": "alpha body", "recap": "r"}
         )
         assert parked.status_code == 200, parked.json()
-        assert parked.json()["fields"]["alpha"]["proposal"]["body"] == "alpha body"
-        assert parked.json()["fields"]["beta"]["proposal"] is None
-
-
-def test_probe_rejects_coding_field_value_edit(app_db: AppDb, probe_installed: None) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        tid = _create(client, "probe")
-        r = client.put(f"/api/tickets/{tid}/value/success", json={"body": "x"})
-        assert r.status_code == 400
-        assert r.json()["error"]["code"] == "validation"
-        assert r.json()["error"]["detail"] == {"field": "success", "worker_type": "probe"}
+        assert parked.json()["pending_proposal"]["body"] == "alpha body"
+        assert parked.json()["pending_proposal"]["field"] == "alpha"
 
 
 def test_ticket_note_routes_make_replace_and_append_explicit(app_db: AppDb) -> None:
@@ -171,54 +136,29 @@ def test_ticket_note_routes_make_replace_and_append_explicit(app_db: AppDb) -> N
     with TestClient(app) as client:
         tid = _create(client, "coding")
 
-        replaced = client.put(
-            f"/api/tickets/{tid}/notes/plan", json={"user_note": "first guidance"}
-        )
+        replaced = client.put(f"/api/tickets/{tid}/guidance", json={"body": "first guidance"})
         assert replaced.status_code == 200, replaced.json()
 
         appended = client.post(
-            f"/api/tickets/{tid}/notes/plan/append",
-            json={"user_note": "second guidance"},
+            f"/api/tickets/{tid}/guidance/append",
+            json={"body": "second guidance"},
         )
         assert appended.status_code == 200, appended.json()
-        assert (
-            appended.json()["fields"]["plan"]["user_note"]
-            == "first guidance\n\nsecond guidance"
-        )
+        assert appended.json()["guidance"] == "first guidance\n\nsecond guidance"
 
-        cleared = client.put(
-            f"/api/tickets/{tid}/notes/plan", json={"user_note": None}
-        )
+        cleared = client.put(f"/api/tickets/{tid}/guidance", json={"body": ""})
         assert cleared.status_code == 200, cleared.json()
 
         appended_after_clear = client.post(
-            f"/api/tickets/{tid}/notes/plan/append",
-            json={"user_note": "new guidance"},
+            f"/api/tickets/{tid}/guidance/append",
+            json={"body": "new guidance"},
         )
         assert appended_after_clear.status_code == 200, appended_after_clear.json()
-        assert (
-            appended_after_clear.json()["fields"]["plan"]["user_note"]
-            == "new guidance"
-        )
+        assert appended_after_clear.json()["guidance"] == "new guidance"
 
 
-def test_probe_rejects_coding_state_and_note_field(app_db: AppDb, probe_installed: None) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        tid = _create(client, "probe")
-        stage = client.post(f"/api/tickets/{tid}/stage", json={"to_stage": "needs_plan"})
-        assert stage.status_code == 400
-        assert stage.json()["error"]["message"] == "stage outside the linear order"
-        note = client.put(
-            f"/api/tickets/{tid}/notes/plan", json={"user_note": "x"}
-        )
-        assert note.status_code == 400
-        assert note.json()["error"]["detail"] == {"field": "plan", "worker_type": "probe"}
-
-
-def test_probe_accepts_its_own_state_via_direct_state(app_db: AppDb, probe_installed: None) -> None:
-    # /stage must stop rejecting probe stages: advancing directly to needs_beta from
-    # needs_alpha is a valid probe stage jump (kickoff first settled so it's non-kickoff).
+def test_arbitrary_stage_jump_route_is_removed(app_db: AppDb, probe_installed: None) -> None:
+    # Even declared worker stages have no arbitrary transition route.
     app, _db = app_db
     with TestClient(app) as client:
         tid = _create(client, "probe")
@@ -226,27 +166,13 @@ def test_probe_accepts_its_own_state_via_direct_state(app_db: AppDb, probe_insta
             f"/api/tickets/{tid}/accept/kickoff",
             json={"next_ceiling": "done", "at_cap": "propose"},
         )
-        jumped = client.post(
-            f"/api/tickets/{tid}/stage", json={"to_stage": "needs_beta"}
-        )
-        assert jumped.status_code == 200, jumped.json()
-        assert jumped.json()["stage"] == "needs_beta"
+        jumped = client.post(f"/api/tickets/{tid}/stage", json={"to_stage": "needs_beta"})
+        assert jumped.status_code == 404, jumped.json()
+        arbitrary = client.post(f"/api/tickets/{tid}/propose/beta", json={"body": "skip ahead"})
+        assert arbitrary.status_code == 404, arbitrary.json()
 
 
 # --- the ?stage= filter decision -----------------------------------------------
-
-
-def test_stage_filter_compares_stored_values_directly(app_db: AppDb, probe_installed: None) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        _create(client, "coding")
-        _create(client, "probe")
-        for reserved in ("needs_kickoff", "done", "dropped"):
-            r = client.get(f"/api/tickets?stage={reserved}")
-            assert r.status_code == 200, r.json()
-        # Both fresh tickets sit at needs_kickoff, so that bookend returns both.
-        both = client.get("/api/tickets?stage=needs_kickoff").json()["tickets"]
-        assert len(both) == 2
 
 
 def test_stage_filter_non_reserved_needs_no_worker_type(
@@ -271,3 +197,33 @@ def test_stage_filter_non_reserved_needs_no_worker_type(
         unknown = client.get("/api/tickets?stage=needs_ghost")
         assert unknown.status_code == 200
         assert unknown.json()["tickets"] == []
+
+
+def test_guidance_round_trip_validation_and_retired_field_routes(app_db: AppDb) -> None:
+    app, _db = app_db
+    with TestClient(app) as client:
+        ticket_id = _create(client, "coding")
+        path = f"/api/tickets/{ticket_id}/guidance"
+        original = "  Scope boundary\n\nKeep this.  "
+        saved = client.put(path, json={"body": original})
+        assert saved.status_code == 200
+        assert saved.json()["guidance"] == original
+        assert saved.json()["field_values"] == {}
+        assert saved.json()["pending_proposal"]["field"] == "kickoff"
+        for body in (
+            {},
+            {"body": None},
+            {"body": 3},
+            {"body": "lost", "field": "plan"},
+            {"key": "plan", "body": "lost"},
+        ):
+            assert client.put(path, json=body).status_code == 400
+            assert client.get(f"/api/tickets/{ticket_id}").json()["guidance"] == original
+        assert client.post(path + "/append", json={"body": ""}).json() == saved.json()
+        appended = client.post(path + "/append", json={"body": "\nNew direction  "})
+        assert appended.json()["guidance"] == original + "\n\n\nNew direction  "
+        assert client.put(path, json={"body": ""}).json()["guidance"] == ""
+        assert (
+            client.put(f"/api/tickets/{ticket_id}/notes/plan", json={"body": "old"}).status_code
+            == 404
+        )

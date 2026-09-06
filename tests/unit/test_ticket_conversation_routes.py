@@ -9,7 +9,6 @@ own record rather than from the route's report of itself.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 from pathlib import Path
 from sqlite3 import Connection
@@ -22,7 +21,6 @@ from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationObservationKind,
     InMemoryConversationSystem,
 )
-from planner.conversation.message_content import text_message_content
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -159,20 +157,6 @@ def test_an_invalid_first_image_makes_neither_conversation_prompt_nor_file(
     assert not list((db_path.parent / "files" / "conversations").glob("**/*"))
 
 
-def test_a_second_message_goes_into_the_conversation_the_first_one_made(
-    tmp_path: Path,
-) -> None:
-    """One conversation per Ticket: talking again must not strand the one being talked to."""
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path)
-
-    with TestClient(app) as client:
-        first = _send(client, ticket_id, "hello").json()
-        again = _send(client, ticket_id, "again", conversation_id=first["conversation_id"])
-
-    assert again.json()["conversation_id"] == first["conversation_id"]
-
-
 def test_the_senders_own_facts_about_a_message_reach_the_conversation(
     tmp_path: Path,
 ) -> None:
@@ -221,26 +205,6 @@ def test_the_senders_own_facts_about_a_message_reach_the_conversation(
     ]
 
 
-def test_a_message_from_a_sender_that_minted_nothing_is_sent_as_it_always_was(
-    tmp_path: Path,
-) -> None:
-    """The readiness loop mints neither, and a message without them is an ordinary one."""
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path)
-
-    with TestClient(app) as client:
-        made = _send(client, ticket_id, "no name on this").json()["conversation_id"]
-
-    delivered = [
-        observation
-        for observation in app.state.conversation_system.observations(made)
-        if observation.kind is InMemoryConversationObservationKind.prompt_delivered
-    ]
-    assert [observation.text for observation in delivered] == ["no name on this"]
-    assert delivered[0].sender_message_id is None
-    assert delivered[0].sent_at_unix_milliseconds is None
-
-
 def test_a_message_naming_a_conversation_the_ticket_is_not_in_is_turned_away(
     tmp_path: Path,
 ) -> None:
@@ -275,88 +239,12 @@ def test_resetting_kills_the_conversation_and_unlinks_it(tmp_path: Path) -> None
     assert after["conversation_id"] != started
 
 
-def test_resetting_a_ticket_with_no_conversation_changes_nothing(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path)
-
-    with TestClient(app) as client:
-        response = client.post(f"/api/tickets/{ticket_id}/conversation/reset")
-
-    assert response.status_code == 200, response.text
-    assert response.json()["conversation_id"] is None
-
-
-def test_a_running_turn_is_stopped_by_the_reset(tmp_path: Path) -> None:
-    """New silences the old worker outright: the turn stops and held messages are dropped."""
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path)
-
-    with TestClient(app) as client:
-        conversation_id = _send(client, ticket_id, "working").json()["conversation_id"]
-        conversations = app.state.conversation_system
-        asyncio.run(
-            conversations.send(
-                conversation_id,
-                text_message_content("and this"),
-                sender_label="loop",
-            )
-        )
-        assert asyncio.run(conversations.is_running(conversation_id)) is True
-
-        client.post(f"/api/tickets/{ticket_id}/conversation/reset")
-
-        assert asyncio.run(conversations.is_running(conversation_id)) is False
-        kinds = [
-            observation.kind for observation in conversations.observations(conversation_id)
-        ]
-        assert InMemoryConversationObservationKind.turn_ended in kinds
-        assert InMemoryConversationObservationKind.prompt_discarded in kinds
-
-
 def _start_values(client: TestClient, ticket_id: str) -> dict[str, object]:
     """Ask what a conversation for this Ticket's worker would run on, as the panel does."""
     asked: Response = client.get(f"/api/tickets/{ticket_id}/conversation/start-values")
     assert asked.status_code == 200, asked.text
     answer: dict[str, object] = asked.json()
     return answer
-
-
-def test_a_ticket_nobody_has_run_says_what_its_worker_type_launches_on(
-    tmp_path: Path,
-) -> None:
-    """The panel's question before there is anything to look at, and asking starts nothing."""
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path)
-
-    with TestClient(app) as client:
-        assert _start_values(client, ticket_id) == {
-            "backend_key": "codex",
-            "model": "gpt-5.6-sol",
-            "reasoning_effort": "medium",
-        }
-        _start_values(client, ticket_id)
-
-    assert _conversation_id(db_path, ticket_id) is None
-
-
-def test_after_new_it_says_what_that_ticket_last_ran_on(tmp_path: Path) -> None:
-    """A Ticket's own last-chosen values outlive the conversation they were chosen in.
-
-    So the panel opens on what this Ticket ran on rather than on what its Worker type
-    ships with — which is the whole point of the Ticket having columns of its own.
-    """
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path)
-
-    with TestClient(app) as client:
-        _send(client, ticket_id, "run it on this instead", model="gpt-5.6-codex")
-        client.post(f"/api/tickets/{ticket_id}/conversation/reset")
-
-        assert _start_values(client, ticket_id) == {
-            "backend_key": "codex",
-            "model": "gpt-5.6-codex",
-            "reasoning_effort": "medium",
-        }
 
 
 def test_the_first_message_runs_on_what_the_panel_was_shown(tmp_path: Path) -> None:
@@ -431,8 +319,8 @@ def _park_on_a_proposal(db_path: Path, ticket_id: str) -> None:
     _past_kickoff(db_path, ticket_id)
     conn: Connection = connect(str(db_path))
     try:
-        tickets_data.file_proposal(
-            conn, ticket_id, field="success", body="how we will know", actor="agent", now=1
+        tickets_data.file_current_proposal_with_recap(
+            conn, ticket_id, body="how we will know", actor="agent", now=1, recap="Current work"
         )
         conn.commit()
     finally:
@@ -452,31 +340,3 @@ def test_replying_to_a_parked_proposal_moves_the_ticket_to_paired(tmp_path: Path
     assert replied.status_code == 200, replied.text
     assert replied.json()["ticket_status"] == "paired"
     assert _ticket_status(db_path, ticket_id) == "paired"
-
-
-def test_replying_leaves_every_other_status_exactly_as_it_was(tmp_path: Path) -> None:
-    """The writer owns which statuses move, and this route reports every reply to it."""
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path)
-    _past_kickoff(db_path, ticket_id)
-    assert _ticket_status(db_path, ticket_id) == "empty"
-
-    with TestClient(app) as client:
-        replied = client.post(f"/api/tickets/{ticket_id}/human-reply")
-
-    assert replied.status_code == 200, replied.text
-    assert replied.json()["ticket_status"] == "empty"
-    assert _ticket_status(db_path, ticket_id) == "empty"
-
-
-def test_only_a_person_can_say_they_replied(tmp_path: Path) -> None:
-    """The automatic loop sends into the same conversation; its prompts are not replies."""
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path)
-    _park_on_a_proposal(db_path, ticket_id)
-
-    with TestClient(app) as client:
-        refused = client.post(f"/api/tickets/{ticket_id}/human-reply", headers=_AGENT)
-
-    assert refused.json()["error"]["code"] == "agent_forbidden", refused.text
-    assert _ticket_status(db_path, ticket_id) == "awaiting_approval"

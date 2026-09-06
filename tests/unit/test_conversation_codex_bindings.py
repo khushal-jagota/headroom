@@ -10,12 +10,15 @@ knows. When codex moves, these fail, which is the point.
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from planner.conversation.backends.codex_app_server import bindings_gen as bindings
+from planner.conversation.backends.codex_app_server import generate_bindings as generator
 from planner.conversation.backends.codex_app_server.adapter import (
     FULL_ACCESS_TURN_SANDBOX_POLICY,
     PERMISSION_ASK_OPTIONS,
@@ -28,6 +31,16 @@ from planner.conversation.backends.codex_app_server.generate_bindings import (
     PINNED_UPSTREAM_TAG,
     SCHEMA_ROOTS,
     VENDORED_SUBSET_SCHEMA_PATH,
+)
+
+CODEX_EXECUTABLE = shutil.which("codex")
+PINNED_CODEX_AVAILABLE = (
+    CODEX_EXECUTABLE is not None
+    and generator._installed_codex_version(CODEX_EXECUTABLE) == PINNED_CODEX_CLI_VERSION
+)
+pinned_codex_only = pytest.mark.skipif(
+    not PINNED_CODEX_AVAILABLE,
+    reason="the pinned Codex binary is not installed",
 )
 
 
@@ -139,6 +152,48 @@ def test_full_access_is_a_sandbox_the_pinned_protocol_knows() -> None:
     )
     assert turn.sandboxPolicy == FULL_ACCESS_TURN_SANDBOX_POLICY
     assert bindings.ThreadStartParams(sandbox="danger-full-access").sandbox
+
+
+def test_goal_requests_and_responses_match_the_pinned_protocol() -> None:
+    set_request = bindings.ThreadGoalSetParams(
+        threadId="thread-1", objective="Ship it", status="active"
+    )
+    assert set_request.model_dump(mode="json", exclude_none=True, exclude_unset=True) == {
+        "threadId": "thread-1",
+        "objective": "Ship it",
+        "status": "active",
+    }
+    goal = {
+        "threadId": "thread-1",
+        "objective": "Ship it",
+        "status": "active",
+        "tokenBudget": None,
+        "tokensUsed": 0,
+        "timeUsedSeconds": 0,
+        "createdAt": 1,
+        "updatedAt": 1,
+    }
+    assert bindings.ThreadGoalSetResponse.model_validate({"goal": goal}).goal.objective == "Ship it"
+    assert bindings.ThreadGoalGetResponse.model_validate({"goal": None}).goal is None
+    assert bindings.ThreadGoalClearResponse.model_validate({"cleared": True}).cleared is True
+
+
+@pinned_codex_only
+def test_regeneration_from_the_pinned_binary_is_byte_deterministic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex = CODEX_EXECUTABLE
+    assert codex is not None
+    with tempfile.TemporaryDirectory(
+        prefix="binding-test-", dir=GENERATED_BINDINGS_PATH.parent
+    ) as temporary_directory:
+        generated = Path(temporary_directory) / "bindings_gen.py"
+        schema = Path(temporary_directory) / "schema.json"
+        monkeypatch.setattr(generator, "GENERATED_BINDINGS_PATH", generated)
+        monkeypatch.setattr(generator, "VENDORED_SUBSET_SCHEMA_PATH", schema)
+        generator.generate_bindings(codex_executable=codex)
+        assert generated.read_bytes() == GENERATED_BINDINGS_PATH.read_bytes()
+        assert schema.read_bytes() == VENDORED_SUBSET_SCHEMA_PATH.read_bytes()
 
 
 def _references_in(document: object) -> list[str]:

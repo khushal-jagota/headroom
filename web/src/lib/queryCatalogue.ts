@@ -3,7 +3,6 @@ import { fetchJson } from "./api";
 import type { ConversationStartValues } from "./conversation/wire";
 import type { WorkerTypesResponse } from "./lifecycle";
 import type {
-  BacklogResponse,
   BoardResponse,
   CurrentSprintResponse,
   DayResponse,
@@ -16,8 +15,11 @@ import type {
   SkillsHomeResponse,
   SprintsResponse,
   SprintItemsResponse,
+  SprintItemSummariesResponse,
   SprintItemWorkspace,
+  SprintTrackingBody,
   TicketDetail,
+  TicketSummariesResponse,
   VpsStatusSummary,
   WorkerManagementDetail,
   WorkersResponse
@@ -46,8 +48,16 @@ export const queries = {
   board: () => jsonQuery<BoardResponse>(["board"], "/api/board"),
   review: () => jsonQuery<ReviewResponse>(["review"], "/api/review"),
   todayDay: () => jsonQuery<DayResponse>(["day", "today"], "/api/day/today"),
-  backlogSprintItems: () =>
-    jsonQuery<BacklogResponse>(["items", "backlog"], "/api/items?sprint_id=null"),
+  backlogTicketSummaries: (offset: number, limit = 30) =>
+    jsonQuery<TicketSummariesResponse>(
+      ["tickets", "backlog", { limit, offset }],
+      `/api/ticket-summaries?sprint_id=null&limit=${limit}&offset=${offset}`
+    ),
+  outcomeSummaries: (offset: number, limit = 30, projectId = "", search = "") =>
+    jsonQuery<SprintItemSummariesResponse>(
+      ["outcomes", { limit, offset, projectId, search }],
+      `/api/sprint-item-summaries?limit=${limit}&offset=${offset}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""}${search ? `&search=${encodeURIComponent(search)}` : ""}`
+    ),
   ideas: () => jsonQuery<IdeasResponse>(["ideas"], "/api/ideas"),
   projects: () => jsonQuery<ProjectsResponse>(["projects"], "/api/projects"),
   schedules: () => jsonQuery<SchedulesResponse>(["schedules"], "/api/schedules"),
@@ -55,6 +65,11 @@ export const queries = {
   sprintItems: () => jsonQuery<SprintItemsResponse>(["items"], "/api/items"),
   currentSprint: () =>
     jsonQuery<CurrentSprintResponse>(["sprint", "current"], "/api/sprint/current"),
+  sprintTracking: (sprintId: string) =>
+    jsonQuery<SprintTrackingBody>(
+      ["sprint", sprintId, "tracking"],
+      `/api/sprints/${encodeURIComponent(sprintId)}/tracking`
+    ),
   sprintItemWorkspace: (itemId: string) =>
     jsonQuery<SprintItemWorkspace>(
       ["sprint-item", itemId, "workspace"],

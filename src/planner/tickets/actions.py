@@ -16,11 +16,10 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.runtime.conversation_start import send_to_ticket_conversation
 from planner.runtime.logic.worker_step_prompt import revision_guidance_prompt
-from planner.sprints import data as sprints_data
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, Proposal, Ticket
-from planner.tickets.logic import admission, fields_codec, resolution
+from planner.tickets.contracts import AtCap, Ticket
+from planner.tickets.logic import admission, resolution
 from planner.worker_context.contracts import WorkerContextService
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -44,25 +43,14 @@ def resolve_creation_placement(
     day_id = resolve_day_id("today", planning_now, boundary_hour)
     if sprint_item_id is not None:
         item = conn.execute(
-            "SELECT project_id, sprint_id FROM sprint_items WHERE id = ?",
-            (sprint_item_id,),
+            "SELECT project_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
         ).fetchone()
-        if item is None:
-            return day_id, project_id or "", sprint_id, sprint_item_id
-        if project_id is not None and project_id != item["project_id"]:
-            raise PlannerError(ErrorCode.validation, "ticket placement does not match sprint item")
-        if sprint_id_explicit and sprint_id != item["sprint_id"]:
-            raise PlannerError(ErrorCode.validation, "ticket placement does not match sprint item")
-        return day_id, str(item["project_id"]), item["sprint_id"], sprint_item_id
+        if item is not None:
+            if project_id is not None and project_id != item["project_id"]:
+                raise PlannerError(ErrorCode.validation, "ticket Project does not match Outcome")
+            project_id = str(item["project_id"])
     if sprint_id_explicit:
-        if sprint_id is not None and worker_type in {
-            "planning-day",
-            "planning-midday-check",
-            "planning-sprint",
-        }:
-            item = sprints_data.ensure_planning_item(conn, sprint_id=sprint_id, now=0)
-            return day_id, item.project_id, sprint_id, item.id
-        return day_id, project_id or "project_other", sprint_id, None
+        return day_id, project_id or "project_other", sprint_id, sprint_item_id
     planning_day = day_id.removeprefix("day_")
     ranges = [
         DateRange(
@@ -73,14 +61,7 @@ def resolve_creation_placement(
         for row in conn.execute("SELECT id, date_start, date_end FROM sprints").fetchall()
     ]
     current_id = current_sprint_id(planning_day, ranges)
-    if current_id is not None and worker_type in {
-        "planning-day",
-        "planning-midday-check",
-        "planning-sprint",
-    }:
-        item = sprints_data.ensure_planning_item(conn, sprint_id=current_id, now=0)
-        return day_id, item.project_id, current_id, item.id
-    return day_id, project_id or "project_other", current_id, None
+    return day_id, project_id or "project_other", current_id, sprint_item_id
 
 
 def create_ticket(
@@ -117,9 +98,7 @@ def create_ticket(
             sprint_item_id=sprint_item_id,
             project_id=project_id,
             sprint_id=sprint_id,
-            sprint_id_explicit=(
-                sprint_id_explicit or (sprint_item_id_explicit and sprint_item_id is None)
-            ),
+            sprint_id_explicit=sprint_id_explicit,
             worker_type=worker_type,
         )
     return tickets_data.create_ticket(
@@ -179,9 +158,7 @@ def create_ticket_from_external_work(
             sprint_item_id=sprint_item_id,
             project_id=project_id,
             sprint_id=sprint_id,
-            sprint_id_explicit=(
-                sprint_id_explicit or (sprint_item_id_explicit and sprint_item_id is None)
-            ),
+            sprint_id_explicit=sprint_id_explicit,
             worker_type=worker_type,
         )
     return tickets_data.create_ticket_from_external_work(
@@ -289,10 +266,7 @@ async def return_ticket_for_revision(
         actor,
         worker_type_definition=worker_type_definition,
     )
-    field = worker_type_definition.gating_field(ticket.stage)
-    expected_proposal: Proposal | None = (
-        fields_codec.get_slot(ticket.fields, field).proposal if field is not None else None
-    )
+    expected_proposal = ticket.pending_proposal
     prepared = worker_context_service.prepare(
         ticket_id,
         revision_guidance_prompt(message.strip()),

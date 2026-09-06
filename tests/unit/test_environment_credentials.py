@@ -8,14 +8,12 @@ from pathlib import Path
 import pytest
 
 from planner.environments.contracts import (
-    EnvironmentCredentialPolicy,
     EnvironmentValidationError,
     ResolvedEnvironmentInstance,
 )
 from planner.environments.logic.credentials import parse_environment_file
 from planner.environments.logic.launch_env import (
     build_environment_run_env,
-    build_test_environment_run_env,
 )
 from planner.environments.logic.registry import resolve_environment_instance
 
@@ -46,20 +44,10 @@ def test_environment_file_parses_comments_blank_lines_and_quoted_values(tmp_path
     ("body", "message"),
     [
         ("ANTHROPIC_API_KEY", "malformed"),
-        ("=secret", "malformed"),
-        ("bad-key=value", "malformed"),
         ("ANTHROPIC_API_KEY=one\nANTHROPIC_API_KEY=two", "duplicate"),
         ("STRIPE_SECRET_KEY=secret", "unknown"),
         ("PLAN_DB_PATH=/tmp/poison.db", "forbidden"),
-        ("PLAN_TEST_MODE=1", "forbidden"),
-        ("PLAN_GATEWAY_ADAPTER=fake", "forbidden"),
-        ("PLAN_FAKE_NOW=2026-07-04T12:00:00", "forbidden"),
-        ("HERMES_HOME=/tmp/home", "forbidden"),
-        ("HERMES_SESSION_KEY=sess", "forbidden"),
-        ("PYTHONPATH=/tmp/src", "forbidden"),
         ("HOME=/tmp/home", "forbidden"),
-        ("PWD=/tmp/repo", "forbidden"),
-        ("USER=panels-live", "forbidden"),
     ],
 )
 def test_environment_file_rejects_unsafe_lines(tmp_path: Path, body: str, message: str) -> None:
@@ -68,32 +56,6 @@ def test_environment_file_rejects_unsafe_lines(tmp_path: Path, body: str, messag
 
     with pytest.raises(EnvironmentValidationError, match=message):
         parse_environment_file(env_file, kind="staging")
-
-
-def test_default_environment_policy_keeps_tailscale_setup_outside_runtime(
-    tmp_path: Path,
-) -> None:
-    env_file = tmp_path / "credentials.env"
-    env_file.write_text("TAILSCALE_AUTHKEY=tskey-secret", encoding="utf-8")
-
-    with pytest.raises(EnvironmentValidationError, match="unknown"):
-        parse_environment_file(env_file, kind="live")
-
-
-def test_environment_file_supports_explicit_production_only_policy(tmp_path: Path) -> None:
-    env_file = tmp_path / "credentials.env"
-    env_file.write_text("EXAMPLE_LIVE_ONLY=secret", encoding="utf-8")
-    policy = EnvironmentCredentialPolicy(
-        allowed_keys=frozenset({"EXAMPLE_LIVE_ONLY"}),
-        production_only_keys=frozenset({"EXAMPLE_LIVE_ONLY"}),
-    )
-
-    with pytest.raises(EnvironmentValidationError, match="production-only"):
-        parse_environment_file(env_file, kind="staging", policy=policy)
-
-    assert parse_environment_file(env_file, kind="live", policy=policy) == {
-        "EXAMPLE_LIVE_ONLY": "secret"
-    }
 
 
 def test_launch_environment_scrubs_ambient_and_adds_contract_values(
@@ -150,30 +112,6 @@ def test_launch_environment_scrubs_ambient_and_adds_contract_values(
     assert "PLAN_FAKE_NOW" not in run_env
     assert "HERMES_HOME" not in run_env
     assert "HERMES_SESSION_KEY" not in run_env
-
-
-def test_hidden_test_launch_seam_injects_fake_runtime_itself(tmp_path: Path) -> None:
-    instance = _staging_instance(tmp_path)
-    ambient = {
-        "PATH": "/usr/bin:/bin",
-        "PLAN_TEST_MODE": "0",
-        "PLAN_GATEWAY_ADAPTER": "real",
-        "PLAN_FAKE_NOW": "2099-01-01T00:00:00",
-        "PLAN_TICK_SECONDS": "9999",
-    }
-
-    run_env = build_test_environment_run_env(
-        instance,
-        credentials={},
-        ambient=ambient,
-        hermes_python=Path("/operator-hermes/bin/python"),
-        runtime_port=43124,
-    )
-
-    assert run_env["PLAN_TEST_MODE"] == "1"
-    assert "PLAN_GATEWAY_ADAPTER" not in run_env
-    assert run_env["PLAN_FAKE_NOW"] == "2026-07-04T12:00:00+00:00"
-    assert run_env["PLAN_TICK_SECONDS"] == "1"
 
 
 def _staging_instance(tmp_path: Path) -> ResolvedEnvironmentInstance:

@@ -38,11 +38,12 @@ is gone and this says so rather than handing back an agent that has forgotten ev
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 from collections.abc import Sequence
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final, Literal
 
@@ -212,6 +213,13 @@ CODEX_BUILT_IN_CATALOG_ENTRIES: tuple[ComposerCatalogEntry, ...] = (
         description="Review the working tree or follow the supplied review instructions",
         argument_hint="[review instructions]",
     ),
+    ComposerCatalogEntry(
+        kind=ComposerCatalogEntryKind.command,
+        display_text="/goal",
+        insertion_text="/goal ",
+        description="Inspect, set, or clear the Codex thread goal",
+        argument_hint="[get | set <objective> | clear]",
+    ),
 )
 
 
@@ -294,6 +302,7 @@ class CodexAppServerBackendChild:
             handler=_CodexServerMessages(self), description=resolved_start.conversation_id
         )
         self._thread_id: str | None = None
+        self._thread_is_ephemeral = False
         self._model: str | None = resolved_start.model
         self._reasoning_effort: str | None = resolved_start.reasoning_effort
         self._turn: _TurnInFlight | None = None
@@ -332,7 +341,7 @@ class CodexAppServerBackendChild:
                 await self._start_thread(resolved_start)
             else:
                 await self._resume_thread(resolved_start, vendor_session_cursor)
-            await self._refresh_catalog_preserving_last_good()
+            await self._refresh_catalog()
         except BaseException:
             # The process is up but this child is not usable, and nobody upstream holds it
             # yet, so the only place it can be cleaned up is here.
@@ -366,12 +375,21 @@ class CodexAppServerBackendChild:
         )
         turn = _TurnInFlight(token=turn_token, started=asyncio.get_running_loop().create_future())
         self._turn = turn
-        invocation = self._catalog_invocation(sender_content)
+        try:
+            invocation = self._catalog_invocation(sender_content)
+        except PromptWriteFailed:
+            self._turn = None
+            raise
+        if invocation is not None and invocation.kind is ComposerCatalogEntryKind.command:
+            command = invocation.name.split("_", 1)[0]
+            if len(sender_content) != 1:
+                self._turn = None
+                raise PromptWriteFailed(f"/{command} cannot carry attachments")
+            if model_change is not None or reasoning_effort_change is not None:
+                self._turn = None
+                raise PromptWriteFailed(f"/{command} cannot change the model or reasoning effort")
         native_command = (
-            invocation is not None
-            and invocation.kind is ComposerCatalogEntryKind.command
-            and model_change is None
-            and reasoning_effort_change is None
+            invocation is not None and invocation.kind is ComposerCatalogEntryKind.command
         )
         try:
             if native_command:
@@ -533,6 +551,7 @@ class CodexAppServerBackendChild:
             "thread/start", parameters, bindings.ThreadStartResponse
         )
         self._thread_id = started.thread.id
+        self._thread_is_ephemeral = started.thread.ephemeral
         await self._sink.vendor_session_cursor_rebound(started.thread.id)
 
     async def _resume_thread(
@@ -564,6 +583,7 @@ class CodexAppServerBackendChild:
                 "what came back"
             )
         self._thread_id = vendor_session_cursor
+        self._thread_is_ephemeral = resumed.thread.ephemeral
 
     async def _ask_about_the_thread[ResponseT: BaseModel](
         self, method: str, parameters: BaseModel, response_model: type[ResponseT]
@@ -581,19 +601,11 @@ class CodexAppServerBackendChild:
 
     # --- the composer catalogue ----------------------------------------------------------
 
-    async def _refresh_catalog_preserving_last_good(self) -> None:
-        """Publish one complete snapshot, or leave the prior snapshot untouched."""
+    async def _refresh_catalog(self) -> None:
+        """Publish a fresh truthful snapshot, even when one source is unavailable."""
         async with self._catalog_refresh_lock:
-            try:
-                snapshot = await self._read_catalog_snapshot()
-                await self._sink.composer_catalog_reported(snapshot.entries)
-            except (CodexAppServerError, ValidationError) as failed:
-                LOGGER.warning(
-                    "conversation %s: Codex catalogue refresh failed: %s",
-                    self._resolved_start.conversation_id,
-                    failed,
-                )
-                return
+            snapshot = await self._read_catalog_snapshot()
+            await self._sink.composer_catalog_reported(snapshot.entries)
             self._catalog_snapshot = snapshot
 
     def _request_catalog_refresh(self) -> None:
@@ -611,41 +623,82 @@ class CodexAppServerBackendChild:
             await asyncio.sleep(CATALOG_REFRESH_COALESCE_SECONDS)
             while self._catalog_refresh_requested:
                 self._catalog_refresh_requested = False
-                await self._refresh_catalog_preserving_last_good()
+                await self._refresh_catalog()
         finally:
             self._catalog_refresh_task = None
 
     async def _read_catalog_snapshot(self) -> _CatalogSnapshot:
         thread_id = self._bound_thread()
         workspace = str(self._resolved_start.workspace_folder)
-        skills_result = await self._catalog_request(
-            "skills/list", bindings.SkillsListParams(cwds=[workspace])
+        skills, installed_apps, apps, plugins = await asyncio.gather(
+            self._read_skills(workspace),
+            self._read_installed_apps(thread_id),
+            self._read_all_apps_or_none(thread_id),
+            self._read_plugins(workspace),
         )
-        installed_apps_result = await self._catalog_request(
-            "app/installed", bindings.AppsInstalledParams(threadId=thread_id)
-        )
-        apps = await self._read_all_apps(thread_id)
-        plugins_result = await self._catalog_request(
-            "plugin/installed", bindings.PluginInstalledParams(cwds=[workspace])
-        )
-        skills = bindings.SkillsListResponse.model_validate(skills_result)
-        installed_apps = bindings.AppsInstalledResponse.model_validate(installed_apps_result)
-        plugins = bindings.PluginInstalledResponse.model_validate(plugins_result)
-        skill_errors = [error for entry in skills.data for error in entry.errors]
-        if skill_errors:
-            raise CodexAppServerError(
-                "skills/list reported errors: "
-                + "; ".join(f"{error.path}: {error.message}" for error in skill_errors)
-            )
-        if plugins.marketplaceLoadErrors:
-            raise CodexAppServerError(
-                "plugin/installed reported marketplace errors: "
-                + "; ".join(
-                    f"{error.marketplacePath}: {error.message}"
-                    for error in plugins.marketplaceLoadErrors
-                )
-            )
         return _catalog_snapshot(skills, installed_apps, apps, plugins)
+
+    async def _read_skills(self, workspace: str) -> bindings.SkillsListResponse | None:
+        try:
+            result = await self._catalog_request(
+                "skills/list", bindings.SkillsListParams(cwds=[workspace])
+            )
+            skills = bindings.SkillsListResponse.model_validate(result)
+        except (CodexAppServerError, ValidationError) as failed:
+            self._log_catalog_source_failure("skills/list", failed)
+            return None
+        for entry in skills.data:
+            for error in entry.errors:
+                LOGGER.warning(
+                    "conversation %s: skills/list could not read %s: %s",
+                    self._resolved_start.conversation_id,
+                    error.path,
+                    error.message,
+                )
+        return skills
+
+    async def _read_installed_apps(self, thread_id: str) -> bindings.AppsInstalledResponse | None:
+        try:
+            result = await self._catalog_request(
+                "app/installed", bindings.AppsInstalledParams(threadId=thread_id)
+            )
+            return bindings.AppsInstalledResponse.model_validate(result)
+        except (CodexAppServerError, ValidationError) as failed:
+            self._log_catalog_source_failure("app/installed", failed)
+            return None
+
+    async def _read_all_apps_or_none(self, thread_id: str) -> tuple[bindings.AppInfo, ...] | None:
+        try:
+            return await self._read_all_apps(thread_id)
+        except (CodexAppServerError, ValidationError) as failed:
+            self._log_catalog_source_failure("app/list", failed)
+            return None
+
+    async def _read_plugins(self, workspace: str) -> bindings.PluginInstalledResponse | None:
+        try:
+            result = await self._catalog_request(
+                "plugin/installed", bindings.PluginInstalledParams(cwds=[workspace])
+            )
+            plugins = bindings.PluginInstalledResponse.model_validate(result)
+        except (CodexAppServerError, ValidationError) as failed:
+            self._log_catalog_source_failure("plugin/installed", failed)
+            return None
+        for error in plugins.marketplaceLoadErrors or []:
+            LOGGER.warning(
+                "conversation %s: plugin/installed could not read %s: %s",
+                self._resolved_start.conversation_id,
+                error.marketplacePath,
+                error.message,
+            )
+        return plugins
+
+    def _log_catalog_source_failure(self, source: str, failure: Exception) -> None:
+        LOGGER.warning(
+            "conversation %s: Codex catalogue source %s failed: %s",
+            self._resolved_start.conversation_id,
+            source,
+            failure,
+        )
 
     async def _catalog_request(self, method: str, parameters: BaseModel) -> Any:
         """Read catalogue data without letting a stale source poison the prompt wire."""
@@ -676,21 +729,25 @@ class CodexAppServerBackendChild:
     def _catalog_invocation(self, content: MessageContent) -> _CatalogInvocation | None:
         if not content or not isinstance(content[0], MessageText):
             return None
-        match = _COMPOSER_TOKEN.fullmatch(content[0].text)
+        text = content[0].text
+        match = _COMPOSER_TOKEN.fullmatch(text)
         if match is None:
             return None
         token = match.group(1)
         if token == "/compact":
-            # Compact has no instruction input. Any text or image after it is an ordinary
-            # prompt, because dropping that content would change the stored message.
-            if match.group(2) is None and len(content) == 1:
+            if text.rstrip() == "/compact":
                 return _CatalogInvocation(ComposerCatalogEntryKind.command, "compact")
-            return None
-        if token == "/review" and len(content) == 1:
+            raise PromptWriteFailed("/compact does not take arguments")
+        if token == "/review":
             return _CatalogInvocation(
-                ComposerCatalogEntryKind.command, "review", match.group(2) or ""
+                ComposerCatalogEntryKind.command, "review", text[len("/review") :].strip()
             )
-        return self._catalog_snapshot.resolve(token)
+        if token == "/goal":
+            return _goal_invocation(text)
+        invocation = self._catalog_snapshot.resolve(token)
+        if invocation is None and token.startswith(("$", "@")):
+            raise PromptWriteFailed(f"{token!r} is not in the current Codex catalogue")
+        return invocation
 
     # --- the turn -----------------------------------------------------------------------
 
@@ -784,6 +841,10 @@ class CodexAppServerBackendChild:
             compact_parameters = bindings.ThreadCompactStartParams(threadId=thread_id)
             return await self._start_compaction(compact_parameters, turn)
 
+        if invocation.name.startswith("goal_"):
+            await self._run_goal_command(thread_id=thread_id, invocation=invocation, turn=turn)
+            return None
+
         instructions = invocation.path or ""
         target: BaseModel
         if instructions:
@@ -794,6 +855,58 @@ class CodexAppServerBackendChild:
             threadId=thread_id, delivery="inline", target=target
         )
         return await self._start_review(review_parameters, turn)
+
+    async def _run_goal_command(
+        self,
+        *,
+        thread_id: str,
+        invocation: _CatalogInvocation,
+        turn: _TurnInFlight,
+    ) -> None:
+        """Run one goal RPC and close its synthetic turn through the ordinary sink."""
+        if self._thread_is_ephemeral:
+            raise PromptWriteFailed("Codex goals are unavailable on an ephemeral thread")
+        try:
+            if invocation.name == "goal_get":
+                result = await self._client.request(
+                    "thread/goal/get",
+                    _wire(bindings.ThreadGoalGetParams(threadId=thread_id)),
+                )
+                get_response = bindings.ThreadGoalGetResponse.model_validate(result)
+                message = _goal_inspection_message(get_response.goal)
+            elif invocation.name == "goal_set":
+                result = await self._client.request(
+                    "thread/goal/set",
+                    _wire(
+                        bindings.ThreadGoalSetParams(
+                            threadId=thread_id,
+                            objective=invocation.path,
+                            status="active",
+                        )
+                    ),
+                )
+                set_response = bindings.ThreadGoalSetResponse.model_validate(result)
+                message = f"Goal set: {set_response.goal.objective}"
+            else:
+                result = await self._client.request(
+                    "thread/goal/clear",
+                    _wire(bindings.ThreadGoalClearParams(threadId=thread_id)),
+                )
+                clear_response = bindings.ThreadGoalClearResponse.model_validate(result)
+                message = "Goal cleared." if clear_response.cleared else "No goal was set."
+        except (CodexAppServerError, ValidationError) as failed:
+            raise PromptWriteFailed(str(failed)) from failed
+
+        await self._sink.agent_message_completed(turn.token, text_message_content(message))
+        if self._turn is turn:
+            self._turn = None
+        await self._sink.turn_ended(
+            turn.token,
+            ending=ConversationTurnEnding.completed,
+            error_summary=None,
+            standard_error_tail=None,
+        )
+        turn.ended.set()
 
     async def _start_compaction(
         self, parameters: bindings.ThreadCompactStartParams, turn: _TurnInFlight
@@ -1488,14 +1601,14 @@ def _shortened_or_nothing(text: str | None, limit: int) -> str | None:
 
 
 def _catalog_snapshot(
-    skills: bindings.SkillsListResponse,
-    installed_apps: bindings.AppsInstalledResponse,
-    apps: tuple[bindings.AppInfo, ...],
-    plugins: bindings.PluginInstalledResponse,
+    skills: bindings.SkillsListResponse | None,
+    installed_apps: bindings.AppsInstalledResponse | None,
+    apps: tuple[bindings.AppInfo, ...] | None,
+    plugins: bindings.PluginInstalledResponse | None,
 ) -> _CatalogSnapshot:
     """Join Codex's catalogue sources into one deterministic, executable snapshot."""
     candidates: list[tuple[str, ComposerCatalogEntry, _CatalogInvocation]] = []
-    for cwd in skills.data:
+    for cwd in () if skills is None else skills.data:
         for skill in cwd.skills:
             if not skill.enabled:
                 continue
@@ -1523,8 +1636,12 @@ def _catalog_snapshot(
                 )
             )
 
-    callable_apps = {app.id for app in installed_apps.apps if app.enabled and app.callable}
-    for app in apps:
+    callable_apps = {
+        app.id
+        for app in (() if installed_apps is None else installed_apps.apps)
+        if app.enabled and app.callable
+    }
+    for app in () if apps is None or installed_apps is None else apps:
         if app.id not in callable_apps or not app.isEnabled or not app.isAccessible:
             continue
         token = f"@{_mention_token(app.name)}"
@@ -1541,7 +1658,7 @@ def _catalog_snapshot(
             )
         )
 
-    for marketplace in plugins.marketplaces:
+    for marketplace in () if plugins is None else plugins.marketplaces:
         for plugin in marketplace.plugins:
             if (
                 not plugin.installed
@@ -1581,20 +1698,100 @@ def _catalog_snapshot(
                 )
             )
 
-    occurrences: dict[str, int] = {}
-    for token, _, _ in candidates:
-        occurrences[token] = occurrences.get(token, 0) + 1
-    unique = [candidate for candidate in candidates if occurrences[candidate[0]] == 1]
-    unique.sort(key=lambda candidate: (str(candidate[1].kind), candidate[0].casefold()))
+    deduplicated: dict[
+        tuple[str, str, str], tuple[str, ComposerCatalogEntry, _CatalogInvocation]
+    ] = {}
+    for candidate in candidates:
+        invocation = candidate[2]
+        identity = (str(invocation.kind), invocation.name, invocation.path or "")
+        deduplicated.setdefault(identity, candidate)
+
+    by_token: dict[str, list[tuple[str, ComposerCatalogEntry, _CatalogInvocation]]] = {}
+    for candidate in deduplicated.values():
+        by_token.setdefault(candidate[0], []).append(candidate)
+
+    executable: list[tuple[str, ComposerCatalogEntry, _CatalogInvocation]] = []
+    allocated_tokens = set(by_token)
+    for token in sorted(by_token, key=lambda value: (value.casefold(), value)):
+        colliding = by_token[token]
+        if len(colliding) == 1:
+            executable.append(colliding[0])
+            continue
+        colliding.sort(
+            key=lambda candidate: (
+                str(candidate[2].kind),
+                candidate[2].name,
+                candidate[2].path or "",
+            )
+        )
+        for _, entry, invocation in colliding:
+            alias = _collision_alias(token, invocation, allocated_tokens)
+            allocated_tokens.add(alias)
+            executable.append(
+                (
+                    alias,
+                    replace(entry, display_text=alias, insertion_text=f"{alias} "),
+                    invocation,
+                )
+            )
+    executable.sort(key=lambda candidate: (str(candidate[1].kind), candidate[0].casefold()))
 
     invocations: list[tuple[str, _CatalogInvocation | None]] = [
         ("/compact", _CatalogInvocation(ComposerCatalogEntryKind.command, "compact")),
         ("/review", _CatalogInvocation(ComposerCatalogEntryKind.command, "review")),
+        ("/goal", _CatalogInvocation(ComposerCatalogEntryKind.command, "goal_get")),
     ]
-    invocations.extend((token, invocation) for token, _, invocation in unique)
+    invocations.extend((token, invocation) for token, _, invocation in executable)
     return _CatalogSnapshot(
-        entries=CODEX_BUILT_IN_CATALOG_ENTRIES + tuple(entry for _, entry, _ in unique),
+        entries=CODEX_BUILT_IN_CATALOG_ENTRIES + tuple(entry for _, entry, _ in executable),
         invocations=tuple(invocations),
+    )
+
+
+def _collision_alias(
+    canonical_token: str,
+    invocation: _CatalogInvocation,
+    allocated_tokens: set[str],
+) -> str:
+    """Allocate a deterministic alias outside every canonical and prior alias token."""
+    identity = f"{invocation.kind}\0{invocation.name}\0{invocation.path or ''}"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    for length in range(8, len(digest) + 1):
+        alias = f"{canonical_token}~{digest[:length]}"
+        if alias not in allocated_tokens:
+            return alias
+    serial = 2
+    while f"{canonical_token}~{digest}-{serial}" in allocated_tokens:
+        serial += 1
+    return f"{canonical_token}~{digest}-{serial}"
+
+
+def _goal_invocation(text: str) -> _CatalogInvocation:
+    """Parse the complete native goal command, or refuse a malformed known form."""
+    command = text.rstrip()
+    if command in {"/goal", "/goal get"}:
+        return _CatalogInvocation(ComposerCatalogEntryKind.command, "goal_get")
+    if command == "/goal clear":
+        return _CatalogInvocation(ComposerCatalogEntryKind.command, "goal_clear")
+    set_prefix = "/goal set"
+    if (
+        command.startswith(set_prefix)
+        and len(command) > len(set_prefix)
+        and command[len(set_prefix)].isspace()
+    ):
+        objective = command[len(set_prefix) :].strip()
+        if objective:
+            return _CatalogInvocation(ComposerCatalogEntryKind.command, "goal_set", objective)
+    raise PromptWriteFailed("/goal accepts no argument, 'get', 'set <objective>', or 'clear'")
+
+
+def _goal_inspection_message(goal: bindings.ThreadGoal | None) -> str:
+    if goal is None:
+        return "No goal is set."
+    budget = "" if goal.tokenBudget is None else f"/{goal.tokenBudget}"
+    return (
+        f"Goal: {goal.objective} ({goal.status}, "
+        f"{goal.tokensUsed}{budget} tokens, {goal.timeUsedSeconds}s)"
     )
 
 

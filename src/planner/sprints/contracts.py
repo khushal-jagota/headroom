@@ -1,4 +1,4 @@
-"""Sprint domain shapes: sprints, sprint items, ideas, and derived item status."""
+"""Sprint domain shapes: Sprints, durable Outcomes, commitments, and ideas."""
 
 from __future__ import annotations
 
@@ -8,13 +8,6 @@ from typing import Final, TypedDict
 
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core.contracts import Priority
-
-
-class ItemStatus(StrEnum):
-    todo = "todo"
-    in_progress = "in_progress"
-    blocked = "blocked"
-    done = "done"
 
 
 class SprintItemKind(StrEnum):
@@ -38,36 +31,8 @@ SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS: Final = SprintItemSupervisorLaunchConfig
 )
 
 
-ITEM_STATUS_ORDER: Final[tuple[ItemStatus, ...]] = (
-    ItemStatus.todo,
-    ItemStatus.in_progress,
-    ItemStatus.blocked,
-    ItemStatus.done,
-)
-
-# Sprint text-field groups: the kickoff and review sub-fields. Freeze is retired,
-# so these no longer gate writes — they only enumerate the always-editable sprint
-# text fields (reused by _SPRINT_TEXT_FIELDS in data.py + api.py).
-KICKOFF_FIELDS: Final[tuple[str, ...]] = (
-    "limiting_factor",
-    "primary_bet",
-    "supports",
-    "premortem",
-)
-REVIEW_FIELDS: Final[tuple[str, ...]] = (
-    "outcomes",
-    "solo_reflection",
-    "joint_discussion",
-    "updates_to_thinking",
-    "carry_forward",
-)
-# Checkpoint (rev6): three headed markdown sub-fields on the sprint, edited per-field
-# in place. The historical mid_* identifiers remain. All sprint text fields stay editable.
-MID_SPRINT_FIELDS: Final[tuple[str, ...]] = (
-    "mid_where_we_stand",
-    "mid_whats_changed",
-    "mid_what_to_adjust",
-)
+# Editable documents; their internal headings are prose, not stored fields.
+SPRINT_DOCUMENT_FIELDS: Final[tuple[str, ...]] = ("kickoff", "checkpoint", "review")
 
 
 @dataclass
@@ -76,18 +41,10 @@ class Sprint:  # §3.1
     name: str
     date_start: str  # ISO, inclusive
     date_end: str  # ISO, inclusive
-    limiting_factor: str
-    primary_bet: str
-    supports: str
-    premortem: str
-    mid_where_we_stand: str = ""  # Checkpoint sub-fields; historical mid_* identifiers
-    mid_whats_changed: str = ""
-    mid_what_to_adjust: str = ""
-    outcomes: str = ""
-    solo_reflection: str = ""
-    joint_discussion: str = ""
-    updates_to_thinking: str = ""
-    carry_forward: str = ""
+    primary_bet: str = ""  # summary also displayed above Sprint tracking
+    kickoff: str = ""
+    checkpoint: str = ""
+    review: str = ""
     created_at: int = 0
     updated_at: int = 0
 
@@ -101,7 +58,6 @@ class SprintItem:  # §3.2
     deadline: str | None
     project_id: str
     project_name: str
-    sprint_id: str | None  # NULL = backlog/deferred
     supervisor_agent_key: str
     supervisor_launch_configuration: SprintItemSupervisorLaunchConfiguration
     kind: SprintItemKind = SprintItemKind.normal
@@ -121,7 +77,8 @@ class SprintItemDeletion:
 
 # --- request bodies (§9 wire shapes) ---
 # Every key is optional on the wire: an absent key takes the documented default,
-# unknown keys are ignored. The api layer marshals the raw JSON dict into these
+# unknown keys are ignored except for Sprint creation, which rejects them.
+# The api layer marshals the raw JSON dict into these
 # shapes; a null or wrong-typed value raises ErrorCode.validation. Enum-valued
 # keys carry the string form and are parsed against the contract enums in api.
 
@@ -133,21 +90,16 @@ class CreateItemBody(TypedDict, total=False):  # POST /items
     body: str  # default ""
     priority: str | None  # Priority value; default P3
     deadline: str | None  # ISO date
-    sprint_id: str | None  # null/absent = backlog
-
-
-class MoveItemTicketBody(TypedDict, total=False):  # POST /items/{id}/tickets
-    ticket_id: str
 
 
 class CreateSprintBody(TypedDict, total=False):  # POST /sprints
     name: str  # default ""
     date_start: str  # ISO date; required (default "" is rejected)
     date_end: str  # ISO date; required (default "" is rejected)
-    limiting_factor: str  # default ""
     primary_bet: str  # default ""
-    supports: str  # default ""
-    premortem: str  # default ""
+    kickoff: str  # default ""
+    checkpoint: str  # default ""
+    review: str  # default ""
 
 
 class CreateIdeaBody(TypedDict, total=False):  # POST /ideas
@@ -166,3 +118,72 @@ class Idea:  # §3.5
     project_name: str | None
     created_at: int
     updated_at: int
+
+
+@dataclass(frozen=True)
+class SprintOutcomeCommitment:
+    sprint_id: str
+    outcome_id: str
+
+
+class SprintSummary(TypedDict):
+    id: str
+    name: str
+    date_start: str
+    date_end: str
+
+
+class SprintWireBody(SprintSummary):
+    primary_bet: str
+    kickoff: str
+    checkpoint: str
+    review: str
+    created_at: int
+    updated_at: int
+
+
+class CarryOutcomeBody(TypedDict):
+    target_sprint_id: str
+    ticket_ids: list[str]
+
+
+class CarryOutcomeResult(TypedDict):
+    source_sprint_id: str
+    target_sprint_id: str
+    outcome_id: str
+    ticket_ids: list[str]
+
+
+class OutcomeSummary(TypedDict):
+    id: str
+    title: str
+    priority: str
+    deadline: str | None
+    project_id: str
+    project: str
+    created_at: int
+    updated_at: int
+
+
+class SprintTicketSummary(TypedDict):
+    id: str
+    title: str
+    stage: str
+    priority: str
+    ticket_status: str
+    project_id: str | None
+    sprint_item_id: str | None
+    waiting_to_closeout: bool
+
+
+class SprintOutcomeGroup(TypedDict):
+    outcome: OutcomeSummary
+    committed: bool
+    tickets: list[SprintTicketSummary]
+
+
+class SprintTrackingBody(TypedDict):
+    planning_date: str
+    sprint: SprintWireBody | None
+    outcome_groups: list[SprintOutcomeGroup]
+    unclassified_tickets: list[SprintTicketSummary]

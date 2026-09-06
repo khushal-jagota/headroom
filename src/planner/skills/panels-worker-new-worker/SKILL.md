@@ -83,7 +83,7 @@ change there, normally in an isolated worktree. Never land a worker by editing
 3. Register it once in `src/planner/worker_types/configuration.py`: add its skill to the known-skills catalog and its definition to the production configuration tuple.
 4. Provision it: add the skill dir to the planner skill list. On restart this **symlinks the skill into the worker's Hermes home — the step that lets a worker `skill_view` it**. The file must exist before the restart, or startup fails.
 5. Confirm it validates at build and the skill is shipped + provisioned.
-6. Announce the Worker type to the agent front doors: add the new specialist to `panels-worker`'s worker list, and add the Worker type (with what it's for) to `panels-chief-of-staff` so it can create and reconcile it.
+6. Describe the Worker type in `panels-chief-of-staff` so it can create and reconcile it. The base Worker discovers its specialist from `panels worker my-ticket`; there is no second list to update.
 
 Before activation, confirm the managed settings bootstrap contains the same backend, model, and reasoning effort approved in Runtime Defaults.
 

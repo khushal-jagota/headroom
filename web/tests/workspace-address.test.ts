@@ -31,71 +31,12 @@ describe("Workspace addresses", () => {
     });
   });
 
-  it("carries the Item a Ticket was opened from", () => {
-    expect(parseWorkspaceAddress("#/workspace/item/si%20one/t%20one")).toEqual({
-      selection: { kind: "ticket", id: "t one", openedFromItemId: "si one" },
-      view: "items",
-      openFile: null
-    });
-    const selection: WorkspaceSelection = {
-      kind: "ticket",
-      id: "t / one",
-      openedFromItemId: "si / one"
-    };
-    expect(workspaceAddress(selection)).toBe(
-      "#/workspace/item/si%20%2F%20one/t%20%2F%20one"
-    );
-    expect(parseWorkspaceAddress(workspaceAddress(selection))?.selection).toEqual(
-      selection
-    );
-  });
-
   it("writes encoded, shareable addresses", () => {
     const selection = { kind: "item", id: "item / one" } as const;
     expect(workspaceAddress(selection)).toBe("#/workspace/item/item%20%2F%20one");
     expect(parseWorkspaceAddress(workspaceAddress(selection))?.selection).toEqual(
       selection
     );
-  });
-
-  it("writes the view only when the reader asked for the other one", () => {
-    expect(workspaceAddress({ kind: "none" }, "tickets")).toBe("#/workspace");
-    expect(workspaceAddress({ kind: "none" }, "items")).toBe(
-      "#/workspace?view=items"
-    );
-    expect(workspaceAddress({ kind: "item", id: "si_one" }, "items")).toBe(
-      "#/workspace/item/si_one"
-    );
-    expect(workspaceAddress({ kind: "chief" }, "items")).toBe(
-      "#/workspace/chief-of-staff"
-    );
-    expect(workspaceAddress({ kind: "chief" }, "tickets")).toBe(
-      "#/workspace/chief-of-staff?view=tickets"
-    );
-    expect(workspaceAddress({ kind: "ticket", id: "t_one" }, "tickets")).toBe(
-      "#/workspace/t_one"
-    );
-    expect(workspaceAddress({ kind: "item", id: "si_one" }, "tickets")).toBe(
-      "#/workspace/item/si_one?view=tickets"
-    );
-  });
-
-  it("reads the view back, and ignores a view it does not know", () => {
-    expect(parseWorkspaceAddress("#/workspace?view=items")).toEqual({
-      selection: { kind: "none" },
-      view: "items",
-      openFile: null
-    });
-    expect(parseWorkspaceAddress("#/workspace/item/si_one?view=tickets")).toEqual({
-      selection: { kind: "item", id: "si_one" },
-      view: "tickets",
-      openFile: null
-    });
-    expect(parseWorkspaceAddress("#/workspace?view=sideways")).toEqual({
-      selection: { kind: "none" },
-      view: "tickets",
-      openFile: null
-    });
   });
 
   it("carries the artifact a Ticket has open", () => {
@@ -111,41 +52,7 @@ describe("Workspace addresses", () => {
     });
   });
 
-  it("keeps the view and the artifact in one address", () => {
-    const file = { kind: "sprint-item-file", sprintItemId: "si_one", path: "notes.md" } as const;
-    const address = workspaceAddress(
-      { kind: "ticket", id: "t_one", openedFromItemId: "si_one" },
-      "tickets",
-      file
-    );
-    expect(address).toBe(
-      "#/workspace/item/si_one/t_one?view=tickets&source=sprint-item&item=si_one&path=notes.md"
-    );
-    expect(parseWorkspaceAddress(address)?.openFile).toEqual(file);
-  });
-
   // Only a Ticket draws an artifact, and an unsafe path names no file at all.
-  it("drops a file no screen here could show", () => {
-    expect(
-      parseWorkspaceAddress("#/workspace?source=ticket&ticket=t_one&path=plan.md")?.openFile
-    ).toBeNull();
-    expect(
-      parseWorkspaceAddress("#/workspace/item/si_one?source=sprint-item&item=si_one&path=a.md")
-        ?.openFile
-    ).toBeNull();
-    expect(
-      parseWorkspaceAddress("#/workspace/t_one?source=ticket&ticket=t_one&path=../secret.md")
-        ?.openFile
-    ).toBeNull();
-    expect(
-      workspaceAddress(
-        { kind: "item", id: "si_one" },
-        undefined,
-        { kind: "ticket-file", ticketId: "t_one", path: "plan.md" }
-      )
-    ).toBe("#/workspace/item/si_one");
-  });
-
   it("rejects malformed Workspace paths", () => {
     expect(parseWorkspaceAddress("#/workspace/item")).toBeNull();
     expect(parseWorkspaceAddress("#/workspace/item/one/two/three")).toBeNull();

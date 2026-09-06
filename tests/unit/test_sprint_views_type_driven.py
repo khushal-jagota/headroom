@@ -14,7 +14,6 @@ from sqlite3 import Connection
 
 import pytest
 from tests.support.probe import (
-    FIELD_ALPHA,
     NEEDS_ALPHA,
     install_probe_registry,
     uninstall_probe_registry,
@@ -26,7 +25,7 @@ from planner.core.contracts import LinkKind
 from planner.sprints.data import create_item
 from planner.sprints.views import item_tickets
 from planner.tickets.contracts import AtCap
-from planner.tickets.data import accept_proposal, create_ticket, file_proposal
+from planner.tickets.data import accept_proposal, create_ticket, file_current_proposal_with_recap
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 
@@ -65,7 +64,9 @@ def test_item_tickets_probe_child_decodes(
         next_ceiling=NEEDS_ALPHA,
         at_cap=AtCap.propose,
     )
-    file_proposal(tmp_db, probe.id, field=FIELD_ALPHA, body="alpha body", actor="agent", now=3)
+    file_current_proposal_with_recap(
+        tmp_db, probe.id, body="alpha body", actor="agent", now=3, recap="Current work"
+    )
 
     rows = item_tickets(tmp_db, item.id)
 
@@ -95,7 +96,9 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
     )
     # Accept kickoff (default ceiling is now needs_kickoff, so kickoff parks until
     # accepted), expanding the ceiling to needs_success; a success proposal then parks.
-    file_proposal(tmp_db, child.id, field="kickoff", body="k", actor="agent", now=2)
+    file_current_proposal_with_recap(
+        tmp_db, child.id, body="k", actor="agent", now=2, recap="Current work"
+    )
     accept_proposal(
         tmp_db,
         child.id,
@@ -105,7 +108,9 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
         next_ceiling="needs_success",
         at_cap=AtCap.propose,
     )
-    file_proposal(tmp_db, child.id, field="success", body="s", actor="agent", now=3)
+    file_current_proposal_with_recap(
+        tmp_db, child.id, body="s", actor="agent", now=3, recap="Current work"
+    )
 
     rows = item_tickets(tmp_db, item.id)
     assert len(rows) == 1
@@ -183,8 +188,7 @@ def test_item_tickets_identifies_only_runnable_empty_closeout_tickets(
         sprint_item_id=item.id,
     )
     tmp_db.execute(
-        "UPDATE tickets SET stage = ?, ticket_status = ?, ceiling = ?, at_cap = ? "
-        "WHERE id = ?",
+        "UPDATE tickets SET stage = ?, ticket_status = ?, ceiling = ?, at_cap = ? WHERE id = ?",
         (stage, ticket_status, ceiling, at_cap, child.id),
     )
 

@@ -13,7 +13,6 @@ from planner.tickets.contracts import (
     ScopePair,
     StageOwnershipMode,
     Ticket,
-    TicketFields,
     TicketStatus,
 )
 from planner.tickets.logic import machine
@@ -22,7 +21,6 @@ from planner.worker_types.contracts import WorkerTypeDefinition
 
 def _cases(
     ticket: Ticket,
-    fields: TicketFields,
     definition: WorkerTypeDefinition,
 ) -> None:
     stage: str = "needs_alpha"
@@ -54,14 +52,7 @@ def _cases(
         ),
         ScopePair,
     )
-    assert_type(
-        machine.has_pending_gating_proposal(stage, fields, worker_type_definition=definition),
-        bool,
-    )
-    assert_type(
-        machine.has_pending_parked_proposal(ticket, worker_type_definition=definition),
-        bool,
-    )
+    assert_type(ticket.pending_proposal is not None, bool)
     assert_type(
         machine.effective_stage_ownership_mode(
             stage,

@@ -129,6 +129,15 @@ SCHEMA_ROOTS: tuple[tuple[str, str], ...] = (
     (_V2_NAMESPACE, "ReviewStartResponse"),
     (_V2_NAMESPACE, "ThreadCompactStartParams"),
     (_V2_NAMESPACE, "ThreadCompactStartResponse"),
+    # Goal commands are direct thread RPCs. Their responses own the command result. The
+    # matching notifications are not consumed because the same state would be reported
+    # twice, and Panels does not maintain a second copy of Codex's goal state.
+    (_V2_NAMESPACE, "ThreadGoalGetParams"),
+    (_V2_NAMESPACE, "ThreadGoalGetResponse"),
+    (_V2_NAMESPACE, "ThreadGoalSetParams"),
+    (_V2_NAMESPACE, "ThreadGoalSetResponse"),
+    (_V2_NAMESPACE, "ThreadGoalClearParams"),
+    (_V2_NAMESPACE, "ThreadGoalClearResponse"),
     # The two snapshot probes, which are requests like any other.
     (_V2_NAMESPACE, "GetAccountParams"),
     (_V2_NAMESPACE, "GetAccountResponse"),

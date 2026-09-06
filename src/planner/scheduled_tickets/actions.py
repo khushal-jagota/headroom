@@ -27,7 +27,6 @@ from planner.scheduled_tickets.logic import (
     planning_day_for,
     validate_local_time,
 )
-from planner.sprints import data as sprints_data
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
@@ -36,20 +35,7 @@ from planner.tickets.contracts import TITLE_MAX_CHARS
 _LOG = logging.getLogger(__name__)
 
 
-def _validate_template(
-    conn: sqlite3.Connection, template: ScheduledTicketTemplate
-) -> None:
-    if (template.placement_mode is ScheduledTicketPlacementMode.sprint_item) != (
-        template.sprint_item_id is not None
-    ):
-        raise PlannerError(
-            ErrorCode.validation,
-            "scheduled Ticket placement mode and sprint item do not match",
-            {
-                "placement_mode": template.placement_mode.value,
-                "sprint_item_id": template.sprint_item_id,
-            },
-        )
+def _validate_template(conn: sqlite3.Connection, template: ScheduledTicketTemplate) -> None:
     if (
         template.placement_mode is ScheduledTicketPlacementMode.backlog
         and template.sprint_id is not None
@@ -83,26 +69,26 @@ def create_schedule(
     template: ScheduledTicketTemplate,
     now: int,
 ) -> ScheduledTicketSchedule:
-    if template.sprint_item_id is not None:
-        item = conn.execute(
-            "SELECT project_id, sprint_id FROM sprint_items WHERE id = ?",
-            (template.sprint_item_id,),
-        ).fetchone()
-        if item is not None:
-            template = replace(
-                template,
-                project_id=str(item["project_id"]),
-                sprint_id=item["sprint_id"],
-            )
-    _validate_template(conn, template)
-    return data.create_schedule(
-        conn,
-        enabled=enabled,
-        cadence=cadence,
-        local_time=validate_local_time(local_time),
-        template=template,
-        now=now,
-    )
+    with data.transaction(conn):
+        if template.sprint_item_id is not None and template.project_id is None:
+            item = conn.execute(
+                "SELECT project_id FROM sprint_items WHERE id = ?",
+                (template.sprint_item_id,),
+            ).fetchone()
+            if item is not None:
+                template = replace(
+                    template,
+                    project_id=str(item["project_id"]),
+                )
+        _validate_template(conn, template)
+        return data.create_schedule(
+            conn,
+            enabled=enabled,
+            cadence=cadence,
+            local_time=validate_local_time(local_time),
+            template=template,
+            now=now,
+        )
 
 
 def update_schedule(
@@ -134,35 +120,16 @@ def _update_schedule_locked(
     if placement_mode is ScheduledTicketPlacementMode.backlog:
         normalized_changes["sprint_id"] = None
 
-    # Project ownership moves with the placement boundary. Entering an exact item
-    # derives Project from that item; leaving one preserves the formerly inherited
-    # Project unless the caller explicitly selects another Project in the same write.
-    if placement_mode is ScheduledTicketPlacementMode.sprint_item:
-        item_id = normalized_changes.get(
-            "sprint_item_id", current.template.sprint_item_id
-        )
-        item = conn.execute(
-            "SELECT project_id, sprint_id FROM sprint_items WHERE id = ?", (item_id,)
-        ).fetchone()
+    item_id = normalized_changes.get("sprint_item_id", current.template.sprint_item_id)
+    if item_id is not None:
+        item = conn.execute("SELECT project_id FROM sprint_items WHERE id=?", (item_id,)).fetchone()
         if item is not None:
+            if (
+                "project_id" in normalized_changes
+                and normalized_changes["project_id"] != item["project_id"]
+            ):
+                raise PlannerError(ErrorCode.validation, "schedule Project does not match Outcome")
             normalized_changes["project_id"] = str(item["project_id"])
-            normalized_changes["sprint_id"] = item["sprint_id"]
-    elif (
-        current.template.placement_mode is ScheduledTicketPlacementMode.sprint_item
-        and "project_id" not in normalized_changes
-    ):
-        item = conn.execute(
-            "SELECT project_id, sprint_id FROM sprint_items WHERE id = ?",
-            (current.template.sprint_item_id,),
-        ).fetchone()
-        if item is None:
-            raise RuntimeError("scheduled Ticket sprint item is missing")
-        normalized_changes["project_id"] = str(item["project_id"])
-        if (
-            placement_mode is not ScheduledTicketPlacementMode.backlog
-            and "sprint_id" not in normalized_changes
-        ):
-            normalized_changes["sprint_id"] = item["sprint_id"]
 
     template_values: dict[str, object] = {
         "title": current.template.title,
@@ -191,25 +158,17 @@ def _update_schedule_locked(
             else Priority(str(template_values["priority"]))
         ),
         deadline=(
-            None
-            if template_values["deadline"] is None
-            else str(template_values["deadline"])
+            None if template_values["deadline"] is None else str(template_values["deadline"])
         ),
         project_id=(
-            None
-            if template_values["project_id"] is None
-            else str(template_values["project_id"])
+            None if template_values["project_id"] is None else str(template_values["project_id"])
         ),
         sprint_id=(
-            None
-            if template_values["sprint_id"] is None
-            else str(template_values["sprint_id"])
+            None if template_values["sprint_id"] is None else str(template_values["sprint_id"])
         ),
         placement_mode=(
             template_values["placement_mode"]
-            if isinstance(
-                template_values["placement_mode"], ScheduledTicketPlacementMode
-            )
+            if isinstance(template_values["placement_mode"], ScheduledTicketPlacementMode)
             else ScheduledTicketPlacementMode(str(template_values["placement_mode"]))
         ),
         sprint_item_id=(
@@ -312,19 +271,6 @@ def _settle_occurrence(
             sprint_item_id = schedule.template.sprint_item_id
             sprint_id: str | None = None
             project_id = schedule.template.project_id
-            if schedule.template.placement_mode is ScheduledTicketPlacementMode.sprint_item:
-                item = conn.execute(
-                    "SELECT project_id, sprint_id FROM sprint_items WHERE id = ?",
-                    (sprint_item_id,),
-                ).fetchone()
-                if item is None:
-                    raise PlannerError(
-                        ErrorCode.not_found,
-                        "sprint item not found",
-                        {"sprint_item_id": sprint_item_id},
-                    )
-                project_id = str(item["project_id"])
-                sprint_id = item["sprint_id"]
             if schedule.template.placement_mode is ScheduledTicketPlacementMode.backlog:
                 sprint_id = None
             elif schedule.template.placement_mode is ScheduledTicketPlacementMode.current_sprint:
@@ -341,16 +287,6 @@ def _settle_occurrence(
                 sprint_id = schedule.template.sprint_id or current_sprint_id(
                     planning_day_for(planning_now, boundary_hour), ranges
                 )
-                if sprint_id is not None and schedule.template.worker_type in {
-                    "planning-day",
-                    "planning-midday-check",
-                    "planning-sprint",
-                }:
-                    planning_item = sprints_data.ensure_planning_item(
-                        conn, sprint_id=sprint_id, now=now
-                    )
-                    project_id = planning_item.project_id
-                    sprint_item_id = planning_item.id
             ticket = tickets_actions.create_ticket(
                 conn,
                 title=schedule.template.title,
@@ -363,9 +299,7 @@ def _settle_occurrence(
                 # An absent scheduled context leaves the worker-owned Kickoff ready
                 # to start. Ordinary Ticket creation still treats "" as a proposal.
                 kickoff_note=(
-                    schedule.template.kickoff_note
-                    if schedule.template.kickoff_note != ""
-                    else None
+                    schedule.template.kickoff_note if schedule.template.kickoff_note != "" else None
                 ),
                 project_id=project_id,
                 sprint_id=sprint_id,
@@ -375,16 +309,8 @@ def _settle_occurrence(
                 blocked_by_ticket_ids=list(schedule.template.blocked_by_ticket_ids),
                 planning_now=planning_now,
                 boundary_hour=boundary_hour,
-                sprint_item_id_explicit=(
-                    schedule.template.placement_mode
-                    is not ScheduledTicketPlacementMode.current_sprint
-                ),
-                sprint_id_explicit=(
-                    schedule.template.sprint_id is not None
-                    or schedule.template.placement_mode
-                    is not ScheduledTicketPlacementMode.current_sprint
-                    or sprint_item_id is not None
-                ),
+                sprint_item_id_explicit=True,
+                sprint_id_explicit=True,
             )
             return data.insert_occurrence(
                 conn,
@@ -397,9 +323,7 @@ def _settle_occurrence(
                 now=now,
             )
     except Exception as exc:
-        _LOG.exception(
-            "scheduled Ticket occurrence failed", extra={"schedule_id": schedule.id}
-        )
+        _LOG.exception("scheduled Ticket occurrence failed", extra={"schedule_id": schedule.id})
         message = f"{type(exc).__name__}: {exc}"
         try:
             with data.transaction(conn):

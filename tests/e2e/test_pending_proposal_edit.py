@@ -12,20 +12,19 @@ from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 def _replace_editor_text(page: Page, selector: str, body: str) -> None:
     editor = page.locator(selector)
     editor.focus()
-    editor.press("Control+A")
+    editor.press("ControlOrMeta+A")
     editor.type(body)
-    page.locator(f'{selector.rsplit(" ", 1)[0]} [data-accept]').focus()
+    page.locator(f"{selector.rsplit(' ', 1)[0]} [data-accept]").focus()
 
 
-def _wait_for_pending_body(
-    page: Page, ticket_id: str, field: str, expected: str
-) -> None:
+def _wait_for_pending_body(page: Page, ticket_id: str, field: str, expected: str) -> None:
     page.wait_for_function(
         """async ({ticketId, field, expected}) => {
           const response = await fetch(`/api/tickets/${ticketId}`);
           if (!response.ok) return false;
           const ticket = await response.json();
-          return ticket.fields?.[field]?.proposal?.body === expected;
+          return ticket.pending_proposal?.field === field
+            && ticket.pending_proposal?.body === expected;
         }""",
         arg={"ticketId": ticket_id, "field": field, "expected": expected},
         timeout=WAIT_MS,
@@ -78,17 +77,11 @@ def test_pending_proposal_edits_persist_on_ticket_and_review_before_approval(
     write_requests: list[tuple[str, JsonObject]] = []
 
     def capture_write(request: Request) -> None:
-        if (
-            request.method == "PUT"
-            and f"/api/tickets/{ticket_id}/value/success" in request.url
-        ):
+        if request.method == "PUT" and f"/api/tickets/{ticket_id}/proposal" in request.url:
             payload = request.post_data_json
             assert payload is not None
             write_requests.append(("edit", payload))
-        if (
-            request.method == "POST"
-            and f"/api/tickets/{ticket_id}/accept/success" in request.url
-        ):
+        if request.method == "POST" and f"/api/tickets/{ticket_id}/accept/success" in request.url:
             payload = request.post_data_json
             assert payload is not None
             write_requests.append(("accept", payload))
@@ -102,14 +95,14 @@ def test_pending_proposal_edits_persist_on_ticket_and_review_before_approval(
     )
     editor = page.locator(review_editor)
     editor.focus()
-    editor.press("Control+A")
+    editor.press("ControlOrMeta+A")
     editor.type("Saved from Review.")
     page.click(approve_selector)
     page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
 
     assert [kind for kind, _payload in write_requests] == ["edit", "accept"]
-    assert write_requests[0][1] == {"body": "Saved from Review."}
+    assert write_requests[0][1] == {"field": "success", "body": "Saved from Review."}
     assert "edited_body" not in write_requests[1][1]
     settled = api.get(server, f"/api/tickets/{ticket_id}")
-    assert settled["fields"]["success"]["proposal"] is None
-    assert settled["fields"]["success"]["value"] == "Saved from Review."
+    assert settled["pending_proposal"] is None
+    assert settled["field_values"].get("success") == "Saved from Review."

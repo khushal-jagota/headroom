@@ -14,6 +14,7 @@ ask still waiting when its turn dies is settled with codex instead of left hangi
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -27,6 +28,7 @@ import pytest
 from tests.unit.test_conversation_codex_scripted_app_server import scripted_app_server_launch
 
 from planner.conversation.backends.codex_app_server import adapter
+from planner.conversation.backends.codex_app_server import bindings_gen as bindings
 from planner.conversation.backends.codex_app_server.adapter import (
     WITHDRAWN_ASK_DECISION,
     CodexAppServerBackendChild,
@@ -54,9 +56,11 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
+    AgentMessageEventPayload,
     ConversationTurnEnding,
     PromptEventPayload,
     ToolCallStatus,
+    TurnEndedEventPayload,
     UserInputAnswer,
 )
 from planner.conversation.message_content import (
@@ -150,6 +154,7 @@ def test_codex_publishes_only_the_native_built_ins_when_dynamic_sources_are_empt
             ] == [
                 "/compact",
                 "/review ",
+                "/goal ",
             ]
 
     _run(exercise)
@@ -231,6 +236,7 @@ def test_codex_joins_paginated_metadata_to_callable_apps_and_enabled_plugins(
             assert [(entry.kind.value, entry.insertion_text) for entry in entries] == [
                 ("command", "/compact"),
                 ("command", "/review "),
+                ("command", "/goal "),
                 ("app", "@demo-app "),
                 ("plugin", "@github@openai-curated-remote "),
                 ("skill", "$ship-it "),
@@ -276,6 +282,83 @@ def test_catalog_invocations_add_structured_inputs_without_rewriting_the_text(
                     "name": "Analytics",
                     "path": "plugin://analytics@personal",
                 },
+            ]
+
+    _run(exercise)
+
+
+def test_structured_skill_keeps_attachments_and_run_value_changes(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(
+            tmp_path, script={**_one_of_each_catalog(tmp_path), "turns": [{}]}
+        ) as scripted:
+            await scripted.start(cursor=None)
+            kept = await scripted.message_files.keep(
+                "c", b"\x89PNG not really", media_type="image/png"
+            )
+            content = (
+                MessageText(text="$ship-it inspect this"),
+                MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
+            )
+            await scripted.child.write_prompt(
+                TurnToken(conversation_id="c", turn_number=1),
+                content,
+                sender_content=content,
+                sender_label="owner",
+                mode=PromptDeliveryMode.run_when_free,
+                model_change="gpt-5.6-codex",
+                reasoning_effort_change="high",
+            )
+            turn = scripted.sent("turn/start")["params"]
+            assert turn["model"] == "gpt-5.6-codex"
+            assert turn["effort"] == "high"
+            assert turn["input"][-1] == {
+                "type": "skill",
+                "name": "ship-it",
+                "path": "/skills/ship-it/SKILL.md",
+            }
+            assert turn["input"][1] == {
+                "type": "localImage",
+                "path": str(kept.absolute_path),
+            }
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "/compact extra",
+        "/goal nope",
+        "/goal set",
+        "/goal setter",
+        "/goal clear extra",
+    ],
+)
+def test_malformed_known_native_commands_refuse_without_a_codex_turn(
+    tmp_path: Path, prompt: str
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={}) as scripted:
+            await scripted.start(cursor=None)
+            with pytest.raises(PromptWriteFailed):
+                await scripted.write_prompt(1, text_message_content(prompt))
+            assert scripted.sent("turn/start", missing_is_none=True) is None
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("prompt", [" $unknown work", "before\n$unknown work"])
+def test_reserved_tokens_away_from_absolute_message_start_remain_prose(
+    tmp_path: Path, prompt: str
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={"turns": [{}]}) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content(prompt))
+            await scripted.sink.wait_for_the_turn_to_end()
+            assert scripted.sent("turn/start")["params"]["input"] == [
+                {"type": "text", "text": prompt}
             ]
 
     _run(exercise)
@@ -358,6 +441,69 @@ def test_the_systems_composed_role_does_not_hide_a_first_prompt_catalog_invocati
                 event.payload for event in events if isinstance(event.payload, PromptEventPayload)
             )
             assert message_content_text(prompt.content) == prompt_text
+        finally:
+            await system.shutdown()
+
+    _run(exercise)
+
+
+def test_goal_command_records_one_durable_answer_and_completed_turn(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        database_path = tmp_path / "goal-system.db"
+        connection = connect(str(database_path))
+        create_schema(connection)
+        connection.close()
+        transcript_path = tmp_path / "goal-system-transcript.jsonl"
+        script_path = tmp_path / "goal-system-script.json"
+        script_path.write_text(
+            json.dumps({"transcript_path": str(transcript_path)}), encoding="utf-8"
+        )
+        argv, environment = scripted_app_server_launch(script_path)
+        factory = CodexAppServerBackendChildFactory(
+            CodexChildLaunch(argv=argv, environment_overrides=tuple(environment.items()))
+        )
+        store = ConversationStore(str(database_path))
+        system = SqliteProcessConversationSystem(
+            store=store,
+            message_files=ConversationMessageFiles(str(database_path)),
+            backend_child_factories={key: factory for key in ConversationBackendKey},
+        )
+        try:
+            await system.start_conversation(
+                ConversationStartRequest(
+                    conversation_id="goal-system",
+                    backend_key=ConversationBackendKey.codex,
+                    model="gpt-5.4-mini",
+                    workspace_folder=tmp_path,
+                )
+            )
+            fate = await system.send(
+                "goal-system",
+                text_message_content("/goal set Keep the result durable"),
+                sender_label="owner",
+            )
+            assert fate == PromptDeliveryStarted()
+            await system.wait_until_quiescent()
+            events = await store.read_events_after("goal-system", 0)
+            messages = [
+                event.payload
+                for event in events
+                if isinstance(event.payload, AgentMessageEventPayload)
+            ]
+            endings = [
+                event.payload
+                for event in events
+                if isinstance(event.payload, TurnEndedEventPayload)
+            ]
+            assert [message_content_text(message.content) for message in messages] == [
+                "Goal set: Keep the result durable"
+            ]
+            assert [ending.ending for ending in endings] == [ConversationTurnEnding.completed]
+            assert not [
+                entry
+                for entry in transcript_path.read_text(encoding="utf-8").splitlines()
+                if '"method": "turn/start"' in entry
+            ]
         finally:
             await system.shutdown()
 
@@ -466,7 +612,84 @@ def test_a_persisted_cursor_without_a_delivered_prompt_keeps_first_prompt_dispat
     _run(exercise)
 
 
-def test_unknown_and_ambiguous_tokens_remain_ordinary_text(tmp_path: Path) -> None:
+def test_resume_replaces_the_persisted_catalog_before_structured_dispatch(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        database_path = tmp_path / "catalog-resume.db"
+        connection = connect(str(database_path))
+        create_schema(connection)
+        connection.close()
+        store = ConversationStore(str(database_path))
+
+        def build(name: str, skill: str) -> SqliteProcessConversationSystem:
+            script_path = tmp_path / f"{name}.json"
+            script_path.write_text(
+                json.dumps(
+                    {
+                        "transcript_path": str(tmp_path / f"{name}.jsonl"),
+                        "skills": _skills_response(tmp_path, skill),
+                        "turns": [{}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            argv, environment = scripted_app_server_launch(script_path)
+            factory = CodexAppServerBackendChildFactory(
+                CodexChildLaunch(argv=argv, environment_overrides=tuple(environment.items()))
+            )
+            return SqliteProcessConversationSystem(
+                store=store,
+                message_files=ConversationMessageFiles(str(database_path)),
+                backend_child_factories={key: factory for key in ConversationBackendKey},
+            )
+
+        first = build("first-catalog", "stale")
+        try:
+            await first.start_conversation(
+                ConversationStartRequest(
+                    conversation_id="catalog-resume",
+                    backend_key=ConversationBackendKey.codex,
+                    model="gpt-5.4-mini",
+                    workspace_folder=tmp_path,
+                )
+            )
+            assert (
+                await first.send(
+                    "catalog-resume", text_message_content("prime catalog"), sender_label="owner"
+                )
+                == PromptDeliveryStarted()
+            )
+            await first.wait_until_quiescent()
+            record = await _wait_for_stored_catalog(store, "catalog-resume", "$stale ")
+            assert record is not None
+            assert "$stale " in {entry.insertion_text for entry in record.composer_catalog}
+        finally:
+            await first.shutdown()
+
+        second = build("second-catalog", "current")
+        try:
+            assert (
+                await second.send(
+                    "catalog-resume",
+                    text_message_content("$current use the resumed catalogue"),
+                    sender_label="owner",
+                )
+                == PromptDeliveryStarted()
+            )
+            await second.wait_until_quiescent()
+            record = await _wait_for_stored_catalog(store, "catalog-resume", "$current ")
+            assert record is not None
+            tokens = {entry.insertion_text for entry in record.composer_catalog}
+            assert "$current " in tokens
+            assert "$stale " not in tokens
+        finally:
+            await second.shutdown()
+
+    _run(exercise)
+
+
+def test_colliding_tokens_get_stable_aliases_and_unknown_reserved_tokens_refuse(
+    tmp_path: Path,
+) -> None:
     async def exercise() -> None:
         catalog = _one_of_each_catalog(tmp_path)
         duplicated = dict(catalog["skills"])
@@ -490,18 +713,102 @@ def test_unknown_and_ambiguous_tokens_remain_ordinary_text(tmp_path: Path) -> No
         catalog["turns"] = [{}, {}]
         async with _scripted_child(tmp_path, script=catalog) as scripted:
             await scripted.start(cursor=None)
-            assert "$ship-it " not in {
-                entry.insertion_text for entry in scripted.sink.composer_catalog_reports[-1]
-            }
-            for number, prompt in enumerate(("$ship-it do it", "/unknown keep this"), 1):
+            aliases = sorted(
+                entry.insertion_text.strip()
+                for entry in scripted.sink.composer_catalog_reports[-1]
+                if entry.kind is ComposerCatalogEntryKind.skill
+            )
+            assert len(aliases) == 2
+            assert all(alias.startswith("$ship-it~") for alias in aliases)
+            with pytest.raises(PromptWriteFailed, match="current Codex catalogue"):
+                await scripted.write_prompt(1, text_message_content("$ship-it do it"))
+            with pytest.raises(PromptWriteFailed, match="current Codex catalogue"):
+                await scripted.write_prompt(1, text_message_content("@missing do it"))
+            for number, prompt in enumerate((f"{aliases[0]} do it", "/unknown keep this"), 1):
                 scripted.sink.expect_another_turn()
                 await scripted.write_prompt(number, text_message_content(prompt))
                 await scripted.sink.wait_for_the_turn_to_end()
-            assert all(
-                len(message["params"]["input"]) == 1 for message in scripted.all_sent("turn/start")
-            )
+            assert len(scripted.all_sent("turn/start")[0]["params"]["input"]) == 2
+            assert len(scripted.all_sent("turn/start")[1]["params"]["input"]) == 1
 
     _run(exercise)
+
+
+def test_collision_aliases_are_order_independent_and_exact_identities_deduplicate(
+    tmp_path: Path,
+) -> None:
+    first = _skills_response(tmp_path, "ship-it")["data"][0]
+    duplicate = dict(first)
+    other = {
+        "cwd": "/elsewhere",
+        "errors": [],
+        "skills": [
+            {
+                "name": "ship-it",
+                "description": "Other",
+                "enabled": True,
+                "path": "/other/SKILL.md",
+                "scope": "user",
+            }
+        ],
+    }
+
+    first_identity = "skill\0ship-it\0/skills/ship-it/SKILL.md"
+    occupied_alias = hashlib.sha256(first_identity.encode("utf-8")).hexdigest()[:8]
+    canonical_collision = {
+        "cwd": "/canonical-collision",
+        "errors": [],
+        "skills": [
+            {
+                "name": f"ship-it~{occupied_alias}",
+                "description": "Owns the first alias candidate",
+                "enabled": True,
+                "path": "/canonical-collision/SKILL.md",
+                "scope": "user",
+            }
+        ],
+    }
+
+    def snapshot(data: list[dict[str, Any]]) -> Any:
+        skills = bindings.SkillsListResponse.model_validate({"data": data})
+        return adapter._catalog_snapshot(skills, None, None, None)
+
+    def aliases(data: list[dict[str, Any]]) -> dict[str, str | None]:
+        catalog = snapshot(data)
+        return {
+            token: invocation.path
+            for token, invocation in catalog.invocations
+            if invocation is not None and invocation.kind is ComposerCatalogEntryKind.skill
+        }
+
+    forward_data = [first, duplicate, other, canonical_collision]
+    reverse_data = [canonical_collision, other, duplicate, first]
+    forward = aliases(forward_data)
+    reverse = aliases(reverse_data)
+    assert forward == reverse
+    assert len(forward) == 3
+    assert set(forward.values()) == {
+        "/skills/ship-it/SKILL.md",
+        "/other/SKILL.md",
+        "/canonical-collision/SKILL.md",
+    }
+    canonical_token = f"$ship-it~{occupied_alias}"
+    assert forward[canonical_token] == "/canonical-collision/SKILL.md"
+    first_alias = next(
+        token for token, path in forward.items() if path == "/skills/ship-it/SKILL.md"
+    )
+    assert first_alias.startswith(f"{canonical_token}")
+    assert len(first_alias) > len(canonical_token)
+
+    catalog = snapshot(forward_data)
+    insertion_tokens = [entry.insertion_text.strip() for entry in catalog.entries]
+    invocation_tokens = [token for token, _ in catalog.invocations]
+    assert len(insertion_tokens) == len(set(insertion_tokens))
+    assert len(invocation_tokens) == len(set(invocation_tokens))
+    for token, path in forward.items():
+        invocation = catalog.resolve(token)
+        assert invocation is not None
+        assert invocation.path == path
 
 
 def test_compact_and_review_use_native_methods_and_the_normal_turn_lifecycle(
@@ -560,24 +867,107 @@ def test_native_review_failure_is_a_refused_prompt_and_does_not_poison_the_next_
     _run(exercise)
 
 
-def test_a_native_command_with_a_model_change_stays_an_ordinary_model_changing_turn(
+def test_goal_commands_use_exact_rpcs_and_synthetic_completed_turns(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={}) as scripted:
+            await scripted.start(cursor=None)
+            commands = (
+                "/goal set   Ship the reliable command path   ",
+                "/goal get   ",
+                "/goal clear   ",
+                "/goal",
+                "/goal clear",
+            )
+            for turn_number, command in enumerate(commands, 1):
+                if turn_number > 1:
+                    scripted.sink.expect_another_turn()
+                await scripted.write_prompt(turn_number, text_message_content(command))
+                await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sent("thread/goal/set")["params"] == {
+                "threadId": "thread-1",
+                "objective": "Ship the reliable command path",
+                "status": "active",
+            }
+            assert len(scripted.all_sent("thread/goal/get")) == 2
+            assert len(scripted.all_sent("thread/goal/clear")) == 2
+            assert scripted.sent("turn/start", missing_is_none=True) is None
+            assert scripted.sink.agent_message_texts == [
+                "Goal set: Ship the reliable command path",
+                "Goal: Ship the reliable command path (active, 0 tokens, 0s)",
+                "Goal cleared.",
+                "No goal is set.",
+                "No goal was set.",
+            ]
+            assert scripted.sink.endings == [ConversationTurnEnding.completed] * 5
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        {"goal_get": "error"},
+        {"goal_get": {"goal": {"objective": "missing required fields"}}},
+        {"ephemeral": True},
+    ],
+)
+def test_goal_rpc_validation_and_ephemeral_threads_refuse(
+    tmp_path: Path, script: dict[str, Any]
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            with pytest.raises(PromptWriteFailed):
+                await scripted.write_prompt(1, text_message_content("/goal"))
+            assert scripted.sink.agent_message_texts == []
+            assert scripted.sink.endings == []
+            assert scripted.sent("turn/start", missing_is_none=True) is None
+
+    _run(exercise)
+
+
+def test_a_native_command_with_a_model_change_is_refused(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
         async with _scripted_child(tmp_path, script={}) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, text_message_content("/compact"), model="gpt-5.6-codex")
-            await scripted.sink.wait_for_the_turn_to_end()
-
-            turn = scripted.sent("turn/start")["params"]
-            assert turn["model"] == "gpt-5.6-codex"
-            assert turn["input"] == [{"type": "text", "text": "/compact"}]
+            with pytest.raises(PromptWriteFailed, match="cannot change the model"):
+                await scripted.write_prompt(
+                    1, text_message_content("/compact"), model="gpt-5.6-codex"
+                )
+            assert scripted.sent("turn/start", missing_is_none=True) is None
             assert scripted.sent("thread/compact/start", missing_is_none=True) is None
 
     _run(exercise)
 
 
-def test_catalog_invalidations_refresh_in_the_background_and_preserve_failures(
+@pytest.mark.parametrize("prompt", ["/compact", "/review", "/goal"])
+def test_native_commands_with_attachments_are_refused(tmp_path: Path, prompt: str) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={}) as scripted:
+            await scripted.start(cursor=None)
+            content = (
+                MessageText(text=prompt),
+                MessageImage(stored_file_id="unused", media_type="image/png"),
+            )
+            with pytest.raises(PromptWriteFailed, match="cannot carry attachments"):
+                await scripted.child.write_prompt(
+                    TurnToken(conversation_id="c", turn_number=1),
+                    content,
+                    sender_content=content,
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.run_when_free,
+                    model_change=None,
+                    reasoning_effort_change=None,
+                )
+            assert scripted.sent("turn/start", missing_is_none=True) is None
+
+    _run(exercise)
+
+
+def test_catalog_invalidations_refresh_in_the_background_and_drop_failed_sources(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
@@ -610,13 +1000,17 @@ def test_catalog_invalidations_refresh_in_the_background_and_preserve_failures(
             await scripted.write_prompt(2, text_message_content("ordinary again"))
             await scripted.sink.wait_for_the_turn_to_end()
             await asyncio.sleep(0.15)
-            assert len(scripted.sink.composer_catalog_reports) == 2
+            assert len(scripted.sink.composer_catalog_reports) == 3
+            assert all(
+                entry.kind is not ComposerCatalogEntryKind.skill
+                for entry in scripted.sink.composer_catalog_reports[-1]
+            )
 
     _run(exercise)
 
 
 @pytest.mark.parametrize("reported_error", ["skill", "plugin"])
-def test_reported_catalog_source_errors_preserve_the_last_complete_snapshot(
+def test_reported_catalog_entry_errors_keep_valid_sibling_sources(
     tmp_path: Path, reported_error: str
 ) -> None:
     async def exercise() -> None:
@@ -625,14 +1019,24 @@ def test_reported_catalog_source_errors_preserve_the_last_complete_snapshot(
             "data": [
                 {
                     "cwd": str(tmp_path),
-                    "skills": [],
+                    "skills": [
+                        {
+                            "name": "valid",
+                            "description": "Still valid",
+                            "enabled": True,
+                            "path": "/skills/valid/SKILL.md",
+                            "scope": "user",
+                        }
+                    ],
                     "errors": [{"path": "/broken/SKILL.md", "message": "cannot read"}],
                 }
             ]
         }
         good_plugins: dict[str, Any] = {"marketplaces": [], "marketplaceLoadErrors": []}
         bad_plugins = {
-            "marketplaces": [],
+            "marketplaces": [
+                {"name": "personal", "plugins": [_plugin("valid-plugin", enabled=True)]}
+            ],
             "marketplaceLoadErrors": [
                 {"marketplacePath": "/broken/marketplace.json", "message": "invalid"}
             ],
@@ -655,16 +1059,26 @@ def test_reported_catalog_source_errors_preserve_the_last_complete_snapshot(
             await scripted.write_prompt(1, text_message_content("refresh"))
             await scripted.sink.wait_for_the_turn_to_end()
             await asyncio.sleep(0.15)
-            assert len(scripted.sink.composer_catalog_reports) == 1
+            assert len(scripted.sink.composer_catalog_reports) == 2
 
             scripted.sink.expect_another_turn()
-            await scripted.write_prompt(2, text_message_content("$first continue"))
-            await scripted.sink.wait_for_the_turn_to_end()
-            assert scripted.all_sent("turn/start")[-1]["params"]["input"][-1] == {
-                "type": "skill",
-                "name": "first",
-                "path": "/skills/first/SKILL.md",
-            }
+            if reported_error == "skill":
+                with pytest.raises(PromptWriteFailed, match="current Codex catalogue"):
+                    await scripted.write_prompt(2, text_message_content("$first continue"))
+                assert "$valid " in {
+                    entry.insertion_text for entry in scripted.sink.composer_catalog_reports[-1]
+                }
+            else:
+                assert "@valid-plugin@personal " in {
+                    entry.insertion_text for entry in scripted.sink.composer_catalog_reports[-1]
+                }
+                await scripted.write_prompt(2, text_message_content("$first continue"))
+                await scripted.sink.wait_for_the_turn_to_end()
+                assert scripted.all_sent("turn/start")[-1]["params"]["input"][-1] == {
+                    "type": "skill",
+                    "name": "first",
+                    "path": "/skills/first/SKILL.md",
+                }
 
     _run(exercise)
 
@@ -692,6 +1106,63 @@ def test_startup_and_notification_refreshes_publish_in_request_order(tmp_path: P
                 for report in scripted.sink.composer_catalog_reports
             ]
             assert skill_tokens == [["$startup "], ["$notification "]]
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    ("failed_source", "missing_kinds"),
+    [
+        ("skills", {ComposerCatalogEntryKind.skill}),
+        ("installed_apps", {ComposerCatalogEntryKind.app}),
+        ("apps", {ComposerCatalogEntryKind.app}),
+        ("plugins", {ComposerCatalogEntryKind.plugin}),
+    ],
+)
+def test_each_catalog_source_failure_publishes_all_fresh_sibling_sources(
+    tmp_path: Path,
+    failed_source: str,
+    missing_kinds: set[ComposerCatalogEntryKind],
+) -> None:
+    async def exercise() -> None:
+        script = _one_of_each_catalog(tmp_path)
+        script[failed_source] = "error"
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            entries = scripted.sink.composer_catalog_reports[-1]
+            kinds = {entry.kind for entry in entries}
+            assert ComposerCatalogEntryKind.command in kinds
+            assert not (kinds & missing_kinds)
+            if failed_source != "skills":
+                assert ComposerCatalogEntryKind.skill in kinds
+            if failed_source != "plugins":
+                assert ComposerCatalogEntryKind.plugin in kinds
+
+    _run(exercise)
+
+
+def test_a_later_app_page_failure_publishes_no_partial_apps(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        script = _one_of_each_catalog(tmp_path)
+        script["apps"] = [
+            {
+                "data": [
+                    {
+                        "id": "demo",
+                        "name": "Demo App",
+                        "isEnabled": True,
+                        "isAccessible": True,
+                    }
+                ]
+            },
+            "error",
+        ]
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            entries = scripted.sink.composer_catalog_reports[-1]
+            assert all(entry.kind is not ComposerCatalogEntryKind.app for entry in entries)
+            assert ComposerCatalogEntryKind.skill in {entry.kind for entry in entries}
+            assert ComposerCatalogEntryKind.plugin in {entry.kind for entry in entries}
 
     _run(exercise)
 
@@ -1908,6 +2379,19 @@ async def _wait_for_catalog_reports(sink: _RecordingSink, count: int) -> None:
             return
         await asyncio.sleep(0.01)
     raise AssertionError(f"only {len(sink.composer_catalog_reports)} catalogue reports arrived")
+
+
+async def _wait_for_stored_catalog(
+    store: ConversationStore, conversation_id: str, token: str
+) -> Any:
+    for _ in range(100):
+        record = await store.read_conversation(conversation_id)
+        if record is not None and token in {
+            entry.insertion_text for entry in record.composer_catalog
+        }:
+            return record
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"{token!r} never reached the stored composer catalogue")
 
 
 def _resolved_start(workspace: Path) -> ResolvedConversationStart:

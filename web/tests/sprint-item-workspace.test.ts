@@ -3,7 +3,8 @@ import {
   remainingWorkspaceTicketGroups,
   todayWorkspaceTicketGroups,
   workspaceArtifactRows,
-  workspaceProgress
+  workspaceProgress,
+  workspaceTicketSprintLabel
 } from "../src/lib/sprintItemWorkspace";
 import { previewHashHref, resolvePreview, sprintItemFileTarget } from "../src/lib/filePreview";
 import type { SprintItemWorkspace } from "../src/lib/types";
@@ -17,10 +18,10 @@ function workspace(): SprintItemWorkspace {
     deadline: null,
     project_id: "project_panels",
     project: "Panels",
-    sprint_id: "sp_current",
+    created_at: 1,
+    updated_at: 1,
     kind: "normal",
-    status: "in_progress",
-    rollup: {},
+    committed_sprints: [{ id: "sp_current", name: "Current", date_start: "2026-08-10", date_end: "2026-08-16" }],
     planning_day_id: "day_2026-08-12",
     today_ticket_ids: ["t_review", "t_done"],
     supervisor: {
@@ -45,7 +46,7 @@ function workspace(): SprintItemWorkspace {
         blocked: false,
         review_route: "propose",
         worker_type: "coding",
-        day_ids: ["day_2026-08-12"]
+        day_ids: ["day_2026-08-12"], sprint_id: "sp_old", sprint_name: "Previous"
       },
       {
         id: "t_done",
@@ -59,7 +60,7 @@ function workspace(): SprintItemWorkspace {
         blocked: false,
         review_route: "stop",
         worker_type: "coding",
-        day_ids: ["day_2026-08-12"]
+        day_ids: ["day_2026-08-12"], sprint_id: "sp_current", sprint_name: "Current"
       },
       {
         id: "t_later",
@@ -73,7 +74,7 @@ function workspace(): SprintItemWorkspace {
         blocked: false,
         review_route: "stop",
         worker_type: "coding",
-        day_ids: []
+        day_ids: [], sprint_id: null, sprint_name: null
       }
     ],
     artifacts: ["proof.md"],
@@ -92,7 +93,19 @@ describe("Sprint Item workspace presentation", () => {
       ["Done", ["t_done"]]
     ]);
     expect(shape(remainingWorkspaceTicketGroups(value))).toEqual([["Agent", ["t_later"]]]);
-    expect(workspaceProgress(value)).toBe("1 of 3 done");
+    expect(workspaceProgress(value)).toBe("1/3 Tickets done");
+  });
+
+  it("labels each Ticket from its own Sprint placement, including historical and backlog work", () => {
+    const value = workspace();
+    expect(value.tickets.map(workspaceTicketSprintLabel)).toEqual(["Previous", "Current", "Backlog"]);
+    expect(workspaceTicketSprintLabel({ ...value.tickets[0], sprint_name: "" })).toBe("sp_old");
+  });
+
+  it("calls zero non-dropped children No Tickets", () => {
+    const value = workspace();
+    expect(workspaceProgress({ ...value, tickets: [] })).toBe("No Tickets");
+    expect(workspaceProgress({ ...value, tickets: [{ ...value.tickets[0], stage: "dropped" }] })).toBe("No Tickets");
   });
 
   it("gathers every parked proposal into the one Awaiting approval group", () => {

@@ -56,17 +56,19 @@ def build_fake_environment_database(db_path: Path, *, now: int) -> FakeFixtureRe
             name="Fictional July Systems Sprint",
             date_start="2026-07-06",
             date_end="2026-07-17",
-            limiting_factor="Keep the fake workspace small enough to inspect.",
+            kickoff=(
+                "## Limiting factor\n\nKeep the fake workspace small enough to inspect.\n\n"
+                "## Supports\n\nRepresentative tickets, day placement, and managed files.\n\n"
+                "## Premortem\n\nThe useful failure is accidental coupling between instances."
+            ),
             primary_bet="Prove isolated environments without touching live state.",
-            supports="Representative tickets, day placement, and managed files.",
-            premortem="The useful failure is accidental coupling between instances.",
             clock=clock,
         )
         generated_ids.add(sprint.id)
         sprints_data.update_sprint_field(
             conn,
             sprint.id,
-            "outcomes",
+            "review",
             "Fake environments materialize predictably and independently.",
             clock=clock,
         )
@@ -153,14 +155,13 @@ def _create_items(
     project_ids: tuple[str, str],
     clock: Clock,
 ) -> tuple[SprintItem, SprintItem]:
-    return (
+    items = (
         sprints_data.create_item(
             conn,
             title="Prepare isolated runtime story",
             body="Small representative plan for fictional staging work.",
             priority=Priority.P1,
             project_id=project_ids[0],
-            sprint_id=sprint_id,
             clock=clock,
         ),
         sprints_data.create_item(
@@ -169,10 +170,14 @@ def _create_items(
             body="Fictional review item with child tickets in multiple states.",
             priority=Priority.P2,
             project_id=project_ids[1],
-            sprint_id=sprint_id,
             clock=clock,
         ),
     )
+    for item in items:
+        conn.execute(
+            "INSERT INTO sprint_outcomes(sprint_id,outcome_id) VALUES (?,?)", (sprint_id, item.id)
+        )
+    return items
 
 
 def _create_tickets(
@@ -197,6 +202,7 @@ def _create_tickets(
         kickoff_note="Build fictional state only.",
         recap="The fake fixture has a settled kickoff and success note.",
         sprint_item_id=sprint_item_ids[0],
+        sprint_id=sprint_id,
         worker_type="coding",
     )
     new_worker = tickets_data.create_ticket_from_external_work(
@@ -213,6 +219,7 @@ def _create_tickets(
         kickoff_note="Invent a representative worker without creating registry rows.",
         recap="Onboarding is represented by a current registry type.",
         sprint_item_id=sprint_item_ids[0],
+        sprint_id=sprint_id,
         worker_type="new_worker",
     )
     exploration = tickets_data.create_ticket_from_external_work(
@@ -229,6 +236,7 @@ def _create_tickets(
         kickoff_note="Inspect reset behavior in fictional staging.",
         recap="Exploration is ready for a research plan.",
         sprint_item_id=sprint_item_ids[1],
+        sprint_id=sprint_id,
         worker_type="exploration",
     )
     initiative = tickets_data.create_ticket(

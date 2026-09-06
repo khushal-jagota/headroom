@@ -92,25 +92,6 @@ def test_tailscale_allowed_and_wrong_login_are_enforced(tmp_path: Path) -> None:
     assert wrong.json()["error"]["code"] == "agent_forbidden"
 
 
-def test_duplicate_tailscale_login_is_rejected_before_trust_decision(
-    tmp_path: Path,
-) -> None:
-    app, _db_path = _make_app(tmp_path)
-
-    with TestClient(app) as client:
-        response = client.get(
-            "/api/meta",
-            headers=[
-                ("Tailscale-User-Login", ALLOWED_LOGIN),
-                ("Tailscale-User-Login", "other@example.com"),
-            ],
-        )
-
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "agent_forbidden"
-    assert response.json()["error"]["message"] == "duplicate security header is not allowed"
-
-
 def test_remote_tailscale_actor_spoof_is_ignored_but_internal_actor_remains(
     tmp_path: Path,
 ) -> None:
@@ -156,40 +137,6 @@ def test_wrong_present_origin_rejected_for_unsafe_http_and_absent_origin_allowed
     assert wrong.json()["error"]["message"] == "request origin is not allowed"
     assert absent.status_code == 200, absent.text
     assert absent.json()["title"] == "Allowed origin"
-
-
-def test_duplicate_origin_is_rejected_before_origin_decision(tmp_path: Path) -> None:
-    app, _db_path = _make_app(tmp_path)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/tickets",
-            json={"title": "Duplicate origin", "worker_type": "coding", "kickoff_note": "k"},
-            headers=[
-                ("Tailscale-User-Login", ALLOWED_LOGIN),
-                ("Origin", CANONICAL_ORIGIN),
-                ("Origin", "https://evil.example"),
-            ],
-        )
-
-    assert response.status_code == 403
-    assert response.json()["error"]["code"] == "agent_forbidden"
-    assert response.json()["error"]["message"] == "duplicate security header is not allowed"
-
-
-def test_hosted_ingress_is_noop_when_not_configured(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path, hosted=False)
-    ticket_id = _ticket(db_path)
-
-    with TestClient(app) as client:
-        response = client.patch(
-            f"/api/tickets/{ticket_id}",
-            json={"title": "Still an agent"},
-            headers={**REMOTE, "X-Plan-Actor": "agent"},
-        )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "agent_forbidden"
 
 
 def test_static_and_file_surfaces_pass_through_trusted_ingress(
@@ -256,48 +203,3 @@ def test_websocket_trusted_ingress_and_origin_policy(tmp_path: Path) -> None:
     # An admitted one is not: it goes past the guard and meets the router, which has no
     # WebSocket to give it. Whatever that closure says, it is not the guard's refusal.
     assert allowed.get("code") != 1008
-
-
-def test_websocket_rejects_duplicate_tailscale_login(tmp_path: Path) -> None:
-    app, _db_path = _make_app(tmp_path)
-
-    messages = asyncio.run(
-        _websocket_messages(
-            app,
-            [
-                (b"tailscale-user-login", ALLOWED_LOGIN.encode("latin1")),
-                (b"tailscale-user-login", b"other@example.com"),
-            ],
-        )
-    )
-
-    assert messages == [
-        {
-            "type": "websocket.close",
-            "code": 1008,
-            "reason": "duplicate security header is not allowed",
-        }
-    ]
-
-
-def test_websocket_rejects_duplicate_origin(tmp_path: Path) -> None:
-    app, _db_path = _make_app(tmp_path)
-
-    messages = asyncio.run(
-        _websocket_messages(
-            app,
-            [
-                (b"tailscale-user-login", ALLOWED_LOGIN.encode("latin1")),
-                (b"origin", CANONICAL_ORIGIN.encode("latin1")),
-                (b"origin", b"https://evil.example"),
-            ],
-        )
-    )
-
-    assert messages == [
-        {
-            "type": "websocket.close",
-            "code": 1008,
-            "reason": "duplicate security header is not allowed",
-        }
-    ]

@@ -29,12 +29,12 @@ backlog. Explicit backlog placement also leaves the Ticket outside a Sprint.
 
 Sprint Item membership is optional classification. Inspect the relevant Project and
 Sprint Items, and use an existing Item only when it genuinely describes the Ticket. The
-Item's Project and Sprint must match the Ticket. Do not create an Item only to classify
+Outcome's Project must match the Ticket; Sprint placement is independent. Do not create an Item only to classify
 otherwise coherent work. Unclassified Sprint Tickets appear in the view-only Other
 group, not in a stored fallback Item.
 
 Route `planning-day`, `planning-midday-check`, and `planning-sprint` Tickets to the
-Personal Project and that Sprint's Planning Item. Keep an `initiative_planning` Ticket
+Personal Project and the intended Sprint, without creating a Planning container. Keep an `initiative_planning` Ticket
 with its initiative Project, Sprint, and optional Item.
 
 ## Importance, timing, and dependencies
@@ -84,10 +84,6 @@ begins instead of waiting for a second approval.
 
 State only the scope you were actually given. Widening a Ticket beyond what the user
 authorized is not a creation detail.
-
-`--wakes-supervisor` says that movement on this Ticket wakes its Sprint Item supervisor.
-The default is no. Use it when the Ticket exists to support the supervisor rather than
-the user, and the user asked for it or would want it.
 
 After creation, read the Ticket back as a whole. Its title, Worker type, Kickoff,
 today status, direct Project and Sprint, optional Sprint Item, priority,

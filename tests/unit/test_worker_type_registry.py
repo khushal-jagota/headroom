@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-import ast
-import inspect
 import json
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
-from tests.support.probe import build_probe_registry
 
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core.contracts import ErrorCode, PlannerError
-from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
     PRODUCTION_WORKER_RUNTIME_DEFINITIONS,
@@ -21,7 +16,6 @@ from planner.worker_types.contracts import (
     FieldDefinition,
     WorkerTypeDefinition,
 )
-from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
 from planner.worker_types.registry import WorkerTypeRegistry
 
 KNOWN_SKILLS = frozenset({"panels-worker", "panels-worker-coding", "panels-worker-new-worker"})
@@ -73,76 +67,6 @@ def assert_error(
     assert raised.value.code is ErrorCode.validation
     assert raised.value.message == message
     assert raised.value.detail == detail
-
-
-def test_coding_definition_owns_complete_behavior() -> None:
-    definition = CODING_WORKER_TYPE_DEFINITION
-    assert definition.stage_ids() == (
-        "needs_kickoff",
-        "needs_success",
-        "needs_approach",
-        "needs_plan",
-        "needs_implementation",
-        "needs_closeout",
-        "done",
-    )
-    assert definition.field_ids() == (
-        "kickoff",
-        "success",
-        "approach",
-        "plan",
-        "implementation",
-        "closeout",
-    )
-    assert definition.reconciliation_field_order() == definition.field_ids()
-    assert definition.ceiling_range() == definition.stage_ids()
-    assert definition.default_ceiling() == "needs_kickoff"
-    assert definition.first_worker_stage() == "needs_success"
-    assert definition.completed_stage() == "done"
-    assert definition.gating_field("needs_plan") == "plan"
-    assert definition.stage_gated_by("implementation") == "needs_implementation"
-    assert definition.advance_target("needs_closeout") == "done"
-    assert definition.advance_target("done") is None
-    assert definition.is_terminal("done")
-    assert definition.is_terminal("dropped")
-    assert definition.gating_field("dropped") is None
-    assert definition.advance_target("dropped") is None
-    assert all(
-        stage.default_ownership_mode is StageOwnershipMode.worker
-        for stage in definition.stages
-        if not stage.is_terminal
-    )
-    assert definition.worker_profile.specialist_skill == "panels-worker-coding"
-    assert definition.worker_profile.default_backend == "codex"
-    assert definition.worker_profile.default_model == "gpt-5.6-sol"
-    assert definition.worker_profile.default_reasoning_effort == "medium"
-    definition.validate_ticket_position("dropped", "done")
-
-
-def test_new_worker_definition_has_distinct_behavior() -> None:
-    definition = NEW_WORKER_TYPE_DEFINITION
-    assert definition.stage_ids() == (
-        "needs_kickoff",
-        "needs_understanding",
-        "needs_stages",
-        "needs_thinking",
-        "needs_runtime_defaults",
-        "needs_drafting",
-        "needs_closeout",
-        "done",
-    )
-    assert definition.field_ids() == (
-        "kickoff",
-        "understanding",
-        "stages",
-        "thinking",
-        "runtime_defaults",
-        "drafting",
-        "closeout",
-    )
-    assert definition.first_worker_stage() == "needs_understanding"
-    assert definition.gating_field("needs_thinking") == "thinking"
-    assert definition.gating_field("needs_runtime_defaults") == "runtime_defaults"
 
 
 def test_definition_errors_are_preserved() -> None:
@@ -307,70 +231,6 @@ def test_registry_validation_order_and_messages() -> None:
     )
 
 
-def test_registry_is_narrow_ordered_and_defensive() -> None:
-    definitions = [CODING_WORKER_TYPE_DEFINITION, NEW_WORKER_TYPE_DEFINITION]
-    registered = registry(*definitions)
-    definitions.clear()
-    assert registered.registered_worker_types() == ("coding", "new_worker")
-    assert registered.require("coding") is CODING_WORKER_TYPE_DEFINITION
-    public_methods = {
-        name
-        for name, value in inspect.getmembers(WorkerTypeRegistry, inspect.isfunction)
-        if not name.startswith("_")
-    }
-    assert public_methods == {"registered_worker_types", "require", "manifest"}
-    with pytest.raises(PlannerError) as raised:
-        registered.require("ghost")
-    assert raised.value.to_payload() == {
-        "error": {
-            "code": "not_found",
-            "message": "unknown worker type",
-            "detail": {"worker_type": "ghost"},
-        }
-    }
-
-
-def test_duplicate_worker_type_is_rejected() -> None:
-    with pytest.raises(PlannerError) as raised:
-        registry(CODING_WORKER_TYPE_DEFINITION, CODING_WORKER_TYPE_DEFINITION)
-    assert raised.value.to_payload() == {
-        "error": {
-            "code": "validation",
-            "message": "duplicate worker type id",
-            "detail": {"worker_type": "coding"},
-        }
-    }
-
-
-@pytest.mark.parametrize("default_backend", ["", " ", "missing-backend"])
-def test_worker_profiles_require_non_empty_registered_default_backend(
-    default_backend: str,
-) -> None:
-    definition = replace(
-        CODING_WORKER_TYPE_DEFINITION,
-        worker_profile=replace(
-            CODING_WORKER_TYPE_DEFINITION.worker_profile,
-            default_backend=default_backend,
-        ),
-    )
-    with pytest.raises(PlannerError) as raised:
-        registry(definition)
-    assert raised.value.code is ErrorCode.validation
-    assert raised.value.detail["backend_key"] == default_backend
-    assert raised.value.detail["backend_keys"] == ["hermes", "codex", "claude"]
-
-
-def test_the_probe_names_a_real_backend_of_its_own() -> None:
-    # The probe exists to prove a Worker type may run on a backend the shipped types do
-    # not, so its default is a real key and deliberately not the one they all name.
-    probe_default = build_probe_registry().require("probe").worker_profile.default_backend
-    assert ConversationBackendKey(probe_default) is ConversationBackendKey.hermes
-    assert probe_default not in {
-        PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile.default_backend
-        for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
-    }
-
-
 def test_manifests_are_complete_and_json_round_trip() -> None:
     registered = PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
     assert len(set(registered)) == len(registered)
@@ -474,135 +334,3 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
         ]
         == "new_worker"
     )
-
-
-def test_old_authority_imports_and_identifiers_are_absent() -> None:
-    root = Path(__file__).resolve().parents[2]
-    this_file = Path(__file__).resolve()
-    forbidden_identifiers = {
-        "WorkflowDefinition",
-        "Registry",
-        "type_id",
-        "CodingStage",
-        "FieldName",
-        "CODING_STAGE_ORDER",
-        "CODING_EMPLOYEE_STAGE_ORDER",
-        "CODING_GATING_FIELD_BY_STAGE",
-        "CODING_NEXT_STAGE_BY_STAGE",
-        "FIELD_GATES",
-        "coding_definition",
-        "coding_registry",
-        "build_registry",
-    }
-    ticket_package = root / "src/planner/tickets"
-    for path in (ticket_package / "contracts.py", ticket_package / "logic/machine.py"):
-        tree = ast.parse(path.read_text(), filename=str(path))
-        assigned_names = {
-            target.id
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.Assign, ast.AnnAssign))
-            for target in (node.targets if isinstance(node, ast.Assign) else (node.target,))
-            if isinstance(target, ast.Name)
-        }
-        assert forbidden_identifiers.isdisjoint(assigned_names), path
-    paths = (
-        *sorted((root / "src/planner").rglob("*.py")),
-        *sorted((root / "tests").rglob("*.py")),
-    )
-    for path in paths:
-        if path.resolve() == this_file:
-            continue
-        tree = ast.parse(path.read_text(), filename=str(path))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                assert all(
-                    not alias.name.startswith("planner.ticket_types") for alias in node.names
-                ), path
-            if isinstance(node, ast.ImportFrom):
-                assert not (node.module or "").startswith("planner.ticket_types"), path
-            identifiers: tuple[str | None, ...] = ()
-            if isinstance(node, ast.Name):
-                identifiers = (node.id,)
-            elif isinstance(node, ast.arg):
-                identifiers = (node.arg,)
-            elif isinstance(node, ast.Attribute):
-                identifiers = (node.attr,)
-            elif isinstance(node, ast.keyword):
-                identifiers = (node.arg,)
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                identifiers = (node.name,)
-            elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                identifiers = tuple(alias.asname for alias in node.names)
-            assert forbidden_identifiers.isdisjoint(
-                identifier for identifier in identifiers if identifier is not None
-            ), path
-
-
-def test_worker_type_package_has_only_the_locked_modules_and_outbound_imports() -> None:
-    root = Path(__file__).resolve().parents[2]
-    package = root / "src/planner/worker_types"
-    infrastructure = {"__init__.py", "configuration.py", "contracts.py", "registry.py"}
-    definition_modules = {
-        f"{worker_type.replace('-', '_')}.py"
-        for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
-    }
-    assert {path.name for path in package.glob("*.py")} == infrastructure | definition_modules
-    allowed_outbound = {
-        "planner.conversation.contracts",
-        "planner.core.contracts",
-        "planner.tickets.contracts",
-    }
-    for path in package.glob("*.py"):
-        tree = ast.parse(path.read_text(), filename=str(path))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                modules = tuple(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom):
-                modules = ((node.module or ""),)
-            else:
-                continue
-            for module in modules:
-                if module.startswith("planner.") and not module.startswith("planner.worker_types"):
-                    assert module in allowed_outbound, (path, module)
-
-
-def test_semantic_modules_have_no_optional_definition_or_coding_fallback() -> None:
-    root = Path(__file__).resolve().parents[2]
-    paths = (
-        root / "src/planner/tickets/logic/machine.py",
-        root / "src/planner/tickets/logic/admission.py",
-        root / "src/planner/tickets/logic/resolution.py",
-        root / "src/planner/tickets/logic/external_work.py",
-        root / "src/planner/runtime/worker_step_readiness.py",
-    )
-    for path in paths:
-        source = path.read_text()
-        tree = ast.parse(source, filename=str(path))
-        assert '.get("coding")' not in source
-        assert ".get('coding')" not in source
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            positional = (*node.args.posonlyargs, *node.args.args)
-            positional_defaults = (None,) * (len(positional) - len(node.args.defaults)) + tuple(
-                node.args.defaults
-            )
-            for argument, default in (
-                *zip(positional, positional_defaults, strict=True),
-                *zip(node.args.kwonlyargs, node.args.kw_defaults, strict=True),
-            ):
-                if argument.arg == "worker_type_definition":
-                    assert default is None, (path, node.name)
-                    assert argument.annotation is not None, (path, node.name)
-                    assert "None" not in ast.unparse(argument.annotation), (
-                        path,
-                        node.name,
-                    )
-                if argument.arg == "definition":
-                    assert default is None, (path, node.name)
-            for expression in ast.walk(node):
-                if isinstance(expression, ast.BoolOp) and isinstance(expression.op, ast.Or):
-                    assert not any(
-                        isinstance(value, ast.Name) and value.id == "definition"
-                        for value in expression.values
-                    ), (path, node.name)

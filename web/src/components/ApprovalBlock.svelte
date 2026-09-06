@@ -4,7 +4,6 @@
   import Disclosure from "./Disclosure.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import InlineEdit from "./InlineEdit.svelte";
-  import MarkdownBlock from "./MarkdownBlock.svelte";
   import ScopePairPicker from "./ScopePairPicker.svelte";
   import { labelize } from "../lib/ui";
   import type { Lifecycle } from "../lib/lifecycle";
@@ -13,7 +12,6 @@
   type ScopePair = { next_ceiling: string; at_cap: AtCap };
 
   let {
-    mode,
     field = "",
     whatLabel = "",
     proposalBody = "",
@@ -23,7 +21,6 @@
     suggestedNextCeiling = null,
     lifecycle = null,
     layout = "default",
-    requireScope = false,
     disabled = false,
     onApprove,
     onProposalSave,
@@ -31,7 +28,6 @@
     actions,
     contextRow
   }: {
-    mode: "gating-pending" | "proposal" | "readonly";
     field?: string;
     whatLabel?: string;
     proposalBody?: string | null;
@@ -41,7 +37,6 @@
     suggestedNextCeiling?: string | null;
     lifecycle?: Lifecycle | null;
     layout?: "default" | "review";
-    requireScope?: boolean;
     disabled?: boolean;
     onApprove?: (payload: Record<string, unknown>) => Promise<unknown>;
     onProposalSave?: (raw: string) => Promise<unknown>;
@@ -61,15 +56,8 @@
   let hasNote = $derived(Boolean(onNoteSave) || Boolean((note || "").trim()));
   let contentTitle = $derived(labelize(whatLabel || field.replace(/_/g, " ")));
 
-  let scopeRequired = $derived(
-    mode === "gating-pending" || (mode === "proposal" && requireScope)
-  );
-  let showScope = $derived(
-    mode === "gating-pending" || (mode === "proposal" && requireScope)
-  );
-  let actionLabel = $derived(mode === "proposal" ? "Accept" : "Approve");
   let actionDisabled = $derived(
-    disabled || inFlight || resolved || (scopeRequired && scope === null)
+    disabled || inFlight || resolved || scope === null
   );
 
   async function saveDraft(raw: string): Promise<void> {
@@ -98,16 +86,12 @@
     try {
       await proposalSave;
       const payload: Record<string, unknown> = {};
-      if (mode === "gating-pending" || mode === "proposal") {
-        if (proposalSave === null && draft !== (proposalBody || "")) {
-          payload.edited_body = draft;
-        }
+      if (proposalSave === null && draft !== (proposalBody || "")) {
+        payload.edited_body = draft;
       }
-      if (scopeRequired) {
-        if (!scopeForApproval) return;
-        payload.next_ceiling = scopeForApproval.next_ceiling;
-        payload.at_cap = scopeForApproval.at_cap;
-      }
+      if (!scopeForApproval) return;
+      payload.next_ceiling = scopeForApproval.next_ceiling;
+      payload.at_cap = scopeForApproval.at_cap;
       await onApprove?.(payload);
       resolved = true;
     } catch (err) {
@@ -141,18 +125,14 @@
         disabled={actionDisabled}
         onclick={() => void approve()}
       >
-        {actionLabel}
+        Approve
       </Button>
-      {#if showScope}<ScopePairPicker {newStage} {suggestedNextCeiling} {lifecycle} bind:scope />{/if}
+      <ScopePairPicker {newStage} {suggestedNextCeiling} {lifecycle} bind:scope />
     </div>
   </div>
 {/snippet}
 
-<div class="approval {reviewLayout ? 'approval--review' : ''}" data-approval-block data-mode={mode} data-field={field || undefined}>
-  {#if mode === "readonly"}
-    {#if proposedBy}<div class="proposal-meta">proposed by {proposedBy}</div>{/if}
-    <MarkdownBlock text={proposalBody} />
-  {:else}
+<div class="approval {reviewLayout ? 'approval--review' : ''}" data-approval-block data-mode="pending" data-field={field || undefined}>
     {#if !reviewLayout}
       <div class="approval-what">{whatLabel || field.replace(/_/g, " ")}</div>
     {/if}
@@ -177,7 +157,7 @@
             multiline
             placeholder={`${contentTitle || "Proposal"}...`}
             dataEdit
-            onCancel={mode === "gating-pending" ? resetDraft : undefined}
+            onCancel={resetDraft}
             onSave={saveDraft}
           />
         </div>
@@ -194,7 +174,7 @@
               multiline
               placeholder={`${contentTitle || "Proposal"}...`}
               dataEdit
-              onCancel={mode === "gating-pending" ? resetDraft : undefined}
+              onCancel={resetDraft}
               onSave={saveDraft}
             />
           </div>
@@ -220,5 +200,4 @@
     {#if !reviewLayout}
       {@render actionGroup(true)}
     {/if}
-  {/if}
 </div>

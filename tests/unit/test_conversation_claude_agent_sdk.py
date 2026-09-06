@@ -2507,7 +2507,7 @@ def test_a_file_reaches_claude_as_explicit_managed_path_context(tmp_path: Path) 
                 "type": "text",
                 "text": (
                     'Attached file "facts.csv" (text/csv, 10 bytes) is available at '
-                    f"{kept.absolute_path}."
+                    f"{kept.absolute_path.resolve()}."
                 ),
             }
         ]

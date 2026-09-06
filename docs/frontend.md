@@ -153,8 +153,8 @@ One screen per part of the system:
   The section stays absent when no trouble was recorded.
 
   The stages and their workflow remain the Ticket's Worker type's, derived from the
-  served manifest (see below and `worker-types.md`); the kickoff user note sits first in
-  that spine, collapsed. The current Stage mark speaks without a second status pill.
+  served manifest (see below and `worker-types.md`). One collapsed Guidance editor sits
+  above the stage history. The current Stage mark speaks without a second status pill.
   Its summary adds words only where the mark would otherwise be ambiguous:
   **you're on it** for user-owned or taken-over work, with **Release**, and
   **awaiting approval** for a parked proposal. Running,
@@ -177,8 +177,10 @@ One screen per part of the system:
   to split its Tickets into on-today, off-today, and folded done work. Project priority
   orders the Project folds. The documents page presents Kickoff, Checkpoint, and Sprint
   Review. See `sprints.md`.
-- **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
-  unboxed serif idiom (see `backlog-and-ideas.md`).
+- **Backlog** — active unscheduled Tickets as bounded summaries, followed by separately
+  paged unscheduled Sprint Item briefs. Both open their canonical Workspace screens.
+  Its compact form creates an ordinary explicitly unscheduled Ticket. **Ideas** keeps
+  the separate loose-capture surface (see `backlog-and-ideas.md`).
 - **Chief of Staff** — the Chief is the first row in Workspace. On wide screens,
   selecting it opens the canonical Chief conversation beside the Workspace rail at
   `#/workspace/chief-of-staff`. On narrow screens, the same address opens the focused
@@ -320,7 +322,7 @@ has no usage source.
   scrollbar appears. On a mouse or trackpad the thumb stays quiet until hover, focus,
   or active use. Touch and forced-colors modes keep the platform's visible scrollbar
   behavior.
-- **Ticket files are linked, not stored in fields.** Canonical notes, fields,
+- **Ticket files are linked, not stored in fields.** Ticket guidance, fields,
   proposals, and results stay as database text. Standalone files for a ticket
   live beside the database under `files/tickets/<ticket_id>/`, so the default local
   path is `data/files/tickets/<ticket_id>/...`. The browser reads them through
@@ -377,15 +379,13 @@ has no usage source.
   back the page the reader left, and the conversation keeps its own section at the bottom
   of the page — the artifact and the worker are on screen together, which is the point.
   An opened conversation is the whole page, so opening a file steps it back to peeked.
-  Escape closes the file, and inside Atlas the panel gives Escape to the file before
-  itself. This is the same on every screen width. A click asking for a new tab or window
-  is left alone, and so is a link to a Ticket's dev server, which is a page rather than a
-  file. On the Workspace the open file rides in the address beside the Ticket, so a
-  reload, Back, and a shared link all show it; Atlas keeps what it is showing in memory
-  rather than in the address, so a file opened there closes with the panel. The
+  Escape closes the file. This is the same on every screen width. A click asking for a
+  new tab or window is left alone, and so is a link to a Ticket's dev server, which is a
+  page rather than a file. On the Workspace the open file rides in the address beside
+  the Ticket, so a reload, Back, and a shared link all show it. The
   `#/preview` address remains the way in from anywhere else — a shared link, a
-  notification, or another screen — and both draw the same document.
-- **Editable Markdown stays one surface.** Ticket notes, recaps, passed fields,
+  notification, or another screen — and it draws the same document.
+- **Editable Markdown stays one surface.** Ticket guidance, recaps, passed fields,
   approval drafts, and future Markdown surfaces remain directly editable with their
   existing focus, blur/save, keyboard, paste, and Escape behavior. What is being typed
   belongs to the editor, not to the cache: a refetch that lands mid-composition never
@@ -412,11 +412,11 @@ The screens are assembled from a small kit of shared pieces rather than
 hand-rolling the same shapes per screen. Each does one job:
 
 - **Disclosure** — the one expand/collapse surface (a native details/summary with a
-  chevron): ticket notes and recaps, sprint phases and items, ideas with bodies, the
-  backlog compose form, board project sections.
+  chevron): Ticket guidance and recaps, sprint phases and items, ideas with bodies, the
+  Backlog Ticket form, board project sections.
 - **ListRow** — the one row shape (title on the left, metadata on the right, hover):
-  sprint tickets, backlog items, flat ideas, board cards. Renders as a link, a button,
-  or a plain non-interactive row.
+  sprint tickets, Backlog Tickets and briefs, flat ideas, board cards. Renders as a
+  link, a button, or a plain non-interactive row.
 - **SectionHeading** — a quiet "Label · count" group heading.
 - **ScreenHeader** — a screen's title row plus an optional meta pill.
 - **Button** — the one button (or link), in a primary, quiet, or pill look.
@@ -433,7 +433,7 @@ hand-rolling the same shapes per screen. Each does one job:
   the kickoff priority, the approval control, and the send-back box. It is named by a
   ticket id and a field and reads that ticket itself, so any screen can raise the same
   ask. Which ask is current — walking, skipping, the keyboard shortcuts — stays with the
-  screen. The Review screen and Atlas's review walk both mount it.
+  screen. The Review screen mounts it.
 - **ResourceState** — the shared error / loading scaffold. It asks what the screen has
   to show before it asks what went wrong: a screen that has data keeps showing it and
   puts a failed read as a line above it, and only a screen with nothing yet is given
@@ -481,7 +481,7 @@ hand-rolling the same shapes per screen. Each does one job:
   that text at its adapter boundary. The browser does not store vendor identifiers or
   construct structured Codex input.
 - **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
-- **SegmentedControl** — a small set of toggle options (backlog project/priority).
+- **SegmentedControl** — a small set of toggle options (Backlog Project/priority).
 - **ScopePairPicker** — the "approve until … then …" scope control.
 - **ErrorLine** — a single error message line.
 

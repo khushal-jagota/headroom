@@ -20,7 +20,6 @@ the single-door rule.
    intake      (what is        roughly)       by-step)      propose a           deploy,
    context      "done"?)                                    reviewable          follow-up,
    field                                                     package)            report)
-        └────────────  direct resolution may jump between worker stages only  ────────────────┘
                                    dropped: any point, direct operation only
 ```
 
@@ -51,9 +50,8 @@ proposed), then **closeout** (only the applicable merge, deploy, follow-up, and
 bookkeeping happen, and a verified report is proposed), and finally it is **done**.
 Each stage has exactly one blank to fill; filling it — and having that accepted — is
 what moves the ticket one stage forward. A ticket can also be **dropped** at any
-point through a direct product operation. Direct operations can also jump between
-worker stages, but cannot bypass an unresolved Kickoff or re-enter Kickoff; workers
-never jump stages.
+point through a direct product operation. Stages advance through approval or the
+explicit external-work operation described below; there is no arbitrary Stage jump.
 
 The **Kickoff field** preserves intake context: the user's original wording, source
 context, boundaries, and advice. It stays readable beside the work so agents can
@@ -213,20 +211,34 @@ _Code paths:_ `src/planner/tickets/logic/machine.py`, `src/planner/tickets/data.
 Workers never change settled values or advance Stages directly. A worker that wants to
 move work forward files a **proposal** on the blank the current Stage gates. The
 proposal resolver is the only thing that can turn a proposal into a real value or
-advance the Stage. Only
-one proposal can be pending on a blank at a time — a newer one replaces the older,
-and the replacement is recorded.
+advance the Stage. A Ticket has at most one pending proposal, always for its current
+Stage. Filing another proposal replaces that pending draft. Saved field values remain
+separate, including a saved value beside a pending revision of the same field.
 
-A pending proposal is directly editable through the same field edit used for a settled
-value. Any actor can replace its text. The proposal stays pending, and the edit keeps its
-author, creation time, note, settled value, Ticket status, Stage, and scope. Direct edits
-of settled values remain limited to passed fields and direct callers.
+The pending proposal has its own editor. Any authorized actor can replace its text.
+The proposal stays pending, and the edit keeps its
+author, creation time, settled value, Ticket status, Stage, and scope. Direct edits
+of saved values use a separate editor and remain limited to passed fields and direct callers.
 
-Each field also has a **field user note**. It is step-specific user guidance, not
-agent scratchpad and not a canonical value. A worker may write one when the user gives
-guidance that should survive for the relevant step.
+The collapsed **Historical record** keeps earlier unapproved drafts and text from retired
+fields readable. Dropping a Ticket moves its pending draft here without approving it.
+Historical text cannot be approved or resumed; the current proposal is the only approval
+choice. The CLI exposes this record as `archive`, and copy text and search include it.
 
-The **recap** is different from both kinds of user note. It is a short cold-reader
+Each Ticket has one **guidance** document for durable user corrections and constraints.
+It is separate from settled field values and is never approved as a proposal. The Ticket
+screen offers one editor; Review shows this same document once. The CLI reads it with
+`panels worker my-ticket guidance` and writes it with `panels worker note <id>` from
+stdin; `--append` preserves the existing text. Copy text, Ticket search, and supervisor
+context include it too.
+
+The next automatic Worker step includes current guidance in its actual prompt. A direct
+edit keeps the existing generic Ticket-changed notice. Saving guidance is not an
+immediate conversation intervention: ordinary chat and return-for-revision keep their
+existing send behavior. A Worker continuing those conversations can read current
+guidance from the Ticket.
+
+The **recap** is a short cold-reader
 orientation line that works beside the title: what the ticket is, where it stands now,
 and the key fact for the current step. It is not a detailed log. It can be written or
 updated at any stage — recap is never gated.

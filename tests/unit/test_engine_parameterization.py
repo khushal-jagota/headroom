@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from planner.core.errors import PlannerError
@@ -77,23 +75,9 @@ def test_foreign_definition_drives_machine_semantics() -> None:
     )
 
 
-def test_stored_decode_is_registry_free_and_declared_validation_is_explicit() -> None:
-    raw = json.dumps(
-        {
-            "kickoff": {"value": "k", "proposal": None, "user_note": None},
-            FIELD_ALPHA: {"value": None, "proposal": None, "user_note": None},
-            FIELD_BETA: {"value": None, "proposal": None, "user_note": None},
-            "legacy": {"value": "kept", "proposal": None, "user_note": None},
-        }
-    )
-    stored = fields_codec.fields_from_json(raw)
-    assert tuple(stored.slots) == ("kickoff", FIELD_ALPHA, FIELD_BETA, "legacy")
-    declared = fields_codec.declared_fields_from_json(
-        raw, SYNTHETIC_WORKER_TYPE_DEFINITION.field_ids()
-    )
-    assert tuple(declared.slots) == ("kickoff", FIELD_ALPHA, FIELD_BETA)
+def test_sparse_decode_rejects_undeclared_values_instead_of_filtering_them() -> None:
+    field_ids = SYNTHETIC_WORKER_TYPE_DEFINITION.field_ids()
+    assert dict(fields_codec.values_from_json('{"kickoff":"k"}', field_ids)) == {"kickoff": "k"}
+    assert dict(fields_codec.values_from_json("{}", field_ids)) == {}
     with pytest.raises(PlannerError):
-        fields_codec.declared_fields_from_json(
-            json.dumps({"kickoff": {"value": None, "proposal": None, "user_note": None}}),
-            SYNTHETIC_WORKER_TYPE_DEFINITION.field_ids(),
-        )
+        fields_codec.values_from_json('{"legacy":"kept"}', field_ids)

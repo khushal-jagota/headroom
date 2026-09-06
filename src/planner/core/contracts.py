@@ -1,5 +1,5 @@
-"""Shared vocabulary used across every domain: cross-domain enums, the kinds a
-resolution decision is stated in, the link kinds, the link row, and the
+"""Shared vocabulary used across every domain: cross-domain enums,
+the link kinds, the link row, and the
 structured-error contract (ErrorCode, PlannerError) that pure logic raises.
 
 Stdlib only. Nothing here imports another planner module."""
@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Literal
 
-JsonDict = dict[str, Any]  # decision payloads, adapter blobs
+JsonDict = dict[str, Any]  # structured errors and adapter data
 UnixTime = int  # unix seconds
 
 
@@ -23,64 +23,6 @@ class Priority(StrEnum):  # SPEC §3.2/§3.3 — homed in core (shared vocabular
 
 class LinkKind(StrEnum):  # the one explicit Ticket relationship
     blocks = "blocks"  # ticket -> ticket | ticket -> sprint item
-
-
-class EventKind(StrEnum):
-    # --- named explicitly in SPEC ---
-    stage_changed = "stage_changed"  # {from_stage, to_stage, cause}
-    proposal_accepted = (
-        "proposal_accepted"  # §4.4.2/4 {field, body, resolved_by, edited}
-    )
-    proposal_superseded = "proposal_superseded"  # §4.4.1 {field, replaced_body}
-    day_ticket_removed = "day_ticket_removed"  # §3.4 {ticket_id}
-    ticket_deleted = "ticket_deleted"  # hard-delete audit + affected resources
-    sprint_item_deleted = (
-        "sprint_item_deleted"  # hard-delete audit + affected resources
-    )
-
-    # --- supplemental: creation, one per entity ---
-    ticket_created = "ticket_created"
-    sprint_created = "sprint_created"
-    sprint_item_created = "sprint_item_created"
-    idea_created = "idea_created"
-    day_created = "day_created"  # §3.4 materialization
-    project_created = "project_created"
-
-    # --- supplemental: proposals and fields ---
-    proposal_filed = "proposal_filed"  # {field, body, proposed_by}
-    proposal_edited = "proposal_edited"  # {field, body}
-    kickoff_proposal_filed = (
-        "kickoff_proposal_filed"  # {title, kickoff_note, proposed_by}
-    )
-    kickoff_accepted = "kickoff_accepted"  # {title, kickoff_note, resolved_by, edited}
-    approval_returned = "approval_returned"  # {kind, field?} returned for revision
-    note_updated = "note_updated"  # field user_note slot {field}
-    recap_updated = "recap_updated"  # §3.3
-    scope_changed = "scope_changed"  # {ceiling, at_cap, cause}
-    stage_ownership_changed = "stage_ownership_changed"  # ownership override set/clear
-    field_value_edited = "field_value_edited"  # {field, body}
-
-    # --- supplemental: plain field updates (§3.2 "event-logged" updates) ---
-    ticket_updated = "ticket_updated"  # {field, from, to} plain edits
-    item_updated = "item_updated"
-    sprint_updated = "sprint_updated"
-    day_updated = "day_updated"  # notes/brief manual edits
-    project_updated = "project_updated"
-    item_children_changed = "item_children_changed"  # {ticket_id, reason}
-
-    # --- supplemental: day lifecycle ---
-    day_ticket_added = "day_ticket_added"  # {ticket_id, position, cause}
-
-    # --- supplemental: durable ticket runtime/parking status ---
-    ticket_status_changed = "ticket_status_changed"  # {ticket_status, optional error}
-    employee_session_changed = "employee_session_changed"  # {conversation_id}
-    worker_settings_changed = (
-        "worker_settings_changed"  # Worker management settings changed
-    )
-
-    # --- supplemental: links ---
-    link_added = "link_added"  # {from_id, to_id, kind}
-    link_removed = "link_removed"
 
 
 @dataclass(frozen=True)

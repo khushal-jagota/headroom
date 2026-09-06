@@ -464,9 +464,10 @@ New Ticket, Chief, and Worker default saves refuse an off model.
 
 Each conversation keeps one typed catalog for commands, skills, apps, and plugins.
 Each entry carries its visible text, exact insertion text, description, and optional
-argument hint. A slash at the start of a composer line offers commands. A dollar offers
-skills. An at sign offers apps and plugins. The composer narrows that eligible list as
-text is typed.
+argument hint. A slash at the absolute start of the message offers commands. A dollar
+offers skills. An at sign offers apps and plugins. Leading whitespace, an empty first
+line, or a trigger on a later line does not open the menu. The composer narrows that
+eligible list as text is typed.
 
 A choice replaces the active token with the entry's exact insertion text. That result is
 still an ordinary draft. Message delivery and transcript rendering do not interpret or
@@ -479,18 +480,38 @@ is `/name `.
 
 Codex reads its catalog from the app-server after each thread starts or resumes. It joins
 enabled skills, callable installed apps, and enabled installed plugins with the native
-`/compact` and `/review` commands. App metadata comes from `app/list`. Current app
+`/compact`, `/review`, and `/goal` commands. App metadata comes from `app/list`. Current app
 callability comes from `app/installed`. This prevents an installed but unusable connector
 from appearing in the menu.
 
 Codex refreshes the complete catalog after skill or app change notifications. Refreshes
-run beside the app-server reader and merge repeated notifications. A failed refresh keeps
-the last complete catalog. A partial result never replaces it.
+run beside the app-server reader and merge repeated notifications. Each source is read
+independently. A failed source contributes nothing to the new snapshot, while fresh
+sibling sources remain available. Apps appear only when both app reads succeed. Source
+errors name the failed source in the log. Every refresh publishes its truthful new
+snapshot, including a snapshot that contains only native commands.
 
 Codex resolves a selected token against that complete snapshot when the prompt starts.
-Skills use Codex skill input. Apps and plugins use exact mention paths. Unknown or
-ambiguous tokens stay ordinary text. `/compact` and `/review` use their native app-server
-methods and keep the normal conversation turn lifecycle.
+Skills use Codex skill input. Apps and plugins use exact mention paths. Exact protocol
+identities are removed when duplicated. Two different identities with the same token get
+visible, stable aliases. A unique identity keeps its short canonical token.
+Command, skill, and mention collisions cannot cross trigger types because their first
+characters differ.
+
+A dollar or at-sign token is reserved only at the absolute start of a message. Codex
+refuses it when the current snapshot cannot resolve it. Unknown slash text remains prose.
+Malformed forms of a known native command are refused. Skills, apps, and plugins keep
+their structured input when a message also carries attachments or run value changes.
+Native commands refuse those combinations because their protocol methods cannot carry
+them.
+
+`/compact` and `/review` use their native app-server methods. `/goal` and `/goal get` read
+the thread goal. `/goal set <objective>` sets a nonempty trimmed objective to active.
+`/goal clear` clears it and reports whether a goal existed. Goal calls do not invoke a
+model. Panels writes one concise assistant result and one completed turn through the
+normal notebook lifecycle. RPC, response validation, and ephemeral-thread failures refuse
+the prompt. Direct RPC responses own these command results. Goal update and clear
+notifications are therefore ignored rather than decoded into a second result.
 
 The last catalog reported is kept on the conversation. The menu still works when no
 child process runs. A conversation with no report yet offers nothing.
@@ -528,4 +549,4 @@ child process runs. A conversation with no report yet offers nothing.
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-08-10._
+_Last verified: 2026-09-04._
