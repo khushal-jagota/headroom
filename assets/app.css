@@ -5621,6 +5621,19 @@ select {
   border-top: 0;
 }
 
+[data-screen="sprint"] .sprint-no-outcome {
+  margin-top: var(--space-7);
+}
+
+[data-screen="sprint"] .sprint-no-outcome > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+[data-screen="sprint"] .sprint-no-outcome > summary::-webkit-details-marker {
+  display: none;
+}
+
 [data-screen="sprint"] .sprint-item-row .list-row-title {
   overflow: hidden;
   text-overflow: ellipsis;

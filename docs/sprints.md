@@ -39,17 +39,19 @@ backfills a missed occurrence, and Planning Sprint stays on the final day.
 ## Tracking and carry-forward
 
 Sprint tracking shows committed Outcomes under Projects, including Outcomes with no
-Tickets. Each group shows only Tickets directly scheduled in that Sprint. Other work
-keeps both unclassified Tickets and Tickets whose Outcome is not committed to that
-Sprint visible. Every scheduled Ticket appears once.
+Tickets. Each Outcome row links to its workspace. One collapsed **No Outcome** row follows
+all Project groups when the Sprint contains non-dropped unclassified Tickets. It combines
+those Tickets across Projects and reveals their canonical links when opened.
 
 The progress count says how many Tickets are done, excluding dropped Tickets. It does
-not claim the Outcome has been achieved. With no non-dropped Tickets it says No Tickets.
+not claim that the Outcome has been achieved. It always uses `done/total`, including
+`0/0` for an Outcome with no non-dropped Tickets.
 The Sprint review records the user's judgment about actual outcomes.
 
 Add outcome lets the user search and reuse an existing Outcome or create one with a
 Project and optional brief. New creation retains the returned identity if commitment
-fails, so retrying the commitment does not create another Outcome.
+fails, so retrying the commitment does not create another Outcome. The control follows
+the Outcome list.
 
 Carry forward adds the existing Outcome to a target Sprint and moves only the exact
 unfinished Tickets the user checks. No Ticket is preselected. An empty selection carries
@@ -59,7 +61,7 @@ moving the remaining selection. Repeating an unchanged successful request is saf
 The source commitment and unselected Tickets remain. Completed history never moves as
 a side effect of carrying an Outcome.
 
-Removing a commitment leaves scheduled Tickets visible under Other work. The Outcome's
+Removing a commitment leaves its scheduled Tickets available through **No Outcome**. The Outcome's
 workspace always holds its full brief, artifacts and Tickets across Sprints, with Today
 and Remaining groups as before. Each Ticket shows its own Sprint name or Backlog.
 Commitment links and that Ticket's schedule can differ: they state different facts.

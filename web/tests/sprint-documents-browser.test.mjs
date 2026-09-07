@@ -44,13 +44,17 @@ try {
       return json(sprint);
     }
     if (path === "/api/sprints/sp_test/tracking") return json({
-      sprint, planning_date: "2026-09-05", outcome_groups: [{ outcome, committed: true, tickets: [
+      sprint, planning_date: "2026-09-08", outcome_groups: [{ outcome, committed: true, tickets: [
         { id: "t_one", title: "Move me", stage: "needs_plan", priority: "P1", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false },
         { id: "t_dropped", title: "Abandoned work", stage: "dropped", priority: "P2", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false },
         { id: "t_done", title: "Leave done", stage: "done", priority: "P2", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false }
-      ] }], unclassified_tickets: []
+      ] }], unclassified_tickets: [
+        { id: "t_loose_one", title: "Loose from One", stage: "needs_plan", priority: "P1", ticket_status: "empty", project_id: "project_one", sprint_item_id: null, waiting_to_closeout: false },
+        { id: "t_loose_two", title: "Loose from Two", stage: "done", priority: "P2", ticket_status: "empty", project_id: "project_two", sprint_item_id: null, waiting_to_closeout: false },
+        { id: "t_loose_dropped", title: "Dropped loose work", stage: "dropped", priority: "P2", ticket_status: "empty", project_id: "project_two", sprint_item_id: null, waiting_to_closeout: false }
+      ]
     });
-    if (path === "/api/projects") return json({ projects: [{ id: "project_one", name: "One", summary: "", priority: "P1", created_at: 1, updated_at: 1 }] });
+    if (path === "/api/projects") return json({ projects: [{ id: "project_one", name: "One", summary: "", priority: "P1", created_at: 1, updated_at: 1 }, { id: "project_two", name: "Two", summary: "", priority: "P2", created_at: 1, updated_at: 1 }] });
     if (path === "/api/day/today") return json({ tickets: [] });
     if (path === "/api/sprints") return json({ sprints: [sprint, { ...sprint, id: "sp_next", name: "Next" }] });
     if (path.startsWith("/api/sprint-item-summaries?")) return json({ items: [outcome], page: { match_count: 1, return_count: 1, limit: 30, offset: 0, omitted_before: 0, omitted_after: 0, complete: true, next_offset: null } });
@@ -127,23 +131,25 @@ with sync_playwright() as playwright:
         page.get_by_role("button", name="Switch view").click()
         expect(page.locator("[data-sprint-bet]")).to_have_text("Updated summary.")
         assert page.locator("a.sprint-docs-link").get_attribute("href") == "#/sprint/documents?sprint=sp_test"
+        assert page.locator('.sprint-meta-line .sep').count() == 0
+        assert "committed outcomes" not in page.locator('.sprint-meta-line').inner_text()
         outcome = page.locator('[data-outcome-id="outcome_existing"]')
-        assert not outcome.locator('[data-sprint-ticket-id]').first.is_visible()
-        expect(outcome.locator('details.sprint-outcome-tickets > summary')).to_have_text("2 Tickets")
-        assert outcome.locator('[data-sprint-ticket-id="t_dropped"]').count() == 0
-        outcome.locator('details.sprint-outcome-tickets > summary').click()
-        assert outcome.locator('[data-sprint-ticket-id]:visible').count() == 2
-        outcome.locator('details.sprint-outcome-menu > summary').click()
-        outcome.get_by_role("button", name="Carry forward").click()
-        carry = page.locator('[data-carry-outcome="outcome_existing"]')
-        assert carry.locator('input[type="checkbox"]').count() == 1
-        assert not carry.locator('input[type="checkbox"]').is_checked()
-        carry.get_by_role("combobox").select_option("sp_next")
-        carry.locator('input[type="checkbox"]').check()
-        carry.get_by_role("button", name="Carry selected").click()
-        page.wait_for_function("() => window.saved().requests.some(request => request.path.endsWith('/carry'))")
-        carry_request = page.evaluate("window.saved().requests.find(request => request.path.endsWith('/carry'))")
-        assert carry_request["body"] == {"target_sprint_id": "sp_next", "ticket_ids": ["t_one"]}
+        expect(outcome.locator('.sprint-item-rollup')).to_have_text("1/2")
+        assert outcome.locator('[data-sprint-ticket-id]').count() == 0
+        assert page.locator('.sprint-outcome-meta, .sprint-outcome-menu, .sprint-outcome-tickets, .board-workspace-bucket-count').count() == 0
+        assert "Committed outcome" not in page.locator('[data-sprint-projects]').inner_text()
+        assert "Other work" not in page.locator('[data-sprint-projects]').inner_text()
+        no_outcome = page.locator('[data-sprint-no-outcome]')
+        expect(no_outcome.locator(':scope > summary')).to_contain_text("No Outcome")
+        expect(no_outcome.locator(':scope > summary .sprint-item-rollup')).to_have_text("1/2")
+        assert no_outcome.get_attribute('open') is None
+        assert no_outcome.locator('[data-sprint-ticket-id]:visible').count() == 0
+        no_outcome.locator(':scope > summary').click()
+        assert no_outcome.locator('[data-sprint-ticket-id]:visible').count() == 2
+        assert no_outcome.locator('[data-sprint-ticket-id="t_loose_dropped"]').count() == 0
+        assert no_outcome.locator('[data-sprint-ticket-id="t_loose_one"]').get_attribute('href') == '#/workspace/t_loose_one'
+        assert no_outcome.locator('[data-sprint-ticket-id="t_loose_two"]').get_attribute('href') == '#/workspace/t_loose_two'
+        assert page.evaluate("""() => Boolean(document.querySelector('[data-sprint-no-outcome]').compareDocumentPosition(document.querySelector('.sprint-outcome-actions')) & Node.DOCUMENT_POSITION_FOLLOWING)""")
         page.get_by_role("button", name="Add outcome").click()
         picker = page.locator('[data-outcome-picker]')
         picker.locator('[data-new-outcome] > summary').click()

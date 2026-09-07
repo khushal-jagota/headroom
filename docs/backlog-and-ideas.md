@@ -13,15 +13,9 @@ Ideas:   remembered possibility                    ──► stays an Idea
 
 Backlog shows committed work that has no sprint. Active unscheduled Tickets are the
 main list. They are fetched as bounded summaries and sorted into P0–P3 groups. Each
-row opens the canonical Ticket in Workspace and shows its title, short recap, Project,
-state, and Worker type. A list that spans pages shows its range and page controls;
-a complete list needs only its total.
-
-A secondary **Outcomes** browser arrives collapsed and loads its bounded catalog only
-while open. Search or filter by Project to find shared context, including historical
-Outcomes. Selecting one opens its existing workspace; creating one opens the returned
-identity without adding a Sprint commitment. This catalog does not describe every
-Outcome as unfinished. It uses the same picker as Add outcome on Sprint tracking.
+row opens the canonical Ticket in Workspace and shows only its title and Project chip.
+A list that spans pages shows its range and page controls. The page does not request or
+show an Outcome catalog.
 
 A faint "+ New ticket" sits at the top, closed and out of the way. It opens a compact
 form for title, kickoff context, Worker type, Project, priority, and optional deadline.
