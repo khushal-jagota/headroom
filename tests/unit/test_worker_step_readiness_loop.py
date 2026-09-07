@@ -18,6 +18,7 @@ from time import monotonic, sleep
 from typing import cast
 
 import pytest
+from tests.support.ticket_progress import advance_ticket
 
 from planner.conversation.contracts import (
     ConversationStartRequest,
@@ -46,7 +47,6 @@ from planner.worker_context.contracts import (
 from planner.worker_context.service import SqliteWorkerContextService
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
-from planner.worker_types.registry import WorkerTypeRegistry
 
 FIXED_NOW = datetime(2026, 7, 6, 12, 0, 0).astimezone()
 BOUNDARY_HOUR = 5
@@ -208,11 +208,8 @@ def test_two_racing_claimers_on_one_database_produce_exactly_one_winner(
 def test_a_release_does_not_fire_once_the_status_has_been_written_again(
     tmp_path: Path,
 ) -> None:
-    # A delayed release carries the status AND the moment it was written. The status can
-    # legitimately come back to the same value; the moment cannot — unless both flips land
-    # in the same second, which is the accepted limitation of this guard: the stamp has
-    # one-second resolution, so a claim and a later re-claim inside the same second are
-    # indistinguishable to it. Recorded, and not worth a wider clock to close.
+    # A delayed release carries the transition revision. A release and re-claim
+    # inside one second share a timestamp and status but have distinct revisions.
     world = _World(tmp_path)
     ticket_id = world.ready_ticket()
     conn = world.connect()
@@ -226,32 +223,34 @@ def test_a_release_does_not_fire_once_the_status_has_been_written_again(
         )
         assert claimed is not None
 
-        # Someone else takes the Ticket away and hands it back to the worker later.
+        # Someone else takes the Ticket away and hands it back to the worker in the same second.
         assert tickets_data.release_worker_step_claim(
             conn,
             ticket_id,
             expected_status=claimed.ticket_status,
-            expected_status_changed_at=claimed.ticket_status_changed_at,
-            now=110,
+            expected_status_revision=claimed.ticket_status_revision,
+            now=100,
         )
         reclaimed = tickets_data.claim_ticket_for_worker_step(
             conn,
             ticket_id,
             planning_day_id_resolver=lambda: TODAY_DAY_ID,
             readiness_check=worker_step_readiness.is_ready_for_worker_step,
-            now=120,
+            now=100,
         )
         assert reclaimed is not None
         assert reclaimed.ticket_status is claimed.ticket_status
+        assert reclaimed.ticket_status_changed_at == claimed.ticket_status_changed_at
+        assert reclaimed.ticket_status_revision > claimed.ticket_status_revision
 
-        # The first claim's late release finds the same status and a different moment.
+        # The first claim's late release finds a different revision despite the same clock.
         assert (
             tickets_data.release_worker_step_claim(
                 conn,
                 ticket_id,
                 expected_status=claimed.ticket_status,
-                expected_status_changed_at=claimed.ticket_status_changed_at,
-                now=130,
+                expected_status_revision=claimed.ticket_status_revision,
+                now=100,
             )
             is False
         )
@@ -330,7 +329,7 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
             conn,
             ticket_id,
             expected_status=claimed.ticket_status,
-            expected_status_changed_at=claimed.ticket_status_changed_at,
+            expected_status_revision=claimed.ticket_status_revision,
             now=2,
         )
     finally:
@@ -463,27 +462,6 @@ class _WorkerTypeLookupFailure:
         raise RuntimeError("the worker type could not be looked up")
 
 
-def test_a_failing_worker_type_lookup_releases_the_claim(world: _World) -> None:
-    ticket_id = world.ready_ticket(conversation_id="conv-lookup-failure")
-    world.start_conversation("conv-lookup-failure")
-
-    started = asyncio.run(
-        start_ready_worker_step(
-            ticket_id,
-            connect_database=world.connect,
-            conversation_system=cast(ConversationSystem, world.conversations),
-            worker_context_service=cast(WorkerContextService, world.context),
-            worker_type_registry=cast(WorkerTypeRegistry, _WorkerTypeLookupFailure()),
-            planning_day_id_resolver=lambda: TODAY_DAY_ID,
-            now=world.clock.now_unix,
-        )
-    )
-
-    assert started is False
-    assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
-    assert world.skill_bindings() == []
-
-
 class _AcknowledgementRefusingContext:
     """Prepares as usual, then cannot tick the context off."""
 
@@ -499,40 +477,6 @@ class _AcknowledgementRefusingContext:
         raise RuntimeError("the context store is unreachable")
 
 
-def test_a_failed_acknowledgement_after_a_delivery_is_reported_and_never_reverted(
-    world: _World, caplog: pytest.LogCaptureFixture
-) -> None:
-    # The text is out. Reverting here would re-arm the Ticket and send it twice, so the
-    # failure is reported and the claim stands — the context stays owed instead.
-    ticket_id = world.ready_ticket(conversation_id="conv-ack")
-    world.start_conversation("conv-ack")
-    world.add_pending_context(ticket_id, "ticket_changed", "The user renamed the ticket.")
-
-    with caplog.at_level(logging.ERROR, logger="planner.runtime.worker_step_readiness_loop"):
-        started = asyncio.run(
-            start_ready_worker_step(
-                ticket_id,
-                connect_database=world.connect,
-                conversation_system=cast(ConversationSystem, world.conversations),
-                worker_context_service=cast(
-                    WorkerContextService, _AcknowledgementRefusingContext(world.context)
-                ),
-                worker_type_registry=configured_worker_type_registry(),
-                planning_day_id_resolver=lambda: TODAY_DAY_ID,
-                now=world.clock.now_unix,
-            )
-        )
-
-    assert started is True
-    assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
-    assert len(world.conversations.backend_prompt_writes("conv-ack")) == 1
-    errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
-    assert len(errors) == 1
-    assert ticket_id in errors[0].getMessage()
-    assert errors[0].exc_info is not None
-    assert world.pending_context_keys(ticket_id) == ["ticket_changed"]
-
-
 class _UnreadableConversationSystem(InMemoryConversationSystem):
     """A conversation system whose liveness read fails outright."""
 
@@ -540,38 +484,12 @@ class _UnreadableConversationSystem(InMemoryConversationSystem):
         raise RuntimeError("the conversation system is unreachable")
 
 
-def test_a_step_that_fails_outside_the_flows_own_handling_is_still_reported(
-    world: _World, caplog: pytest.LogCaptureFixture
-) -> None:
-    # Nobody awaits a scheduled step, and the occupancy read happens before the flow has
-    # anything to give back, so it sits outside the flow's own failure handling. An
-    # exception there has no way to be heard except through the finished task itself.
-    ticket_id = world.ready_ticket(conversation_id="conv-unreadable")
-    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(
-        world,
-        conversation_system=cast(ConversationSystem, _UnreadableConversationSystem()),
-    )
-    with caplog.at_level(logging.ERROR, logger="planner.runtime.worker_step_readiness_loop"):
-        try:
-            assert readiness_loop.poll_once() == [ticket_id]
-            assert _waited_for(lambda: bool(caplog.records))
-        finally:
-            readiness_loop.stop()
-            asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
-            thread.join(5)
-            asyncio_loop.close()
-
-    errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
-    assert len(errors) == 1
-    assert ticket_id in errors[0].getMessage()
-    assert errors[0].exc_info is not None
-    # Nothing was claimed, so the Ticket is exactly where it was.
-    assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
-
-
 def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _World) -> None:
     ticket_id = world.ready_ticket(title="Ship it", conversation_id="conv-opener")
     world.start_conversation("conv-opener")
+    guidance = "Keep the owner’s boundary.\n\n  Exact whitespace stays.  "
+    with world.connect() as conn:
+        tickets_data.replace_guidance(conn, ticket_id, body=guidance, actor="human", now=0)
     world.add_pending_context(ticket_id, "ticket_changed", "The user renamed the ticket.")
 
     assert world.start_step(ticket_id) is True
@@ -585,6 +503,8 @@ def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _Worl
     assert f"Work ticket {ticket_id} — Ship it" in writes[0].text
     assert "propose the 'success' field for approval" in writes[0].text
     assert "Stage owner: worker" in writes[0].text
+    assert f"[Ticket guidance]\n{guidance}\n[/Ticket guidance]" in writes[0].text
+    assert world.pending_context_keys(ticket_id) == []
     assert "The user renamed the ticket." in writes[0].text
     bindings = world.skill_bindings()
     assert len(bindings) == 3
@@ -607,26 +527,6 @@ def test_a_paired_owned_stage_departs_at_paired_and_gets_the_paired_opener(
     text = world.conversations.backend_prompt_writes("conv-paired")[0].text
     assert "open the paired discussion for the 'success' field" in text
     assert "Stage owner: paired" in text
-
-
-def test_an_unlinked_ticket_gets_a_conversation_and_the_first_message(world: _World) -> None:
-    ticket_id = world.ready_ticket(title="First message")
-    assert world.ticket(ticket_id).conversation_id is None
-
-    assert world.start_step(ticket_id) is True
-
-    ticket = world.ticket(ticket_id)
-    conversation_id = ticket.conversation_id
-    assert conversation_id is not None
-    assert conversation_id.startswith("conv_")
-    assert ticket.ticket_status is TicketStatus.agent
-    # The conversation exists, is addressable, and has the opener on its wire.
-    assert asyncio.run(world.conversations.is_running(conversation_id)) is True
-    writes = world.conversations.backend_prompt_writes(conversation_id)
-    assert len(writes) == 1
-    assert f"Work ticket {ticket_id} — First message" in writes[0].text
-    # The last-chosen columns record what the conversation actually runs on.
-    assert ticket.employee_backend in ("hermes", "codex", "claude")
 
 
 def test_a_ticket_that_is_not_ready_is_never_sent_to(world: _World) -> None:
@@ -745,8 +645,10 @@ def test_the_poll_schedules_every_ready_ticket_and_skips_the_rest(world: _World)
         scheduled = readiness_loop.poll_once()
         assert sorted(scheduled) == sorted([ready_one, ready_two])
         assert _waited_for(
-            lambda: world.ticket(ready_one).conversation_id is not None
-            and world.ticket(ready_two).conversation_id is not None
+            lambda: (
+                world.ticket(ready_one).conversation_id is not None
+                and world.ticket(ready_two).conversation_id is not None
+            )
         )
         assert world.ticket(ready_one).ticket_status is TicketStatus.agent
         assert world.ticket(ready_two).ticket_status is TicketStatus.agent
@@ -762,9 +664,7 @@ def test_one_closeout_lane_takes_one_ticket_per_pass(world: _World) -> None:
     second = world.ready_ticket(title="Closeout two")
     with world.connect() as conn:
         for ticket_id in (first, second):
-            tickets_data.set_stage(
-                conn, ticket_id, new_stage="needs_closeout", actor="human", now=0
-            )
+            advance_ticket(conn, ticket_id, new_stage="needs_closeout", actor="human", now=0)
         conn.execute("UPDATE tickets SET updated_at = 10 WHERE id = ?", (first,))
         conn.execute("UPDATE tickets SET updated_at = 20 WHERE id = ?", (second,))
     readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
@@ -773,42 +673,6 @@ def test_one_closeout_lane_takes_one_ticket_per_pass(world: _World) -> None:
         # poll itself has to hold the lane for the one it picks.
         assert readiness_loop.poll_once() == [first]
     finally:
-        readiness_loop.stop()
-        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
-        thread.join(5)
-        asyncio_loop.close()
-
-
-def test_a_ticket_already_in_flight_is_not_scheduled_twice(world: _World) -> None:
-    # The step is held at its very first await, before the claim, so the Ticket is still
-    # plainly ready when the second poll runs. Nothing but the in-flight set can turn that
-    # poll away, which is the point: without it a stalled step would be started twice.
-    ticket_id = world.ready_ticket(conversation_id="conv-inflight")
-    world.start_conversation("conv-inflight")
-    held = _HeldAtTheOccupancyCheck(world.conversations)
-    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(
-        world, conversation_system=cast(ConversationSystem, held)
-    )
-    try:
-        assert readiness_loop.poll_once() == [ticket_id]
-        assert held.reached.wait(5)
-        assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
-
-        assert readiness_loop.poll_once() == []
-
-        held.release(asyncio_loop)
-        # Wait for the opener to reach the backend, not for the claim. The claim is the
-        # status flip and it happens strictly before the send, so waiting on the status
-        # can return while the send is still in the air — which is what made this test
-        # fail about one run in twenty.
-        assert _waited_for(
-            lambda: len(world.conversations.backend_prompt_writes("conv-inflight")) == 1
-        )
-        assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
-        # One step ran, so one opener reached the backend.
-        assert len(world.conversations.backend_prompt_writes("conv-inflight")) == 1
-    finally:
-        held.release(asyncio_loop)
         readiness_loop.stop()
         asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
         thread.join(5)

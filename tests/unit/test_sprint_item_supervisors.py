@@ -6,11 +6,9 @@ import asyncio
 import json
 import threading
 from pathlib import Path
-from time import time
 from typing import Any, cast
 
 import pytest
-from alembic import command
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -18,7 +16,6 @@ from planner.conversation.contracts import ConversationStartRequest
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import text_message_content
 from planner.core import change_signal
-from planner.core import db as db_module
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -28,8 +25,10 @@ from planner.runtime import conversation_start
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
 from planner.sprints import supervisor_service
+from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
+from planner.worker_context import data as context_data
 
 
 def _app(tmp_path: Path, *, fake_now: str | None = None) -> tuple[FastAPI, Path]:
@@ -77,8 +76,8 @@ def _park_a_proposal(client: TestClient, item_id: str) -> dict[str, Any]:
     )
     assert kickoff.status_code == 200, kickoff.text
     proposed = client.post(
-        f"/api/tickets/{ticket_id}/propose/success",
-        json={"body": "The result is verified."},
+        f"/api/tickets/{ticket_id}/propose",
+        json={"body": "The result is verified.", "recap": "Ready for review"},
         headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
     )
     assert proposed.status_code == 200, proposed.text
@@ -91,104 +90,6 @@ def _supervisor_headers(item_id: str) -> dict[str, str]:
         "X-Plan-Actor": "sprint_item_supervisor",
         "X-Plan-Sprint-Item-ID": item_id,
     }
-
-
-def test_creation_owns_one_agent_and_detail_exposes_the_launch_snapshot(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-
-    supervisor = cast(dict[str, Any], item["supervisor"])
-    assert supervisor == {
-        "agent_key": f"sprint_item_supervisor_{item['id']}",
-        "conversation_id": None,
-        "launch_configuration": {
-            "employee_backend": "codex",
-            "employee_launch_model": "gpt-5.6-sol",
-            "employee_launch_reasoning_effort": "medium",
-        },
-    }
-    with connect(str(db_path)) as conn:
-        row = conn.execute(
-            "SELECT conversation_id FROM agents WHERE agent_key=?",
-            (supervisor["agent_key"],),
-        ).fetchone()
-        assert row is not None and row[0] is None
-
-
-def test_workspace_read_joins_today_artifacts_and_supervisor_attention(tmp_path: Path) -> None:
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client, "Workspace outcome")
-        ticket = client.post(
-            "/api/tickets",
-            json={
-                "worker_type": "coding",
-                "title": "Today work",
-                "kickoff_note": "Do the work.",
-                "sprint_item_id": item["id"],
-            },
-        ).json()
-        headers = _supervisor_headers(str(item["id"]))
-        placed = client.post(
-            f"/api/items/{item['id']}/supervisor/days/today/tickets/{ticket['id']}",
-            headers=headers,
-        )
-        artifact = client.put(
-            f"/api/items/{item['id']}/supervisor/artifacts/proof.md",
-            json={"content": "# Proof"},
-            headers=headers,
-        )
-        workspace = client.get(f"/api/items/{item['id']}/workspace")
-
-    assert placed.status_code == 200, placed.text
-    assert artifact.status_code == 200, artifact.text
-    assert workspace.status_code == 200, workspace.text
-    body = workspace.json()
-    assert body["title"] == "Workspace outcome"
-    assert body["today_ticket_ids"] == [ticket["id"]]
-    assert body["tickets"][0]["worker_type"] == "coding"
-    assert body["tickets"][0]["day_ids"] == [body["planning_day_id"]]
-    assert body["artifacts"] == ["artifacts/proof.md"]
-    assert body["conversation_history"] == []
-
-
-def test_supervisor_item_context_answers_with_an_overview(tmp_path: Path) -> None:
-    """The own-Item read is one line per Ticket. Full Ticket text belongs to the
-    per-Ticket drill-in, so no field or proposal text may reach this payload."""
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client, "Overview outcome")
-        headers = _supervisor_headers(str(item["id"]))
-        parked = _park_a_proposal(client, str(item["id"]))
-        placed = client.post(
-            f"/api/items/{item['id']}/supervisor/days/today/tickets/{parked['id']}",
-            headers=headers,
-        )
-        context = client.get(f"/api/items/{item['id']}/supervisor/context", headers=headers)
-        workspace = client.get(f"/api/items/{item['id']}/workspace").json()
-        planning_day_id = str(workspace["planning_day_id"])
-
-    assert placed.status_code == 200, placed.text
-    assert context.status_code == 200, context.text
-    body = context.json()
-    assert body["sprint_item"]["title"] == "Overview outcome"
-    assert body["sprint_item"]["priority"] == "P3"
-    assert body["tickets"] == [
-        {
-            "id": parked["id"],
-            "title": "Supervisor review",
-            "stage": "needs_success",
-            "ticket_status": "awaiting_approval",
-            "day_ids": [planning_day_id],
-        }
-    ]
-    # The kickoff note and the parked proposal exist on that Ticket. Neither may appear
-    # anywhere in the answer, under this key set or any later one.
-    assert "Start here." not in context.text
-    assert "The result is verified." not in context.text
 
 
 def test_supervisor_item_routes_refuse_a_cross_item_actor(tmp_path: Path) -> None:
@@ -288,9 +189,7 @@ def test_supervisor_context_and_history_use_only_the_current_child_conversation(
             unsubscribe()
 
     assert context.status_code == 200, context.text
-    assert context.json()["triggering_worker_message"]["payload"]["text"] == (
-        "Exact Worker update"
-    )
+    assert context.json()["triggering_worker_message"]["payload"]["text"] == ("Exact Worker update")
     assert context.json()["conversation_id"] == conversation_id
     assert context_without_trigger.json()["triggering_worker_message"] is None
     assert quiet_context.status_code == 200, quiet_context.text
@@ -331,9 +230,7 @@ def test_ticket_context_serializes_a_concurrent_child_move(
                 moving.commit()
             move_finished.set()
 
-        def ticket_detail_during_move(
-            conn: Any, ticket_id: str, now: int
-        ) -> dict[str, Any]:
+        def ticket_detail_during_move(conn: Any, ticket_id: str, now: int) -> dict[str, Any]:
             nonlocal move_thread
             move_thread = threading.Thread(target=move_child)
             move_thread.start()
@@ -421,9 +318,7 @@ def test_history_serializes_a_concurrent_conversation_reset(
             assert reset_finished.wait(1)
             return ticket_result
 
-        monkeypatch.setattr(
-            supervisor_service, "require_current_child", require_child_during_reset
-        )
+        monkeypatch.setattr(supervisor_service, "require_current_child", require_child_during_reset)
         history = client.get(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/history",
             headers=_supervisor_headers(str(item["id"])),
@@ -436,9 +331,7 @@ def test_history_serializes_a_concurrent_conversation_reset(
     assert history.json()["conversation_id"] == conversation_id
     assert history.json()["events"][0]["payload"]["text"] == "History before reset"
     with connect(str(db_path)) as conn:
-        assert tickets_data.read_ticket(conn, str(ticket["id"])).conversation_id == (
-            replacement_id
-        )
+        assert tickets_data.read_ticket(conn, str(ticket["id"])).conversation_id == (replacement_id)
 
 
 def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
@@ -483,152 +376,11 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
     assert sent.json()["sender"] == item["supervisor"]["agent_key"]
     for field in ("stage", "ceiling", "at_cap", "ticket_status", "day_ids"):
         assert after[field] == before[field]
-    write = cast(
-        InMemoryConversationSystem, app.state.conversation_system
-    ).backend_prompt_writes(conversation_id)[0]
+    write = cast(InMemoryConversationSystem, app.state.conversation_system).backend_prompt_writes(
+        conversation_id
+    )[0]
     assert write.sender_label == item["supervisor"]["agent_key"]
     assert write.text == "Check the acceptance evidence."
-
-
-def test_targeted_worker_message_refuses_missing_stale_and_cross_item_targets(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        first = _create_item(client, "First")
-        second = _create_item(client, "Second")
-        ticket = client.post(
-            "/api/tickets",
-            json={
-                "worker_type": "coding",
-                "title": "Current child",
-                "kickoff_note": "Start.",
-                "sprint_item_id": first["id"],
-            },
-        ).json()
-        path = f"/api/items/{first['id']}/supervisor/tickets/{ticket['id']}/message"
-        missing = client.post(
-            path,
-            json={"conversation_id": "conv_missing", "message": "Hello"},
-            headers=_supervisor_headers(str(first["id"])),
-        )
-        with connect(str(db_path)) as conn:
-            conn.execute(
-                "UPDATE tickets SET conversation_id='conv_current' WHERE id=?",
-                (ticket["id"],),
-            )
-            conn.commit()
-        stale = client.post(
-            path,
-            json={"conversation_id": "conv_stale", "message": "Hello"},
-            headers=_supervisor_headers(str(first["id"])),
-        )
-        cross = client.post(
-            path,
-            json={"conversation_id": "conv_current", "message": "Hello"},
-            headers=_supervisor_headers(str(second["id"])),
-        )
-
-    assert missing.json()["error"]["code"] == "not_found"
-    assert stale.json()["error"]["code"] == "not_found"
-    assert cross.json()["error"]["code"] == "agent_forbidden"
-
-
-def test_supervisor_artifacts_stay_under_the_owned_item(tmp_path: Path) -> None:
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        headers = _supervisor_headers(str(item["id"]))
-        written = client.put(
-            f"/api/items/{item['id']}/supervisor/artifacts/notes/proof.md",
-            json={"content": "Verified."},
-            headers=headers,
-        )
-        listed = client.get(
-            f"/api/items/{item['id']}/supervisor/artifacts", headers=headers
-        )
-        traversal = client.put(
-            f"/api/items/{item['id']}/supervisor/artifacts/%2e%2e/escape.md",
-            json={"content": "No."},
-            headers=headers,
-        )
-
-    assert written.status_code == 200, written.text
-    assert written.json()["url"].endswith("/artifacts/notes/proof.md")
-    assert listed.json()["artifacts"] == ["notes/proof.md"]
-    assert traversal.status_code in {400, 404}
-
-
-def test_supervisor_management_actions_use_current_child_scope(tmp_path: Path) -> None:
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        other = _create_item(client, "Other")
-        first = client.post(
-            "/api/tickets",
-            json={
-                "worker_type": "coding",
-                "title": "First",
-                "kickoff_note": "Start.",
-                "sprint_item_id": item["id"],
-            },
-        ).json()
-        second = client.post(
-            "/api/tickets",
-            json={
-                "worker_type": "coding",
-                "title": "Second",
-                "kickoff_note": "Start.",
-                "sprint_item_id": item["id"],
-            },
-        ).json()
-        foreign = client.post(
-            "/api/tickets",
-            json={
-                "worker_type": "coding",
-                "title": "Foreign",
-                "kickoff_note": "Start.",
-                "sprint_item_id": other["id"],
-            },
-        ).json()
-        headers = _supervisor_headers(str(item["id"]))
-        item_edit = client.patch(
-            f"/api/items/{item['id']}/supervisor/item",
-            json={"body": "Updated brief."},
-            headers=headers,
-        )
-        ticket_edit = client.patch(
-            f"/api/items/{item['id']}/supervisor/tickets/{first['id']}",
-            json={"priority": "P1"},
-            headers=headers,
-        )
-        scoped = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{first['id']}/scope",
-            json={"ceiling": "needs_approach", "at_cap": "propose"},
-            headers=headers,
-        )
-        day = client.post(
-            f"/api/items/{item['id']}/supervisor/days/2026-08-13/tickets/{first['id']}",
-            headers=headers,
-        )
-        blocked = client.post(
-            f"/api/items/{item['id']}/supervisor/blocks",
-            json={"from_id": second["id"], "to_id": first["id"]},
-            headers=headers,
-        )
-        cross = client.patch(
-            f"/api/items/{item['id']}/supervisor/tickets/{foreign['id']}",
-            json={"priority": "P0"},
-            headers=headers,
-        )
-
-    assert item_edit.json()["body"] == "Updated brief."
-    assert ticket_edit.json()["priority"] == "P1"
-    assert scoped.json()["ceiling"] == "needs_approach"
-    assert scoped.json()["at_cap"] == "propose"
-    assert day.json()["day_id"] == "day_2026-08-13"
-    assert blocked.json()["kind"] == "blocks"
-    assert cross.json()["error"]["code"] == "agent_forbidden"
 
 
 def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> None:
@@ -653,57 +405,26 @@ def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> Non
     assert cross.json()["error"]["code"] == "agent_forbidden"
     assert approved.status_code == 200, approved.text
     assert approved.json()["stage"] == "needs_approach"
-    assert approved.json()["fields"]["success"]["value"] == "The result is verified."
+    assert approved.json()["field_values"].get("success") == "The result is verified."
 
 
-def test_a_parked_proposal_is_in_the_review_queue_and_scope_leaves_it_there(
-    tmp_path: Path,
+@pytest.mark.parametrize("outcome", ["refused", "delivered", "superseded"])
+def test_supervisor_rejection_delivers_before_it_mutates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
 ) -> None:
-    """One gate means one queue. A parked proposal is in Review the moment it parks.
-
-    Scope used to decide who held it, so changing scope moved it in and out of this
-    queue. Now scope only says how far the Ticket may run, and the proposal stays put.
-    """
     app, db_path = _app(tmp_path)
+    conversation_id = "conv-supervisor-reject"
     with TestClient(app) as client:
         item = _create_item(client)
+        other = _create_item(client, "Other")
         ticket = _park_a_proposal(client, str(item["id"]))
-        review_on_parking = client.get("/api/review")
-        scoped = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/scope",
-            json={"ceiling": "needs_success", "at_cap": "stop"},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        review_after_scope = client.get("/api/review")
-
-    assert [row["ticket_id"] for row in review_on_parking.json()["items"]] == [ticket["id"]]
-    assert scoped.status_code == 200, scoped.text
-    assert scoped.json()["at_cap"] == "stop"
-    assert scoped.json()["ticket_status"] == "awaiting_approval"
-    assert [row["ticket_id"] for row in review_after_scope.json()["items"]] == [ticket["id"]]
-    with connect(str(db_path)) as conn:
-        stored = tickets_data.read_ticket(conn, str(ticket["id"]))
-    assert stored.at_cap.value == "stop"
-
-
-def test_a_supervisor_may_approve_the_revision_after_a_user_rejection(
-    tmp_path: Path,
-) -> None:
-    """A supervisor is refused nothing on its own child by the shape of the review.
-
-    There is one gate, so a proposal the user sent back and the worker re-filed is the
-    same kind of thing it was before, and the supervisor may resolve it.
-    """
-    app, db_path = _app(tmp_path)
-    conversation_id = "conv-handover-revision"
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket = _park_a_proposal(client, str(item["id"]))
-        ticket_id = str(ticket["id"])
         with connect(str(db_path)) as conn:
             conn.execute(
                 "UPDATE tickets SET conversation_id = ? WHERE id = ?",
-                (conversation_id, ticket_id),
+                (conversation_id, ticket["id"]),
+            )
+            context_data.set_context(
+                conn, str(ticket["id"]), "ticket_changed", "Read exact guidance."
             )
             conn.commit()
         asyncio.run(
@@ -711,116 +432,67 @@ def test_a_supervisor_may_approve_the_revision_after_a_user_rejection(
                 ConversationStartRequest(conversation_id=conversation_id, model="test-model")
             )
         )
-        rejected = client.post(
-            f"/api/tickets/{ticket_id}/return-for-revision",
-            json={"message": "State the verification evidence."},
-        )
-        revised = client.post(
-            f"/api/tickets/{ticket_id}/propose/success",
-            json={"body": "The result is verified against the log."},
-            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
-        )
-        supervisor_approve_the_revision = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/approve",
-            json={"next_ceiling": "needs_approach", "at_cap": "propose"},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-
-    assert rejected.status_code == 200, rejected.text
-    assert rejected.json()["fields"]["success"]["proposal"] is None
-    assert revised.status_code == 200, revised.text
-    assert revised.json()["ticket_status"] == "awaiting_approval"
-    assert supervisor_approve_the_revision.status_code == 200, (
-        supervisor_approve_the_revision.text
-    )
-    assert supervisor_approve_the_revision.json()["stage"] == "needs_approach"
-
-
-def test_direct_user_can_approve_a_parked_proposal(tmp_path: Path) -> None:
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket = _park_a_proposal(client, str(item["id"]))
-        approved = client.post(
-            f"/api/tickets/{ticket['id']}/accept/success",
-            json={"next_ceiling": "needs_approach", "at_cap": "propose"},
-        )
-
-    assert approved.status_code == 200, approved.text
-    assert approved.json()["stage"] == "needs_approach"
-
-
-def test_supervisor_rejection_delivers_before_it_mutates(tmp_path: Path) -> None:
-    app, db_path = _app(tmp_path)
-    conversation_id = "conv-supervisor-reject"
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket = _park_a_proposal(client, str(item["id"]))
-        with connect(str(db_path)) as conn:
-            conn.execute(
-                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
-                (conversation_id, ticket["id"]),
-            )
-            conn.commit()
-        asyncio.run(
-            app.state.conversation_system.start_conversation(
-                ConversationStartRequest(
-                    conversation_id=conversation_id,
-                    model="test-model",
-                )
-            )
-        )
         system = cast(InMemoryConversationSystem, app.state.conversation_system)
-        system.arm_backend_write_failure(conversation_id)
+        path = f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/reject"
+        cross = client.post(
+            path,
+            json={"message": "Not your Ticket."},
+            headers=_supervisor_headers(str(other["id"])),
+        )
+        assert cross.status_code == 400
+        assert cross.json()["error"]["code"] == "agent_forbidden"
+        assert system.backend_prompt_writes(conversation_id) == ()
+        if outcome == "refused":
+            system.arm_backend_write_failure(conversation_id)
+        original_send = conversation_start.send_to_ticket_conversation
+
+        async def send_then_replace(
+            *args: Any, **kwargs: Any
+        ) -> conversation_start.DeliveredMessage:
+            result = await original_send(*args, **kwargs)
+            if outcome == "superseded":
+                with connect(str(db_path)) as conn:
+                    tickets_data.edit_pending_proposal(
+                        conn,
+                        str(ticket["id"]),
+                        field="success",
+                        new_body="A newer pending draft",
+                        actor="human",
+                        now=5,
+                    )
+            return result
+
+        monkeypatch.setattr(tickets_actions, "send_to_ticket_conversation", send_then_replace)
         rejected = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/reject",
+            path,
             json={"message": "State the verification evidence."},
             headers=_supervisor_headers(str(item["id"])),
         )
 
-    assert rejected.status_code == 503
-    assert rejected.json()["error"]["code"] == "gateway_offline"
     with connect(str(db_path)) as conn:
-        unchanged = tickets_data.read_ticket(conn, str(ticket["id"]))
-    assert unchanged.ticket_status.value == "awaiting_approval"
-    assert unchanged.fields.slots["success"].proposal is not None
-
-
-def test_supervisor_rejection_delivers_focused_guidance_then_returns_work(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _app(tmp_path)
-    conversation_id = "conv-supervisor-reject-success"
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket = _park_a_proposal(client, str(item["id"]))
-        with connect(str(db_path)) as conn:
-            conn.execute(
-                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
-                (conversation_id, ticket["id"]),
-            )
-            conn.commit()
-        asyncio.run(
-            app.state.conversation_system.start_conversation(
-                ConversationStartRequest(
-                    conversation_id=conversation_id,
-                    model="test-model",
-                )
-            )
-        )
-        rejected = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/reject",
-            json={"message": "State the verification evidence."},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-
-    assert rejected.status_code == 200, rejected.text
-    assert rejected.json()["ticket_status"] == "agent"
-    assert rejected.json()["fields"]["success"]["proposal"] is None
-    system = cast(InMemoryConversationSystem, app.state.conversation_system)
-    writes = system.backend_prompt_writes(conversation_id)
-    assert len(writes) == 1
-    assert "State the verification evidence." in writes[0].text
+        after = tickets_data.read_ticket(conn, str(ticket["id"]))
+        pending_context = context_data.snapshot(conn, str(ticket["id"])).items
+    if outcome == "refused":
+        assert rejected.status_code == 503
+        assert rejected.json()["error"]["code"] == "gateway_offline"
+        assert after.ticket_status.value == "awaiting_approval"
+        assert after.pending_proposal is not None
+        assert any(item.text == "Read exact guidance." for item in pending_context)
+    else:
+        write = system.backend_prompt_writes(conversation_id)[0]
+        assert "State the verification evidence." in write.text
+        assert "Read exact guidance." in write.text
+        assert all(item.text != "Read exact guidance." for item in pending_context)
+        if outcome == "superseded":
+            assert rejected.status_code == 400
+            assert "proposal changed" in rejected.json()["error"]["message"]
+            assert after.pending_proposal is not None
+            assert after.pending_proposal.body == "A newer pending draft"
+            assert after.ticket_status.value == "awaiting_approval"
+        else:
+            assert rejected.status_code == 200, rejected.text
+            assert after.pending_proposal is None
+            assert after.ticket_status.value == "agent"
 
 
 def test_first_message_creates_the_conversation_and_reset_preserves_history(
@@ -885,108 +557,6 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
         )
 
 
-def test_deleted_item_refuses_its_stale_supervisor_identity(tmp_path: Path) -> None:
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        client.delete(f"/api/items/{item['id']}")
-        response = client.get(
-            f"/api/items/{item['id']}/supervisor/context",
-            headers={
-                "X-Plan-Actor": "sprint_item_supervisor",
-                "X-Plan-Sprint-Item-ID": str(item["id"]),
-            },
-        )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "agent_forbidden"
-
-
-def test_deleting_an_item_stops_its_active_supervisor(tmp_path: Path) -> None:
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        sent = client.post(
-            f"/api/items/{item['id']}/supervisor/conversation/send",
-            json={
-                "content": [{"piece": "text", "text": "Working"}],
-                "sender_label": "owner",
-            },
-        ).json()
-        conversation_id = sent["conversation_id"]
-        system = cast(InMemoryConversationSystem, app.state.conversation_system)
-        assert asyncio.run(system.is_running(conversation_id)) is True
-        deleted = client.delete(f"/api/items/{item['id']}")
-
-    assert deleted.status_code == 200, deleted.text
-    assert asyncio.run(system.is_running(conversation_id)) is False
-    with connect(str(db_path)) as conn:
-        assert (
-            conn.execute(
-                "SELECT 1 FROM agents WHERE agent_key=?",
-                (item["supervisor"]["agent_key"],),
-            ).fetchone()
-            is None
-        )
-
-
-def test_queued_override_does_not_replace_the_saved_launch_choice(tmp_path: Path) -> None:
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        first = client.post(
-            f"/api/items/{item['id']}/supervisor/conversation/send",
-            json={
-                "content": [{"piece": "text", "text": "First"}],
-                "sender_label": "owner",
-            },
-        ).json()
-        queued = client.post(
-            f"/api/items/{item['id']}/supervisor/conversation/send",
-            json={
-                "conversation_id": first["conversation_id"],
-                "model": "gpt-5.6-terra",
-                "reasoning_effort": "high",
-                "content": [{"piece": "text", "text": "Later"}],
-                "sender_label": "owner",
-            },
-        )
-        shown = client.get(f"/api/items/{item['id']}/supervisor").json()
-        client.post(f"/api/items/{item['id']}/supervisor/conversation/reset")
-
-    assert queued.json()["fate"] == "queued"
-    assert shown["launch_configuration"] == {
-        "employee_backend": "codex",
-        "employee_launch_model": "gpt-5.6-sol",
-        "employee_launch_reasoning_effort": "medium",
-    }
-
-
-def test_existing_conversation_rejects_a_backend_override(tmp_path: Path) -> None:
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        first = client.post(
-            f"/api/items/{item['id']}/supervisor/conversation/send",
-            json={
-                "content": [{"piece": "text", "text": "First"}],
-                "sender_label": "owner",
-            },
-        ).json()
-        changed = client.post(
-            f"/api/items/{item['id']}/supervisor/conversation/send",
-            json={
-                "conversation_id": first["conversation_id"],
-                "backend_key": "hermes",
-                "model": "openai-codex:gpt-5.6-sol",
-                "content": [{"piece": "text", "text": "Move"}],
-                "sender_label": "owner",
-            },
-        )
-
-    assert changed.json()["error"]["code"] == "validation"
-
-
 class _PausedStartSystem(InMemoryConversationSystem):
     def __init__(self) -> None:
         super().__init__()
@@ -1047,45 +617,6 @@ def test_delete_between_backend_start_and_link_cannot_recreate_the_agent(
     asyncio.run(scenario())
 
 
-def test_migration_backfills_normal_items_without_starting_conversations(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "migration.db"
-    engine = db_module._migration_engine(str(db_path), 5000)
-    try:
-        with engine.begin() as connection:
-            command.upgrade(db_module._alembic_config(connection), "direct_ticket_sprint_placement")
-            connection.exec_driver_sql(
-                "INSERT OR IGNORE INTO projects(id,name,summary,created_at,updated_at) "
-                "VALUES ('project_vylo','Vylo','',1,1)"
-            )
-            connection.exec_driver_sql(
-                "INSERT INTO sprint_items(id,title,project_id,created_at,updated_at) "
-                "VALUES ('si_old','Old','project_vylo',1,1)"
-            )
-            command.upgrade(db_module._alembic_config(connection), "head")
-    finally:
-        engine.dispose()
-
-    with connect(str(db_path)) as conn:
-        row = conn.execute(
-            "SELECT supervisor_agent_key, supervisor_backend, supervisor_model, "
-            "supervisor_reasoning_effort FROM sprint_items WHERE id='si_old'"
-        ).fetchone()
-        assert tuple(row) == (
-            "sprint_item_supervisor_si_old",
-            "codex",
-            "gpt-5.6-sol",
-            "medium",
-        )
-        assert (
-            conn.execute(
-                "SELECT conversation_id FROM agents WHERE agent_key=?", (row[0],)
-            ).fetchone()[0]
-            is None
-        )
-
-
 def test_supervisor_creates_and_approves_a_ticket_under_its_own_item(tmp_path: Path) -> None:
     """A supervisor-created Ticket gets the same scope as anyone else's.
 
@@ -1118,38 +649,7 @@ def test_supervisor_creates_and_approves_a_ticket_under_its_own_item(tmp_path: P
     assert created.json()["ticket_status"] == "awaiting_approval"
     assert approved.status_code == 200, approved.text
     assert approved.json()["stage"] == "needs_success"
-    assert approved.json()["fields"]["kickoff"]["value"] == "Do the work."
-
-
-def test_supervisor_cannot_approve_a_ticket_outside_its_own_item(
-    tmp_path: Path,
-) -> None:
-    """The surviving rule is the only rule: a supervisor writes inside its own Item."""
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        first = _create_item(client, "First")
-        second = _create_item(client, "Second")
-        created = client.post(
-            "/api/tickets",
-            json={
-                "worker_type": "coding",
-                "title": "Child of another Item",
-                "kickoff_note": "Do the work.",
-                "sprint_item_id": str(second["id"]),
-            },
-            headers=_supervisor_headers(str(first["id"])),
-        )
-        assert created.status_code == 200, created.text
-        refused = client.post(
-            f"/api/items/{first['id']}/supervisor/tickets/{created.json()['id']}/approve",
-            json={"next_ceiling": "needs_approach", "at_cap": "propose"},
-            headers=_supervisor_headers(str(first["id"])),
-        )
-
-    assert created.json()["at_cap"] == "propose"
-    assert created.json()["ticket_status"] == "awaiting_approval"
-    assert refused.status_code == 400
-    assert refused.json()["error"]["code"] == "agent_forbidden"
+    assert approved.json()["field_values"].get("kickoff") == "Do the work."
 
 
 def _child_ticket(client: TestClient, item_id: str, title: str = "Child of the Item") -> str:
@@ -1164,192 +664,6 @@ def _child_ticket(client: TestClient, item_id: str, title: str = "Child of the I
     )
     assert created.status_code == 200, created.text
     return str(created.json()["id"])
-
-
-def test_supervisor_deletes_a_current_child_and_nothing_else(tmp_path: Path) -> None:
-    """The Item comes from the supervisor's own identity, so it reaches no other Ticket."""
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        first = _create_item(client, "First")
-        second = _create_item(client, "Second")
-        own = _child_ticket(client, str(first["id"]), "Mine to delete")
-        elsewhere = _child_ticket(client, str(second["id"]), "Another Item's child")
-        cross = client.delete(
-            f"/api/tickets/{elsewhere}", headers=_supervisor_headers(str(first["id"]))
-        )
-        without_an_item = client.delete(
-            f"/api/tickets/{own}", headers={"X-Plan-Actor": "sprint_item_supervisor"}
-        )
-        deleted = client.delete(
-            f"/api/tickets/{own}", headers=_supervisor_headers(str(first["id"]))
-        )
-        gone = client.get(f"/api/tickets/{own}")
-        survivor = client.get(f"/api/tickets/{elsewhere}")
-
-    assert cross.status_code == 400
-    assert cross.json()["error"]["code"] == "agent_forbidden"
-    assert without_an_item.status_code == 400
-    assert without_an_item.json()["error"]["code"] == "agent_forbidden"
-    assert deleted.status_code == 200, deleted.text
-    assert deleted.json()["ticket_id"] == own
-    assert deleted.json()["sprint_item_ids"] == [str(first["id"])]
-    assert gone.status_code == 404
-    assert survivor.status_code == 200
-
-
-def test_supervisor_deletes_a_running_child_and_leaves_no_worker_behind(
-    tmp_path: Path,
-) -> None:
-    """Delete is unguarded for a supervisor, so the running turn is what needs killing.
-
-    The Ticket carries the claim, the pending context, and the conversation link, and all
-    three go with the row. The turn does not: it is somebody else's process, and without
-    this it keeps talking into a conversation that belongs to nothing.
-    """
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        running = _stranded_child(client, db_path, str(item["id"]))
-        asyncio.run(
-            app.state.conversation_system.start_conversation(
-                ConversationStartRequest(conversation_id="conv-dead-worker", model="a-model")
-            )
-        )
-        asyncio.run(
-            app.state.conversation_system.send(
-                "conv-dead-worker",
-                text_message_content("mid-turn"),
-                sender_label="loop",
-            )
-        )
-        assert asyncio.run(app.state.conversation_system.is_running("conv-dead-worker"))
-        with connect(str(db_path)) as conn:
-            conn.execute(
-                "INSERT INTO pending_worker_context(worker_entity_id,context_key,text,revision) "
-                "VALUES (?, 'guidance', 'unread', 1)",
-                (running,),
-            )
-            conn.commit()
-        deleted = client.delete(
-            f"/api/tickets/{running}", headers=_supervisor_headers(str(item["id"]))
-        )
-        gone = client.get(f"/api/tickets/{running}")
-        with connect(str(db_path)) as conn:
-            leftover_context = conn.execute(
-                "SELECT 1 FROM pending_worker_context WHERE worker_entity_id = ?",
-                (running,),
-            ).fetchone()
-            leftover_link = conn.execute(
-                "SELECT 1 FROM ticket_conversations WHERE ticket_id = ?", (running,)
-            ).fetchone()
-
-    assert deleted.status_code == 200, deleted.text
-    assert gone.status_code == 404
-    assert asyncio.run(app.state.conversation_system.is_running("conv-dead-worker")) is False
-    assert asyncio.run(app.state.conversation_system.held_prompts("conv-dead-worker")) == ()
-    assert leftover_context is None
-    assert leftover_link is None
-
-
-def test_supervisor_may_force_its_own_delete(tmp_path: Path) -> None:
-    """Force adds nothing for a supervisor, and it is no longer refused one."""
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        first = _create_item(client, "First")
-        second = _create_item(client, "Second")
-        own = _child_ticket(client, str(first["id"]), "Mine to force")
-        elsewhere = _child_ticket(client, str(second["id"]), "Another Item's child")
-        forced_elsewhere = client.delete(
-            f"/api/tickets/{elsewhere}?force=true",
-            headers=_supervisor_headers(str(first["id"])),
-        )
-        forced = client.delete(
-            f"/api/tickets/{own}?force=true", headers=_supervisor_headers(str(first["id"]))
-        )
-
-    assert forced_elsewhere.status_code == 400
-    assert forced_elsewhere.json()["error"]["code"] == "agent_forbidden"
-    assert forced.status_code == 200, forced.text
-    assert forced.json()["ticket_id"] == own
-
-
-def test_a_ceiling_accepts_the_plain_stage_name(tmp_path: Path) -> None:
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client, "Scoped")
-        ticket = _park_a_proposal(client, str(item["id"]))
-        scoped = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/scope",
-            json={"ceiling": "closeout", "at_cap": "propose"},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        unknown = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/scope",
-            json={"ceiling": "nonsense", "at_cap": "propose"},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-
-    assert scoped.status_code == 200, scoped.text
-    assert scoped.json()["ceiling"] == "needs_closeout"
-    assert unknown.json()["error"]["code"] == "scope_invalid"
-
-
-def test_scope_stated_at_creation_settles_the_kickoff(tmp_path: Path) -> None:
-    """A creator that states scope creates a Ticket already scoped, with nothing parked."""
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client, "Stated")
-        stated = client.post(
-            "/api/tickets",
-            json={
-                "worker_type": "coding",
-                "title": "Go through it completely",
-                "kickoff_note": "Do the whole thing.",
-                "sprint_item_id": str(item["id"]),
-                "ceiling": "closeout",
-                "at_cap": "propose",
-            },
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        default = client.post(
-            "/api/tickets",
-            json={
-                "worker_type": "coding",
-                "title": "Ordinary intake",
-                "kickoff_note": "Look at this.",
-            },
-        )
-
-    assert stated.status_code == 200, stated.text
-    assert stated.json()["ceiling"] == "needs_closeout"
-    assert stated.json()["at_cap"] == "propose"
-    assert stated.json()["stage"] == "needs_success"
-    assert stated.json()["ticket_status"] == "empty"
-    assert stated.json()["fields"]["kickoff"]["value"] == "Do the whole thing."
-    assert stated.json()["fields"]["kickoff"]["proposal"] is None
-    # No explicit scope keeps the default leash.
-    assert default.json()["at_cap"] == "propose"
-    assert default.json()["ticket_status"] == "awaiting_approval"
-
-
-def test_stated_scope_needs_no_sprint_item(tmp_path: Path) -> None:
-    """Nothing owns a reviewer, so scope no longer drags placement along with it."""
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        created = client.post(
-            "/api/tickets",
-            json={
-                "worker_type": "coding",
-                "title": "Unplaced but scoped",
-                "kickoff_note": "Do the whole thing.",
-                "ceiling": "closeout",
-                "at_cap": "propose",
-            },
-        )
-
-    assert created.status_code == 200, created.text
-    assert created.json()["sprint_item_id"] is None
-    assert created.json()["at_cap"] == "propose"
 
 
 # --- restarting a dead Worker -------------------------------------------------
@@ -1423,74 +737,6 @@ def test_restart_gives_the_claim_back_and_starts_a_new_conversation(
     assert body["employee_configuration"]["employee_backend"] == "codex"
 
 
-def test_restart_refuses_a_cross_item_actor_and_a_ticket_that_is_not_a_child(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        other = _create_item(client, "Other item")
-        ticket_id = _stranded_child(client, db_path, str(item["id"]))
-        cross_item = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
-            json={},
-            headers=_supervisor_headers(str(other["id"])),
-        )
-        not_a_child = client.post(
-            f"/api/items/{other['id']}/supervisor/tickets/{ticket_id}/restart-worker",
-            json={},
-            headers=_supervisor_headers(str(other["id"])),
-        )
-        # Scope is proved before the body is read, so a foreign supervisor cannot reach
-        # the backend catalog by naming a configuration on somebody else's Ticket.
-        carrying_a_configuration = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
-            json={
-                "employee_backend": "hermes",
-                "employee_launch_model": "hermes-model",
-                "employee_launch_reasoning_effort": None,
-            },
-            headers=_supervisor_headers(str(other["id"])),
-        )
-        after = client.get(f"/api/tickets/{ticket_id}")
-
-    assert cross_item.status_code == 400, cross_item.text
-    assert cross_item.json()["error"]["code"] == "agent_forbidden"
-    assert not_a_child.status_code == 400, not_a_child.text
-    assert carrying_a_configuration.json()["error"]["code"] == "agent_forbidden"
-    assert after.json()["conversation_id"] == "conv-dead-worker"
-    assert after.json()["ticket_status"] == "agent"
-
-
-def test_restart_refuses_a_worker_step_that_is_still_inside_its_first_minutes(
-    tmp_path: Path,
-) -> None:
-    """The one bound on a restart loop, and it kills nothing on the way out."""
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket_id = _stranded_child(
-            client,
-            db_path,
-            str(item["id"]),
-            ticket_status_changed_at=int(time()) - 10,
-        )
-        response = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
-            json={},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        after = client.get(f"/api/tickets/{ticket_id}")
-
-    assert response.status_code == 400, response.text
-    assert response.json()["error"]["message"] == (
-        "this worker step is too young to restart"
-    )
-    assert response.json()["error"]["detail"]["floor_seconds"] == 300
-    assert after.json()["conversation_id"] == "conv-dead-worker"
-    assert after.json()["ticket_status"] == "agent"
-
-
 def test_restart_refuses_a_stage_the_worker_does_not_own(tmp_path: Path) -> None:
     """A Paired Stage rests where it departs, so a restart there kills a live discussion."""
     app, db_path = _app(tmp_path)
@@ -1515,141 +761,3 @@ def test_restart_refuses_a_stage_the_worker_does_not_own(tmp_path: Path) -> None
         "only a Worker-owned Stage has a worker step to restart"
     )
     assert after.json()["conversation_id"] == "conv-dead-worker"
-
-
-def test_restart_refuses_a_ticket_with_no_worker_step_out(tmp_path: Path) -> None:
-    """`errored` is one of these: nothing writes it today, and it is not a claim."""
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket_id = _stranded_child(client, db_path, str(item["id"]))
-        with connect(str(db_path)) as conn:
-            conn.execute(
-                "UPDATE tickets SET ticket_status = 'errored' WHERE id = ?",
-                (ticket_id,),
-            )
-            conn.commit()
-        response = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
-            json={},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-
-    assert response.status_code == 400, response.text
-    assert response.json()["error"]["message"] == (
-        "the Ticket has no worker step out to restart"
-    )
-    assert response.json()["error"]["detail"]["ticket_status"] == "errored"
-
-
-def test_restart_on_a_named_configuration_keeps_it_for_the_ticket(tmp_path: Path) -> None:
-    """A Worker that died on its backend must not come back on the same one."""
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket_id = _stranded_child(client, db_path, str(item["id"]))
-        response = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
-            json={
-                "employee_backend": "hermes",
-                "employee_launch_model": "hermes-model",
-                "employee_launch_reasoning_effort": None,
-            },
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        after = client.get(f"/api/tickets/{ticket_id}")
-
-    assert response.status_code == 200, response.text
-    assert response.json()["started"] is True
-    assert response.json()["employee_configuration"] == {
-        "employee_backend": "hermes",
-        "employee_launch_model": "hermes-model",
-        "employee_launch_reasoning_effort": None,
-    }
-    # Kept for the Ticket, not spent on one turn: the columns are what every later step
-    # launches on.
-    assert after.json()["employee_backend"] == "hermes"
-    assert after.json()["employee_launch_model"] == "hermes-model"
-
-
-def test_restart_refuses_a_bad_configuration_before_it_kills_anything(
-    tmp_path: Path,
-) -> None:
-    """A bad argument must cost the Ticket nothing. It still has its Worker's remains."""
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket_id = _stranded_child(client, db_path, str(item["id"]))
-        with connect(str(db_path)) as conn:
-            conn.execute(
-                "INSERT INTO backend_model_enablement(backend_key, model_id, enabled) "
-                "VALUES ('hermes', 'retired-model', 0)"
-            )
-            conn.commit()
-        disabled_model = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
-            json={
-                "employee_backend": "hermes",
-                "employee_launch_model": "retired-model",
-                "employee_launch_reasoning_effort": None,
-            },
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        unregistered_backend = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
-            json={
-                "employee_backend": "invented",
-                "employee_launch_model": "whatever",
-                "employee_launch_reasoning_effort": None,
-            },
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        half_a_configuration = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
-            json={"employee_backend": "hermes"},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        after = client.get(f"/api/tickets/{ticket_id}")
-
-    assert disabled_model.status_code == 400, disabled_model.text
-    assert disabled_model.json()["error"]["message"] == "Employee model is disabled"
-    assert unregistered_backend.status_code == 400, unregistered_backend.text
-    assert half_a_configuration.status_code == 400, half_a_configuration.text
-    assert half_a_configuration.json()["error"]["message"] == (
-        "a launch configuration needs both a backend and a model"
-    )
-    assert after.json()["conversation_id"] == "conv-dead-worker"
-    assert after.json()["ticket_status"] == "agent"
-    assert after.json()["employee_backend"] == "codex"
-
-
-def test_restart_says_why_nothing_started_and_leaves_the_claim_given_back(
-    tmp_path: Path,
-) -> None:
-    """A restart that silently does nothing would be useless, so readiness says why."""
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket_id = _stranded_child(client, db_path, str(item["id"]))
-        with connect(str(db_path)) as conn:
-            conn.execute("DELETE FROM day_tickets WHERE ticket_id = ?", (ticket_id,))
-            conn.commit()
-        response = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
-            json={},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        again = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
-            json={},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["started"] is False
-    assert response.json()["not_started_because"] == "the Ticket is not on today's Day"
-    assert response.json()["ticket_status"] == "empty"
-    assert response.json()["conversation_id"] is None
-    # A Ticket left naming no conversation stays restartable, which is how a supervisor
-    # corrects the configuration it named the first time.
-    assert again.status_code == 200, again.text

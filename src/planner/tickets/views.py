@@ -4,8 +4,8 @@ or imports from an API module."""
 
 from __future__ import annotations
 
-import json
 import sqlite3
+from dataclasses import asdict
 
 from planner.core import links as core_links
 from planner.core.contracts import BlockerSummary, JsonDict
@@ -18,7 +18,6 @@ from planner.tickets.contracts import (
     AtCap,
     BoardCard,
     BoardSprintItem,
-    FieldSlot,
     Ticket,
     TicketListFilters,
     TicketStatus,
@@ -94,13 +93,13 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
             ),
         },
         "recap": ticket.recap,
+        "guidance": ticket.guidance,
         "ceiling": str(ticket.ceiling),
         "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
         "backend_error": ticket.backend_error,
         "stage_ownership_overrides": {
-            stage: mode.value
-            for stage, mode in ticket.stage_ownership_overrides.items()
+            stage: mode.value for stage, mode in ticket.stage_ownership_overrides.items()
         },
         "default_stage_ownership_mode": (
             ticket.default_stage_ownership_mode.value
@@ -114,7 +113,11 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         ),
         "conversation_id": ticket.conversation_id,
         "alias": ticket.alias,
-        "fields": json.loads(fields_codec.fields_to_json(ticket.fields)),
+        "field_values": dict(ticket.field_values),
+        "pending_proposal": asdict(ticket.pending_proposal)
+        if ticket.pending_proposal is not None
+        else None,
+        "archived_field_content": ticket.archived_field_content,
         "created_at": ticket.created_at,
         "updated_at": ticket.updated_at,
     }
@@ -151,9 +154,7 @@ def list_tickets(
         clauses.append("tickets.sprint_item_id = ?")
         params.append(sprint_item_id)
     if day_id is not None:  # scope to one day's board via the day_tickets join
-        clauses.append(
-            "tickets.id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)"
-        )
+        clauses.append("tickets.id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)")
         params.append(day_id)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = conn.execute(
@@ -163,26 +164,24 @@ def list_tickets(
         + " ORDER BY tickets.created_at ASC, tickets.id",
         tuple(params),
     ).fetchall()
-    return [
-        ticket_json(tickets_data.read_ticket(conn, str(row["id"])), now) for row in rows
-    ]
+    return [ticket_json(tickets_data.read_ticket(conn, str(row["id"])), now) for row in rows]
 
 
 def _ticket_search_text(row: sqlite3.Row) -> str:
     registry = configured_worker_type_registry()
     definition = registry.require(str(row["worker_type"]))
-    fields = fields_codec.declared_fields_from_json(
-        str(row["fields"]), definition.field_ids()
+    values = fields_codec.values_from_json(str(row["field_values"]), definition.field_ids())
+    proposal = fields_codec.proposal_from_json(row["pending_proposal"])
+    return "\n".join(
+        (
+            str(row["title"]),
+            str(row["recap"]),
+            str(row["guidance"]),
+            str(row["archived_field_content"]),
+            *values.values(),
+            proposal.body if proposal is not None else "",
+        )
     )
-    field_text: list[str] = []
-    for slot in fields.slots.values():
-        if slot.value:
-            field_text.append(slot.value)
-        if slot.proposal is not None:
-            field_text.append(slot.proposal.body)
-        if slot.user_note:
-            field_text.append(slot.user_note)
-    return "\n".join((str(row["title"]), str(row["recap"]), *field_text))
 
 
 def _recap_preview(recap: str) -> str:
@@ -201,20 +200,14 @@ def _ticket_summary_json(row: sqlite3.Row) -> JsonDict:
         "ticket_status": str(row["ticket_status"]),
         "priority": str(row["priority"]),
         "project_id": (
-            str(row["effective_project_id"])
-            if row["effective_project_id"] is not None
-            else None
+            str(row["effective_project_id"]) if row["effective_project_id"] is not None else None
         ),
-        "project": (
-            str(row["project_name"]) if row["project_name"] is not None else None
-        ),
+        "project": (str(row["project_name"]) if row["project_name"] is not None else None),
         "sprint_item_id": (
             str(row["sprint_item_id"]) if row["sprint_item_id"] is not None else None
         ),
         "sprint_item": (
-            str(row["sprint_item_title"])
-            if row["sprint_item_title"] is not None
-            else None
+            str(row["sprint_item_title"]) if row["sprint_item_title"] is not None else None
         ),
         "sprint_id": str(row["sprint_id"]) if row["sprint_id"] is not None else None,
         "effective_sprint_id": str(row["sprint_id"]) if row["sprint_id"] is not None else None,
@@ -258,12 +251,21 @@ def list_ticket_summaries(
         if day_order
         else "tickets.created_at ASC, tickets.id"
     )
-    searchable_fields = "tickets.fields" if filters.search else "NULL"
+    searchable_fields = "tickets.field_values" if filters.search else "NULL"
+    searchable_proposal = "tickets.pending_proposal" if filters.search else "NULL"
+    searchable_archive = "tickets.archived_field_content" if filters.search else "NULL"
+    searchable_guidance = "tickets.guidance" if filters.search else "NULL"
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.worker_type, tickets.stage, "
         "tickets.ticket_status, tickets.priority, tickets.recap, "
+        + searchable_guidance
+        + " AS guidance, "
         + searchable_fields
-        + " AS fields, "
+        + " AS field_values, "
+        + searchable_proposal
+        + " AS pending_proposal, "
+        + searchable_archive
+        + " AS archived_field_content, "
         "tickets.project_id AS effective_project_id, "
         "projects.name AS project_name, tickets.sprint_item_id, "
         "sprint_items.title AS sprint_item_title, tickets.sprint_id "
@@ -326,9 +328,7 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
         {
             "blocked": blocker_summary.blocked,
             "day_ids": [str(r["day_id"]) for r in day_rows],
-            "employee_configuration_editable": tickets_data.employee_configuration_editable(
-                ticket
-            ),
+            "employee_configuration_editable": tickets_data.employee_configuration_editable(ticket),
             "conversation_history": [
                 {
                     "conversation_id": str(row["conversation_id"]),
@@ -342,10 +342,7 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
                     "text": judgment.verdict_text,
                 }
                 if judgment is not None
-                and (
-                    judgment.verdict_rating is not None
-                    or judgment.verdict_text is not None
-                )
+                and (judgment.verdict_rating is not None or judgment.verdict_text is not None)
                 else None
             ),
             "trouble_notes": [
@@ -354,9 +351,7 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
                     "body": note.body,
                     "created_at": note.created_at,
                 }
-                for note in (
-                    judgment.trouble_notes if judgment is not None else ()
-                )
+                for note in (judgment.trouble_notes if judgment is not None else ())
             ],
         }
     )
@@ -367,30 +362,20 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
 
 def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
     ticket = tickets_data.read_ticket(conn, ticket_id)
-    fields = ticket.fields
-    worker_type_definition = configured_worker_type_registry().require(
-        ticket.worker_type
-    )
+    worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
 
     def show(value: str | None) -> str:
         return value if value else "(none)"
 
-    def slot(field_id: str) -> FieldSlot:
-        return fields_codec.get_slot(fields, field_id)
-
     blocker_summary = core_links.blocker_summary(conn, ticket_id)
     blocked_by_rows = tuple(row for row in blocker_summary.blocked_by if row.active)
     blocked_by_block = (
-        "\n".join(
-            f"- {row.title} ({row.ticket_id}, {row.stage})" for row in blocked_by_rows
-        )
+        "\n".join(f"- {row.title} ({row.ticket_id}, {row.stage})" for row in blocked_by_rows)
         if blocked_by_rows
         else "(none)"
     )
     field_blocks = "".join(
-        f"{field_id}:\n{show(slot(field_id).value)}\n"
-        f"{field_id}_user_note:\n{show(slot(field_id).user_note)}\n"
-        f"\n"
+        f"{field_id}:\n{show(ticket.field_values.get(field_id))}\n\n"
         for field_id in worker_type_definition.field_ids()
     )
     return (
@@ -402,7 +387,11 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"{ticket.effective_stage_ownership_mode.value if ticket.effective_stage_ownership_mode is not None else '(none)'}\n"  # noqa: E501
         f"\n"
         f"{field_blocks}"
+        f"pending proposal:\n"
+        f"{show(ticket.pending_proposal.body if ticket.pending_proposal else None)}\n"
+        f"\nhistorical record:\n{show(ticket.archived_field_content)}\n"
         f"recap:\n{show(ticket.recap)}\n"
+        f"\nguidance:\n{show(ticket.guidance)}\n"
         f"\n"
         f"blocked_by:\n{blocked_by_block}\n"
     )
@@ -438,7 +427,8 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "sprint_items.project_id AS parent_project_id, "
         "sprint_items.title AS sprint_item_title, "
         "sprint_items.priority AS sprint_item_priority, "
-        "parent_projects.name AS parent_project_name, tickets.fields, tickets.worker_type, "
+        "parent_projects.name AS parent_project_name, "
+        "tickets.pending_proposal, tickets.worker_type, "
         "tickets.employee_backend, "
         "tickets.conversation_id, "
         "tickets.ticket_status, "
@@ -465,9 +455,6 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         deadline = str(row["deadline"]) if row["deadline"] is not None else None
         worker_type = str(row["worker_type"])
         worker_type_definition = registry.require(worker_type)
-        fields = fields_codec.declared_fields_from_json(
-            str(row["fields"]), worker_type_definition.field_ids()
-        )
         gating_field_id = worker_type_definition.gating_field(stage)
         gating_field_label = (
             worker_type_definition.field_definition(gating_field_id).label
@@ -475,21 +462,13 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             else None
         )
         parent_project_id = (
-            str(row["parent_project_id"])
-            if row["parent_project_id"] is not None
-            else None
+            str(row["parent_project_id"]) if row["parent_project_id"] is not None else None
         )
         parent_project_name = (
-            str(row["parent_project_name"])
-            if row["parent_project_name"] is not None
-            else None
+            str(row["parent_project_name"]) if row["parent_project_name"] is not None else None
         )
-        ticket_project_id = (
-            str(row["project_id"]) if row["project_id"] is not None else None
-        )
-        ticket_project_name = (
-            str(row["project_name"]) if row["project_name"] is not None else None
-        )
+        ticket_project_id = str(row["project_id"]) if row["project_id"] is not None else None
+        ticket_project_name = str(row["project_name"]) if row["project_name"] is not None else None
         is_parented = row["sprint_item_id"] is not None
         group_project_id = parent_project_id if is_parented else ticket_project_id
         group_project_name = parent_project_name if is_parented else ticket_project_name
@@ -511,11 +490,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "group_project_id": group_project_id,
             "group_project": group_project_name,
             "activity_at": int(row["updated_at"]),
-            "has_pending_proposal": machine.has_pending_gating_proposal(
-                stage,
-                fields,
-                worker_type_definition=worker_type_definition,
-            ),
+            "has_pending_proposal": row["pending_proposal"] is not None,
             "ticket_status": ticket_status,
             "backend_error": (
                 str(row["backend_error"]) if row["backend_error"] is not None else None
@@ -530,9 +505,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "is_dropped": stage == worker_type_definition.dropped_stage.id,
             "blocked": str(row["id"]) in blocked_target_ids,
             "conversation_id": (
-                str(row["conversation_id"])
-                if row["conversation_id"] is not None
-                else None
+                str(row["conversation_id"]) if row["conversation_id"] is not None else None
             ),
             "waiting_to_closeout": (
                 gating_field_id == "closeout"
@@ -540,14 +513,10 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
                 and not stopped_at_current_stage
             ),
             "sprint_item_id": (
-                str(row["sprint_item_id"])
-                if row["sprint_item_id"] is not None
-                else None
+                str(row["sprint_item_id"]) if row["sprint_item_id"] is not None else None
             ),
             "sprint_item_title": (
-                str(row["sprint_item_title"])
-                if row["sprint_item_title"] is not None
-                else None
+                str(row["sprint_item_title"]) if row["sprint_item_title"] is not None else None
             ),
             "sprint_item_priority": (
                 str(row["sprint_item_priority"])
@@ -568,9 +537,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
     columns: list[JsonDict] = [
         {
             "stage": sid,
-            "cards": [
-                card for _, card in sorted(by_stage[sid], key=lambda item: item[0])
-            ],
+            "cards": [card for _, card in sorted(by_stage[sid], key=lambda item: item[0])],
         }
         for sid in column_order
     ]
@@ -579,11 +546,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "sprint_items": _board_sprint_items(
             conn,
             item_ids=sorted(
-                {
-                    str(row["sprint_item_id"])
-                    for row in rows
-                    if row["sprint_item_id"] is not None
-                }
+                {str(row["sprint_item_id"]) for row in rows if row["sprint_item_id"] is not None}
             ),
         ),
     }
@@ -631,7 +594,7 @@ def _board_sprint_items(
 def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
     rows = conn.execute(
         "SELECT id, title, stage, worker_type, ticket_status, ticket_status_changed_at, "
-        "fields FROM tickets "
+        "pending_proposal FROM tickets "
         "WHERE id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) ORDER BY id",
         (day_id,),
     ).fetchall()
@@ -656,14 +619,8 @@ def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
         field = worker_type_definition.gating_field(stage)
         if field is None:
             continue
-        fields = json.loads(str(row["fields"]))
-        if not isinstance(fields, dict):
-            continue
-        slot = fields.get(field)
-        if not isinstance(slot, dict):
-            continue
-        proposal = slot.get("proposal")
-        if not isinstance(proposal, dict):
+        proposal = fields_codec.proposal_from_json(row["pending_proposal"])
+        if proposal is None:
             continue
         items.append(
             {
@@ -671,7 +628,7 @@ def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
                 "ticket_id": str(row["id"]),
                 "field": field,
                 "title": str(row["title"]),
-                "waiting_since": proposal["created_at"],
+                "waiting_since": proposal.created_at,
             }
         )
     items.sort(key=lambda item: (item["waiting_since"], item["ticket_id"]))
@@ -688,7 +645,5 @@ def review_view(
     ).fetchone()
     return {
         "items": _review_items(conn, day_id=day_id),
-        "running_worker_count": int(
-            running_workers["count"] if running_workers is not None else 0
-        ),
+        "running_worker_count": int(running_workers["count"] if running_workers is not None else 0),
     }

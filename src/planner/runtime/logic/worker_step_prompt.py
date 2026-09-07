@@ -25,7 +25,7 @@ def worker_step_prompt(
     """Describe what to advance; the worker role skill owns how to do the work.
 
     The Worker type selects the specialist skill; this prompt carries only the current
-    Stage ownership and the gated field to advance.
+    Stage ownership, the gated field to advance, and current Ticket guidance.
     The gating field is resolved against the ticket's OWN type definition (not the
     coding default), so a novel-stage type (e.g. new_worker at needs_understanding) reads
     its real field instead of raising 'stage outside the linear order'.
@@ -38,18 +38,21 @@ def worker_step_prompt(
         if ticket.effective_stage_ownership_mode is not None
         else "terminal"
     )
+    guidance = (
+        f"\n\n[Ticket guidance]\n{ticket.guidance}\n[/Ticket guidance]" if ticket.guidance else ""
+    )
     if ticket.effective_stage_ownership_mode is StageOwnershipMode.paired:
         return (
             f"Work ticket {ticket.id} — {ticket.title}. It is at Stage '{str(ticket.stage)}'; "
             f"open the paired discussion for the '{field}' field. "
             "Ask bounded questions or resume the Stage conversation, and do not file a "
             "proposal until the discussion has enough shared understanding. "
-            f"Stage owner: {ownership_wire}."
+            f"Stage owner: {ownership_wire}.{guidance}"
         )
     return (
         f"Work ticket {ticket.id} — {ticket.title}. It is at Stage '{str(ticket.stage)}'; "
         f"take the next step and propose the '{field}' field for approval. "
-        f"Stage owner: {ownership_wire}."
+        f"Stage owner: {ownership_wire}.{guidance}"
     )
 
 

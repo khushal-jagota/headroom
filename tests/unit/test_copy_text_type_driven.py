@@ -24,8 +24,9 @@ from planner.tickets.contracts import AtCap
 from planner.tickets.data import (
     accept_proposal,
     create_ticket,
-    file_proposal,
-    set_field_user_note,
+    drop_ticket,
+    file_current_proposal_with_recap,
+    replace_guidance,
 )
 from planner.tickets.views import copy_text
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -40,19 +41,22 @@ _CODING_COPY_TEXT_GOLDEN = (
     "employee_backend: codex\n"
     "owner: worker\n"
     "\n"
-    "kickoff:\nkickoff body\nkickoff_user_note:\n(none)\n"
+    "kickoff:\nkickoff body\n"
     "\n"
-    "success:\n(none)\nsuccess_user_note:\nsuccess note\n"
+    "success:\n(none)\n"
     "\n"
-    "approach:\n(none)\napproach_user_note:\n(none)\n"
+    "approach:\n(none)\n"
     "\n"
-    "plan:\n(none)\nplan_user_note:\n(none)\n"
+    "plan:\n(none)\n"
     "\n"
-    "implementation:\n(none)\nimplementation_user_note:\n(none)\n"
+    "implementation:\n(none)\n"
     "\n"
-    "closeout:\n(none)\ncloseout_user_note:\n(none)\n"
+    "closeout:\n(none)\n"
     "\n"
-    "recap:\n(none)\n"
+    "pending proposal:\n(none)\n"
+    "\nhistorical record:\n(none)\n"
+    "recap:\nCurrent work\n"
+    "\nguidance:\nsuccess note\n"
     "\n"
     "blocked_by:\n(none)\n"
 )
@@ -76,7 +80,9 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
         now=1,
         title_max_chars=200,
     )
-    file_proposal(tmp_db, ticket.id, field="kickoff", body="kickoff body", actor="agent", now=2)
+    file_current_proposal_with_recap(
+        tmp_db, ticket.id, body="kickoff body", actor="agent", now=2, recap="Current work"
+    )
     # Accept kickoff so its value settles and the ticket advances to needs_success (the
     # default ceiling is now needs_kickoff, so kickoff parks until accepted — the golden
     # pins a SETTLED kickoff value, so we accept and expand the ceiling onward).
@@ -89,9 +95,7 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
         next_ceiling="needs_success",
         at_cap=AtCap.propose,
     )
-    set_field_user_note(
-        tmp_db, ticket.id, field="success", user_note="success note", actor="human", now=4
-    )
+    replace_guidance(tmp_db, ticket.id, body="success note", actor="human", now=4)
     assert copy_text(tmp_db, ticket.id) == _CODING_COPY_TEXT_GOLDEN
 
 
@@ -106,14 +110,15 @@ def test_copy_text_probe_renders_own_fields(
         title_max_chars=200,
         worker_type="probe",
     )
+    dropped = drop_ticket(tmp_db, ticket.id, actor="human", now=2)
     text = copy_text(tmp_db, ticket.id)
+    assert dropped.archived_field_content in text
+    assert "Unapproved proposal" in text
 
-    # Probe renders its own three field blocks (kickoff/alpha/beta) with user-notes.
+    # Probe renders its own field blocks plus one separate guidance document.
     assert "kickoff:\n" in text
     assert f"{FIELD_ALPHA}:\n" in text
-    assert f"{FIELD_ALPHA}_user_note:\n" in text
     assert f"{FIELD_BETA}:\n" in text
-    assert f"{FIELD_BETA}_user_note:\n" in text
 
     # No coding-only field appears (success/approach/plan/implementation/closeout).
     for coding_field in ("success", "approach", "plan", "implementation", "closeout"):

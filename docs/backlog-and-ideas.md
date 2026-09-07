@@ -1,46 +1,54 @@
 # Backlog & Ideas
 
-Backlog and Ideas are the two catch surfaces. They used to share one page; they are
-now two separate pages under Planning in the More menu, because they are two different things —
-one is work you haven't scheduled, the other is a thought you don't want to lose.
+Backlog and Ideas are two separate pages under Planning in the More menu because they
+are two different things: one is committed work without a sprint, and the other is a
+thought you do not want to lose.
 
 ```
-Backlog: committed work without a sprint ──► Sprint Item in a sprint
-Ideas:   remembered possibility           ──► stays an Idea
+Backlog: unscheduled Tickets ──► plan into a sprint
+Ideas:   remembered possibility                    ──► stays an Idea
 ```
 
 ## Backlog
 
-The pile of work you have noted down but not yet put into a sprint. Its whole job is
-to be scanned: the items are sorted into four groups by importance — P0 at the top
-down to P3 — under quiet little headings. Each item is a single flat line showing its
-title, which project it belongs to, and a deadline if it has one. It does not repeat
-the priority on the line, because the group it sits in already says that. To add
-something, a faint "+ New backlog item" sits at the top, closed and out of the way
-until you click it, then opens a small form (title, project, priority, an optional
-deadline, an optional description) with a plain "Add to backlog" button. A new item
-shows up in its group a moment after you add it. The project selector is loaded from
-the projects catalog, so new projects appear without a code change.
+Backlog shows committed work that has no sprint. Active unscheduled Tickets are the
+main list. They are fetched as bounded summaries and sorted into P0–P3 groups. Each
+row opens the canonical Ticket in Workspace and shows its title, short recap, Project,
+state, and Worker type. A list that spans pages shows its range and page controls;
+a complete list needs only its total.
+
+A secondary **Outcomes** browser arrives collapsed and loads its bounded catalog only
+while open. Search or filter by Project to find shared context, including historical
+Outcomes. Selecting one opens its existing workspace; creating one opens the returned
+identity without adding a Sprint commitment. This catalog does not describe every
+Outcome as unfinished. It uses the same picker as Add outcome on Sprint tracking.
+
+A faint "+ New ticket" sits at the top, closed and out of the way. It opens a compact
+form for title, kickoff context, Worker type, Project, priority, and optional deadline.
+The form creates an ordinary Ticket with explicit backlog placement. Priority uses the
+Project default unless you choose one. Its Worker and
+Project choices come from the same server catalogs used elsewhere, so it does not
+carry its own list or creation rules.
 
 ## Ideas
 
 The opposite: its whole job is to catch a thought before you lose it, so the box to
 write one is always open at the very top and is the biggest thing on the page. Type a
 title and press Enter and it is saved; a longer note and a project are optional.
-The project list is the same data-backed catalog used by backlog items and tickets.
+The project list is the same data-backed catalog used by Tickets, Sprint Items, and
+ideas.
 Below, the ideas are listed newest first. An idea with no note is one line. An idea
 with a note gets a small arrow that opens its detail.
 
 _Code paths:_ `web/src/routes/BacklogRoute.svelte`,
-`web/src/routes/IdeasRoute.svelte`. Backlog items and ideas live in
-`src/planner/sprints/`; backlog items are Sprint Items with no sprint.
+`web/src/routes/IdeasRoute.svelte`. Tickets live in `src/planner/tickets/`. Outcomes hold shared context independently of Sprint commitments. Outcomes and ideas
+live in `src/planner/sprints/`.
 
 ## Handoffs
 
 - **Days** (`days.md`) — the Day page is only the daily overview right now; loose
   capture is not wired there.
-- **Sprints** (`sprints.md`) — a backlog item becomes a sprint item once it's placed
-  in a sprint.
+- **Sprints** (`sprints.md`) — where Tickets are scheduled and Outcomes are chosen for a Sprint.
 - **Projects** (`projects.md`) — where the project list comes from.
 
 ## Deferred
@@ -51,4 +59,4 @@ _Code paths:_ `web/src/routes/BacklogRoute.svelte`,
 
 ---
 
-_Last verified: 2026-08-09._
+_Last verified: 2026-09-05._

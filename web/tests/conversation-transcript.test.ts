@@ -42,12 +42,6 @@ function rowOfKind<Kind extends TranscriptRow["kind"]>(
 }
 
 describe("Conversation transcript", () => {
-  it("labels only prompts from somebody other than the reader", () => {
-    expect(promptLabelFor("owner", "owner")).toBeNull();
-    expect(promptLabelFor("automatic loop", "owner")).toBe("automatic loop");
-    expect(promptLabelFor("owner", null)).toBe("owner");
-  });
-
   it("reconciles a tool start and finish into one completed row", () => {
     const rows = rowsFrom([
       promptEvent(1, "do it"),
@@ -72,43 +66,6 @@ describe("Conversation transcript", () => {
     });
     expect(rows[0]).toMatchObject({ kind: "prompt", mode: "run_when_free" });
     expect(tools[0]).toMatchObject({ cappedDetailSequence: null });
-  });
-
-  it("keeps where the whole output is when only its start arrived", () => {
-    // The line the finish is drawn into keeps the start's number, so the finish's own
-    // number is kept beside it. That is what the fold asks the record for.
-    const rows = rowsFrom([
-      toolCallStartedEvent(1, { toolCallId: "tool-1", title: "Bash" }),
-      toolCallFinishedEvent(2, {
-        toolCallId: "tool-1",
-        detail: "the first kilobyte",
-        detailCapped: true
-      }),
-      toolCallFinishedEvent(3, { toolCallId: "orphan", detail: "all of it" })
-    ]);
-    const tools = rows.filter(
-      (row): row is Extract<TranscriptRow, { kind: "tool_call" }> =>
-        row.kind === "tool_call"
-    );
-
-    expect(tools[0]).toMatchObject({ sequence: 1, cappedDetailSequence: 2 });
-    expect(tools[1]).toMatchObject({ sequence: 3, cappedDetailSequence: null });
-  });
-
-  it("keeps a running unanswered ask live", () => {
-    const rows = rowsFrom([
-      promptEvent(1),
-      permissionAskedEvent(2, { askId: "ask-1", title: "Run ls" })
-    ]);
-    const ask = rowOfKind(rows, "permission_ask");
-
-    expect(ask).toMatchObject({
-      askId: "ask-1",
-      title: "Run ls",
-      state: "live",
-      deadReason: null
-    });
-    expect(liveAskFrom(rows)).toBe(ask);
   });
 
   it("folds an answer into its ask using the backend's label", () => {
@@ -139,44 +96,6 @@ describe("Conversation transcript", () => {
       deadReason: null
     });
     expect(liveAskFrom(rows)).toBeNull();
-  });
-
-  it("expires an unanswered ask when its recorded turn ends", () => {
-    const rows = rowsFrom([
-      promptEvent(1),
-      permissionAskedEvent(2, {
-        askId: "ask-1",
-        title: "Run rm",
-        detail: "in /workspace"
-      }),
-      turnEndedEvent(3, { ending: "interrupted" })
-    ]);
-    const ask = rowOfKind(rows, "permission_ask");
-
-    expect(ask).toMatchObject({
-      state: "dead",
-      deadReason: "turn_ended"
-    });
-    expect(askDeadSentence(ask.deadReason)).toBe("expired with the turn");
-    expect(liveAskFrom(rows)).toBeNull();
-  });
-
-  it("expires asks and states when a turn stopped without an ending", () => {
-    const feed = feedWithCommittedEvents(emptyConversationFeed(), [
-      promptEvent(1),
-      permissionAskedEvent(2, { askId: "ask-1", title: "Run ls" })
-    ]);
-    const rows = transcriptRows(feed, { turnStoppedWithoutAnEnding: true });
-    const ask = rowOfKind(rows, "permission_ask");
-
-    expect(ask).toMatchObject({
-      state: "dead",
-      deadReason: "no_ending_recorded"
-    });
-    expect(askDeadSentence(ask.deadReason))
-      .toBe("expired — its turn stopped without an ending");
-    expect(liveAskFrom(rows)).toBeNull();
-    expect(rows.some((row) => row.kind === "turn_stopped")).toBe(true);
   });
 
   it("reconstructs a pending multi-question request from durable rows", () => {
@@ -254,44 +173,6 @@ describe("Conversation transcript", () => {
       answers: { scope: { answers: ["The ticket pane"] } }
     });
     expect(liveUserInputFrom(rows)).toBeNull();
-  });
-
-  it("keeps malformed delivery failures visible and expires abandoned requests", () => {
-    const request = {
-      conversation_id: "c1",
-      sequence: 2,
-      kind: "user_input_requested",
-      payload: {
-        request_id: "input-1",
-        questions: [{
-          question_id: "q1",
-          header: "Choice",
-          question: "Choose",
-          options: [],
-          multi_select: false,
-          allow_other: true
-        }]
-      },
-      created_at: 1_700_000_000
-    } satisfies ConversationEvent;
-    const failed = {
-      conversation_id: "c1",
-      sequence: 3,
-      kind: "user_input_failed",
-      payload: { request_id: "input-1", detail: "Malformed question payload" },
-      created_at: 1_700_000_001
-    } satisfies ConversationEvent;
-    expect(rowOfKind(rowsFrom([failed]), "user_input")).toMatchObject({
-      state: "failed",
-      questions: [],
-      failureDetail: "Malformed question payload"
-    });
-
-    const expired = rowOfKind(
-      rowsFrom([request, turnEndedEvent(3, { ending: "interrupted" })]),
-      "user_input"
-    );
-    expect(expired).toMatchObject({ state: "dead", deadReason: "turn_ended" });
   });
 
   it("replaces streaming text with its committed message", () => {

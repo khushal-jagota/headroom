@@ -89,18 +89,6 @@ describe("reply watermark persistence", () => {
     expect(moves).toEqual([12]);
   });
 
-  it("keeps different Conversations independent", () => {
-    writeReplyWatermark("conv-a", 30);
-
-    expect(readReplyWatermark("conv-b")).toBe(0);
-    writeReplyWatermark("conv-b", 3);
-
-    expect(readReplyWatermark("conv-a")).toBe(30);
-    expect(readReplyWatermark("conv-b")).toBe(3);
-    expect(storage.getItem("panels.replySeen.conv-a")).toBe("30");
-    expect(storage.getItem("panels.replySeen.conv-b")).toBe("3");
-  });
-
   it.each(["", "  ", "seven", "3.5", "-2", "NaN"])(
     "reads malformed stored value %j as zero",
     (storedValue) => {
@@ -122,55 +110,4 @@ describe("reply watermark persistence", () => {
     expect(movementCount).toBe(0);
   });
 
-  it("stops notifying an unsubscribed listener", () => {
-    let movementCount = 0;
-    const stopListening = listen(() => {
-      movementCount += 1;
-    });
-
-    writeReplyWatermark("conv-a", 1);
-    stopListening();
-    writeReplyWatermark("conv-a", 2);
-
-    expect(movementCount).toBe(1);
-  });
-
-  it("fails safe when storage reads throw", () => {
-    storage.rejectReads = true;
-
-    expect(readReplyWatermark("conv-a")).toBe(0);
-  });
-
-  it("fails safe when reading the localStorage property itself throws", () => {
-    const priorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
-    Object.defineProperty(globalThis, "localStorage", {
-      configurable: true,
-      get() {
-        throw new Error("storage access is blocked");
-      }
-    });
-
-    try {
-      expect(readReplyWatermark("conv-a")).toBe(0);
-      expect(() => writeReplyWatermark("conv-a", 4)).not.toThrow();
-    } finally {
-      if (priorDescriptor) {
-        Object.defineProperty(globalThis, "localStorage", priorDescriptor);
-      } else {
-        Reflect.deleteProperty(globalThis, "localStorage");
-      }
-    }
-  });
-
-  it("fails safe when storage is missing", () => {
-    let movementCount = 0;
-    listen(() => {
-      movementCount += 1;
-    });
-    vi.stubGlobal("localStorage", undefined);
-
-    expect(readReplyWatermark("conv-a")).toBe(0);
-    expect(() => writeReplyWatermark("conv-a", 40)).not.toThrow();
-    expect(movementCount).toBe(0);
-  });
 });

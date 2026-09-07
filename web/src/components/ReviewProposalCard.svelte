@@ -8,8 +8,7 @@
    * wants shown. Everything about *which* decision is current — walking, skipping,
    * keyboard shortcuts — belongs to the caller.
    *
-   * Callers: the Review screen (`ReviewRoute`) and Atlas's review walk
-   * (`AtlasReviewStop`).
+   * The Review screen (`ReviewRoute`) mounts the card.
    */
   import { onMount, type Snippet } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
@@ -20,6 +19,7 @@
   import type { TicketDetail } from "../lib/types";
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
+  import Disclosure from "./Disclosure.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import TicketStageSection from "./TicketStageSection.svelte";
@@ -46,10 +46,9 @@
     /** The Ticket field the proposal is filed against. */
     field: string;
     /** The queue's own title for the Ticket, shown only when the detail cannot be
-     *  fetched. A caller that does not have one (Atlas knows only an id) omits it. */
+     *  fetched. A caller without one omits it. */
     title?: string | null;
-    /** Given, the card carries its own Skip control. A caller whose own chrome
-     *  owns skipping (Atlas's walk bar) leaves it out. */
+    /** Given, the card carries its own Skip control. */
     onSkip?: () => void;
     /** The decision has left the queue: approved, sent back, or found already
      *  gone. Fires at most once per proposal. */
@@ -125,7 +124,7 @@
 
   function isStale(ticketDetail: TicketDetail): boolean {
     if (!acceptField) return true;
-    if (!ticketDetail.fields?.[acceptField]?.proposal) return true;
+    if (ticketDetail.pending_proposal?.field !== acceptField) return true;
     return gatingFieldFor(lc, String(ticketDetail.stage)) !== acceptField;
   }
 
@@ -179,9 +178,9 @@
 
   function saveProposal(raw: string): Promise<unknown> {
     if (!acceptField) throw new Error("Review decision is not a Ticket field");
-    return mutateJson(`/api/tickets/${ticketId}/value/${acceptField}`, {
+    return mutateJson(`/api/tickets/${ticketId}/proposal`, {
       method: "PUT",
-      body: { body: raw }
+      body: { field: acceptField, body: raw }
     });
   }
 
@@ -306,12 +305,18 @@
         {/if}
       </div>
 
+      {#if ticketDetail.guidance}
+        <Disclosure title="Guidance" variant="support" defaultOpen={false} data-ticket-guidance>
+          <MarkdownBlock text={ticketDetail.guidance} />
+        </Disclosure>
+      {/if}
       <div class="review-arrive review-arrive--3">
         {#if acceptField}
           <TicketStageSection
             variant="review"
             name={acceptField}
-            slot={ticketDetail.fields[acceptField]}
+            value={ticketDetail.field_values[acceptField] ?? ""}
+            pendingProposal={ticketDetail.pending_proposal}
             lifecycle={lc}
             ticketStage={ticketDetail.stage}
             ceiling={ticketDetail.ceiling}
@@ -319,7 +324,7 @@
             stageState={fieldStageVisualStateFor(lc, ticketDetail, acceptField)}
             approvalDisabled={acceptField === "kickoff" && priorityBusy}
             onAccept={(payload) => accept(payload)}
-            onSaveValue={saveProposal}
+            onSaveProposal={saveProposal}
           />
         {/if}
       </div>

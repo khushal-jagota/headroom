@@ -1,0 +1,168 @@
+
+=== /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/.venv/bin/ruff check . ===
+All checks passed!
+
+=== /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/.venv/bin/mypy ===
+Success: no issues found in 352 source files
+
+=== /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/.venv/bin/pytest tests/unit --junitxml=/Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/data/verify/unit.xml ===
+........................................................................ [  7%]
+........................................................................ [ 15%]
+..............................sssss...ss................................ [ 22%]
+...........................................................sssssssss.... [ 30%]
+................................................................ssss.... [ 38%]
+........................................................................ [ 45%]
+........................................................................ [ 53%]
+........................................................................ [ 60%]
+........................................................................ [ 68%]
+........................................................................ [ 76%]
+........................................................................ [ 83%]
+........................................................................ [ 91%]
+........................................................................ [ 98%]
+..........                                                               [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.14/site-packages/fastapi/testclient.py:1
+  /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/.venv/lib/python3.14/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_generic_field_storage.py)
+    class TestClock:
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_sprint_item_status_buckets.py)
+    class TestClock:
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_sprint_views_type_driven.py)
+    class TestClock:
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_sprints.py)
+    class TestClock:
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_worker_step_readiness_loop.py)
+    class TestClock:
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_worker_type_persistence.py)
+    class TestClock:
+
+tests/unit/test_worker_type_stage_contracts.py::test_http_contract_uses_only_worker_type_and_stage
+  /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/.venv/lib/python3.14/site-packages/fastapi/openapi/utils.py:252: UserWarning: Duplicate Operation ID proxy_ticket_dev_server_dev_tickets__ticket_id___port___path__post for function proxy_ticket_dev_server at /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/src/planner/core/dev_server_proxy.py
+    warnings.warn(message, stacklevel=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+926 passed, 20 skipped, 8 warnings in 94.62s (0:01:34)
+
+=== /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/.venv/bin/python -m compileall -q src/ ===
+
+=== css check /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/assets/app.css ===
+
+=== css check /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/assets/tokens.css ===
+
+=== npm --prefix web run check ===
+
+> check
+> svelte-check --tsconfig ./tsconfig.json
+
+Loading svelte-check in workspace: /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/web
+Getting Svelte diagnostics...
+
+svelte-check found 0 errors and 0 warnings
+
+=== npm --prefix web run build ===
+
+> build
+> vite build
+
+vite v6.4.3 building for production...
+
+/assets/tokens.css doesn't exist at build time, it will remain unchanged to be resolved at runtime
+
+/assets/app.css doesn't exist at build time, it will remain unchanged to be resolved at runtime
+transforming...
+✓ 607 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                                0.98 kB │ gzip:   0.45 kB
+dist/assets/newsreader-vietnamese-400-normal-DdKr49mV.woff2    5.43 kB
+dist/assets/newsreader-vietnamese-500-normal-CL6a8tp2.woff2    5.44 kB
+dist/assets/newsreader-vietnamese-600-normal-CaH84vfx.woff2    5.50 kB
+dist/assets/newsreader-vietnamese-400-normal-BekUZro8.woff     6.97 kB
+dist/assets/newsreader-vietnamese-500-normal-BEAbKU8A.woff     7.04 kB
+dist/assets/newsreader-vietnamese-600-normal-CVAR0otO.woff     7.06 kB
+dist/assets/chief-of-staff-profile-Dh0m1M-N.webp              10.58 kB
+dist/assets/newsreader-latin-ext-400-normal-svq1FPys.woff2    14.21 kB
+dist/assets/newsreader-latin-ext-500-normal-BNHmvKvI.woff2    15.07 kB
+dist/assets/newsreader-latin-ext-600-normal-BXv5iMHi.woff2    15.17 kB
+dist/assets/newsreader-latin-ext-400-normal-DYA1XoQK.woff     18.38 kB
+dist/assets/newsreader-latin-ext-500-normal-CZruMFou.woff     19.30 kB
+dist/assets/newsreader-latin-ext-600-normal-BrbfzHZ5.woff     19.39 kB
+dist/assets/newsreader-latin-400-normal-BFBkh4jY.woff2        22.48 kB
+dist/assets/newsreader-latin-500-normal-B66TYsaK.woff2        23.62 kB
+dist/assets/newsreader-latin-600-normal-30OJ_TG_.woff2        23.88 kB
+dist/assets/newsreader-latin-400-normal-gRTjlS2D.woff         28.29 kB
+dist/assets/newsreader-latin-500-normal-DFwuUcdu.woff         29.64 kB
+dist/assets/newsreader-latin-600-normal-DUnT2r2g.woff         29.78 kB
+dist/assets/hermes-CIhgC6OS.png                              574.27 kB
+dist/assets/index-B3VGfTf5.css                                40.40 kB │ gzip:   6.51 kB
+dist/assets/index-gF7gJcrH.js                                604.61 kB │ gzip: 189.63 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 1.55s
+
+=== npm --prefix web test ===
+
+> test
+> npm run test:vitest && npm run test:legacy
+
+
+> test:vitest
+> vitest run --typecheck
+
+Testing types with tsc and vue-tsc is an experimental feature.
+Breaking changes might not follow SemVer, please pin Vitest's version when using it.
+
+ RUN  v4.1.10 /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/web
+
+
+ Test Files  58 passed (58)
+      Tests  334 passed (334)
+Type Errors  no errors
+   Start at  07:16:52
+   Duration  869ms (transform 1.31s, setup 0ms, import 1.69s, tests 424ms, environment 1ms, typecheck 304ms)
+
+
+> test:legacy
+> node tests/managed-markdown.test.mjs && node tests/markdown-renderer.test.mjs && node tests/backlog-ideas.test.mjs && node tests/scheduled-tasks-browser.test.mjs && node tests/worker-configuration-setup.test.mjs && node tests/conversation-rest-line.test.mjs && node tests/conversation-pane-browser.test.mjs && node tests/voice-everywhere-browser.test.mjs && node tests/file-preview-browser.test.mjs && node tests/sprint-documents-browser.test.mjs && node tests/ticket-guidance-browser.test.mjs
+
+backlog-ideas.test.mjs: all assertions passed
+scheduled-tasks-browser.test.mjs: all assertions passed
+worker-configuration-setup.test.mjs: all assertions passed
+conversation-rest-line.test.mjs: all assertions passed
+conversation-pane-browser.test.mjs: all assertions passed
+file-preview-browser.test.mjs: all assertions passed
+sprint document editing and summary readback passed
+
+=== /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/.venv/bin/pytest tests/integration --junitxml=/Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/data/verify/integration.xml ===
+........                                                                 [100%]
+8 passed in 17.81s
+
+=== /Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/.venv/bin/pytest tests/e2e --junitxml=/Users/khushaljagota/Coding/planning-v2-worktrees/panels-simplification/data/verify/e2e.xml ===
+...................                                                      [100%]
+19 passed in 111.95s (0:01:51)
+
+[verify] gate ruff: ok
+[verify] gate mypy: ok
+[verify] gate unit suite: ok
+[verify] gate build check: ok
+[verify] gate frontend: ok
+[verify] gate integration suite: ok
+[verify] gate e2e suite: ok
+
+VERIFY: PASS

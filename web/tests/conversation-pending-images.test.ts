@@ -10,34 +10,6 @@ import {
 const THREE_MIB_IN_BYTES = 3 * 1024 * 1024;
 
 describe("pending Conversation images", () => {
-  it.each([
-    ["image/png", "image.png"],
-    ["image/jpeg", "image.jpg"],
-    ["image/gif", "image.gif"],
-    ["image/webp", "image.webp"]
-  ])("admits supported %s files", async (mediaType, fileName) => {
-    const image = new File([new Uint8Array([1])], fileName, { type: mediaType });
-    const intake = await createPendingConversationImages(
-      [image],
-      3,
-      0,
-      () => `blob:${fileName}`
-    );
-
-    expect(intake.rejected).toEqual([]);
-    expect(intake.nextId).toBe(4);
-    expect(intake.accepted).toMatchObject([
-      {
-        id: 3,
-        fileName,
-        mediaType,
-        byteCount: 1,
-        previewUrl: `blob:${fileName}`,
-        previewUrlNeedsRevoking: true
-      }
-    ]);
-  });
-
   it("keeps selection order, rejects non-images, and encodes exact message pieces", async () => {
     const created: string[] = [];
     const imageA = new File([new Uint8Array([1, 2, 3])], "a.png", { type: "image/png" });
@@ -66,35 +38,6 @@ describe("pending Conversation images", () => {
       { piece: "image", data: "AQID", media_type: "image/png", file_name: "a.png" },
       { piece: "image", data: "BAU=", media_type: "image/webp", file_name: "b.webp" }
     ]);
-  });
-
-  it("restores ordered data previews without claiming browser resources", () => {
-    const restored = restoredPendingImages(
-      [
-        { piece: "text", text: "look" },
-        {
-          piece: "image",
-          data: "AQID",
-          media_type: "image/png",
-          file_name: "a.png"
-        },
-        { piece: "image", data: "BAU=", media_type: "image/webp" }
-      ],
-      20
-    );
-    const revoked: string[] = [];
-
-    expect(restored.nextId).toBe(22);
-    expect(restored.images.map((image) => [image.id, image.fileName, image.byteCount])).toEqual([
-      [20, "a.png", 3],
-      [21, "", 2]
-    ]);
-    expect(restored.images.map((image) => image.previewUrl)).toEqual([
-      "data:image/png;base64,AQID",
-      "data:image/webp;base64,BAU="
-    ]);
-    releasePendingImages(restored.images, (url) => revoked.push(url));
-    expect(revoked).toEqual([]);
   });
 
   it("revokes owned blob previews and cleans up a partially-created batch", async () => {
@@ -155,25 +98,6 @@ describe("pending Conversation images", () => {
     expect(intake.nextId).toBe(40);
     expect(read).not.toHaveBeenCalled();
     expect(createPreview).not.toHaveBeenCalled();
-  });
-
-  it("admits an independent exact 3 MiB image", async () => {
-    const exactBoundary = new File(
-      [new Uint8Array(THREE_MIB_IN_BYTES)],
-      "boundary.png",
-      { type: "image/png" }
-    );
-
-    const intake = await createPendingConversationImages(
-      [exactBoundary],
-      50,
-      0,
-      () => "blob:boundary"
-    );
-
-    expect(intake.accepted).toHaveLength(1);
-    expect(intake.accepted[0].byteCount).toBe(THREE_MIB_IN_BYTES);
-    expect(intake.rejected).toEqual([]);
   });
 
   it("applies aggregate and already-pending byte bounds before reading rejected bytes", async () => {

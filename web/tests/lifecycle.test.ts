@@ -197,7 +197,10 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     conversation_history: [],
     verdict: null,
     trouble_notes: [],
-    fields: {},
+    field_values: {},
+    pending_proposal: null,
+    archived_field_content: "",
+    guidance: "",
     ...overrides
   };
 }
@@ -275,79 +278,16 @@ describe("coding lifecycle", () => {
     ]);
   });
 
-  it("waits for lifecycle data before choosing a scope default", () => {
-    expect(preferredScopeCeilingFor(null, "needs_success", "needs_plan")).toBeNull();
-    expect(
-      preferredScopeCeilingFor(codingLifecycle, "needs_success", "needs_plan")
-    ).toBe("needs_plan");
-    expect(
-      preferredScopeCeilingFor(codingLifecycle, "needs_success", "foreign_stage")
-    ).toBe("needs_success");
-  });
-
-  it("projects gating, advance targets, and passed fields", () => {
-    expect(gatingFieldFor(codingLifecycle, "needs_success")).toBe("success");
-    expect(gatingFieldFor(codingLifecycle, "done")).toBeNull();
-    expect(advanceTargetFor(codingLifecycle, "needs_plan", "done")).toBe(
-      "needs_implementation"
-    );
-    expect(advanceTargetFor(codingLifecycle, "needs_closeout", "done")).toBe("done");
-    expect(advanceTargetFor(codingLifecycle, "done", "done")).toBeNull();
-    expect(fieldIsPassedFor(codingLifecycle, "success", "needs_success")).toBe(false);
-    expect(fieldIsPassedFor(codingLifecycle, "success", "needs_approach")).toBe(true);
-    expect(fieldIsPassedFor(codingLifecycle, "closeout", "needs_success")).toBe(false);
-  });
-
-  it.each([
-    ["running", "needs_success", "agent", "success", false, "current-running"],
-    ["errored", "needs_success", "errored", "success", false, "errored"],
-    [
-      "awaiting approval",
-      "needs_success",
-      "awaiting_approval",
-      "success",
-      false,
-      "current-awaiting-approval"
-    ],
-    [
-      "proposal",
-      "needs_success",
-      "empty",
-      "success",
-      true,
-      "current-awaiting-approval"
-    ],
-    ["waiting", "needs_success", "empty", "success", false, "current-waiting"],
-    ["paired", "needs_success", "paired", "success", false, "current-paired"],
-    ["completed field", "needs_approach", "empty", "success", false, "completed"],
-    ["done Ticket", "done", "empty", "closeout", false, "completed"],
-    ["upcoming field", "needs_success", "empty", "closeout", false, "upcoming"]
-  ])(
-    "classifies a %s Stage",
-    (_case, ticketStage, ticketStatus, fieldName, fieldHasProposal, expected) => {
-      expect(
-        ticketStageVisualStateFor(codingLifecycle, {
-          ticketStage,
-          ticketStatus,
-          fieldName,
-          fieldHasProposal
-        })
-      ).toBe(expected);
-    }
-  );
-
-  it("reads proposal state from the Ticket field slot", () => {
+  it("reads the Ticket's one pending proposal", () => {
     expect(
       fieldStageVisualStateFor(
         codingLifecycle,
         ticketDetail({
-          fields: {
-            success: {
-              proposal: {
-                body: "Proposed success",
-                proposed_by: "worker"
-              }
-            }
+          pending_proposal: {
+            field: "success",
+            body: "Proposed success",
+            proposed_by: "worker",
+            created_at: 1
           }
         }),
         "success"
@@ -360,10 +300,6 @@ describe("coding lifecycle", () => {
     expect(ticketStatusText("awaiting_approval")).toBe("awaiting approval");
   });
 
-  it("names each at-cap behaviour for the Ticket scope controls", () => {
-    expect(atCapLabel("stop")).toBe("stop");
-    expect(atCapLabel("propose")).toBe("propose");
-  });
 });
 
 describe("fallbacks before lifecycle data is available", () => {

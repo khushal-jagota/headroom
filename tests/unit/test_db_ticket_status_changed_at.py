@@ -23,13 +23,10 @@ from planner.tickets.contracts import NO_FURTHER, AtCap
 
 SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_v37.sql"
 PREVIOUS_REVISION = "ticket_status_reshape"
-# The database is brought all the way up, so it comes to rest at the current head rather
-# than at the revision this module is about.
-HEAD_REVISION = "planning_day_direction"
 
 _EMPTY_CODING_FIELDS = json.dumps(
     {
-        field: {"value": None, "proposal": None, "user_note": None}
+        field: {"value": None, "proposal": None}
         for field in (
             "kickoff",
             "success",
@@ -153,7 +150,6 @@ def upgraded(tmp_path: Path) -> sqlite3.Connection:
 
 
 def test_the_event_log_and_its_index_are_gone(upgraded: sqlite3.Connection) -> None:
-    assert _revision(upgraded) == HEAD_REVISION
     names = {
         str(row[0])
         for row in upgraded.execute(

@@ -5,7 +5,7 @@
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import { atCapLabel, fieldSlot, labelize, stageLabel } from "../lib/ui";
+  import { atCapLabel, labelize, stageLabel } from "../lib/ui";
   import {
     ceilingOptionsFor,
     fieldStageVisualStateFor,
@@ -28,8 +28,10 @@
   } from "../lib/conversation/wire";
   import WorkerConfigurationSetup from "../components/WorkerConfigurationSetup.svelte";
   import ClampedText from "../components/ClampedText.svelte";
+  import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
+  import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import StageMark from "../components/StageMark.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
@@ -47,9 +49,8 @@
   let {
     id,
     // The artifact this screen is showing, when the host keeps that in its address, and
-    // the way to write it there. The Workspace does; Atlas, which keeps what it is
-    // showing in memory rather than in the address, gives neither and the screen holds
-    // the value itself.
+    // the way to write it there. The Workspace supplies both; without them, the screen
+    // holds the value itself.
     openFile = null,
     onOpenFile = null
   }: {
@@ -68,6 +69,7 @@
   );
   const projects = createQuery(() => queries.projects());
   const sprintItems = createQuery(() => queries.sprintItems());
+  const sprintSummaries = createQuery(() => queries.sprintSummaries());
   const manifest = createQuery(() => queries.workerTypeManifests());
 
   // Derive the per-Worker-type lifecycle from the QUERY (ticket.data?.worker_type), not
@@ -194,8 +196,7 @@
   /** Escape closes the artifact, and belongs to it before anything else on the page.
    *
    * The conversation steps back a state on Escape too, so the press is claimed here to
-   * keep one press to one thing. The Atlas panel asks the page the same question before
-   * it closes itself, because its own handler runs before this one.
+   * keep one press to one thing.
    */
   function closeFileOnEscape(event: KeyboardEvent): void {
     if (event.key !== "Escape" || event.defaultPrevented) return;
@@ -271,18 +272,13 @@
     detail: TicketDetail,
     changes: Partial<Pick<TicketDetail, "project_id" | "sprint_id" | "sprint_item_id">>
   ): Promise<void> {
-    const projectId = changes.project_id !== undefined ? changes.project_id : detail.project_id ?? null;
-    const sprintId = changes.sprint_id !== undefined ? changes.sprint_id : detail.sprint_id ?? null;
-    const requestedItemId =
-      changes.sprint_item_id !== undefined ? changes.sprint_item_id : detail.sprint_item_id ?? null;
-    const requestedItem = (sprintItems.data?.items || []).find((item) => item.id === requestedItemId);
-    const sprintItemId =
-      requestedItem?.project_id === projectId && requestedItem?.sprint_id === sprintId
-        ? requestedItem.id
-        : null;
+    const placement = { ...changes };
+    if (changes.project_id !== undefined && changes.project_id !== (detail.project_id ?? null)) {
+      placement.sprint_item_id = null;
+    }
     headerError = null;
     try {
-      await patch({ project_id: projectId, sprint_id: sprintId, sprint_item_id: sprintItemId });
+      await patch(placement);
     } catch (err) {
       headerError = err;
     }
@@ -333,10 +329,10 @@
     );
   }
 
-  function replaceNote(field: string, note: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/notes/${field}`, {
+  function replaceGuidance(body: string): Promise<unknown> {
+    return mutateJson(`/api/tickets/${stableId}/guidance`, {
       method: "PUT",
-      body: { user_note: note }
+      body: { body }
     });
   }
 
@@ -344,6 +340,13 @@
     return mutateJson(`/api/tickets/${stableId}/value/${field}`, {
       method: "PUT",
       body: { body }
+    });
+  }
+
+  function saveProposal(field: string, body: string): Promise<unknown> {
+    return mutateJson(`/api/tickets/${stableId}/proposal`, {
+      method: "PUT",
+      body: { field, body }
     });
   }
 
@@ -443,7 +446,7 @@
   // always stay in the masthead instead of moving into a stage card.
   let kickoffCardShowsContextRow = $derived(
     gatingFieldFor(lc, ticket.data?.stage ?? "") === "kickoff" &&
-      Boolean(ticket.data?.fields.kickoff.proposal) &&
+      ticket.data?.pending_proposal?.field === "kickoff" &&
       Boolean(ticket.data?.employee_configuration_editable)
   );
 
@@ -513,8 +516,7 @@
                   aria-label={detail.project_id ? "Ticket project" : "Add ticket project"}
                   value={detail.project_id || ""}
                   onchange={(event) => void patchPlacement(detail, {
-                    project_id: event.currentTarget.value || null,
-                    sprint_item_id: null
+                    project_id: event.currentTarget.value || null
                   })}
                 >
                   {#each projectOptions as option}
@@ -522,16 +524,22 @@
                   {/each}
                 </select>
               </span>
-              {#if detail.sprint_item_id}
-                <span class="ticket-identity-separator" aria-hidden="true">·</span>
-                <a
-                  class="ticket-identity-fact ticket-identity-link"
-                  data-sprint-item-control
-                  href={workspaceAddress({ kind: "item", id: detail.sprint_item_id })}
-                >
-                  {sprintItemTitle(detail.sprint_item_id)}
-                </a>
-              {/if}
+              <span class="ticket-identity-separator" aria-hidden="true">·</span>
+              <span class="ticket-identity-fact" data-outcome-control>
+                {detail.sprint_item_id ? sprintItemTitle(detail.sprint_item_id) : "No outcome"}
+                <select aria-label="Ticket outcome" value={detail.sprint_item_id || ""} onchange={(event) => void patchPlacement(detail, { sprint_item_id: event.currentTarget.value || null })}>
+                  <option value="">No outcome</option>
+                  {#each (sprintItems.data?.items || []).filter((item) => item.project_id === detail.project_id) as item}<option value={item.id}>{item.title}</option>{/each}
+                </select>
+              </span>
+              <span class="ticket-identity-separator" aria-hidden="true">·</span>
+              <span class="ticket-identity-fact" data-sprint-control>
+                {detail.sprint_id ? (sprintSummaries.data?.sprints || []).find((entry) => entry.id === detail.sprint_id)?.name || detail.sprint_id : "Backlog"}
+                <select aria-label="Ticket Sprint" value={detail.sprint_id || ""} onchange={(event) => void patchPlacement(detail, { sprint_id: event.currentTarget.value || null })}>
+                  <option value="">Backlog</option>
+                  {#each sprintSummaries.data?.sprints || [] as sprint}<option value={sprint.id}>{sprint.name}</option>{/each}
+                </select>
+              </span>
             </span>
             {#if lc}
               <span class="ticket-identity-group">
@@ -667,6 +675,9 @@
         <div class="ticket-col">
           <TicketVerdict stage={detail.stage} verdict={detail.verdict} onSave={saveVerdict} />
           <TicketTroubleNotes notes={detail.trouble_notes} />
+          <Disclosure title="Guidance" variant="support" defaultOpen={false} data-ticket-guidance>
+            <InlineEdit value={detail.guidance} markdown multiline placeholder="Guidance..." onSave={replaceGuidance} />
+          </Disclosure>
           <div class="fields">
             {#snippet kickoffContextRow()}
               {#if detail.employee_configuration_editable}
@@ -692,11 +703,11 @@
                   </summary>
                   <div class="stage-fold-rows">
                     {#each settledFields as name}
-                      {@const slot = fieldSlot(detail, name)}
                       {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
                       <TicketStageSection
                         {name}
-                        {slot}
+                        value={detail.field_values[name] ?? ""}
+                        pendingProposal={detail.pending_proposal?.field === name ? detail.pending_proposal : null}
                         {stageState}
                         lifecycle={lc}
                         ticketStage={detail.stage}
@@ -712,7 +723,7 @@
                           ? kickoffContextRow
                           : undefined}
                         onAccept={(payload) => acceptField(name, payload)}
-                        onReplaceNote={(raw) => replaceNote(name, raw)}
+                        onSaveProposal={(raw) => saveProposal(name, raw)}
                         onSaveValue={(raw) => saveValue(name, raw)}
                       />
                     {/each}
@@ -729,11 +740,11 @@
                 </details>
               {/if}
               {#each lc.fieldIds.filter((name) => !settledFields.includes(name)) as name}
-                {@const slot = fieldSlot(detail, name)}
                 {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
                 <TicketStageSection
                   {name}
-                  {slot}
+                  value={detail.field_values[name] ?? ""}
+                  pendingProposal={detail.pending_proposal?.field === name ? detail.pending_proposal : null}
                   {stageState}
                   lifecycle={lc}
                   ticketStage={detail.stage}
@@ -749,12 +760,17 @@
                     ? kickoffContextRow
                     : undefined}
                   onAccept={(payload) => acceptField(name, payload)}
-                  onReplaceNote={(raw) => replaceNote(name, raw)}
+                  onSaveProposal={(raw) => saveProposal(name, raw)}
                   onSaveValue={(raw) => saveValue(name, raw)}
                 />
               {/each}
             {/if}
           </div>
+          {#if detail.archived_field_content}
+            <Disclosure title="Historical record" variant="support" defaultOpen={false} data-ticket-history>
+              <MarkdownBlock text={detail.archived_field_content} />
+            </Disclosure>
+          {/if}
         </div>
       </main>
       {#if shownFile}

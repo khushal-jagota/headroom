@@ -97,9 +97,7 @@ def cli_app(
                 env["PLAN_TICKET_ID"] = ticket_id
             if actor is not None:
                 env["PLAN_ACTOR"] = actor
-            result = CliRunner().invoke(
-                cli_main, [*args, "--json"], input=stdin, env=env
-            )
+            result = CliRunner().invoke(cli_main, [*args, "--json"], input=stdin, env=env)
             assert result.exit_code == 0, result.output
             return cast(JsonObject, json.loads(result.stdout))
 
@@ -150,43 +148,6 @@ def test_worker_type_list_json_preserves_the_registry_manifest(
     assert listed["worker_types"][-1]["worker_type"] == "probe"
 
 
-def test_worker_type_list_human_output_uses_registry_order(
-    probe_worker_type: None,
-    cli_app: tuple[ServerHandle, Callable[..., JsonObject], ApiHelper],
-) -> None:
-    server, _, api = cli_app
-    expected = api.get(server, "/api/worker-types")
-
-    result = CliRunner().invoke(
-        cli_main,
-        ["worker-type", "list"],
-        env={"PLAN_SERVER_URL": server.base},
-    )
-
-    assert result.exit_code == 0, result.output
-    assert result.stdout.splitlines() == [
-        item["worker_type"] for item in expected["worker_types"]
-    ]
-    assert result.stdout.splitlines()[-1] == "probe"
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        ("schedule", "create"),
-        ("ticket", "create"),
-        ("chief", "create-ticket-from-external-work"),
-    ],
-)
-def test_worker_type_inputs_point_to_the_listing_command(
-    command: tuple[str, ...],
-) -> None:
-    result = CliRunner().invoke(cli_main, [*command, "--help"])
-
-    assert result.exit_code == 0, result.output
-    assert "panels worker-type list" in result.output
-
-
 def test_day_cli_round_trips_midday_reconciliation(
     server: ServerHandle, cli: Callable[..., JsonObject]
 ) -> None:
@@ -209,10 +170,7 @@ def test_day_cli_round_trips_midday_reconciliation(
     )
 
     assert updated["midday_reconciliation"] == "The morning bet still holds."
-    assert (
-        shown["parts"]["midday_reconciliation"]["value"]
-        == "The morning bet still holds."
-    )
+    assert shown["parts"]["midday_reconciliation"]["value"] == "The morning bet still holds."
 
 
 def test_record_reads_share_manifests_selection_and_identity(
@@ -250,12 +208,14 @@ def test_record_reads_share_manifests_selection_and_identity(
         "Record reads",
         "--project-id",
         "project_other",
-        "--sprint",
-        sprint["id"],
         "--body-file",
         "-",
         stdin="Show one part. 🌱",
     )
+    cli(server, "sprint", "outcome", "add", sprint["id"], item["id"])
+    empty = cli(server, "sprint", "outcome", "list", sprint["id"])
+    assert empty["outcome_groups"][0]["committed"] is True
+    assert empty["outcome_groups"][0]["tickets"] == []
     ticket = cli(
         server,
         "ticket",
@@ -304,27 +264,43 @@ def test_record_reads_share_manifests_selection_and_identity(
     assert worker_manifest["header"]["worker"] == "panels-worker-coding"
     assert worker_manifest["header"]["id"] == ticket["id"]
     assert sprint_manifest["header"]["id"] == sprint["id"]
-    assert list(sprint_manifest["manifest"]) == [
-        "limiting_factor",
-        "primary_bet",
-        "supports",
-        "premortem",
-        "mid_where_we_stand",
-        "mid_whats_changed",
-        "mid_what_to_adjust",
-        "outcomes",
-        "solo_reflection",
-        "joint_discussion",
-        "updates_to_thinking",
-        "carry_forward",
-    ]
+    assert list(sprint_manifest["manifest"]) == ["primary_bet", "kickoff", "checkpoint", "review"]
     assert item_part["parts"]["body"]["value"] == "Show one part. 🌱"
-    assert sum(item_part["header"]["rollup"].values()) == 1
+    assert "rollup" not in item_part["header"]
     assert "tickets" not in day_manifest
     assert "tickets" not in day_manifest["header"]
     assert "tickets" not in day_manifest["manifest"]
     assert list(day_part["parts"]) == ["notes", "focus"]
     assert project_part["parts"]["summary"]["value"] == "Shared work."
+
+    next_sprint = cli(
+        server,
+        "sprint",
+        "create",
+        "--name",
+        "Next sprint",
+        "--date-start",
+        "2026-07-13",
+        "--date-end",
+        "2026-07-26",
+    )
+    carried = cli(
+        server,
+        "sprint",
+        "outcome",
+        "carry",
+        sprint["id"],
+        item["id"],
+        "--to",
+        next_sprint["id"],
+        "--ticket",
+        ticket["id"],
+    )
+    assert carried["ticket_ids"] == [ticket["id"]]
+    cli(server, "sprint", "outcome", "remove", next_sprint["id"], item["id"])
+    tracking = cli(server, "sprint", "outcome", "list", next_sprint["id"])
+    assert tracking["outcome_groups"][0]["committed"] is False
+    assert [t["id"] for t in tracking["outcome_groups"][0]["tickets"]] == [ticket["id"]]
 
     human = CliRunner().invoke(
         cli_main,
@@ -343,9 +319,7 @@ def test_record_reads_share_manifests_selection_and_identity(
     )
     assert invalid.exit_code == 1
     error = json.loads(invalid.stderr)["error"]
-    assert error["message"] == (
-        "unknown part names: missing; valid part names: summary"
-    )
+    assert error["message"] == ("unknown part names: missing; valid part names: summary")
 
 
 def test_planning_worker_cli_claims_authorize_day_midday_and_sprint_writes(
@@ -415,14 +389,10 @@ def test_planning_worker_cli_claims_authorize_day_midday_and_sprint_writes(
         "2026-07-06",
         "--date-end",
         "2026-07-19",
-        "--limiting-factor",
-        "No durable plan.",
+        "--kickoff",
+        "No durable plan. Keep it small and watch for drift.",
         "--primary-bet",
         "Use one canonical sprint.",
-        "--supports",
-        "Keep it small.",
-        "--premortem",
-        "The plan drifts.",
         ticket_id=sprint_ticket["id"],
         actor="worker",
     )
@@ -430,10 +400,7 @@ def test_planning_worker_cli_claims_authorize_day_midday_and_sprint_writes(
 
     assert day["focus"] == "Ship the planning boundary."
     assert midday["midday_reconciliation"] == "The morning bet still holds."
-    assert (
-        sprint_readback["parts"]["primary_bet"]["value"]
-        == "Use one canonical sprint."
-    )
+    assert sprint_readback["parts"]["primary_bet"]["value"] == "Use one canonical sprint."
 
 
 def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
@@ -561,7 +528,7 @@ def test_schedule_cli_creates_lists_updates_and_shows_run_state(
         "--value",
         item_id,
     )
-    assert exact["placement_mode"] == "sprint_item"
+    assert exact["placement_mode"] == "current_sprint"
     assert exact["sprint_item_id"] == item_id
     assert exact["project_id"] == "project_vylo"
     updated = cli(
@@ -574,175 +541,12 @@ def test_schedule_cli_creates_lists_updates_and_shows_run_state(
         "backlog",
     )
     assert updated["placement_mode"] == "backlog"
+    assert updated["sprint_item_id"] == item_id
     assert updated["project_id"] == "project_vylo"
 
     shown = cli(server, "schedule", "show", created["id"])
     assert shown["occurrences"] == []
     assert api.get(server, f"/api/schedules/{created['id']}")["enabled"] is False
-
-
-def test_ticket_create_sprint_item_parents_it(
-    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
-) -> None:
-    # --item -> --sprint-item: the option renamed; still parents the ticket under the item.
-    iid = cli(
-        server,
-        "sprint",
-        "item",
-        "create",
-        "--title",
-        "Item A",
-        "--project",
-        "Vylo",
-        "--priority",
-        "P1",
-    )["id"]
-    tid = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Child",
-        "--sprint-item",
-        iid,
-    )["id"]
-    detail = api.get(server, f"/api/tickets/{tid}")
-    assert detail["sprint_item_id"] == iid
-    assert detail["priority"] == "P1"
-    assert detail["resolved_priority_anchors"]["sprint_item"] == {
-        "id": iid,
-        "title": "Item A",
-        "priority": "P1",
-    }
-    assert [
-        t["id"] for t in cli(server, "ticket", "list", "--sprint-item", iid)["tickets"]
-    ] == [tid]
-
-
-def test_ticket_list_day_filter(
-    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
-) -> None:
-    # `ticket list --day today` scopes to the day's board (day_tickets join).
-    t_on = cli(
-        server, "ticket", "create", "--worker-type", "coding", "--title", "On today"
-    )["id"]
-    t_off = cli(
-        server, "ticket", "create", "--worker-type", "coding", "--title", "Off day"
-    )["id"]
-    cli(server, "day", "add-ticket", t_on, "--date", "today")  # add t_on to today's day
-    cli(server, "day", "remove-ticket", t_off, "--date", "today")
-
-    listed = cli(server, "ticket", "list", "--day", "today")
-    ids = [t["id"] for t in listed["tickets"]]
-    assert t_on in ids
-    assert t_off not in ids
-
-    # The fake clock's planning date is 2026-07-04: an ISO --day gives the same set.
-    dated = [
-        t["id"] for t in cli(server, "ticket", "list", "--day", "2026-07-04")["tickets"]
-    ]
-    assert dated == ids
-
-    # the unscoped list still returns both.
-    all_ids = [t["id"] for t in cli(server, "ticket", "list")["tickets"]]
-    assert t_on in all_ids and t_off in all_ids
-
-
-def test_project_create_list_and_project_id_item_filter(
-    server: ServerHandle, cli: Callable[..., JsonObject], tmp_path: Path
-) -> None:
-    project_folder = tmp_path / "Alpha"
-    missing_priority = CliRunner().invoke(
-        cli_main, ["project", "create", "--name", "Missing Priority", "--json"]
-    )
-    assert missing_priority.exit_code == 2
-    assert "Missing option '--priority'" in missing_priority.output
-
-    project = cli(
-        server,
-        "project",
-        "create",
-        "--name",
-        "Alpha One",
-        "--priority",
-        "P1",
-        "--folder-path",
-        str(project_folder),
-    )
-    assert project["id"] == "project_alpha_one"
-    assert project["name"] == "Alpha One"
-    assert project["priority"] == "P1"
-    assert project["folder_path"] == str(project_folder)
-
-    shown = cli(server, "project", "show", project["id"])
-    assert shown["header"]["folder_path"] == str(project_folder)
-
-    cleared_folder = cli(server, "project", "set", project["id"], "folder-path", "--clear")
-    assert cleared_folder["folder_path"] is None
-
-    reset_folder = cli(
-        server,
-        "project",
-        "set",
-        project["id"],
-        "folder-path",
-        "--value",
-        str(project_folder),
-    )
-    assert reset_folder["folder_path"] == str(project_folder)
-
-    listed_projects = cli(server, "project", "list")
-    listed_by_id = {entry["id"]: entry for entry in listed_projects["projects"]}
-    assert listed_by_id[project["id"]]["priority"] == "P1"
-    assert listed_by_id["project_other"]["priority"] is None
-
-    reassessed = cli(
-        server,
-        "project",
-        "set",
-        project["id"],
-        "priority",
-        "--value",
-        "P0",
-    )
-    assert reassessed["priority"] == "P0"
-    assert reassessed["name"] == "Alpha One"
-
-    invalid_priority = CliRunner().invoke(
-        cli_main,
-        ["project", "set", project["id"], "priority", "--value", "urgent", "--json"],
-    )
-    assert invalid_priority.exit_code == 1
-    assert "priority must be P0, P1, P2, or P3" in invalid_priority.output
-
-    cleared_priority = CliRunner().invoke(
-        cli_main,
-        ["project", "set", project["id"], "priority", "--clear", "--json"],
-    )
-    assert cleared_priority.exit_code == 1
-    assert "priority cannot be cleared" in cleared_priority.output
-
-    item = cli(
-        server,
-        "sprint",
-        "item",
-        "create",
-        "--title",
-        "Project id backlog item",
-        "--project-id",
-        project["id"],
-    )
-    listed_items = cli(server, "sprint", "item", "list", "--project-id", project["id"])
-    assert [entry["id"] for entry in listed_items["items"]] == [item["id"]]
-
-
-def test_queue_pickup_command_removed() -> None:
-    # `queue` is no longer a CLI command group; approval is homed on ticket/sprint item.
-    result = CliRunner().invoke(cli_main, ["queue", "pickup", "--json"])
-    assert result.exit_code != 0
-    assert "queue" in result.output
 
 
 def test_ticket_approval_copy_and_worker_note_shape(
@@ -761,9 +565,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
     )["id"]
     created = api.get(server, f"/api/tickets/{tid}")
     assert created["stage"] == "needs_kickoff"
-    assert (
-        created["fields"]["kickoff"]["proposal"]["body"] == "intake context from user"
-    )
+    assert created["pending_proposal"]["body"] == "intake context from user"
 
     accepted_kickoff = cli(
         server,
@@ -781,7 +583,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
     assert accepted_kickoff["stage"] == "needs_success"
     assert accepted_kickoff["ceiling"] == "needs_success"
     assert accepted_kickoff["at_cap"] == "propose"
-    assert accepted_kickoff["fields"]["kickoff"]["value"] == "updated intake"
+    assert accepted_kickoff["field_values"].get("kickoff") == "updated intake"
 
     cli(
         server,
@@ -792,18 +594,15 @@ def test_ticket_approval_copy_and_worker_note_shape(
         ticket_id=tid,
         stdin="success body",
     )
-    approved = cli(
-        server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose"
-    )
+    approved = cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose")
     assert approved["stage"] == "needs_approach"
-    assert approved["fields"]["success"]["value"] == "success body"
+    assert approved["field_values"].get("success") == "success body"
 
     cli(
         server,
         "worker",
         "note",
         tid,
-        "approach",
         stdin="approach note",
     )
     cli(
@@ -811,26 +610,20 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "worker",
         "note",
         tid,
-        "approach",
         "--append",
         stdin="additional approach note",
     )
     appended_detail = api.get(server, f"/api/tickets/{tid}")
-    assert (
-        appended_detail["fields"]["approach"]["user_note"]
-        == "approach note\n\nadditional approach note"
-    )
+    assert appended_detail["guidance"] == "approach note\n\nadditional approach note"
     cli(
         server,
         "worker",
         "note",
         tid,
-        "approach",
-        "--replace",
         stdin="replaced approach note",
     )
     detail = api.get(server, f"/api/tickets/{tid}")
-    assert detail["fields"]["approach"]["user_note"] == "replaced approach note"
+    assert detail["guidance"] == "replaced approach note"
 
     new_worker_id = cli(
         server,
@@ -846,90 +639,15 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "worker",
         "note",
         new_worker_id,
-        "stages",
         stdin="stages note",
     )
     new_worker_detail = api.get(server, f"/api/tickets/{new_worker_id}")
-    assert new_worker_detail["fields"]["stages"]["user_note"] == "stages note"
+    assert new_worker_detail["guidance"] == "stages note"
 
     copied = cli(server, "ticket", "copy", tid)
     assert "CLI approve ticket" in copied["text"]
     assert "updated intake" in copied["text"]
     assert "replaced approach note" in copied["text"]
-
-
-def test_worker_write_commands_take_text_on_stdin_only(
-    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
-) -> None:
-    tid = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Stdin-only worker commands",
-        "--kickoff-note",
-        "intake context",
-    )["id"]
-
-    cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose")
-
-    env = {"PLAN_SERVER_URL": server.base, "PLAN_TICKET_ID": tid}
-
-    refused_propose = CliRunner().invoke(
-        cli_main,
-        ["worker", "propose", "--body-file", "/tmp/whatever.md", "--recap", "r", "--json"],
-        env=env,
-    )
-    assert refused_propose.exit_code != 0
-    error = json.loads(refused_propose.stderr)["error"]
-    assert "stdin" in error["message"]
-
-    refused_recap_file = CliRunner().invoke(
-        cli_main,
-        ["worker", "propose", "--recap-file", "/tmp/whatever.md", "--json"],
-        input="success body",
-        env=env,
-    )
-    assert refused_recap_file.exit_code != 0
-    error = json.loads(refused_recap_file.stderr)["error"]
-    assert "--recap TEXT" in error["message"]
-
-    refused_trouble = CliRunner().invoke(
-        cli_main,
-        ["worker", "trouble", "--body-file", "/tmp/whatever.md", "--json"],
-        env=env,
-    )
-    assert refused_trouble.exit_code != 0
-    error = json.loads(refused_trouble.stderr)["error"]
-    assert "stdin" in error["message"]
-
-    refused_note = CliRunner().invoke(
-        cli_main,
-        ["worker", "note", tid, "approach", "--body-file", "/tmp/whatever.md", "--json"],
-        env=env,
-    )
-    assert refused_note.exit_code != 0
-    error = json.loads(refused_note.stderr)["error"]
-    assert "stdin" in error["message"]
-
-    cli(
-        server,
-        "worker",
-        "propose",
-        "--recap",
-        "Success via stdin.",
-        ticket_id=tid,
-        stdin="success body from stdin",
-    )
-    cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose")
-    approved_detail = api.get(server, f"/api/tickets/{tid}")
-    assert approved_detail["fields"]["success"]["value"] == "success body from stdin"
-
-    cli(server, "worker", "recap", tid, stdin="recap from stdin")
-    detail = api.get(server, f"/api/tickets/{tid}")
-    assert detail["recap"] == "recap from stdin"
 
     # `trouble` only accepts writes during an active claimed worker step. The refusal
     # assertion above covers its argument parsing. Writer tests cover the active path.
@@ -967,25 +685,21 @@ def test_sprint_item_ticket_commands_move_atomically_and_to_backlog(
         "CLI item",
         "--project-id",
         "project_other",
-        "--sprint",
-        "current",
     )
 
-    cli(server, "sprint", "item", "move-ticket", item["id"], tid)
+    cli(server, "sprint", "item", "add-ticket", item["id"], tid)
     detail = api.get(server, f"/api/tickets/{tid}")
     assert detail["sprint_item_id"] == item["id"]
     assert detail["effective_sprint_id"] == sprint["id"]
 
-    renamed = cli(
-        server, "sprint", "set", "current", "name", "--value", "Renamed CLI sprint"
-    )
+    renamed = cli(server, "sprint", "set", "current", "name", "--value", "Renamed CLI sprint")
     assert renamed["id"] == sprint["id"]
     assert renamed["name"] == "Renamed CLI sprint"
 
-    cli(server, "sprint", "item", "move-ticket-to-backlog", item["id"], tid)
+    cli(server, "sprint", "item", "remove-ticket", item["id"], tid)
     detail = api.get(server, f"/api/tickets/{tid}")
     assert detail["sprint_item_id"] is None
-    assert detail["effective_sprint_id"] is None
+    assert detail["effective_sprint_id"] == sprint["id"]
 
 
 def test_ticket_place_sends_one_coherent_placement_patch(
@@ -1011,8 +725,6 @@ def test_ticket_place_sends_one_coherent_placement_patch(
         "Placement item",
         "--project-id",
         "project_vylo",
-        "--sprint",
-        "current",
     )
     ticket_id = cli(
         server,
@@ -1054,31 +766,3 @@ def test_ticket_place_sends_one_coherent_placement_patch(
     assert backlog["project_id"] == "project_vylo"
     assert backlog["sprint_id"] is None
     assert backlog["sprint_item_id"] is None
-
-
-@pytest.mark.parametrize(
-    "command",
-    (
-        ("ticket", "create", "--worker-type", "coding", "--title", "Conflict"),
-        (
-            "chief",
-            "create-ticket-from-external-work",
-            "--title",
-            "Conflict",
-            "--worker-type",
-            "coding",
-            "--stage",
-            "needs_success",
-            "--kickoff-note-file",
-            "-",
-        ),
-    ),
-)
-def test_ticket_creation_rejects_backlog_with_sprint(command: tuple[str, ...]) -> None:
-    result = CliRunner().invoke(
-        cli_main,
-        [*command, "--backlog", "--sprint", "sp_conflict", "--json"],
-        input="Kickoff",
-    )
-    assert result.exit_code == 1
-    assert "--backlog cannot be combined with --sprint or --sprint-item" in result.output

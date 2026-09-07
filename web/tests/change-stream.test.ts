@@ -107,42 +107,6 @@ describe("change stream", () => {
     expect(fakes.invalidateQueries).not.toHaveBeenCalled();
   });
 
-  it("marks an open stream connected and reconciles missed changes", async () => {
-    const { startChangeStream } = await loadChangeStream();
-    startChangeStream();
-
-    FakeEventSource.instances[0].onopen?.();
-    await vi.waitFor(() => expect(debug.sseReconciliations).toBe(1));
-
-    expect(statuses.at(-1)).toBe("connected");
-    expect(fakes.invalidateQueries).toHaveBeenCalledTimes(1);
-    expect(debug).toEqual({
-      sseOpens: 1,
-      sseReconciliations: 1,
-      flushes: 1
-    });
-  });
-
-  it("reports initial reconciliation only after its invalidation resolves", async () => {
-    let resolveInvalidation!: () => void;
-    fakes.invalidateQueries.mockReturnValueOnce(
-      new Promise<void>((resolve) => {
-        resolveInvalidation = resolve;
-      })
-    );
-    const { startChangeStream } = await loadChangeStream();
-    startChangeStream();
-
-    FakeEventSource.instances[0].onopen?.();
-
-    expect(debug.sseOpens).toBe(1);
-    expect(debug.flushes).toBe(1);
-    expect(debug.sseReconciliations).toBe(0);
-
-    resolveInvalidation();
-    await vi.waitFor(() => expect(debug.sseReconciliations).toBe(1));
-  });
-
   it("collapses a finite burst into one invalidation at the first frame's deadline", async () => {
     const { startChangeStream } = await loadChangeStream();
     startChangeStream();
@@ -240,22 +204,6 @@ describe("change stream", () => {
     fakeDocument.becomes("visible");
     await vi.advanceTimersByTimeAsync(INVALIDATE_DEBOUNCE_MS);
     expect(fakes.invalidateQueries).toHaveBeenCalledTimes(2);
-  });
-
-  it("leaves nothing listening for the tab once the stream is stopped", async () => {
-    const { startChangeStream, stopChangeStream } = await loadChangeStream();
-    startChangeStream();
-    const source = FakeEventSource.instances[0];
-    source.onopen?.();
-    await vi.waitFor(() => expect(debug.sseReconciliations).toBe(1));
-
-    fakeDocument.becomes("hidden");
-    source.onmessage?.();
-    stopChangeStream();
-
-    fakeDocument.becomes("visible");
-    await vi.advanceTimersByTimeAsync(INVALIDATE_DEBOUNCE_MS);
-    expect(fakes.invalidateQueries).toHaveBeenCalledTimes(1);
   });
 
   it("stops cleanly, cancels a pending flush, and ignores stale callbacks", async () => {

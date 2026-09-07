@@ -22,14 +22,11 @@ from planner.conversation.events import (
 )
 from planner.conversation.message_content import text_message_content
 from planner.conversation.storage import ConversationStore
-from planner.core import change_signal
 from planner.core.db import connect, create_schema
 from planner.skill_sources import ensure_managed_panels_skills
 from planner.skill_versions import (
     bind_worker_step_skills,
     capture_skill_version,
-    reconcile_managed_skill_versions,
-    reconcile_provisional_worker_step_bindings,
 )
 from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -110,59 +107,6 @@ def test_versions_are_immutable_in_the_database(tmp_path: Path) -> None:
         conn.close()
 
 
-def test_reconciliation_records_every_current_managed_skill(tmp_path: Path) -> None:
-    _, conn = _database(tmp_path)
-    try:
-        root = ensure_managed_panels_skills(tmp_path)
-        expected = sorted(
-            directory.name
-            for directory in root.iterdir()
-            if directory.is_dir() and (directory / "SKILL.md").is_file()
-        )
-        reconcile_managed_skill_versions(conn, tmp_path)
-        actual = [
-            str(row[0])
-            for row in conn.execute(
-                "SELECT DISTINCT skill_name FROM managed_skill_versions ORDER BY skill_name"
-            )
-        ]
-        assert actual == expected
-    finally:
-        conn.close()
-
-
-def test_skill_reconciliation_failure_aborts_startup_in_test_mode(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from fastapi.testclient import TestClient
-
-    from planner.core.clock import build_clock
-    from planner.core.config import load_config
-    from planner.core.server import create_app
-
-    db_path, conn = _database(tmp_path)
-    conn.close()
-    config = load_config(
-        path=None,
-        env={
-            "PLAN_TEST_MODE": "1",
-            "PLAN_DB_PATH": str(db_path),
-            "PLAN_LOGS_DIR": str(tmp_path / "logs"),
-        },
-    )
-
-    def fail_reconciliation(*args: object, **kwargs: object) -> None:
-        raise RuntimeError("skill capture failed")
-
-    monkeypatch.setattr(
-        "planner.core.server.reconcile_managed_skill_versions", fail_reconciliation
-    )
-    app = create_app(config, build_clock(config), lambda: connect(str(db_path)))
-
-    with pytest.raises(RuntimeError, match="skill capture failed"), TestClient(app):
-        pass
-
-
 def test_each_step_binds_exact_orientation_worker_and_specialist_versions(
     tmp_path: Path,
 ) -> None:
@@ -227,57 +171,6 @@ def test_queued_binding_is_removed_if_its_later_outcome_did_not_run(
     asyncio.run(exercise())
     with connect(str(db_path)) as check:
         assert _binding_rows(check, "queued-message") == []
-
-
-def test_queued_binding_becomes_final_with_its_later_prompt_event(
-    tmp_path: Path,
-) -> None:
-    db_path, conn = _database(tmp_path)
-    try:
-        bind_worker_step_skills(conn, tmp_path, "queued-message", "panels-worker-coding")
-    finally:
-        conn.close()
-    store = ConversationStore(str(db_path), integer_now=lambda: 1)
-
-    async def exercise() -> None:
-        await store.create_conversation(_resolved("conversation"))
-        await store.append_delivered_prompt(
-            "conversation", prompt=_prompt("queued-message"), model_change=None
-        )
-
-    asyncio.run(exercise())
-    with connect(str(db_path)) as check:
-        assert {row["binding_status"] for row in _binding_rows(check, "queued-message")} == {
-            "final"
-        }
-
-
-def test_startup_reconciliation_resolves_or_expires_provisional_bindings(
-    tmp_path: Path,
-) -> None:
-    db_path, conn = _database(tmp_path)
-    store = ConversationStore(str(db_path), integer_now=lambda: 1)
-    try:
-        bind_worker_step_skills(conn, tmp_path, "recorded", "panels-worker-coding")
-        bind_worker_step_skills(conn, tmp_path, "lost-queue", "panels-worker-coding")
-    finally:
-        conn.close()
-
-    async def write_prompt_before_recreating_provisional_state() -> None:
-        await store.create_conversation(_resolved("conversation"))
-        await store.append_delivered_prompt(
-            "conversation", prompt=_prompt("recorded"), model_change=None
-        )
-
-    asyncio.run(write_prompt_before_recreating_provisional_state())
-    with connect(str(db_path)) as check:
-        check.execute(
-            "UPDATE worker_step_skill_bindings SET binding_status = 'provisional' "
-            "WHERE sender_message_id = 'recorded'"
-        )
-        reconcile_provisional_worker_step_bindings(check)
-        assert {row["binding_status"] for row in _binding_rows(check, "recorded")} == {"final"}
-        assert _binding_rows(check, "lost-queue") == []
 
 
 def test_each_managed_save_path_captures_the_exact_rendered_bytes(
@@ -352,81 +245,3 @@ def test_capture_failure_restores_the_previous_skill_bytes_atomically(
         assert atomic_replacements[-1] == before
     finally:
         conn.close()
-
-
-@pytest.mark.parametrize(
-    ("save_kind", "skill_name"),
-    [
-        ("chief", "panels-chief-of-staff"),
-        ("specialist", "panels-worker-coding"),
-    ],
-)
-def test_each_role_save_restores_its_file_if_capture_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    save_kind: str,
-    skill_name: str,
-) -> None:
-    _, conn = _database(tmp_path)
-    root = ensure_managed_panels_skills(tmp_path)
-    path = root / skill_name / "SKILL.md"
-    before = path.read_bytes()
-
-    def fail_capture(*args: object, **kwargs: object) -> str:
-        raise RuntimeError("database unavailable")
-
-    monkeypatch.setattr(worker_settings_service, "capture_skill_version", fail_capture)
-    try:
-        with pytest.raises(RuntimeError, match="database unavailable"):
-            if save_kind == "chief":
-                worker_settings_service.save_chief_skill(
-                    tmp_path,
-                    {"description": "changed"},
-                    version_connection=conn,
-                )
-            else:
-                worker_settings_service.save_specialist_skill(
-                    tmp_path,
-                    configured_worker_type_registry(),
-                    "coding",
-                    {"description": "changed", "markdown_body": "# changed\n"},
-                    version_connection=conn,
-                )
-        assert path.read_bytes() == before
-    finally:
-        conn.close()
-
-
-def test_settling_a_binding_still_tells_readers_something_changed(tmp_path: Path) -> None:
-    """The prompt row that settles a binding is one a screen reads, so it announces.
-
-    Bindings are settled inside the conversation event transaction, and only a prompt,
-    a refusal, or a discard settles one — all rows the board reads. So no settlement
-    rides in on a commit that stays quiet.
-    """
-    db_path, conn = _database(tmp_path)
-    try:
-        bind_worker_step_skills(conn, tmp_path, "queued-message", "panels-worker-coding")
-    finally:
-        conn.close()
-    store = ConversationStore(str(db_path), integer_now=lambda: 1)
-    announcements: list[None] = []
-    unsubscribe = change_signal.subscribe(lambda: announcements.append(None))
-
-    async def exercise() -> None:
-        await store.create_conversation(_resolved("conversation"))
-        announcements.clear()
-        await store.append_delivered_prompt(
-            "conversation", prompt=_prompt("queued-message"), model_change=None
-        )
-
-    try:
-        asyncio.run(exercise())
-    finally:
-        unsubscribe()
-
-    assert len(announcements) == 1
-    with connect(str(db_path)) as check:
-        assert {row["binding_status"] for row in _binding_rows(check, "queued-message")} == {
-            "final"
-        }

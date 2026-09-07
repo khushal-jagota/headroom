@@ -12,11 +12,12 @@
     type Lifecycle
   } from "../lib/lifecycle";
   import type { Snippet } from "svelte";
-  import type { TicketField } from "../lib/types";
+  import type { PendingTicketProposal } from "../lib/types";
 
   let {
     name,
-    slot,
+    value = "",
+    pendingProposal = null,
     ticketStage,
     ceiling,
     suggestedNextCeiling = null,
@@ -31,11 +32,12 @@
     onRelease,
     contextRow,
     onAccept,
-    onReplaceNote,
+    onSaveProposal,
     onSaveValue
   }: {
     name: string;
-    slot: TicketField;
+    value?: string;
+    pendingProposal?: PendingTicketProposal | null;
     ticketStage: string;
     ceiling: string;
     suggestedNextCeiling?: string | null;
@@ -50,7 +52,7 @@
     onRelease?: () => void;
     contextRow?: Snippet;
     onAccept: (payload: Record<string, unknown>) => Promise<unknown>;
-    onReplaceNote?: (raw: string) => Promise<unknown>;
+    onSaveProposal?: (raw: string) => Promise<unknown>;
     onSaveValue?: (raw: string) => Promise<unknown>;
   } = $props();
 
@@ -59,79 +61,40 @@
   let isDropped = $derived(ticketStage === "dropped");
   let isGating = $derived(gatingFieldFor(lifecycle, ticketStage) === name);
   let passed = $derived(fieldIsPassedFor(lifecycle, name, ticketStage));
-  let hasValue = $derived(hasText(slot.value));
-  let hasNotes = $derived(hasText(slot.user_note));
-  let hasProposal = $derived(Boolean(slot.proposal));
+  let hasProposal = $derived(pendingProposal?.field === name);
   let nextStage = $derived(advanceTargetFor(lifecycle, ticketStage, ceiling));
   let defaultOpen = $derived(isGating);
 
-  function hasText(value: unknown): boolean {
-    return value !== null && value !== undefined && String(value).trim() !== "";
-  }
 </script>
 
 {#snippet stageBody()}
-  {#if reviewVariant && hasNotes}
-    <Disclosure title="Notes" variant="support" defaultOpen={false} data-content-section="notes">
-      <MarkdownBlock text={slot.user_note} />
-    </Disclosure>
-  {/if}
-
   {#if isDropped}
-    <MarkdownBlock text={slot.value} quiet={emptyText} />
-    {#if slot.proposal}
-      <ApprovalBlock
-        mode="readonly"
-        field={name}
-        whatLabel={fieldLabel}
-        proposalBody={slot.proposal?.body || ""}
-        proposedBy={slot.proposal?.proposed_by || ""}
-      />
-    {/if}
+    <MarkdownBlock text={value} quiet={emptyText} />
   {:else if isGating && hasProposal}
     <ApprovalBlock
-      mode="gating-pending"
       layout="review"
       field={name}
       whatLabel={fieldLabel}
-      proposalBody={slot.proposal?.body || ""}
-      proposedBy={slot.proposal?.proposed_by || ""}
+      proposalBody={pendingProposal?.body || ""}
+      proposedBy={pendingProposal?.proposed_by || ""}
       newStage={nextStage}
       suggestedNextCeiling={name === "kickoff" ? suggestedNextCeiling : null}
       {lifecycle}
       {contextRow}
       disabled={approvalDisabled}
       onApprove={onAccept}
-      onProposalSave={onSaveValue}
+      onProposalSave={onSaveProposal}
     />
   {:else}
-    {#if hasProposal && slot.proposal}
-      <ApprovalBlock
-        mode="proposal"
-        field={name}
-        whatLabel={fieldLabel}
-        proposalBody={slot.proposal?.body || ""}
-        proposedBy={slot.proposal?.proposed_by || ""}
-        newStage={nextStage}
-        {lifecycle}
-        onApprove={onAccept}
-        onProposalSave={onSaveValue}
-      />
-      {#if hasValue}<MarkdownBlock text={slot.value} />{/if}
-    {:else if passed && editableValue && onSaveValue}
+    {#if passed && editableValue && onSaveValue}
       <div class="ticket-field-value">
-        <InlineEdit value={slot.value} markdown multiline placeholder="Value..." onSave={onSaveValue} />
+        <InlineEdit {value} markdown multiline placeholder="Value..." onSave={onSaveValue} />
       </div>
     {:else}
-      <MarkdownBlock text={slot.value} quiet={emptyText} />
+      <MarkdownBlock text={value} quiet={emptyText} />
     {/if}
   {/if}
 
-  {#if !reviewVariant && onReplaceNote}
-    <Disclosure title="Notes" variant="support" defaultOpen={hasNotes} data-content-section="note">
-      <InlineEdit value={slot.user_note} markdown multiline placeholder="Note..." onSave={onReplaceNote} />
-    </Disclosure>
-  {/if}
 {/snippet}
 
 {#if reviewVariant}

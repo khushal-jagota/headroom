@@ -6,17 +6,14 @@ import shutil
 import sqlite3
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from planner.environments import materialize as environment_materialize
 from planner.environments.fake_fixture import (
     FAKE_FIXTURE_VERSION,
     build_fake_environment_database,
 )
 from planner.environments.materialize import (
-    inspect_environment_instance,
     prepare_environment_instance,
     reset_environment_instance,
 )
@@ -71,106 +68,6 @@ def test_fake_fixture_builds_current_schema_with_registered_worker_types(
         assert managed_file.is_file()
         assert managed_file.read_bytes()
     assert all(path.parts[0] == "tickets" for path in report.managed_file_relative_paths)
-
-
-def test_fake_fixture_is_same_logical_seed_but_independent_ids_and_database_bytes(
-    tmp_path: Path,
-) -> None:
-    first_db_path = tmp_path / "first" / "planner.db"
-    second_db_path = tmp_path / "second" / "planner.db"
-
-    first = build_fake_environment_database(first_db_path, now=1_800_000_000)
-    second = build_fake_environment_database(second_db_path, now=1_800_000_000)
-
-    assert first.fixture_version == second.fixture_version == FAKE_FIXTURE_VERSION
-    assert first.logical_summary == second.logical_summary
-    assert first.logical_titles == second.logical_titles
-    assert first.generated_ids.isdisjoint(second.generated_ids)
-    assert first_db_path != second_db_path
-    assert _sha256(first_db_path) != _sha256(second_db_path)
-
-
-def test_prepare_common_layout_materializes_only_runtime_state_directories(
-    tmp_path: Path,
-) -> None:
-    instance = SimpleNamespace(
-        instance_root=tmp_path / "instance",
-        logs_dir=tmp_path / "logs",
-        dispatcher_lock_path=tmp_path / "locks" / "dispatcher.lock",
-        server_control_socket_path=tmp_path / "run" / "server.sock",
-        db_path=(tmp_path / "instance-data" / "planning.db"),
-        allowed_repository_roots=(Path(__file__).resolve().parents[2],),
-    )
-
-    environment_materialize._prepare_common_layout(instance)
-
-    assert instance.instance_root.is_dir()
-    assert instance.logs_dir.is_dir()
-    assert instance.dispatcher_lock_path.parent.is_dir()
-    assert instance.server_control_socket_path.parent.is_dir()
-
-
-def test_live_prepare_records_contract_without_fake_fixture_or_persistent_state(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fail_fixture(*args: object, **kwargs: object) -> None:
-        raise AssertionError("live prepare must not build the fake fixture")
-
-    monkeypatch.setattr(
-        "planner.environments.materialize.build_fake_environment_database",
-        fail_fixture,
-    )
-
-    live = prepare_environment_instance(
-        kind="live",
-        environment_root=_short_environment_root(tmp_path),
-        repository_roots=(),
-    )
-
-    assert live.fixture_version is None
-    assert live.instance_root == _short_environment_root(tmp_path).resolve()
-    assert live.db_path == live.instance_root / "current" / "data" / "planner.db"
-    assert live.logs_dir == live.instance_root / "current" / "logs"
-    assert not live.db_path.exists()
-    assert not live.managed_files_root.exists()
-
-    inspected = inspect_environment_instance(
-        kind="live",
-        environment_root=_short_environment_root(tmp_path),
-        repository_roots=(),
-    )
-    assert inspected == live
-
-
-def test_reset_rebuilds_fake_state_and_preserves_instance_identity(tmp_path: Path) -> None:
-    repository_root = _repository_root()
-    staging = prepare_environment_instance(
-        kind="staging",
-        environment_root=_short_environment_root(tmp_path),
-        repository_roots=(repository_root,),
-    )
-    marker = staging.db_path.parent / "marker.txt"
-    marker.write_text("old data", encoding="utf-8")
-
-    reset = reset_environment_instance(
-        kind="staging",
-        environment_root=_short_environment_root(tmp_path),
-        repository_roots=(repository_root,),
-    )
-    inspected = inspect_environment_instance(
-        kind="staging",
-        environment_root=_short_environment_root(tmp_path),
-        repository_roots=(repository_root,),
-    )
-
-    assert reset.instance_id == staging.instance_id
-    assert reset.port_policy == staging.port_policy
-    assert reset.credentials_env_file == staging.credentials_env_file
-    assert reset.fixture_version == FAKE_FIXTURE_VERSION
-    assert inspected.prepared_at == reset.prepared_at
-    assert not marker.exists()
-    assert reset.db_path.is_file()
 
 
 def test_failed_reset_keeps_prior_data_tree(

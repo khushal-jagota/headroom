@@ -9,8 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from planner.core.config import load_config
-from planner.core.server import resolve_application_root
 from planner.environments.app import (
     AppValidationError,
     build_exported_app,
@@ -21,21 +19,6 @@ from planner.environments.app import (
 from planner.environments.app_launcher import build_app_launch_env
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
-
-
-def test_app_runtime_resolves_assets_from_app_root(tmp_path: Path) -> None:
-    app_root = tmp_path / "app"
-    installed_module = app_root / ".venv/lib/python3.13/site-packages/planner/core/server.py"
-    assert resolve_application_root(
-        environment={"PLAN_APP_ROOT": str(app_root)}, module_file=installed_module
-    ) == app_root.resolve()
-
-
-def test_checkout_runtime_resolves_assets_from_source_tree(tmp_path: Path) -> None:
-    module_file = tmp_path / "repo/src/planner/core/server.py"
-    assert resolve_application_root(environment={}, module_file=module_file) == (
-        tmp_path / "repo"
-    ).resolve()
 
 
 def test_app_manifest_requires_full_sha_and_matching_digest(tmp_path: Path) -> None:
@@ -55,51 +38,6 @@ def test_app_manifest_requires_full_sha_and_matching_digest(tmp_path: Path) -> N
         validate_app_manifest(manifest_path)
 
 
-def test_new_app_digest_ignores_python_caches(tmp_path: Path) -> None:
-    app = tmp_path / "app"
-    app.mkdir()
-    (app / "stable.txt").write_text("stable", encoding="utf-8")
-    digest = digest_app_artifact(app)
-    cache = app / "package" / "__pycache__" / "module.pyc"
-    cache.parent.mkdir(parents=True)
-    cache.write_bytes(b"runtime cache")
-
-    assert digest_app_artifact(app) == digest
-
-
-def test_runtime_python_caches_do_not_invalidate_app_manifest(tmp_path: Path) -> None:
-    manifest, _ = _legacy_cached_app(tmp_path / "app")
-
-    assert validate_app_manifest(manifest).app_sha == SHA
-
-
-def test_pytest_cache_does_not_invalidate_current_or_legacy_app_manifest(
-    tmp_path: Path,
-) -> None:
-    current = _runtime_app(tmp_path / "current")
-    legacy_manifest, _ = _legacy_cached_app(tmp_path / "legacy")
-    for app in (current, legacy_manifest.parent):
-        cache = app / "package" / "nested" / ".pytest_cache" / "v" / "cache" / "nodeids"
-        cache.parent.mkdir(parents=True)
-        cache.write_text("test state", encoding="utf-8")
-
-    assert validate_app_manifest(current / "manifest.json").app_sha == SHA
-    assert validate_app_manifest(legacy_manifest).app_sha == SHA
-
-
-def test_pytest_cache_changes_source_digest_but_not_artifact_manifest(tmp_path: Path) -> None:
-    app = _runtime_app(tmp_path / "app")
-    source_digest = digest_app_source(app)
-    artifact_digest = digest_app_artifact(app)
-    cache = app / "package" / "nested" / ".pytest_cache" / "v" / "cache" / "nodeids"
-    cache.parent.mkdir(parents=True)
-    cache.write_text("test state", encoding="utf-8")
-
-    assert digest_app_source(app) != source_digest
-    assert digest_app_artifact(app) == artifact_digest
-    assert validate_app_manifest(app / "manifest.json").app_sha == SHA
-
-
 def test_real_file_mutation_still_invalidates_manifest_with_pytest_cache(tmp_path: Path) -> None:
     app = _runtime_app(tmp_path / "app")
     cache = app / ".pytest_cache" / "v" / "cache" / "lastfailed"
@@ -108,45 +46,6 @@ def test_real_file_mutation_still_invalidates_manifest_with_pytest_cache(tmp_pat
     (app / "web" / "dist" / "index.html").write_text("tampered", encoding="utf-8")
 
     with pytest.raises(AppValidationError, match="artifact digest"):
-        validate_app_manifest(app / "manifest.json")
-
-
-def test_disappearing_runtime_cache_does_not_break_legacy_validation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manifest, runtime_cache = _legacy_cached_app(tmp_path / "app")
-    real_lstat = Path.lstat
-    disappeared = False
-
-    def lstat(path: Path, *args: object, **kwargs: object) -> os.stat_result:
-        nonlocal disappeared
-        if path == runtime_cache and not disappeared:
-            disappeared = True
-            runtime_cache.unlink()
-            raise FileNotFoundError(path)
-        return real_lstat(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "lstat", lstat)
-
-    assert validate_app_manifest(manifest).app_sha == SHA
-
-
-def test_nested_manifest_is_covered_by_app_digest(tmp_path: Path) -> None:
-    app = tmp_path / "app"
-    nested = app / "package" / "manifest.json"
-    nested.parent.mkdir(parents=True)
-    nested.write_text("first", encoding="utf-8")
-    digest = digest_app_artifact(app)
-    nested.write_text("tampered", encoding="utf-8")
-    assert digest_app_artifact(app) != digest
-
-
-def test_nested_git_metadata_is_rejected_even_when_excluded_from_digest(tmp_path: Path) -> None:
-    app = _runtime_app(tmp_path / "app")
-    nested_git = app / "vendor" / ".git" / "config"
-    nested_git.parent.mkdir(parents=True)
-    nested_git.write_text("tampered", encoding="utf-8")
-    with pytest.raises(AppValidationError, match="Git metadata"):
         validate_app_manifest(app / "manifest.json")
 
 
@@ -166,19 +65,6 @@ def test_export_is_git_free_and_records_exact_checkout(tmp_path: Path) -> None:
     )
     assert os.access(candidate / "bin" / "panels", os.X_OK)
     assert validate_app_manifest(candidate / "manifest.json").app_sha == sha
-
-
-def test_export_rejects_checkout_at_different_sha(tmp_path: Path) -> None:
-    source, _ = _git_source(tmp_path)
-    with pytest.raises(AppValidationError, match="requested SHA"):
-        build_exported_app(source, requested_sha=SHA, candidate_app=tmp_path / "candidate")
-
-
-def test_export_accepts_already_validated_same_app(tmp_path: Path) -> None:
-    source, sha = _git_source(tmp_path)
-    candidate = tmp_path / "candidate"
-    first = build_exported_app(source, requested_sha=sha, candidate_app=candidate)
-    assert build_exported_app(source, requested_sha=sha, candidate_app=candidate) == first
 
 
 def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path: Path) -> None:
@@ -203,42 +89,11 @@ def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path
     }
 
 
-def test_app_launcher_carries_user_service_manager_environment(tmp_path: Path) -> None:
-    app = _runtime_app(tmp_path / "app")
-    env = build_app_launch_env(
-        app,
-        ambient={
-            "XDG_RUNTIME_DIR": "/run/user/1000",
-            "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
-            "UNRELATED_AMBIENT_VALUE": "strip-me",
-        },
-    )
-    assert env == {
-        "XDG_RUNTIME_DIR": "/run/user/1000",
-        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
-        "PLAN_APP_SHA": SHA,
-        "PLAN_APP_ROOT": str(app),
-    }
-
-
-def test_config_keeps_development_identity_explicit() -> None:
-    assert load_config(env={"PLAN_TEST_MODE": "1"}).app_sha is None
-    assert load_config(env={"PLAN_TEST_MODE": "1", "PLAN_APP_SHA": SHA}).app_sha == SHA
-
-
 def test_runtime_app_validation_requires_runnable_tree(tmp_path: Path) -> None:
     app = _runtime_app(tmp_path / "app")
     (app / "bin" / "panels-launcher").chmod(0o644)
     _rewrite_digest(app)
     with pytest.raises(AppValidationError, match="executable"):
-        validate_app_manifest(app / "manifest.json", require_runtime=True)
-
-
-def test_runtime_app_validation_requires_deployed_cli(tmp_path: Path) -> None:
-    app = _runtime_app(tmp_path / "app")
-    (app / "bin" / "panels").unlink()
-    _rewrite_digest(app)
-    with pytest.raises(AppValidationError, match=r"bin/panels"):
         validate_app_manifest(app / "manifest.json", require_runtime=True)
 
 

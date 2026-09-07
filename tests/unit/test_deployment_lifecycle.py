@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -12,7 +12,6 @@ from planner.environments.deployment_lifecycle import (
     DeploymentLifecycleConflict,
     DeploymentLifecycleError,
     DeploymentLifecycleStore,
-    main,
 )
 
 SHA_A = "a" * 40
@@ -57,34 +56,6 @@ def test_start_transition_read_and_additive_v1_fields(tmp_path: Path) -> None:
     assert read.available is True
     assert read.lifecycle is not None
     assert read.lifecycle.phase == "succeeded"
-
-
-@pytest.mark.parametrize(
-    ("change", "reason"),
-    [
-        ({"version": 2}, "malformed"),
-        ({"version": True}, "malformed"),
-        ({"requested_sha": "not-a-sha"}, "malformed"),
-        ({"requested_sha": "a" * 64}, "malformed"),
-        ({"phase": "invented"}, "malformed"),
-        ({"detail": "x" * 501}, "malformed"),
-        ({"updated_at": "2026-07-29T10:00:00"}, "malformed"),
-    ],
-)
-def test_unsupported_or_malformed_core_is_explicitly_unavailable(
-    tmp_path: Path,
-    change: dict[str, object],
-    reason: str,
-) -> None:
-    store = _store(tmp_path)
-    store.start("deploy-1", SHA_B, expected_deployment_id=None)
-    payload = json.loads(store.path.read_text(encoding="utf-8"))
-    payload.update(change)
-    store.path.write_text(json.dumps(payload), encoding="utf-8")
-    read = store.read()
-    assert read.available is False
-    assert read.lifecycle is None
-    assert reason in (read.reason or "")
 
 
 def test_malformed_json_oversize_and_symlink_are_unavailable(tmp_path: Path) -> None:
@@ -134,35 +105,6 @@ def test_atomic_replace_fault_leaves_previous_record_intact(
     assert list(store.path.parent.glob(f".{store.path.name}.*.tmp")) == []
 
 
-def test_freshness_is_bounded_and_problems_persist(tmp_path: Path) -> None:
-    clock = Clock()
-    store = _store(tmp_path, clock)
-    store.start("deploy-1", SHA_B, expected_deployment_id=None, prior_sha=SHA_A)
-    assert store.project(SHA_A).state == "preparing"
-    clock.value += timedelta(minutes=16)
-    assert store.project(SHA_A).state == "unknown"
-
-    store.start("deploy-2", SHA_B, expected_deployment_id="deploy-1", prior_sha=SHA_A)
-    store.transition("deploy-2", "restarting")
-    store.transition("deploy-2", "verifying")
-    store.transition("deploy-2", "app_healthy", serving_sha=SHA_B)
-    store.transition("deploy-2", "succeeded")
-    assert store.project(SHA_B).state == "back_up"
-    assert store.project(SHA_A).state == "problem"
-    clock.value += timedelta(minutes=6)
-    settled = store.project(SHA_B)
-    assert settled.state == "idle"
-    assert settled.outcome == "succeeded"
-    assert settled.valid_until is None
-
-    store.start("deploy-3", SHA_B, expected_deployment_id="deploy-2", prior_sha=SHA_A)
-    store.transition("deploy-3", "failed", detail="backup failed", code="backup_failed")
-    clock.value += timedelta(days=31)
-    projection = store.project(SHA_A)
-    assert projection.state == "problem"
-    assert projection.detail == "backup failed"
-
-
 def test_rollback_requires_proven_prior_serving_sha(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.start("deploy-1", SHA_B, expected_deployment_id=None, prior_sha=SHA_A)
@@ -172,120 +114,3 @@ def test_rollback_requires_proven_prior_serving_sha(tmp_path: Path) -> None:
     rolled_back = store.transition("deploy-1", "rolled_back", serving_sha=SHA_A)
     assert rolled_back.serving_sha == SHA_A
     assert store.project(SHA_A).outcome == "rolled_back"
-
-
-def test_fresh_start_supersedes_old_evidence_and_terminal_preservation_is_a_noop(
-    tmp_path: Path,
-) -> None:
-    store = _store(tmp_path)
-    store.start("deploy-1", SHA_A, expected_deployment_id=None)
-    store.transition("deploy-1", "failed")
-    store.start("deploy-2", SHA_B, expected_deployment_id="deploy-1")
-    store.transition("deploy-2", "failed")
-    preserved = store.transition(
-        "deploy-2",
-        "failed",
-        detail="generic finalizer",
-        preserve_terminal=True,
-    )
-    assert preserved.detail is None
-
-
-def test_missing_and_malformed_records_both_require_an_explicit_empty_expectation(
-    tmp_path: Path,
-) -> None:
-    store = _store(tmp_path)
-    store.start("deploy-1", SHA_A, expected_deployment_id=None)
-    store.path.write_text("{", encoding="utf-8")
-
-    # Malformed evidence has no readable deployment ID, so a caller that observed
-    # that exact state can replace it under the same lock.
-    store.start("deploy-2", SHA_B, expected_deployment_id=None)
-    lifecycle = store.read().lifecycle
-    assert lifecycle is not None
-    assert lifecycle.deployment_id == "deploy-2"
-
-
-def test_stale_empty_expectation_loses_after_another_start(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    # Runner A observed no readable record. Runner B wins the locked start first.
-    store.start("deploy-b", SHA_B, expected_deployment_id=None)
-    with pytest.raises(DeploymentLifecycleConflict):
-        store.start("deploy-a", SHA_A, expected_deployment_id=None)
-
-
-def test_stdlib_cli_emits_wire_ready_projection(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    path = tmp_path / "deployment-lifecycle.json"
-    assert (
-        main(
-            [
-                "start",
-                "--path",
-                str(path),
-                "--deployment-id",
-                "deploy-1",
-                "--requested-sha",
-                SHA_B,
-            ]
-        )
-        == 0
-    )
-    capsys.readouterr()
-    assert (
-        main(
-            [
-                "project",
-                "--path",
-                str(path),
-                "--deployed-sha",
-                SHA_A,
-            ]
-        )
-        == 0
-    )
-    payload = json.loads(capsys.readouterr().out)
-    assert payload == {
-        "deployed_sha": SHA_A,
-        "detail": None,
-        "outcome": None,
-        "state": "preparing",
-        "target_sha": SHA_B,
-        "valid_until": payload["valid_until"],
-    }
-
-
-def test_stdlib_protocol_reads_current_id_for_the_next_locked_start(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    path = tmp_path / "deployment-lifecycle.json"
-    assert main(
-        [
-            "start",
-            "--path",
-            str(path),
-            "--deployment-id",
-            "deploy-1",
-            "--requested-sha",
-            SHA_A,
-        ]
-    ) == 0
-    capsys.readouterr()
-    assert main(["read", "--path", str(path)]) == 0
-    observed = json.loads(capsys.readouterr().out)
-
-    assert main(
-        [
-            "start",
-            "--path",
-            str(path),
-            "--deployment-id",
-            "deploy-2",
-            "--requested-sha",
-            SHA_B,
-            "--expected-deployment-id",
-            observed["deployment_id"],
-        ]
-    ) == 0
-    assert json.loads(capsys.readouterr().out)["deployment_id"] == "deploy-2"

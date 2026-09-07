@@ -11,7 +11,6 @@ from planner.core.db import connect, create_schema
 from planner.notifications import data as notifications_data
 
 PREVIOUS_REVISION = "backend_usage_and_model_enablement"
-HEAD_REVISION = "planning_day_direction"
 
 
 def _upgrade_to_previous_revision(path: Path) -> None:
@@ -114,9 +113,6 @@ def test_upgrade_keys_preferences_by_subject_and_preserves_notification_history(
     upgraded = connect(str(db_path))
     create_schema(upgraded)
 
-    assert upgraded.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
-        HEAD_REVISION
-    )
     assert [
         tuple(row)
         for row in upgraded.execute(

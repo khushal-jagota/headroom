@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
-  sprintItemIsDone,
-  sprintItemRollup,
+  outcomeTicketProgress,
   sprintDayLabel,
   sprintProjectGroups,
   sprintTicketCondition,
   sprintTicketSectionsForTickets,
-  type SprintItem,
   type SprintTicket
 } from "../src/lib/sprintPresentation";
+import type { SprintOutcomeGroup, SprintTicketSummary } from "../src/lib/types";
 
 describe("Sprint day presentation", () => {
   const weeklySprint = { date_start: "2026-08-03", date_end: "2026-08-09" };
@@ -25,23 +24,21 @@ describe("Sprint day presentation", () => {
   });
 });
 
-const ticket = (overrides: Partial<SprintTicket> = {}): SprintTicket => ({
+const ticket = (overrides: Partial<SprintTicketSummary> = {}): SprintTicketSummary => ({
   id: "t_default",
   title: "Default",
   stage: "needs_success",
   priority: "P2",
   ticket_status: "empty",
+  project_id: "project_panels",
+  sprint_item_id: "si_default",
+  waiting_to_closeout: false,
   ...overrides
 });
 
-const item = (overrides: Partial<SprintItem> = {}): SprintItem => ({
-  id: "si_default",
-  title: "Default item",
-  priority: "P2",
-  project_id: "project_panels",
-  project: "Panels",
-  kind: "normal",
-  status: "todo",
+const item = (overrides: Partial<SprintOutcomeGroup> = {}): SprintOutcomeGroup => ({
+  outcome: { id: "si_default", title: "Default outcome", priority: "P2", deadline: null, project_id: "project_panels", project: "Panels", created_at: 1, updated_at: 1 },
+  committed: true,
   tickets: [],
   ...overrides
 });
@@ -53,7 +50,7 @@ describe("Sprint ticket conditions", () => {
     [ticket({ ticket_status: "errored" }), "errored", "errored"],
     // Messaging a Ticket that was awaiting approval pairs it and leaves the proposal
     // filed. The status is the fact, so it reads paired.
-    [ticket({ ticket_status: "paired", has_pending_proposal: true }), "current-paired", "paired"],
+    [ticket({ ticket_status: "paired" }), "current-paired", "paired"],
     [ticket({ ticket_status: "awaiting_approval" }), "current-awaiting-approval", "to review"],
     [ticket({ ticket_status: "needs_user" }), "needs-me", "need you"],
     [ticket({ ticket_status: "user" }), "needs-me", "yours"],
@@ -66,14 +63,11 @@ describe("Sprint ticket conditions", () => {
   });
 });
 
-describe("Sprint Item presentation", () => {
-  it("uses words for empty and untouched items, a fraction for progress, and done when settled", () => {
-    expect(sprintItemRollup(item())).toBe("to do");
-    expect(sprintItemRollup(item({ tickets: [ticket()] }))).toBe("to do");
-    expect(sprintItemRollup(item({ tickets: [ticket({ stage: "done" }), ticket()] }))).toBe("1/2");
-    const settled = item({ tickets: [ticket({ stage: "done" }), ticket({ id: "t_2", stage: "done" })] });
-    expect(sprintItemRollup(settled)).toBe("done");
-    expect(sprintItemIsDone(settled)).toBe(true);
+describe("Outcome presentation", () => {
+  it("qualifies Ticket progress and never calls a zero-child Outcome done", () => {
+    expect(outcomeTicketProgress(item())).toBe("No Tickets");
+    expect(outcomeTicketProgress(item({ tickets: [ticket()] }))).toBe("0/1 Tickets done");
+    expect(outcomeTicketProgress(item({ tickets: [ticket({ stage: "done" }), ticket()] }))).toBe("1/2 Tickets done");
   });
 
   it("presents unclassified Sprint Tickets without a Sprint Item identity", () => {
@@ -89,7 +83,7 @@ describe("Sprint Item presentation", () => {
 
   it("excludes dropped Tickets from sections and rollups", () => {
     const value = item({ tickets: [ticket({ stage: "done" }), ticket({ id: "t_drop", stage: "dropped" })] });
-    expect(sprintItemRollup(value)).toBe("done");
+    expect(outcomeTicketProgress(value)).toBe("1/1 Tickets done");
     expect(sprintTicketSectionsForTickets(value.tickets || [], new Set())).toEqual({
       today: [],
       later: [],
@@ -117,9 +111,9 @@ describe("Sprint Project overview", () => {
   it("orders assessed Projects, uses the stable fallback, and puts Other last", () => {
     const groups = sprintProjectGroups(
       [
-        item({ id: "si_other", project_id: "project_other", project: "Other" }),
-        item({ id: "si_panels", project_id: "project_panels", project: "Panels" }),
-        item({ id: "si_vylo", project_id: "project_vylo", project: "Vylo" })
+        item({ outcome: { ...item().outcome, id: "si_other", project_id: "project_other", project: "Other" } }),
+        item({ outcome: { ...item().outcome, id: "si_panels", project_id: "project_panels", project: "Panels" } }),
+        item({ outcome: { ...item().outcome, id: "si_vylo", project_id: "project_vylo", project: "Vylo" } })
       ],
       [
         { id: "project_other", name: "Other", summary: "", priority: null, created_at: 1, updated_at: 1 },
@@ -130,11 +124,11 @@ describe("Sprint Project overview", () => {
     expect(groups.map((group) => group.label)).toEqual(["Panels", "Vylo", "Other"]);
   });
 
-  it("puts completed Items last within each Project", () => {
-    const normal = item({ id: "si_normal", priority: "P3" });
-    const urgent = item({ id: "si_urgent", priority: "P0" });
-    const done = item({ id: "si_done", priority: "P0", tickets: [ticket({ stage: "done" })] });
-    const [group] = sprintProjectGroups([normal, done, urgent], []);
-    expect(group.items.map((entry) => entry.id)).toEqual(["si_urgent", "si_normal", "si_done"]);
+  it("orders Outcomes by priority and creation rather than aggregate completion", () => {
+    const normal = item({ outcome: { ...item().outcome, id: "si_normal", priority: "P3" } });
+    const older = item({ outcome: { ...item().outcome, id: "si_older", priority: "P0", created_at: 1 }, tickets: [ticket({ stage: "done" })] });
+    const newer = item({ outcome: { ...item().outcome, id: "si_newer", priority: "P0", created_at: 2 } });
+    const [group] = sprintProjectGroups([normal, newer, older], []);
+    expect(group.outcomes.map((entry) => entry.outcome.id)).toEqual(["si_older", "si_newer", "si_normal"]);
   });
 });

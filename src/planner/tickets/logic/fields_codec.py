@@ -1,106 +1,69 @@
-"""The tickets.fields (de)serializer and slot accessors. Pure: json + contracts.
-The stored JSON shape has field keys, each containing a slot of
-{value, proposal, user_note}, proposal being {body, proposed_by, created_at} or null.
-Legacy rows using {notes} are accepted on read. with_slot is copy-on-write so decision
-functions never mutate their input."""
+"""Strict codecs for saved field values and the one pending Ticket proposal."""
 
 from __future__ import annotations
 
 import json
-from typing import Any, cast
+from dataclasses import asdict
+from types import MappingProxyType
+from typing import Any
 
 from planner.core.contracts import ErrorCode, PlannerError
-from planner.tickets.contracts import (
-    FieldSlot,
-    Proposal,
-    TicketFields,
-)
-
-
-def _slot_to_dict(slot: FieldSlot) -> dict[str, Any]:
-    proposal: dict[str, Any] | None = None
-    if slot.proposal is not None:
-        proposal = {
-            "body": slot.proposal.body,
-            "proposed_by": slot.proposal.proposed_by,
-            "created_at": slot.proposal.created_at,
-        }
-    return {"value": slot.value, "proposal": proposal, "user_note": slot.user_note}
-
-
-def fields_to_json(fields: TicketFields) -> str:
-    payload = {fid: _slot_to_dict(slot) for fid, slot in fields.slots.items()}
-    return json.dumps(payload)
+from planner.tickets.contracts import PendingTicketProposal, TicketFieldValues
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 
 def _require(condition: bool) -> None:
     if not condition:
-        raise PlannerError(ErrorCode.validation, "corrupt ticket fields JSON")
+        raise PlannerError(ErrorCode.validation, "corrupt ticket field state")
 
 
-def _proposal_from_obj(obj: Any) -> Proposal | None:
-    if obj is None:
+def values_to_json(values: TicketFieldValues) -> str:
+    return json.dumps(dict(values), ensure_ascii=False)
+
+
+def values_from_json(raw: str, field_ids: tuple[str, ...]) -> TicketFieldValues:
+    value: Any = json.loads(raw)
+    _require(isinstance(value, dict))
+    _require(all(key in field_ids and isinstance(body, str) for key, body in value.items()))
+    return MappingProxyType({key: value[key] for key in field_ids if key in value})
+
+
+def proposal_to_json(proposal: PendingTicketProposal | None) -> str | None:
+    return None if proposal is None else json.dumps(asdict(proposal), ensure_ascii=False)
+
+
+def proposal_from_json(raw: str | None) -> PendingTicketProposal | None:
+    if raw is None:
         return None
+    obj: Any = json.loads(raw)
     _require(isinstance(obj, dict))
-    body = obj.get("body")
-    proposed_by = obj.get("proposed_by")
-    created_at = obj.get("created_at")
-    _require(isinstance(body, str))
-    _require(isinstance(proposed_by, str))
-    _require(isinstance(created_at, int) and not isinstance(created_at, bool))
-    return Proposal(
-        body=body,
-        proposed_by=proposed_by,
-        created_at=created_at,
+    _require(set(obj) == {"field", "body", "proposed_by", "created_at"})
+    _require(all(isinstance(obj[key], str) for key in ("field", "body", "proposed_by")))
+    _require(isinstance(obj["created_at"], int) and not isinstance(obj["created_at"], bool))
+    return PendingTicketProposal(**obj)
+
+
+def validate_state(
+    values: TicketFieldValues,
+    proposal: PendingTicketProposal | None,
+    stage: str,
+    *,
+    worker_type_definition: WorkerTypeDefinition,
+) -> None:
+    _require(
+        all(
+            worker_type_definition.has_field(key) and isinstance(body, str)
+            for key, body in values.items()
+        )
     )
+    if proposal is not None:
+        _require(proposal.field == worker_type_definition.gating_field(stage))
+        _require(isinstance(proposal.body, str) and isinstance(proposal.proposed_by, str))
+        _require(isinstance(proposal.created_at, int) and not isinstance(proposal.created_at, bool))
 
 
-def _slot_from_obj(obj: Any) -> FieldSlot:
-    _require(isinstance(obj, dict))
-    value = obj.get("value")
-    user_note = obj.get("user_note", obj.get("notes"))
-    _require(value is None or isinstance(value, str))
-    _require(user_note is None or isinstance(user_note, str))
-    return FieldSlot(
-        value=value,
-        proposal=_proposal_from_obj(obj.get("proposal")),
-        user_note=user_note,
-    )
-
-
-def _data_from_json(raw: str) -> dict[str, Any]:
-    data: Any = json.loads(raw)
-    _require(isinstance(data, dict))
-    return cast(dict[str, Any], data)
-
-
-def fields_from_json(raw: str) -> TicketFields:
-    """Decode the exact stored top-level field map without Worker-type resolution."""
-    data = _data_from_json(raw)
-    slots = {str(field_id): _slot_from_obj(obj) for field_id, obj in data.items()}
-    return TicketFields(slots)
-
-
-def declared_fields_from_json(raw: str, field_ids: tuple[str, ...]) -> TicketFields:
-    """Validate every declared field while ignoring unknown legacy top-level keys."""
-    data = _data_from_json(raw)
-    slots: dict[str, FieldSlot] = {}
-    for field_id in field_ids:
-        _require(field_id in data)
-        slots[field_id] = _slot_from_obj(data[field_id])
-    return TicketFields(slots)
-
-
-def get_slot(fields: TicketFields, field_id: str) -> FieldSlot:
-    slot = fields.slots.get(field_id)
-    if slot is None:
-        raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": field_id})
-    return slot
-
-
-def with_slot(fields: TicketFields, field_id: str, slot: FieldSlot) -> TicketFields:
-    if field_id not in fields.slots:
-        raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": field_id})
-    new = dict(fields.slots)  # copy-on-write; declared order preserved
-    new[field_id] = slot
-    return TicketFields(new)
+def field_value(
+    values: TicketFieldValues, field: str, *, worker_type_definition: WorkerTypeDefinition
+) -> str | None:
+    worker_type_definition.field_definition(field)
+    return values.get(field)

@@ -126,11 +126,10 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(
         actor="agent",
         now=2,
     )
-    tickets_data.set_field_user_note(
+    tickets_data.replace_guidance(
         tmp_db,
         ticket.id,
-        field="success",
-        user_note="agent note",
+        body="agent note",
         actor="agent",
         now=3,
     )
@@ -151,11 +150,10 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(
         actor="human",
         now=5,
     )
-    tickets_data.set_field_user_note(
+    tickets_data.replace_guidance(
         tmp_db,
         ticket.id,
-        field="success",
-        user_note="field guidance",
+        body="field guidance",
         actor="human",
         now=6,
     )
@@ -191,11 +189,11 @@ def test_only_edited_approval_produces_context_at_each_approval_gate(
             now=10,
         )
         for prior in prior_fields:
-            tickets_data.file_proposal(
-                tmp_db, ticket.id, field=prior, body=prior, actor="agent", now=11
+            tickets_data.file_current_proposal_with_recap(
+                tmp_db, ticket.id, body=prior, actor="agent", now=11, recap="Current work"
             )
-        tickets_data.file_proposal(
-            tmp_db, ticket.id, field=field, body="draft", actor="agent", now=12
+        tickets_data.file_current_proposal_with_recap(
+            tmp_db, ticket.id, body="draft", actor="agent", now=12, recap="Current work"
         )
         _clear(tmp_db, ticket.id)
         tickets_data.accept_proposal(
@@ -232,8 +230,8 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
         now=20,
     )
     for field in ("success", "approach", "plan", "implementation"):
-        tickets_data.file_proposal(
-            tmp_db, ticket.id, field=field, body=field, actor="agent", now=21
+        tickets_data.file_current_proposal_with_recap(
+            tmp_db, ticket.id, body=field, actor="agent", now=21, recap="Current work"
         )
     _clear(tmp_db, ticket.id)
 
@@ -248,8 +246,8 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
     assert len(_pending(tmp_db, ticket.id)) == 1
     _clear(tmp_db, ticket.id)
 
-    tickets_data.file_proposal(
-        tmp_db, ticket.id, field="closeout", body="closeout draft", actor="agent", now=23
+    tickets_data.file_current_proposal_with_recap(
+        tmp_db, ticket.id, body="closeout draft", actor="agent", now=23, recap="Current work"
     )
     _clear(tmp_db, ticket.id)
     tickets_data.accept_proposal(
@@ -266,8 +264,8 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
 
 def test_human_recap_marks_context_but_agent_recap_does_not(tmp_db: Connection) -> None:
     ticket = _ticket(tmp_db)
-    tickets_data.file_proposal(
-        tmp_db, ticket.id, field="success", body="success", actor="agent", now=28
+    tickets_data.file_current_proposal_with_recap(
+        tmp_db, ticket.id, body="success", actor="agent", now=28, recap="Current work"
     )
     tickets_data.accept_proposal(
         tmp_db,

@@ -49,7 +49,12 @@ export function remainingWorkspaceTicketGroups(
 export function workspaceProgress(workspace: SprintItemWorkspace): string {
   const tickets = workspace.tickets.filter((ticket) => ticket.stage !== "dropped");
   const done = tickets.filter((ticket) => ticket.stage === "done").length;
-  return `${done} of ${tickets.length} done`;
+  return tickets.length ? `${done}/${tickets.length} Tickets done` : "No Tickets";
+}
+
+export function workspaceTicketSprintLabel(ticket: SprintItemWorkspaceTicket): string {
+  if (ticket.sprint_id === null) return "Backlog";
+  return ticket.sprint_name || ticket.sprint_id;
 }
 
 export type WorkspaceArtifactRow = {

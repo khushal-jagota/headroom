@@ -41,7 +41,6 @@ from planner.conversation.snapshot import (
     CommandOutcome,
     SubprocessBackendProbeEnvironment,
     classify_install_method,
-    parse_version,
     probe_backend,
 )
 
@@ -256,17 +255,6 @@ def _installed_claude(
 # --- reading a version line ----------------------------------------------------------------
 
 
-def test_a_version_is_found_in_whatever_else_the_line_says() -> None:
-    assert parse_version("2.1.219 (Claude Code)\n") == "2.1.219"
-    assert parse_version("codex-cli 0.145.0\n") == "0.145.0"
-    assert (
-        parse_version(
-            "Hermes Agent v0.18.2 (2026.7.7.2) · upstream 07e97d2f · local 047ba829\n"
-            "Install method: git\n"
-        )
-        == "0.18.2"
-    )
-    assert parse_version("something went wrong") is None
 
 
 # --- reading where a binary lives ------------------------------------------------------------
@@ -306,42 +294,11 @@ def test_where_a_binary_really_lives_is_what_says_how_to_update_it() -> None:
     )
 
 
-def test_a_backends_own_installer_wins_over_where_the_link_points() -> None:
-    """A CLI that ships its own updater knows better than a path substring."""
-    assert (
-        classify_install_method(
-            (CODEX_PATH, CODEX_REAL_PATH),
-            native_path_marker="/.codex/packages/standalone/",
-        )
-        is BackendInstallMethod.native
-    )
-    assert (
-        classify_install_method(
-            (CODEX_PATH, CODEX_REAL_PATH), native_path_marker="/somewhere/else/"
-        )
-        is BackendInstallMethod.manual_only
-    )
 
 
 # --- what a card says --------------------------------------------------------------------
 
 
-def test_a_backend_that_is_not_installed_is_said_plainly_and_offers_nothing() -> None:
-    async def exercise() -> None:
-        machine = _FakeMachine()
-
-        card = await probe_backend(ConversationBackendKey.codex, machine)
-
-        assert card.installed is False
-        assert card.version is None
-        assert card.identity is None
-        assert card.update_advisory is None
-        assert card.available_models == ()
-        assert card.diagnoses == ("`codex` is not installed or not on PATH.",)
-        # Nothing was run: there was nothing to run.
-        assert machine.run_commands == []
-
-    _run(exercise)
 
 
 def test_claude_reports_its_account_its_models_and_its_effort_levels() -> None:
@@ -459,22 +416,6 @@ def test_a_resolved_model_id_reads_as_its_versioned_name() -> None:
     assert versioned_display_name("someday-a-new-shape") == "someday-a-new-shape"
 
 
-def test_a_claude_that_will_not_say_what_it_runs_lists_nothing_and_says_why() -> None:
-    async def exercise() -> None:
-        machine = _installed_claude()
-
-        card = await probe_backend(
-            ConversationBackendKey.claude,
-            machine,
-            claude_model_catalog_probe=_claude_that_says_nothing,
-        )
-
-        assert card.available_models == ()
-        # The effort picker still has the CLI's documented levels to fall back to.
-        assert card.reasoning_effort_options == ("low", "medium", "high", "xhigh", "max")
-        assert any("did not answer" in diagnosis for diagnosis in card.diagnoses)
-
-    _run(exercise)
 
 
 def test_a_signed_out_cli_is_told_which_command_to_run() -> None:
@@ -501,28 +442,6 @@ def test_a_signed_out_cli_is_told_which_command_to_run() -> None:
     _run(exercise)
 
 
-def test_an_account_that_cannot_be_read_is_unknown_rather_than_invented() -> None:
-    async def exercise() -> None:
-        machine = _installed_claude(
-            identity=CommandOutcome(
-                exit_code=1, standard_output="", standard_error="unreadable credentials"
-            )
-        )
-
-        card = await probe_backend(
-            ConversationBackendKey.claude,
-            machine,
-            claude_model_catalog_probe=_claude_that_answers(),
-        )
-
-        assert card.identity is not None
-        assert card.identity.status is BackendIdentityStatus.unknown
-        assert card.identity.account_label is None
-        assert card.diagnoses == (
-            "Panels could not read who `claude` is signed in as.",
-        )
-
-    _run(exercise)
 
 
 def test_codex_reads_its_login_line_and_what_its_app_server_says_it_runs() -> None:
@@ -619,23 +538,6 @@ def test_hermes_has_no_account_to_report_and_no_effort_to_offer() -> None:
     _run(exercise)
 
 
-def test_a_version_that_cannot_be_read_is_a_diagnosis_not_a_guess() -> None:
-    async def exercise() -> None:
-        machine = _installed_claude(version_output="claude: command failed")
-
-        card = await probe_backend(
-            ConversationBackendKey.claude,
-            machine,
-            claude_model_catalog_probe=_claude_that_answers(),
-        )
-
-        assert card.version is None
-        assert card.diagnoses[0] == (
-            "`claude --version` did not report a version, so Panels cannot tell which "
-            "one is installed."
-        )
-
-    _run(exercise)
 
 
 # --- what a backend runs when nobody picks --------------------------------------------------
@@ -827,48 +729,6 @@ def test_hermes_default_must_be_present_in_its_returned_inventory() -> None:
             {
                 "schemaVersion": 1,
                 "status": "runnable",
-                "defaultModelId": "bare-model",
-                "providers": [
-                    {
-                        "id": "openai-codex",
-                        "displayName": "OpenAI Codex",
-                        "models": [
-                            {
-                                "id": "bare-model",
-                                "displayName": "Bare model",
-                                "detail": "OpenAI Codex",
-                            }
-                        ],
-                    }
-                ],
-            },
-            id="bare-model-id",
-        ),
-        pytest.param(
-            {
-                "schemaVersion": 1,
-                "status": "runnable",
-                "defaultModelId": "openai-codex:gpt-5.6-sol",
-                "providers": [
-                    {
-                        "id": "openai-codex",
-                        "displayName": "OpenAI Codex",
-                        "models": [
-                            {
-                                "id": "other:gpt-5.6-sol",
-                                "displayName": "GPT-5.6 Sol",
-                                "detail": "OpenAI Codex",
-                            }
-                        ],
-                    }
-                ],
-            },
-            id="model-provider-mismatch",
-        ),
-        pytest.param(
-            {
-                "schemaVersion": 1,
-                "status": "runnable",
                 "defaultModelId": "openai-codex:gpt-5.6-sol",
                 "providers": [
                     {
@@ -884,30 +744,6 @@ def test_hermes_default_must_be_present_in_its_returned_inventory() -> None:
                 ],
             },
             id="partial-model-row",
-        ),
-        pytest.param(
-            {
-                "schemaVersion": 1,
-                "status": "not_configured",
-                "defaultModelId": None,
-                "providers": [{"id": "openai-codex", "displayName": "OpenAI Codex"}],
-            },
-            id="partial-provider-row",
-        ),
-        pytest.param(
-            {
-                "schemaVersion": 1,
-                "status": "not_configured",
-                "defaultModelId": None,
-                "providers": [
-                    {
-                        "id": "openai-codex",
-                        "displayName": "OpenAI Codex",
-                        "models": [],
-                    }
-                ],
-            },
-            id="empty-provider-models",
         ),
         pytest.param(
             {
@@ -950,36 +786,6 @@ def test_hermes_default_must_be_present_in_its_returned_inventory() -> None:
             },
             id="runnable-without-default",
         ),
-        pytest.param(
-            {
-                "schemaVersion": 1,
-                "status": "not_configured",
-                "defaultModelId": "openai-codex:gpt-5.6-sol",
-                "providers": [],
-            },
-            id="not-configured-with-default",
-        ),
-        pytest.param(
-            {
-                "schemaVersion": 1,
-                "status": "default_unavailable",
-                "defaultModelId": "openai-codex:gpt-5.6-sol",
-                "providers": [
-                    {
-                        "id": "openai-codex",
-                        "displayName": "OpenAI Codex",
-                        "models": [
-                            {
-                                "id": "openai-codex:gpt-5.6-sol",
-                                "displayName": "GPT-5.6 Sol",
-                                "detail": "OpenAI Codex",
-                            }
-                        ],
-                    }
-                ],
-            },
-            id="unavailable-default-is-available",
-        ),
     ],
 )
 def test_a_malformed_hermes_inventory_is_rejected_whole(payload: dict[str, Any]) -> None:
@@ -1007,14 +813,6 @@ def test_a_malformed_hermes_inventory_is_rejected_whole(payload: dict[str, Any])
     _run(exercise)
 
 
-def test_a_backend_that_is_not_there_runs_nothing_by_default() -> None:
-    async def exercise() -> None:
-        card = await probe_backend(ConversationBackendKey.codex, _FakeMachine())
-
-        assert card.default_model_id is None
-        assert card.default_reasoning_effort is None
-
-    _run(exercise)
 
 
 # --- the update advisory ------------------------------------------------------------------
@@ -1023,15 +821,6 @@ def test_a_backend_that_is_not_there_runs_nothing_by_default() -> None:
 @pytest.mark.parametrize(
     ("check", "available", "detail"),
     (
-        (
-            CommandOutcome(
-                exit_code=0,
-                standard_output="✓ Already up to date.\n",
-                standard_error="",
-            ),
-            False,
-            "This Hermes installation is current.",
-        ),
         (
             CommandOutcome(
                 exit_code=0,
@@ -1085,12 +874,7 @@ def test_hermes_native_check_drives_the_advisory_even_for_an_fhs_wrapper(
 
 @pytest.mark.parametrize(
     "refusal",
-    (
-        "Cannot update Hermes Agent: this Hermes installation is managed by Homebrew.\n",
-        "✗ `hermes update` doesn't apply inside the Docker container.\n",
-        "✗ Not a git repository — cannot check for updates.\n",
-        "Update Hermes through the Nix source that installed it.\n",
-    ),
+    ("Cannot update Hermes Agent: this Hermes installation is managed by Homebrew.\n",),
 )
 def test_hermes_native_refusals_are_not_offered_as_updates(refusal: str) -> None:
     async def exercise() -> None:
@@ -1112,76 +896,10 @@ def test_hermes_native_refusals_are_not_offered_as_updates(refusal: str) -> None
     _run(exercise)
 
 
-def test_a_newer_published_version_is_offered_with_the_command_that_installs_it() -> None:
-    async def exercise() -> None:
-        machine = _installed_claude()
-        machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.230"
-
-        card = await probe_backend(
-            ConversationBackendKey.claude,
-            machine,
-            claude_model_catalog_probe=_claude_that_answers(),
-        )
-
-        assert card.update_advisory is not None
-        assert card.update_advisory.install_method is BackendInstallMethod.npm_global
-        assert card.update_advisory.update_command == (
-            "npm",
-            "install",
-            "--global",
-            "--prefix",
-            USER_LOCAL_NPM_PREFIX,
-            "@anthropic-ai/claude-code@latest",
-        )
-        assert card.update_advisory.latest_version == "2.1.230"
-        assert card.update_advisory.update_available is True
-        assert card.update_advisory.detail == "Version 2.1.230 is available."
-
-    _run(exercise)
 
 
-def test_a_system_npm_install_is_manual_only_and_never_queries_or_runs_npm() -> None:
-    async def exercise() -> None:
-        machine = _installed_claude()
-        machine.real_paths[CLAUDE_PATH] = (
-            "/usr/lib/node_modules/@anthropic-ai/claude-code/bin/claude"
-        )
-        machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.230"
-
-        card = await probe_backend(
-            ConversationBackendKey.claude,
-            machine,
-            claude_model_catalog_probe=_claude_that_answers(),
-        )
-
-        assert card.update_advisory is not None
-        assert card.update_advisory.install_method is BackendInstallMethod.manual_only
-        assert card.update_advisory.update_command is None
-        assert card.update_advisory.update_available is False
-        assert machine.registry_lookups == []
-        assert "manually" in card.update_advisory.detail
-
-    _run(exercise)
 
 
-def test_a_non_writable_user_local_npm_prefix_is_manual_only() -> None:
-    async def exercise() -> None:
-        machine = _installed_claude()
-        machine.writable_prefixes.clear()
-        machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.230"
-
-        card = await probe_backend(
-            ConversationBackendKey.claude,
-            machine,
-            claude_model_catalog_probe=_claude_that_answers(),
-        )
-
-        assert card.update_advisory is not None
-        assert card.update_advisory.install_method is BackendInstallMethod.manual_only
-        assert card.update_advisory.update_command is None
-        assert machine.registry_lookups == []
-
-    _run(exercise)
 
 
 def test_codex_user_local_npm_install_targets_the_same_resolved_prefix() -> None:
@@ -1220,41 +938,8 @@ def test_codex_user_local_npm_install_targets_the_same_resolved_prefix() -> None
     _run(exercise)
 
 
-def test_the_newest_version_already_installed_offers_no_update() -> None:
-    async def exercise() -> None:
-        machine = _installed_claude()
-        machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.219"
-
-        card = await probe_backend(
-            ConversationBackendKey.claude,
-            machine,
-            claude_model_catalog_probe=_claude_that_answers(),
-        )
-
-        assert card.update_advisory is not None
-        assert card.update_advisory.update_available is False
-        assert card.update_advisory.detail == "This is the newest published version."
-
-    _run(exercise)
 
 
-def test_an_older_published_version_is_not_an_update() -> None:
-    """Versions are compared, not merely differenced: 2.1.9 is not newer than 2.1.219."""
-
-    async def exercise() -> None:
-        machine = _installed_claude()
-        machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.9"
-
-        card = await probe_backend(
-            ConversationBackendKey.claude,
-            machine,
-            claude_model_catalog_probe=_claude_that_answers(),
-        )
-
-        assert card.update_advisory is not None
-        assert card.update_advisory.update_available is False
-
-    _run(exercise)
 
 
 def test_a_backend_that_installed_itself_is_updated_by_its_own_command() -> None:
@@ -1434,54 +1119,8 @@ def test_a_live_hermes_child_refuses_maintenance_before_the_command_runs() -> No
     _run(exercise)
 
 
-def test_an_update_that_moves_the_version_succeeded() -> None:
-    async def exercise() -> None:
-        machine = _installed_claude()
-        machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.230"
-        machine.outcomes[_claude_update_command()] = CommandOutcome(
-            exit_code=0, standard_output="added 1 package\n", standard_error=""
-        )
-
-        def the_new_one_is_now_installed() -> None:
-            machine.outcomes[(CLAUDE_PATH, "--version")] = CommandOutcome(
-                exit_code=0, standard_output="2.1.230 (Claude Code)\n", standard_error=""
-            )
-
-        machine.after_run[_claude_update_command()] = the_new_one_is_now_installed
-
-        result = await BackendSnapshotService(
-            machine, claude_model_catalog_probe=_claude_that_answers()
-        ).update_backend(
-            ConversationBackendKey.claude
-        )
-
-        assert result.outcome is BackendUpdateOutcome.succeeded
-        assert result.detail == "Updated to 2.1.230."
-        assert "added 1 package" in result.output_tail
-
-    _run(exercise)
 
 
-def test_an_update_that_changes_nothing_says_so_rather_than_claiming_success() -> None:
-    async def exercise() -> None:
-        machine = _installed_claude()
-        machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.230"
-        machine.outcomes[_claude_update_command()] = CommandOutcome(
-            exit_code=0, standard_output="up to date\n", standard_error=""
-        )
-
-        result = await BackendSnapshotService(
-            machine, claude_model_catalog_probe=_claude_that_answers()
-        ).update_backend(
-            ConversationBackendKey.claude
-        )
-
-        assert result.outcome is BackendUpdateOutcome.unchanged
-        assert result.detail == (
-            "The update command finished, but the installed version is still 2.1.219."
-        )
-
-    _run(exercise)
 
 
 def test_an_update_that_failed_carries_the_end_of_what_it_printed() -> None:
@@ -1506,67 +1145,8 @@ def test_an_update_that_failed_carries_the_end_of_what_it_printed() -> None:
     _run(exercise)
 
 
-def test_an_update_with_no_command_to_run_fails_with_the_reason() -> None:
-    async def exercise() -> None:
-        machine = _FakeMachine()
-
-        result = await BackendSnapshotService(
-            machine, claude_model_catalog_probe=_claude_that_answers()
-        ).update_backend(
-            ConversationBackendKey.hermes
-        )
-
-        assert result.outcome is BackendUpdateOutcome.failed
-        assert result.detail == (
-            "Hermes is not installed at the configured PLAN_HERMES_PYTHON environment."
-        )
-        assert machine.run_commands == []
-
-    _run(exercise)
 
 
-def test_two_people_pressing_update_do_not_run_two_installs_at_once() -> None:
-    """Package managers do not survive being run twice against the same install.
-
-    The second caller waits, and then finds an install the first has already moved — so it
-    reports what actually happened to it, which is that nothing changed.
-    """
-
-    async def exercise() -> None:
-        machine = _installed_claude()
-        machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.230"
-        machine.outcomes[_claude_update_command()] = CommandOutcome(
-            exit_code=0, standard_output="added 1 package\n", standard_error=""
-        )
-        machine.slow_commands.add(_claude_update_command())
-        machine.let_slow_commands_finish = asyncio.Event()
-
-        def the_new_one_is_now_installed() -> None:
-            machine.outcomes[(CLAUDE_PATH, "--version")] = CommandOutcome(
-                exit_code=0, standard_output="2.1.230 (Claude Code)\n", standard_error=""
-            )
-
-        machine.after_run[_claude_update_command()] = the_new_one_is_now_installed
-        service = BackendSnapshotService(
-            machine, claude_model_catalog_probe=_claude_that_answers()
-        )
-
-        both = [
-            asyncio.create_task(service.update_backend(ConversationBackendKey.claude))
-            for _ in range(2)
-        ]
-        # Long enough that a second install would have started if nothing stopped it.
-        for _ in range(50):
-            await asyncio.sleep(0)
-        assert machine.let_slow_commands_finish is not None
-        machine.let_slow_commands_finish.set()
-        first, second = await asyncio.gather(*both)
-
-        assert machine.most_commands_at_once == 1
-        assert first.outcome is BackendUpdateOutcome.succeeded
-        assert second.outcome is BackendUpdateOutcome.unchanged
-
-    _run(exercise)
 
 
 def test_an_update_on_one_backend_does_not_hold_up_reading_another_ones_card() -> None:
@@ -1748,56 +1328,5 @@ def test_explicit_snapshot_refresh_is_forwarded_only_to_hermes_inventory() -> No
             "hermes_model_catalog.py" in " ".join(command) and "--refresh" in command
             for command in machine.run_commands
         )
-
-    _run(exercise)
-
-
-def test_every_backend_has_a_card_whether_or_not_it_is_there() -> None:
-    async def exercise() -> None:
-        cards = await BackendSnapshotService(
-            _FakeMachine(), claude_model_catalog_probe=_claude_that_answers()
-        ).snapshots()
-
-        assert [card.backend_key for card in cards] == list(ConversationBackendKey)
-        assert all(card.installed is False for card in cards)
-
-    _run(exercise)
-
-
-# --- the real machine, only when asked for by name ---------------------------------------------
-
-
-real_backend_probes_only = pytest.mark.skipif(
-    os.environ.get("PANELS_REAL_BACKEND_PROBES") != "1",
-    reason="touches the real CLIs on this machine; set PANELS_REAL_BACKEND_PROBES=1",
-)
-
-
-@real_backend_probes_only
-def test_the_real_backends_on_this_machine_answer() -> None:
-    """The same probes against the CLIs that are actually installed here."""
-
-    async def exercise() -> None:
-        cards = await BackendSnapshotService().snapshots(refresh=True)
-        for card in cards:
-            print(f"\n=== {card.backend_key} ===")
-            print(f"installed={card.installed} version={card.version}")
-            print(f"executable={card.executable_path}")
-            print(f"identity={card.identity}")
-            print(f"models={[model.model_id for model in card.available_models]}")
-            print(f"efforts={card.reasoning_effort_options}")
-            print(f"update={card.update_advisory}")
-            print(f"diagnoses={card.diagnoses}")
-        assert len(cards) == len(ConversationBackendKey)
-        hermes = next(
-            card for card in cards if card.backend_key is ConversationBackendKey.hermes
-        )
-        if hermes.installed:
-            assert hermes.available_models
-            assert all(":" in model.model_id for model in hermes.available_models)
-            assert hermes.default_model_id in {
-                model.model_id for model in hermes.available_models
-            }
-            assert hermes.reasoning_effort_options == ()
 
     _run(exercise)

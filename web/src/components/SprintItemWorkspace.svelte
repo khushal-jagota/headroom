@@ -9,6 +9,7 @@
     todayWorkspaceTicketGroups,
     workspaceArtifactRows,
     workspaceProgress,
+    workspaceTicketSprintLabel,
     type WorkspaceTicketGroup
   } from "../lib/sprintItemWorkspace";
   import { sprintTicketCondition } from "../lib/sprintPresentation";
@@ -31,8 +32,7 @@
     itemId,
     sprintName,
     backHref = "#/sprint"
-    // A host that is already a way back needs no link back. Atlas raises this over
-    // the world with its own close, so it passes null and the line is not drawn.
+    // A host that is already a way back can pass null so the line is not drawn.
   }: { itemId: string; sprintName: string; backHref?: string | null } = $props();
 
   const workspace = createQuery(() => queries.sprintItemWorkspace(itemId));
@@ -119,6 +119,7 @@
           >
             <StageMark state={condition.mark} aria-label={condition.word} />
             <span class="ticket-row-title">{ticket.title}</span>
+            <span class="ticket-row-sprint" data-ticket-sprint={ticket.sprint_id || "backlog"}>{workspaceTicketSprintLabel(ticket)}</span>
           </a>
         {/each}
       </div>
@@ -151,16 +152,21 @@
             <div class="sprint-workspace-identity">
               <TicketPriorityControl
                 priority={item.priority}
-                ariaLabel="Sprint Item priority"
+                ariaLabel="Outcome priority"
                 onChange={(value) => void saveItem("priority", value)}
               />
               <span>·</span><span>{item.project}</span>
               <span>·</span><span>{workspaceProgress(item)}</span>
+              {#if item.committed_sprints.length}
+                <span>·</span><span class="sprint-workspace-commitments">
+                  {#each item.committed_sprints as sprint, index (sprint.id)}{#if index}, {/if}<a href={`#/sprint?sprint=${encodeURIComponent(sprint.id)}`}>{sprint.name}</a>{/each}
+                </span>
+              {/if}
             </div>
             <h1 class="sprint-workspace-title">
               <InlineEdit
                 value={item.title}
-                placeholder="(untitled Sprint Item)"
+                placeholder="(untitled Outcome)"
                 onSave={(value) => saveItem("title", value)}
               />
             </h1>
@@ -214,7 +220,7 @@
 
           <details class="sprint-workspace-section" data-workspace-section="remaining">
             <summary>
-              <span class="sprint-workspace-section-label">Remaining Tickets</span>
+              <span class="sprint-workspace-section-label">Other Tickets</span>
               <span class="sprint-workspace-count">
                 {remainingGroups.reduce((sum, group) => sum + group.tickets.length, 0)}
               </span>

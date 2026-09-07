@@ -11,7 +11,6 @@ from planner.core.db import connect
 from planner.notifications import data as notifications_data
 
 PREVIOUS_REVISION = "ticket_wakes_supervisor"
-HEAD_REVISION = "planning_day_direction"
 
 
 def _upgrade_to(path: Path, revision: str) -> None:
@@ -76,7 +75,7 @@ def _database_with_a_ping_behind_it(tmp_path: Path, name: str) -> Path:
 def test_upgrade_drops_the_watch_switch_and_both_ping_columns(tmp_path: Path) -> None:
     db_path = _database_with_a_ping_behind_it(tmp_path, "wake-and-ping-columns.db")
 
-    _upgrade_to(db_path, HEAD_REVISION)
+    _upgrade_to(db_path, "head")
 
     conn = connect(str(db_path))
     ticket_columns = {row[1] for row in conn.execute("PRAGMA table_info(tickets)")}
@@ -92,7 +91,7 @@ def test_upgrade_clears_the_ping_ahead_of_the_loop_and_keeps_the_decided_one(
 ) -> None:
     db_path = _database_with_a_ping_behind_it(tmp_path, "wake-and-ping-facts.db")
 
-    _upgrade_to(db_path, HEAD_REVISION)
+    _upgrade_to(db_path, "head")
 
     conn = connect(str(db_path))
     # The decided ping is finished business and stays, with its decision and its push.

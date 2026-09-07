@@ -54,8 +54,8 @@ export type { WorkerTypesResponse } from "./lifecycle";
 export type SprintSummary = {
   id: string;
   name: string;
-  date_start?: string;
-  date_end?: string;
+  date_start: string;
+  date_end: string;
 };
 
 export type SprintsResponse = {
@@ -64,15 +64,61 @@ export type SprintsResponse = {
 
 export type Priority = "P0" | "P1" | "P2" | "P3";
 
-export type SprintItemKind = "normal";
+export type ListPageFacts = {
+  match_count: number;
+  return_count: number;
+  limit: number;
+  offset: number;
+  omitted_before: number;
+  omitted_after: number;
+  complete: boolean;
+  next_offset: number | null;
+};
 
-export type SprintItemSummary = AnyRecord & {
+export type TicketSummary = {
   id: string;
   title: string;
+  worker_type: string;
+  stage: string;
+  ticket_status: string;
+  priority: Priority;
+  project_id: string | null;
+  project: string | null;
+  sprint_item_id: string | null;
+  sprint_item: string | null;
+  sprint_id: string | null;
+  effective_sprint_id: string | null;
+  recap_preview: string;
+};
+
+export type TicketSummariesResponse = {
+  tickets: TicketSummary[];
+  page: ListPageFacts;
+};
+
+export type OutcomeSummary = {
+  id: string;
+  title: string;
+  priority: Priority;
+  deadline: string | null;
   project_id: string;
   project: string;
-  sprint_id: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
+export type SprintItemListSummary = OutcomeSummary;
+
+export type SprintItemSummariesResponse = {
+  items: SprintItemListSummary[];
+  page: ListPageFacts;
+};
+
+export type SprintItemKind = "normal";
+
+export type SprintItemSummary = OutcomeSummary & {
   kind: SprintItemKind;
+  committed_sprints: SprintSummary[];
 };
 
 export type SprintItemsResponse = {
@@ -97,7 +143,7 @@ export type ScheduleCadence =
   | "current_sprint_day_four"
   | "current_sprint_final_day";
 
-export type SchedulePlacementMode = "current_sprint" | "backlog" | "sprint_item";
+export type SchedulePlacementMode = "current_sprint" | "backlog";
 
 export type ScheduledTask = {
   id: string;
@@ -124,13 +170,13 @@ export type SchedulesResponse = {
   schedules: ScheduledTask[];
 };
 
-export type TicketField = {
-  value?: string | null;
-  user_note?: string | null;
-  proposal?: {
-    body: string;
-    proposed_by: string;
-  } | null;
+export type TicketFieldValues = Record<string, string>;
+
+export type PendingTicketProposal = {
+  field: string;
+  body: string;
+  proposed_by: string;
+  created_at: number;
 };
 
 export type AtCap = "stop" | "propose";
@@ -243,9 +289,12 @@ export type TicketDetail = {
   blocked?: boolean;
   blocker_summary?: BlockerSummary;
   recap?: string | null;
+  guidance: string;
   verdict: TicketVerdict | null;
   trouble_notes: TicketTroubleNote[];
-  fields: Record<string, TicketField>;
+  field_values: TicketFieldValues;
+  pending_proposal: PendingTicketProposal | null;
+  archived_field_content: string;
 };
 
 export type TicketVerdict = {
@@ -275,16 +324,57 @@ export type TicketDeletionResponse = {
   linked_entity_ids: string[];
 };
 
-export type CurrentSprint = AnyRecord & {
+export type SprintWireBody = {
+  id: string;
+  name: string;
   date_start: string;
   date_end: string;
+  primary_bet: string;
+  kickoff: string;
+  checkpoint: string;
+  review: string;
+  created_at: number;
+  updated_at: number;
 };
 
-export type CurrentSprintResponse = {
+export type CurrentSprint = SprintWireBody;
+
+export type SprintTicketSummary = {
+  id: string;
+  title: string;
+  stage: string;
+  priority: Priority;
+  ticket_status: string;
+  project_id: string | null;
+  sprint_item_id: string | null;
+  waiting_to_closeout: boolean;
+};
+
+export type SprintOutcomeGroup = {
+  outcome: OutcomeSummary;
+  committed: boolean;
+  tickets: SprintTicketSummary[];
+};
+
+export type SprintTrackingBody = {
   planning_date: string;
-  sprint: CurrentSprint | null;
-  groups: Record<string, AnyRecord[]>;
-  other_tickets: AnyRecord[];
+  sprint: SprintWireBody | null;
+  outcome_groups: SprintOutcomeGroup[];
+  unclassified_tickets: SprintTicketSummary[];
+};
+
+export type CurrentSprintResponse = SprintTrackingBody;
+
+export type CarryOutcomeBody = {
+  target_sprint_id: string;
+  ticket_ids: string[];
+};
+
+export type CarryOutcomeResult = {
+  source_sprint_id: string;
+  target_sprint_id: string;
+  outcome_id: string;
+  ticket_ids: string[];
 };
 
 export type SprintItemWorkspaceTicket = {
@@ -300,14 +390,14 @@ export type SprintItemWorkspaceTicket = {
   review_route: AtCap;
   worker_type: string;
   day_ids: string[];
+  sprint_id: string | null;
+  sprint_name: string | null;
 };
 
 export type SprintItemWorkspace = SprintItemSummary & {
   body: string;
-  status: string;
   priority: Priority;
   deadline: string | null;
-  rollup: Record<string, number>;
   supervisor: {
     agent_key: string;
     conversation_id: string | null;
@@ -418,7 +508,6 @@ export type DayResponse = {
   tickets: DayTicket[];
 };
 
-export type BacklogResponse = SprintItemsResponse;
 
 export type IdeasResponse = {
   ideas: AnyRecord[];

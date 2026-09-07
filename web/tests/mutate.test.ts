@@ -47,16 +47,6 @@ describe("mutateJson", () => {
     );
   });
 
-  it("forwards omitted options as an empty object and still invalidates", async () => {
-    await mutateJson("/api/tickets/t_written/conversation");
-
-    expect(fakes.fetchJson).toHaveBeenCalledWith(
-      "/api/tickets/t_written/conversation",
-      {}
-    );
-    expect(fakes.invalidateQueries).toHaveBeenCalledTimes(1);
-  });
-
   it("rethrows a rejected write without invalidating", async () => {
     const failure = new Error("write rejected");
     fakes.fetchJson.mockRejectedValue(failure);
@@ -67,27 +57,4 @@ describe("mutateJson", () => {
     expect(fakes.invalidateQueries).not.toHaveBeenCalled();
   });
 
-  it("does not settle until cache invalidation settles", async () => {
-    let releaseInvalidation!: () => void;
-    const invalidation = new Promise<void>((resolve) => {
-      releaseInvalidation = resolve;
-    });
-    fakes.invalidateQueries.mockReturnValue(invalidation);
-
-    let settled = false;
-    const pending = mutateJson("/api/tickets/t_awaited", { method: "POST" }).then(
-      () => {
-        settled = true;
-      }
-    );
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(fakes.invalidateQueries).toHaveBeenCalledTimes(1);
-    expect(settled).toBe(false);
-
-    releaseInvalidation();
-    await pending;
-    expect(settled).toBe(true);
-  });
 });

@@ -11,7 +11,6 @@ from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 
 PREVIOUS_REVISION = "ticket_judgments"
-HEAD_REVISION = "planning_day_direction"
 
 
 def _upgrade_to_previous_revision(path: Path) -> sqlite3.Connection:
@@ -47,9 +46,6 @@ def test_upgrade_adds_ordered_notes_under_existing_judgments(tmp_path: Path) -> 
     upgraded = connect(str(db_path))
     create_schema(upgraded)
 
-    assert upgraded.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
-        HEAD_REVISION
-    )
     assert tuple(
         upgraded.execute(
             "SELECT verdict_rating, verdict_text FROM ticket_judgments "

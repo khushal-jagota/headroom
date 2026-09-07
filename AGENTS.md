@@ -1,6 +1,6 @@
 # AGENTS.md
 
-There is no immutable spec. `SPEC.md` was a starting point and has been retired: design intent lives in `DESIGN.md` and the current plain-language documentation, and the backend correctness model is the code plus its tests (surfaced by `./verify`).
+There is no immutable spec. `SPEC.md` was a starting point and has been retired: design intent lives in `DESIGN.md` and the current plain-language documentation. Code and focused behavioral tests establish correctness; `./verify` is the final integration check.
 
 **PRINCIPLES.md** holds the standing engineering and design rules; they bind unless a live owner decision overrides them.
 
@@ -32,7 +32,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 ## Verification
 - **A check follows a piece of work, not a file and not an edit.** Finish what you set out to do, then run the narrowest check that proves it. A broad suite re-run when nothing since could have changed it proves nothing, and at a hundred repetitions it is not a detail of the work, it is most of the wall clock.
-- `./verify` is the only source of truth for completeness. Run it after changes land — not mid-work, not to re-confirm a result nothing has changed since. One clean run is the claim; show its full output and cite it. Don't re-run just to quote it.
+- Reserve `./verify` for the final settled tree of a complete change or multi-ticket program. Do not run it during investigation, planning, or individual implementation chunks. During work, run only the narrow checks that prove the changed behavior. One clean final run supports the repository-wide completeness claim; save and cite its full output. Repeat only after a failure or a material subsequent change.
 - Use Playwright E2E only when a material risk requires a real browser and live server together. Ticket plans or reviews must name that risk, the exercised boundary, and why frontend, unit, or integration tests cannot prove it. Keep the smallest E2E proof. Test other browser behavior in `web/tests`, and never rely on an eyeball check.
 - Independent reviews may use a fresh sub-agent; the Codex CLI is not required. Use one focused review wherever a second pair of eyes materially improves confidence: completed work against its contract/design, intricate correctness logic, or a combined diff before integration. A second round is only for a concrete unresolved finding. Surface the review output and address or refute each point in writing.
 
@@ -88,7 +88,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   integration.
 
 ## Conduct
-- Keep `./verify` green; never advance over failing tests.
+- Integrate only after the final checks pass; investigate failures rather than advancing over them. Do not use repeated broad verification as the implementation loop.
 - Blocked three attempts on the same problem → record the blocker on the ticket and change approach materially, not the same idea harder.
 - Do not ask questions mid-run. Delegated choices are yours; make them and record them on the ticket.
 

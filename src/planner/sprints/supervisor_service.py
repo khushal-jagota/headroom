@@ -261,7 +261,7 @@ async def restart_worker(
                 conn,
                 ticket_id,
                 expected_status=ticket.ticket_status,
-                expected_status_changed_at=ticket.ticket_status_changed_at,
+                expected_status_revision=ticket.ticket_status_revision,
                 now=now,
             )
             if not given_back:

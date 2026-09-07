@@ -21,7 +21,7 @@ try {
 <script lang="ts">
   import AppWithQueryClient from "../src/AppWithQueryClient.svelte";
 
-  const projects = [{
+  const projects = [{ id: "project_other", name: "Other", summary: "", priority: "P2", created_at: 1, updated_at: 1 }, {
     id: "project_panels",
     name: "Panels",
     summary: "The Panels app",
@@ -34,7 +34,6 @@ try {
     title: "Scheduled tasks",
     project_id: "project_panels",
     project: "Panels",
-    sprint_id: "sp_demo",
     kind: "normal"
   }];
   const workerTypes = [
@@ -65,7 +64,7 @@ try {
     deadline: null,
     project_id: "project_panels",
     placement_mode: "current_sprint",
-    sprint_item_id: null,
+    sprint_item_id: "si_demo",
     employee_backend: null,
     employee_launch_model: null,
     blocked_by_ticket_ids: [],
@@ -227,7 +226,7 @@ with sync_playwright() as playwright:
 
     title.fill("Created browser schedule")
     editor.locator('[data-input="local-time"]').fill("11:30")
-    editor.locator('[data-input="placement"]').select_option("sprint_item")
+    editor.locator('[data-input="project"]').select_option("project_panels")
     editor.locator('[data-input="sprint-item"]').select_option("si_demo")
     submit.click()
     created = page.locator('[data-schedule-id="schedule_created"]')
@@ -243,6 +242,11 @@ with sync_playwright() as playwright:
     page.wait_for_function("document.querySelector('[data-schedule-id=\\\"schedule_demo\\\"] [data-schedule-toggle]')?.getAttribute('aria-checked') === 'false'")
     assert card.locator('[data-schedule-toggle]').get_attribute("aria-checked") == "false"
     card.locator('[data-schedule-title]').click()
+    assert editor.locator('[data-input="sprint-item"]').input_value() == "si_demo"
+    editor.locator('[data-input="project"]').select_option("project_panels")
+    assert editor.locator('[data-input="sprint-item"]').input_value() == "si_demo"
+    editor.locator('[data-input="project"]').select_option("project_other")
+    assert editor.locator('[data-input="sprint-item"]').input_value() == ""
     editor.locator('[data-schedule-title] .ed').fill("Edited existing schedule")
     editor.locator('[data-input="local-time"]').fill("09:50")
     editor.get_by_text("Advanced Ticket settings").click()
@@ -258,6 +262,9 @@ with sync_playwright() as playwright:
     assert any(request["path"] == "/api/schedules/schedule_demo" and request["method"] == "PATCH" for request in requests)
     assert any(request["method"] == "PATCH" and request["body"]["enabled"] is False for request in requests)
     assert any(request["path"] == "/api/schedules/schedule_demo" and request["method"] == "PATCH" and request["body"].get("title") == "Edited existing schedule" for request in requests)
+    placement = next(request["body"] for request in requests if request["method"] == "PATCH" and request["body"].get("title") == "Edited existing schedule")
+    assert placement["project_id"] == "project_other"
+    assert placement["sprint_item_id"] is None
     browser.close()
 
 print("scheduled tasks browser assertions passed")

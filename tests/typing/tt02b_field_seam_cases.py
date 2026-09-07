@@ -23,8 +23,8 @@ def _cases(
 ) -> None:
     foreign_field: str = "alpha"
 
-    _t1: Ticket = tickets_data.file_proposal(
-        conn, "t_1", field=foreign_field, body="b", actor="agent", now=0
+    _t1: Ticket = tickets_data.file_current_proposal_with_recap(
+        conn, "t_1", body="b", actor="agent", now=0, recap="Current work"
     )
     _t2: Ticket = tickets_data.accept_proposal(
         conn, "t_1", field=foreign_field, actor="human", now=0
@@ -32,17 +32,12 @@ def _cases(
     _t3: Ticket = tickets_data.edit_field_value(
         conn, "t_1", field=foreign_field, new_body="b", actor="human", now=0
     )
-    _t4: Ticket = tickets_data.set_field_user_note(
-        conn, "t_1", field=foreign_field, user_note="n", actor="human", now=0
-    )
-    _t5: Ticket = tickets_data.set_note(
-        conn, "t_1", field=foreign_field, note="n", actor="human", now=0
-    )
+    _t4: Ticket = tickets_data.replace_guidance(conn, "t_1", body="n", actor="human", now=0)
+    _t5: Ticket = tickets_data.append_guidance(conn, "t_1", body="n", actor="human", now=0)
 
     assert_type(
         resolution.decide_file_proposal(
             ticket,
-            foreign_field,
             "b",
             "agent",
             0,
@@ -79,7 +74,7 @@ def _cases(
             field_values,
             worker_type_definition=definition,
         ),
-        tuple[Decision, Decision],
+        Decision,
     )
     admission.check_agent_proposal(
         ticket.stage,

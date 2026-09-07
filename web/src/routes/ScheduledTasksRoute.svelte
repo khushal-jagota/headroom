@@ -25,6 +25,7 @@
   const schedules = createQuery(() => queries.schedules());
   const projects = createQuery(() => queries.projects());
   const sprintItems = createQuery(() => queries.sprintItems());
+  const sprintSummaries = createQuery(() => queries.sprintSummaries());
   const workerTypes = createQuery(() => queries.workerTypeManifests());
 
   const cadenceOptions: Array<{ value: ScheduleCadence; label: string }> = [
@@ -34,8 +35,7 @@
   ];
   const placementOptions: Array<{ value: SchedulePlacementMode; label: string }> = [
     { value: "current_sprint", label: "Current sprint" },
-    { value: "backlog", label: "Backlog" },
-    { value: "sprint_item", label: "Sprint item" }
+    { value: "backlog", label: "Backlog" }
   ];
   const priorities: Priority[] = ["P0", "P1", "P2", "P3"];
 
@@ -96,16 +96,23 @@
   }
 
   function setProject(event: Event): void {
-    draft.project_id = selectValue(event) || null;
+    const projectId = selectValue(event) || null;
+    if (projectId !== draft.project_id) draft.sprint_item_id = null;
+    draft.project_id = projectId;
   }
 
   function setPlacement(event: Event): void {
     draft.placement_mode = selectValue(event) as SchedulePlacementMode;
-    if (draft.placement_mode !== "sprint_item") draft.sprint_item_id = null;
+    if (draft.placement_mode === "backlog") draft.sprint_id = null;
   }
 
   function setSprintItem(event: Event): void {
     draft.sprint_item_id = selectValue(event) || null;
+    const outcome = (sprintItems.data?.items || []).find((item) => item.id === draft.sprint_item_id);
+    if (outcome) draft.project_id = outcome.project_id;
+  }
+  function setSprint(event: Event): void {
+    draft.sprint_id = selectValue(event) || null;
   }
 
   function saveDraftField(field: "title" | "kickoff_note", raw: string): Promise<void> {
@@ -275,21 +282,7 @@
                 {/each}
               </select>
               <span class="scheduled-task-separator" aria-hidden="true">·</span>
-              {#if draft.placement_mode === "sprint_item"}
-                <select
-                  class="scheduled-task-quiet-control"
-                  aria-label="Sprint item"
-                  value={draft.sprint_item_id || ""}
-                  onchange={setSprintItem}
-                  data-input="sprint-item"
-                >
-                  <option value="">Choose a sprint item</option>
-                  {#each sprintItems.data?.items || [] as item}
-                    <option value={item.id}>{item.title} · {item.project}</option>
-                  {/each}
-                </select>
-              {:else}
-                <select
+              <select
                   class="scheduled-task-quiet-control"
                   aria-label="Project"
                   value={draft.project_id || ""}
@@ -300,8 +293,19 @@
                   {#each projects.data?.projects || [] as project}
                     <option value={project.id}>{project.name}</option>
                   {/each}
+              </select>
+              {#if draft.placement_mode === "current_sprint"}
+                <span class="scheduled-task-separator" aria-hidden="true">·</span>
+                <select class="scheduled-task-quiet-control" aria-label="Sprint" value={draft.sprint_id || ""} onchange={setSprint} data-input="sprint">
+                  <option value="">Current Sprint</option>
+                  {#each sprintSummaries.data?.sprints || [] as sprint}<option value={sprint.id}>{sprint.name}</option>{/each}
                 </select>
               {/if}
+              <span class="scheduled-task-separator" aria-hidden="true">·</span>
+              <select class="scheduled-task-quiet-control" aria-label="Outcome" value={draft.sprint_item_id || ""} onchange={setSprintItem} data-input="sprint-item">
+                <option value="">No outcome</option>
+                {#each (sprintItems.data?.items || []).filter((item) => !draft.project_id || item.project_id === draft.project_id) as item}<option value={item.id}>{item.title}</option>{/each}
+              </select>
             </div>
           </section>
 

@@ -13,23 +13,20 @@ from typing import Any, TypedDict
 
 class RecordPart(TypedDict):
     value: Any
-    user_note: Any
     proposal: Any
 
 
 class ManifestEntry(TypedDict):
     character_count: int
-    has_user_note: bool
 
 
 def part(
     value: Any,
     *,
-    user_note: Any = None,
     proposal: Any = None,
 ) -> RecordPart:
     """Build the common shape for one authored part."""
-    return {"value": value, "user_note": user_note, "proposal": proposal}
+    return {"value": value, "proposal": proposal}
 
 
 def parse_part_names(raw: str | None) -> tuple[str, ...] | None:
@@ -61,7 +58,6 @@ def project_record(
         for name, record_part in parts.items():
             manifest[name] = {
                 "character_count": _character_count(record_part["value"]),
-                "has_user_note": record_part["user_note"] is not None,
             }
         return {"header": dict(header), "manifest": manifest}
 
@@ -116,13 +112,11 @@ def render_text(projection: Mapping[str, Any]) -> str:
         for name, entry in manifest.items():
             lines.append(f"  {name}:")
             lines.append(f"    character_count: {entry['character_count']}")
-            lines.append(f"    has_user_note: {_display(entry['has_user_note'])}")
         return "\n".join(lines)
 
     lines.extend(("", "parts:"))
     for name, record_part in projection["parts"].items():
         lines.append(f"  {name}:")
         _append_value(lines, "value", record_part["value"], "    ")
-        _append_value(lines, "user_note", record_part["user_note"], "    ")
         _append_value(lines, "proposal", record_part["proposal"], "    ")
     return "\n".join(lines)

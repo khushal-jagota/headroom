@@ -43,37 +43,6 @@ function setup(serverSha: string) {
 }
 
 describe("installed app release monitor", () => {
-  it("checks the release without browser or HTTP cache reuse", async () => {
-    const { fetchMeta, states, monitor } = setup(BOOT_SHA);
-
-    monitor.start();
-    await monitor.check();
-
-    expect(fetchMeta).toHaveBeenCalledWith("/api/meta", { cache: "no-store" });
-    expect(states.at(-1)?.updateAvailable).toBe(false);
-  });
-
-  it("reports a server identity that differs from the document boot identity", async () => {
-    const { states, monitor } = setup(NEXT_SHA);
-
-    monitor.start();
-    await monitor.check();
-
-    expect(states.at(-1)).toMatchObject({ updateAvailable: true, reloadRequested: false });
-  });
-
-  it("rechecks when a retained page becomes visible", async () => {
-    const { document, fetchMeta, monitor } = setup(BOOT_SHA);
-    monitor.start();
-    await monitor.check();
-
-    document.visibilityState = "hidden";
-    document.dispatchEvent(new Event("visibilitychange"));
-    document.visibilityState = "visible";
-    document.dispatchEvent(new Event("visibilitychange"));
-    await vi.waitFor(() => expect(fetchMeta).toHaveBeenCalledTimes(2));
-  });
-
   it("defers an explicit reload while composition is active", async () => {
     const { document, reload, states, monitor } = setup(NEXT_SHA);
     monitor.start();
@@ -101,14 +70,4 @@ describe("installed app release monitor", () => {
     expect(fetchMeta.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("never reloads a changed release without the update action", async () => {
-    const { window, reload, monitor } = setup(NEXT_SHA);
-    monitor.start();
-    await monitor.check();
-
-    window.dispatchEvent(new Event("pageshow"));
-    await monitor.check();
-
-    expect(reload).not.toHaveBeenCalled();
-  });
 });

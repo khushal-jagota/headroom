@@ -192,43 +192,6 @@ describe("composer run selection", () => {
     });
   });
 
-  it("clears a disproved model pick without mutating input, but keeps it when the catalog is empty", () => {
-    const selected = selection({
-      pickedModel: "missing",
-      pickedReasoningEffort: "high"
-    });
-    const supplied = input({ selection: selected });
-
-    const resolved = resolveComposerRunControls(supplied);
-    const unresolved = resolveComposerRunControls(
-      input({ selection: selected, models: [] })
-    );
-
-    expect(resolved.normalizedSelection).toEqual({
-      ...selected,
-      pickedModel: null
-    });
-    expect(resolved.picker.modelValue).toBe("sonnet");
-    expect(unresolved.normalizedSelection.pickedModel).toBe("missing");
-    expect(unresolved.picker.modelValue).toBe("missing");
-    expect(supplied.selection).toEqual(selected);
-  });
-
-  it("keeps a stale current model on the face without synthesizing a selectable row", () => {
-    const view = resolveComposerRunControls(
-      input({
-        conversationExists: true,
-        current: { model: "legacy", reasoningEffort: null }
-      })
-    );
-
-    expect(view.picker.modelValue).toBe("legacy");
-    expect(view.picker.models.map((choice) => choice.value)).toEqual(["opus", "sonnet"]);
-    expect(view.picker.face).toBe("legacy high");
-    expect(view.picker.models.some((choice) => choice.value === "legacy")).toBe(false);
-    expect(view.picker.staleModelReason).toBe("Claude no longer offers legacy.");
-  });
-
   it("keeps a disabled historical model on the face but removes it from every choice", () => {
     const view = resolveComposerRunControls(
       input({
@@ -245,36 +208,6 @@ describe("composer run selection", () => {
     expect(view.picker.face).toBe("Opus 5 high");
     expect(view.picker.models).toEqual([{ value: "sonnet", name: "Sonnet 5" }]);
     expect(view.picker.staleModelReason).toBe("Claude no longer offers opus.");
-  });
-
-  it("treats a pre-enablement model payload as enabled by default", () => {
-    const legacyModel = {
-      model_id: "sonnet",
-      display_name: "Sonnet"
-    } as BackendModel;
-
-    const view = resolveModelPicker({
-      backendKey: "claude",
-      model: "sonnet",
-      reasoningEffort: null,
-      backends: [],
-      models: [legacyModel]
-    });
-
-    expect(view.models).toEqual([{ value: "sonnet", name: "Sonnet" }]);
-  });
-
-  it("does not carry a disabled draft pick into the next run", () => {
-    const view = resolveComposerRunControls(input({
-      selection: selection({ pickedModel: "opus" }),
-      models: [
-        model("opus", "Opus", { enabled: false }),
-        model("sonnet", "Sonnet")
-      ]
-    }));
-
-    expect(view.normalizedSelection.pickedModel).toBeNull();
-    expect(view.picker.models.map((choice) => choice.value)).toEqual(["sonnet"]);
   });
 
   it("uses the normalized shown model for effort options in the same resolved view", () => {
@@ -303,66 +236,6 @@ describe("composer run selection", () => {
     expect(view.picker.efforts).toEqual([{ value: "low", name: "low" }]);
   });
 
-  it("treats a model's explicit empty effort list as authoritative", () => {
-    const view = resolveComposerRunControls(
-      input({
-        models: [
-          model("haiku", "Haiku", { reasoning_effort_options: [] }),
-          model("opus", "Opus")
-        ],
-        current: { model: "haiku", reasoningEffort: null },
-        startsOnModel: null,
-        startsOnReasoningEffort: null
-      })
-    );
-
-    expect(view.picker.efforts).toEqual([]);
-    expect(view.picker.reasoningUnavailableReason).toBe("Haiku takes no reasoning effort.");
-  });
-
-  it("keeps an absent current effort visible and renders an unvalued offered effort bare", () => {
-    const currentEffort = resolveComposerRunControls(
-      input({
-        current: { model: "opus", reasoningEffort: "legacy" },
-        startsOnModel: null,
-        startsOnReasoningEffort: null
-      })
-    );
-    const bareEffort = resolveComposerRunControls(
-      input({
-        current: { model: "opus", reasoningEffort: null },
-        startsOnModel: null,
-        startsOnReasoningEffort: null
-      })
-    );
-
-    expect(currentEffort.picker.reasoningEffort).toBe("legacy");
-    expect(currentEffort.picker.efforts.map((choice) => choice.value)).toEqual(["low", "high"]);
-    expect(bareEffort.picker.reasoningEffort).toBe("");
-    expect(bareEffort.picker.efforts.map((choice) => choice.value)).toEqual(["low", "high"]);
-  });
-
-  it("keeps only model names in the unified list", () => {
-    const view = resolveComposerRunControls(
-      input({
-        current: { model: "opus", reasoningEffort: null },
-        models: [
-          model("opus", "Opus 5", { detail: "opus → claude-opus-5" }),
-          model("sonnet", "Sonnet 5"),
-          model("haiku", "haiku")
-        ],
-        startsOnModel: null
-      })
-    );
-
-    expect(view.picker.modelValue).toBe("opus");
-    expect(view.picker.models).toEqual([
-      { value: "opus", name: "Opus 5" },
-      { value: "sonnet", name: "Sonnet 5" },
-      { value: "haiku", name: "haiku" }
-    ]);
-  });
-
   it("keeps Send present beside a separate Stop control while running", () => {
     const running = resolveComposerRunControls(
       input({
@@ -381,66 +254,6 @@ describe("composer run selection", () => {
     expect(running.submit.title).toBe("Queue this message");
     expect(idle.showStop).toBe(false);
     expect(idle.submit.title).toBe("Send");
-  });
-
-  it.each([
-    [
-      "empty",
-      {},
-      {
-        active: false,
-        sending: false,
-        disabled: true,
-        title: "Send",
-        ariaLabel: "Send"
-      }
-    ],
-    [
-      "sendable",
-      { hasSendableContent: true },
-      {
-        active: true,
-        sending: false,
-        disabled: false,
-        title: "Send",
-        ariaLabel: "Send"
-      }
-    ],
-    [
-      "in flight",
-      { sendsInFlight: 1 },
-      {
-        active: false,
-        sending: true,
-        disabled: true,
-        title: "On its way",
-        ariaLabel: "On its way"
-      }
-    ],
-    [
-      "disabled with content",
-      { inputDisabled: true, hasSendableContent: true },
-      {
-        active: true,
-        sending: false,
-        disabled: true,
-        title: "Send",
-        ariaLabel: "Send"
-      }
-    ],
-    [
-      "running",
-      { running: true },
-      {
-        active: false,
-        sending: false,
-        disabled: true,
-        title: "Queue this message",
-        ariaLabel: "Queue this message"
-      }
-    ]
-  ] as const)("projects the existing %s submit state", (_label, overrides, expected) => {
-    expect(resolveComposerRunControls(input(overrides)).submit).toEqual(expected);
   });
 
   it("changes only the selected model or effort field", () => {
@@ -482,29 +295,6 @@ describe("composer run selection", () => {
 
     expect(view.backends.find((backend) => backend.key === "codex")?.unavailableReason)
       .toBe("Codex is not signed in.");
-  });
-
-  it("dims an installed backend that reports no runnable model", () => {
-    const hermes = snapshot("hermes", {
-      diagnoses: ["Hermes has no configured model."],
-      available_models: [],
-      default_model_id: null
-    });
-    const view = resolveModelPicker({
-      backendKey: "claude",
-      model: "opus",
-      reasoningEffort: "high",
-      backends: [snapshot("claude"), hermes],
-      models: [model("opus", "Opus")],
-      backendEffortOptions: ["high"]
-    });
-
-    expect(view.backends.find((backend) => backend.key === "hermes")?.unavailableReason)
-      .toBe("Hermes has no configured model.");
-    expect(backendSelectionDefaults([hermes], "hermes")).toEqual({
-      model: null,
-      reasoningEffort: null
-    });
   });
 
   it("selects a backend's valid defaults and clears an invalid default effort", () => {

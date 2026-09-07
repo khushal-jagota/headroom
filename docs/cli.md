@@ -5,19 +5,21 @@ machine-readable JSON with `--json`.
 
 Single-record reads use one grammar. With no part list, a read returns an identity and
 state header plus a manifest. The manifest lists every authored part in stable order,
-including empty parts. It reports the Unicode character count and `has_user_note` for
+including empty parts. It reports the Unicode character count for
 each part. Pass one optional comma-separated positional list to expand only those parts.
-Each expanded part contains `value`, `user_note`, and `proposal`:
+Each expanded part contains `value` and `proposal`. Ticket field parts contain saved
+values; the separate `proposal` part contains the one current draft and `archive` contains
+the Historical record:
 
 ```sh
 panels ticket show t_example
 panels ticket show t_example success,approach --json
-panels sprint show current primary_bet
+panels sprint show current primary_bet,kickoff
 panels sprint item show si_example body
 panels day show 2026-08-10 focus,watchout
 panels day show --date 2026-08-10 focus
 panels project show project_panels summary
-panels worker my-ticket plan,implementation
+panels worker my-ticket plan,implementation,proposal
 ```
 
 The same projection serves text and JSON. An unknown or duplicate part name fails and
@@ -102,10 +104,10 @@ record shapes. Direct `show` commands also keep their full record shapes.
   context, the created Ticket has no pending proposal, so readiness can start its
   Worker-owned Kickoff. Supplying kickoff context creates the ordinary proposed Kickoff
   and waits for approval. By default each
-  occurrence resolves direct placement in the current Sprint; `--sprint-item`
-  selects an exact coherent Item classification and `--backlog` keeps occurrences out
-  of a Sprint. The three planning Worker types use the Personal Project and that
-  Sprint's Planning Item. Use
+  occurrence resolves direct placement in the current Sprint; `--sprint` selects a fixed
+  Sprint, `--backlog` leaves it unscheduled, and independent `--sprint-item` supplies
+  Outcome context. Planning templates use the Personal Project without manufacturing
+  containers. Use
   `schedule set … placement --value current-sprint|backlog` to switch the reusable
   placement mode. `show` includes its durable created, suppressed, or failed occurrence
   receipts. These commands
@@ -126,7 +128,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   filter types use AND, and exclusions apply last. A terminal `--stage` also requires
   `--include-terminal`. An unknown Stage produces no matches.
   `--search` performs a case-insensitive substring match across the title, recap, field
-  values, proposal bodies, and user notes. Search keeps stable Ticket order and combines
+  values, the pending proposal, Ticket guidance, and the Historical record. Search keeps stable Ticket order and combines
   with placement filters and page controls. Results include Ticket state, placement, and
   a short recap preview. Search does not rank matches or return snippets.
   `ticket create` uses Today and the current Sprint when placement is omitted.
@@ -157,16 +159,18 @@ record shapes. Direct `show` commands also keep their full record shapes.
 - **`ticket copy`** — copy one ticket's plain-text packet.
 - **`sprint create / list / show / set`** — plan sprints. `current` resolves through
   `/api/sprint/current`; `none` means the backlog where a list supports it.
-- **`sprint item create / list / show / set / move-ticket / move-ticket-to-backlog / block / unblock / delete`**
-  — manage Sprint Items and Ticket classification. Creating a Ticket is still `ticket
-  create`. `sprint item move-ticket <item-id> <ticket-id>` classifies an existing Ticket
-  and aligns its Project and Sprint. `sprint item move-ticket-to-backlog <item-id>
-  <ticket-id>` compares the named current Item before it moves the Ticket to backlog, so
-  a stale command cannot move a Ticket that was since reclassified.
-  `sprint item block <item-id> --by <ticket-id>` records a Ticket blocking an item.
-  Item status is read-only and derived from child tickets and active blocking links.
-  `sprint item delete <item-id> --yes` permanently removes a childless item. An item
-  with child tickets must have that work explicitly moved or removed first.
+- **`sprint item create / list / show / set / add-ticket / remove-ticket / block / unblock / delete`**
+  — manage durable Outcome context through the existing Item identity. Item records
+  have no single Sprint and no derived Outcome status. Classification aligns the
+  Ticket's Project and preserves its Sprint; removal preserves Project and Sprint.
+  A stale removal cannot detach a different current Outcome. Ordinary Ticket placement
+  owns scheduling. `list --search` searches the bounded Project catalog. Deleting an
+  Outcome still requires `--yes` and refuses children.
+- **`sprint outcome add / remove / list / carry`** — choose Outcomes for a Sprint,
+  including before Tickets exist. Add/remove changes the commitment only. Carry takes
+  source Sprint and Outcome, `--to` target Sprint, and repeatable `--ticket` IDs. It
+  atomically commits the Outcome and moves only that explicit unfinished selection;
+  no IDs means commitment only. The source commitment and completed history stay put.
 - **`sprint item supervisor show / context / send / reset`** — inspect the supervisor
   and launch configuration, read its scoped brief and current Tickets, send a direct
   user message, or reset its current conversation.
@@ -208,10 +212,10 @@ record shapes. Direct `show` commands also keep their full record shapes.
   `propose`, `recap`, `note`, and `trouble` take their text on stdin only; there is no
   file-path option, so no shared `/tmp` file can carry one Ticket's text onto another.
   `worker propose` infers the current gating field from the Ticket Stage and requires a
-  short recap on `--recap TEXT` in the same request. `worker note` replaces field
-  guidance by default and accepts `--append` for additive guidance without changing
-  the field's value. `--replace` names the default operation when an explicit flag helps
-  a caller. `worker my-ticket`
+  short recap on `--recap TEXT` in the same request. `worker note <id>` replaces the
+  Ticket guidance document and accepts `--append` to add text with one blank line.
+  Empty replacement clears guidance; empty append does nothing. No field argument
+  or type lookup is needed. Ticket reads offer `recap` and `guidance` parts. `worker my-ticket`
   reports the current Ticket, and names the **specialist skill** for its Worker type —
   the one the base worker loads to learn that Worker type's Stages (see
   `worker-types.md`). `worker trouble` appends one short trouble note, read from stdin,
@@ -301,6 +305,13 @@ one worker step at a time and writes the Ticket's status itself (see
   this tool gets started.
 - **Worker types** (`worker-types.md`) — the registry `worker my-ticket` reads the
   ticket's specialist skill from.
+
+Sprint writing has four parts: `primary_bet`, `kickoff`, `checkpoint`, and `review`.
+The primary bet is the short summary shown above Sprint tracking; the others are complete
+Markdown documents. For example, `panels sprint set current review --body-file review.md`
+replaces the review document. Sprint creation accepts `--primary-bet`, `--kickoff`,
+`--checkpoint`, and `--review`; omitted text starts empty. The old per-heading fields
+and creation options have been removed.
 
 ---
 

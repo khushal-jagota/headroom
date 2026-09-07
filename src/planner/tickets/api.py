@@ -69,21 +69,19 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AcceptBody,
-    AppendNoteBody,
     AtCap,
     CreateTicketBody,
     CreateTicketFromExternalWorkBody,
     EmployeeConfigurationBody,
     EmployeeLaunchConfiguration,
+    GuidanceBody,
     LinkBody,
-    NoteBody,
-    ProposeBody,
+    PendingProposalEditBody,
     ProposeWithRecapBody,
     RecapBody,
     ReconcileTicketFromExternalWorkBody,
     RevisionMessageBody,
     ScopeBody,
-    StageBody,
     StageOwnershipMode,
     Ticket,
     TicketEdit,
@@ -150,9 +148,7 @@ def get_conversation_record(request: Request) -> ConversationStore:
 def get_conversation_message_files(request: Request) -> ConversationMessageFiles:
     """The files messages carry, for the send doors that keep a picture's bytes."""
     runtime = getattr(request.app.state, "conversation", None)
-    message_files = (
-        getattr(runtime, "message_files", None) if runtime is not None else None
-    )
+    message_files = getattr(runtime, "message_files", None) if runtime is not None else None
     if message_files is None:
         raise PlannerError(
             ErrorCode.gateway_offline,
@@ -171,9 +167,7 @@ Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
 Conversations = Annotated[ConversationSystem, Depends(get_conversation_system)]
-MessageFiles = Annotated[
-    ConversationMessageFiles, Depends(get_conversation_message_files)
-]
+MessageFiles = Annotated[ConversationMessageFiles, Depends(get_conversation_message_files)]
 ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_record)]
 WorkerContext = Annotated[WorkerContextService, Depends(get_worker_context_service)]
 
@@ -256,9 +250,7 @@ def parse_enum[E: StrEnum](enum_cls: type[E], raw: str, what: str) -> E:
     try:
         return enum_cls(raw)
     except ValueError:
-        raise PlannerError(
-            ErrorCode.validation, f"invalid {what}", {what: raw}
-        ) from None
+        raise PlannerError(ErrorCode.validation, f"invalid {what}", {what: raw}) from None
 
 
 def body_str(body: JsonDict, key: str, default: str = "") -> str:
@@ -338,6 +330,12 @@ def _validate_field(worker_type_definition: WorkerTypeDefinition, field: str) ->
 # --- request-body marshallers (contract shapes in tickets/contracts.py) ---------
 
 
+def _marshal_guidance(raw: dict[str, Any]) -> GuidanceBody:
+    if set(raw) != {"body"} or not isinstance(raw["body"], str):
+        raise PlannerError(ErrorCode.validation, "guidance requires a string body", {})
+    return GuidanceBody(body=raw["body"])
+
+
 def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
     body = CreateTicketBody(
         worker_type=_require_create_worker_type(raw),
@@ -386,9 +384,7 @@ def _external_field_keys(
 ) -> tuple[str, ...]:
     """The type's field-value body keys: its declared field ids minus kickoff (which
     arrives as kickoff_note)."""
-    return tuple(
-        field for field in worker_type_definition.field_ids() if field != "kickoff"
-    )
+    return tuple(field for field in worker_type_definition.field_ids() if field != "kickoff")
 
 
 def _reject_unknown_external_keys(raw: JsonDict, allowed: frozenset[str]) -> None:
@@ -405,9 +401,7 @@ def _marshal_external_reconcile(
     raw: JsonDict, worker_type_definition: WorkerTypeDefinition
 ) -> ReconcileTicketFromExternalWorkBody:
     field_keys = _external_field_keys(worker_type_definition)
-    _reject_unknown_external_keys(
-        raw, _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(field_keys)
-    )
+    _reject_unknown_external_keys(raw, _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(field_keys))
     missing = [key for key in ("stage", "kickoff_note") if key not in raw]
     if missing:
         raise PlannerError(
@@ -428,9 +422,7 @@ def _marshal_external_create(
     raw: JsonDict, worker_type_definition: WorkerTypeDefinition
 ) -> CreateTicketFromExternalWorkBody:
     field_keys = _external_field_keys(worker_type_definition)
-    _reject_unknown_external_keys(
-        raw, _EXTERNAL_FIXED_CREATE_KEYS | frozenset(field_keys)
-    )
+    _reject_unknown_external_keys(raw, _EXTERNAL_FIXED_CREATE_KEYS | frozenset(field_keys))
     if "title" not in raw:
         raise PlannerError(
             ErrorCode.validation,
@@ -483,9 +475,7 @@ def _external_values(
     return values
 
 
-def _validate_external_stage(
-    stage: str, worker_type_definition: WorkerTypeDefinition
-) -> str:
+def _validate_external_stage(stage: str, worker_type_definition: WorkerTypeDefinition) -> str:
     """An external-work target Stage validated against the Worker type's Stages.
 
     A Stage that is neither linear nor the reserved ``dropped`` is rejected at
@@ -528,9 +518,7 @@ def _parse_scope_at_cap(raw: str | None) -> AtCap | None:
     try:
         return AtCap(raw)
     except ValueError:
-        raise PlannerError(
-            ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": raw}
-        ) from None
+        raise PlannerError(ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": raw}) from None
 
 
 # --- ticket routes -------------------------------------------------------------
@@ -547,9 +535,7 @@ async def create_ticket(
     body = _marshal_create_ticket(raw)
     now = clk.now_unix()
     priority = (
-        parse_enum(Priority, body["priority"], "priority")
-        if body["priority"] is not None
-        else None
+        parse_enum(Priority, body["priority"], "priority") if body["priority"] is not None else None
     )
     project = projects_data.resolve_project(
         conn,
@@ -596,11 +582,7 @@ async def create_ticket_from_external_work(
     body = _marshal_external_create(raw, worker_type_definition)
     target_stage = _validate_external_stage(body["stage"], worker_type_definition)
     priority_raw = body.get("priority")
-    priority = (
-        parse_enum(Priority, priority_raw, "priority")
-        if priority_raw is not None
-        else None
-    )
+    priority = parse_enum(Priority, priority_raw, "priority") if priority_raw is not None else None
     project = projects_data.resolve_project(
         conn,
         project_id=body.get("project_id"),
@@ -612,9 +594,7 @@ async def create_ticket_from_external_work(
         title=body["title"],
         kickoff_note=body["kickoff_note"],
         target_stage=target_stage,
-        provided_values=_external_values(
-            raw, body["kickoff_note"], worker_type_definition
-        ),
+        provided_values=_external_values(raw, body["kickoff_note"], worker_type_definition),
         recap=body.get("recap"),
         actor=ctx.actor,
         now=now,
@@ -647,9 +627,7 @@ async def reconcile_ticket_from_external_work(
 ) -> JsonDict:
     require_chief(ctx)
     await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
-        conn, ticket_id
-    )
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     body = _marshal_external_reconcile(raw, worker_type_definition)
     target_stage = _validate_external_stage(body["stage"], worker_type_definition)
     now = clk.now_unix()
@@ -658,9 +636,7 @@ async def reconcile_ticket_from_external_work(
         ticket_id,
         kickoff_note=body["kickoff_note"],
         target_stage=target_stage,
-        provided_values=_external_values(
-            raw, body["kickoff_note"], worker_type_definition
-        ),
+        provided_values=_external_values(raw, body["kickoff_note"], worker_type_definition),
         recap=body.get("recap"),
         actor=ctx.actor,
         now=now,
@@ -686,9 +662,7 @@ async def list_tickets(
         conn, project_id=project_id, project_name=project
     )
     # `day` ('today' | ISO) scopes the list to one day's board via the day_tickets join.
-    day_id = (
-        resolve_day_id(day, clk.now(), cfg.boundary_hour) if day is not None else None
-    )
+    day_id = resolve_day_id(day, clk.now(), cfg.boundary_hour) if day is not None else None
     return {
         "tickets": tickets_views.list_tickets(
             conn,
@@ -739,8 +713,7 @@ async def list_ticket_summaries(
             {"stages": requested_terminal},
         )
     statuses = tuple(
-        parse_enum(TicketStatus, value, "ticket_status")
-        for value in (ticket_status or ())
+        parse_enum(TicketStatus, value, "ticket_status") for value in (ticket_status or ())
     )
     excluded_statuses = tuple(
         parse_enum(TicketStatus, value, "exclude_ticket_status")
@@ -749,9 +722,7 @@ async def list_ticket_summaries(
     resolved_project = projects_data.resolve_project(
         conn, project_id=project_id, project_name=project
     )
-    day_id = (
-        resolve_day_id(day, clk.now(), cfg.boundary_hour) if day is not None else None
-    )
+    day_id = resolve_day_id(day, clk.now(), cfg.boundary_hour) if day is not None else None
     page = tickets_views.list_ticket_summaries(
         conn,
         page_request=ListPageRequest(limit=limit, offset=offset),
@@ -773,9 +744,7 @@ async def list_ticket_summaries(
 
 def _backend_snapshots(request: Request) -> BackendSnapshotService:
     runtime = getattr(request.app.state, "conversation", None)
-    service = (
-        getattr(runtime, "backend_snapshots", None) if runtime is not None else None
-    )
+    service = getattr(runtime, "backend_snapshots", None) if runtime is not None else None
     if service is None:
         raise PlannerError(
             ErrorCode.gateway_offline,
@@ -854,9 +823,7 @@ async def resolve_employee_configuration(
     ``normalize_employee_launch_configuration`` gives — the old backend's catalog is the
     wrong one to ask.
     """
-    expected = tickets_data.employee_launch_configuration(
-        tickets_data.read_ticket(conn, ticket_id)
-    )
+    expected = tickets_data.employee_launch_configuration(tickets_data.read_ticket(conn, ticket_id))
     registered_backend = require_conversation_backend_key(employee_backend)
     advertised_models: frozenset[str] | None = None
     reasoning_supported: bool | None = None
@@ -876,12 +843,10 @@ async def resolve_employee_configuration(
             },
         )
     if registered_backend == expected.employee_backend and candidate != expected:
-        advertised_models, advertised_reasoning_efforts = (
-            await _advertised_launch_options(
-                request,
-                registered_backend,
-                employee_launch_model,
-            )
+        advertised_models, advertised_reasoning_efforts = await _advertised_launch_options(
+            request,
+            registered_backend,
+            employee_launch_model,
         )
         reasoning_supported = len(advertised_reasoning_efforts) > 0
     return ResolvedEmployeeConfiguration(
@@ -933,9 +898,7 @@ async def get_worker_self_ticket(
     (`ticket_detail` + the worker specialist skill) the by-session route returns."""
     ticket = tickets_data.read_ticket(conn, ticket_id)
     if ticket.conversation_id is not None:
-        owner = tickets_data.read_ticket_by_conversation_id(
-            conn, ticket.conversation_id
-        )
+        owner = tickets_data.read_ticket_by_conversation_id(conn, ticket.conversation_id)
         if owner.id != ticket.id:
             raise PlannerError(
                 ErrorCode.validation,
@@ -946,9 +909,7 @@ async def get_worker_self_ticket(
                     "owner_ticket_id": owner.id,
                 },
             )
-    detail = _ticket_detail_with_worker_settings(
-        conn, ticket.id, clk.now_unix(), config
-    )
+    detail = _ticket_detail_with_worker_settings(conn, ticket.id, clk.now_unix(), config)
     detail["worker"] = (
         configured_worker_type_registry()
         .require(ticket.worker_type)
@@ -1021,9 +982,7 @@ async def put_ticket_employee_configuration(
         # The model is read the way the backend is: a null is a body that did not say what
         # this Ticket runs on, and there is nothing here that could answer for it.
         employee_launch_model=body_str(raw, "employee_launch_model"),
-        employee_launch_reasoning_effort=body_opt_str(
-            raw, "employee_launch_reasoning_effort"
-        ),
+        employee_launch_reasoning_effort=body_opt_str(raw, "employee_launch_reasoning_effort"),
     )
     resolved = await resolve_employee_configuration(
         request,
@@ -1033,12 +992,8 @@ async def put_ticket_employee_configuration(
         employee_launch_model=body["employee_launch_model"],
         employee_launch_reasoning_effort=body["employee_launch_reasoning_effort"],
     )
-    ticket = write_resolved_employee_configuration(
-        conn, ticket_id, resolved, now=clk.now_unix()
-    )
-    return _ticket_detail_with_worker_settings(
-        conn, ticket.id, clk.now_unix(), get_config(request)
-    )
+    ticket = write_resolved_employee_configuration(conn, ticket_id, resolved, now=clk.now_unix())
+    return _ticket_detail_with_worker_settings(conn, ticket.id, clk.now_unix(), get_config(request))
 
 
 @router.delete("/tickets/{ticket_id}")
@@ -1093,9 +1048,7 @@ async def patch_ticket(
     )
     for key in body:
         if key not in recognized:
-            raise PlannerError(
-                ErrorCode.validation, "unknown ticket field", {"field": key}
-            )
+            raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": key})
     if not body:
         raise PlannerError(ErrorCode.validation, "no ticket fields to update", {})
     reject_agent_fields(ctx, body, _TICKET_DIRECT_ONLY_FIELDS)
@@ -1155,32 +1108,6 @@ async def propose_current_field(
     return tickets_views.ticket_json(ticket, now)
 
 
-@router.post("/tickets/{ticket_id}/propose/{field}")
-async def propose_field(
-    ticket_id: str,
-    field: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    body = ProposeBody(body=body_str(raw, "body"))
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
-        conn, ticket_id
-    )
-    _validate_field(worker_type_definition, field)
-    now = clk.now_unix()
-    ticket = tickets_data.file_proposal(
-        conn,
-        ticket_id,
-        field=field,
-        body=body["body"],
-        actor=ctx.actor,
-        now=now,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
 @router.post("/tickets/{ticket_id}/accept/{field}")
 async def accept_field(
     ticket_id: str,
@@ -1192,9 +1119,7 @@ async def accept_field(
 ) -> JsonDict:
     body = _marshal_accept(raw)
     require_direct_write(ctx)
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
-        conn, ticket_id
-    )
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
     next_ceiling = _parse_next_ceiling(body["next_ceiling"], worker_type_definition)
@@ -1241,9 +1166,7 @@ def _what_this_message_runs_under(body: OwnerSendBody) -> ConversationStartOverr
     """The values a message says it runs on, as the resolver takes them."""
     return ConversationStartOverrides(
         backend_key=(
-            None
-            if body.backend_key is None
-            else require_conversation_backend_key(body.backend_key)
+            None if body.backend_key is None else require_conversation_backend_key(body.backend_key)
         ),
         model=body.model,
         reasoning_effort=body.reasoning_effort,
@@ -1299,11 +1222,7 @@ def _conversation_start_values_json(values: ConversationStartValues) -> JsonDict
 @router.get("/chief/conversation")
 async def read_chief_conversation(conn: DbConn) -> JsonDict:
     """Which conversation the Chief is currently talking in, or none."""
-    return {
-        "conversation_id": conversation_start.read_agent_conversation(
-            conn, CHIEF_SETTINGS_KEY
-        )
-    }
+    return {"conversation_id": conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)}
 
 
 @router.get("/chief/conversation/start-values")
@@ -1370,16 +1289,12 @@ async def reset_chief_conversation(
 ) -> JsonDict:
     """Cut the Chief loose from its conversation. This is what New does."""
     require_direct_write(ctx)
-    await conversation_start.reset_agent_conversation(
-        conversations, conn, CHIEF_SETTINGS_KEY
-    )
+    await conversation_start.reset_agent_conversation(conversations, conn, CHIEF_SETTINGS_KEY)
     return {"conversation_id": None}
 
 
 @router.get("/tickets/{ticket_id}/conversation/start-values")
-async def read_ticket_conversation_start_values(
-    ticket_id: str, conn: DbConn
-) -> JsonDict:
+async def read_ticket_conversation_start_values(ticket_id: str, conn: DbConn) -> JsonDict:
     """What a conversation started for this Ticket's worker right now would run on.
 
     The Chief's question, asked of a Ticket: the same resolve the send door runs, so the
@@ -1387,9 +1302,7 @@ async def read_ticket_conversation_start_values(
     as they will answer when a message makes the conversation.
     """
     return _conversation_start_values_json(
-        conversation_start.worker_resolve(
-            conn, tickets_data.read_ticket(conn, ticket_id)
-        )
+        conversation_start.worker_resolve(conn, tickets_data.read_ticket(conn, ticket_id))
     )
 
 
@@ -1458,60 +1371,30 @@ async def reset_ticket_conversation(
     """
     require_direct_write(ctx)
     now = clk.now_unix()
-    await conversation_start.reset_ticket_conversation(
-        conversations, conn, ticket_id, now=now
-    )
+    await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
     return tickets_views.ticket_json(tickets_data.read_ticket(conn, ticket_id), now)
 
 
-@router.put("/tickets/{ticket_id}/notes/{field}")
-async def put_notes(
-    ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+@router.put("/tickets/{ticket_id}/guidance")
+async def put_guidance(
+    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
-    body = NoteBody(
-        note=body_opt_str(raw, "note"), user_note=body_opt_str(raw, "user_note")
+    body = _marshal_guidance(raw)
+    ticket = tickets_data.replace_guidance(
+        conn, ticket_id, body=body["body"], actor=ctx.actor, now=clk.now_unix()
     )
-    if "note" in raw and "user_note" in raw:
-        raise PlannerError(ErrorCode.validation, "use note or user_note, not both", {})
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
-        conn, ticket_id
-    )
-    _validate_field(worker_type_definition, field)
-    now = clk.now_unix()
-    ticket = tickets_data.replace_note(
-        conn,
-        ticket_id,
-        field=field,
-        note=body["user_note"] if "user_note" in raw else body["note"],
-        actor=ctx.actor,
-        now=now,
-    )
-    return tickets_views.ticket_json(ticket, now)
+    return tickets_views.ticket_json(ticket, clk.now_unix())
 
 
-@router.post("/tickets/{ticket_id}/notes/{field}/append")
-async def append_notes(
-    ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+@router.post("/tickets/{ticket_id}/guidance/append")
+async def append_guidance(
+    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
-    body = AppendNoteBody(
-        note=body_str(raw, "note"), user_note=body_str(raw, "user_note")
+    body = _marshal_guidance(raw)
+    ticket = tickets_data.append_guidance(
+        conn, ticket_id, body=body["body"], actor=ctx.actor, now=clk.now_unix()
     )
-    if "note" in raw and "user_note" in raw:
-        raise PlannerError(ErrorCode.validation, "use note or user_note, not both", {})
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
-        conn, ticket_id
-    )
-    _validate_field(worker_type_definition, field)
-    now = clk.now_unix()
-    ticket = tickets_data.append_note(
-        conn,
-        ticket_id,
-        field=field,
-        note=body["user_note"] if "user_note" in raw else body["note"],
-        actor=ctx.actor,
-        now=now,
-    )
-    return tickets_views.ticket_json(ticket, now)
+    return tickets_views.ticket_json(ticket, clk.now_unix())
 
 
 @router.put("/tickets/{ticket_id}/recap")
@@ -1520,8 +1403,18 @@ async def put_recap(
 ) -> JsonDict:
     body = RecapBody(body=body_str(raw, "body"))
     now = clk.now_unix()
-    ticket = tickets_data.write_recap(
-        conn, ticket_id, body=body["body"], actor=ctx.actor, now=now
+    ticket = tickets_data.write_recap(conn, ticket_id, body=body["body"], actor=ctx.actor, now=now)
+    return tickets_views.ticket_json(ticket, now)
+
+
+@router.put("/tickets/{ticket_id}/proposal")
+async def edit_pending_proposal(
+    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
+    body = PendingProposalEditBody(field=body_str(raw, "field"), body=body_str(raw, "body"))
+    now = clk.now_unix()
+    ticket = tickets_data.edit_pending_proposal(
+        conn, ticket_id, field=body["field"], new_body=body["body"], actor=ctx.actor, now=now
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1536,9 +1429,7 @@ async def put_value(
     clk: Clk,
 ) -> JsonDict:
     body = ValueEditBody(body=body_str(raw, "body"))
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
-        conn, ticket_id
-    )
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
     ticket = tickets_data.edit_field_value(
@@ -1560,9 +1451,7 @@ async def scope_ticket(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    body = ScopeBody(
-        ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap")
-    )
+    body = ScopeBody(ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap"))
     require_direct_write(ctx)
     now = clk.now_unix()
     ceiling_raw = body["ceiling"]
@@ -1589,35 +1478,6 @@ async def scope_ticket(
         ticket_id,
         ceiling=ceiling_raw,
         at_cap=at_cap,
-        actor=ctx.actor,
-        now=now,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/tickets/{ticket_id}/stage")
-async def set_stage(
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    body = StageBody(to_stage=body_str(raw, "to_stage"))
-    require_direct_write(ctx)
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
-        conn, ticket_id
-    )
-    to_stage = body["to_stage"]
-    # A linear stage of the type, or the reserved dropped (the writer rejects dropped
-    # with "use the drop action"); anything else is foreign to the type.
-    if to_stage != worker_type_definition.dropped_stage.id:
-        worker_type_definition.stage_index(to_stage)
-    now = clk.now_unix()
-    ticket = tickets_data.set_stage(
-        conn,
-        ticket_id,
-        new_stage=to_stage,
         actor=ctx.actor,
         now=now,
     )
@@ -1828,9 +1688,7 @@ async def add_conversation_row_signals(
             else False
         )
         row["latest_turn_ended_sequence"] = (
-            latest_turn_ended.get(conversation_id, 0)
-            if conversation_id is not None
-            else 0
+            latest_turn_ended.get(conversation_id, 0) if conversation_id is not None else 0
         )
     return board
 

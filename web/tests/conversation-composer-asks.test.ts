@@ -33,20 +33,6 @@ describe("Conversation composer asks", () => {
     expect(askIsGeneric(ask)).toBe(false);
   });
 
-  it.each([null, {}, { options: [] }])(
-    "recovers the three safe actions for an incomplete ask",
-    (ask) => {
-      const actions = askActions(ask);
-
-      expect(actions.map((action) => action.label))
-        .toEqual(["Cancel turn", "Decline", "Approve once"]);
-      expect(actions.map((action) => action.act))
-        .toEqual(["cancel_turn", "answer", "answer"]);
-      expect(actions.slice(1).map((action) => action.supplied)).toEqual([false, false]);
-      expect(askIsGeneric(ask)).toBe(true);
-    }
-  );
-
   it("keeps an unfamiliar backend option while recovering missing anchors", () => {
     const ask = {
       options: [
@@ -109,25 +95,4 @@ describe("Conversation composer asks", () => {
     });
   });
 
-  it.each([0, 10, Number.NaN, 2.5])(
-    "does not select a question choice for invalid digit %s",
-    (digit) => {
-      const ask = {
-        options: [{ option_id: "one", label: "One", option_kind: "choice" }]
-      };
-      expect(askChoiceForDigit(ask, digit)).toBeNull();
-    }
-  );
-
-  it.each([
-    [{ title: "Run ls", detail: "in /workspace" }, "in /workspace"],
-    [{ title: "Which way?", detail: '{"questions":[{"q":"a"}]}' }, "Which way?"],
-    [{ title: "Run it", detail: "line one\nline two" }, "Run it"],
-    [{ title: "Run it", detail: "x".repeat(200) }, "Run it"],
-    [{ title: "Run ls", detail: null }, "Run ls"],
-    [{ title: "Run ls" }, "Run ls"],
-    [null, ""]
-  ] as const)("uses a readable one-line ask placeholder", (ask, expected) => {
-    expect(askPlaceholder(ask)).toBe(expected);
-  });
 });

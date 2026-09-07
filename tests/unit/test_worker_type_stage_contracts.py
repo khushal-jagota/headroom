@@ -7,11 +7,9 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import get_type_hints
 
-from click.testing import CliRunner
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from planner.cli.main import main
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -21,12 +19,12 @@ from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 
 _EMPTY_FIELDS_DEFAULT = (
-    '{"kickoff":{"value":null,"proposal":null,"user_note":null},'
-    '"success":{"value":null,"proposal":null,"user_note":null},'
-    '"approach":{"value":null,"proposal":null,"user_note":null},'
-    '"plan":{"value":null,"proposal":null,"user_note":null},'
-    '"implementation":{"value":null,"proposal":null,"user_note":null},'
-    '"closeout":{"value":null,"proposal":null,"user_note":null}}'
+    '{"kickoff":{"value":null,"proposal":null},'
+    '"success":{"value":null,"proposal":null},'
+    '"approach":{"value":null,"proposal":null},'
+    '"plan":{"value":null,"proposal":null},'
+    '"implementation":{"value":null,"proposal":null},'
+    '"closeout":{"value":null,"proposal":null}}'
 )
 
 
@@ -80,8 +78,8 @@ def test_fresh_schema_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
     assert "stage" in columns
     assert columns["stage"][3] == 1
     assert columns["stage"][4] == "'needs_kickoff'"
-    assert columns["fields"][3] == 1
-    assert columns["fields"][4] is None
+    assert columns["field_values"][3] == 1
+    assert columns["field_values"][4] is None
     assert "ticket_type" not in columns
     assert "state" not in columns
     assert "conversation_id" in columns
@@ -126,10 +124,3 @@ def test_http_contract_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
         }
         assert "stage" in list_parameters
         assert "worker_type" not in list_parameters
-
-
-def test_ticket_list_help_has_stage_without_worker_type_disambiguation() -> None:
-    result = CliRunner().invoke(main, ["ticket", "list", "--help"])
-    assert result.exit_code == 0, result.output
-    assert "--stage" in result.output
-    assert "--worker-type" not in result.output

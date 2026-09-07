@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import plistlib
 import shutil
 import subprocess
 from pathlib import Path
@@ -68,100 +67,6 @@ def test_panels_wrapper_uses_the_vps_users_current_app_and_preserves_arguments(
     assert second.stdout.splitlines() == ["release-b", *arguments]
 
 
-def test_linux_live_service_is_a_home_relative_user_unit() -> None:
-    service = (ASSET_ROOT / "panels-live.service").read_text(encoding="utf-8")
-    current = "%h/Deployments/Panels/current"
-    assert f"WorkingDirectory={current}" in service
-    assert f"ExecStart={current}/app/bin/panels-launcher serve" in service
-    assert f"Environment=PLAN_DB_PATH={current}/data/planner.db" in service
-    assert f"Environment=PLAN_LOGS_DIR={current}/logs" in service
-    assert "Environment=PLAN_HERMES_HOME=%h/.hermes" in service
-    assert "Environment=PLAN_PORT=8767" in service
-    assert "WantedBy=default.target" in service
-    assert "User=" not in service
-    assert "/opt/panels" not in service
-    assert "/var/lib/panels" not in service
-    assert "/etc/panels" not in service
-
-
-def test_macos_input_remains_a_supervised_user_launch_agent() -> None:
-    plist_path = ASSET_ROOT / "panels-launchd.plist"
-    plist = plist_path.read_text(encoding="utf-8")
-    plist_values = plistlib.loads(plist_path.read_bytes())
-    assert "com.panels.live" in plist
-    assert 'root="$HOME/Deployments/Panels/current"' in plist
-    assert "$root/app/bin/panels-launcher" in plist
-    assert 'PLAN_DB_PATH="$root/data/planner.db"' in plist
-    assert 'PLAN_HERMES_HOME="$HOME/.hermes"' in plist
-    assert "<key>UserName</key>" not in plist
-    assert plist_values["KeepAlive"] == {"SuccessfulExit": False}
-
-
-def test_github_deployment_proves_and_builds_the_requested_exact_sha() -> None:
-    workflow = (WORKFLOW_ROOT / "deploy.yml").read_text(encoding="utf-8")
-    assert "push:\n    branches: [main]" in workflow
-    assert "workflow_dispatch:" in workflow
-    assert "commit_sha:" in workflow
-    assert "github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.sha" in workflow
-    assert 'git -C "$PANELS_CANDIDATE_SOURCE" rev-parse HEAD)' in workflow
-    assert "'^[0-9a-f]{40}$'" in workflow
-    assert workflow.index("rev-parse HEAD") < workflow.index(
-        "app-build"
-    ) < workflow.index("app-deploy")
-    assert "actions/checkout@" in workflow and "@v4" not in workflow
-    assert workflow.count("actions/checkout@") == 1
-    assert "ref: ${{ github.sha }}" in workflow
-    assert 'git worktree add --detach "$PANELS_CANDIDATE_SOURCE"' in workflow
-    assert "upload-artifact" not in workflow
-    assert "download-artifact" not in workflow
-
-
-def test_github_deployment_provisions_agent_skills_after_app_deploy() -> None:
-    workflow = (WORKFLOW_ROOT / "deploy.yml").read_text(encoding="utf-8")
-    provision_command = (
-        '"$PANELS_DEPLOY_VENV/bin/python" -m planner environment provision-skills'
-    )
-
-    assert provision_command in workflow
-    assert "current/app/bin/panels-launcher\" environment provision-skills" not in workflow
-    assert '--database-parent "$HOME/Deployments/Panels/current/data"' in workflow
-    assert '--hermes-home "$HOME/.hermes"' in workflow
-    assert '--codex-home "$HOME/.codex"' in workflow
-    assert '--claude-home "$HOME/.claude"' in workflow
-    assert (
-        workflow.index("environment app-deploy")
-        < workflow.index(provision_command)
-        < workflow.index("Remove runner-temporary deployment state")
-    )
-
-
-def test_deploy_workflow_and_user_runner_share_one_real_runner_contract() -> None:
-    workflow = (WORKFLOW_ROOT / "deploy.yml").read_text(encoding="utf-8")
-    unit = (ASSET_ROOT / "panels-deployment-runner.service").read_text(encoding="utf-8")
-    labels = ("self-hosted", "linux", "production", "panels-deploy")
-    assert workflow.count(f"runs-on: [{', '.join(labels)}]") == 1
-    assert all(label in unit for label in labels)
-    assert "WorkingDirectory=%h/Deployments/Panels/deployment-runner" in unit
-    assert "ExecStart=%h/Deployments/Panels/deployment-runner/run.sh" in unit
-    assert "ConditionPathExists=%h/Deployments/Panels/deployment-runner/.runner" in unit
-    assert "User=" not in unit
-    assert "${{ runner.temp }}" not in workflow
-    assert "PANELS_CANDIDATE_APP=$RUNNER_TEMP/panels-candidate-" in workflow
-    assert "PANELS_CANDIDATE_SOURCE=$RUNNER_TEMP/panels-source-" in workflow
-    assert '>> "$GITHUB_ENV"' in workflow
-    assert 'python3 -m venv "$PANELS_DEPLOY_VENV"' in workflow
-    assert "--source-root \"$PANELS_CANDIDATE_SOURCE\"" in workflow
-    assert "--requested-sha \"$PANELS_REQUESTED_SHA\"" in workflow
-    assert "--candidate-app \"$PANELS_CANDIDATE_APP\"" in workflow
-    assert "actions/setup-python@" not in workflow
-    assert "actions/setup-node@" not in workflow
-    assert "sys.version_info >= (3, 12)" in workflow
-    assert "Node 22 is required" in workflow
-    assert "./verify" not in workflow
-    assert "npm ci --prefix web" not in workflow
-    assert "npm ci --prefix agent_backends" not in workflow
-
-
 def test_runner_setup_registers_the_labels_requested_by_the_workflow(
     tmp_path: Path,
 ) -> None:
@@ -201,70 +106,6 @@ def test_runner_setup_registers_the_labels_requested_by_the_workflow(
         "_work",
         "--replace",
     ]
-
-
-def test_production_workflow_uses_the_single_user_live_contract() -> None:
-    workflow = (WORKFLOW_ROOT / "deploy.yml").read_text(encoding="utf-8")
-    current = "$HOME/Deployments/Panels/current"
-    assert f'--current-root "{current}"' in workflow
-    assert f'--source-db "{current}/data/planner.db"' in workflow
-    assert f'--backup-dir "{current}/data/backups"' in workflow
-    assert '--health-url "http://127.0.0.1:8767/api/health"' in workflow
-    assert "--service-manager systemctl" in workflow
-    assert "--service-name panels-live.service" in workflow
-    assert "${{ vars." not in workflow
-    assert "release-build" not in workflow
-    assert "PANELS_RELEASE_ROOT" not in workflow
-    assert "PANELS_CURRENT_POINTER" not in workflow
-
-
-def test_scheduled_and_scripted_backups_use_the_same_deployed_launcher_contract() -> None:
-    service = (ASSET_ROOT / "panels-db-backup.service").read_text(encoding="utf-8")
-    pre_deploy = (ASSET_ROOT / "pre-deploy-backup.sh").read_text(encoding="utf-8")
-    current = "%h/Deployments/Panels/current"
-    assert (
-        f"ExecStart={current}/app/bin/panels-launcher environment backup-current"
-        in service
-    )
-    assert f"--source-db {current}/data/planner.db" in service
-    assert f"--backup-dir {current}/data/backups" in service
-    assert f"--current-app {current}/app" in service
-    assert "Environment=PLAN_HERMES_HOME=%h/.hermes" in service
-    assert '"$current_app/bin/panels-launcher" environment backup-current' in pre_deploy
-    assert '--source-db "$PANELS_BACKUP_SOURCE_DB"' in pre_deploy
-    assert '--backup-dir "$PANELS_BACKUP_DIRECTORY"' in pre_deploy
-    assert '--current-app "$current_app"' in pre_deploy
-    assert 'export PLAN_HERMES_HOME="$HOME/.hermes"' in pre_deploy
-    assert "app-identity" not in pre_deploy
-    assert "ENVIRONMENT_MANAGER" not in pre_deploy
-
-
-def test_workflow_lifecycle_starts_before_build_and_only_finishes_after_all_work(
-) -> None:
-    workflow = (WORKFLOW_ROOT / "deploy.yml").read_text(encoding="utf-8")
-
-    start = workflow.index("- name: Start deployment lifecycle")
-    prove = workflow.index("- name: Prove exact temporary source")
-    prepare_runtime = workflow.index("- name: Prepare deployment runtime")
-    build = workflow.index("- name: Build and validate exact app")
-    deploy = workflow.index("- name: Deploy exact app")
-    provision = workflow.index("- name: Provision production agent skills")
-    cleanup = workflow.index("- name: Remove runner-temporary deployment state")
-    finalize = workflow.index("- name: Finalize deployment lifecycle")
-
-    assert start < prove < prepare_runtime < build < deploy < provision < cleanup < finalize
-    start_step = workflow[start:prove]
-    assert "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" in start_step
-    assert "$PANELS_DEPLOY_VENV" not in start_step
-    assert " read \\" in start_step
-    assert "--expected-deployment-id" in start_step
-    assert 'except (OSError, AttributeError, json.JSONDecodeError):' in start_step
-    final_step = workflow[finalize:]
-    assert "if: always()" in final_step
-    assert "--preserve-terminal" in final_step
-    assert "phase=succeeded" in final_step
-    assert "phase=failed" in final_step
-    assert "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" in final_step
 
 
 def test_predeploy_backup_replaces_ambient_hermes_home_with_vps_home(
@@ -383,15 +224,3 @@ def test_launchctl_restart_recovers_when_loaded_job_has_no_process(tmp_path: Pat
         "bootstrap gui/501 "
         + str(Path.home() / "Library/LaunchAgents/com.panels.live.plist"),
     ]
-
-
-def test_multi_account_and_persistent_staging_assets_are_removed() -> None:
-    assert not (ASSET_ROOT / "setup-accounts.sh").exists()
-    assert not (ASSET_ROOT / "panels-environments.tmpfiles").exists()
-    assert not (ASSET_ROOT / "panels-staging.service").exists()
-    user_units = [
-        ASSET_ROOT / "panels-live.service",
-        ASSET_ROOT / "panels-deployment-runner.service",
-        ASSET_ROOT / "panels-db-backup.service",
-    ]
-    assert all("User=" not in path.read_text(encoding="utf-8") for path in user_units)

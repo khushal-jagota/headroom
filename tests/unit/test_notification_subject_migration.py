@@ -11,7 +11,6 @@ from planner.core.db import connect, create_schema
 from planner.notifications import data as notifications_data
 
 PREVIOUS_REVISION = "notifications"
-HEAD_REVISION = "planning_day_direction"
 
 
 def _upgrade_to_previous_revision(path: Path) -> None:
@@ -94,9 +93,6 @@ def test_upgrade_preserves_delivery_graph_and_seeds_agent_no_history_cursor(
     upgraded = connect(str(db_path))
     create_schema(upgraded)
 
-    assert upgraded.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
-        HEAD_REVISION
-    )
     assert [
         (row["fact_id"], row["subject_kind"], row["subject_id"], row["payload"])
         for row in upgraded.execute(

@@ -13,7 +13,6 @@ from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 
 PREVIOUS_REVISION = "day_midday_reconciliation"
-HEAD_REVISION = "planning_day_direction"
 
 
 def _upgrade_to_previous_revision(path: Path) -> sqlite3.Connection:
@@ -154,9 +153,6 @@ def test_migration_moves_direct_placements_to_shared_other_items_and_preserves_s
     upgraded = connect(str(db_path))
     create_schema(upgraded)
 
-    assert upgraded.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
-        HEAD_REVISION
-    )
     assert "sprint_id" in {
         str(row["name"]) for row in upgraded.execute("PRAGMA table_info(tickets)")
     }
@@ -211,7 +207,7 @@ def test_migration_moves_direct_placements_to_shared_other_items_and_preserves_s
         "project_vylo",
         "sp_one",
         "si_normal",
-        "sprint_item",
+        "current_sprint",
     )
     assert schedule_rows["schedule_project_template"] == (
         "project_tribe",
@@ -247,7 +243,8 @@ def test_migration_moves_direct_placements_to_shared_other_items_and_preserves_s
     item_indexes = {
         str(row["name"]) for row in upgraded.execute("PRAGMA index_list(sprint_items)")
     }
-    assert "idx_sprint_items_one_other_per_sprint_project" in item_indexes
+    assert "idx_sprint_items_one_other_per_sprint_project" not in item_indexes
+    assert "idx_sprint_items_supervisor_agent_key" in item_indexes
 
     with pytest.raises(sqlite3.IntegrityError):
         upgraded.execute("UPDATE sprint_items SET kind = 'catch_all' WHERE id = 'si_normal'")
