@@ -439,6 +439,35 @@ def test_a_second_report_puts_the_whole_menu_where_the_old_one_was(
     asyncio.run(exercise())
 
 
+def test_composer_catalog_replacement_signals_only_each_distinct_value(
+    store: ConversationStore, signals: _SignalCounter
+) -> None:
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        signals.reset()
+
+        await store.replace_composer_catalog("c", FIRST_MENU)
+        assert signals.count == 1
+        await store.replace_composer_catalog("c", FIRST_MENU)
+        assert signals.count == 1
+
+        await store.replace_composer_catalog("c", SECOND_MENU)
+        assert signals.count == 2
+        read = await store.read_conversation("c")
+        assert read is not None
+        assert read.composer_catalog == SECOND_MENU
+
+        await store.replace_composer_catalog("c", ())
+        assert signals.count == 3
+        await store.replace_composer_catalog("c", ())
+        assert signals.count == 3
+        emptied = await store.read_conversation("c")
+        assert emptied is not None
+        assert emptied.composer_catalog == ()
+
+    asyncio.run(exercise())
+
+
 def test_a_conversation_nothing_has_reported_for_offers_no_commands(
     store: ConversationStore,
 ) -> None:

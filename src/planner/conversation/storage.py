@@ -592,11 +592,13 @@ class ConversationStore:
     def _replace_composer_catalog_sync(
         self, conversation_id: str, composer_catalog: tuple[ComposerCatalogEntry, ...]
     ) -> None:
+        serialized_catalog = _composer_catalog_to_json(composer_catalog)
         conn = self._connect()
         try:
             conn.execute(
-                "UPDATE conversations SET composer_catalog = ? WHERE conversation_id = ?",
-                (_composer_catalog_to_json(composer_catalog), conversation_id),
+                "UPDATE conversations SET composer_catalog = ? "
+                "WHERE conversation_id = ? AND composer_catalog IS NOT ?",
+                (serialized_catalog, conversation_id, serialized_catalog),
             )
         finally:
             conn.close()

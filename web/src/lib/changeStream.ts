@@ -7,10 +7,10 @@ import { queryClient } from "./queryClient";
 // is actually using refetch. Nothing about what changed travels over the wire.
 export type ConnectionStatus = "connected" | "reconnecting";
 
-// A burst of commits collapses into one round of refetches. A working agent commits in
-// bursts of dozens, and each round asks the server for everything on screen again, so the
-// window is wide enough to swallow a whole burst: a board-level fact — a status, a count, a
-// card's place — landing a second and a half later is not something a reader can see.
+// Commits inside one fixed window collapse into one round of refetches. A working agent
+// commits in bursts of dozens, and each round asks the server for everything on screen
+// again. The first commit starts the deadline so a sustained stream cannot keep the visible
+// screen stale. A board-level fact landing a second and a half later is not perceptible.
 export const INVALIDATE_DEBOUNCE_MS = 1_500;
 
 export const connectionStatus = writable<ConnectionStatus>("reconnecting");
@@ -62,8 +62,9 @@ export function startChangeStream(): void {
       changedWhileHidden = true;
       return;
     }
-    if (flushTimer !== null) window.clearTimeout(flushTimer);
-    flushTimer = window.setTimeout(flush, INVALIDATE_DEBOUNCE_MS);
+    if (flushTimer === null) {
+      flushTimer = window.setTimeout(flush, INVALIDATE_DEBOUNCE_MS);
+    }
   };
   source.onerror = () => {
     if (stream !== source) return;
