@@ -150,6 +150,17 @@ with sync_playwright() as playwright:
         assert no_outcome.locator('[data-sprint-ticket-id="t_loose_one"]').get_attribute('href') == '#/workspace/t_loose_one'
         assert no_outcome.locator('[data-sprint-ticket-id="t_loose_two"]').get_attribute('href') == '#/workspace/t_loose_two'
         assert page.evaluate("""() => Boolean(document.querySelector('[data-sprint-no-outcome]').compareDocumentPosition(document.querySelector('.sprint-outcome-actions')) & Node.DOCUMENT_POSITION_FOLLOWING)""")
+        def assert_sprint_layout(width):
+            page.set_viewport_size({"width": width, "height": 900})
+            page.wait_for_timeout(50)
+            assert page.evaluate("""() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth + 1""")
+            no_outcome_box = no_outcome.bounding_box()
+            add_outcome_box = page.locator('.sprint-outcome-actions').bounding_box()
+            assert no_outcome_box and add_outcome_box
+            assert no_outcome_box['y'] + no_outcome_box['height'] <= add_outcome_box['y'] + 1
+        assert_sprint_layout(1280)
+        assert_sprint_layout(390)
+        page.set_viewport_size({"width": 1280, "height": 900})
         page.get_by_role("button", name="Add outcome").click()
         picker = page.locator('[data-outcome-picker]')
         picker.locator('[data-new-outcome] > summary').click()

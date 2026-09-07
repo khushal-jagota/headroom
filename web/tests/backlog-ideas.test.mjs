@@ -292,6 +292,19 @@ with sync_playwright() as playwright:
         "sprint_item_id": None,
     }
     assert not any("sprint-item-summaries" in request["path"] for request in page.evaluate("window.__requests()"))
+    page.locator('[data-create="ticket"] > summary').click()
+    def assert_backlog_layout(width):
+        page.set_viewport_size({"width": width, "height": 900})
+        page.wait_for_timeout(50)
+        assert page.evaluate("""() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth + 1""")
+        row = page.locator('[data-ticket-id="ticket_0"]')
+        title_box = row.locator('.list-row-title').bounding_box()
+        chip_box = row.locator('.chip--project').bounding_box()
+        assert title_box and chip_box
+        assert title_box['x'] + title_box['width'] <= chip_box['x'] + 1
+    assert_backlog_layout(1280)
+    assert_backlog_layout(390)
+    page.set_viewport_size({"width": 1280, "height": 900})
 
     # A canonical direct Item address survives the empty board response and mounts
     # the real Item workspace, even though the board rail has no row for it.

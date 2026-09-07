@@ -411,7 +411,7 @@ hand-rolling the same shapes per screen. Each does one job:
   chevron): Ticket recaps, sprint phases and items, ideas with bodies, the
   Backlog Ticket form, board project sections.
 - **ListRow** — the one row shape (title on the left, metadata on the right, hover):
-  sprint tickets, Backlog Tickets and briefs, flat ideas, board cards. Renders as a
+  sprint tickets, Backlog Tickets, flat ideas, and board cards. Renders as a
   link, a button, or a plain non-interactive row.
 - **SectionHeading** — a quiet "Label · count" group heading.
 - **ScreenHeader** — a screen's title row plus an optional meta pill.

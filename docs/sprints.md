@@ -61,10 +61,12 @@ moving the remaining selection. Repeating an unchanged successful request is saf
 The source commitment and unselected Tickets remain. Completed history never moves as
 a side effect of carrying an Outcome.
 
-Removing a commitment leaves its scheduled Tickets available through **No Outcome**. The Outcome's
-workspace always holds its full brief, artifacts and Tickets across Sprints, with Today
-and Remaining groups as before. Each Ticket shows its own Sprint name or Backlog.
-Commitment links and that Ticket's schedule can differ: they state different facts.
+Removing a commitment does not remove a Ticket's Outcome classification. Those Tickets
+remain under that Outcome on Sprint tracking. Only Tickets without an Outcome appear
+under **No Outcome**. The Outcome workspace always holds its full brief, artifacts, and
+Tickets across Sprints, with Today and Remaining groups as before. The Ticket page does
+not show Sprint or Backlog placement. Commitment links and a Ticket's stored schedule
+can differ: they state different facts.
 
 Outcome and Ticket Projects remain coherent. Classifying a Ticket aligns its Project
 and preserves its Sprint. Removing its Outcome preserves both Project and Sprint.

@@ -29,7 +29,7 @@ let ticketId = $state('t_guidance');
 {#if review}<ReviewProposalCard ticketId="t_guidance" field="success" />
 {:else}{#key ticketId}<TicketRoute id={ticketId} />{/key}{/if}
 </QueryClientProvider>`);
-  await writeFile(main, `import { mount } from 'svelte'; import Host from './${stem}.svelte'; mount(Host, {target: document.getElementById('app')!});`);
+  await writeFile(main, `import { mount } from 'svelte'; import Host from './${stem}.svelte'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host, {target: document.getElementById('app')!});`);
   await writeFile(index, `<html><body><div id="app"></div><script type="module" src="./${stem}.ts"></script></body></html>`);
   server = await createServer({ root, configFile: false, plugins: [svelte()], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' });
   await server.listen();
@@ -104,6 +104,20 @@ with sync_playwright() as p:
     assert placement_writes == []
     assert 'Copy' not in page.locator('.ticket-operating').inner_text()
     assert 'Take over' not in page.locator('.ticket-operating').inner_text()
+    def assert_ticket_layout(width):
+        page.set_viewport_size({'width': width, 'height': 900})
+        page.wait_for_timeout(50)
+        assert page.evaluate("""() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth + 1""")
+        identity_box=page.locator('[data-ticket-identity]').bounding_box()
+        title_box=page.locator('.ticket-title-row').bounding_box()
+        menu_box=page.locator('.ticket-leash-menu').bounding_box()
+        assert identity_box and title_box and menu_box
+        assert identity_box['y'] + identity_box['height'] <= title_box['y'] + 1
+        assert menu_box['x'] >= -1
+        assert menu_box['x'] + menu_box['width'] <= width + 1
+    assert_ticket_layout(1280)
+    assert_ticket_layout(390)
+    page.set_viewport_size({'width': 1280, 'height': 900})
     assert page.locator('[data-accept]').count() == 1
     proposal=page.locator('[data-field="success"] [contenteditable]')
     proposal.click()
