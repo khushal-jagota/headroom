@@ -18,7 +18,7 @@ Outlines → Closeout → Done**.
 - **needs_kickoff** — preserve the confirmed direction and source context.
 - **needs_rough_shape** — section the initiative into its important parts.
 - **needs_question_tree** — map the cross-cutting questions that must be answered.
-- **needs_question_answers** — work through the consequential questions with the user.
+- **needs_question_answers** — research and recommend answers before focused user review.
 - **needs_ticket_outlines** — derive the downstream Tickets for the user's sense-check.
 - **needs_closeout** — create and verify exactly those approved Tickets.
 - **done** — finished.
@@ -85,8 +85,10 @@ a substitute for judgment.
 
 The approved field is for the user's sense-check. Show only the concise question outline:
 no blocker labels, affected-system notes, rationale, or agent-working detail. Keep a short
-tree inline. When it would become a wall of text, use a ticket-owned HTML artifact with
-progressive disclosure and link it from a brief field summary. Keep one canonical copy.
+tree inline. Before Question Answers, create a ticket-owned HTML artifact as the living
+question tree so the later research, recommendations, and decisions have one usable home.
+Prefer a calm, Notion-style document with progressive disclosure over a dense dashboard.
+Link it from a brief field summary and keep one canonical copy.
 
 A good **question tree** is small enough to navigate, complete enough to expose the
 initiative's consequential choices, and ordered so Question Answers can work one useful
@@ -94,12 +96,20 @@ branch at a time.
 
 ### needs_question_answers — settle the shared approach
 
-This is paired work. Begin from the approved tree and choose a bounded branch or small
-related group. Treat it as one continuous conversation: acknowledge the user's answer,
-briefly orient any branch change, then ask the next bounded question. Ground factual
-questions with available sources and tools. For judgment questions, explain the practical
-options and implications, make a recommendation when useful, and let the user settle the
-consequential choice. Do not dump the whole tree on the user as an interview.
+This stage is agent-led preparation followed by focused paired review. Begin from the
+approved tree and choose a bounded branch or small related group. Before asking the user
+to answer, investigate each question with the available records, sources, and tools, then
+write the best supported answer and its practical implications. For a judgment question,
+make a recommendation. When the evidence leaves a genuine choice, give the bounded
+options and recommend one; often one well-supported recommendation is enough, so do not
+manufacture alternatives merely to appear balanced.
+
+Open each prepared answer for paired review. Let the user accept it, correct it, or talk
+through only the specific parts they care about. Treat their participation as review and
+decision-making, not as the agent's research method. As the conversation continues,
+acknowledge the user's response, briefly orient any branch change, and bring forward the
+next prepared answer or related group. Do not dump the whole tree on the user as an
+interview or make them answer every question from scratch.
 
 As the conversation proceeds:
 
@@ -109,11 +119,11 @@ As the conversation proceeds:
 - add genuinely new cross-cutting questions and retire superseded branches; and
 - move newly discovered local questions to the future Ticket that owns them.
 
-If a living question-tree artifact exists, update it as branches change. Otherwise keep
-the working state in the paired conversation and make the final field the durable
-result. The formal **question answers** field is a synthesis, not a transcript: group the
-settled answers by the Rough Shape, preserve the implications that downstream Tickets
-need, and list only unresolved questions that can safely be deferred with a clear owner.
+Keep the living HTML question-tree artifact current as proposed answers are researched,
+reviewed, settled, superseded, or deferred. The formal **question answers** field is a
+synthesis, not a transcript: group the settled answers by the Rough Shape, preserve the
+implications that downstream Tickets need, and list only unresolved questions that can
+safely be deferred with a clear owner.
 
 Do not propose until every question that blocks coherent Ticket boundaries is answered
 or the user has explicitly chosen a safe deferral. A strong result makes the shared
