@@ -249,7 +249,8 @@ refresh shows each provider window as its remaining percentage, reset time, and
 observation time. The backend source still reports the used percentage. The shared
 ring derives the remaining value and empties counter-clockwise from the top as the
 allowance falls. One provider failure does not discard the other's new answer. Hermes
-has no usage source.
+has no usage source. Codex uses its app-server rate-limit read, so Refresh starts no
+model turn and consumes no allowance.
 
 ## The two rules that shape it
 

@@ -16,7 +16,8 @@ import json
 import sqlite3
 import zlib
 from collections.abc import Callable, Coroutine, Iterator, MutableMapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,8 +36,13 @@ from planner.conversation.api import (
     conversation_message_content,
     router,
 )
+from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backend_usage import (
+    BackendUsageOutcome,
+    BackendUsageResult,
     BackendUsageService,
+    BackendUsageWindow,
+    BackendUsageWindowKind,
 )
 from planner.conversation.backends.claude_model_catalog import (
     ClaudeModel,
@@ -86,6 +92,8 @@ from planner.conversation.message_content import (
 )
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.snapshot import (
+    BackendModel,
+    BackendSnapshot,
     BackendSnapshotService,
     CommandOutcome,
 )
@@ -1986,6 +1994,122 @@ def test_a_tail_is_closed_by_the_same_door_that_closes_the_change_stream(
 
 
 # --- the backends on this machine -------------------------------------------------------------
+
+
+class _UsageAnswer:
+    def __init__(self, result: BackendUsageResult) -> None:
+        self.result = result
+
+    async def refresh(self) -> BackendUsageResult:
+        return self.result
+
+
+class _SnapshotAnswers(BackendSnapshotService):
+    def __init__(self, snapshots: tuple[BackendSnapshot, ...]) -> None:
+        self.snapshots_answer = snapshots
+
+    async def snapshots(self, *, refresh: bool = False) -> tuple[BackendSnapshot, ...]:
+        assert refresh is True
+        return self.snapshots_answer
+
+
+def test_backend_refresh_resolves_scopes_and_keeps_cached_usage_after_failure(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        state = BackendStateStore(str(harness.db_path))
+        reset = datetime(2026, 9, 17, 12, 0, tzinfo=UTC)
+        old_observation = datetime(2026, 9, 9, 12, 0, tzinfo=UTC)
+        new_observation = datetime(2026, 9, 10, 12, 0, tzinfo=UTC)
+        old_claude = BackendUsageResult(
+            backend_key=ConversationBackendKey.claude,
+            outcome=BackendUsageOutcome.succeeded,
+            observed_at=old_observation,
+            windows=(
+                BackendUsageWindow(
+                    kind=BackendUsageWindowKind.seven_day,
+                    used_percent=20,
+                    resets_at=reset,
+                ),
+            ),
+        )
+        state.keep_successful_usage(old_claude)
+
+        snapshots = tuple(
+            BackendSnapshot(
+                backend_key=backend_key,
+                installed=True,
+                executable_path=f"/bin/{backend_key.value}",
+                version="1.0.0",
+                identity=None,
+                available_models=(
+                    BackendModel(model_id="spark[1m]", display_name="Spark 5 (1M)"),
+                ),
+                reasoning_effort_options=(),
+                default_model_id="spark[1m]",
+                default_reasoning_effort=None,
+                update_advisory=None,
+                diagnoses=(),
+            )
+            for backend_key in ConversationBackendKey
+        )
+        codex = BackendUsageResult(
+            backend_key=ConversationBackendKey.codex,
+            outcome=BackendUsageOutcome.succeeded,
+            observed_at=new_observation,
+            windows=(
+                BackendUsageWindow(
+                    kind=BackendUsageWindowKind.seven_day,
+                    model_scope="Spark",
+                    used_percent=8,
+                    resets_at=reset,
+                ),
+                BackendUsageWindow(
+                    kind=BackendUsageWindowKind.seven_day,
+                    model_scope="gpt-reserve",
+                    used_percent=9,
+                    resets_at=reset,
+                ),
+            ),
+        )
+        claude_failure = BackendUsageResult(
+            backend_key=ConversationBackendKey.claude,
+            outcome=BackendUsageOutcome.failed,
+            detail="Claude usage could not be refreshed. Try again.",
+        )
+        runtime = replace(
+            harness.runtime,
+            backend_snapshots=_SnapshotAnswers(snapshots),
+            backend_usage=BackendUsageService(
+                {
+                    ConversationBackendKey.codex: _UsageAnswer(codex),
+                    ConversationBackendKey.claude: _UsageAnswer(claude_failure),
+                }
+            ),
+            backend_state=state,
+        )
+
+        response = await conversation_api.refresh_backends(runtime)
+
+        assert [item["outcome"] for item in response["usage_outcomes"]] == [
+            "unavailable",
+            "succeeded",
+            "failed",
+        ]
+        by_backend = {item["backend_key"]: item for item in response["backends"]}
+        assert by_backend["codex"]["cached_usage"]["windows"] == [
+            {
+                "kind": "seven_day",
+                "used_percent": 8,
+                "resets_at": "2026-09-17T12:00:00Z",
+                "model_id": "spark[1m]",
+            }
+        ]
+        assert by_backend["claude"]["cached_usage"]["observed_at"] == (
+            "2026-09-09T12:00:00Z"
+        )
+
+    _run(exercise)
 
 
 # --- the wiring in the real application ---------------------------------------------------------

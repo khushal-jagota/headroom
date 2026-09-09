@@ -1,9 +1,9 @@
 """Explicit, provider-neutral rolling-window usage for agent backends.
 
-Usage is deliberately not part of a backend snapshot.  A snapshot is an ordinary read
-that surfaces all over Panels; acquiring usage can make a provider request and, for
-Codex, spend a very small amount of allowance.  The only public operation here is named
-``refresh`` so composition cannot accidentally turn it into ambient polling.
+Usage is deliberately not part of a backend snapshot. A snapshot is an ordinary read
+that surfaces all over Panels, while acquiring usage makes a bounded provider-native
+request. The only public operation here is named ``refresh`` so composition cannot
+accidentally turn it into ambient polling.
 """
 
 from __future__ import annotations
@@ -11,21 +11,31 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import tempfile
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final, Protocol
 
 import httpx
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
-from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.snapshot import (
-    BackendProbeEnvironment,
-    SubprocessBackendProbeEnvironment,
+from planner import __version__
+from planner.conversation.backends.codex_app_server import bindings_gen as bindings
+from planner.conversation.backends.codex_app_server.adapter import (
+    CLIENT_NAME,
+    CLIENT_TITLE,
+    INITIALIZE_CAPABILITIES,
 )
+from planner.conversation.backends.codex_app_server.client import (
+    CodexAppServerClient,
+    CodexAppServerError,
+    CodexRequestRejected,
+    child_environment,
+)
+from planner.conversation.contracts import ConversationBackendKey
+from planner.conversation.snapshot import SubprocessBackendProbeEnvironment
 
 
 class BackendUsageOutcome(StrEnum):
@@ -97,60 +107,94 @@ class BackendUsageService:
 # --- Codex -------------------------------------------------------------------------------
 
 
-CODEX_USAGE_FRESHNESS: Final = timedelta(minutes=10)
-CODEX_USAGE_REFRESH_TIMEOUT_SECONDS: Final = 120.0
-CODEX_USAGE_REFRESH_MODEL: Final = "gpt-5.6-luna"
-_CODEX_REFRESH_PROMPT: Final = "Do not use tools. Reply with OK."
-_CODEX_REFRESH_DISABLED_FEATURES: Final = (
-    "shell_tool",
-    "unified_exec",
-    "browser_use",
-    "browser_use_external",
-    "browser_use_full_cdp_access",
-    "in_app_browser",
-    "standalone_web_search",
-    "computer_use",
-    "apps",
-    "image_generation",
-    "skill_search",
-    "skill_mcp_dependency_install",
-    "plugins",
-    "remote_plugin",
-    "multi_agent",
-    "multi_agent_v2",
-    "code_mode",
-    "code_mode_host",
-    "code_mode_only",
-)
+CODEX_USAGE_REFRESH_TIMEOUT_SECONDS: Final = 30.0
 
 
-@dataclass(frozen=True, slots=True)
-class _CodexRateLimitSnapshot:
-    observed_at: datetime
-    windows: tuple[BackendUsageWindow, ...]
+class _CodexRateLimitWindow(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    used_percent: StrictInt = Field(alias="usedPercent")
+    window_duration_minutes: StrictInt | None = Field(
+        default=None, alias="windowDurationMins"
+    )
+    resets_at: StrictInt | None = Field(default=None, alias="resetsAt")
+
+
+class _CodexRateLimitBucket(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    limit_id: str | None = Field(default=None, alias="limitId")
+    limit_name: str | None = Field(default=None, alias="limitName")
+    primary: _CodexRateLimitWindow | None = None
+    secondary: _CodexRateLimitWindow | None = None
+
+
+class _CodexRateLimitsResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    rate_limits: _CodexRateLimitBucket = Field(alias="rateLimits")
+    rate_limits_by_limit_id: dict[str, _CodexRateLimitBucket] | None = Field(
+        default=None, alias="rateLimitsByLimitId"
+    )
+
+
+class _CodexUsageMessageHandler:
+    async def on_notification(self, method: str, notification: BaseModel) -> None:
+        del method, notification
+
+    async def on_server_request(
+        self, method: str, request_id: Any, params: BaseModel
+    ) -> None:
+        del method, request_id, params
+
+    async def on_child_ended(self) -> None:
+        return
+
+
+class _CodexUsageEnvironment(Protocol):
+    def executable_path(self, name: str) -> str | None: ...
+
+
+class _CodexUsageClient(Protocol):
+    async def start(
+        self,
+        *,
+        argv: Sequence[str],
+        environment: Mapping[str, str],
+        working_directory: Path,
+    ) -> None: ...
+
+    async def request(
+        self,
+        method: str,
+        params: Mapping[str, Any] | None = None,
+    ) -> Any: ...
+
+    async def notify(
+        self, method: str, params: Mapping[str, Any] | None = None
+    ) -> None: ...
+
+    async def stop(self) -> None: ...
+
+
+type _CodexUsageClientFactory = Callable[..., _CodexUsageClient]
 
 
 class CodexUsageAdapter:
-    """Read Codex rollout rate limits, spending only when the local reading is stale."""
+    """Read Codex rate limits directly from one short-lived app-server child."""
 
     def __init__(
         self,
         *,
-        environment: BackendProbeEnvironment | None = None,
-        rollout_root: Path | None = None,
+        environment: _CodexUsageEnvironment | None = None,
         now: Callable[[], datetime] | None = None,
+        client_factory: _CodexUsageClientFactory = CodexAppServerClient,
     ) -> None:
         self._environment = environment or SubprocessBackendProbeEnvironment()
-        codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
-        self._rollout_root = rollout_root or codex_home / "sessions"
         self._now = now or (lambda: datetime.now(UTC))
+        self._client_factory = client_factory
 
     async def refresh(self) -> BackendUsageResult:
-        now = _as_utc(self._now())
-        before = newest_codex_rate_limit_snapshot(self._rollout_root)
-        if before is not None and timedelta(0) <= now - before.observed_at <= CODEX_USAGE_FRESHNESS:
-            return _codex_success(before)
-
         executable = self._environment.executable_path("codex")
         if executable is None:
             return BackendUsageResult(
@@ -158,17 +202,30 @@ class CodexUsageAdapter:
                 outcome=BackendUsageOutcome.unavailable,
                 detail="Codex is not installed or not on PATH.",
             )
-        # Keep the refresh away from the server's repository and instructions. The CLI
-        # still uses the real CODEX_HOME for its existing login and for the rollout that
-        # carries the new rate-limit event; --ephemeral would prevent that event.
-        with tempfile.TemporaryDirectory(prefix="panels-codex-usage-") as work_directory:
-            outcome = await self._environment.run(
-                codex_usage_refresh_command(executable, Path(work_directory)),
-                timeout_seconds=CODEX_USAGE_REFRESH_TIMEOUT_SECONDS,
+        client = self._client_factory(
+            handler=_CodexUsageMessageHandler(), description="usage-read"
+        )
+        try:
+            response = await asyncio.wait_for(
+                _read_codex_rate_limits(client, executable),
+                timeout=CODEX_USAGE_REFRESH_TIMEOUT_SECONDS,
             )
-        if not outcome.succeeded:
-            said = f"{outcome.standard_output}\n{outcome.standard_error}".lower()
-            unauthenticated = "not logged in" in said or "login" in said and "required" in said
+        except TimeoutError:
+            return BackendUsageResult(
+                backend_key=ConversationBackendKey.codex,
+                outcome=BackendUsageOutcome.failed,
+                detail="Codex usage did not answer in time. Try again.",
+            )
+        except CodexRequestRejected as rejected:
+            unauthenticated = rejected.code in (401, 403) or any(
+                phrase in rejected.message.lower()
+                for phrase in (
+                    "not logged in",
+                    "login required",
+                    "authentication required",
+                    "unauthorized",
+                )
+            )
             return BackendUsageResult(
                 backend_key=ConversationBackendKey.codex,
                 outcome=(
@@ -182,112 +239,85 @@ class CodexUsageAdapter:
                     else "Codex could not refresh its usage. Try again."
                 ),
             )
-        after = newest_codex_rate_limit_snapshot(self._rollout_root)
-        if after is None or (before is not None and after.observed_at <= before.observed_at):
+        except (CodexAppServerError, ValidationError):
             return BackendUsageResult(
                 backend_key=ConversationBackendKey.codex,
                 outcome=BackendUsageOutcome.failed,
-                detail="Codex finished, but did not write a new usable usage reading.",
+                detail="Codex could not refresh its usage. Try again.",
             )
-        return _codex_success(after)
-
-
-def codex_usage_refresh_command(executable: str, work_directory: Path) -> tuple[str, ...]:
-    """Build the isolated request that causes Codex to persist one rate-limit event."""
-
-    command = (
-        executable,
-        "exec",
-        "--cd",
-        str(work_directory),
-        "--ignore-user-config",
-        "--ignore-rules",
-        "--model",
-        CODEX_USAGE_REFRESH_MODEL,
-        "--config",
-        'model_reasoning_effort="low"',
-        "--sandbox",
-        "read-only",
-        "--skip-git-repo-check",
-    )
-    disabled_features = tuple(
-        part for feature in _CODEX_REFRESH_DISABLED_FEATURES for part in ("--disable", feature)
-    )
-    return (*command, *disabled_features, _CODEX_REFRESH_PROMPT)
-
-
-def newest_codex_rate_limit_snapshot(root: Path) -> _CodexRateLimitSnapshot | None:
-    """Read the newest valid ``rate_limits`` event from Codex JSONL rollouts."""
-
-    newest: _CodexRateLimitSnapshot | None = None
-    if not root.is_dir():
-        return None
-    for rollout in root.rglob("*.jsonl"):
-        try:
-            lines = rollout.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
-        for line in lines:
-            try:
-                event = json.loads(line)
-            except ValueError:
-                continue
-            parsed = _parse_codex_rate_limit_event(event)
-            if parsed is not None and (newest is None or parsed.observed_at > newest.observed_at):
-                newest = parsed
-    return newest
-
-
-def _parse_codex_rate_limit_event(event: Any) -> _CodexRateLimitSnapshot | None:
-    if not isinstance(event, dict):
-        return None
-    payload = event.get("payload")
-    if not isinstance(payload, dict):
-        return None
-    rate_limits = payload.get("rate_limits")
-    if not isinstance(rate_limits, dict):
-        return None
-    observed_at = _parse_datetime(event.get("timestamp"))
-    if observed_at is None:
-        return None
-    windows: list[BackendUsageWindow] = []
-    for provider_name in ("primary", "secondary"):
-        window = rate_limits.get(provider_name)
-        if not isinstance(window, dict):
-            continue
-        used_percent = _percentage(window.get("used_percent"))
-        resets_at = _parse_datetime(window.get("resets_at"))
-        minutes = window.get("window_minutes")
-        window_kind = (
-            _window_kind(minutes)
-            if isinstance(minutes, int) and not isinstance(minutes, bool)
-            else None
+        finally:
+            await client.stop()
+        windows = _codex_windows(response)
+        if not windows:
+            return BackendUsageResult(
+                backend_key=ConversationBackendKey.codex,
+                outcome=BackendUsageOutcome.failed,
+                detail="Codex returned usage in a format Panels does not understand.",
+            )
+        return BackendUsageResult(
+            backend_key=ConversationBackendKey.codex,
+            outcome=BackendUsageOutcome.succeeded,
+            observed_at=_as_utc(self._now()),
+            windows=windows,
         )
-        if (
-            used_percent is None
-            or resets_at is None
-            or window_kind is None
+
+
+async def _read_codex_rate_limits(
+    client: _CodexUsageClient, executable: str
+) -> _CodexRateLimitsResponse:
+    await client.start(
+        argv=(executable, "app-server"),
+        environment=child_environment(),
+        working_directory=Path.home(),
+    )
+    await client.request(
+        "initialize",
+        bindings.InitializeParams(
+            clientInfo=bindings.ClientInfo(
+                name=CLIENT_NAME, title=CLIENT_TITLE, version=__version__
+            ),
+            capabilities=INITIALIZE_CAPABILITIES,
+        ).model_dump(mode="json", exclude_none=True, by_alias=True),
+    )
+    await client.notify("initialized")
+    answered = await client.request("account/rateLimits/read", {})
+    return _CodexRateLimitsResponse.model_validate(answered)
+
+
+def _codex_windows(response: _CodexRateLimitsResponse) -> tuple[BackendUsageWindow, ...]:
+    windows = list(_codex_bucket_windows(response.rate_limits, model_scope=None))
+    account_limit_id = response.rate_limits.limit_id
+    for limit_id, bucket in (response.rate_limits_by_limit_id or {}).items():
+        if account_limit_id is not None and (
+            limit_id == account_limit_id or bucket.limit_id == account_limit_id
         ):
+            continue
+        model_scope = bucket.limit_name or limit_id
+        windows.extend(_codex_bucket_windows(bucket, model_scope=model_scope))
+    return tuple(windows)
+
+
+def _codex_bucket_windows(
+    bucket: _CodexRateLimitBucket, *, model_scope: str | None
+) -> tuple[BackendUsageWindow, ...]:
+    windows: list[BackendUsageWindow] = []
+    for provider_window in (bucket.primary, bucket.secondary):
+        if provider_window is None:
+            continue
+        window_kind = _window_kind(provider_window.window_duration_minutes)
+        used_percent = _percentage(provider_window.used_percent)
+        resets_at = _parse_datetime(provider_window.resets_at)
+        if window_kind is None or used_percent is None or resets_at is None:
             continue
         windows.append(
             BackendUsageWindow(
                 kind=window_kind,
                 used_percent=used_percent,
                 resets_at=resets_at,
+                model_scope=model_scope,
             )
         )
-    if not windows:
-        return None
-    return _CodexRateLimitSnapshot(observed_at=observed_at, windows=tuple(windows))
-
-
-def _codex_success(snapshot: _CodexRateLimitSnapshot) -> BackendUsageResult:
-    return BackendUsageResult(
-        backend_key=ConversationBackendKey.codex,
-        outcome=BackendUsageOutcome.succeeded,
-        observed_at=snapshot.observed_at,
-        windows=snapshot.windows,
-    )
+    return tuple(windows)
 
 
 # --- Claude ------------------------------------------------------------------------------
@@ -338,12 +368,18 @@ class ClaudeUsageAdapter:
         self._now = now or (lambda: datetime.now(UTC))
 
     async def refresh(self) -> BackendUsageResult:
-        access_token = _read_claude_access_token(self._credential_path)
+        access_token, token_expired = _read_claude_access_token(
+            self._credential_path, now=_as_utc(self._now())
+        )
         if access_token is None:
             return BackendUsageResult(
                 backend_key=ConversationBackendKey.claude,
                 outcome=BackendUsageOutcome.unauthenticated,
-                detail="Claude is not logged in. Run `claude auth login` and try again.",
+                detail=(
+                    "Claude's login has expired. Run `claude auth login` and try again."
+                    if token_expired
+                    else "Claude is not logged in. Run `claude auth login` and try again."
+                ),
             )
         try:
             response = await self._http_get(
@@ -393,18 +429,28 @@ class ClaudeUsageAdapter:
         )
 
 
-def _read_claude_access_token(path: Path) -> str | None:
+def _read_claude_access_token(path: Path, *, now: datetime) -> tuple[str | None, bool]:
     try:
         credentials = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return None
+        return None, False
     if not isinstance(credentials, dict):
-        return None
+        return None, False
     oauth = credentials.get("claudeAiOauth")
     if not isinstance(oauth, dict):
-        return None
+        return None, False
     token = oauth.get("accessToken")
-    return token if isinstance(token, str) and token else None
+    if not isinstance(token, str) or not token:
+        return None, False
+    expires_at = oauth.get("expiresAt")
+    if isinstance(expires_at, (int, float)) and not isinstance(expires_at, bool):
+        try:
+            expiry = datetime.fromtimestamp(float(expires_at) / 1000, tz=UTC)
+        except (OverflowError, OSError, ValueError):
+            expiry = None
+        if expiry is not None and expiry <= now:
+            return None, True
+    return token, False
 
 
 def _parse_claude_windows(body: Any) -> tuple[BackendUsageWindow, ...] | None:
@@ -417,8 +463,6 @@ def _parse_claude_windows(body: Any) -> tuple[BackendUsageWindow, ...] | None:
 
     windows: list[BackendUsageWindow] = []
     for key, value in body.items():
-        if key not in ("five_hour", "seven_day") and not key.startswith("seven_day_"):
-            continue
         window = _parse_claude_window(key, value)
         if window is not None:
             windows.append(window)
@@ -533,7 +577,7 @@ def _percentage(value: Any) -> float | None:
     return number if 0 <= number <= 100 else None
 
 
-def _window_kind(minutes: int) -> BackendUsageWindowKind | None:
+def _window_kind(minutes: int | None) -> BackendUsageWindowKind | None:
     if minutes == 300:
         return BackendUsageWindowKind.five_hour
     if minutes == 10080:

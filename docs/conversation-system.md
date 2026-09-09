@@ -439,15 +439,18 @@ source through `POST /backends/refresh`. Codex and Claude refresh independently,
 failure does not discard the other provider's new answer. A failed refresh also leaves
 that backend's prior reading in place.
 
-Codex first reads the newest rate-limit event in its local rollout record. A reading
-no more than ten minutes old is returned without starting Codex. Otherwise Panels runs
-one minimal Luna request at low reasoning and reads the newly written event. Claude
-uses the CLI's existing OAuth login for one bounded request to its usage endpoint. The
-credential never appears in the result or logs. Both providers are translated into the
-same answer: the observed time and only the rolling windows the provider returned, with
-percentage used and reset time. A window also says whether it is five hours or seven
-days. A model-scoped Claude window names the stable model id from Claude's current
-catalogue. Hermes has no usage source here.
+Codex starts one short-lived app-server child and asks its native
+`account/rateLimits/read` method. The request does not start a thread, run a model turn,
+spend allowance, or scan rollout files. Panels accepts the account bucket and distinct
+named model buckets, then always stops the child. Claude uses the CLI's existing OAuth
+login for one bounded request to its usage endpoint. Panels refuses an expired access
+token locally and never reads or uses the refresh token. Credentials never appear in a
+result or log.
+
+Both providers are translated into the same answer: the observed time and only the
+valid rolling windows the provider returned, with percentage used and reset time. A
+window also says whether it is five hours or seven days. A model-scoped window names the
+stable model id from that provider's current catalogue. Hermes has no usage source here.
 
 Unavailable, logged-out, transport, and changed-response cases are calm typed refresh
 results. They do not affect another backend, invent missing windows, or turn ordinary
