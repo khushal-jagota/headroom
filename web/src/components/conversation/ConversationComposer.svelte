@@ -97,6 +97,7 @@
     startsOnModel = null,
     startsOnReasoningEffort = null,
     heldPromptRows = [],
+    supportsSteer = false,
     fateNote = null,
     errorNote = null,
     placeholder = "Message the agent...",
@@ -149,6 +150,7 @@
     startsOnModel?: string | null;
     startsOnReasoningEffort?: string | null;
     heldPromptRows?: readonly HeldPromptRow[];
+    supportsSteer?: boolean;
     fateNote?: string | null;
     errorNote?: string | null;
     placeholder?: string;
@@ -745,7 +747,7 @@
     <HeldPromptStack
       rows={heldPromptRows}
       {conversationId}
-      hermes={backendKey === "hermes"}
+      {supportsSteer}
       {running}
       onDiscard={onDiscardHeldPrompt}
       onPromote={onPromoteHeldPrompt}

@@ -167,6 +167,11 @@ function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Happened |
         who: senderOf(row.senderLabel, ownSenderLabel),
         text: oneLine(`not delivered · ${row.sentence}`)
       };
+    case "prompt_uncertain":
+      return {
+        who: senderOf(row.senderLabel, ownSenderLabel),
+        text: "delivery uncertain · do not resend"
+      };
     case "prompt_discarded":
       return { who: senderOf(row.senderLabel, ownSenderLabel), text: PROMPT_DISCARDED_SENTENCE };
     case "agent_message":

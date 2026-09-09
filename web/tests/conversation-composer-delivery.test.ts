@@ -160,5 +160,7 @@ describe("Conversation composer delivery", () => {
       fate: "refused",
       refusal_reason: "backend_cannot_steer"
     })).toBe("not delivered · this backend cannot take text into a running turn");
+    expect(fateSentence({ fate: "uncertain" }))
+      .toBe("delivery uncertain · do not resend");
   });
 });

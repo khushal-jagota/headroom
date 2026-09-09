@@ -358,6 +358,19 @@ const PLAN = [
   assert.equal(refused.text, "not delivered · the backend would not start");
   assert.equal(refused.workingSinceUnixMilliseconds, null, "a refusal started no turn");
 
+  const uncertain = restLineFrom(
+    [
+      row("prompt_uncertain", {
+        content: [{ piece: "text", text: "possibly steered" }],
+        senderLabel: "owner"
+      })
+    ],
+    "owner"
+  );
+  assert.equal(uncertain.who, "you");
+  assert.equal(uncertain.text, "delivery uncertain · do not resend");
+  assert.equal(uncertain.workingSinceUnixMilliseconds, null, "uncertainty started no turn");
+
   const discarded = restLineFrom(
     [
       row("prompt_discarded", {

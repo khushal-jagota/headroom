@@ -2,15 +2,16 @@
 
 This is an internal seam, not the contract Panels talks to. It exists so that the rules
 live in exactly one place: **the core owns every contract semantic** — the held queue, the
-four fates, steer gating, permission bookkeeping, which rows get written, when a child is
+delivery fates, steer gating, permission bookkeeping, which rows get written, when a child is
 spawned and when it is stopped. An adapter owns one child process and its wire, and knows
 none of that.
 
 The division shows up in what each side is allowed to decide. An adapter never decides
 that a message should wait, never decides that an ask has expired, and never writes a row.
-The core never speaks a vendor's protocol. When an adapter cannot do what it was asked, it
-says so by raising one of the named failures below, and the core turns that into the one
-refusal reason the contract has for it:
+The core never speaks a vendor's protocol. Ordinary prompt delivery failures use the named
+exceptions below. Steering instead returns a structured accepted, refused, or uncertain
+outcome because a failed response does not necessarily mean that no bytes crossed the
+provider boundary:
 
 - ``BackendSpawnFailed`` → ``backend_did_not_start``
 - ``SessionLoadFailed`` → ``session_did_not_load``
