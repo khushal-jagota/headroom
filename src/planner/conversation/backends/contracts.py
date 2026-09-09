@@ -28,6 +28,7 @@ from typing import Protocol
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
     PromptDeliveryMode,
+    PromptDeliveryRefusalReason,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
@@ -113,6 +114,26 @@ class TurnToken:
 
     conversation_id: str
     turn_number: int
+
+
+@dataclass(frozen=True, slots=True)
+class BackendSteerAccepted:
+    """The provider admitted the message to the exact turn that the token names."""
+
+
+@dataclass(frozen=True, slots=True)
+class BackendSteerRefused:
+    """The adapter proved that the message was not admitted to the target turn."""
+
+    refusal_reason: PromptDeliveryRefusalReason
+
+
+@dataclass(frozen=True, slots=True)
+class BackendSteerUncertain:
+    """The adapter cannot prove admission or non-admission after the attempt."""
+
+
+type BackendSteerOutcome = BackendSteerAccepted | BackendSteerRefused | BackendSteerUncertain
 
 
 @dataclass(frozen=True, slots=True)
@@ -388,12 +409,13 @@ class BackendChild(Protocol):
         if this child cannot safely accept a write that has not started.
         """
 
-    async def steer(self, content: MessageContent, *, sender_label: str) -> None:
-        """Put a message into the turn that is already running, without ending it.
+    async def steer(
+        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+    ) -> BackendSteerOutcome:
+        """Try to admit a message to the exact turn named by ``turn_token``.
 
-        Only a backend that can do this ever has it called: the core refuses a steer aimed
-        at one that cannot, before any child is touched. ``sender_label`` travels with the
-        message the same way it does on a prompt. Raises ``PromptWriteFailed``.
+        The adapter validates the target before transmission and never substitutes a newer
+        turn. It returns one explicit outcome and never retries or falls back to a prompt.
         """
 
     async def cancel_running_turn(self) -> None:

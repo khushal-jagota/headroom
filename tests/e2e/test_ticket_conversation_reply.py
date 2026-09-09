@@ -24,6 +24,7 @@ from playwright.sync_api import BrowserContext, Page, Request
 from tests.e2e.harness import REPO_ROOT, WAIT_MS, ApiHelper, JsonObject, ServerHandle
 from tests.e2e.test_dev_conversation_pane import HOLD_THE_SEND
 
+from planner.conversation.backends.contracts import BackendSteerAccepted, BackendSteerOutcome
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core import server as server_module
 from planner.core.clock import build_clock
@@ -48,8 +49,8 @@ class _AcceptingBackendChild:
     async def write_prompt(self, *_args: object, **_kwargs: object) -> None:
         return None
 
-    async def steer(self, *_args: object, **_kwargs: object) -> None:
-        return None
+    async def steer(self, *_args: object, **_kwargs: object) -> BackendSteerOutcome:
+        return BackendSteerAccepted()
 
     async def cancel_running_turn(self) -> None:
         return None

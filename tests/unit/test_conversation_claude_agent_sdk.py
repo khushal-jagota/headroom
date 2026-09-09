@@ -1037,7 +1037,9 @@ def test_claude_cannot_take_text_into_a_running_turn(tmp_path: Path) -> None:
         child, _, _ = _bench(_start_request(workspace_folder=tmp_path))
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
         with pytest.raises(PromptWriteFailed):
-            await child.steer(text_message_content("go left"), sender_label="owner")
+            await child.steer(
+                TurnToken("c", 1), text_message_content("go left"), sender_label="owner"
+            )
         await child.stop()
 
     _run(exercise)

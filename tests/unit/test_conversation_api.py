@@ -56,6 +56,8 @@ from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendSteerAccepted,
+    BackendSteerOutcome,
     BackendUserInputRequest,
     NeedsRebind,
     PromptWriteFailed,
@@ -188,9 +190,13 @@ class _FakeBackendChild:
         self._backend.written_contents.append(content)
         self._backend.live_turn_token = turn_token
 
-    async def steer(self, content: MessageContent, *, sender_label: str) -> None:
+    async def steer(
+        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+    ) -> BackendSteerOutcome:
+        del turn_token
         del sender_label
         self._backend.steered_contents.append(content)
+        return BackendSteerAccepted()
 
     async def cancel_running_turn(self) -> None:
         self._backend.cancellations += 1

@@ -49,6 +49,7 @@ class ConversationEventKind(StrEnum):
 
     prompt = "prompt"
     prompt_delivery_refused = "prompt_delivery_refused"
+    prompt_delivery_uncertain = "prompt_delivery_uncertain"
     prompt_discarded = "prompt_discarded"
     agent_message = "agent_message"
     tool_call_started = "tool_call_started"
@@ -226,6 +227,18 @@ class PromptDeliveryRefusedEventPayload:
     sender_label: str
     mode: PromptDeliveryMode
     refusal_reason: PromptDeliveryRefusalReason
+    sender_message_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PromptDeliveryUncertainEventPayload:
+    """A steering attempt whose admission stayed unknown after possible transmission."""
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.prompt_delivery_uncertain
+
+    content: MessageContent
+    sender_label: str
+    mode: PromptDeliveryMode
     sender_message_id: str | None = None
 
 
@@ -427,6 +440,7 @@ class TurnEndedEventPayload:
 type ConversationEventPayload = (
     PromptEventPayload
     | PromptDeliveryRefusedEventPayload
+    | PromptDeliveryUncertainEventPayload
     | PromptDiscardedEventPayload
     | AgentMessageEventPayload
     | ToolCallStartedEventPayload
@@ -535,6 +549,13 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
                 "refusal_reason": str(payload.refusal_reason),
+                **_entry_if_minted("sender_message_id", payload.sender_message_id),
+            }
+        case PromptDeliveryUncertainEventPayload():
+            return {
+                **message_content_json_entries(payload.content),
+                "sender_label": payload.sender_label,
+                "mode": str(payload.mode),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
             }
         case PromptDiscardedEventPayload():
@@ -649,6 +670,13 @@ def _payload_from_json_object(
                 sender_label=_text(stored, "sender_label"),
                 mode=PromptDeliveryMode(_text(stored, "mode")),
                 refusal_reason=PromptDeliveryRefusalReason(_text(stored, "refusal_reason")),
+                sender_message_id=_optional_text(stored, "sender_message_id"),
+            )
+        case ConversationEventKind.prompt_delivery_uncertain:
+            return PromptDeliveryUncertainEventPayload(
+                content=message_content_from_stored(stored),
+                sender_label=_text(stored, "sender_label"),
+                mode=PromptDeliveryMode(_text(stored, "mode")),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
             )
         case ConversationEventKind.prompt_discarded:
