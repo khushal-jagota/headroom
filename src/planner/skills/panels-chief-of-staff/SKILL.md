@@ -181,6 +181,11 @@ path, researches, and hands back a sourced synthesis without a paired conversati
 does not decide or implement. When the question itself is still undefined, use
 `exploration` instead.
 
+Use the `initiative_review` Worker type when a delivered initiative or another coherent
+multi-Ticket change needs one combined review before integration. It inspects the actual
+combined result, captures the user's specific feedback, and creates the agreed follow-up
+work before closeout.
+
 Use the `amend_worker` Worker type when an existing Worker type needs changing: a Stage
 removed or added, an ownership mode, a runtime default, or its skill guidance. One
 Worker per Ticket. Designing a worker that does not exist yet is `new_worker`.

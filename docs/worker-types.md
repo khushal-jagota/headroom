@@ -368,6 +368,7 @@ process is started again under it when there is a reason to.
 - `panels-worker-exploration` guides `exploration` Tickets.
 - `panels-worker-research` guides `research` Tickets.
 - `panels-worker-initiative-planning` guides `initiative_planning` Tickets.
+- `panels-worker-initiative-review` guides `initiative_review` Tickets.
 - `panels-worker-product-design` guides `product_design` Tickets.
 - `panels-worker-planning-day` guides `planning-day` Tickets.
 - `panels-worker-planning-midday-check` guides `planning-midday-check` Tickets.

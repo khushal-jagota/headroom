@@ -35,6 +35,7 @@ PLANNER_SKILL_NAMES: Final = (
     "panels-worker-amend-worker",
     "panels-worker-exploration",
     "panels-worker-initiative-planning",
+    "panels-worker-initiative-review",
     "panels-worker-product-design",
     "panels-worker-planning-day",
     "panels-worker-planning-midday-check",
