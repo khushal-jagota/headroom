@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+import planner.conversation.system as conversation_system
 from planner.conversation.backend_lifecycle import BackendLifecycleCoordinator
 from planner.conversation.backends.contracts import (
     BackendEventSink,
@@ -27,6 +28,8 @@ from planner.conversation.backends.contracts import (
     BackendSpawnFailed,
     BackendSteerAccepted,
     BackendSteerOutcome,
+    BackendSteerRefused,
+    BackendSteerUncertain,
     BackendUserInputRequest,
     NeedsRebind,
     PermissionAnswerWriteFailed,
@@ -48,6 +51,7 @@ from planner.conversation.contracts import (
     PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliveryUncertain,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
@@ -59,6 +63,7 @@ from planner.conversation.events import (
     ModelThinkingFrame,
     PermissionAskOption,
     PromptDeliveryRefusedEventPayload,
+    PromptDeliveryUncertainEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
     TurnEndedEventPayload,
@@ -125,6 +130,7 @@ class _FakeBackend:
 
     conversation_id: str
     writes: list[_FakeBackendWrite] = field(default_factory=list)
+    steer_tokens: list[TurnToken] = field(default_factory=list)
     permission_answers: dict[str, str] = field(default_factory=dict)
     user_input_answers: dict[str, tuple[UserInputAnswer, ...]] = field(default_factory=dict)
     cancellations: int = 0
@@ -134,6 +140,7 @@ class _FakeBackend:
     reasoning_effort: str | None = None
     started_from_cursor: str | None = None
     live_turn_token: TurnToken | None = None
+    steer_outcome: BackendSteerOutcome = field(default_factory=BackendSteerAccepted)
     permission_asks_raised: int = 0
     sink: BackendEventSink | None = None
 
@@ -273,11 +280,12 @@ class _FakeBackendChild:
     async def steer(
         self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
     ) -> BackendSteerOutcome:
-        del turn_token, sender_label
+        del sender_label
         if self._backend.write_fails:
             raise PromptWriteFailed(self._backend.conversation_id)
+        self._backend.steer_tokens.append(turn_token)
         self._backend.writes.append(_FakeBackendWrite(content=content, steered=True))
-        return BackendSteerAccepted()
+        return self._backend.steer_outcome
 
     async def cancel_running_turn(self) -> None:
         if self._backend.cancel_has_begun is not None:
@@ -698,8 +706,11 @@ def test_a_failed_hermes_start_releases_its_maintenance_reservation(
     _run(exercise)
 
 
-def test_a_steer_that_does_not_reach_the_wire_leaves_the_turn_alone(harness: _Harness) -> None:
+def test_an_unconfirmed_steer_is_uncertain_and_leaves_the_turn_alone(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
         await _start(harness, "c", backend_key=ConversationBackendKey.hermes)
         await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
         harness.backend("c").write_fails = True
@@ -709,12 +720,98 @@ def test_a_steer_that_does_not_reach_the_wire_leaves_the_turn_alone(harness: _Ha
             text_message_content("steered"),
             sender_label="owner",
             mode=PromptDeliveryMode.steer,
-        ) == PromptDeliveryRefused(
-            refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed
-        )
+        ) == PromptDeliveryUncertain()
         assert harness.backend("c").written_texts() == ("incumbent",)
         assert await harness.system.is_running("c") is True
-        assert await harness.recorded_prompts("c") == (("incumbent", "owner", "run_when_free"),)
+        assert await harness.recorded_kinds("c") == (
+            ConversationEventKind.prompt,
+            ConversationEventKind.prompt_delivery_uncertain,
+        )
+
+    _run(exercise)
+
+
+def test_a_provider_refused_steer_is_durable_and_deduplicated(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        backend = harness.backend("c")
+        backend.steer_outcome = BackendSteerRefused(
+            PromptDeliveryRefusalReason.backend_rejected_steer
+        )
+        content = text_message_content("refused steer")
+
+        first = await harness.system.send(
+            "c",
+            content,
+            sender_label="owner",
+            mode=PromptDeliveryMode.steer,
+            sender_message_id="refused-id",
+        )
+        duplicate = await harness.system.send(
+            "c",
+            content,
+            sender_label="owner",
+            mode=PromptDeliveryMode.steer,
+            sender_message_id="refused-id",
+        )
+
+        expected = PromptDeliveryRefused(
+            refusal_reason=PromptDeliveryRefusalReason.backend_rejected_steer
+        )
+        assert first == expected
+        assert duplicate == expected
+        assert backend.steer_tokens == [TurnToken("c", 1)]
+        assert await harness.recorded_kinds("c") == (
+            ConversationEventKind.prompt,
+            ConversationEventKind.prompt_delivery_refused,
+        )
+
+    _run(exercise)
+
+
+def test_an_uncertain_steer_survives_reload_without_retransmission(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        backend = harness.backend("c")
+        backend.steer_outcome = BackendSteerUncertain()
+        content = text_message_content("uncertain steer")
+
+        assert await harness.system.send(
+            "c",
+            content,
+            sender_label="owner",
+            mode=PromptDeliveryMode.steer,
+            sender_message_id="uncertain-id",
+        ) == PromptDeliveryUncertain()
+
+        restarted = _Harness(tmp_path / "conversations.db")
+        restarted.backends = harness.backends
+        try:
+            assert await restarted.system.send(
+                "c",
+                content,
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
+                sender_message_id="uncertain-id",
+            ) == PromptDeliveryUncertain()
+            assert backend.steer_tokens == [TurnToken("c", 1)]
+            uncertain_rows = [
+                event.payload
+                for event in await restarted.events("c")
+                if isinstance(event.payload, PromptDeliveryUncertainEventPayload)
+            ]
+            assert len(uncertain_rows) == 1
+            assert uncertain_rows[0].sender_message_id == "uncertain-id"
+        finally:
+            await restarted.system.shutdown()
 
     _run(exercise)
 
@@ -2409,8 +2506,11 @@ def test_two_promotions_of_one_held_id_have_exactly_one_winner(harness: _Harness
     _run(exercise)
 
 
-def test_promoted_steer_does_not_apply_the_queued_model_change(harness: _Harness) -> None:
+def test_promoted_steer_does_not_apply_the_queued_model_change(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
         await _start(harness, "c")
         await harness.system.send(
             "c", text_message_content("incumbent"), sender_label="owner"
@@ -2433,6 +2533,48 @@ def test_promoted_steer_does_not_apply_the_queued_model_change(harness: _Harness
             content=text_message_content("steered"), steered=True
         )
         assert ConversationEventKind.model_changed not in await harness.recorded_kinds("c")
+        assert harness.backend("c").steer_tokens == [TurnToken("c", 1)]
+
+    _run(exercise)
+
+
+def test_uncertain_promoted_steer_settles_only_the_selected_held_row(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        await harness.system.send(
+            "c",
+            text_message_content("selected"),
+            sender_label="owner",
+            sender_message_id="selected-id",
+            model_change="never-model",
+        )
+        await harness.system.send("c", text_message_content("next"), sender_label="owner")
+        selected = (await harness.system.held_prompts("c"))[0]
+        backend = harness.backend("c")
+        backend.steer_outcome = BackendSteerUncertain()
+
+        fate = await harness.system.promote_held_prompt(
+            "c", selected.held_prompt_id, HeldPromptPromotionMode.steer
+        )
+
+        assert fate == PromptDeliveryUncertain()
+        assert backend.model != "never-model"
+        assert backend.steer_tokens == [TurnToken("c", 1)]
+        assert [
+            message_content_text(item.content)
+            for item in await harness.system.held_prompts("c")
+        ] == ["next"]
+        uncertain_rows = [
+            event.payload
+            for event in await harness.events("c")
+            if isinstance(event.payload, PromptDeliveryUncertainEventPayload)
+        ]
+        assert len(uncertain_rows) == 1
+        assert uncertain_rows[0].sender_message_id == "selected-id"
 
     _run(exercise)
 

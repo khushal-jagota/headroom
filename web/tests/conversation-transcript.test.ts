@@ -218,6 +218,26 @@ describe("Conversation transcript", () => {
     expect(turnEndingSentence("interrupted", null)).toBe("turn interrupted");
   });
 
+  it("projects uncertain steering as its own terminal message row", () => {
+    const uncertain = {
+      conversation_id: "c1",
+      sequence: 1,
+      kind: "prompt_delivery_uncertain",
+      payload: {
+        text: "possibly steered",
+        sender_label: "owner",
+        mode: "steer",
+        sender_message_id: "message-1"
+      },
+      created_at: 1_700_000_000
+    } satisfies ConversationEvent;
+
+    expect(rowOfKind(rowsFrom([uncertain]), "prompt_uncertain")).toMatchObject({
+      content: [{ piece: "text", text: "possibly steered" }],
+      senderLabel: "owner"
+    });
+  });
+
   it("preserves image pieces on both sides and normalizes legacy text", () => {
     const content = [
       { piece: "text" as const, text: "look at this" },

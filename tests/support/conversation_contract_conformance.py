@@ -74,6 +74,7 @@ class RecordedFactKind(StrEnum):
 
     prompt_delivered = "prompt_delivered"
     prompt_delivery_refused = "prompt_delivery_refused"
+    prompt_delivery_uncertain = "prompt_delivery_uncertain"
     prompt_discarded = "prompt_discarded"
     turn_ended = "turn_ended"
     permission_asked = "permission_asked"

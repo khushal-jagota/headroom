@@ -321,9 +321,11 @@ class PromptDeliveryUncertain:
 
 # The fate of one delivery. Fate means it happened, never that it was attempted. Each
 # member claims exactly the layer it names and no more: started means written to a live
-# backend's wire, queued means held by the conversation system, injected means entered
-# the running turn's wire, refused means impossible. No member carries a turn outcome,
-# because a turn's ending is an event and never a return value.
+# backend's wire, queued means held by the conversation system, injected means admitted
+# to the captured running turn, refused means proven non-admission, and uncertain means a
+# steering attempt may have crossed the backend boundary without a trustworthy answer.
+# No member carries a turn outcome, because a turn's ending is an event and never a
+# return value.
 type PromptDeliveryFate = (
     PromptDeliveryStarted
     | PromptDeliveryQueued

@@ -26,6 +26,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 import planner.conversation.api as conversation_api
+import planner.conversation.system as conversation_system
 from planner.conversation.api import (
     COMMITTED_EVENT_STREAM_NAME,
     LIVE_FRAME_STREAM_NAME,
@@ -52,6 +53,7 @@ from planner.conversation.backends.contracts import (
     BackendSpawnFailed,
     BackendSteerAccepted,
     BackendSteerOutcome,
+    BackendSteerUncertain,
     BackendUserInputRequest,
     NeedsRebind,
     PromptWriteFailed,
@@ -125,6 +127,7 @@ class _FakeBackend:
         """The words of each message written. The messages themselves are above."""
         return [message_content_text(content) for content in self.written_contents]
     steered_contents: list[MessageContent] = field(default_factory=list)
+    steer_outcome: BackendSteerOutcome = field(default_factory=BackendSteerAccepted)
     permission_answers: dict[str, str] = field(default_factory=dict)
     user_input_answers: dict[str, tuple[UserInputAnswer, ...]] = field(default_factory=dict)
     cancellations: int = 0
@@ -188,7 +191,7 @@ class _FakeBackendChild:
         del turn_token
         del sender_label
         self._backend.steered_contents.append(content)
-        return BackendSteerAccepted()
+        return self._backend.steer_outcome
 
     async def cancel_running_turn(self) -> None:
         self._backend.cancellations += 1
@@ -731,6 +734,7 @@ def test_starting_a_conversation_answers_with_what_it_resolved_to(harness: _Harn
             # The floor default, applied because the request said nothing about access.
             assert view["access"] == "full"
             assert view["is_running"] is False
+            assert view["supports_steer"] is False
             assert view["latest_sequence"] == 0
             assert view["held_prompts"] == []
             assert view["pending_permission_ask"] is None
@@ -801,10 +805,17 @@ def test_the_view_carries_the_typed_composer_catalog(
 # --- sending -----------------------------------------------------------------------------
 
 
-def test_every_fate_a_send_can_have_comes_back_tagged(harness: _Harness) -> None:
+def test_every_fate_a_send_can_have_comes_back_tagged(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        monkeypatch.setattr(conversation_api, "backend_supports_steer", lambda _key: True)
         async with harness.client() as client:
             await _start(client, "c")
+            assert (
+                await client.get("/api/conversation/conversations/c")
+            ).json()["supports_steer"] is True
 
             started = await client.post(
                 "/api/conversation/conversations/c/send",
@@ -837,6 +848,17 @@ def test_every_fate_a_send_can_have_comes_back_tagged(harness: _Harness) -> None
             )
             assert injected.json() == {"fate": "injected"}
             assert harness.backend("c").steered_contents == [text_message_content("also this")]
+
+            harness.backend("c").steer_outcome = BackendSteerUncertain()
+            uncertain = await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [{"piece": "text", "text": "unclear"}],
+                    "sender_label": "owner",
+                    "mode": "steer",
+                },
+            )
+            assert uncertain.json() == {"fate": "uncertain"}
 
             refused = await client.post(
                 "/api/conversation/conversations/unknown/send",

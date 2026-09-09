@@ -35,6 +35,7 @@ from planner.conversation.events import (
     PlanEntryStatus,
     PlanUpdatedEventPayload,
     PromptDeliveryRefusedEventPayload,
+    PromptDeliveryUncertainEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
     TokenUsageEventPayload,
@@ -76,6 +77,11 @@ A_REFUSED_DELIVERY = PromptDeliveryRefusedEventPayload(
     mode=PromptDeliveryMode.run_when_free,
     refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed,
 )
+A_UNCERTAIN_DELIVERY = PromptDeliveryUncertainEventPayload(
+    content=text_message_content("possibly steered"),
+    sender_label="owner",
+    mode=PromptDeliveryMode.steer,
+)
 AN_AGENT_MESSAGE = AgentMessageEventPayload(
     content=text_message_content("# heading\n\nbody with an em dash — and 日本語")
 )
@@ -84,6 +90,7 @@ AN_AGENT_MESSAGE = AgentMessageEventPayload(
 EVERY_PAYLOAD: tuple[ConversationEventPayload, ...] = (
     A_PROMPT,
     A_REFUSED_DELIVERY,
+    A_UNCERTAIN_DELIVERY,
     PromptDiscardedEventPayload(content=text_message_content("never ran"), sender_label="owner"),
     AN_AGENT_MESSAGE,
     ToolCallStartedEventPayload(
@@ -198,7 +205,7 @@ def test_what_a_sender_minted_is_stored_and_read_back_exactly() -> None:
 
 
 def test_a_sent_message_carries_its_id_into_whichever_row_it_becomes() -> None:
-    """Delivered, refused, discarded — a sender must recognise its own in all three."""
+    """A sender can recognise its message in every durable delivery outcome."""
     for payload in (
         PromptEventPayload(
             content=text_message_content("go"),
@@ -211,6 +218,12 @@ def test_a_sent_message_carries_its_id_into_whichever_row_it_becomes() -> None:
             sender_label="owner",
             mode=PromptDeliveryMode.run_when_free,
             refusal_reason=PromptDeliveryRefusalReason.backend_did_not_start,
+            sender_message_id="m-1",
+        ),
+        PromptDeliveryUncertainEventPayload(
+            content=text_message_content("go"),
+            sender_label="owner",
+            mode=PromptDeliveryMode.steer,
             sender_message_id="m-1",
         ),
         PromptDiscardedEventPayload(

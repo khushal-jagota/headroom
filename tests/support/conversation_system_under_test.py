@@ -79,6 +79,7 @@ from planner.conversation.events import (
     PermissionAskedEventPayload,
     PlanEntry,
     PromptDeliveryRefusedEventPayload,
+    PromptDeliveryUncertainEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
     ToolCallStatus,
@@ -649,6 +650,13 @@ def _recorded_fact(event: StoredConversationEvent) -> RecordedFact | None:
                 sender_label=payload.sender_label,
                 mode=payload.mode,
                 refusal_reason=payload.refusal_reason,
+            )
+        case PromptDeliveryUncertainEventPayload():
+            return RecordedFact(
+                kind=RecordedFactKind.prompt_delivery_uncertain,
+                content=payload.content,
+                sender_label=payload.sender_label,
+                mode=payload.mode,
             )
         case PromptDiscardedEventPayload():
             return RecordedFact(

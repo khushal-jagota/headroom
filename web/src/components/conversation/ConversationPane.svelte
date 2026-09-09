@@ -52,6 +52,7 @@
     startsOnModel = null,
     startsOnReasoningEffort = null,
     heldPromptRows = [],
+    supportsSteer = false,
     fateNote = null,
     errorNote = null,
     connectionTrouble = false,
@@ -112,6 +113,7 @@
     startsOnModel?: string | null;
     startsOnReasoningEffort?: string | null;
     heldPromptRows?: readonly HeldPromptRow[];
+    supportsSteer?: boolean;
     fateNote?: string | null;
     errorNote?: string | null;
     connectionTrouble?: boolean;
@@ -361,6 +363,7 @@
       {startsOnModel}
       {startsOnReasoningEffort}
       {heldPromptRows}
+      {supportsSteer}
       {fateNote}
       {errorNote}
       placeholder={composerPlaceholder}

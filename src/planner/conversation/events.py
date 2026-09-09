@@ -213,12 +213,12 @@ class PromptDeliveryRefusedEventPayload:
 
     A dequeued delivery is recorded because its caller is gone. A direct delivery is also
     recorded when replacement of a failed child cannot resume or accept the follow-up.
-    Other direct refusals are returned as their fate and do not create an event.
+    Steering refusals are also recorded so sender-id deduplication can return the same
+    outcome without another backend write.
 
     ``sender_message_id`` is the id the sender minted for this message. A sent message
-    becomes exactly one of three rows — delivered, refused, or discarded — and a sender
-    has to recognise its own message in whichever of the three it becomes, or it is left
-    drawing a copy of a message the record has already answered for.
+    becomes one durable outcome row — delivered, refused, uncertain, or discarded — and
+    a sender has to recognise its own message in whichever row it becomes.
     """
 
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.prompt_delivery_refused
@@ -232,7 +232,11 @@ class PromptDeliveryRefusedEventPayload:
 
 @dataclass(frozen=True, slots=True)
 class PromptDeliveryUncertainEventPayload:
-    """A steering attempt whose admission stayed unknown after possible transmission."""
+    """A steering attempt whose admission stayed unknown after possible transmission.
+
+    This is a terminal delivery record. Panels does not retry it, and a sender-id replay
+    reads this row instead of transmitting the same guidance again.
+    """
 
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.prompt_delivery_uncertain
 
