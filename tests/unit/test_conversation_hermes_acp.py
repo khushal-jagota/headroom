@@ -655,7 +655,11 @@ def test_an_answer_the_wire_would_not_take_leaves_the_ask_answerable(tmp_path: P
             # knows — and only then is the ask answered.
             await control.send({"command": "break_wire"})
             with pytest.raises(PromptWriteFailed):
-                await child.steer(text_message_content("are you there"), sender_label="owner")
+                await child.steer(
+                    TurnToken("c", 1),
+                    text_message_content("are you there"),
+                    sender_label="owner",
+                )
 
             with pytest.raises(PermissionAnswerWriteFailed):
                 await child.answer_permission_ask(ask_id, "allow-once")

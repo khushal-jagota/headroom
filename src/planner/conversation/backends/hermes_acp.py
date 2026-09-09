@@ -97,6 +97,8 @@ from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendSteerOutcome,
+    BackendSteerRefused,
     NeedsRebind,
     PermissionAnswerWriteFailed,
     PromptWriteFailed,
@@ -109,6 +111,7 @@ from planner.conversation.contracts import (
     ComposerCatalogEntryKind,
     ConversationAccess,
     PromptDeliveryMode,
+    PromptDeliveryRefusalReason,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
@@ -126,7 +129,6 @@ from planner.conversation.message_content import (
     MessagePiece,
     MessageText,
     joined_runs_of_text,
-    prefix_message_content_text,
     text_message_content,
 )
 from planner.conversation.message_files import (
@@ -135,9 +137,6 @@ from planner.conversation.message_files import (
 )
 
 LOGGER = logging.getLogger("planner.conversation.backends.hermes_acp")
-
-# What hermes reads as text meant for the turn that is already running.
-HERMES_STEER_COMMAND_PREFIX = "/steer "
 
 # Hermes' ACP mode that realizes Panels' full-access posture for file edits. Terminal
 # commands use HERMES_YOLO_MODE; ACP edits are a separate session-level permission surface.
@@ -447,21 +446,12 @@ class HermesAcpBackendChild:
             )
         return text_message_content(HERMES_COMPACTION_PROMPT)
 
-    async def steer(self, content: MessageContent, *, sender_label: str) -> None:
-        """Send hermes' steer command, which joins the turn instead of starting one.
-
-        The command word goes in front of the message the way it always did — onto its
-        opening words when it has them, and as a piece of its own when the message opens
-        with something else, so a steered picture still arrives as a steer.
-        """
-        prompt = await self._write_prompt_to_the_wire(
-            prefix_message_content_text(content, HERMES_STEER_COMMAND_PREFIX, ""),
-            sender_label=sender_label,
-            mode=PromptDeliveryMode.steer,
-        )
-        # The steer's own response says how the injection went, not how the turn goes, so
-        # it is read and let go. Nothing about the running turn changes here.
-        self._forget(prompt, "steer")
+    async def steer(
+        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+    ) -> BackendSteerOutcome:
+        """Refuse until the Hermes adapter proves the shared steering contract."""
+        del turn_token, content, sender_label
+        return BackendSteerRefused(PromptDeliveryRefusalReason.backend_cannot_steer)
 
     async def cancel_running_turn(self) -> None:
         """Stop the turn, and do not come back until hermes says it has stopped.

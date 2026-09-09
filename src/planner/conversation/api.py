@@ -53,6 +53,7 @@ from planner.conversation.contracts import (
     PromptDeliveryQueued,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliveryUncertain,
 )
 from planner.conversation.events import (
     AgentMessageDeltaFrame,
@@ -1112,6 +1113,8 @@ def delivery_fate_json(fate: object) -> dict[str, Any]:
             return {"fate": "injected"}
         case PromptDeliveryRefused(refusal_reason=reason):
             return {"fate": "refused", "refusal_reason": str(reason)}
+        case PromptDeliveryUncertain():
+            return {"fate": "uncertain"}
         case _:  # pragma: no cover - the fate type is closed
             raise AssertionError(f"unknown delivery fate {fate!r}")
 

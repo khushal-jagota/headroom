@@ -2243,7 +2243,11 @@ def test_codex_does_not_take_text_into_a_running_turn(tmp_path: Path) -> None:
         async with _scripted_child(tmp_path, script={}) as scripted:
             await scripted.start(cursor=None)
             with pytest.raises(PromptWriteFailed):
-                await scripted.child.steer(text_message_content("keep going"), sender_label="owner")
+                await scripted.child.steer(
+                    TurnToken("c", 1),
+                    text_message_content("keep going"),
+                    sender_label="owner",
+                )
 
     _run(exercise)
 

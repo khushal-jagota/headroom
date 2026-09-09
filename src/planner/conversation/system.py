@@ -45,6 +45,9 @@ from planner.conversation.backends.contracts import (
     BackendChildFactory,
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendSteerAccepted,
+    BackendSteerRefused,
+    BackendSteerUncertain,
     BackendUserInputRequest,
     NeedsRebind,
     PermissionAnswerWriteFailed,
@@ -67,6 +70,7 @@ from planner.conversation.contracts import (
     PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliveryUncertain,
     backend_supports_steer,
 )
 from planner.conversation.events import (
@@ -590,6 +594,7 @@ class SqliteProcessConversationSystem:
         held: _HeldPrompt | None = None
         reservation: _ReservedTurn | None = None
         steer_child: BackendChild | None = None
+        steer_turn_token: TurnToken | None = None
         immediate_refusal: PromptDeliveryRefusalReason | None = None
         try:
             position = next(
@@ -630,6 +635,7 @@ class SqliteProcessConversationSystem:
                     immediate_refusal = PromptDeliveryRefusalReason.no_running_turn_to_steer_into
                 else:
                     steer_child = state.child
+                    steer_turn_token = state.running_turn.token
 
                 if immediate_refusal is not None:
                     await self._record_promoted_refusal(
@@ -695,15 +701,27 @@ class SqliteProcessConversationSystem:
             return PromptDeliveryRefused(refusal_reason=immediate_refusal)
 
         assert steer_child is not None
+        assert steer_turn_token is not None
         try:
-            await steer_child.steer(held.content, sender_label=held.sender_label)
+            steer_outcome = await steer_child.steer(
+                steer_turn_token, held.content, sender_label=held.sender_label
+            )
         except PromptWriteFailed:
-            refusal = PromptDeliveryRefusalReason.write_to_backend_failed
+            steer_outcome = BackendSteerUncertain()
+
+        if isinstance(steer_outcome, BackendSteerRefused):
             async with state.lock:
-                await self._record_promoted_refusal(state, held, PromptDeliveryMode.steer, refusal)
+                await self._record_promoted_refusal(
+                    state, held, PromptDeliveryMode.steer, steer_outcome.refusal_reason
+                )
                 self._settle_held_deliveries(state, (held,))
             await self._drain_held_prompts(state)
-            return PromptDeliveryRefused(refusal_reason=refusal)
+            return PromptDeliveryRefused(refusal_reason=steer_outcome.refusal_reason)
+        if isinstance(steer_outcome, BackendSteerUncertain):
+            async with state.lock:
+                self._settle_held_deliveries(state, (held,))
+            return PromptDeliveryUncertain()
+        assert isinstance(steer_outcome, BackendSteerAccepted)
 
         async with state.lock:
             await self._append_event(
@@ -1180,11 +1198,17 @@ class SqliteProcessConversationSystem:
             state.lock.release()
 
         try:
-            await child.steer(content, sender_label=sender_label)
-        except PromptWriteFailed:
-            return PromptDeliveryRefused(
-                refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed
+            steer_outcome = await child.steer(
+                running.token, content, sender_label=sender_label
             )
+        except PromptWriteFailed:
+            steer_outcome = BackendSteerUncertain()
+
+        if isinstance(steer_outcome, BackendSteerRefused):
+            return PromptDeliveryRefused(refusal_reason=steer_outcome.refusal_reason)
+        if isinstance(steer_outcome, BackendSteerUncertain):
+            return PromptDeliveryUncertain()
+        assert isinstance(steer_outcome, BackendSteerAccepted)
 
         async with state.lock:
             # The message entered the wire of the turn that was running, so it is
