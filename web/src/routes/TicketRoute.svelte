@@ -682,7 +682,7 @@
             ticketId={detail.id}
             label={conversationWorkerTypeLabel(detail)}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
-            backends={conversationBackends}
+            bind:backends={conversationBackends}
             startValues={conversationStartValues.data ?? null}
             senderLabel="owner"
             sendMessage={sendToTicketWorker}

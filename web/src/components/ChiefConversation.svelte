@@ -80,7 +80,7 @@
     {conversationId}
     persistenceKey="owner:chief"
     label="Chief of Staff"
-    {backends}
+    bind:backends
     startValues={startValues.data ?? null}
     senderLabel="owner"
     sendMessage={sendToTheChief}

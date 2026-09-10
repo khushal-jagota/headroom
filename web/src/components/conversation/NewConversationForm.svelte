@@ -12,7 +12,7 @@
 
   let {
     conversationId,
-    backends = [],
+    backends = $bindable([]),
     backendKey = $bindable("codex" as ConversationBackendKey),
     model = $bindable<string | null>(null),
     reasoningEffort = $bindable<string | null>(null),
@@ -49,7 +49,7 @@
   <div class="c2-new-field">
     <UnifiedModelPicker
       view={picker}
-      snapshots={backends}
+      bind:snapshots={backends}
       models={chosen?.available_models ?? []}
       backendEffortOptions={chosen?.reasoning_effort_options ?? []}
       below

@@ -44,7 +44,7 @@
     askNote = null,
     current = { model: null, reasoningEffort: null },
     models = [],
-    backends = [],
+    backends = $bindable([]),
     ownSenderLabel = null,
     livenessPulse = 0,
     effortOptions = [],
@@ -355,7 +355,7 @@
       {askNote}
       {current}
       {models}
-      {backends}
+      bind:backends
       {effortOptions}
       {composerCatalog}
       {startsOnModel}

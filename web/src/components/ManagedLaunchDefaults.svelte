@@ -98,7 +98,7 @@
     <span class="worker-launch-defaults-key">launches on</span>
     <UnifiedModelPicker
       view={picker}
-      snapshots={backends}
+      bind:snapshots={backends}
       models={snapshot?.available_models ?? []}
       backendEffortOptions={snapshot?.reasoning_effort_options ?? []}
       below

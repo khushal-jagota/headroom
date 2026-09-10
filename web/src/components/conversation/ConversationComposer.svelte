@@ -91,7 +91,7 @@
     askNote = null,
     current = { model: null, reasoningEffort: null },
     models = [],
-    backends = [],
+    backends = $bindable([]),
     effortOptions = [],
     composerCatalog = [],
     startsOnModel = null,
@@ -1030,7 +1030,11 @@
           />
 
           {#if showRunPicker}
-            <ComposerRunControls view={runControlsView} intents={runControlIntents} />
+            <ComposerRunControls
+              view={runControlsView}
+              intents={runControlIntents}
+              bind:snapshots={backends}
+            />
           {/if}
         {/if}
       </div>

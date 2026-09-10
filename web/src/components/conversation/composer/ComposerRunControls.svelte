@@ -7,16 +7,18 @@
 
   let {
     view,
-    intents
+    intents,
+    snapshots = $bindable()
   }: {
     view: ComposerRunControlsView;
     intents: ComposerRunControlIntents;
+    snapshots: readonly import("../../../lib/conversation/wire").BackendSnapshot[];
   } = $props();
 </script>
 
 <UnifiedModelPicker
   view={view.picker}
-  snapshots={view.pickerSource.backends}
+  bind:snapshots
   models={view.pickerSource.models}
   backendEffortOptions={view.pickerSource.backendEffortOptions}
   showUsage

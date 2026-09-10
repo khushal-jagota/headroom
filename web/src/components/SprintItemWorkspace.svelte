@@ -251,7 +251,7 @@
         readOnly={selectedPastConversationId !== null}
         label="Sprint Item"
         composerPlaceholder="Message this Sprint Item…"
-        {backends}
+        bind:backends
         startValues={startValues.data ?? null}
         senderLabel="owner"
         {sendMessage}

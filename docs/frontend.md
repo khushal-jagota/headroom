@@ -252,6 +252,11 @@ allowance falls. One provider failure does not discard the other's new answer. H
 has no usage source. Codex uses its app-server rate-limit read, so Refresh starts no
 model turn and consumes no allowance.
 
+The shared model picker offers the same Refresh action beside Reasoning. It replaces
+the picker owner's backend snapshots with that same refresh response, so model choices
+and usage rings update together. The picker stays open while it reads and reports a
+provider or transport failure in its existing feedback line.
+
 ## The two rules that shape it
 
 - **The server says "something changed"; the browser refetches what it is showing.**

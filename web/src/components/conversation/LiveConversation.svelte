@@ -75,7 +75,7 @@
     conversationId = null,
     persistenceKey,
     label,
-    backends = [],
+    backends = $bindable([]),
     senderLabel = "owner",
     startValues = null,
     runningBackendKey = $bindable(),
@@ -669,7 +669,7 @@
   {label}
   {backendKey}
   conversationExists={started}
-  {backends}
+  bind:backends
   workspaceFolder={view?.workspace_folder ?? null}
   {rows}
   outgoingMessages={transcriptOutgoingMessages}
