@@ -59,10 +59,8 @@ def test_the_packaged_extension_owns_generation_lifecycle_and_redirect_admission
         async def base_prompt(self, prompt, session_id, **kwargs):
             state.is_running = True
             await release.wait()
-            if state.cancel_event.is_set():
-                raise AttributeError("'NoneType' object has no attribute 'startswith'")
             state.is_running = False
-            return SimpleNamespace(stop_reason="end_turn")
+            return "done"
 
         async def base_cancel(self, session_id, **kwargs):
             assert subject._panels_prompt_generations.get(session_id) is None
@@ -114,7 +112,7 @@ def test_the_packaged_extension_owns_generation_lifecycle_and_redirect_admission
                 {{"sessionId": "s", "turnToken": token, "text": "late"}},
             )
             release.set()
-            responses = await asyncio.gather(prompt, concurrent)
+            await asyncio.gather(prompt, concurrent)
             after_completion = await subject.ext_method(
                 "panels/steer",
                 {{"sessionId": "s", "turnToken": token, "text": "finished"}},
@@ -130,8 +128,6 @@ def test_the_packaged_extension_owns_generation_lifecycle_and_redirect_admission
                 "redirects": state.agent.redirects,
                 "queued": state.queued_prompts,
                 "generation": subject._panels_prompt_generations.get("s"),
-                "stop_reasons": [str(response.stop_reason) for response in responses],
-                "is_running": state.is_running,
             }}
 
         print(json.dumps(asyncio.run(exercise())))
@@ -164,6 +160,136 @@ def test_the_packaged_extension_owns_generation_lifecycle_and_redirect_admission
         "redirects": ["new direction", "not accepted"],
         "queued": ["existing"],
         "generation": None,
-        "stop_reasons": ["cancelled", "cancelled"],
-        "is_running": False,
+    }
+
+
+def test_the_packaged_extension_recovers_only_an_owned_null_final_response() -> None:
+    hermes_python = resolve_hermes_python()
+    if not hermes_python.is_file():
+        pytest.skip("the configured Hermes interpreter is not installed")
+
+    extension_directory = Path(hermes_acp.__file__).resolve().parent
+    script = textwrap.dedent(
+        f"""
+        import asyncio
+        import json
+        import sys
+        import threading
+        from types import SimpleNamespace
+
+        sys.path.insert(0, {str(extension_directory)!r})
+        import hermes_acp_extension as extension
+
+        def make_state(*, running=False, cancelled=False):
+            cancel_event = threading.Event()
+            if cancelled:
+                cancel_event.set()
+            return SimpleNamespace(
+                runtime_lock=threading.Lock(),
+                is_running=running,
+                cancel_event=cancel_event,
+                current_prompt_text="incumbent" if running else "",
+            )
+
+        def make_subject(state):
+            subject = object.__new__(extension.PanelsHermesACPAgent)
+            subject.session_manager = SimpleNamespace(get_session=lambda session_id: state)
+            subject._panels_prompt_generations = {{}}
+            return subject
+
+        async def owned_fault():
+            state = make_state()
+            subject = make_subject(state)
+            release = asyncio.Event()
+
+            async def prompt(self, prompt, session_id, **kwargs):
+                state.is_running = True
+                state.current_prompt_text = "owned"
+                await release.wait()
+                result = {{"final_response": None}}
+                final_response = result.get("final_response", "")
+                final_response.startswith("waiting")
+
+            extension.hermes_server.HermesACPAgent.prompt = prompt
+            token = {{"conversationId": "c", "turnNumber": 1}}
+            task = asyncio.create_task(subject.prompt([], "s", panelsTurnToken=token))
+            await asyncio.sleep(0)
+            state.cancel_event.set()
+            release.set()
+            response = await task
+            return str(response.stop_reason), state.is_running, state.current_prompt_text
+
+        async def unrelated_fault():
+            state = make_state()
+            subject = make_subject(state)
+            release = asyncio.Event()
+
+            async def prompt(self, prompt, session_id, **kwargs):
+                state.is_running = True
+                state.current_prompt_text = "owned"
+                await release.wait()
+                raise AttributeError("persistence failed")
+
+            extension.hermes_server.HermesACPAgent.prompt = prompt
+            token = {{"conversationId": "c", "turnNumber": 1}}
+            task = asyncio.create_task(subject.prompt([], "s", panelsTurnToken=token))
+            await asyncio.sleep(0)
+            state.cancel_event.set()
+            release.set()
+            try:
+                await task
+            except AttributeError as failure:
+                return str(failure), state.is_running, state.current_prompt_text
+            raise AssertionError("unrelated failure was hidden")
+
+        async def non_owning_fault():
+            state = make_state(running=True, cancelled=True)
+            subject = make_subject(state)
+            subject._panels_prompt_generations["s"] = ("c", 1)
+
+            async def prompt(self, prompt, session_id, **kwargs):
+                result = {{"final_response": None}}
+                final_response = result.get("final_response", "")
+                final_response.startswith("waiting")
+
+            extension.hermes_server.HermesACPAgent.prompt = prompt
+            token = {{"conversationId": "c", "turnNumber": 2}}
+            try:
+                await subject.prompt([], "s", panelsTurnToken=token)
+            except AttributeError as failure:
+                return (
+                    str(failure),
+                    state.is_running,
+                    state.current_prompt_text,
+                    subject._panels_prompt_generations["s"],
+                )
+            raise AssertionError("non-owning failure was hidden")
+
+        async def exercise():
+            return {{
+                "owned": await owned_fault(),
+                "unrelated": await unrelated_fault(),
+                "non_owning": await non_owning_fault(),
+            }}
+
+        print(json.dumps(asyncio.run(exercise())))
+        """
+    )
+    completed = subprocess.run(
+        [str(hermes_python), "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert json.loads(completed.stdout) == {
+        "owned": ["cancelled", False, ""],
+        "unrelated": ["persistence failed", True, "owned"],
+        "non_owning": [
+            "'NoneType' object has no attribute 'startswith'",
+            True,
+            "incumbent",
+            ["c", 1],
+        ],
     }

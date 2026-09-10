@@ -22,6 +22,7 @@ PANELS_TURN_TOKEN_METADATA_KEY = "panelsTurnToken"
 PANELS_CURRENT_MODEL_METADATA_KEY = "currentModelId"
 PANELS_METADATA_KEY = "panels"
 HERMES_UNPROVEN_NATIVE_STEER_API_MODE = "codex_app_server"
+HERMES_NULL_FINAL_RESPONSE_ERROR = "'NoneType' object has no attribute 'startswith'"
 
 
 def _turn_token(value: Any) -> tuple[str, int] | None:
@@ -35,6 +36,26 @@ def _turn_token(value: Any) -> tuple[str, int] | None:
     if not isinstance(turn_number, int) or isinstance(turn_number, bool) or turn_number < 1:
         return None
     return conversation_id, turn_number
+
+
+def _is_null_final_response_fault(failure: AttributeError) -> bool:
+    """Identify Hermes 0.20's fault after its executor returned no final response."""
+    if failure.args != (HERMES_NULL_FINAL_RESPONSE_ERROR,):
+        return False
+    traceback = failure.__traceback__
+    while traceback is not None:
+        frame = traceback.tb_frame
+        result = frame.f_locals.get("result")
+        if (
+            frame.f_code.co_name == "prompt"
+            and isinstance(result, dict)
+            and "final_response" in result
+            and result["final_response"] is None
+            and frame.f_locals.get("final_response") is None
+        ):
+            return True
+        traceback = traceback.tb_next
+    return False
 
 
 class PanelsHermesACPAgent(hermes_server.HermesACPAgent):
@@ -85,12 +106,12 @@ class PanelsHermesACPAgent(hermes_server.HermesACPAgent):
                     owns_generation = True
         try:
             return await super().prompt(prompt=prompt, session_id=session_id, **kwargs)
-        except Exception:
+        except AttributeError as failure:
             # Hermes 0.20 can dereference a missing final response after a hard
             # interrupt. Finish the cancelled lifecycle here so a later prompt does
             # not see the session as active and fall into Hermes' stock queue.
             cancelled = False
-            if state is not None:
+            if state is not None and owns_generation and _is_null_final_response_fault(failure):
                 with state.runtime_lock:
                     cancelled = bool(state.cancel_event and state.cancel_event.is_set())
                     if cancelled:
