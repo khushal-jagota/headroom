@@ -93,16 +93,20 @@ from claude_agent_sdk import (
     ToolPermissionContext,
     ToolResultBlock,
     ToolUseBlock,
+    Transport,
     UserMessage,
 )
-from claude_agent_sdk.types import SystemPromptPreset
+from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+from claude_agent_sdk.types import SystemPromptPreset, _configure_can_use_tool
 
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendSteerAccepted,
     BackendSteerOutcome,
     BackendSteerRefused,
+    BackendSteerUncertain,
     BackendUserInputRequest,
     NeedsRebind,
     PermissionAnswerWriteFailed,
@@ -169,7 +173,9 @@ TRANSIENT_SESSION_ID_SYSTEM_SUBTYPES: Final[frozenset[str]] = frozenset(
 
 # What the CLI calls a turn that somebody stopped. Anything else it reports is a turn that
 # ran and stopped on its own account.
-ABORTED_TERMINAL_REASONS: Final[frozenset[str]] = frozenset({"aborted_streaming", "aborted_tools"})
+ABORTED_TERMINAL_REASONS: Final[frozenset[str]] = frozenset(
+    {"aborted_streaming", "aborted_tools"}
+)
 
 # Enough of a dead child's standard error to say what happened, in the failed turn's line
 # and in the failure that names why a session would not load.
@@ -178,6 +184,17 @@ STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS: Final = 8192
 # Tool results can include the contents of a file Claude read. Keep the SDK's line buffer
 # bounded while allowing results larger than its 1 MiB default to reach the conversation.
 CLAUDE_SDK_MAX_BUFFER_SIZE: Final[int] = 4 * 1024 * 1024
+
+# A command lifecycle receipt normally follows a streaming-input write immediately. A
+# missing receipt after this bound leaves admission unknown. The command remains owned by
+# its captured turn until a UUID-correlated result arrives or Stop discards the child.
+CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS: Final[float] = 5.0
+
+# Stop must not leave a queued steering command behind. A missing cancel receipt is a
+# failed cancellation, which makes the core discard this child and resume its session on
+# the next prompt.
+CLAUDE_CANCEL_QUEUED_TIMEOUT_SECONDS: Final[float] = 5.0
+CLAUDE_CANCEL_SETTLEMENT_TIMEOUT_SECONDS: Final[float] = 5.0
 
 # The three answers this adapter offers for a permission ask, which are the three the SDK's
 # callback can give back: allow it this once, allow it and take the SDK's own suggested
@@ -195,7 +212,9 @@ PERMISSION_ASK_OPTIONS: Final[tuple[PermissionAskOption, ...]] = (
         label="Always allow this session",
         option_kind="allow_always",
     ),
-    PermissionAskOption(option_id=DECLINE_OPTION_ID, label="Decline", option_kind="reject_once"),
+    PermissionAskOption(
+        option_id=DECLINE_OPTION_ID, label="Decline", option_kind="reject_once"
+    ),
 )
 
 DECLINED_TOOL_MESSAGE: Final = "User declined tool execution."
@@ -263,9 +282,27 @@ class ClaudeSdkClient(Protocol):
         """
         ...
 
+    def watch_user_message(self, user_message_uuid: str) -> None: ...
+
+    async def wait_for_user_message_admission(
+        self, user_message_uuid: str
+    ) -> bool | None:
+        """True is provider admission, false is definite cancellation, and None is unknown."""
+        ...
+
+    def user_message_uuids_for_result(
+        self, result_uuid: str | None
+    ) -> frozenset[str]: ...
+
     def receive_messages(self) -> AsyncIterator[Message]: ...
 
     async def interrupt(self) -> None: ...
+
+    async def interrupt_and_cancel_queued(
+        self,
+    ) -> tuple[frozenset[str], frozenset[str]]:
+        """Return the UUIDs cancelled and still queued by the provider receipt."""
+        ...
 
     async def disconnect(self) -> None: ...
 
@@ -274,8 +311,205 @@ type ClaudeSdkClientFactory = Callable[[ClaudeAgentOptions], ClaudeSdkClient]
 
 
 def claude_sdk_client(options: ClaudeAgentOptions) -> ClaudeSdkClient:
-    """The real SDK client for these options."""
-    return ClaudeSDKClient(options)
+    """The real SDK client, with the SDK's public custom-transport observation seam."""
+
+    async def empty_prompt() -> AsyncIterator[dict[str, Any]]:
+        return
+        yield {}
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", CanUseToolShadowedWarning)
+        transport_options = _configure_can_use_tool(options)
+    transport = _ClaudeProtocolTransport(
+        SubprocessCLITransport(prompt=empty_prompt(), options=transport_options)
+    )
+    return _ObservedClaudeSdkClient(options, transport)
+
+
+@dataclass(slots=True)
+class _ObservedUserMessage:
+    admission: asyncio.Future[bool | None]
+
+
+class _ClaudeProtocolTransport(Transport):
+    """Pass the SDK transport through and retain only Claude's correlation receipts."""
+
+    def __init__(self, inner: Transport) -> None:
+        self._inner = inner
+        self._user_messages: dict[str, _ObservedUserMessage] = {}
+        self._result_user_message_uuids: dict[str, frozenset[str]] = {}
+        self._control_responses: dict[str, asyncio.Future[dict[str, Any] | None]] = {}
+
+    async def connect(self) -> None:
+        await self._inner.connect()
+
+    async def write(self, data: str) -> None:
+        await self._inner.write(data)
+
+    def read_messages(self) -> AsyncIterator[dict[str, Any]]:
+        return self._read_messages()
+
+    async def _read_messages(self) -> AsyncIterator[dict[str, Any]]:
+        try:
+            async for message in self._inner.read_messages():
+                self._observe(message)
+                yield message
+        finally:
+            for observed in self._user_messages.values():
+                if not observed.admission.done():
+                    observed.admission.set_result(None)
+            for response in self._control_responses.values():
+                if not response.done():
+                    response.set_result(None)
+
+    def _observe(self, message: dict[str, Any]) -> None:
+        if message.get("type") == "command_lifecycle":
+            command_uuid = message.get("command_uuid")
+            state = message.get("state")
+            observed = (
+                self._user_messages.get(command_uuid)
+                if isinstance(command_uuid, str)
+                else None
+            )
+            if observed is not None and not observed.admission.done():
+                if state in {"queued", "started", "completed"}:
+                    observed.admission.set_result(True)
+                elif state == "cancelled":
+                    observed.admission.set_result(False)
+        if message.get("type") == "result":
+            result_uuid = message.get("uuid")
+            if isinstance(result_uuid, str):
+                user_message_uuids = _raw_user_message_uuids(message)
+                self._result_user_message_uuids[result_uuid] = user_message_uuids
+                for user_message_uuid in user_message_uuids:
+                    observed = self._user_messages.get(user_message_uuid)
+                    if observed is not None and not observed.admission.done():
+                        observed.admission.set_result(True)
+
+        if message.get("type") == "control_response":
+            response = message.get("response")
+            if not isinstance(response, dict):
+                return
+            request_id = response.get("request_id")
+            waiting = (
+                self._control_responses.get(request_id)
+                if isinstance(request_id, str)
+                else None
+            )
+            if waiting is not None and not waiting.done():
+                payload = response.get("response")
+                waiting.set_result(payload if isinstance(payload, dict) else None)
+
+    def watch_user_message(self, user_message_uuid: str) -> None:
+        self._user_messages[user_message_uuid] = _ObservedUserMessage(
+            admission=asyncio.get_running_loop().create_future(),
+        )
+
+    async def wait_for_user_message_admission(
+        self, user_message_uuid: str
+    ) -> bool | None:
+        observed = self._user_messages[user_message_uuid]
+        try:
+            admission = await asyncio.wait_for(
+                asyncio.shield(observed.admission),
+                CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            return None
+        return admission
+
+    def user_message_uuids_for_result(self, result_uuid: str | None) -> frozenset[str]:
+        if result_uuid is None:
+            return frozenset()
+        user_message_uuids = self._result_user_message_uuids.pop(
+            result_uuid, frozenset()
+        )
+        for user_message_uuid in user_message_uuids:
+            self._user_messages.pop(user_message_uuid, None)
+        return user_message_uuids
+
+    async def interrupt_and_cancel_queued(
+        self,
+    ) -> tuple[frozenset[str], frozenset[str]]:
+        request_id = str(uuid.uuid4())
+        response = asyncio.get_running_loop().create_future()
+        self._control_responses[request_id] = response
+        await self.write(
+            json.dumps(
+                {
+                    "type": "control_request",
+                    "request_id": request_id,
+                    "request": {"subtype": "interrupt", "cancel_queued": True},
+                }
+            )
+            + "\n"
+        )
+        try:
+            payload = await asyncio.wait_for(
+                asyncio.shield(response), CLAUDE_CANCEL_QUEUED_TIMEOUT_SECONDS
+            )
+        finally:
+            self._control_responses.pop(request_id, None)
+        if payload is None:
+            raise PromptWriteFailed(
+                "claude did not confirm queued command cancellation"
+            )
+        cancelled = _raw_uuid_set(payload.get("cancelled"))
+        still_queued = _raw_uuid_set(payload.get("still_queued"))
+        return cancelled, still_queued
+
+    async def close(self) -> None:
+        await self._inner.close()
+
+    def is_ready(self) -> bool:
+        return self._inner.is_ready()
+
+    async def end_input(self) -> None:
+        await self._inner.end_input()
+
+
+class _ObservedClaudeSdkClient:
+    """Expose typed SDK messages plus the raw receipts that the parser omits."""
+
+    def __init__(
+        self, options: ClaudeAgentOptions, transport: _ClaudeProtocolTransport
+    ) -> None:
+        self._client = ClaudeSDKClient(options, transport=transport)
+        self._transport = transport
+
+    async def connect(self) -> None:
+        await self._client.connect()
+
+    async def get_server_info(self) -> dict[str, Any] | None:
+        return await self._client.get_server_info()
+
+    async def query(self, prompt: str | AsyncIterable[dict[str, Any]]) -> None:
+        await self._client.query(prompt)
+
+    def receive_messages(self) -> AsyncIterator[Message]:
+        return self._client.receive_messages()
+
+    def watch_user_message(self, user_message_uuid: str) -> None:
+        self._transport.watch_user_message(user_message_uuid)
+
+    async def wait_for_user_message_admission(
+        self, user_message_uuid: str
+    ) -> bool | None:
+        return await self._transport.wait_for_user_message_admission(user_message_uuid)
+
+    def user_message_uuids_for_result(self, result_uuid: str | None) -> frozenset[str]:
+        return self._transport.user_message_uuids_for_result(result_uuid)
+
+    async def interrupt(self) -> None:
+        await self._client.interrupt()
+
+    async def interrupt_and_cancel_queued(
+        self,
+    ) -> tuple[frozenset[str], frozenset[str]]:
+        return await self._transport.interrupt_and_cancel_queued()
+
+    async def disconnect(self) -> None:
+        await self._client.disconnect()
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,6 +569,8 @@ class _TurnInFlight:
 
     token: TurnToken
     cancel_requested: bool = False
+    owned_steer_uuids: set[str] = field(default_factory=set)
+    ended: asyncio.Event = field(default_factory=asyncio.Event)
     parked_asks: dict[str, _ParkedPermissionAsk] = field(default_factory=dict)
     parked_user_inputs: dict[str, _ParkedUserInput] = field(default_factory=dict)
     user_input_tool_use_ids: set[str] = field(default_factory=set)
@@ -384,8 +620,12 @@ class ClaudeAgentSdkBackendChild:
         names the session it wants and gets that one or nothing.
         """
         self._resolved_start = resolved_start
-        minted_session_id = None if vendor_session_cursor is not None else str(uuid.uuid4())
-        options = self._options(resolved_start, vendor_session_cursor, minted_session_id)
+        minted_session_id = (
+            None if vendor_session_cursor is not None else str(uuid.uuid4())
+        )
+        options = self._options(
+            resolved_start, vendor_session_cursor, minted_session_id
+        )
         client = self._client_factory(options)
         await self._connect(client, resumed_from=vendor_session_cursor)
         self._client = client
@@ -415,7 +655,9 @@ class ClaudeAgentSdkBackendChild:
         replacing it with an empty one, because having no commands and never having said
         is not the same thing.
         """
-        composer_catalog = _composer_catalog_from_the_handshake(await client.get_server_info())
+        composer_catalog = _composer_catalog_from_the_handshake(
+            await client.get_server_info()
+        )
         if composer_catalog is None:
             return
         await self._sink.composer_catalog_reported(composer_catalog)
@@ -444,7 +686,9 @@ class ClaudeAgentSdkBackendChild:
         child that is written to is one that was started on the new values.
         """
         del sender_content, sender_label, mode, automatic_compaction
-        self._require_the_carried_values_are_in_force(model_change, reasoning_effort_change)
+        self._require_the_carried_values_are_in_force(
+            model_change, reasoning_effort_change
+        )
         client = self._connected_client()
         self._require_a_live_wire()
         asked = await self._query_argument(content)
@@ -456,7 +700,7 @@ class ClaudeAgentSdkBackendChild:
         self._turn = _TurnInFlight(token=turn_token)
 
     async def _query_argument(
-        self, content: MessageContent
+        self, content: MessageContent, *, user_message_uuid: str | None = None
     ) -> str | AsyncIterator[dict[str, Any]]:
         """The message in the form the SDK takes it.
 
@@ -468,7 +712,11 @@ class ClaudeAgentSdkBackendChild:
         A message with more in it goes as one user message carrying content blocks, which
         is the SDK's other documented input.
         """
-        if len(content) == 1 and isinstance(content[0], MessageText):
+        if (
+            user_message_uuid is None
+            and len(content) == 1
+            and isinstance(content[0], MessageText)
+        ):
             return content[0].text
 
         blocks: list[dict[str, Any]] = []
@@ -496,11 +744,14 @@ class ClaudeAgentSdkBackendChild:
                     )
 
         async def one_user_message() -> AsyncIterator[dict[str, Any]]:
-            yield {
+            message = {
                 "type": "user",
                 "message": {"role": "user", "content": blocks},
                 "parent_tool_use_id": None,
             }
+            if user_message_uuid is not None:
+                message["uuid"] = user_message_uuid
+            yield message
 
         return one_user_message()
 
@@ -525,18 +776,69 @@ class ClaudeAgentSdkBackendChild:
                 self._resolved_start.conversation_id, stored_file_id
             )
         except (MessageFileMissing, OSError) as unreadable:
-            raise PromptWriteFailed(f"{stored_file_id} could not be read") from unreadable
+            raise PromptWriteFailed(
+                f"{stored_file_id} could not be read"
+            ) from unreadable
         return b64encode(kept).decode("ascii")
 
     async def steer(
         self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
     ) -> BackendSteerOutcome:
-        """Refuse until the Claude adapter proves the shared steering contract."""
-        del turn_token, content, sender_label
-        return BackendSteerRefused(PromptDeliveryRefusalReason.backend_cannot_steer)
+        """Admit one UUID-named command to work owned by the captured Panels turn.
+
+        Claude can fold the command into the current model loop or run a native
+        continuation. Both stay under the captured token. A UUID lifecycle receipt says
+        that Claude owns the command. A correlated result settles it. Neither signal is
+        used to classify which native path Claude chose.
+        """
+        del sender_label
+        turn = self._turn
+        if turn is None or turn.token != turn_token:
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.no_running_turn_to_steer_into
+            )
+        user_message_uuid = str(uuid.uuid4())
+        client = self._connected_client()
+        try:
+            self._require_a_live_wire()
+            asked = await self._query_argument(
+                content, user_message_uuid=user_message_uuid
+            )
+        except (NeedsRebind, PromptWriteFailed):
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.write_to_backend_failed
+            )
+        if self._turn is not turn or turn.cancel_requested:
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.no_running_turn_to_steer_into
+            )
+        try:
+            self._require_a_live_wire()
+        except NeedsRebind:
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.write_to_backend_failed
+            )
+        client.watch_user_message(user_message_uuid)
+        turn.owned_steer_uuids.add(user_message_uuid)
+        try:
+            await client.query(asked)
+        except Exception:
+            # The command can have crossed the process boundary before this failure. Keep
+            # its ownership on the turn so a later correlated result remains captured. A
+            # stream failure, if there was one, closes the wire through the reader path.
+            return BackendSteerUncertain()
+        admission = await client.wait_for_user_message_admission(user_message_uuid)
+        if admission is True:
+            return BackendSteerAccepted()
+        if admission is False:
+            turn.owned_steer_uuids.discard(user_message_uuid)
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.write_to_backend_failed
+            )
+        return BackendSteerUncertain()
 
     async def cancel_running_turn(self) -> None:
-        """Stop the turn that is running. The client, its child and its session stay up."""
+        """Stop active work and prove that no owned queued command remains."""
         turn = self._turn
         if turn is None:
             return
@@ -545,13 +847,28 @@ class ClaudeAgentSdkBackendChild:
         turn.cancel_requested = True
         client = self._connected_client()
         try:
-            await client.interrupt()
+            cancelled, still_queued = await client.interrupt_and_cancel_queued()
         except Exception as did_not_reach:
             self._wire_broken = True
             raise PromptWriteFailed(str(did_not_reach)) from did_not_reach
+        if still_queued or not turn.owned_steer_uuids.issubset(cancelled):
+            self._wire_broken = True
+            raise PromptWriteFailed(
+                "claude did not confirm cancellation of every owned steering command"
+            )
+        turn.owned_steer_uuids.clear()
         # The core records the interruption as soon as this returns. Settle every callback
         # at the same boundary instead of waiting for a terminal result Claude may delay.
         self._settle_parked_asks(turn)
+        try:
+            await asyncio.wait_for(
+                turn.ended.wait(), CLAUDE_CANCEL_SETTLEMENT_TIMEOUT_SECONDS
+            )
+        except TimeoutError as did_not_settle:
+            self._wire_broken = True
+            raise PromptWriteFailed(
+                "claude cancelled its queue but did not settle the active command"
+            ) from did_not_settle
 
     async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
         """Give the SDK the option a person chose, and wait for its callback to take it.
@@ -564,7 +881,9 @@ class ClaudeAgentSdkBackendChild:
         parked = None if turn is None else turn.parked_asks.get(ask_id)
         if parked is None or parked.answer.done():
             raise PermissionAnswerWriteFailed(ask_id)
-        answer = _permission_answer_for(option_id, parked.tool_input, parked.suggestions)
+        answer = _permission_answer_for(
+            option_id, parked.tool_input, parked.suggestions
+        )
         if answer is None:
             raise PermissionAnswerWriteFailed(f"{ask_id} was not offered {option_id!r}")
         if turn is not None:
@@ -585,7 +904,9 @@ class ClaudeAgentSdkBackendChild:
             raise UserInputAnswerWriteFailed(request_id)
         answer = _user_input_answer_for(answers, parked.tool_input, parked.questions)
         if answer is None:
-            raise UserInputAnswerWriteFailed(f"{request_id} did not receive complete answers")
+            raise UserInputAnswerWriteFailed(
+                f"{request_id} did not receive complete answers"
+            )
         if turn is not None:
             turn.parked_user_inputs.pop(request_id, None)
         parked.answer.set_result(answer)
@@ -658,7 +979,9 @@ class ClaudeAgentSdkBackendChild:
             )
         return cast(EffortLevel, reasoning_effort)
 
-    async def _connect(self, client: ClaudeSdkClient, *, resumed_from: str | None) -> None:
+    async def _connect(
+        self, client: ClaudeSdkClient, *, resumed_from: str | None
+    ) -> None:
         """Bring the child up, or say which of the two things went wrong.
 
         A resume is the CLI's own startup step: it refuses to come up at all when it does
@@ -734,14 +1057,19 @@ class ClaudeAgentSdkBackendChild:
         self._turn = None
         self._last_ended_turn = turn
         self._settle_parked_asks(turn)
-        await self._sink.turn_ended(
-            turn.token,
-            ending=ending,
-            error_summary=error_summary,
-            standard_error_tail=(
-                self._standard_error_tail() if ending is ConversationTurnEnding.failed else None
-            ),
-        )
+        try:
+            await self._sink.turn_ended(
+                turn.token,
+                ending=ending,
+                error_summary=error_summary,
+                standard_error_tail=(
+                    self._standard_error_tail()
+                    if ending is ConversationTurnEnding.failed
+                    else None
+                ),
+            )
+        finally:
+            turn.ended.set()
 
     async def _fail_the_running_turn(self, why: str) -> None:
         turn = self._turn
@@ -752,7 +1080,9 @@ class ClaudeAgentSdkBackendChild:
         """A turn's asks die with it, and the SDK is told so rather than left waiting."""
         for parked in list(turn.parked_asks.values()):
             if not parked.answer.done():
-                parked.answer.set_result(PermissionResultDeny(message=WITHDRAWN_TOOL_MESSAGE))
+                parked.answer.set_result(
+                    PermissionResultDeny(message=WITHDRAWN_TOOL_MESSAGE)
+                )
         turn.parked_asks.clear()
         for parked_user_input in list(turn.parked_user_inputs.values()):
             if not parked_user_input.answer.done():
@@ -772,7 +1102,9 @@ class ClaudeAgentSdkBackendChild:
             raise
         except Exception as stream_failed:
             self._wire_broken = True
-            await self._fail_the_running_turn(self._with_the_standard_error(str(stream_failed)))
+            await self._fail_the_running_turn(
+                self._with_the_standard_error(str(stream_failed))
+            )
         else:
             self._wire_broken = True
             await self._fail_the_running_turn(
@@ -792,8 +1124,13 @@ class ClaudeAgentSdkBackendChild:
             # a result ended the backend turn. It is still a message in this conversation,
             # so preserve it under the turn that just ended. Every other late event remains
             # turn-bound and is dropped. The session id above is conversation-bound too.
-            if isinstance(message, AssistantMessage) and self._last_ended_turn is not None:
-                await self._on_assistant_message_after_turn(self._last_ended_turn, message)
+            if (
+                isinstance(message, AssistantMessage)
+                and self._last_ended_turn is not None
+            ):
+                await self._on_assistant_message_after_turn(
+                    self._last_ended_turn, message
+                )
             return
         match message:
             case StreamEvent():
@@ -879,7 +1216,9 @@ class ClaudeAgentSdkBackendChild:
             return
         await self._sink.agent_message_delta(turn.token, text)
 
-    async def _on_assistant_message(self, turn: _TurnInFlight, message: AssistantMessage) -> None:
+    async def _on_assistant_message(
+        self, turn: _TurnInFlight, message: AssistantMessage
+    ) -> None:
         """A finished message from the agent, and the tool calls it made in it.
 
         The blocks are taken in the order they were written, and text is finished off
@@ -943,7 +1282,9 @@ class ClaudeAgentSdkBackendChild:
                 return
         await self._complete_agent_message(turn, said)
 
-    async def _complete_agent_message(self, turn: _TurnInFlight, said: list[str]) -> None:
+    async def _complete_agent_message(
+        self, turn: _TurnInFlight, said: list[str]
+    ) -> None:
         if not said:
             return
         text = "".join(said)
@@ -972,12 +1313,16 @@ class ClaudeAgentSdkBackendChild:
                 turn.token,
                 tool_call_id=block.tool_use_id,
                 tool_call_status=(
-                    ToolCallStatus.failed if block.is_error else ToolCallStatus.completed
+                    ToolCallStatus.failed
+                    if block.is_error
+                    else ToolCallStatus.completed
                 ),
                 detail=_tool_result_detail(block.content),
             )
 
-    async def _on_result_message(self, turn: _TurnInFlight, message: ResultMessage) -> None:
+    async def _on_result_message(
+        self, turn: _TurnInFlight, message: ResultMessage
+    ) -> None:
         """The turn stopped running, and this says how — and what has been spent.
 
         Two things say it was stopped rather than finished, and both are facts rather than
@@ -985,6 +1330,19 @@ class ClaudeAgentSdkBackendChild:
         this adapter having asked for the interrupt itself.
         """
         await self._report_what_has_been_spent(turn, message)
+        client = self._connected_client()
+        result_user_message_uuids = client.user_message_uuids_for_result(message.uuid)
+        turn.owned_steer_uuids.difference_update(result_user_message_uuids)
+        if turn.owned_steer_uuids:
+            # The root provider result is not the Panels ending when Claude queued a
+            # native continuation for an owned steer. Every following event remains on
+            # this token until a result names each owned steering UUID.
+            return
+        await self._end_turn_from_result(turn, message)
+
+    async def _end_turn_from_result(
+        self, turn: _TurnInFlight, message: ResultMessage
+    ) -> None:
         if turn.cancel_requested or message.terminal_reason in ABORTED_TERMINAL_REASONS:
             await self._end_turn(turn, ConversationTurnEnding.interrupted, None)
             return
@@ -1125,10 +1483,14 @@ class ClaudeAgentSdkBackendChild:
             answer = await parked.answer
         except BaseException as never_answered:
             if not parked.handed_over.done():
-                parked.handed_over.set_exception(PermissionAnswerWriteFailed(str(never_answered)))
+                parked.handed_over.set_exception(
+                    PermissionAnswerWriteFailed(str(never_answered))
+                )
                 # There may be nobody waiting to hear it. Reading it back keeps a failure
                 # that has already been dealt with from being reported as one that was not.
-                parked.handed_over.add_done_callback(lambda settled: settled.exception())
+                parked.handed_over.add_done_callback(
+                    lambda settled: settled.exception()
+                )
             raise
         if not parked.handed_over.done():
             parked.handed_over.set_result(None)
@@ -1144,7 +1506,8 @@ class ClaudeAgentSdkBackendChild:
         """
         self._standard_error.append(line)
         while (
-            sum(len(part) for part in self._standard_error) > STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS
+            sum(len(part) for part in self._standard_error)
+            > STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS
             and len(self._standard_error) > 1
         ):
             self._standard_error.popleft()
@@ -1252,7 +1615,9 @@ def _composer_catalog_from_the_handshake(
                 insertion_text=f"/{name} ",
                 description=description if isinstance(description, str) else "",
                 argument_hint=(
-                    argument_hint if isinstance(argument_hint, str) and argument_hint else None
+                    argument_hint
+                    if isinstance(argument_hint, str) and argument_hint
+                    else None
                 ),
             )
         )
@@ -1354,7 +1719,9 @@ def _user_input_answer_for(
         return None
     answer_map: dict[str, str] = {}
     for question, answer in zip(questions, answers, strict=True):
-        if not answer.answers or (not question.multi_select and len(answer.answers) != 1):
+        if not answer.answers or (
+            not question.multi_select and len(answer.answers) != 1
+        ):
             return None
         if any(not value for value in answer.answers):
             return None
@@ -1435,3 +1802,19 @@ def _result_error_summary(message: ResultMessage) -> str:
     if message.api_error_status is not None:
         return f"{message.subtype} (HTTP {message.api_error_status})"
     return message.subtype
+
+
+def _raw_uuid_set(value: Any) -> frozenset[str]:
+    """The UUID strings in one raw provider field, with malformed values discarded."""
+    if not isinstance(value, list):
+        return frozenset()
+    return frozenset(item for item in value if isinstance(item, str))
+
+
+def _raw_user_message_uuids(message: dict[str, Any]) -> frozenset[str]:
+    """All submitted command UUIDs that Claude attributes to one result."""
+    many = _raw_uuid_set(message.get("user_message_uuids"))
+    one = message.get("user_message_uuid")
+    if isinstance(one, str):
+        return many | {one}
+    return many

@@ -222,9 +222,9 @@ on desktop and phone. Width changes the available text space, not the control de
 
 The answer to a send is the fate of that delivery, and fate means it happened:
 started (the text reached a live agent), queued at a position, injected into the exact
-target turn, refused with a named reason, or uncertain after a steering attempt may have
-crossed the backend boundary. Uncertain is terminal: Panels records it and does not retry
-it. The only refusals are genuine impossibilities — no
+captured turn's owned work, refused with a named reason, or uncertain after a steering
+attempt may have crossed the backend boundary. Uncertain is terminal: Panels records it
+and does not retry it. The only refusals are genuine impossibilities — no
 such conversation, the agent would not start, its session would not load, the
 write failed, a steer with no running turn to join, or a steer at a backend that
 cannot steer. A busy agent is never a refusal. A message with nothing in it is not a refusal
@@ -243,6 +243,17 @@ message, then the remaining FIFO line continues. Steer consumes the selected
 text into the captured running turn and does not apply model choices that waited with
 that message. Being told that the message is gone is an ordinary answer because
 automatic delivery may win the same race.
+
+Claude gives every steered message a UUID. Its queue receipt admits the message to work
+owned by the captured Panels turn. Claude can fold that work into its current model loop
+or run a native continuation. Panels does not classify those paths. It keeps their
+messages, tools, asks, results, and running usage under one turn token until Claude marks
+each UUID on a correlated result. That result supplies the exact terminal receipt.
+
+Claude Stop sends one interrupt that also cancels queued UUIDs. Panels waits for the
+provider receipt, verifies that no owned UUID remains queued, and waits for the active
+command result. If any proof is absent, Panels discards the child. The next prompt resumes
+the stored session without replay of the steer.
 
 A send may also carry a model or reasoning-effort change. The change rides the
 message: browsing a picker does nothing, the change lands when the message is
