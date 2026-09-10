@@ -19,6 +19,7 @@ import json
 from base64 import b64decode
 from binascii import Error as BinasciiError
 from collections.abc import AsyncIterator, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -657,11 +658,21 @@ async def read_backends(runtime: Runtime, refresh: bool = False) -> dict[str, An
 
 @router.post("/backends/refresh")
 async def refresh_backends(runtime: Runtime) -> dict[str, Any]:
-    """Refresh every catalogue and provider usage source as one user action."""
-    snapshots = await runtime.backend_snapshots.snapshots(refresh=True)
-    refreshed = await asyncio.gather(
+    """Refresh provider usage and resolve it against the current backend catalogues."""
+    usage_refresh = asyncio.gather(
         *(runtime.backend_usage.refresh(backend_key) for backend_key in ConversationBackendKey)
     )
+    try:
+        # Schedule provider reads before catalogue acquisition. A usage request must not
+        # wait for version, identity, model-catalogue, or update-advisory probes.
+        await asyncio.sleep(0)
+        snapshots = await runtime.backend_snapshots.snapshots()
+        refreshed = await usage_refresh
+    finally:
+        if not usage_refresh.done():
+            usage_refresh.cancel()
+        with suppress(asyncio.CancelledError):
+            await usage_refresh
     by_backend = {snapshot.backend_key: snapshot for snapshot in snapshots}
     resolved = tuple(
         resolve_usage_model_scopes(result, by_backend[result.backend_key])

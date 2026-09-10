@@ -1,5 +1,6 @@
 import {
   ConversationWireError,
+  readBackends,
   refreshBackends,
   type BackendSnapshot,
   type BackendsRefreshResult
@@ -41,6 +42,46 @@ export async function refreshBackendSnapshots(
         : problem instanceof Error
           ? problem.message
           : "The request did not succeed."
+    };
+  }
+}
+
+type BackendSnapshotRequest = () => Promise<BackendSnapshot[]>;
+
+/** Paint the first catalogue, then enrich it with update advice in the background. */
+export async function loadBackendPageSnapshots(
+  onOrdinarySnapshots: (snapshots: BackendSnapshot[]) => void | Promise<void>,
+  ordinaryRequest: BackendSnapshotRequest = () => readBackends(),
+  advisoryRequest: () => Promise<BackendSnapshot[]> = () => readBackends(true)
+): Promise<BackendRefreshAttempt> {
+  let ordinarySnapshots: BackendSnapshot[];
+  try {
+    ordinarySnapshots = await ordinaryRequest();
+  } catch (problem) {
+    return {
+      snapshots: null,
+      error: problem instanceof ConversationWireError
+        ? problem.message
+        : problem instanceof Error
+          ? problem.message
+          : "The request did not succeed."
+    };
+  }
+  await onOrdinarySnapshots(ordinarySnapshots);
+  try {
+    return {
+      snapshots: await advisoryRequest(),
+      error: null
+    };
+  } catch (problem) {
+    const advisoryError = problem instanceof ConversationWireError
+      ? problem.message
+      : problem instanceof Error
+        ? problem.message
+        : "The request did not succeed.";
+    return {
+      snapshots: ordinarySnapshots,
+      error: advisoryError
     };
   }
 }

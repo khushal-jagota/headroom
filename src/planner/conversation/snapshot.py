@@ -911,6 +911,7 @@ async def probe_backend(
     codex_model_catalog_probe: CodexModelCatalogProbe = probe_codex_model_catalog,
     claude_model_catalog_probe: ClaudeModelCatalogProbe = probe_claude_model_catalog,
     refresh: bool = False,
+    discover_update_advisory: bool = True,
 ) -> BackendSnapshot:
     """Everything this machine can say about one backend, without touching an agent API."""
     recipe = _BACKEND_PROBE_RECIPES[backend_key]
@@ -970,7 +971,11 @@ async def probe_backend(
     )
     diagnoses.extend(catalog.diagnoses)
 
-    advisory = await _update_advisory(recipe, executable_path, version, environment)
+    advisory = (
+        await _update_advisory(recipe, executable_path, version, environment)
+        if discover_update_advisory
+        else None
+    )
     return BackendSnapshot(
         backend_key=backend_key,
         installed=True,
@@ -1148,7 +1153,12 @@ class BackendSnapshotService:
         self._claude_model_catalog_probe = claude_model_catalog_probe
         self._backend_lifecycle = backend_lifecycle
         self._snapshots: dict[ConversationBackendKey, BackendSnapshot] = {}
-        self._lock = asyncio.Lock()
+        # A probe is shared only with another reader of the same backend. Independent
+        # backends use separate CLIs and catalogues, so one slow child must not hold the
+        # others behind it.
+        self._snapshot_locks: dict[ConversationBackendKey, asyncio.Lock] = {
+            backend_key: asyncio.Lock() for backend_key in ConversationBackendKey
+        }
         # One lock per backend, held for a whole update rather than for a probe. Reading a
         # card is quick and shares the lock above; installing a package is slow, changes
         # the machine, and must not happen twice at once — so the two are different locks,
@@ -1159,16 +1169,24 @@ class BackendSnapshotService:
 
     async def snapshots(self, *, refresh: bool = False) -> tuple[BackendSnapshot, ...]:
         return tuple(
-            [
-                await self.snapshot(backend_key, refresh=refresh)
-                for backend_key in ConversationBackendKey
-            ]
+            await asyncio.gather(
+                *(
+                    self.snapshot(backend_key, refresh=refresh)
+                    for backend_key in ConversationBackendKey
+                )
+            )
         )
 
     async def snapshot(
         self, backend_key: ConversationBackendKey, *, refresh: bool = False
     ) -> BackendSnapshot:
-        async with self._lock:
+        # A forced advisory refresh keeps the last complete card readable. An ordinary
+        # reader never waits behind remote work when this process already has an answer.
+        if not refresh:
+            kept = self._snapshots.get(backend_key)
+            if kept is not None:
+                return kept
+        async with self._snapshot_locks[backend_key]:
             kept = None if refresh else self._snapshots.get(backend_key)
             if kept is not None:
                 return kept
@@ -1178,6 +1196,10 @@ class BackendSnapshotService:
                 codex_model_catalog_probe=self._codex_model_catalog_probe,
                 claude_model_catalog_probe=self._claude_model_catalog_probe,
                 refresh=refresh,
+                # Ordinary reads serve the catalogue without waiting for remote update
+                # discovery. An explicit refresh replaces this cached answer with the
+                # complete advisory, which update_backend also requires before it acts.
+                discover_update_advisory=refresh,
             )
             self._snapshots[backend_key] = probed
             return probed

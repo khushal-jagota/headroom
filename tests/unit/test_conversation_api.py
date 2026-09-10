@@ -2070,8 +2070,134 @@ class _SnapshotAnswers(BackendSnapshotService):
         self.snapshots_answer = snapshots
 
     async def snapshots(self, *, refresh: bool = False) -> tuple[BackendSnapshot, ...]:
-        assert refresh is True
+        assert refresh is False
         return self.snapshots_answer
+
+
+class _OrderedUsageAnswers(BackendUsageService):
+    def __init__(self) -> None:
+        super().__init__({})
+        self.started: set[ConversationBackendKey] = set()
+        self.completed: set[ConversationBackendKey] = set()
+
+    async def refresh(self, backend_key: ConversationBackendKey) -> BackendUsageResult:
+        self.started.add(backend_key)
+        self.completed.add(backend_key)
+        return BackendUsageResult(
+            backend_key=backend_key,
+            outcome=BackendUsageOutcome.unavailable,
+            detail="No usage source.",
+        )
+
+
+class _SnapshotsAfterUsageStart(_SnapshotAnswers):
+    def __init__(
+        self,
+        snapshots: tuple[BackendSnapshot, ...],
+        release_snapshots: asyncio.Event,
+    ) -> None:
+        super().__init__(snapshots)
+        self.release_snapshots = release_snapshots
+        self.started = asyncio.Event()
+        self.refresh_arguments: list[bool] = []
+
+    async def snapshots(self, *, refresh: bool = False) -> tuple[BackendSnapshot, ...]:
+        self.refresh_arguments.append(refresh)
+        self.started.set()
+        await self.release_snapshots.wait()
+        return self.snapshots_answer
+
+
+class _UsageAnswersThatWait(BackendUsageService):
+    def __init__(self) -> None:
+        super().__init__({})
+        self.started: set[ConversationBackendKey] = set()
+        self.cancelled: set[ConversationBackendKey] = set()
+
+    async def refresh(self, backend_key: ConversationBackendKey) -> BackendUsageResult:
+        self.started.add(backend_key)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            self.cancelled.add(backend_key)
+        raise AssertionError("usage wait was released")
+
+
+class _SnapshotFailure(BackendSnapshotService):
+    async def snapshots(self, *, refresh: bool = False) -> tuple[BackendSnapshot, ...]:
+        del refresh
+        raise RuntimeError("snapshot acquisition stopped")
+
+
+def test_backend_refresh_starts_usage_before_ordinary_snapshot_acquisition(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        snapshots = tuple(
+            BackendSnapshot(
+                backend_key=backend_key,
+                installed=False,
+                executable_path=None,
+                version=None,
+                identity=None,
+                available_models=(),
+                reasoning_effort_options=(),
+                default_model_id=None,
+                default_reasoning_effort=None,
+                update_advisory=None,
+                diagnoses=(),
+            )
+            for backend_key in ConversationBackendKey
+        )
+        usage = _OrderedUsageAnswers()
+        release_snapshots = asyncio.Event()
+        snapshot_answers = _SnapshotsAfterUsageStart(snapshots, release_snapshots)
+        runtime = replace(
+            harness.runtime,
+            backend_snapshots=snapshot_answers,
+            backend_usage=usage,
+        )
+
+        refreshing = asyncio.create_task(conversation_api.refresh_backends(runtime))
+        for _ in range(20):
+            if snapshot_answers.started.is_set():
+                break
+            await asyncio.sleep(0)
+        completed_before_snapshot = set(usage.completed)
+        release_snapshots.set()
+        response = await refreshing
+
+        assert snapshot_answers.started.is_set()
+        assert completed_before_snapshot == set(ConversationBackendKey)
+        assert snapshot_answers.refresh_arguments == [False]
+        assert [item["backend_key"] for item in response["usage_outcomes"]] == [
+            backend_key.value for backend_key in ConversationBackendKey
+        ]
+        assert [item["backend_key"] for item in response["backends"]] == [
+            backend_key.value for backend_key in ConversationBackendKey
+        ]
+
+    _run(exercise)
+
+
+def test_backend_refresh_cancels_provider_reads_when_snapshot_acquisition_fails(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        usage = _UsageAnswersThatWait()
+        runtime = replace(
+            harness.runtime,
+            backend_snapshots=_SnapshotFailure(),
+            backend_usage=usage,
+        )
+
+        with pytest.raises(RuntimeError, match="snapshot acquisition stopped"):
+            await conversation_api.refresh_backends(runtime)
+
+        assert usage.started == set(ConversationBackendKey)
+        assert usage.cancelled == set(ConversationBackendKey)
+
+    _run(exercise)
 
 
 def test_backend_refresh_resolves_scopes_and_keeps_cached_usage_after_failure(

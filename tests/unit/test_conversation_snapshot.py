@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import Callable, Coroutine, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -134,7 +134,9 @@ class _FakeMachine:
         return self.registry_versions.get(package_name)
 
 
-def _codex_that_answers(*models: CodexModel) -> Callable[[str], Any]:
+def _codex_that_answers(
+    *models: CodexModel,
+) -> Callable[[str], Awaitable[CodexModelCatalog]]:
     async def probe(codex_executable: str) -> CodexModelCatalog:
         del codex_executable
         efforts: list[str] = []
@@ -184,7 +186,7 @@ _CLAUDE_HANDSHAKE_MODELS = (
 
 def _claude_that_answers(
     *models: ClaudeModel, default_model_id: str | None = None
-) -> Callable[[str], Any]:
+) -> Callable[[str], Awaitable[ClaudeModelCatalog]]:
     answered = models or _CLAUDE_HANDSHAKE_MODELS
 
     async def probe(claude_executable: str) -> ClaudeModelCatalog:
@@ -1286,6 +1288,156 @@ def test_a_probe_is_run_once_and_again_only_when_asked() -> None:
 
         await service.snapshot(ConversationBackendKey.claude, refresh=True)
         assert len(machine.run_commands) > commands_after_the_first
+
+    _run(exercise)
+
+
+def test_cold_hermes_snapshot_returns_before_explicit_update_discovery() -> None:
+    async def exercise() -> None:
+        machine = _installed_updatable_hermes()
+        update_check = (FHS_HERMES_PATH, "update", "--check")
+        machine.slow_commands.add(update_check)
+        machine.let_slow_commands_finish = asyncio.Event()
+        service = BackendSnapshotService(machine)
+
+        ordinary_read = asyncio.create_task(
+            service.snapshot(ConversationBackendKey.hermes)
+        )
+        for _ in range(20):
+            if ordinary_read.done():
+                break
+            await asyncio.sleep(0)
+        ordinary_finished_before_update_discovery = ordinary_read.done()
+        if not ordinary_read.done():
+            machine.let_slow_commands_finish.set()
+        ordinary = await ordinary_read
+
+        assert ordinary_finished_before_update_discovery
+        assert ordinary.update_advisory is None
+        assert update_check not in machine.run_commands
+
+        machine.let_slow_commands_finish = asyncio.Event()
+        explicit_refresh = asyncio.create_task(
+            service.snapshot(ConversationBackendKey.hermes, refresh=True)
+        )
+        for _ in range(20):
+            if machine.commands_in_flight == 1:
+                break
+            await asyncio.sleep(0)
+        assert machine.commands_in_flight == 1
+        assert not explicit_refresh.done()
+
+        cached_read = asyncio.create_task(
+            service.snapshot(ConversationBackendKey.hermes)
+        )
+        for _ in range(20):
+            if cached_read.done():
+                break
+            await asyncio.sleep(0)
+        cached_finished_during_refresh = cached_read.done()
+
+        machine.let_slow_commands_finish.set()
+        cached, refreshed = await asyncio.gather(cached_read, explicit_refresh)
+
+        assert cached_finished_during_refresh
+        assert cached is ordinary
+        assert refreshed.update_advisory is not None
+        assert refreshed.update_advisory.update_available is True
+        assert update_check in machine.run_commands
+
+    _run(exercise)
+
+
+def test_independent_backend_snapshots_start_together() -> None:
+    async def exercise() -> None:
+        machine = _FakeMachine(
+            executables={"codex": CODEX_PATH, "claude": CLAUDE_PATH},
+            real_paths={CODEX_PATH: CODEX_REAL_PATH, CLAUDE_PATH: CLAUDE_REAL_PATH},
+        )
+        machine.outcomes[(CODEX_PATH, "--version")] = CommandOutcome(
+            exit_code=0, standard_output="codex-cli 0.145.0\n", standard_error=""
+        )
+        machine.outcomes[(CODEX_PATH, "login", "status")] = CommandOutcome(
+            exit_code=0, standard_output="Logged in using ChatGPT\n", standard_error=""
+        )
+        machine.outcomes[(CLAUDE_PATH, "--version")] = CommandOutcome(
+            exit_code=0, standard_output="2.1.219 (Claude Code)\n", standard_error=""
+        )
+        machine.outcomes[(CLAUDE_PATH, "auth", "status", "--json")] = CommandOutcome(
+            exit_code=0,
+            standard_output=json.dumps({"loggedIn": True}),
+            standard_error="",
+        )
+        release_catalogues = asyncio.Event()
+        started_catalogues: set[ConversationBackendKey] = set()
+
+        async def codex_catalog(codex_executable: str) -> CodexModelCatalog:
+            del codex_executable
+            started_catalogues.add(ConversationBackendKey.codex)
+            await release_catalogues.wait()
+            return await _codex_that_answers()(CODEX_PATH)
+
+        async def claude_catalog(claude_executable: str) -> ClaudeModelCatalog:
+            del claude_executable
+            started_catalogues.add(ConversationBackendKey.claude)
+            await release_catalogues.wait()
+            return await _claude_that_answers()(CLAUDE_PATH)
+
+        service = BackendSnapshotService(
+            machine,
+            codex_model_catalog_probe=codex_catalog,
+            claude_model_catalog_probe=claude_catalog,
+        )
+        reading = asyncio.create_task(service.snapshots())
+        try:
+            for _ in range(20):
+                if len(started_catalogues) == 2:
+                    break
+                await asyncio.sleep(0)
+            assert started_catalogues == {
+                ConversationBackendKey.codex,
+                ConversationBackendKey.claude,
+            }
+        finally:
+            release_catalogues.set()
+        snapshots = await reading
+
+        assert tuple(snapshot.backend_key for snapshot in snapshots) == tuple(
+            ConversationBackendKey
+        )
+
+    _run(exercise)
+
+
+def test_concurrent_reads_of_one_backend_share_the_first_probe() -> None:
+    async def exercise() -> None:
+        machine = _installed_claude()
+        release_catalogue = asyncio.Event()
+        catalogue_probe_count = 0
+
+        async def claude_catalog(claude_executable: str) -> ClaudeModelCatalog:
+            nonlocal catalogue_probe_count
+            catalogue_probe_count += 1
+            await release_catalogue.wait()
+            return await _claude_that_answers()(claude_executable)
+
+        service = BackendSnapshotService(
+            machine, claude_model_catalog_probe=claude_catalog
+        )
+        reads = tuple(
+            asyncio.create_task(service.snapshot(ConversationBackendKey.claude))
+            for _ in range(2)
+        )
+        try:
+            for _ in range(20):
+                await asyncio.sleep(0)
+            assert catalogue_probe_count == 1
+        finally:
+            release_catalogue.set()
+        first, second = await asyncio.gather(*reads)
+
+        assert first is second
+        assert machine.run_commands.count((CLAUDE_PATH, "--version")) == 1
 
     _run(exercise)
 

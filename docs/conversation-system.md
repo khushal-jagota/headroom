@@ -434,12 +434,12 @@ Ticket's ordered conversation history. Only the active conversation accepts new 
 ## Backend cards
 
 The system can describe each agent CLI as a card: is the binary installed and
-what version, who is logged in (where the CLI will say without a network call),
-which models it offers, and whether a newer version exists — with a one-click
-update whose command is inferred from how the CLI was installed, re-checked
-afterwards, and reported as succeeded, unchanged, or failed. All of it is
-advisory; nothing blocks on it. Logging in stays in the terminal, and the card
-names the command.
+what version, who is logged in, and which models it offers. An ordinary cold read
+returns these facts without waiting for remote update discovery. An explicit refresh
+adds whether a newer version exists and a one-click update when Panels can run one.
+The update command comes from how the CLI was installed. Panels checks the card again
+afterwards and reports the update as succeeded, unchanged, or failed. Logging in stays
+in the terminal, and the card names the command.
 
 Hermes is found from its configured Python environment, the same installation a
 conversation launches, even when its executable is not on `PATH`. A packaged
@@ -462,10 +462,15 @@ even when the command fails.
 Panels keeps the last successful usage reading for each backend in its database.
 Opening the Backends page, reading `GET /backends`, receiving a change signal, or
 refreshing another query only reads that stored answer. None of those actions contacts
-a provider. The one Refresh on the Backends page re-reads every catalogue and usage
-source through `POST /backends/refresh`. Codex and Claude refresh independently, so one
-failure does not discard the other provider's new answer. A failed refresh also leaves
-that backend's prior reading in place.
+a provider. The one Refresh on the Backends page starts every usage source through
+`POST /backends/refresh`, then resolves those answers against ordinary backend snapshots.
+It does not force model catalogues, versions, identities, or update advice to refresh.
+Codex and Claude usage reads start independently, so catalogue work cannot delay them and
+one provider failure does not discard the other provider's new answer. A failed refresh
+also leaves that backend's prior reading in place. When the Backends page opens, it paints
+an ordinary snapshot first. It then refreshes catalogue and update advice in the
+background. Cached ordinary reads stay available during that work. The page's Refresh
+action and the shared model picker stop after the usage answer.
 
 Codex starts one short-lived app-server child and asks its native
 `account/rateLimits/read` method. The request does not start a thread, run a model turn,
