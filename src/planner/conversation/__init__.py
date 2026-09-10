@@ -21,6 +21,7 @@ from planner.conversation.contracts import (
     PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliveryUncertain,
     ResolvedConversationStart,
     backend_supports_steer,
 )
@@ -63,6 +64,7 @@ __all__ = [
     "PromptDeliveryRefusalReason",
     "PromptDeliveryRefused",
     "PromptDeliveryStarted",
+    "PromptDeliveryUncertain",
     "ResolvedConversationStart",
     "TurnCannotEndWhilePermissionAskIsPending",
     "TurnCannotEndWhileUserInputIsPending",

@@ -44,7 +44,11 @@ export type PromptDeliveryRefusalReason =
   | "session_did_not_load"
   | "write_to_backend_failed"
   | "no_running_turn_to_steer_into"
-  | "backend_cannot_steer";
+  | "backend_cannot_steer"
+  | "running_turn_changed_before_steer"
+  | "running_turn_cannot_accept_steer"
+  | "message_cannot_be_steered"
+  | "backend_rejected_steer";
 
 /** What one message is made of: written words, pictures, and files.
  *
@@ -166,6 +170,7 @@ export type HeldPrompt = StoredMessageContent & {
 export type ConversationView = {
   conversation_id: string;
   backend_key: ConversationBackendKey;
+  supports_steer: boolean;
   model: string | null;
   reasoning_effort: string | null;
   workspace_folder: string;
@@ -216,6 +221,14 @@ export type ConversationEvent =
         sender_label: string;
         mode: PromptDeliveryMode;
         refusal_reason: PromptDeliveryRefusalReason;
+        sender_message_id?: string;
+      }
+    >
+  | Row<
+      "prompt_delivery_uncertain",
+      StoredMessageContent & {
+        sender_label: string;
+        mode: PromptDeliveryMode;
         sender_message_id?: string;
       }
     >
@@ -294,7 +307,8 @@ export type PromptDeliveryFate =
   | { fate: "started" }
   | { fate: "queued"; queue_position: number }
   | { fate: "injected" }
-  | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason };
+  | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
+  | { fate: "uncertain" };
 
 export type HeldPromptPromotionResult =
   | { promoted: false }
@@ -302,6 +316,7 @@ export type HeldPromptPromotionResult =
       | { fate: "started" }
       | { fate: "injected" }
       | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
+      | { fate: "uncertain" }
     ));
 
 export type BackendIdentity = {

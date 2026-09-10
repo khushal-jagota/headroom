@@ -83,10 +83,10 @@ the real build's to keep, because no external observer can see them:
   a turn's failure needs no return channel; it is not a surface the seam exposes, and the
   conformance suite does not reach into an implementation's logging to check it.
 - **The start request's values are actually used.** Of everything a start request carries,
-  conformance can show three were honoured: the backend key (indirectly — a steer is
-  refused on codex and claude and accepted on hermes), and the model and reasoning effort
-  (directly — the harness reads the backend side's own account of what its session runs
-  on, added with the model-change extension). The role text, the identity environment
+  conformance can show the model and reasoning effort were honoured directly — the
+  harness reads the backend side's own account of what its session runs on, added with
+  the model-change extension. Backend steering support is advertised separately and
+  remains off until that adapter proves the shared contract. The role text, the identity environment
   variables, the workspace folder and the access posture have no observation path at this
   seam at all — an implementation that threw the role materials away entirely would still
   pass every conformance test. Honouring them is the real build's obligation, and proving

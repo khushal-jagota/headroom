@@ -43,6 +43,8 @@ try {
   );
   let nextRowIndex = 28;
   let running = $state(false);
+  let heldPromptRows = $state<any[]>([]);
+  let supportsSteer = $state(false);
   let conversationState = $state<ConversationState>("rest");
 
   function dismissConversation(): void {
@@ -117,6 +119,15 @@ try {
     ];
     running = true;
   };
+  (window as any).__showHeldPrompt = (supported: boolean) => {
+    supportsSteer = supported;
+    heldPromptRows = [{
+      key: "held-1",
+      heldPromptId: "held-1",
+      content: [{ piece: "text", text: "waiting guidance" }],
+      state: "queued"
+    }];
+  };
 </script>
 
 <main class="fixture-ticket">
@@ -136,6 +147,8 @@ try {
         conversationExists
         {rows}
         {running}
+        {heldPromptRows}
+        {supportsSteer}
         outgoingMessages={[]}
         ownSenderLabel="owner"
         showRunPicker={false}
@@ -378,6 +391,16 @@ with sync_playwright() as playwright:
     assert strip_box is not None and composer_box is not None
     assert round(strip_box["height"]) == 34
     assert round(composer_box["y"] - strip_box["y"] - strip_box["height"]) == 8
+
+    # The server capability controls one provider-neutral steering action.
+    page.evaluate("window.__showHeldPrompt(false)")
+    page.locator('[data-conversation-held-row="held-1"]').wait_for()
+    assert page.locator('[data-conversation-held-promote="steer"]').count() == 0
+    page.evaluate("window.__showHeldPrompt(true)")
+    steer = page.locator('[data-conversation-held-promote="steer"]')
+    steer.wait_for()
+    assert steer.inner_text() == "Steer"
+    assert "Hermes" not in page.locator("[data-conversation-held-stack]").inner_text()
 
     browser.close()
 

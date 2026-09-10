@@ -58,6 +58,14 @@ export type TranscriptRow =
     }
   | {
       key: string;
+      kind: "prompt_uncertain";
+      sequence: number;
+      createdAt: number;
+      content: readonly MessagePiece[];
+      senderLabel: string;
+    }
+  | {
+      key: string;
       kind: "prompt_discarded";
       sequence: number;
       createdAt: number;
@@ -163,7 +171,11 @@ const REFUSAL_SENTENCES: Record<PromptDeliveryRefusalReason, string> = {
   session_did_not_load: "the backend's session would not load",
   write_to_backend_failed: "the write to the backend did not succeed",
   no_running_turn_to_steer_into: "there was no running turn to steer into",
-  backend_cannot_steer: "this backend cannot take text into a running turn"
+  backend_cannot_steer: "this backend cannot take text into a running turn",
+  running_turn_changed_before_steer: "the running turn changed before delivery",
+  running_turn_cannot_accept_steer: "the running turn cannot accept steering",
+  message_cannot_be_steered: "this message content cannot be steered",
+  backend_rejected_steer: "the backend rejected steering for this turn"
 };
 
 export function refusalSentence(reason: PromptDeliveryRefusalReason): string {
@@ -280,6 +292,16 @@ export function transcriptRows(
           senderLabel: event.payload.sender_label,
           reason: event.payload.refusal_reason,
           sentence: refusalSentence(event.payload.refusal_reason)
+        });
+        break;
+      case "prompt_delivery_uncertain":
+        rows.push({
+          key: `e${sequence}`,
+          kind: "prompt_uncertain",
+          sequence,
+          createdAt,
+          content: messageContentOf(event.payload),
+          senderLabel: event.payload.sender_label
         });
         break;
       case "prompt_discarded":

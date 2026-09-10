@@ -101,6 +101,8 @@ from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendSteerOutcome,
+    BackendSteerRefused,
     BackendUserInputRequest,
     NeedsRebind,
     PermissionAnswerWriteFailed,
@@ -114,6 +116,7 @@ from planner.conversation.contracts import (
     ComposerCatalogEntryKind,
     ConversationAccess,
     PromptDeliveryMode,
+    PromptDeliveryRefusalReason,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
@@ -525,10 +528,12 @@ class ClaudeAgentSdkBackendChild:
             raise PromptWriteFailed(f"{stored_file_id} could not be read") from unreadable
         return b64encode(kept).decode("ascii")
 
-    async def steer(self, content: MessageContent, *, sender_label: str) -> None:
-        """Claude has no way to take text into a turn that is already running."""
-        del content, sender_label
-        raise PromptWriteFailed("claude cannot take text into a turn that is already running")
+    async def steer(
+        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+    ) -> BackendSteerOutcome:
+        """Refuse until the Claude adapter proves the shared steering contract."""
+        del turn_token, content, sender_label
+        return BackendSteerRefused(PromptDeliveryRefusalReason.backend_cannot_steer)
 
     async def cancel_running_turn(self) -> None:
         """Stop the turn that is running. The client, its child and its session stay up."""
