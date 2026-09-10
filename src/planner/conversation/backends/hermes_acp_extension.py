@@ -14,8 +14,11 @@ from __future__ import annotations
 from typing import Any
 
 from acp.exceptions import RequestError
-from acp_adapter import server as hermes_server
-from acp_adapter.entry import main as hermes_acp_main
+
+# These modules exist only in the Hermes interpreter that launches this script;
+# Panels deliberately does not install Hermes into its server/type-checking environment.
+from acp_adapter import server as hermes_server  # type: ignore[import-not-found]
+from acp_adapter.entry import main as hermes_acp_main  # type: ignore[import-not-found]
 
 PANELS_STEER_EXTENSION_METHOD = "panels/steer"
 PANELS_TURN_TOKEN_METADATA_KEY = "panelsTurnToken"
@@ -58,7 +61,8 @@ def _is_null_final_response_fault(failure: AttributeError) -> bool:
     return False
 
 
-class PanelsHermesACPAgent(hermes_server.HermesACPAgent):
+# Only the external base is untyped; keep strict checking of our extension methods.
+class PanelsHermesACPAgent(hermes_server.HermesACPAgent):  # type: ignore[misc]
     """Hermes ACP with correlated admission for one live Panels turn."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
