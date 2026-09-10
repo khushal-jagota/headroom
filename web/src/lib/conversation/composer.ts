@@ -344,5 +344,7 @@ export function fateSentence(fate: PromptDeliveryFate): string | null {
       return "steered into the running turn";
     case "refused":
       return `not delivered · ${refusalSentence(fate.refusal_reason)}`;
+    case "uncertain":
+      return "delivery uncertain · do not resend";
   }
 }

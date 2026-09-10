@@ -212,17 +212,19 @@ sent into a turn that is already running.
 
 The composer shows the held line in one inset tray above its recessed input on desktop
 and phone. Messages stack inside that tray. Each row stays on one line and can discard
-the message or make it run next. A Hermes row can also steer its text into the running
-turn. The server snapshot is the shared answer, so a second tab or device shows the same
-held line. A tab merges its immediate copy with that snapshot by the sender's message id
-rather than drawing it twice.
+the message or make it run next. When the server reports steering support, a row can also
+steer its text into the running turn. The server snapshot is the shared answer, so a
+second tab or device shows the same held line. A tab merges its immediate copy with that
+snapshot by the sender's message id rather than drawing it twice.
 
 The queue actions and the input action row use the same order, labels, and button treatment
 on desktop and phone. Width changes the available text space, not the control design.
 
 The answer to a send is the fate of that delivery, and fate means it happened:
-started (the text reached a live agent), queued at a position, injected, or
-refused with a named reason. The only refusals are genuine impossibilities — no
+started (the text reached a live agent), queued at a position, injected into the exact
+target turn, refused with a named reason, or uncertain after a steering attempt may have
+crossed the backend boundary. Uncertain is terminal: Panels records it and does not retry
+it. The only refusals are genuine impossibilities — no
 such conversation, the agent would not start, its session would not load, the
 write failed, a steer with no running turn to join, or a steer at a backend that
 cannot steer. A busy agent is never a refusal. A message with nothing in it is not a refusal
@@ -238,7 +240,7 @@ Discard takes one held message out of the line and writes it down as discarded.
 Send now stops the running turn, records that interruption honestly, and runs
 the selected message ahead of the line. A refusal still records the selected
 message, then the remaining FIFO line continues. Steer consumes the selected
-text into a running Hermes turn and does not apply model choices that waited with
+text into the captured running turn and does not apply model choices that waited with
 that message. Being told that the message is gone is an ordinary answer because
 automatic delivery may win the same race.
 

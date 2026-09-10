@@ -61,6 +61,8 @@ from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendSteerOutcome,
+    BackendSteerRefused,
     BackendUserInputRequest,
     PermissionAnswerWriteFailed,
     PromptWriteFailed,
@@ -73,6 +75,7 @@ from planner.conversation.contracts import (
     ComposerCatalogEntryKind,
     ConversationAccess,
     PromptDeliveryMode,
+    PromptDeliveryRefusalReason,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
@@ -417,16 +420,12 @@ class CodexAppServerBackendChild:
             self._model = model
             self._reasoning_effort = reasoning_effort
 
-    async def steer(self, content: MessageContent, *, sender_label: str) -> None:
-        """Never called: codex is one of the backends the contract says cannot steer.
-
-        Codex's app-server does have a ``turn/steer`` method. It is not used, because
-        whether a backend can take text into a running turn is stated once, in the
-        conversation contract, and the core refuses a steer aimed at codex before any child
-        is touched. Changing that is a change to the contract, not to this adapter.
-        """
-        del content, sender_label
-        raise PromptWriteFailed("codex does not take text into a turn that is already running")
+    async def steer(
+        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+    ) -> BackendSteerOutcome:
+        """Refuse until the Codex adapter proves the shared steering contract."""
+        del turn_token, content, sender_label
+        return BackendSteerRefused(PromptDeliveryRefusalReason.backend_cannot_steer)
 
     async def cancel_running_turn(self) -> None:
         """Stop the running turn, and return once codex says it has stopped.

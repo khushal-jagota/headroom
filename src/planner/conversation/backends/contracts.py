@@ -2,15 +2,16 @@
 
 This is an internal seam, not the contract Panels talks to. It exists so that the rules
 live in exactly one place: **the core owns every contract semantic** — the held queue, the
-four fates, steer gating, permission bookkeeping, which rows get written, when a child is
+delivery fates, steer gating, permission bookkeeping, which rows get written, when a child is
 spawned and when it is stopped. An adapter owns one child process and its wire, and knows
 none of that.
 
 The division shows up in what each side is allowed to decide. An adapter never decides
 that a message should wait, never decides that an ask has expired, and never writes a row.
-The core never speaks a vendor's protocol. When an adapter cannot do what it was asked, it
-says so by raising one of the named failures below, and the core turns that into the one
-refusal reason the contract has for it:
+The core never speaks a vendor's protocol. Ordinary prompt delivery failures use the named
+exceptions below. Steering instead returns a structured accepted, refused, or uncertain
+outcome because a failed response does not necessarily mean that no bytes crossed the
+provider boundary:
 
 - ``BackendSpawnFailed`` → ``backend_did_not_start``
 - ``SessionLoadFailed`` → ``session_did_not_load``
@@ -28,6 +29,7 @@ from typing import Protocol
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
     PromptDeliveryMode,
+    PromptDeliveryRefusalReason,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
@@ -113,6 +115,26 @@ class TurnToken:
 
     conversation_id: str
     turn_number: int
+
+
+@dataclass(frozen=True, slots=True)
+class BackendSteerAccepted:
+    """The provider admitted the message to the exact turn that the token names."""
+
+
+@dataclass(frozen=True, slots=True)
+class BackendSteerRefused:
+    """The adapter proved that the message was not admitted to the target turn."""
+
+    refusal_reason: PromptDeliveryRefusalReason
+
+
+@dataclass(frozen=True, slots=True)
+class BackendSteerUncertain:
+    """The adapter cannot prove admission or non-admission after the attempt."""
+
+
+type BackendSteerOutcome = BackendSteerAccepted | BackendSteerRefused | BackendSteerUncertain
 
 
 @dataclass(frozen=True, slots=True)
@@ -388,12 +410,13 @@ class BackendChild(Protocol):
         if this child cannot safely accept a write that has not started.
         """
 
-    async def steer(self, content: MessageContent, *, sender_label: str) -> None:
-        """Put a message into the turn that is already running, without ending it.
+    async def steer(
+        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+    ) -> BackendSteerOutcome:
+        """Try to admit a message to the exact turn named by ``turn_token``.
 
-        Only a backend that can do this ever has it called: the core refuses a steer aimed
-        at one that cannot, before any child is touched. ``sender_label`` travels with the
-        message the same way it does on a prompt. Raises ``PromptWriteFailed``.
+        The adapter validates the target before transmission and never substitutes a newer
+        turn. It returns one explicit outcome and never retries or falls back to a prompt.
         """
 
     async def cancel_running_turn(self) -> None:
