@@ -48,7 +48,7 @@ export async function refreshBackendSnapshots(
 
 type BackendSnapshotRequest = () => Promise<BackendSnapshot[]>;
 
-/** Paint the first catalogue, then enrich it with update advice in the background. */
+/** Paint the first catalogue, then enrich Codex and Claude with update advice. */
 export async function loadBackendPageSnapshots(
   onOrdinarySnapshots: (snapshots: BackendSnapshot[]) => void | Promise<void>,
   ordinaryRequest: BackendSnapshotRequest = () => readBackends(),

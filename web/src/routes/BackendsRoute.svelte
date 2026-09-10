@@ -250,7 +250,7 @@
         </section>
       {/each}
     </div>
-    <p class="note">Refresh re-reads Codex and Claude usage. Update checks run in the background after this page opens.</p>
+    <p class="note">Refresh re-reads Codex and Claude usage. Their update checks run in the background after this page opens.</p>
   {/if}
 </section>
 

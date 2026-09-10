@@ -1,16 +1,16 @@
 """What each agent backend on this machine is, and whether it needs anything from you.
 
 A backend snapshot is a product object, not a health check hidden in a log: is the CLI
-there, which version, who is it logged in as, what can it be run as, and is there a newer
-one. Every answer here is either something the machine told us or an honest absence. The
-snapshot never guesses, and it never reaches an agent API — identity comes from the CLI's
-own local credential read, which costs a subprocess and nothing else.
+there, which version, who is it logged in as, what can it be run as, and whether Panels
+can advise an update. Every answer here is either something the machine told us or an
+honest absence. The snapshot never guesses, and it never reaches an agent API — identity
+comes from the CLI's own local credential read, which costs a subprocess and nothing else.
 
 Three rules hold the module together.
 
 **One classifier for every backend.** Where a binary lives says how it was installed, and
-that says how to update it. The same function classifies all three; what differs between
-backends is data — a package name, a native marker — never a code path of its own.
+that says how to update it. The same function classifies supported update paths. Hermes
+does not offer update discovery or an update action here.
 
 **An advisory is never a blocker.** A backend with no update advisory, or with a failed
 probe, still runs. The card says what is known and offers what can be acted on.
@@ -37,10 +37,6 @@ from typing import Any, Final, Protocol
 
 import httpx
 
-from planner.conversation.backend_lifecycle import (
-    BackendLifecycleCoordinator,
-    BackendMaintenanceLease,
-)
 from planner.conversation.backends.claude_model_catalog import (
     ClaudeModelCatalog,
     ClaudeModelCatalogUnavailable,
@@ -80,17 +76,6 @@ VERSION_ARGUMENTS: Final = ("--version",)
 _VERSION_PATTERN: Final = re.compile(r"(?<![\d.])v?(\d+\.\d+\.\d+)(?![\d.])")
 
 _NPM_REGISTRY_URL: Final = "https://registry.npmjs.org"
-_HERMES_UPDATE_AVAILABLE_MARKER: Final = "update available"
-_HERMES_CURRENT_MARKER: Final = "already up to date"
-_HERMES_UNSUPPORTED_MARKERS: Final = (
-    "this hermes installation is managed by",
-    "doesn't apply inside the docker container",
-    "not a git repository",
-    "update hermes through the nix source that installed it",
-    "unrecognized arguments: --check",
-    "invalid choice: 'update'",
-    "no such command",
-)
 
 
 class BackendInstallMethod(StrEnum):
@@ -340,8 +325,8 @@ class SubprocessBackendProbeEnvironment:
             )
         except asyncio.CancelledError:
             # An HTTP caller going away must not leave an installer working after its
-            # maintenance lease is released. End the whole group before cancellation
-            # leaves this boundary, just as a timeout does.
+            # request is canceled. End the whole group before cancellation leaves this
+            # boundary, just as a timeout does.
             _end_the_whole_process_group(process)
             await process.wait()
             raise
@@ -541,7 +526,6 @@ class _BackendProbeRecipe:
     homebrew_formula: str | None
     native_path_marker: str | None
     native_update_command: tuple[str, ...] | None
-    native_update_check_arguments: tuple[str, ...] | None
     manual_only_detail: str
     read_catalog: Callable[[_CatalogRequest], Awaitable[_CatalogAnswer]]
 
@@ -855,7 +839,6 @@ _BACKEND_PROBE_RECIPES: Final[Mapping[ConversationBackendKey, _BackendProbeRecip
         homebrew_formula="claude-code",
         native_path_marker=None,
         native_update_command=None,
-        native_update_check_arguments=None,
         manual_only_detail=(
             "Panels only updates `claude` from the configured vps-owned user-local npm "
             "prefix; update this installation manually."
@@ -872,7 +855,6 @@ _BACKEND_PROBE_RECIPES: Final[Mapping[ConversationBackendKey, _BackendProbeRecip
         homebrew_formula="codex",
         native_path_marker=_CODEX_NATIVE_PATH_MARKER,
         native_update_command=("codex", "update"),
-        native_update_check_arguments=None,
         manual_only_detail=(
             "Panels only updates `codex` from the configured vps-owned user-local npm "
             "prefix; update this installation manually."
@@ -890,8 +872,7 @@ _BACKEND_PROBE_RECIPES: Final[Mapping[ConversationBackendKey, _BackendProbeRecip
         registry_package_name=None,
         homebrew_formula=None,
         native_path_marker=None,
-        native_update_command=("hermes", "update", "--yes"),
-        native_update_check_arguments=("update", "--check"),
+        native_update_command=None,
         manual_only_detail=(
             "Panels cannot confirm this Hermes installation is managed by Hermes' native "
             "updater, so it offers no update here."
@@ -1014,33 +995,18 @@ async def _update_advisory(
     executable_path: str,
     version: str | None,
     environment: BackendProbeEnvironment,
-) -> BackendUpdateAdvisory:
+) -> BackendUpdateAdvisory | None:
+    if recipe.registry_package_name is None and recipe.native_update_command is None:
+        return None
     resolved_install = _resolve_install(recipe, executable_path, environment)
     install_method = resolved_install.install_method
     update_command = _update_command(recipe, install_method, resolved_install.package_prefix)
     latest_version: str | None = None
-    hermes_detail: str | None = None
-    hermes_update_available = False
-    if recipe.native_update_check_arguments is not None:
-        check = await environment.run(
-            (executable_path, *recipe.native_update_check_arguments),
-            timeout_seconds=VERSION_PROBE_TIMEOUT_SECONDS,
-        )
-        supported, hermes_update_available, hermes_detail = _read_hermes_update_check(check)
-        install_method = (
-            BackendInstallMethod.native if supported else BackendInstallMethod.manual_only
-        )
-        native_update_command = recipe.native_update_command
-        update_command = (
-            (executable_path, *native_update_command[1:])
-            if supported and native_update_command is not None
-            else None
-        )
     if recipe.registry_package_name is not None and install_method in _REGISTRY_INSTALL_METHODS:
         latest_version = await environment.latest_released_version(
             recipe.registry_package_name, timeout_seconds=REGISTRY_LOOKUP_TIMEOUT_SECONDS
         )
-    update_available = hermes_update_available or (
+    update_available = (
         latest_version is not None
         and version is not None
         and _version_is_newer(latest_version, version)
@@ -1050,32 +1016,9 @@ async def _update_advisory(
         update_command=update_command,
         latest_version=latest_version,
         update_available=update_available,
-        detail=hermes_detail
-        or _advisory_detail(
+        detail=_advisory_detail(
             recipe, install_method, update_command, latest_version, update_available
         ),
-    )
-
-
-def _read_hermes_update_check(
-    outcome: CommandOutcome,
-) -> tuple[bool, bool, str]:
-    """Translate Hermes' human-readable native check without trusting exit code alone."""
-    output = "\n".join(
-        part for part in (outcome.standard_output, outcome.standard_error) if part
-    ).strip()
-    normalized = output.lower()
-    if any(marker in normalized for marker in _HERMES_UNSUPPORTED_MARKERS):
-        return False, False, output or "This Hermes installation cannot update itself."
-    if outcome.succeeded and _HERMES_UPDATE_AVAILABLE_MARKER in normalized:
-        return True, True, "A Hermes update is available."
-    if outcome.succeeded and _HERMES_CURRENT_MARKER in normalized:
-        return True, False, "This Hermes installation is current."
-    detail = output.splitlines()[-1] if output else "The update check returned no answer."
-    return (
-        True,
-        False,
-        f"Panels could not determine whether Hermes has an update: {detail}",
     )
 
 
@@ -1146,12 +1089,10 @@ class BackendSnapshotService:
         *,
         codex_model_catalog_probe: CodexModelCatalogProbe = probe_codex_model_catalog,
         claude_model_catalog_probe: ClaudeModelCatalogProbe = probe_claude_model_catalog,
-        backend_lifecycle: BackendLifecycleCoordinator | None = None,
     ) -> None:
         self._environment = environment or SubprocessBackendProbeEnvironment()
         self._codex_model_catalog_probe = codex_model_catalog_probe
         self._claude_model_catalog_probe = claude_model_catalog_probe
-        self._backend_lifecycle = backend_lifecycle
         self._snapshots: dict[ConversationBackendKey, BackendSnapshot] = {}
         # A probe is shared only with another reader of the same backend. Independent
         # backends use separate CLIs and catalogues, so one slow child must not hold the
@@ -1222,7 +1163,7 @@ class BackendSnapshotService:
     async def _update_backend(self, backend_key: ConversationBackendKey) -> BackendUpdateResult:
         before = await self.snapshot(backend_key, refresh=True)
         advisory = before.update_advisory
-        if not before.installed or advisory is None or advisory.update_command is None:
+        if not before.installed:
             return BackendUpdateResult(
                 outcome=BackendUpdateOutcome.failed,
                 detail=(
@@ -1232,53 +1173,45 @@ class BackendSnapshotService:
                 ),
                 output_tail="",
             )
-        maintenance_lease: BackendMaintenanceLease | None = None
-        backend_lifecycle = self._backend_lifecycle
-        if (
-            backend_key is ConversationBackendKey.hermes
-            and backend_lifecycle is not None
-        ):
-            maintenance_lease = await backend_lifecycle.try_begin_maintenance(backend_key)
-            if maintenance_lease is None:
-                return BackendUpdateResult(
-                    outcome=BackendUpdateOutcome.failed,
-                    detail=(
-                        "Hermes cannot be updated while a Panels-owned Hermes process "
-                        "is starting or running. Stop it and try again."
-                    ),
-                    output_tail="",
-                )
-        try:
-            outcome = await self._environment.run(
-                advisory.update_command, timeout_seconds=UPDATE_COMMAND_TIMEOUT_SECONDS
-            )
-            output_tail = outcome.output_tail(UPDATE_OUTPUT_TAIL_MAXIMUM_CHARACTERS)
-            # Refresh even after a failed command. An updater may have changed part of an
-            # installation before failing, and the card must describe what remains.
-            after = await self.snapshot(backend_key, refresh=True)
-            if not outcome.succeeded:
-                return BackendUpdateResult(
-                    outcome=BackendUpdateOutcome.failed,
-                    detail=f"The update command exited with code {outcome.exit_code}.",
-                    output_tail=output_tail,
-                )
-            if after.version is not None and after.version != before.version:
-                return BackendUpdateResult(
-                    outcome=BackendUpdateOutcome.succeeded,
-                    detail=f"Updated to {after.version}.",
-                    output_tail=output_tail,
-                )
+        if advisory is None:
             return BackendUpdateResult(
-                outcome=BackendUpdateOutcome.unchanged,
-                detail=(
-                    "The update command finished, but the installed version is still "
-                    f"{before.version if before.version is not None else 'unknown'}."
-                ),
+                outcome=BackendUpdateOutcome.failed,
+                detail="There is no update Panels can run for this backend.",
+                output_tail="",
+            )
+        if advisory.update_command is None:
+            return BackendUpdateResult(
+                outcome=BackendUpdateOutcome.failed,
+                detail=advisory.detail,
+                output_tail="",
+            )
+        outcome = await self._environment.run(
+            advisory.update_command, timeout_seconds=UPDATE_COMMAND_TIMEOUT_SECONDS
+        )
+        output_tail = outcome.output_tail(UPDATE_OUTPUT_TAIL_MAXIMUM_CHARACTERS)
+        # Refresh even after a failed command. An updater may have changed part of an
+        # installation before failing, and the card must describe what remains.
+        after = await self.snapshot(backend_key, refresh=True)
+        if not outcome.succeeded:
+            return BackendUpdateResult(
+                outcome=BackendUpdateOutcome.failed,
+                detail=f"The update command exited with code {outcome.exit_code}.",
                 output_tail=output_tail,
             )
-        finally:
-            if maintenance_lease is not None and backend_lifecycle is not None:
-                await backend_lifecycle.end_maintenance(maintenance_lease)
+        if after.version is not None and after.version != before.version:
+            return BackendUpdateResult(
+                outcome=BackendUpdateOutcome.succeeded,
+                detail=f"Updated to {after.version}.",
+                output_tail=output_tail,
+            )
+        return BackendUpdateResult(
+            outcome=BackendUpdateOutcome.unchanged,
+            detail=(
+                "The update command finished, but the installed version is still "
+                f"{before.version if before.version is not None else 'unknown'}."
+            ),
+            output_tail=output_tail,
+        )
 
 
 def _version_at_least(version: str, minimum: tuple[int, ...]) -> bool:

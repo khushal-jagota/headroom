@@ -167,7 +167,7 @@ def build_conversation_runtime(
             backend_lifecycle=backend_lifecycle,
         ),
         live_tail=live_tail,
-        backend_snapshots=BackendSnapshotService(backend_lifecycle=backend_lifecycle),
+        backend_snapshots=BackendSnapshotService(),
         backend_usage=production_backend_usage_service(),
         message_files=message_files,
         database_path=db_path,

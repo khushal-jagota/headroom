@@ -20,7 +20,6 @@ from typing import Any
 
 import pytest
 
-from planner.conversation.backend_lifecycle import BackendLifecycleCoordinator
 from planner.conversation.backends.claude_model_catalog import (
     ClaudeModel,
     ClaudeModelCatalog,
@@ -49,7 +48,6 @@ CLAUDE_REAL_PATH = "/Users/someone/.local/lib/node_modules/@anthropic-ai/claude-
 CODEX_PATH = "/Users/someone/.local/bin/codex"
 CODEX_REAL_PATH = "/Users/someone/.codex/packages/standalone/releases/0.145.0-arm64/bin/codex"
 HERMES_PATH = "/Users/someone/.local/bin/hermes"
-FHS_HERMES_PATH = "/usr/local/bin/hermes"
 USER_LOCAL_NPM_PREFIX = "/Users/someone/.local"
 
 
@@ -517,23 +515,12 @@ def test_hermes_has_no_account_to_report_and_no_effort_to_offer() -> None:
         machine.outcomes[(HERMES_PATH, "--version")] = CommandOutcome(
             exit_code=0, standard_output="Hermes Agent v0.18.2 (2026.7.7.2)\n", standard_error=""
         )
-        machine.outcomes[(HERMES_PATH, "update", "--check")] = CommandOutcome(
-            exit_code=1,
-            standard_output="",
-            standard_error="error: unrecognized arguments: --check",
-        )
-
         card = await probe_backend(ConversationBackendKey.hermes, machine)
 
         assert card.version == "0.18.2"
         assert card.identity is None
         assert card.reasoning_effort_options == ()
-        assert card.update_advisory is not None
-        assert card.update_advisory.install_method is BackendInstallMethod.manual_only
-        assert card.update_advisory.update_command is None
-        assert card.update_advisory.detail == (
-            "error: unrecognized arguments: --check"
-        )
+        assert card.update_advisory is None
         # Nothing was asked of a registry for a backend no registry publishes.
         assert machine.registry_lookups == []
 
@@ -820,90 +807,6 @@ def test_a_malformed_hermes_inventory_is_rejected_whole(payload: dict[str, Any])
 # --- the update advisory ------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("check", "available", "detail"),
-    (
-        (
-            CommandOutcome(
-                exit_code=0,
-                standard_output="⚕ Update available: 2 commits behind upstream/main.\n",
-                standard_error="",
-            ),
-            True,
-            "A Hermes update is available.",
-        ),
-        (
-            CommandOutcome(
-                exit_code=1,
-                standard_output="",
-                standard_error="✗ Network error — cannot reach the remote repository.\n",
-            ),
-            False,
-            (
-                "Panels could not determine whether Hermes has an update: "
-                "✗ Network error — cannot reach the remote repository."
-            ),
-        ),
-    ),
-)
-def test_hermes_native_check_drives_the_advisory_even_for_an_fhs_wrapper(
-    check: CommandOutcome, available: bool, detail: str
-) -> None:
-    async def exercise() -> None:
-        machine = _FakeMachine(
-            executables={"hermes": FHS_HERMES_PATH},
-            real_paths={FHS_HERMES_PATH: FHS_HERMES_PATH},
-        )
-        machine.outcomes[(FHS_HERMES_PATH, "--version")] = CommandOutcome(
-            exit_code=0, standard_output="Hermes Agent v0.18.2\n", standard_error=""
-        )
-        machine.outcomes[(FHS_HERMES_PATH, "update", "--check")] = check
-
-        card = await probe_backend(ConversationBackendKey.hermes, machine)
-
-        assert card.update_advisory is not None
-        assert card.update_advisory.install_method is BackendInstallMethod.native
-        assert card.update_advisory.update_command == (
-            FHS_HERMES_PATH,
-            "update",
-            "--yes",
-        )
-        assert card.update_advisory.update_available is available
-        assert card.update_advisory.detail == detail
-
-    _run(exercise)
-
-
-@pytest.mark.parametrize(
-    "refusal",
-    ("Cannot update Hermes Agent: this Hermes installation is managed by Homebrew.\n",),
-)
-def test_hermes_native_refusals_are_not_offered_as_updates(refusal: str) -> None:
-    async def exercise() -> None:
-        machine = _FakeMachine(executables={"hermes": FHS_HERMES_PATH})
-        machine.outcomes[(FHS_HERMES_PATH, "--version")] = CommandOutcome(
-            exit_code=0, standard_output="Hermes Agent v0.18.2\n", standard_error=""
-        )
-        machine.outcomes[(FHS_HERMES_PATH, "update", "--check")] = CommandOutcome(
-            exit_code=1, standard_output="", standard_error=refusal
-        )
-
-        card = await probe_backend(ConversationBackendKey.hermes, machine)
-
-        assert card.update_advisory is not None
-        assert card.update_advisory.install_method is BackendInstallMethod.manual_only
-        assert card.update_advisory.update_command is None
-        assert refusal.strip() in card.update_advisory.detail
-
-    _run(exercise)
-
-
-
-
-
-
-
-
 def test_codex_user_local_npm_install_targets_the_same_resolved_prefix() -> None:
     async def exercise() -> None:
         machine = _FakeMachine(
@@ -981,76 +884,23 @@ def _claude_update_command() -> tuple[str, ...]:
     )
 
 
-def _installed_updatable_hermes() -> _FakeMachine:
-    machine = _FakeMachine(executables={"hermes": FHS_HERMES_PATH})
-    machine.outcomes[(FHS_HERMES_PATH, "--version")] = CommandOutcome(
-        exit_code=0, standard_output="Hermes Agent v0.18.2\n", standard_error=""
-    )
-    machine.outcomes[(FHS_HERMES_PATH, "update", "--check")] = CommandOutcome(
-        exit_code=0,
-        standard_output="⚕ Update available: 2 commits behind upstream/main.\n",
-        standard_error="",
-    )
-    machine.answers_any_other_command = CommandOutcome(
-        exit_code=0,
-        standard_output='{"nativeModel": null, "models": []}',
-        standard_error="",
-    )
-    return machine
-
-
-def _hermes_update_command() -> tuple[str, ...]:
-    return (FHS_HERMES_PATH, "update", "--yes")
-
-
-def test_hermes_update_uses_only_the_native_non_interactive_safe_path() -> None:
+def test_hermes_update_action_is_unavailable_without_running_an_update_command() -> None:
     async def exercise() -> None:
-        machine = _installed_updatable_hermes()
-        machine.outcomes[_hermes_update_command()] = CommandOutcome(
-            exit_code=0, standard_output="✓ Update complete!\n", standard_error=""
+        machine = _FakeMachine(executables={"hermes": HERMES_PATH})
+        machine.outcomes[(HERMES_PATH, "--version")] = CommandOutcome(
+            exit_code=0, standard_output="Hermes Agent v0.18.2\n", standard_error=""
         )
-
-        result = await BackendSnapshotService(machine).update_backend(
-            ConversationBackendKey.hermes
-        )
-
-        assert result.outcome is BackendUpdateOutcome.unchanged
-        assert _hermes_update_command() in machine.run_commands
-        assert all("--force" not in command for command in machine.run_commands)
-        assert all("--force-venv" not in command for command in machine.run_commands)
-
-    _run(exercise)
-
-
-def test_a_hermes_update_that_moves_the_version_succeeds() -> None:
-    async def exercise() -> None:
-        machine = _installed_updatable_hermes()
-        machine.outcomes[_hermes_update_command()] = CommandOutcome(
-            exit_code=0, standard_output="✓ Update complete!\n", standard_error=""
-        )
-
-        def the_new_one_is_now_installed() -> None:
-            machine.outcomes[(FHS_HERMES_PATH, "--version")] = CommandOutcome(
-                exit_code=0, standard_output="Hermes Agent v0.19.0\n", standard_error=""
-            )
-
-        machine.after_run[_hermes_update_command()] = the_new_one_is_now_installed
-
-        result = await BackendSnapshotService(machine).update_backend(
-            ConversationBackendKey.hermes
-        )
-
-        assert result.outcome is BackendUpdateOutcome.succeeded
-        assert result.detail == "Updated to 0.19.0."
-
-    _run(exercise)
-
-
-def test_a_failed_hermes_update_still_refreshes_its_snapshot() -> None:
-    async def exercise() -> None:
-        machine = _installed_updatable_hermes()
-        machine.outcomes[_hermes_update_command()] = CommandOutcome(
-            exit_code=1, standard_output="", standard_error="migration failed"
+        machine.answers_any_other_command = CommandOutcome(
+            exit_code=0,
+            standard_output=json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "status": "not_configured",
+                    "defaultModelId": None,
+                    "providers": [],
+                }
+            ),
+            standard_error="",
         )
 
         result = await BackendSnapshotService(machine).update_backend(
@@ -1058,71 +908,10 @@ def test_a_failed_hermes_update_still_refreshes_its_snapshot() -> None:
         )
 
         assert result.outcome is BackendUpdateOutcome.failed
-        assert result.output_tail == "migration failed"
-        assert machine.run_commands.count((FHS_HERMES_PATH, "--version")) == 2
-        assert machine.run_commands.count(
-            (FHS_HERMES_PATH, "update", "--check")
-        ) == 2
+        assert result.detail == "There is no update Panels can run for this backend."
+        assert all("update" not in command for command in machine.run_commands)
 
     _run(exercise)
-
-
-def test_concurrent_hermes_updates_are_serialized_and_report_their_own_change() -> None:
-    async def exercise() -> None:
-        machine = _installed_updatable_hermes()
-        machine.outcomes[_hermes_update_command()] = CommandOutcome(
-            exit_code=0, standard_output="✓ Update complete!\n", standard_error=""
-        )
-        machine.slow_commands.add(_hermes_update_command())
-        machine.let_slow_commands_finish = asyncio.Event()
-
-        def the_new_one_is_now_installed() -> None:
-            machine.outcomes[(FHS_HERMES_PATH, "--version")] = CommandOutcome(
-                exit_code=0, standard_output="Hermes Agent v0.19.0\n", standard_error=""
-            )
-
-        machine.after_run[_hermes_update_command()] = the_new_one_is_now_installed
-        service = BackendSnapshotService(machine)
-        updates = [
-            asyncio.create_task(service.update_backend(ConversationBackendKey.hermes))
-            for _ in range(2)
-        ]
-        for _ in range(20):
-            await asyncio.sleep(0)
-        assert machine.let_slow_commands_finish is not None
-        machine.let_slow_commands_finish.set()
-        first, second = await asyncio.gather(*updates)
-
-        assert machine.most_commands_at_once == 1
-        assert first.outcome is BackendUpdateOutcome.succeeded
-        assert second.outcome is BackendUpdateOutcome.unchanged
-
-    _run(exercise)
-
-
-def test_a_live_hermes_child_refuses_maintenance_before_the_command_runs() -> None:
-    async def exercise() -> None:
-        machine = _installed_updatable_hermes()
-        lifecycle = BackendLifecycleCoordinator()
-        service = BackendSnapshotService(machine, backend_lifecycle=lifecycle)
-
-        async with lifecycle.child_start(ConversationBackendKey.hermes):
-            pass
-        result = await service.update_backend(ConversationBackendKey.hermes)
-
-        assert result.outcome is BackendUpdateOutcome.failed
-        assert result.detail == (
-            "Hermes cannot be updated while a Panels-owned Hermes process is starting "
-            "or running. Stop it and try again."
-        )
-        assert _hermes_update_command() not in machine.run_commands
-        await lifecycle.child_stopped(ConversationBackendKey.hermes)
-
-    _run(exercise)
-
-
-
-
 
 
 def test_an_update_that_failed_carries_the_end_of_what_it_printed() -> None:
@@ -1292,62 +1081,6 @@ def test_a_probe_is_run_once_and_again_only_when_asked() -> None:
     _run(exercise)
 
 
-def test_cold_hermes_snapshot_returns_before_explicit_update_discovery() -> None:
-    async def exercise() -> None:
-        machine = _installed_updatable_hermes()
-        update_check = (FHS_HERMES_PATH, "update", "--check")
-        machine.slow_commands.add(update_check)
-        machine.let_slow_commands_finish = asyncio.Event()
-        service = BackendSnapshotService(machine)
-
-        ordinary_read = asyncio.create_task(
-            service.snapshot(ConversationBackendKey.hermes)
-        )
-        for _ in range(20):
-            if ordinary_read.done():
-                break
-            await asyncio.sleep(0)
-        ordinary_finished_before_update_discovery = ordinary_read.done()
-        if not ordinary_read.done():
-            machine.let_slow_commands_finish.set()
-        ordinary = await ordinary_read
-
-        assert ordinary_finished_before_update_discovery
-        assert ordinary.update_advisory is None
-        assert update_check not in machine.run_commands
-
-        machine.let_slow_commands_finish = asyncio.Event()
-        explicit_refresh = asyncio.create_task(
-            service.snapshot(ConversationBackendKey.hermes, refresh=True)
-        )
-        for _ in range(20):
-            if machine.commands_in_flight == 1:
-                break
-            await asyncio.sleep(0)
-        assert machine.commands_in_flight == 1
-        assert not explicit_refresh.done()
-
-        cached_read = asyncio.create_task(
-            service.snapshot(ConversationBackendKey.hermes)
-        )
-        for _ in range(20):
-            if cached_read.done():
-                break
-            await asyncio.sleep(0)
-        cached_finished_during_refresh = cached_read.done()
-
-        machine.let_slow_commands_finish.set()
-        cached, refreshed = await asyncio.gather(cached_read, explicit_refresh)
-
-        assert cached_finished_during_refresh
-        assert cached is ordinary
-        assert refreshed.update_advisory is not None
-        assert refreshed.update_advisory.update_available is True
-        assert update_check in machine.run_commands
-
-    _run(exercise)
-
-
 def test_independent_backend_snapshots_start_together() -> None:
     async def exercise() -> None:
         machine = _FakeMachine(
@@ -1442,7 +1175,7 @@ def test_concurrent_reads_of_one_backend_share_the_first_probe() -> None:
     _run(exercise)
 
 
-def test_explicit_snapshot_refresh_is_forwarded_only_to_hermes_inventory() -> None:
+def test_forced_hermes_snapshot_refreshes_inventory_without_probing_for_updates() -> None:
     async def exercise() -> None:
         machine = _FakeMachine(executables={"hermes": HERMES_PATH})
         machine.outcomes[(HERMES_PATH, "--version")] = CommandOutcome(
@@ -1475,10 +1208,14 @@ def test_explicit_snapshot_refresh_is_forwarded_only_to_hermes_inventory() -> No
         await service.snapshot(ConversationBackendKey.hermes)
         assert machine.run_commands.count(first_inventory_command) == 1
 
-        await service.snapshot(ConversationBackendKey.hermes, refresh=True)
+        refreshed = await service.snapshot(ConversationBackendKey.hermes, refresh=True)
+
+        assert refreshed.version == "0.18.2"
+        assert refreshed.update_advisory is None
         assert any(
             "hermes_model_catalog.py" in " ".join(command) and "--refresh" in command
             for command in machine.run_commands
         )
+        assert (HERMES_PATH, "update", "--check") not in machine.run_commands
 
     _run(exercise)

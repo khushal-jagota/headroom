@@ -416,13 +416,6 @@ that did not actually restore the agent's memory is refused out loud — never
 silently accepted as a fresh brain behind an old transcript. A failed turn
 writes one error-log line with the ids and the tail of the process's stderr.
 
-Hermes installation maintenance is exclusive with those child processes. Panels
-refuses an update while any Hermes child is starting or alive, including an idle
-child. Once an update has been accepted, a new Hermes child waits until the
-update command and the card refresh have both finished. The reservation is made
-before spawn, so a send and an update cannot both see an empty gap and race into
-it.
-
 Held messages live in memory only: a server restart loses whatever was still
 waiting in line (the notebook keeps what was delivered or discarded). Kill is
 the loud version of stopping: it ends the running turn and throws away the
@@ -436,7 +429,7 @@ Ticket's ordered conversation history. Only the active conversation accepts new 
 The system can describe each agent CLI as a card: is the binary installed and
 what version, who is logged in, and which models it offers. An ordinary cold read
 returns these facts without waiting for remote update discovery. An explicit refresh
-adds whether a newer version exists and a one-click update when Panels can run one.
+adds Codex and Claude update advice and a one-click update when Panels can run one.
 The update command comes from how the CLI was installed. Panels checks the card again
 afterwards and reports the update as succeeded, unchanged, or failed. Logging in stays
 in the terminal, and the card names the command.
@@ -451,13 +444,8 @@ refresh and may probe every configured custom endpoint. The answer is kept in th
 Panels process until that explicit refresh. It is not polled or copied onto
 Tickets. Hermes still offers no Panels reasoning control.
 
-Hermes supplies its own update advice through `hermes update --check`. Panels
-withholds the updater when that command identifies an installation it cannot
-drive; a network or authentication failure remains advisory because it does not
-change how the installation is managed. An authorized update runs as
-`hermes update --yes` without force options. A failed check does not make an
-otherwise usable backend unavailable. Every attempted update refreshes the card,
-even when the command fails.
+Panels does not ask Hermes for update advice and does not offer a Hermes update action.
+Hermes version and model catalogue discovery remain independent of update maintenance.
 
 Panels keeps the last successful usage reading for each backend in its database.
 Opening the Backends page, reading `GET /backends`, receiving a change signal, or
@@ -468,9 +456,9 @@ It does not force model catalogues, versions, identities, or update advice to re
 Codex and Claude usage reads start independently, so catalogue work cannot delay them and
 one provider failure does not discard the other provider's new answer. A failed refresh
 also leaves that backend's prior reading in place. When the Backends page opens, it paints
-an ordinary snapshot first. It then refreshes catalogue and update advice in the
-background. Cached ordinary reads stay available during that work. The page's Refresh
-action and the shared model picker stop after the usage answer.
+an ordinary snapshot first. It then refreshes catalogue and Codex and Claude update
+advice in the background. Cached ordinary reads stay available during that work. The
+page's Refresh action and the shared model picker stop after the usage answer.
 
 Codex starts one short-lived app-server child and asks its native
 `account/rateLimits/read` method. The request does not start a thread, run a model turn,

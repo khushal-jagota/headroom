@@ -243,8 +243,10 @@ applies the requested update. The push-only service worker and its subscription 
 in place across this page reload.
 
 **Backends** at `#/backends` shows the conversation backends installed on this machine,
-their account and model facts, and any update Panels can run. The first catalogue paints
-before the page refreshes catalogue and update advice in the background. An ordinary
+their account and model facts, and any update Panels can run. Hermes shows its version
+and model catalogue without update discovery or an update action. The first catalogue
+paints before the page refreshes catalogue and Codex and Claude update advice in the
+background. An ordinary
 cached read remains immediate during that work. The page's **Refresh** action reads Codex
 and Claude usage only, then uses the current backend catalogues. A successful refresh
 shows each provider window as its remaining percentage, reset time, and
