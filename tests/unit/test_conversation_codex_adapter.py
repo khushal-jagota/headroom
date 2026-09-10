@@ -29,15 +29,20 @@ from tests.unit.test_conversation_codex_scripted_app_server import scripted_app_
 
 from planner.conversation.backends.codex_app_server import adapter
 from planner.conversation.backends.codex_app_server import bindings_gen as bindings
+from planner.conversation.backends.codex_app_server import client as client_module
 from planner.conversation.backends.codex_app_server.adapter import (
     WITHDRAWN_ASK_DECISION,
     CodexAppServerBackendChild,
     CodexAppServerBackendChildFactory,
     CodexChildLaunch,
 )
+from planner.conversation.backends.codex_app_server.client import CodexWireFailed
 from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendSteerAccepted,
+    BackendSteerRefused,
+    BackendSteerUncertain,
     BackendUserInputRequest,
     PromptWriteFailed,
     SessionLoadFailed,
@@ -51,9 +56,11 @@ from planner.conversation.contracts import (
     ConversationRoleMaterials,
     ConversationStartRequest,
     PromptDeliveryMode,
+    PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     ResolvedConversationStart,
+    backend_supports_steer,
 )
 from planner.conversation.events import (
     AgentMessageEventPayload,
@@ -817,7 +824,14 @@ def test_compact_and_review_use_native_methods_and_the_normal_turn_lifecycle(
     async def exercise() -> None:
         script: dict[str, Any] = {
             "compact_response": "never",
-            "turns": [{}, {"respond": "never"}],
+            "turns": [
+                {},
+                {
+                    "respond": "never",
+                    "turn_id": "review-parent",
+                    "started_turn_id": "review-nested",
+                },
+            ],
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
@@ -863,6 +877,88 @@ def test_native_review_failure_is_a_refused_prompt_and_does_not_poison_the_next_
             assert scripted.sent("turn/start")["params"]["input"] == [
                 {"type": "text", "text": "ordinary"}
             ]
+
+    _run(exercise)
+
+
+def test_review_response_id_controls_items_and_interrupt_before_nested_start(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        script = {
+            "turns": [
+                {
+                    "turn_id": "review-parent",
+                    "started_turn_id": "review-nested",
+                    "response_order": "before_started",
+                    "started_delay": 0.2,
+                    "actions": [
+                        {
+                            "do": "item_completed",
+                            "item": {"type": "agentMessage", "id": "m1", "text": "reviewed"},
+                        },
+                        {"do": "await_interrupt"},
+                        {"do": "complete", "status": "interrupted"},
+                    ],
+                }
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("/review"))
+            await scripted.child.cancel_running_turn()
+
+            assert scripted.sent("turn/interrupt")["params"]["turnId"] == "review-parent"
+            assert scripted.sink.agent_message_texts == ["reviewed"]
+            assert scripted.sink.endings == [ConversationTurnEnding.interrupted]
+
+    _run(exercise)
+
+
+def test_review_nested_id_controls_interrupt_without_overwriting_parent_completion(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        script = {
+            "turns": [
+                {
+                    "turn_id": "review-parent",
+                    "started_turn_id": "review-nested",
+                    "response_order": "after_actions",
+                    "actions": [
+                        {
+                            "do": "item_completed",
+                            "item": {"type": "agentMessage", "id": "m1", "text": "reviewed"},
+                        },
+                        {"do": "await_interrupt"},
+                        {"do": "complete", "status": "interrupted"},
+                    ],
+                }
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("/review"))
+
+            refusal = await scripted.child.steer(
+                TurnToken("c", 1), text_message_content("do more"), sender_label="owner"
+            )
+            assert refusal == BackendSteerRefused(
+                PromptDeliveryRefusalReason.running_turn_cannot_accept_steer
+            )
+            assert scripted.sent("turn/steer", missing_is_none=True) is None
+
+            await scripted.child.cancel_running_turn()
+            await asyncio.sleep(0.05)
+
+            assert scripted.sent("turn/interrupt")["params"]["turnId"] == "review-nested"
+            assert scripted.sink.agent_message_texts == ["reviewed"]
+            assert scripted.sink.endings == [ConversationTurnEnding.interrupted]
+            assert await scripted.child.steer(
+                TurnToken("c", 1), text_message_content("late"), sender_label="owner"
+            ) == BackendSteerRefused(
+                PromptDeliveryRefusalReason.no_running_turn_to_steer_into
+            )
 
     _run(exercise)
 
@@ -2235,19 +2331,272 @@ def test_malformed_codex_user_input_fails_visibly_without_becoming_permission(
     _run(exercise)
 
 
-# --- what this backend cannot do ---------------------------------------------------------------
+# --- steering ---------------------------------------------------------------------------------
 
 
-def test_codex_does_not_take_text_into_a_running_turn(tmp_path: Path) -> None:
+def test_codex_is_published_as_steer_capable() -> None:
+    assert backend_supports_steer(ConversationBackendKey.codex)
+
+
+def test_codex_steers_encoded_content_into_the_captured_turn(tmp_path: Path) -> None:
     async def exercise() -> None:
-        async with _scripted_child(tmp_path, script={}) as scripted:
+        script = {
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "await_interrupt"},
+                        {"do": "complete", "status": "interrupted"},
+                    ]
+                }
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            with pytest.raises(PromptWriteFailed):
-                await scripted.child.steer(
-                    TurnToken("c", 1),
-                    text_message_content("keep going"),
-                    sender_label="owner",
-                )
+            await scripted.write_prompt(1, text_message_content("start"))
+            image = await scripted.message_files.keep("c", b"image", media_type="image/png")
+            file = await scripted.message_files.keep("c", b"facts", media_type="text/plain")
+            content = (
+                MessageText(text="keep going"),
+                MessageImage(stored_file_id=image.stored_file_id, media_type="image/png"),
+                MessageFile(
+                    stored_file_id=file.stored_file_id,
+                    media_type="text/plain",
+                    file_name="facts.txt",
+                    byte_count=5,
+                ),
+            )
+
+            outcome = await scripted.child.steer(
+                TurnToken("c", 1), content, sender_label="owner"
+            )
+
+            assert outcome == BackendSteerAccepted()
+            assert scripted.sent("turn/steer")["params"] == {
+                "threadId": "thread-1",
+                "expectedTurnId": "turn-1",
+                "input": [
+                    {"type": "text", "text": "keep going"},
+                    {"type": "localImage", "path": str(image.absolute_path)},
+                    {
+                        "type": "text",
+                        "text": (
+                            'Attached file "facts.txt" (text/plain, 5 bytes) is available at '
+                            f"{file.absolute_path}."
+                        ),
+                    },
+                ],
+            }
+            await scripted.child.cancel_running_turn()
+
+    _run(exercise)
+
+
+def test_codex_refuses_a_replacement_core_turn_before_the_steer_write(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        script = {
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "await_interrupt"},
+                        {"do": "complete", "status": "interrupted"},
+                    ]
+                }
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("start"))
+
+            outcome = await scripted.child.steer(
+                TurnToken("c", 2), text_message_content("wrong turn"), sender_label="owner"
+            )
+
+            assert outcome == BackendSteerRefused(
+                PromptDeliveryRefusalReason.running_turn_changed_before_steer
+            )
+            assert scripted.sent("turn/steer", missing_is_none=True) is None
+            await scripted.child.cancel_running_turn()
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    ("native", "reason"),
+    [
+        (
+            {"outcome": "rejected", "message": "no active turn to steer"},
+            PromptDeliveryRefusalReason.no_running_turn_to_steer_into,
+        ),
+        (
+            {
+                "outcome": "rejected",
+                "message": "expected active turn id `stale` but found `turn-1`",
+            },
+            PromptDeliveryRefusalReason.running_turn_changed_before_steer,
+        ),
+        (
+            {
+                "outcome": "rejected",
+                "message": "steer refused",
+                "data": {
+                    "message": "cannot steer a review turn",
+                    "codexErrorInfo": {
+                        "activeTurnNotSteerable": {"turnKind": "review"}
+                    },
+                },
+            },
+            PromptDeliveryRefusalReason.running_turn_cannot_accept_steer,
+        ),
+    ],
+)
+def test_codex_maps_native_non_admission_without_retry(
+    tmp_path: Path, native: dict[str, Any], reason: PromptDeliveryRefusalReason
+) -> None:
+    async def exercise() -> None:
+        script = {
+            "steers": [native],
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "await_interrupt"},
+                        {"do": "complete", "status": "interrupted"},
+                    ]
+                }
+            ],
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("start"))
+            outcome = await scripted.child.steer(
+                TurnToken("c", 1), text_message_content("steer"), sender_label="owner"
+            )
+            assert outcome == BackendSteerRefused(reason)
+            assert len(scripted.all_sent("turn/steer")) == 1
+            assert scripted.sent("turn/start")["params"]["input"] == [
+                {"type": "text", "text": "start"}
+            ]
+            await scripted.child.cancel_running_turn()
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("native", [{"outcome": "malformed"}, {"outcome": "mismatched"}])
+def test_codex_reports_uncertain_success_responses(
+    tmp_path: Path, native: dict[str, Any]
+) -> None:
+    async def exercise() -> None:
+        script = {
+            "steers": [native],
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "await_interrupt"},
+                        {"do": "complete", "status": "interrupted"},
+                    ]
+                }
+            ],
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("start"))
+            outcome = await scripted.child.steer(
+                TurnToken("c", 1), text_message_content("steer"), sender_label="owner"
+            )
+            assert outcome == BackendSteerUncertain()
+            assert len(scripted.all_sent("turn/steer")) == 1
+            await scripted.child.cancel_running_turn()
+
+    _run(exercise)
+
+
+def test_codex_validates_the_captured_native_id_after_completion(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        script = {
+            "steers": [{"after_turn_completion": True}],
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "sleep", "seconds": 0.1},
+                        {"do": "complete", "status": "completed"},
+                    ]
+                }
+            ],
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("start"))
+            outcome = await scripted.child.steer(
+                TurnToken("c", 1), text_message_content("steer"), sender_label="owner"
+            )
+            assert outcome == BackendSteerAccepted()
+            assert scripted.sink.endings == [ConversationTurnEnding.completed]
+
+    _run(exercise)
+
+
+def test_codex_steer_timeout_keeps_incumbent_cancellation_usable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        script = {
+            "steers": [{"outcome": "never"}],
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "await_interrupt"},
+                        {"do": "complete", "status": "interrupted"},
+                    ]
+                }
+            ],
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("start"))
+            monkeypatch.setattr(client_module, "REQUEST_TIMEOUT_SECONDS", 0.05)
+            outcome = await scripted.child.steer(
+                TurnToken("c", 1), text_message_content("steer"), sender_label="owner"
+            )
+            assert outcome == BackendSteerUncertain()
+
+            await scripted.child.cancel_running_turn()
+
+            assert scripted.sent("turn/interrupt")["params"]["turnId"] == "turn-1"
+            assert scripted.sink.endings == [ConversationTurnEnding.interrupted]
+
+    _run(exercise)
+
+
+def test_codex_partial_steer_write_is_uncertain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        script = {
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "await_interrupt"},
+                        {"do": "complete", "status": "interrupted"},
+                    ]
+                }
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("start"))
+            attempts = 0
+
+            async def fail_after_possible_write(message: dict[str, Any]) -> None:
+                nonlocal attempts
+                del message
+                attempts += 1
+                raise CodexWireFailed("partial write", request_may_have_been_written=True)
+
+            monkeypatch.setattr(scripted.child._client, "_write", fail_after_possible_write)
+            outcome = await scripted.child.steer(
+                TurnToken("c", 1), text_message_content("steer"), sender_label="owner"
+            )
+            assert outcome == BackendSteerUncertain()
+            assert attempts == 1
 
     _run(exercise)
 
@@ -2419,7 +2768,9 @@ class _RecordingSink:
 
     def __init__(self) -> None:
         self.deltas: list[str] = []
+        self.delta_tokens: list[TurnToken] = []
         self.agent_contents: list[MessageContent] = []
+        self.agent_content_tokens: list[TurnToken] = []
         self.tool_calls_started: list[tuple[str, str, str]] = []
         self.tool_calls_progressed: list[tuple[str, str]] = []
         self.thinking_pulses: int = 0
@@ -2431,6 +2782,7 @@ class _RecordingSink:
         self.user_inputs: list[BackendUserInputRequest] = []
         self.user_input_failures: list[tuple[str, str]] = []
         self.endings: list[ConversationTurnEnding] = []
+        self.ending_tokens: list[TurnToken] = []
         self.error_summaries: list[str | None] = []
         self.standard_error_tails: list[str | None] = []
         self.vendor_session_cursor: str | None = None
@@ -2463,6 +2815,7 @@ class _RecordingSink:
 
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
         self.deltas.append(text_delta)
+        self.delta_tokens.append(turn_token)
 
     async def model_thinking_happened(self, turn_token: TurnToken) -> None:
         self.thinking_pulses += 1
@@ -2491,6 +2844,7 @@ class _RecordingSink:
 
     async def agent_message_completed(self, turn_token: TurnToken, content: MessageContent) -> None:
         self.agent_contents.append(content)
+        self.agent_content_tokens.append(turn_token)
 
     async def tool_call_started(
         self,
@@ -2543,6 +2897,7 @@ class _RecordingSink:
         standard_error_tail: str | None,
     ) -> None:
         self.endings.append(ending)
+        self.ending_tokens.append(turn_token)
         self.error_summaries.append(error_summary)
         self.standard_error_tails.append(standard_error_tail)
         self._turn_over.set()

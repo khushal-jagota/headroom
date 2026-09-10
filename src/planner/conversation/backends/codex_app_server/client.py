@@ -99,15 +99,22 @@ class CodexChildWouldNotStart(CodexAppServerError):
 class CodexWireFailed(CodexAppServerError):
     """The message did not reach the child, or the wire it would go over is finished."""
 
+    def __init__(
+        self, message: str, *, request_may_have_been_written: bool = False
+    ) -> None:
+        super().__init__(message)
+        self.request_may_have_been_written = request_may_have_been_written
+
 
 class CodexRequestRejected(CodexAppServerError):
     """The child answered the request with an error rather than a result."""
 
-    def __init__(self, method: str, code: int | None, message: str) -> None:
+    def __init__(self, method: str, code: int | None, message: str, data: Any = None) -> None:
         super().__init__(f"{method} was rejected: {message}")
         self.method = method
         self.code = code
         self.message = message
+        self.data = data
 
 
 class CodexServerMessageHandler(Protocol):
@@ -284,7 +291,9 @@ class CodexAppServerClient:
             self._remove_pending_answer(answer)
             if poison_wire_on_timeout:
                 self._wire_broken = True
-            raise CodexWireFailed(f"{method} was not answered") from never_answered
+            raise CodexWireFailed(
+                f"{method} was not answered", request_may_have_been_written=True
+            ) from never_answered
         except asyncio.CancelledError:
             raise
         except CodexWireFailed:
@@ -295,6 +304,7 @@ class CodexAppServerClient:
                 method,
                 error.get("code") if isinstance(error, dict) else None,
                 str(error.get("message")) if isinstance(error, dict) else str(error),
+                error.get("data") if isinstance(error, dict) else None,
             )
         return envelope.get("result")
 
@@ -320,14 +330,18 @@ class CodexAppServerClient:
     async def _write(self, message: Mapping[str, Any]) -> None:
         process = self._process
         if process is None or process.stdin is None or self._wire_broken:
-            raise CodexWireFailed("this child's wire is not usable")
+            raise CodexWireFailed(
+                "this child's wire is not usable", request_may_have_been_written=False
+            )
         line = json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n"
         try:
             process.stdin.write(line.encode("utf-8"))
             await process.stdin.drain()
         except Exception as did_not_reach:
             self._wire_broken = True
-            raise CodexWireFailed(str(did_not_reach)) from did_not_reach
+            raise CodexWireFailed(
+                str(did_not_reach), request_may_have_been_written=True
+            ) from did_not_reach
 
     # --- listening ----------------------------------------------------------------------
 
@@ -448,7 +462,9 @@ class CodexAppServerClient:
     def _fail_everything_pending(self, why: str) -> None:
         for answer in list(self._pending.values()):
             if not answer.done():
-                answer.set_exception(CodexWireFailed(why))
+                answer.set_exception(
+                    CodexWireFailed(why, request_may_have_been_written=True)
+                )
         self._pending.clear()
 
 

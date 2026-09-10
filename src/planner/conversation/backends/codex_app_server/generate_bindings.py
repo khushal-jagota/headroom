@@ -40,11 +40,11 @@ from typing import Any
 # ---------------------------------------------------------------------------------------
 
 # What ``codex --version`` must print for this generated file to be the one that matches.
-PINNED_CODEX_CLI_VERSION = "codex-cli 0.147.0"
+PINNED_CODEX_CLI_VERSION = "codex-cli 0.153.3"
 
 # The upstream tag that binary was cut from, and its commit, so the Rust can be read.
-PINNED_UPSTREAM_TAG = "rust-v0.147.0"
-PINNED_UPSTREAM_COMMIT = "be6e8eac029b183056b7e4402879f15d2c85f61b"
+PINNED_UPSTREAM_TAG = "rust-v0.153.3"
+PINNED_UPSTREAM_COMMIT = "b1a547b1f73ce86205d9222ac19cff334b3b7a2e"
 
 # ---------------------------------------------------------------------------------------
 
@@ -85,6 +85,8 @@ SCHEMA_ROOTS: tuple[tuple[str, str], ...] = (
     (_V2_NAMESPACE, "ThreadResumeResponse"),
     (_V2_NAMESPACE, "TurnStartParams"),
     (_V2_NAMESPACE, "TurnStartResponse"),
+    (_V2_NAMESPACE, "TurnSteerParams"),
+    (_V2_NAMESPACE, "TurnSteerResponse"),
     (_V2_NAMESPACE, "TurnInterruptParams"),
     (_V2_NAMESPACE, "TurnInterruptResponse"),
     (_V2_NAMESPACE, "ThreadStartedNotification"),
