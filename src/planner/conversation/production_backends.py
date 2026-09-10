@@ -101,14 +101,13 @@ def production_backend_child_factories(
 def _hermes_launch(panels_server_url: str) -> AcpChildLaunch:
     """Hermes as today's layer resolves it: from its interpreter, not from PATH.
 
-    Hermes is a checkout with a virtualenv rather than a packaged binary, so the
-    interpreter is the thing that is configured and everything else is derived from it —
-    the executable beside it, and the source tree two levels up that the agent imports
-    itself from. The home is the one Panels already uses for hermes.
+    Hermes is a checkout with a virtualenv rather than a packaged binary. Its configured
+    interpreter runs the Panels-owned ACP extension, which imports Hermes from that same
+    environment. The source tree and home remain Hermes' normal values.
     """
     hermes_python = resolve_hermes_python()
     return hermes_acp_child_launch(
-        hermes_executable=hermes_python.with_name("hermes"),
+        hermes_python=hermes_python,
         hermes_home=resolve_planner_home(),
         hermes_python_source_root=hermes_src_root(hermes_python),
         panels_server_url=panels_server_url,

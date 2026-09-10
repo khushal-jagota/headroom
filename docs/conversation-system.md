@@ -231,6 +231,13 @@ cannot steer. A busy agent is never a refusal. A message with nothing in it is n
 either — it is not a message, and it is turned away where it is sent. How a turn later ends is never
 part of the answer — endings are notebook rows.
 
+Hermes steering uses a small Panels-owned ACP extension. The original prompt and steer
+carry the same turn token. Under Hermes' session lock, the extension redirects only that
+live turn and returns a structured admission result. It never uses Hermes' later-work
+queue. Standard prompt responses end turns, and uncorrelated agent prose never counts as
+admission. Hermes steering accepts text only. Panels refuses images, files, and mixed
+content before any steering write.
+
 A held message has one server-owned line id. The browser sender id stays beside
 it when the browser supplied one, which is how the optimistic copy matches the
 shared snapshot. The server supplies an id and send instant when the original
@@ -249,6 +256,10 @@ message: browsing a picker does nothing, the change lands when the message is
 delivered, a waiting message applies it when it runs, and a refused delivery
 changes nothing. Codex and hermes take the change in place; claude is restarted
 under the same conversation with its memory carried over.
+
+Hermes new and loaded sessions also return their exact current model through extension
+metadata. Panels omits the legacy model request only when that value exactly matches the
+requested model. A different model or absent metadata keeps the existing model route.
 
 Claude uses that same restart when its message stream fails for good. The failed turn
 stays failed. The next message stops the broken child, resumes one replacement from the

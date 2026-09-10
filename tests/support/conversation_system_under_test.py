@@ -56,7 +56,6 @@ from tests.support.conversation_scripted_acp_agent import (
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
-    BackendSteerAccepted,
     BackendSteerOutcome,
     BackendUserInputRequest,
     TurnToken,
@@ -337,10 +336,7 @@ class _CountedChild:
     async def steer(
         self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
     ) -> BackendSteerOutcome:
-        outcome = await self._child.steer(turn_token, content, sender_label=sender_label)
-        if isinstance(outcome, BackendSteerAccepted):
-            self._conversation.expected_prompt_writes += 1
-        return outcome
+        return await self._child.steer(turn_token, content, sender_label=sender_label)
 
     async def cancel_running_turn(self) -> None:
         await self._child.cancel_running_turn()

@@ -88,12 +88,16 @@ ARMS_ENVIRONMENT_NAME = "PANELS_SCRIPTED_ACP_AGENT_ARMS"
 ARM_REJECT_NEW_SESSION = "reject_new_session"
 ARM_REJECT_LOAD_SESSION = "reject_load_session"
 ARM_BREAK_WIRE_ON_SESSION = "break_wire_on_session"
+ARM_REPORT_CURRENT_MODEL = "report_current_model"
 
 LEGACY_SET_SESSION_MODEL_METHOD = "session/set_model"
 STEER_COMMAND_PREFIX = "/steer "
 REASONING_EFFORT_CONFIGURATION_OPTION_ID = "thought_level"
 REASONING_EFFORT_CONFIGURATION_CATEGORY = "thought_level"
 FULL_ACCESS_MODE_ID = "dont_ask"
+PANELS_STEER_EXTENSION_METHOD = "panels/steer"
+PANELS_TURN_TOKEN_METADATA_KEY = "panelsTurnToken"
+PANELS_CURRENT_MODEL = "a-model"
 
 # The names of this process's environment a test reads back, to prove the values a
 # conversation was started with reached the agent rather than being dropped on the way.
@@ -185,6 +189,9 @@ class _Account:
     mode: str | None = None
     mode_writes: list[str] = field(default_factory=list)
     agent_messages_emitted: int = 0
+    model_writes: list[str] = field(default_factory=list)
+    steer_attempts: list[dict[str, Any]] = field(default_factory=list)
+    steer_writes: list[dict[str, Any]] = field(default_factory=list)
 
 
 class ScriptedAcpAgent:
@@ -200,6 +207,9 @@ class ScriptedAcpAgent:
         self._break_wire_once_the_session_is_on_its_model = False
         self._seconds_to_take_over_a_cancel = 0.0
         self._wire_broken = False
+        self._active_turn_token: Any = None
+        self._reject_steer = False
+        self._malformed_steer_response = False
         self.shutting_down = asyncio.Event()
         self._background: set[asyncio.Task[Any]] = set()
 
@@ -231,6 +241,7 @@ class ScriptedAcpAgent:
             session_id=self.account.session_id,
             config_options=[self._reasoning_effort_option()],
             modes=self._modes(),
+            field_meta=self._model_metadata(),
         )
 
     async def load_session(self, cwd: str, session_id: str, **kwargs: Any) -> LoadSessionResponse:
@@ -243,8 +254,15 @@ class ScriptedAcpAgent:
         if ARM_BREAK_WIRE_ON_SESSION in self._arms:
             self._break_wire_once_the_session_is_on_its_model = True
         return LoadSessionResponse(
-            config_options=[self._reasoning_effort_option()], modes=self._modes()
+            config_options=[self._reasoning_effort_option()],
+            modes=self._modes(),
+            field_meta=self._model_metadata(),
         )
+
+    def _model_metadata(self) -> dict[str, Any] | None:
+        if ARM_REPORT_CURRENT_MODEL not in self._arms:
+            return None
+        return {"panels": {"currentModelId": PANELS_CURRENT_MODEL}}
 
     async def set_session_mode(
         self, mode_id: str, session_id: str, **kwargs: Any
@@ -266,6 +284,7 @@ class ScriptedAcpAgent:
         """Hermes' retired ``session/set_model``, which is how its model really changes."""
         payload = params if isinstance(params, dict) else {}
         self.account.model = str(payload.get("modelId"))
+        self.account.model_writes.append(self.account.model)
         if self._break_wire_once_the_session_is_on_its_model:
             self._break_wire_once_the_session_is_on_its_model = False
             self._break_wire_at_next_answer = True
@@ -280,7 +299,6 @@ class ScriptedAcpAgent:
         in the order it came off the wire — which is what lets a test ask what has reached
         the agent without waiting for anything.
         """
-        del session_id
         text = "".join(block.text for block in prompt if isinstance(block, TextContentBlock))
         steered = text.startswith(STEER_COMMAND_PREFIX)
         blocks = tuple(_block_report(block, steered) for block in prompt)
@@ -299,7 +317,27 @@ class ScriptedAcpAgent:
             return PromptResponse(stop_reason="end_turn")
         open_turn: asyncio.Future[PromptResponse] = asyncio.get_running_loop().create_future()
         self._open_turn = open_turn
+        self._active_turn_token = kwargs.get(PANELS_TURN_TOKEN_METADATA_KEY)
         return await open_turn
+
+    async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        if method != PANELS_STEER_EXTENSION_METHOD:
+            raise RequestError.method_not_found(f"_{method}")
+        self.account.steer_attempts.append(dict(params))
+        supplied = params.get("turnToken")
+        if self._malformed_steer_response:
+            return {"accepted": True, "turnToken": {"wrong": True}}
+        accepted = (
+            not self._reject_steer
+            and self._open_turn is not None
+            and params.get("sessionId") == self.account.session_id
+            and supplied == self._active_turn_token
+            and isinstance(params.get("text"), str)
+            and bool(params["text"].strip())
+        )
+        if accepted:
+            self.account.steer_writes.append(dict(params))
+        return {"accepted": accepted, "turnToken": supplied}
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         """Take the cancel, and take as long over it as a test has asked for.
@@ -310,6 +348,7 @@ class ScriptedAcpAgent:
         """
         del session_id, kwargs
         self.account.cancellations += 1
+        self._active_turn_token = None
         if self._seconds_to_take_over_a_cancel <= 0:
             self._finish_open_turn(PromptResponse(stop_reason="cancelled"))
             return
@@ -399,6 +438,12 @@ class ScriptedAcpAgent:
             case "take_this_long_over_a_cancel":
                 self._seconds_to_take_over_a_cancel = float(command["seconds"])
                 return {"ok": True}
+            case "reject_steer":
+                self._reject_steer = True
+                return {"ok": True}
+            case "return_malformed_steer_response":
+                self._malformed_steer_response = True
+                return {"ok": True}
             case "break_wire":
                 self._break_the_wire()
                 return {"ok": True}
@@ -434,6 +479,9 @@ class ScriptedAcpAgent:
             "sessions_loaded": account.sessions_loaded,
             "loaded_from": account.loaded_from,
             "model": account.model,
+            "model_writes": list(account.model_writes),
+            "steer_attempts": [dict(attempt) for attempt in account.steer_attempts],
+            "steer_writes": [dict(write) for write in account.steer_writes],
             "reasoning_effort": account.reasoning_effort,
             "mode": account.mode,
             "mode_writes": list(account.mode_writes),
@@ -453,12 +501,14 @@ class ScriptedAcpAgent:
     def _finish_open_turn(self, response: PromptResponse) -> None:
         open_turn = self._open_turn
         self._open_turn = None
+        self._active_turn_token = None
         if open_turn is not None and not open_turn.done():
             open_turn.set_result(response)
 
     def _fail_open_turn(self, reason: str) -> None:
         open_turn = self._open_turn
         self._open_turn = None
+        self._active_turn_token = None
         if open_turn is not None and not open_turn.done():
             open_turn.set_exception(RequestError.internal_error({"details": reason}))
 

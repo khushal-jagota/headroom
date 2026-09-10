@@ -90,7 +90,10 @@ def test_hermes_is_derived_from_its_interpreter_rather_than_the_path(
         panels_server_url=SERVER_URL,
         executable_path=_machine())
 
-    assert launches.hermes.argv == ("/tmp/hermes-install/hermes-agent/venv/bin/hermes", "acp")
+    assert launches.hermes.argv[0] == "/tmp/hermes-install/hermes-agent/venv/bin/python"
+    assert launches.hermes.argv[1].endswith(
+        "/planner/conversation/backends/hermes_acp_extension.py"
+    )
     environment = dict(launches.hermes.environment_overrides)
     assert environment["HERMES_HOME"] == "/tmp/hermes-home"
     # Two levels up from the interpreter: the source tree the agent imports itself from.
