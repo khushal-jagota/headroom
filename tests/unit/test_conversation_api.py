@@ -26,6 +26,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 import planner.conversation.api as conversation_api
+import planner.conversation.contracts as conversation_contracts
 import planner.conversation.system as conversation_system
 from planner.conversation.api import (
     COMMITTED_EVENT_STREAM_NAME,
@@ -719,27 +720,59 @@ def test_every_conversation_mutation_rejects_a_tickets_past_conversation(
     _run(exercise)
 
 
-def test_starting_a_conversation_answers_with_what_it_resolved_to(harness: _Harness) -> None:
+@pytest.mark.parametrize("backend_key", tuple(ConversationBackendKey))
+def test_starting_a_conversation_answers_with_what_it_resolved_to(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    backend_key: ConversationBackendKey,
+) -> None:
     async def exercise() -> None:
         async with harness.client() as client:
-            response = await _start(client, "c", model="a-model", reasoning_effort="high")
+            monkeypatch.setattr(
+                conversation_contracts,
+                "BACKEND_KEYS_SUPPORTING_STEER",
+                frozenset(ConversationBackendKey),
+            )
+            response = await _start(
+                client,
+                "c",
+                backend_key=str(backend_key),
+                model="a-model",
+                reasoning_effort="high",
+            )
 
             assert response.status_code == 201
             view = response.json()
             assert view["conversation_id"] == "c"
-            assert view["backend_key"] == "hermes"
+            assert view["backend_key"] == str(backend_key)
             assert view["model"] == "a-model"
             assert view["reasoning_effort"] == "high"
             assert view["workspace_folder"] == "/tmp/workspace"
             # The floor default, applied because the request said nothing about access.
             assert view["access"] == "full"
             assert view["is_running"] is False
-            assert view["supports_steer"] is False
+            assert view["supports_steer"] is True
             assert view["latest_sequence"] == 0
             assert view["held_prompts"] == []
             assert view["pending_permission_ask"] is None
             # Nothing has reported a menu, so there is none to offer.
             assert view["composer_catalog"] == []
+
+    _run(exercise)
+
+
+def test_the_view_reports_a_controlled_capability_off(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(
+            conversation_contracts,
+            "BACKEND_KEYS_SUPPORTING_STEER",
+            frozenset(),
+        )
+        async with harness.client() as client:
+            response = await _start(client, "c")
+            assert response.json()["supports_steer"] is False
 
     _run(exercise)
 

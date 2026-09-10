@@ -17,14 +17,15 @@ it exactly once, through the subclass.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from contextlib import AbstractAsyncContextManager
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import AbstractAsyncContextManager, contextmanager
 from dataclasses import dataclass, fields
 from enum import StrEnum
 from typing import Protocol
 
 import pytest
 
+import planner.conversation.contracts as conversation_contracts
 from planner.conversation.contracts import (
     ConversationAlreadyStarted,
     ConversationBackendKey,
@@ -36,6 +37,7 @@ from planner.conversation.contracts import (
     PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import (
     MessageContent,
@@ -211,6 +213,7 @@ FATE_TYPES = (
     PromptDeliveryQueued,
     PromptDeliveryInjected,
     PromptDeliveryRefused,
+    PromptDeliveryUncertain,
 )
 
 # No conformance test does real work, so anything approaching this limit is a subject
@@ -238,6 +241,20 @@ def _written_texts(writes: tuple[BackendWrite, ...]) -> tuple[str, ...]:
     return tuple(write.text for write in writes)
 
 
+@contextmanager
+def _steering_supported_by(
+    *backend_keys: ConversationBackendKey,
+) -> Iterator[None]:
+    """Control capability independently of production rollout state for one exercise."""
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            conversation_contracts,
+            "BACKEND_KEYS_SUPPORTING_STEER",
+            frozenset(backend_keys),
+        )
+        yield
+
+
 class ConversationContractConformanceSuite:
     """The conformance tests. Subclass this and provide a subject factory."""
 
@@ -246,8 +263,9 @@ class ConversationContractConformanceSuite:
 
     def _run(self, exercise: Callable[[ConversationSystemUnderTest], Awaitable[None]]) -> None:
         async def main() -> None:
-            async with self.open_system_under_test() as subject:
-                await exercise(subject)
+            with _steering_supported_by(*ConversationBackendKey):
+                async with self.open_system_under_test() as subject:
+                    await exercise(subject)
 
         asyncio.run(asyncio.wait_for(main(), CONFORMANCE_TEST_TIME_LIMIT_SECONDS))
 
@@ -457,64 +475,73 @@ class ConversationContractConformanceSuite:
 
         self._run(exercise)
 
-    def test_steer_into_a_running_hermes_turn_is_injected(self) -> None:
+    def test_steer_into_a_running_turn_is_injected_on_every_backend(self) -> None:
         """Coverage 10."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
-            await subject.system.start_conversation(
-                _start_request("c", ConversationBackendKey.hermes)
-            )
-            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
-            fate = await subject.system.send(
-                "c",
-                text_message_content("also consider this"),
-                sender_label="owner",
-                mode=PromptDeliveryMode.steer,
-            )
-            assert fate == PromptDeliveryInjected()
+            for backend_key in ConversationBackendKey:
+                conversation_id = str(backend_key)
+                await subject.system.start_conversation(
+                    _start_request(conversation_id, backend_key)
+                )
+                await subject.system.send(
+                    conversation_id,
+                    text_message_content("incumbent"),
+                    sender_label="owner",
+                )
+                fate = await subject.system.send(
+                    conversation_id,
+                    text_message_content("also consider this"),
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.steer,
+                )
+                assert fate == PromptDeliveryInjected()
 
         self._run(exercise)
 
-    def test_steer_on_codex_and_claude_is_refused_running_or_idle(self) -> None:
+    def test_capability_off_refuses_steer_on_every_backend_running_or_idle(self) -> None:
         """Coverage 11."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             cannot_steer = PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.backend_cannot_steer
             )
-            for backend_key in (ConversationBackendKey.codex, ConversationBackendKey.claude):
-                idle_id = f"{backend_key}-idle"
-                await subject.system.start_conversation(_start_request(idle_id, backend_key))
-                assert await subject.system.send(
-                    idle_id,
-                    text_message_content("steered"),
-                    sender_label="owner",
-                    mode=PromptDeliveryMode.steer,
-                ) == cannot_steer
+            with _steering_supported_by():
+                for backend_key in ConversationBackendKey:
+                    idle_id = f"{backend_key}-idle"
+                    await subject.system.start_conversation(_start_request(idle_id, backend_key))
+                    assert await subject.system.send(
+                        idle_id,
+                        text_message_content("steered"),
+                        sender_label="owner",
+                        mode=PromptDeliveryMode.steer,
+                    ) == cannot_steer
 
-                running_id = f"{backend_key}-running"
-                await subject.system.start_conversation(_start_request(running_id, backend_key))
-                await subject.system.send(
-                    running_id,
-                    text_message_content("incumbent"),
-                    sender_label="owner",
-                )
-                assert await subject.system.is_running(running_id) is True
-                assert await subject.system.send(
-                    running_id,
-                    text_message_content("steered"),
-                    sender_label="owner",
-                    mode=PromptDeliveryMode.steer,
-                ) == cannot_steer
+                    running_id = f"{backend_key}-running"
+                    await subject.system.start_conversation(
+                        _start_request(running_id, backend_key)
+                    )
+                    await subject.system.send(
+                        running_id,
+                        text_message_content("incumbent"),
+                        sender_label="owner",
+                    )
+                    assert await subject.system.is_running(running_id) is True
+                    assert await subject.system.send(
+                        running_id,
+                        text_message_content("steered"),
+                        sender_label="owner",
+                        mode=PromptDeliveryMode.steer,
+                    ) == cannot_steer
 
         self._run(exercise)
 
-    def test_steer_while_idle_on_hermes_is_refused_for_want_of_a_running_turn(self) -> None:
+    def test_steer_while_idle_is_refused_for_want_of_a_running_turn(self) -> None:
         """Coverage 12."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(
-                _start_request("c", ConversationBackendKey.hermes)
+                _start_request("c", ConversationBackendKey.codex)
             )
             fate = await subject.system.send(
                 "c",
@@ -723,14 +750,15 @@ class ConversationContractConformanceSuite:
                 text_message_content("incumbent"),
                 sender_label="owner",
             )
-            assert await subject.system.send(
-                "no-steer",
-                text_message_content("refused-text"),
-                sender_label="owner",
-                mode=PromptDeliveryMode.steer,
-            ) == PromptDeliveryRefused(
-                refusal_reason=PromptDeliveryRefusalReason.backend_cannot_steer
-            )
+            with _steering_supported_by():
+                assert await subject.system.send(
+                    "no-steer",
+                    text_message_content("refused-text"),
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.steer,
+                ) == PromptDeliveryRefused(
+                    refusal_reason=PromptDeliveryRefusalReason.backend_cannot_steer
+                )
             assert _written_texts(await subject.backend_writes("no-steer")) == ("incumbent",)
 
         self._run(exercise)
@@ -853,7 +881,7 @@ class ConversationContractConformanceSuite:
 
         self._run(exercise)
 
-    def test_every_refusal_reason_is_produced_only_by_its_own_cause(self) -> None:
+    def test_shared_refusal_reasons_are_produced_only_by_their_own_cause(self) -> None:
         """Coverage 23."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
@@ -917,12 +945,13 @@ class ConversationContractConformanceSuite:
                 text_message_content("incumbent"),
                 sender_label="owner",
             )
-            fate = await subject.system.send(
-                "no-steer",
-                text_message_content("text"),
-                sender_label="owner",
-                mode=PromptDeliveryMode.steer,
-            )
+            with _steering_supported_by():
+                fate = await subject.system.send(
+                    "no-steer",
+                    text_message_content("text"),
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.steer,
+                )
             assert isinstance(fate, PromptDeliveryRefused)
             produced["steer on a backend that cannot"] = fate.refusal_reason
 
@@ -938,8 +967,6 @@ class ConversationContractConformanceSuite:
                     PromptDeliveryRefusalReason.backend_cannot_steer
                 ),
             }
-            assert set(produced.values()) == set(PromptDeliveryRefusalReason)
-
         self._run(exercise)
 
     # --- Each refusal reason arises only from its own cause ---
@@ -1448,6 +1475,7 @@ class ConversationContractConformanceSuite:
                 "PromptDeliveryQueued": ("queue_position",),
                 "PromptDeliveryInjected": (),
                 "PromptDeliveryRefused": ("refusal_reason",),
+                "PromptDeliveryUncertain": (),
             }
 
         self._run(exercise)

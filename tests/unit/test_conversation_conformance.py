@@ -13,6 +13,9 @@ from tests.support.conversation_contract_conformance import (
 from tests.support.conversation_system_under_test import (
     open_conversation_system_under_test,
 )
+from tests.support.in_memory_conversation_system_under_test import (
+    open_in_memory_conversation_system_under_test,
+)
 
 from planner.conversation.logic import conversation_start_resolution
 
@@ -31,3 +34,8 @@ def existing_floor_workspace(
 class TestConversationSystemConformance(ConversationContractConformanceSuite):
     def open_system_under_test(self) -> AbstractAsyncContextManager[ConversationSystemUnderTest]:
         return open_conversation_system_under_test()
+
+
+class TestInMemoryConversationSystemConformance(ConversationContractConformanceSuite):
+    def open_system_under_test(self) -> AbstractAsyncContextManager[ConversationSystemUnderTest]:
+        return open_in_memory_conversation_system_under_test()
