@@ -85,6 +85,20 @@ class PanelsHermesACPAgent(hermes_server.HermesACPAgent):
                     owns_generation = True
         try:
             return await super().prompt(prompt=prompt, session_id=session_id, **kwargs)
+        except Exception:
+            # Hermes 0.20 can dereference a missing final response after a hard
+            # interrupt. Finish the cancelled lifecycle here so a later prompt does
+            # not see the session as active and fall into Hermes' stock queue.
+            cancelled = False
+            if state is not None:
+                with state.runtime_lock:
+                    cancelled = bool(state.cancel_event and state.cancel_event.is_set())
+                    if cancelled:
+                        state.is_running = False
+                        state.current_prompt_text = ""
+            if not cancelled:
+                raise
+            return hermes_server.PromptResponse(stop_reason="cancelled")
         finally:
             if state is not None and owns_generation:
                 with state.runtime_lock:

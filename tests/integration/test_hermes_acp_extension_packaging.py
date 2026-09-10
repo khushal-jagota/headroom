@@ -59,8 +59,10 @@ def test_the_packaged_extension_owns_generation_lifecycle_and_redirect_admission
         async def base_prompt(self, prompt, session_id, **kwargs):
             state.is_running = True
             await release.wait()
+            if state.cancel_event.is_set():
+                raise AttributeError("'NoneType' object has no attribute 'startswith'")
             state.is_running = False
-            return "done"
+            return SimpleNamespace(stop_reason="end_turn")
 
         async def base_cancel(self, session_id, **kwargs):
             assert subject._panels_prompt_generations.get(session_id) is None
@@ -112,7 +114,7 @@ def test_the_packaged_extension_owns_generation_lifecycle_and_redirect_admission
                 {{"sessionId": "s", "turnToken": token, "text": "late"}},
             )
             release.set()
-            await asyncio.gather(prompt, concurrent)
+            responses = await asyncio.gather(prompt, concurrent)
             after_completion = await subject.ext_method(
                 "panels/steer",
                 {{"sessionId": "s", "turnToken": token, "text": "finished"}},
@@ -128,6 +130,8 @@ def test_the_packaged_extension_owns_generation_lifecycle_and_redirect_admission
                 "redirects": state.agent.redirects,
                 "queued": state.queued_prompts,
                 "generation": subject._panels_prompt_generations.get("s"),
+                "stop_reasons": [str(response.stop_reason) for response in responses],
+                "is_running": state.is_running,
             }}
 
         print(json.dumps(asyncio.run(exercise())))
@@ -160,4 +164,6 @@ def test_the_packaged_extension_owns_generation_lifecycle_and_redirect_admission
         "redirects": ["new direction", "not accepted"],
         "queued": ["existing"],
         "generation": None,
+        "stop_reasons": ["cancelled", "cancelled"],
+        "is_running": False,
     }
