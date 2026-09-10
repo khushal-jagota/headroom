@@ -742,7 +742,7 @@ def test_starting_a_conversation_answers_with_what_it_resolved_to(harness: _Harn
             # The floor default, applied because the request said nothing about access.
             assert view["access"] == "full"
             assert view["is_running"] is False
-            assert view["supports_steer"] is False
+            assert view["supports_steer"] is True
             assert view["latest_sequence"] == 0
             assert view["held_prompts"] == []
             assert view["pending_permission_ask"] is None

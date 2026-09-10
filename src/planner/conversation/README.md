@@ -85,8 +85,8 @@ the real build's to keep, because no external observer can see them:
 - **The start request's values are actually used.** Of everything a start request carries,
   conformance can show the model and reasoning effort were honoured directly — the
   harness reads the backend side's own account of what its session runs on, added with
-  the model-change extension. Backend steering support is advertised separately and
-  remains off until that adapter proves the shared contract. The role text, the identity environment
+  the model-change extension. Backend steering support is advertised separately after
+  that adapter proves the shared contract. The role text, the identity environment
   variables, the workspace folder and the access posture have no observation path at this
   seam at all — an implementation that threw the role materials away entirely would still
   pass every conformance test. Honouring them is the real build's obligation, and proving

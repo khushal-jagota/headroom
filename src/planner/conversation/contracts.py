@@ -82,7 +82,9 @@ FLOOR_DEFAULT_BACKEND_KEY: Final = ConversationBackendKey.codex
 FLOOR_DEFAULT_WORKSPACE_FOLDER: Final[Path] = Path.home() / "projects"
 FLOOR_DEFAULT_ACCESS: Final = ConversationAccess.full
 
-BACKEND_KEYS_SUPPORTING_STEER: Final[frozenset[ConversationBackendKey]] = frozenset()
+BACKEND_KEYS_SUPPORTING_STEER: Final[frozenset[ConversationBackendKey]] = frozenset(
+    {ConversationBackendKey.hermes}
+)
 
 
 def backend_supports_steer(backend_key: ConversationBackendKey) -> bool:
