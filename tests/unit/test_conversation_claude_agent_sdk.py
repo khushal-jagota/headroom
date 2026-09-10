@@ -19,10 +19,10 @@ import json
 import os
 import shutil
 from base64 import b64encode
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from tempfile import mkdtemp
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from claude_agent_sdk import (
@@ -583,9 +583,9 @@ def test_the_custom_transport_retains_uuid_admission_and_result_membership() -> 
         transport = _ClaudeProtocolTransport(inner)
         command_uuid = "30000000-0000-4000-8000-00000000000c"
         transport.watch_user_message(command_uuid)
-        messages = transport.read_messages()
+        messages = cast(AsyncGenerator[dict[str, Any], None], transport.read_messages())
 
-        first = asyncio.create_task(anext(messages))
+        first = asyncio.ensure_future(anext(messages))
         inner.say(
             {
                 "type": "command_lifecycle",
@@ -600,7 +600,7 @@ def test_the_custom_transport_retains_uuid_admission_and_result_membership() -> 
         }
         assert await transport.wait_for_user_message_admission(command_uuid) is True
 
-        second = asyncio.create_task(anext(messages))
+        second = asyncio.ensure_future(anext(messages))
         inner.say(
             {
                 "type": "command_lifecycle",
@@ -611,7 +611,7 @@ def test_the_custom_transport_retains_uuid_admission_and_result_membership() -> 
         await second
         assert transport.user_message_uuids_for_result("root-result") == frozenset()
 
-        third = asyncio.create_task(anext(messages))
+        third = asyncio.ensure_future(anext(messages))
         inner.say(
             {
                 "type": "result",
@@ -654,13 +654,13 @@ def test_the_custom_transport_requests_cancel_queued_and_reads_its_receipt() -> 
     async def exercise() -> None:
         inner = _ScriptedRawTransport()
         transport = _ClaudeProtocolTransport(inner)
-        messages = transport.read_messages()
+        messages = cast(AsyncGenerator[dict[str, Any], None], transport.read_messages())
         cancelling = asyncio.create_task(transport.interrupt_and_cancel_queued())
         await asyncio.sleep(0)
         request = json.loads(inner.writes[-1])
         assert request["request"] == {"subtype": "interrupt", "cancel_queued": True}
 
-        receipt = asyncio.create_task(anext(messages))
+        receipt = asyncio.ensure_future(anext(messages))
         inner.say(
             {
                 "type": "control_response",
@@ -3028,8 +3028,9 @@ def test_real_claude_stops_a_running_turn_when_it_is_cancelled(tmp_path: Path) -
 
         await _write(child, "Reply with exactly RESUMED-AFTER-STOP.", TURN_2)
         await _until_the_turn_ends(sink)
-        assert sink.endings[-1]["turn"] == TURN_2
-        assert sink.endings[-1]["ending"] is ConversationTurnEnding.completed
+        resumed_ending = sink.endings[-1]
+        assert resumed_ending["turn"] == TURN_2
+        assert resumed_ending["ending"] is ConversationTurnEnding.completed
         assert "RESUMED-AFTER-STOP" in " ".join(
             text for token, text in sink.message_texts if token == TURN_2
         )
