@@ -83,7 +83,7 @@ FLOOR_DEFAULT_WORKSPACE_FOLDER: Final[Path] = Path.home() / "projects"
 FLOOR_DEFAULT_ACCESS: Final = ConversationAccess.full
 
 BACKEND_KEYS_SUPPORTING_STEER: Final[frozenset[ConversationBackendKey]] = frozenset(
-    {ConversationBackendKey.codex, ConversationBackendKey.hermes}
+    {ConversationBackendKey.codex, ConversationBackendKey.hermes, ConversationBackendKey.claude}
 )
 
 

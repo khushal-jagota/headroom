@@ -1172,7 +1172,7 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None,
     ) -> PromptDeliveryFate:
         # Whether a backend can steer is a fact about the backend, settled before any
-        # child is touched: a steer at codex or claude spawns nothing.
+        # child is touched: an unsupported steer spawns nothing.
         if not backend_supports_steer(state.record.backend_key):
             refusal = PromptDeliveryRefusalReason.backend_cannot_steer
             async with state.lock:
