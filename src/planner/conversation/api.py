@@ -53,6 +53,8 @@ from planner.conversation.contracts import (
     PromptDeliveryQueued,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliveryUncertain,
+    backend_supports_steer,
 )
 from planner.conversation.events import (
     AgentMessageDeltaFrame,
@@ -771,6 +773,7 @@ async def _conversation_view(
     return {
         "conversation_id": record.conversation_id,
         "backend_key": str(record.backend_key),
+        "supports_steer": backend_supports_steer(record.backend_key),
         "model": record.model,
         "reasoning_effort": record.reasoning_effort,
         "workspace_folder": str(record.workspace_folder),
@@ -1112,6 +1115,8 @@ def delivery_fate_json(fate: object) -> dict[str, Any]:
             return {"fate": "injected"}
         case PromptDeliveryRefused(refusal_reason=reason):
             return {"fate": "refused", "refusal_reason": str(reason)}
+        case PromptDeliveryUncertain():
+            return {"fate": "uncertain"}
         case _:  # pragma: no cover - the fate type is closed
             raise AssertionError(f"unknown delivery fate {fate!r}")
 

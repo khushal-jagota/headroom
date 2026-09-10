@@ -15,13 +15,14 @@ actually installed on this machine and cost real model calls, so they are opt-in
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 from base64 import b64encode
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from tempfile import mkdtemp
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from claude_agent_sdk import (
@@ -42,6 +43,7 @@ from claude_agent_sdk import (
     ToolPermissionContext,
     ToolResultBlock,
     ToolUseBlock,
+    Transport,
     UserMessage,
 )
 
@@ -53,12 +55,17 @@ from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChild,
     ClaudeAgentSdkBackendChildFactory,
     ClaudeAgentSdkChildLaunch,
+    _ClaudeProtocolTransport,
+    claude_sdk_client,
 )
 from planner.conversation.backends.contracts import (
     BackendChild,
     BackendChildFactory,
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendSteerAccepted,
+    BackendSteerRefused,
+    BackendSteerUncertain,
     BackendUserInputRequest,
     NeedsRebind,
     PermissionAnswerWriteFailed,
@@ -76,7 +83,11 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     ResolvedConversationStart,
 )
-from planner.conversation.events import ConversationTurnEnding, ToolCallStatus, UserInputAnswer
+from planner.conversation.events import (
+    ConversationTurnEnding,
+    ToolCallStatus,
+    UserInputAnswer,
+)
 from planner.conversation.message_content import (
     MessageContent,
     MessageFile,
@@ -113,7 +124,8 @@ CLAUDE_MODEL = "haiku"
 CLAUDE_OTHER_MODEL = "sonnet"
 
 real_claude_only = pytest.mark.skipif(
-    os.environ.get(REAL_CLAUDE_TESTS_ENVIRONMENT_NAME) != "1" or CLAUDE_EXECUTABLE is None,
+    os.environ.get(REAL_CLAUDE_TESTS_ENVIRONMENT_NAME) != "1"
+    or CLAUDE_EXECUTABLE is None,
     reason=f"set {REAL_CLAUDE_TESTS_ENVIRONMENT_NAME}=1 with claude installed to run this",
 )
 
@@ -141,6 +153,11 @@ class _ScriptedClaudeSdkClient:
         # so a test can see the blocks rather than an exhausted generator.
         self.streamed_messages: list[dict[str, Any]] = []
         self.interrupts = 0
+        self.watched_user_message_uuids: list[str] = []
+        self.steer_admission: bool | None = True
+        self.result_user_message_uuids: dict[str, frozenset[str]] = {}
+        self.cancelled_user_message_uuids: frozenset[str] | None = None
+        self.still_queued_user_message_uuids: frozenset[str] = frozenset()
         self.disconnected = False
         self.connect_failure: BaseException | None = None
         self.query_failure: BaseException | None = None
@@ -165,6 +182,20 @@ class _ScriptedClaudeSdkClient:
     def receive_messages(self) -> AsyncIterator[Message]:
         return self._drain()
 
+    def watch_user_message(self, user_message_uuid: str) -> None:
+        self.watched_user_message_uuids.append(user_message_uuid)
+
+    async def wait_for_user_message_admission(
+        self, user_message_uuid: str
+    ) -> bool | None:
+        assert user_message_uuid in self.watched_user_message_uuids
+        return self.steer_admission
+
+    def user_message_uuids_for_result(self, result_uuid: str | None) -> frozenset[str]:
+        if result_uuid is None:
+            return frozenset()
+        return self.result_user_message_uuids.pop(result_uuid, frozenset())
+
     async def _drain(self) -> AsyncIterator[Message]:
         while True:
             message = await self._inbox.get()
@@ -177,6 +208,15 @@ class _ScriptedClaudeSdkClient:
 
     async def interrupt(self) -> None:
         self.interrupts += 1
+
+    async def interrupt_and_cancel_queued(
+        self,
+    ) -> tuple[frozenset[str], frozenset[str]]:
+        self.interrupts += 1
+        cancelled = self.cancelled_user_message_uuids
+        if cancelled is None:
+            cancelled = frozenset(self.watched_user_message_uuids)
+        return cancelled, self.still_queued_user_message_uuids
 
     async def disconnect(self) -> None:
         self.disconnected = True
@@ -191,6 +231,37 @@ class _ScriptedClaudeSdkClient:
     async def until_taken_in(self) -> None:
         """Return once every message said so far has been worked through."""
         await self._inbox.join()
+
+
+class _ScriptedRawTransport(Transport):
+    def __init__(self) -> None:
+        self.writes: list[str] = []
+        self._inbox: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+    async def connect(self) -> None:
+        return None
+
+    async def write(self, data: str) -> None:
+        self.writes.append(data)
+
+    def read_messages(self) -> AsyncIterator[dict[str, Any]]:
+        return self._read_messages()
+
+    async def _read_messages(self) -> AsyncIterator[dict[str, Any]]:
+        while (message := await self._inbox.get()) is not None:
+            yield message
+
+    async def close(self) -> None:
+        self._inbox.put_nowait(None)
+
+    def is_ready(self) -> bool:
+        return True
+
+    async def end_input(self) -> None:
+        return None
+
+    def say(self, message: dict[str, Any]) -> None:
+        self._inbox.put_nowait(message)
 
 
 class _RecordingSink:
@@ -233,11 +304,13 @@ class _RecordingSink:
     async def plan_updated(self, turn_token: TurnToken, entries: Any) -> None:
         self.plans.append([(entry.text, str(entry.status)) for entry in entries])
 
-
     @property
     def message_texts(self) -> list[tuple[TurnToken, str]]:
         """Each finished message's words. The messages themselves are above."""
-        return [(token, message_content_text(content)) for token, content in self.message_contents]
+        return [
+            (token, message_content_text(content))
+            for token, content in self.message_contents
+        ]
 
     async def agent_message_completed(
         self, turn_token: TurnToken, content: MessageContent
@@ -309,7 +382,9 @@ class _RecordingSink:
         self.calls_in_order.append("context_compacted")
         self.compactions.append(turn_token)
 
-    async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
+    async def permission_ask_raised(
+        self, turn_token: TurnToken, ask: BackendPermissionAsk
+    ) -> None:
         del turn_token
         self.asks.append(ask)
 
@@ -450,6 +525,18 @@ async def _write(
     )
 
 
+async def _cancel_with_result(
+    child: ClaudeAgentSdkBackendChild,
+    client: _ScriptedClaudeSdkClient,
+    result: ResultMessage,
+) -> None:
+    cancelling = asyncio.create_task(child.cancel_running_turn())
+    await asyncio.sleep(0)
+    client.say(result)
+    await cancelling
+    await client.until_taken_in()
+
+
 def _result(
     *,
     session_id: str = SESSION_ID,
@@ -459,6 +546,7 @@ def _result(
     errors: list[str] | None = None,
     usage: dict[str, Any] | None = None,
     total_cost_usd: float | None = None,
+    result_uuid: str | None = None,
 ) -> ResultMessage:
     return ResultMessage(
         subtype=subtype,
@@ -471,6 +559,7 @@ def _result(
         errors=errors,
         usage=usage,
         total_cost_usd=total_cost_usd,
+        uuid=result_uuid,
     )
 
 
@@ -478,11 +567,118 @@ def _assistant(
     *blocks: Any, session_id: str = SESSION_ID, parent: str | None = None
 ) -> AssistantMessage:
     return AssistantMessage(
-        content=list(blocks), model="claude", session_id=session_id, parent_tool_use_id=parent
+        content=list(blocks),
+        model="claude",
+        session_id=session_id,
+        parent_tool_use_id=parent,
     )
 
 
 # --- the seam ---------------------------------------------------------------------------------
+
+
+def test_the_custom_transport_retains_uuid_admission_and_result_membership() -> None:
+    async def exercise() -> None:
+        inner = _ScriptedRawTransport()
+        transport = _ClaudeProtocolTransport(inner)
+        command_uuid = "30000000-0000-4000-8000-00000000000c"
+        transport.watch_user_message(command_uuid)
+        messages = cast(AsyncGenerator[dict[str, Any], None], transport.read_messages())
+
+        first = asyncio.ensure_future(anext(messages))
+        inner.say(
+            {
+                "type": "command_lifecycle",
+                "command_uuid": command_uuid,
+                "state": "queued",
+            }
+        )
+        assert await first == {
+            "type": "command_lifecycle",
+            "command_uuid": command_uuid,
+            "state": "queued",
+        }
+        assert await transport.wait_for_user_message_admission(command_uuid) is True
+
+        second = asyncio.ensure_future(anext(messages))
+        inner.say(
+            {
+                "type": "command_lifecycle",
+                "command_uuid": command_uuid,
+                "state": "completed",
+            }
+        )
+        await second
+        assert transport.user_message_uuids_for_result("root-result") == frozenset()
+
+        third = asyncio.ensure_future(anext(messages))
+        inner.say(
+            {
+                "type": "result",
+                "uuid": "result-1",
+                "user_message_uuid": command_uuid,
+                "user_message_uuids": [command_uuid, "another-command"],
+            }
+        )
+        await third
+        assert transport.user_message_uuids_for_result("result-1") == frozenset(
+            {command_uuid, "another-command"}
+        )
+        await messages.aclose()
+
+    _run(exercise)
+
+
+def test_the_custom_transport_routes_permission_callbacks_over_stdio() -> None:
+    async def permit(
+        tool_name: str, tool_input: dict[str, Any], context: ToolPermissionContext
+    ) -> PermissionResult:
+        del tool_name, tool_input, context
+        return PermissionResultDeny(message="no")
+
+    client = claude_sdk_client(
+        ClaudeAgentOptions(
+            cli_path=Path("/usr/bin/claude"),
+            can_use_tool=permit,
+        )
+    )
+    observed = client._transport  # type: ignore[attr-defined]
+    inner = observed._inner
+    command = inner._build_command()
+
+    assert command[command.index("--permission-prompt-tool") + 1] == "stdio"
+    assert client._client.options.can_use_tool is permit  # type: ignore[attr-defined]
+
+
+def test_the_custom_transport_requests_cancel_queued_and_reads_its_receipt() -> None:
+    async def exercise() -> None:
+        inner = _ScriptedRawTransport()
+        transport = _ClaudeProtocolTransport(inner)
+        messages = cast(AsyncGenerator[dict[str, Any], None], transport.read_messages())
+        cancelling = asyncio.create_task(transport.interrupt_and_cancel_queued())
+        await asyncio.sleep(0)
+        request = json.loads(inner.writes[-1])
+        assert request["request"] == {"subtype": "interrupt", "cancel_queued": True}
+
+        receipt = asyncio.ensure_future(anext(messages))
+        inner.say(
+            {
+                "type": "control_response",
+                "response": {
+                    "subtype": "success",
+                    "request_id": request["request_id"],
+                    "response": {
+                        "cancelled": ["queued-command"],
+                        "still_queued": [],
+                    },
+                },
+            }
+        )
+        await receipt
+        assert await cancelling == (frozenset({"queued-command"}), frozenset())
+        await messages.aclose()
+
+    _run(exercise)
 
 
 def test_the_adapter_is_the_seam_the_core_talks_to(tmp_path: Path) -> None:
@@ -512,7 +708,9 @@ def test_a_fresh_session_is_started_under_an_id_of_our_own(tmp_path: Path) -> No
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         options = clients[0].options
         assert options.session_id is not None
         assert options.resume is None
@@ -538,7 +736,9 @@ def test_a_resume_names_the_session_it_wants_and_mints_nothing(tmp_path: Path) -
     _run(exercise)
 
 
-def test_fresh_and_resumed_sessions_use_the_explicit_message_buffer_limit(tmp_path: Path) -> None:
+def test_fresh_and_resumed_sessions_use_the_explicit_message_buffer_limit(
+    tmp_path: Path,
+) -> None:
     async def exercise() -> None:
         resolved_start = _start_request(workspace_folder=tmp_path)
         child, _, clients = _bench(resolved_start)
@@ -554,7 +754,9 @@ def test_fresh_and_resumed_sessions_use_the_explicit_message_buffer_limit(tmp_pa
     _run(exercise)
 
 
-def test_a_session_that_will_not_load_is_never_replaced_by_a_fresh_one(tmp_path: Path) -> None:
+def test_a_session_that_will_not_load_is_never_replaced_by_a_fresh_one(
+    tmp_path: Path,
+) -> None:
     """Claude refuses to come up at all when it does not have the session that was named.
 
     That refusal is a session that did not load, not a process that would not spawn, and
@@ -583,14 +785,18 @@ def test_a_child_that_will_not_spawn_says_so_rather_than_blaming_the_session(
 
     async def exercise() -> None:
         resolved_start = _start_request(workspace_folder=tmp_path)
-        child, _, _ = _bench_that_will_not_connect(resolved_start, RuntimeError("claude fell over"))
+        child, _, _ = _bench_that_will_not_connect(
+            resolved_start, RuntimeError("claude fell over")
+        )
         with pytest.raises(BackendSpawnFailed):
             await child.start(resolved_start, vendor_session_cursor=None)
 
     _run(exercise)
 
 
-def test_a_missing_executable_is_a_spawn_failure_even_under_a_cursor(tmp_path: Path) -> None:
+def test_a_missing_executable_is_a_spawn_failure_even_under_a_cursor(
+    tmp_path: Path,
+) -> None:
     """There being no claude to run is not this conversation's session's fault."""
 
     async def exercise() -> None:
@@ -624,11 +830,18 @@ def _bench_that_will_not_connect(
 
     sink = _RecordingSink()
     factory = ClaudeAgentSdkBackendChildFactory(
-        ClaudeAgentSdkChildLaunch(claude_executable=Path("/usr/bin/claude")), client_factory=make
+        ClaudeAgentSdkChildLaunch(claude_executable=Path("/usr/bin/claude")),
+        client_factory=make,
     )
-    return factory(
-        resolved_start=resolved_start, event_sink=sink, message_files=_message_files()
-    ), sink, clients
+    return (
+        factory(
+            resolved_start=resolved_start,
+            event_sink=sink,
+            message_files=_message_files(),
+        ),
+        sink,
+        clients,
+    )
 
 
 def test_a_resume_that_answers_under_another_session_is_refused(tmp_path: Path) -> None:
@@ -677,7 +890,9 @@ def test_a_hook_messages_session_id_never_becomes_the_cursor(tmp_path: Path) -> 
                 hook_event_name="SessionStart",
                 session_id=ANOTHER_SESSION_ID,
             ),
-            SystemMessage(subtype="hook_progress", data={"session_id": ANOTHER_SESSION_ID}),
+            SystemMessage(
+                subtype="hook_progress", data={"session_id": ANOTHER_SESSION_ID}
+            ),
             _assistant(TextBlock(text="hi")),
             _result(),
         )
@@ -738,12 +953,16 @@ def test_the_commands_claude_takes_are_reported_as_the_session_is_established(
                 ]
             },
         )
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
 
         assert sink.composer_catalog == [
             (
                 _command(
-                    name="review", description="Review the working tree", argument_hint="[path]"
+                    name="review",
+                    description="Review the working tree",
+                    argument_hint="[path]",
                 ),
                 # Nothing to type after it, so there is no hint rather than an empty one.
                 _command(name="clear", description="Start the conversation again"),
@@ -754,7 +973,9 @@ def test_the_commands_claude_takes_are_reported_as_the_session_is_established(
     _run(exercise)
 
 
-def test_the_commands_are_the_answer_for_this_conversations_own_folder(tmp_path: Path) -> None:
+def test_the_commands_are_the_answer_for_this_conversations_own_folder(
+    tmp_path: Path,
+) -> None:
     """The child that answered about commands is the one running where the work happens.
 
     Claude's list is not the same everywhere: a project keeps commands of its own in the
@@ -767,9 +988,13 @@ def test_the_commands_are_the_answer_for_this_conversations_own_folder(tmp_path:
     async def exercise() -> None:
         child, sink, clients = _bench(
             _start_request(workspace_folder=tmp_path),
-            handshake={"commands": [{"name": "ship", "description": "This project's own"}]},
+            handshake={
+                "commands": [{"name": "ship", "description": "This project's own"}]
+            },
         )
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
 
         assert len(clients) == 1
         assert clients[0].options.cwd == str(tmp_path)
@@ -781,7 +1006,9 @@ def test_the_commands_are_the_answer_for_this_conversations_own_folder(tmp_path:
     _run(exercise)
 
 
-def test_a_commands_other_spellings_are_dropped_rather_than_offered(tmp_path: Path) -> None:
+def test_a_commands_other_spellings_are_dropped_rather_than_offered(
+    tmp_path: Path,
+) -> None:
     """Claude reports the aliases a command also answers to. Panels offers the one name."""
 
     async def exercise() -> None:
@@ -797,7 +1024,9 @@ def test_a_commands_other_spellings_are_dropped_rather_than_offered(tmp_path: Pa
                 ]
             },
         )
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
 
         assert sink.composer_catalog == [
             (_command(name="review", description="Review the working tree"),)
@@ -807,7 +1036,9 @@ def test_a_commands_other_spellings_are_dropped_rather_than_offered(tmp_path: Pa
     _run(exercise)
 
 
-def test_an_entry_with_no_name_to_type_is_left_out_and_the_rest_stand(tmp_path: Path) -> None:
+def test_an_entry_with_no_name_to_type_is_left_out_and_the_rest_stand(
+    tmp_path: Path,
+) -> None:
     """The handshake is claude's, so a shape this does not recognise is skipped, not read.
 
     A command nobody could type is no use in a menu, and it is no reason to refuse the
@@ -827,7 +1058,9 @@ def test_an_entry_with_no_name_to_type_is_left_out_and_the_rest_stand(tmp_path: 
                 ]
             },
         )
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
 
         assert sink.composer_catalog == [
             (_command(name="review", description="Review the working tree"),)
@@ -838,13 +1071,19 @@ def test_an_entry_with_no_name_to_type_is_left_out_and_the_rest_stand(tmp_path: 
     _run(exercise)
 
 
-def test_a_handshake_that_says_nothing_about_commands_reports_nothing(tmp_path: Path) -> None:
+def test_a_handshake_that_says_nothing_about_commands_reports_nothing(
+    tmp_path: Path,
+) -> None:
     """A child with nothing to say about commands is a session that starts all the same."""
 
     async def exercise() -> None:
         for handshake in (None, {"output_style": "default"}):
-            child, sink, _ = _bench(_start_request(workspace_folder=tmp_path), handshake=handshake)
-            await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+            child, sink, _ = _bench(
+                _start_request(workspace_folder=tmp_path), handshake=handshake
+            )
+            await child.start(
+                _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+            )
 
             assert sink.composer_catalog == []
             assert sink.cursors != []
@@ -862,7 +1101,9 @@ def test_claude_saying_it_has_no_commands_is_not_the_same_as_saying_nothing(
         child, sink, _ = _bench(
             _start_request(workspace_folder=tmp_path), handshake={"commands": []}
         )
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
 
         assert sink.composer_catalog == [()]
         await child.stop()
@@ -918,7 +1159,9 @@ def test_a_reasoning_effort_claude_does_not_have_is_a_session_that_did_not_load(
     write under: the text would go to an agent nobody configured."""
 
     async def exercise() -> None:
-        resolved_start = _start_request(workspace_folder=tmp_path, reasoning_effort="ludicrous")
+        resolved_start = _start_request(
+            workspace_folder=tmp_path, reasoning_effort="ludicrous"
+        )
         child, _, _ = _bench(resolved_start)
         with pytest.raises(SessionLoadFailed):
             await child.start(resolved_start, vendor_session_cursor=None)
@@ -934,7 +1177,9 @@ def test_a_model_change_asks_for_a_child_started_on_it(tmp_path: Path) -> None:
     """
 
     async def exercise() -> None:
-        resolved_start = _start_request(workspace_folder=tmp_path, model="claude-haiku-4-5")
+        resolved_start = _start_request(
+            workspace_folder=tmp_path, model="claude-haiku-4-5"
+        )
         child, _, clients = _bench(resolved_start)
         await child.start(resolved_start, vendor_session_cursor=None)
         with pytest.raises(NeedsRebind):
@@ -954,9 +1199,13 @@ def test_a_model_change_asks_for_a_child_started_on_it(tmp_path: Path) -> None:
     _run(exercise)
 
 
-def test_a_reasoning_effort_change_asks_for_a_child_started_on_it(tmp_path: Path) -> None:
+def test_a_reasoning_effort_change_asks_for_a_child_started_on_it(
+    tmp_path: Path,
+) -> None:
     async def exercise() -> None:
-        resolved_start = _start_request(workspace_folder=tmp_path, reasoning_effort="low")
+        resolved_start = _start_request(
+            workspace_folder=tmp_path, reasoning_effort="low"
+        )
         child, _, clients = _bench(resolved_start)
         await child.start(resolved_start, vendor_session_cursor=None)
         with pytest.raises(NeedsRebind):
@@ -986,7 +1235,9 @@ def test_the_rebound_child_takes_the_prompt_that_asked_for_it(tmp_path: Path) ->
     async def exercise() -> None:
         # The core starts the new child on the values the delivery was carrying.
         resolved_start = _start_request(
-            workspace_folder=tmp_path, model="claude-sonnet-4-5", reasoning_effort="high"
+            workspace_folder=tmp_path,
+            model="claude-sonnet-4-5",
+            reasoning_effort="high",
         )
         child, _, clients = _bench(resolved_start)
         await child.start(resolved_start, vendor_session_cursor=SESSION_ID)
@@ -1015,7 +1266,9 @@ def test_the_label_and_the_mode_are_taken_and_dropped(tmp_path: Path) -> None:
 
     async def exercise() -> None:
         child, _, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         content = text_message_content("hello")
         await child.write_prompt(
             TURN,
@@ -1032,12 +1285,284 @@ def test_the_label_and_the_mode_are_taken_and_dropped(tmp_path: Path) -> None:
     _run(exercise)
 
 
-def test_claude_cannot_take_text_into_a_running_turn(tmp_path: Path) -> None:
+def test_steering_requires_the_exact_running_turn(tmp_path: Path) -> None:
     async def exercise() -> None:
         child, _, _ = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
-        with pytest.raises(PromptWriteFailed):
-            await child.steer(text_message_content("go left"), sender_label="owner")
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        refused = await child.steer(
+            TurnToken("c", 1), text_message_content("go left"), sender_label="owner"
+        )
+        assert isinstance(refused, BackendSteerRefused)
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_steering_uses_one_uuid_and_accepts_a_provider_queue_receipt(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, _, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        await _write(child)
+
+        outcome = await child.steer(
+            TURN, text_message_content("go left"), sender_label="owner"
+        )
+
+        assert isinstance(outcome, BackendSteerAccepted)
+        assert len(clients[0].watched_user_message_uuids) == 1
+        sent = clients[0].streamed_messages[-1]
+        assert sent["uuid"] == clients[0].watched_user_message_uuids[0]
+        assert sent["message"]["content"] == [{"type": "text", "text": "go left"}]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_steering_keeps_rich_content_under_its_owned_uuid(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        child, _, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        await _write(child)
+        files = _bench_message_files(child)
+        image = await files.keep(
+            CONVERSATION_ID, b"image bytes", media_type="image/png"
+        )
+        document = await files.keep(
+            CONVERSATION_ID, b"document", media_type="text/plain"
+        )
+
+        outcome = await child.steer(
+            TURN,
+            (
+                MessageText(text="read both"),
+                MessageImage(
+                    stored_file_id=image.stored_file_id, media_type="image/png"
+                ),
+                MessageFile(
+                    stored_file_id=document.stored_file_id,
+                    file_name="note.txt",
+                    media_type="text/plain",
+                    byte_count=8,
+                ),
+            ),
+            sender_label="owner",
+        )
+
+        assert isinstance(outcome, BackendSteerAccepted)
+        sent = clients[0].streamed_messages[-1]
+        assert sent["uuid"] == clients[0].watched_user_message_uuids[-1]
+        assert sent["message"]["content"][0] == {"type": "text", "text": "read both"}
+        assert sent["message"]["content"][1]["source"]["data"] == b64encode(
+            b"image bytes"
+        ).decode("ascii")
+        assert (
+            str(document.absolute_path.resolve())
+            in sent["message"]["content"][2]["text"]
+        )
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_missing_steer_attachment_refuses_without_retained_ownership(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        await _write(child)
+
+        outcome = await child.steer(
+            TURN,
+            (MessageImage(stored_file_id="missing-image", media_type="image/png"),),
+            sender_label="owner",
+        )
+
+        assert isinstance(outcome, BackendSteerRefused)
+        assert clients[0].watched_user_message_uuids == []
+        assert clients[0].streamed_messages == []
+        clients[0].say(_result(result_uuid="root-result"))
+        await clients[0].until_taken_in()
+        assert len(sink.endings) == 1
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_stop_during_steer_content_preparation_prevents_the_later_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        await _write(child)
+        preparation_started = asyncio.Event()
+        release_preparation = asyncio.Event()
+
+        async def paused_encoding(stored_file_id: str) -> str:
+            del stored_file_id
+            preparation_started.set()
+            await release_preparation.wait()
+            return "encoded"
+
+        monkeypatch.setattr(child, "_encoded_bytes", paused_encoding)
+        steering = asyncio.create_task(
+            child.steer(
+                TURN,
+                (MessageImage(stored_file_id="image", media_type="image/png"),),
+                sender_label="owner",
+            )
+        )
+        await preparation_started.wait()
+        cancelling = asyncio.create_task(child.cancel_running_turn())
+        await asyncio.sleep(0)
+        clients[0].say(
+            _result(terminal_reason="aborted_streaming", result_uuid="stopped")
+        )
+        await cancelling
+        await clients[0].until_taken_in()
+        release_preparation.set()
+
+        outcome = await steering
+        assert isinstance(outcome, BackendSteerRefused)
+        assert clients[0].watched_user_message_uuids == []
+        assert clients[0].streamed_messages == []
+        assert sink.endings[0]["ending"] is ConversationTurnEnding.interrupted
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_an_unconfirmed_steer_is_uncertain_and_still_owns_its_later_result(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        await _write(child)
+        clients[0].steer_admission = None
+        outcome = await child.steer(
+            TURN, text_message_content("go left"), sender_label="owner"
+        )
+        steer_uuid = clients[0].watched_user_message_uuids[0]
+        assert isinstance(outcome, BackendSteerUncertain)
+
+        clients[0].say(_result(result_uuid="root-result"))
+        await clients[0].until_taken_in()
+        assert sink.endings == []
+
+        clients[0].result_user_message_uuids["steer-result"] = frozenset({steer_uuid})
+        clients[0].say(
+            _assistant(TextBlock(text="owned continuation")),
+            _result(result_uuid="steer-result"),
+        )
+        await clients[0].until_taken_in()
+        assert sink.message_texts[-1] == (TURN, "owned continuation")
+        assert len(sink.token_usage) == 2
+        assert len(sink.endings) == 1
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_steer_write_failure_is_uncertain_and_keeps_later_correlated_work(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        await _write(child)
+        clients[0].query_failure = BrokenPipeError("uncertain write")
+
+        outcome = await child.steer(
+            TURN, text_message_content("go left"), sender_label="owner"
+        )
+        steer_uuid = clients[0].watched_user_message_uuids[0]
+        assert isinstance(outcome, BackendSteerUncertain)
+
+        clients[0].say(_result(result_uuid="root-result"))
+        await clients[0].until_taken_in()
+        assert sink.endings == []
+        clients[0].result_user_message_uuids["steer-result"] = frozenset({steer_uuid})
+        clients[0].say(
+            _assistant(TextBlock(text="late after uncertain write")),
+            _result(result_uuid="steer-result"),
+        )
+        await clients[0].until_taken_in()
+        assert sink.message_texts[-1] == (TURN, "late after uncertain write")
+        assert len(sink.endings) == 1
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_multiple_steers_settle_under_one_turn_after_one_correlated_result(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        await _write(child)
+        assert isinstance(
+            await child.steer(
+                TURN, text_message_content("first"), sender_label="owner"
+            ),
+            BackendSteerAccepted,
+        )
+        assert isinstance(
+            await child.steer(
+                TURN, text_message_content("second"), sender_label="owner"
+            ),
+            BackendSteerAccepted,
+        )
+        clients[0].say(
+            _result(
+                result_uuid="root-result",
+                usage={"input_tokens": 1, "output_tokens": 2},
+            )
+        )
+        await clients[0].until_taken_in()
+        assert sink.endings == []
+        assert len(sink.token_usage) == 1
+
+        clients[0].result_user_message_uuids["steer-result"] = frozenset(
+            clients[0].watched_user_message_uuids
+        )
+        clients[0].say(
+            _assistant(TextBlock(text="late owned result")),
+            _result(
+                result_uuid="steer-result",
+                usage={"input_tokens": 3, "output_tokens": 4},
+            ),
+        )
+        await clients[0].until_taken_in()
+        assert len(sink.endings) == 1
+        assert len(sink.token_usage) == 2
+        assert sink.message_texts[-1] == (TURN, "late owned result")
+
+        await _write(child, "ordinary queue successor", TURN_2)
+        assert clients[0].prompts[-1] == "ordinary queue successor"
+        clients[0].say(_result(result_uuid="next-result"))
+        await clients[0].until_taken_in()
+        assert [ending["turn"] for ending in sink.endings] == [TURN, TURN_2]
         await child.stop()
 
     _run(exercise)
@@ -1046,7 +1571,9 @@ def test_claude_cannot_take_text_into_a_running_turn(tmp_path: Path) -> None:
 def test_a_prompt_that_does_not_reach_the_wire_says_so(tmp_path: Path) -> None:
     async def exercise() -> None:
         child, _, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         clients[0].query_failure = BrokenPipeError("the child has gone")
         with pytest.raises(PromptWriteFailed):
             await _write(child)
@@ -1075,7 +1602,9 @@ def test_thinking_is_dropped_where_it_arrives_and_only_its_arrival_is_told(
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
@@ -1106,10 +1635,14 @@ def test_thinking_is_dropped_where_it_arrives_and_only_its_arrival_is_told(
     _run(exercise)
 
 
-def test_streamed_text_is_shown_and_the_finished_message_is_the_row(tmp_path: Path) -> None:
+def test_streamed_text_is_shown_and_the_finished_message_is_the_row(
+    tmp_path: Path,
+) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
@@ -1141,7 +1674,9 @@ def test_a_message_around_a_tool_call_is_recorded_in_the_order_it_happened(
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
@@ -1153,7 +1688,11 @@ def test_a_message_around_a_tool_call_is_recorded_in_the_order_it_happened(
                 session_id=session_id,
             ),
             UserMessage(
-                content=[ToolResultBlock(tool_use_id="tool-1", content="a.txt", is_error=False)]
+                content=[
+                    ToolResultBlock(
+                        tool_use_id="tool-1", content="a.txt", is_error=False
+                    )
+                ]
             ),
         )
         await clients[0].until_taken_in()
@@ -1181,19 +1720,29 @@ def test_a_message_around_a_tool_call_is_recorded_in_the_order_it_happened(
     _run(exercise)
 
 
-def test_a_valid_tool_result_just_over_one_megabyte_reaches_panels(tmp_path: Path) -> None:
+def test_a_valid_tool_result_just_over_one_megabyte_reaches_panels(
+    tmp_path: Path,
+) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
 
         result = "x" * (1024 * 1024 + 1)
         clients[0].say(
-            _assistant(ToolUseBlock(id="tool-1", name="Read", input={}), session_id=session_id),
+            _assistant(
+                ToolUseBlock(id="tool-1", name="Read", input={}), session_id=session_id
+            ),
             UserMessage(
-                content=[ToolResultBlock(tool_use_id="tool-1", content=result, is_error=False)]
+                content=[
+                    ToolResultBlock(
+                        tool_use_id="tool-1", content=result, is_error=False
+                    )
+                ]
             ),
         )
         await clients[0].until_taken_in()
@@ -1275,12 +1824,16 @@ def test_only_readable_text_from_block_tool_results_reaches_panels(
 def test_a_tool_call_that_went_wrong_is_recorded_as_a_failure(tmp_path: Path) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         await _write(child)
         clients[0].say(
             UserMessage(
                 content=[
-                    ToolResultBlock(tool_use_id="tool-1", content="no such file", is_error=True)
+                    ToolResultBlock(
+                        tool_use_id="tool-1", content="no such file", is_error=True
+                    )
                 ]
             )
         )
@@ -1301,7 +1854,9 @@ def test_a_subagents_own_talk_stays_inside_its_tool_call(tmp_path: Path) -> None
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
@@ -1339,13 +1894,19 @@ def test_a_subagents_own_tool_results_are_not_this_conversations_finishes(
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
         clients[0].say(
             UserMessage(
-                content=[ToolResultBlock(tool_use_id="inner-1", content="done", is_error=False)],
+                content=[
+                    ToolResultBlock(
+                        tool_use_id="inner-1", content="done", is_error=False
+                    )
+                ],
                 parent_tool_use_id="tool-1",
             ),
         )
@@ -1368,7 +1929,9 @@ def test_the_todo_list_claude_keeps_for_itself_is_this_conversations_plan(
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
@@ -1414,7 +1977,9 @@ def test_a_todo_list_that_is_not_the_shape_it_should_be_is_no_plan_at_all(
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
@@ -1428,7 +1993,9 @@ def test_a_todo_list_that_is_not_the_shape_it_should_be_is_no_plan_at_all(
                 session_id=session_id,
             ),
             _assistant(
-                ToolUseBlock(id="tool-2", name="TodoWrite", input={"todos": "not a list"}),
+                ToolUseBlock(
+                    id="tool-2", name="TodoWrite", input={"todos": "not a list"}
+                ),
                 session_id=session_id,
             ),
             _assistant(
@@ -1449,12 +2016,16 @@ def test_a_todo_list_that_is_not_the_shape_it_should_be_is_no_plan_at_all(
     _run(exercise)
 
 
-def test_news_this_adapter_has_no_use_for_never_stops_the_stream(tmp_path: Path) -> None:
+def test_news_this_adapter_has_no_use_for_never_stops_the_stream(
+    tmp_path: Path,
+) -> None:
     """An SDK that grows a message type is not an adapter that falls over."""
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
@@ -1473,19 +2044,27 @@ def test_news_this_adapter_has_no_use_for_never_stops_the_stream(tmp_path: Path)
 # --- how a turn ends ---------------------------------------------------------------------------
 
 
-def test_an_ordinary_parent_message_after_a_result_is_still_reported(tmp_path: Path) -> None:
+def test_an_ordinary_parent_message_after_a_result_is_still_reported(
+    tmp_path: Path,
+) -> None:
     """Claude may continue its persistent run after saying that one turn completed."""
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
         clients[0].say(
-            _assistant(TextBlock(text="the first parent message"), session_id=session_id),
+            _assistant(
+                TextBlock(text="the first parent message"), session_id=session_id
+            ),
             _result(session_id=session_id),
-            _assistant(TextBlock(text="the delayed parent message"), session_id=session_id),
+            _assistant(
+                TextBlock(text="the delayed parent message"), session_id=session_id
+            ),
             _result(session_id=session_id),
         )
         await clients[0].until_taken_in()
@@ -1507,7 +2086,9 @@ def test_parent_messages_are_not_lost_when_a_successor_prompt_interleaves(
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child, "first")
@@ -1523,7 +2104,10 @@ def test_parent_messages_are_not_lost_when_a_successor_prompt_interleaves(
         )
         await clients[0].until_taken_in()
 
-        assert [text for _, text in sink.message_texts] == ["late first reply", "second reply"]
+        assert [text for _, text in sink.message_texts] == [
+            "late first reply",
+            "second reply",
+        ]
         assert [ending["turn"] for ending in sink.endings] == [TURN, TURN_2]
         await child.stop()
 
@@ -1533,7 +2117,9 @@ def test_parent_messages_are_not_lost_when_a_successor_prompt_interleaves(
 def test_a_turn_that_finished_is_recorded_as_completed(tmp_path: Path) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
@@ -1556,7 +2142,9 @@ def test_a_turn_that_finished_is_recorded_as_completed(tmp_path: Path) -> None:
 def test_a_turn_that_failed_carries_what_went_wrong(tmp_path: Path) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         stderr = clients[0].options.stderr
@@ -1575,7 +2163,10 @@ def test_a_turn_that_failed_carries_what_went_wrong(tmp_path: Path) -> None:
 
         assert sink.endings[0]["ending"] is ConversationTurnEnding.failed
         assert sink.endings[0]["error_summary"] == "the api said no"
-        assert sink.endings[0]["standard_error_tail"] == "something went wrong inside claude"
+        assert (
+            sink.endings[0]["standard_error_tail"]
+            == "something went wrong inside claude"
+        )
         await child.stop()
 
     _run(exercise)
@@ -1586,11 +2177,15 @@ def test_a_turn_the_cli_says_was_aborted_is_an_interruption(tmp_path: Path) -> N
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
-        clients[0].say(_result(session_id=session_id, terminal_reason="aborted_streaming"))
+        clients[0].say(
+            _result(session_id=session_id, terminal_reason="aborted_streaming")
+        )
         await clients[0].until_taken_in()
 
         assert sink.endings[0]["ending"] is ConversationTurnEnding.interrupted
@@ -1606,21 +2201,23 @@ def test_a_turn_this_adapter_stopped_is_an_interruption_whatever_it_reports(
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
-        await child.cancel_running_turn()
-        assert clients[0].interrupts == 1
-        clients[0].say(
+        await _cancel_with_result(
+            child,
+            clients[0],
             _result(
                 session_id=session_id,
                 subtype="error_during_execution",
                 is_error=True,
                 terminal_reason=None,
-            )
+            ),
         )
-        await clients[0].until_taken_in()
+        assert clients[0].interrupts == 1
 
         assert sink.endings[0]["ending"] is ConversationTurnEnding.interrupted
         assert sink.endings[0]["error_summary"] is None
@@ -1635,7 +2232,9 @@ def test_a_turn_this_adapter_stopped_is_an_interruption_whatever_it_reports(
 def test_a_child_whose_stream_ends_mid_turn_fails_the_turn(tmp_path: Path) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         await _write(child)
         clients[0].end_the_stream()
         await clients[0].until_taken_in()
@@ -1663,7 +2262,9 @@ CLAUDE_COUNTS: dict[str, Any] = {
 }
 
 
-def test_the_counts_claude_gave_are_reported_before_the_turn_is_closed(tmp_path: Path) -> None:
+def test_the_counts_claude_gave_are_reported_before_the_turn_is_closed(
+    tmp_path: Path,
+) -> None:
     """Claude is the one backend with real money in it, and this is where it says how much.
 
     The money is ``total_cost_usd``, which is claude's own name for the cost. It goes before
@@ -1673,12 +2274,16 @@ def test_the_counts_claude_gave_are_reported_before_the_turn_is_closed(tmp_path:
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
         clients[0].say(
-            _result(session_id=session_id, usage=dict(CLAUDE_COUNTS), total_cost_usd=0.0731)
+            _result(
+                session_id=session_id, usage=dict(CLAUDE_COUNTS), total_cost_usd=0.0731
+            )
         )
         await clients[0].until_taken_in()
 
@@ -1723,7 +2328,9 @@ def test_a_count_claude_did_not_give_is_nothing_rather_than_zero(
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
@@ -1749,20 +2356,22 @@ def test_a_turn_that_was_stopped_still_says_what_has_been_spent(tmp_path: Path) 
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
-        await child.cancel_running_turn()
-        clients[0].say(
+        await _cancel_with_result(
+            child,
+            clients[0],
             _result(
                 session_id=session_id,
                 terminal_reason="aborted_streaming",
                 usage=dict(CLAUDE_COUNTS),
                 total_cost_usd=0.0731,
-            )
+            ),
         )
-        await clients[0].until_taken_in()
 
         assert sink.endings[0]["ending"] is ConversationTurnEnding.interrupted
         assert [report["cost_usd"] for report in sink.token_usage] == [0.0731]
@@ -1775,7 +2384,9 @@ def test_a_turn_that_was_stopped_still_says_what_has_been_spent(tmp_path: Path) 
 # --- when claude drops what it has summarised --------------------------------------------------
 
 
-def test_a_compaction_is_reported_and_the_rest_of_the_news_is_left_alone(tmp_path: Path) -> None:
+def test_a_compaction_is_reported_and_the_rest_of_the_news_is_left_alone(
+    tmp_path: Path,
+) -> None:
     """Claude summarises what came before and drops it, and says so with a system message.
 
     Nothing about what was summarised travels: that it happened, and where in the thread, is
@@ -1785,7 +2396,9 @@ def test_a_compaction_is_reported_and_the_rest_of_the_news_is_left_alone(tmp_pat
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
@@ -1840,12 +2453,16 @@ async def _raise_an_ask(
     return asking
 
 
-def test_an_ask_waits_and_the_answer_is_the_one_that_was_offered(tmp_path: Path) -> None:
+def test_an_ask_waits_and_the_answer_is_the_one_that_was_offered(
+    tmp_path: Path,
+) -> None:
     """The options are this adapter's three, and an allow goes back with the call's input."""
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         await _write(child)
         asking = await _raise_an_ask(clients[0], sink)
 
@@ -1874,12 +2491,16 @@ def test_always_allow_carries_the_scope_the_sdk_suggested(tmp_path: Path) -> Non
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         await _write(child)
         suggested = PermissionUpdate(type="addRules")
         asking = await _raise_an_ask(clients[0], sink, suggestions=[suggested])
 
-        await child.answer_permission_ask(sink.asks[0].ask_id, ALWAYS_ALLOW_THIS_SESSION_OPTION_ID)
+        await child.answer_permission_ask(
+            sink.asks[0].ask_id, ALWAYS_ALLOW_THIS_SESSION_OPTION_ID
+        )
         answer = await asking
         assert isinstance(answer, PermissionResultAllow)
         assert answer.updated_permissions == [suggested]
@@ -1888,14 +2509,20 @@ def test_always_allow_carries_the_scope_the_sdk_suggested(tmp_path: Path) -> Non
     _run(exercise)
 
 
-def test_always_allow_with_nothing_suggested_is_an_allow_all_the_same(tmp_path: Path) -> None:
+def test_always_allow_with_nothing_suggested_is_an_allow_all_the_same(
+    tmp_path: Path,
+) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         await _write(child)
         asking = await _raise_an_ask(clients[0], sink)
 
-        await child.answer_permission_ask(sink.asks[0].ask_id, ALWAYS_ALLOW_THIS_SESSION_OPTION_ID)
+        await child.answer_permission_ask(
+            sink.asks[0].ask_id, ALWAYS_ALLOW_THIS_SESSION_OPTION_ID
+        )
         answer = await asking
         assert isinstance(answer, PermissionResultAllow)
         assert answer.updated_permissions is None
@@ -1907,7 +2534,9 @@ def test_always_allow_with_nothing_suggested_is_an_allow_all_the_same(tmp_path: 
 def test_a_declined_ask_is_a_denial_the_agent_can_read(tmp_path: Path) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         await _write(child)
         asking = await _raise_an_ask(clients[0], sink)
 
@@ -1925,7 +2554,9 @@ def test_an_answer_that_was_never_offered_does_not_land(tmp_path: Path) -> None:
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         await _write(child)
         asking = await _raise_an_ask(clients[0], sink)
 
@@ -1943,7 +2574,9 @@ def test_an_answer_that_was_never_offered_does_not_land(tmp_path: Path) -> None:
 def test_an_answer_to_an_unknown_ask_does_not_land(tmp_path: Path) -> None:
     async def exercise() -> None:
         child, _, _ = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         await _write(child)
         with pytest.raises(PermissionAnswerWriteFailed):
             await child.answer_permission_ask("no-such-ask", APPROVE_ONCE_OPTION_ID)
@@ -1957,7 +2590,9 @@ def test_an_ask_dies_with_its_turn_and_the_sdk_is_told(tmp_path: Path) -> None:
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
@@ -1971,16 +2606,22 @@ def test_an_ask_dies_with_its_turn_and_the_sdk_is_told(tmp_path: Path) -> None:
         assert answer.message != "User declined tool execution."
         # The core is told nothing about it: an ask that died carries no answer.
         with pytest.raises(PermissionAnswerWriteFailed):
-            await child.answer_permission_ask(sink.asks[0].ask_id, APPROVE_ONCE_OPTION_ID)
+            await child.answer_permission_ask(
+                sink.asks[0].ask_id, APPROVE_ONCE_OPTION_ID
+            )
         await child.stop()
 
     _run(exercise)
 
 
-def test_stopping_the_child_settles_its_asks_and_closes_the_client(tmp_path: Path) -> None:
+def test_stopping_the_child_settles_its_asks_and_closes_the_client(
+    tmp_path: Path,
+) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         await _write(child)
         asking = await _raise_an_ask(clients[0], sink)
 
@@ -2033,10 +2674,16 @@ async def _raise_a_question(
     asked = tool_input if tool_input is not None else _ask_user_question_input()
 
     async def ask() -> PermissionResult:
-        return await callback("AskUserQuestion", asked, ToolPermissionContext(tool_use_id="tool-q"))
+        return await callback(
+            "AskUserQuestion", asked, ToolPermissionContext(tool_use_id="tool-q")
+        )
 
     asking = asyncio.create_task(ask())
-    while not sink.user_input_requests and not sink.user_input_failures and not asking.done():
+    while (
+        not sink.user_input_requests
+        and not sink.user_input_failures
+        and not asking.done()
+    ):
         await asyncio.sleep(0)
     return asking
 
@@ -2067,10 +2714,14 @@ def _three_question_input() -> dict[str, Any]:
     }
 
 
-def test_three_questions_are_one_distinct_ordered_user_input_request(tmp_path: Path) -> None:
+def test_three_questions_are_one_distinct_ordered_user_input_request(
+    tmp_path: Path,
+) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         await _write(child)
         asking = await _raise_a_question(
             clients[0], sink, tool_input=_three_question_input()
@@ -2112,7 +2763,9 @@ def test_three_questions_are_one_distinct_ordered_user_input_request(tmp_path: P
 def test_an_incomplete_question_answer_map_does_not_land(tmp_path: Path) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         await _write(child)
         asking = await _raise_a_question(clients[0], sink)
         request = sink.user_input_requests[0]
@@ -2129,10 +2782,14 @@ def test_an_incomplete_question_answer_map_does_not_land(tmp_path: Path) -> None
     _run(exercise)
 
 
-def test_a_question_that_dies_with_its_turn_is_settled_as_denied(tmp_path: Path) -> None:
+def test_a_question_that_dies_with_its_turn_is_settled_as_denied(
+    tmp_path: Path,
+) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
@@ -2145,16 +2802,20 @@ def test_a_question_that_dies_with_its_turn_is_settled_as_denied(tmp_path: Path)
     _run(exercise)
 
 
-def test_cancelling_settles_the_question_without_waiting_for_a_terminal_result(
+def test_cancelling_settles_the_question_and_waits_for_the_terminal_result(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         await _write(child)
         asking = await _raise_a_question(clients[0], sink)
 
-        await child.cancel_running_turn()
+        await _cancel_with_result(
+            child, clients[0], _result(terminal_reason="aborted_streaming")
+        )
 
         assert isinstance(await asking, PermissionResultDeny)
         assert clients[0].interrupts == 1
@@ -2188,7 +2849,9 @@ def test_malformed_questions_fail_visibly_and_never_become_permissions(
 ) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         await _write(child)
         asking = await _raise_a_question(clients[0], sink, tool_input=tool_input)
         answer = await asking
@@ -2205,7 +2868,9 @@ def test_ask_user_question_tool_lifecycle_is_not_rendered_beside_the_question(
 ) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
         session_id = clients[0].options.session_id
         assert session_id is not None
         await _write(child)
@@ -2238,7 +2903,9 @@ def test_ask_user_question_tool_lifecycle_is_not_rendered_beside_the_question(
 
 
 @real_claude_only
-def test_real_claude_holds_a_conversation_across_a_stop_and_a_resume(tmp_path: Path) -> None:
+def test_real_claude_holds_a_conversation_across_a_stop_and_a_resume(
+    tmp_path: Path,
+) -> None:
     """A codeword given before the child was stopped comes back after it is resumed.
 
     This is the whole of the durable-session claim: the cursor the adapter minted names a
@@ -2277,11 +2944,62 @@ def test_real_claude_refuses_a_session_it_does_not_have(tmp_path: Path) -> None:
         child, _, _ = _bench_on_real_claude(resolved_start)
         with pytest.raises(SessionLoadFailed) as would_not_load:
             await child.start(
-                resolved_start, vendor_session_cursor="00000000-0000-4000-8000-000000000000"
+                resolved_start,
+                vendor_session_cursor="00000000-0000-4000-8000-000000000000",
             )
         assert "No conversation found" in str(would_not_load.value)
 
     _run(exercise, seconds=120.0)
+
+
+@real_claude_only
+def test_real_claude_accepts_a_uuid_steer_and_keeps_one_panels_turn(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        resolved_start = _start_request(workspace_folder=tmp_path, model=CLAUDE_MODEL)
+        child, sink, _ = _bench_on_real_claude(resolved_start)
+        await child.start(resolved_start, vendor_session_cursor=None)
+        await _write(
+            child,
+            "Run one foreground Bash call: `sleep 4; echo first`. "
+            "After it returns, reply with exactly ORIGINAL-DONE.",
+        )
+        while not sink.tools_started:
+            await asyncio.sleep(0.1)
+
+        outcome = await child.steer(
+            TURN,
+            text_message_content(
+                "After the current command, include PANELS-FIRST-STEER in your reply."
+            ),
+            sender_label="owner",
+        )
+        assert isinstance(outcome, BackendSteerAccepted)
+        second_outcome = await child.steer(
+            TURN,
+            text_message_content(
+                "Also include PANELS-SECOND-STEER in your final reply."
+            ),
+            sender_label="owner",
+        )
+        assert isinstance(second_outcome, BackendSteerAccepted)
+        await _until_the_turn_ends(sink)
+        assert len(sink.endings) == 1
+        assert sink.endings[0]["turn"] == TURN
+        assert sink.token_usage
+        assert all(report["turn"] == TURN for report in sink.token_usage)
+        assert all(token == TURN for token, _ in sink.message_texts)
+        assert sink.tools_finished
+        assert all(tool["turn"] == TURN for tool in sink.tools_started)
+        assert all(tool["turn"] == TURN for tool in sink.tools_finished)
+        assert sink.calls_in_order[-1] == "turn_ended"
+        said = " ".join(text for _, text in sink.message_texts)
+        assert "PANELS-FIRST-STEER" in said
+        assert "PANELS-SECOND-STEER" in said
+        await child.stop()
+
+    _run(exercise, seconds=300.0)
 
 
 @real_claude_only
@@ -2290,19 +3008,44 @@ def test_real_claude_stops_a_running_turn_when_it_is_cancelled(tmp_path: Path) -
         resolved_start = _start_request(workspace_folder=tmp_path, model=CLAUDE_MODEL)
         child, sink, _ = _bench_on_real_claude(resolved_start)
         await child.start(resolved_start, vendor_session_cursor=None)
-        await _write(child, "Count slowly from 1 to 500, one number per line.")
-        while not sink.deltas:
+        await _write(
+            child,
+            "Run one foreground Bash command: `sleep 60; echo finished`. "
+            "After it returns, reply with exactly FINISHED.",
+        )
+        while not sink.tools_started:
             await asyncio.sleep(0.1)
+        steer_outcome = await child.steer(
+            TURN,
+            text_message_content(
+                "After the command, reply with exactly MUST-NOT-RUN-AFTER-STOP."
+            ),
+            sender_label="owner",
+        )
+        assert isinstance(steer_outcome, BackendSteerAccepted)
         await child.cancel_running_turn()
-        await _until_the_turn_ends(sink)
         assert sink.endings[-1]["ending"] is ConversationTurnEnding.interrupted
+
+        await _write(child, "Reply with exactly RESUMED-AFTER-STOP.", TURN_2)
+        await _until_the_turn_ends(sink)
+        resumed_ending = sink.endings[-1]
+        assert resumed_ending["turn"] == TURN_2
+        assert resumed_ending["ending"] is ConversationTurnEnding.completed
+        assert "RESUMED-AFTER-STOP" in " ".join(
+            text for token, text in sink.message_texts if token == TURN_2
+        )
+        assert "MUST-NOT-RUN-AFTER-STOP" not in " ".join(
+            text for _, text in sink.message_texts
+        )
         await child.stop()
 
     _run(exercise, seconds=300.0)
 
 
 @real_claude_only
-def test_real_claude_keeps_the_conversation_across_a_model_change(tmp_path: Path) -> None:
+def test_real_claude_keeps_the_conversation_across_a_model_change(
+    tmp_path: Path,
+) -> None:
     """The rebind is the core's, and this is the half the adapter owes it: the same session
     comes back up on the new model with the conversation intact."""
 
@@ -2329,7 +3072,9 @@ def test_real_claude_keeps_the_conversation_across_a_model_change(tmp_path: Path
             )
         await child.stop()
 
-        on_the_new_model = _start_request(workspace_folder=tmp_path, model=CLAUDE_OTHER_MODEL)
+        on_the_new_model = _start_request(
+            workspace_folder=tmp_path, model=CLAUDE_OTHER_MODEL
+        )
         rebound, rebound_sink, _ = _bench_on_real_claude(on_the_new_model)
         await rebound.start(on_the_new_model, vendor_session_cursor=cursor)
         await rebound.write_prompt(
@@ -2370,16 +3115,20 @@ def test_real_claude_is_told_the_answer_the_owner_chose(tmp_path: Path) -> None:
         )
 
         async def until_asked() -> None:
-            while not sink.asks:
+            while not sink.user_input_requests:
                 await asyncio.sleep(0.1)
 
         await asyncio.wait_for(until_asked(), 120.0)
-        ask = sink.asks[0]
-        # Claude asked a question, so the ask carries the question's own choices.
-        assert not any(option.option_kind.startswith(("allow", "reject")) for option in ask.options)
-        blue = next(option for option in ask.options if "blue" in option.label.lower())
+        request = sink.user_input_requests[0]
+        question = request.questions[0]
+        blue = next(
+            option for option in question.options if "blue" in option.label.lower()
+        )
 
-        await child.answer_permission_ask(ask.ask_id, blue.option_id)
+        await child.answer_user_input(
+            request.request_id,
+            (UserInputAnswer(question.question_id, (blue.label,)),),
+        )
         await _until_the_turn_ends(sink)
         assert sink.endings[-1]["ending"] is ConversationTurnEnding.completed
         said = " ".join(text for _, text in sink.message_texts).lower()
@@ -2398,9 +3147,15 @@ def _bench_on_real_claude(
     factory = ClaudeAgentSdkBackendChildFactory(
         ClaudeAgentSdkChildLaunch(claude_executable=Path(CLAUDE_EXECUTABLE))
     )
-    return factory(
-        resolved_start=resolved_start, event_sink=sink, message_files=_message_files()
-    ), sink, None
+    return (
+        factory(
+            resolved_start=resolved_start,
+            event_sink=sink,
+            message_files=_message_files(),
+        ),
+        sink,
+        None,
+    )
 
 
 async def _until_the_turn_ends(sink: _RecordingSink, *, seconds: float = 180.0) -> None:

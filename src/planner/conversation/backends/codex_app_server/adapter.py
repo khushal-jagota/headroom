@@ -55,12 +55,18 @@ from planner.conversation.backends.codex_app_server.client import (
     CodexAppServerClient,
     CodexAppServerError,
     CodexChildWouldNotStart,
+    CodexRequestRejected,
+    CodexWireFailed,
     child_environment,
 )
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendSteerAccepted,
+    BackendSteerOutcome,
+    BackendSteerRefused,
+    BackendSteerUncertain,
     BackendUserInputRequest,
     PermissionAnswerWriteFailed,
     PromptWriteFailed,
@@ -73,6 +79,7 @@ from planner.conversation.contracts import (
     ComposerCatalogEntryKind,
     ConversationAccess,
     PromptDeliveryMode,
+    PromptDeliveryRefusalReason,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
@@ -272,7 +279,11 @@ class _TurnInFlight:
 
     token: TurnToken
     started: asyncio.Future[str]
+    kind: Literal["ordinary", "review", "compact", "goal"] = "ordinary"
+    # Items and completion for an inline review use the parent id from review/start.
     turn_id: str | None = None
+    # Interrupt switches to the nested reviewer id after turn/started announces it.
+    interrupt_turn_id: str | None = None
     agent_message_texts: dict[str, list[str]] = field(default_factory=dict)
     parked_asks: dict[str, _ParkedPermissionAsk] = field(default_factory=dict)
     parked_user_inputs: dict[str, _ParkedUserInput] = field(default_factory=dict)
@@ -391,6 +402,15 @@ class CodexAppServerBackendChild:
         native_command = (
             invocation is not None and invocation.kind is ComposerCatalogEntryKind.command
         )
+        if native_command:
+            assert invocation is not None
+            turn.kind = (
+                "compact"
+                if invocation.name == "compact"
+                else "goal"
+                if invocation.name.startswith("goal_")
+                else "review"
+            )
         try:
             if native_command:
                 assert invocation is not None
@@ -417,16 +437,65 @@ class CodexAppServerBackendChild:
             self._model = model
             self._reasoning_effort = reasoning_effort
 
-    async def steer(self, content: MessageContent, *, sender_label: str) -> None:
-        """Never called: codex is one of the backends the contract says cannot steer.
+    async def steer(
+        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+    ) -> BackendSteerOutcome:
+        """Ask Codex to admit this content to the exact captured ordinary turn."""
+        del sender_label
+        turn = self._turn
+        if turn is None:
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.no_running_turn_to_steer_into
+            )
+        if turn.token != turn_token:
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.running_turn_changed_before_steer
+            )
+        if turn.kind != "ordinary":
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.running_turn_cannot_accept_steer
+            )
+        if turn.turn_id is None:
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.no_running_turn_to_steer_into
+            )
 
-        Codex's app-server does have a ``turn/steer`` method. It is not used, because
-        whether a backend can take text into a running turn is stated once, in the
-        conversation contract, and the core refuses a steer aimed at codex before any child
-        is touched. Changing that is a change to the contract, not to this adapter.
-        """
-        del content, sender_label
-        raise PromptWriteFailed("codex does not take text into a turn that is already running")
+        captured_native_turn_id = turn.turn_id
+        try:
+            thread_id = self._bound_thread()
+        except PromptWriteFailed:
+            return BackendSteerRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
+        try:
+            parameters = bindings.TurnSteerParams(
+                threadId=thread_id,
+                expectedTurnId=captured_native_turn_id,
+                input=self._turn_input(content),
+            )
+        except (PromptWriteFailed, ValidationError):
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.message_cannot_be_steered
+            )
+
+        try:
+            result = await self._client.request(
+                "turn/steer",
+                _wire(parameters),
+                poison_wire_on_timeout=False,
+            )
+        except CodexRequestRejected as rejected:
+            return BackendSteerRefused(_steer_rejection_reason(rejected))
+        except CodexWireFailed as failed:
+            if failed.request_may_have_been_written:
+                return BackendSteerUncertain()
+            return BackendSteerRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
+
+        try:
+            response = bindings.TurnSteerResponse.model_validate(result)
+        except ValidationError:
+            return BackendSteerUncertain()
+        if response.turnId != captured_native_turn_id:
+            return BackendSteerUncertain()
+        return BackendSteerAccepted()
 
     async def cancel_running_turn(self) -> None:
         """Stop the running turn, and return once codex says it has stopped.
@@ -443,10 +512,15 @@ class CodexAppServerBackendChild:
         bound this returns anyway, which is no worse than not having waited at all.
         """
         turn = self._turn
-        if turn is None or turn.turn_id is None:
+        if turn is None:
+            return
+        interrupt_turn_id = turn.interrupt_turn_id or turn.turn_id
+        if interrupt_turn_id is None:
             return
         thread_id = self._bound_thread()
-        parameters = bindings.TurnInterruptParams(threadId=thread_id, turnId=turn.turn_id)
+        parameters = bindings.TurnInterruptParams(
+            threadId=thread_id, turnId=interrupt_turn_id
+        )
         try:
             await self._client.request("turn/interrupt", _wire(parameters))
         except CodexAppServerError as did_not_reach:
@@ -935,8 +1009,8 @@ class CodexAppServerBackendChild:
 
     async def _start_review(
         self, parameters: bindings.ReviewStartParams, turn: _TurnInFlight
-    ) -> str:
-        """Accept review/start on either acknowledgement Codex documents."""
+    ) -> str | None:
+        """Keep the parent review id and the nested interrupt id distinct."""
         try:
             answer = await self._client.begin_request("review/start", _wire(parameters))
         except CodexAppServerError as did_not_reach:
@@ -947,13 +1021,36 @@ class CodexAppServerBackendChild:
         )
         await asyncio.wait({accepted, turn.started}, return_when=asyncio.FIRST_COMPLETED)
         if turn.started.done() and not turn.started.cancelled():
-            self._forget(accepted, "review/start")
-            return turn.started.result()
+            response_reader = asyncio.create_task(
+                self._finish_review_start_response(turn, accepted),
+                name=f"planner.conversation.codex.review-response.{turn.token.conversation_id}",
+            )
+            self._forget(response_reader, "review/start response identity")
+            return turn.turn_id
         try:
             result = await accepted
-            return bindings.ReviewStartResponse.model_validate(result).turn.id
+            response_turn_id = bindings.ReviewStartResponse.model_validate(result).turn.id
         except (CodexAppServerError, ValidationError) as would_not_start:
             raise PromptWriteFailed(str(would_not_start)) from would_not_start
+        self._bind_review_parent_id(turn, response_turn_id)
+        return response_turn_id
+
+    async def _finish_review_start_response(
+        self, turn: _TurnInFlight, accepted: asyncio.Task[Any]
+    ) -> None:
+        """Read a review response that arrived after its nested start notification."""
+        result = await accepted
+        response_turn_id = bindings.ReviewStartResponse.model_validate(result).turn.id
+        self._bind_review_parent_id(turn, response_turn_id)
+
+    def _bind_review_parent_id(self, turn: _TurnInFlight, turn_id: str) -> None:
+        if turn.turn_id is not None and turn.turn_id != turn_id:
+            raise CodexAppServerError(
+                "review/start returned a turn id that did not match its lifecycle"
+            )
+        turn.turn_id = turn_id
+        if turn.interrupt_turn_id is None:
+            turn.interrupt_turn_id = turn_id
 
     async def _start_the_turn(
         self, parameters: bindings.TurnStartParams, turn: _TurnInFlight
@@ -1003,9 +1100,19 @@ class CodexAppServerBackendChild:
         nothing left for it to change.
         """
         turn = self._turn
-        if turn is None or turn.turn_id != turn_id:
+        if turn is None:
             return None
-        return turn
+        if turn.turn_id == turn_id:
+            return turn
+        # Inline review items and completion use the parent id. If they beat the delayed
+        # review/start response, they establish that id without replacing the nested id
+        # that turn/started supplied for interruption.
+        if turn.kind == "review" and turn.turn_id is None and turn.interrupt_turn_id != turn_id:
+            turn.turn_id = turn_id
+            if turn.interrupt_turn_id is None:
+                turn.interrupt_turn_id = turn_id
+            return turn
+        return None
 
     async def _end_turn(
         self,
@@ -1124,9 +1231,15 @@ class CodexAppServerBackendChild:
 
     def _on_turn_started(self, notification: bindings.TurnStartedNotification) -> None:
         turn = self._turn
-        if turn is None or turn.turn_id is not None:
+        if turn is None:
             return
-        turn.turn_id = notification.turn.id
+        if turn.kind == "review":
+            turn.interrupt_turn_id = notification.turn.id
+        elif turn.turn_id is None:
+            turn.turn_id = notification.turn.id
+            turn.interrupt_turn_id = notification.turn.id
+        else:
+            return
         if not turn.started.done():
             turn.started.set_result(notification.turn.id)
 
@@ -1813,3 +1926,21 @@ def _wire(parameters: BaseModel) -> dict[str, Any]:
         mode="json", exclude_none=True, exclude_unset=True, by_alias=True
     )
     return dumped
+
+
+def _steer_rejection_reason(
+    rejected: CodexRequestRejected,
+) -> PromptDeliveryRefusalReason:
+    """Map the native non-admission evidence without parsing a replacement target."""
+    if rejected.code == -32600 and rejected.message == "no active turn to steer":
+        return PromptDeliveryRefusalReason.no_running_turn_to_steer_into
+    if rejected.code == -32600 and rejected.message.startswith("expected active turn id `"):
+        return PromptDeliveryRefusalReason.running_turn_changed_before_steer
+    data = rejected.data
+    if isinstance(data, dict):
+        error_info = data.get("codexErrorInfo")
+        if isinstance(error_info, dict) and isinstance(
+            error_info.get("activeTurnNotSteerable"), dict
+        ):
+            return PromptDeliveryRefusalReason.running_turn_cannot_accept_steer
+    return PromptDeliveryRefusalReason.backend_rejected_steer

@@ -244,12 +244,15 @@ with sync_playwright() as playwright:
 
     assert page.locator('[data-pagination="tickets"] [data-page-range]').inner_text() == "1–30 of 31"
     assert not any("sprint-item-summaries" in request["path"] for request in page.evaluate("window.__requests()"))
-    page.locator('[data-backlog-outcomes] > summary').click()
-    page.locator('[data-outcome-picker]').wait_for()
-    page.wait_for_function("() => window.__requests().some(request => request.path.includes('sprint-item-summaries'))")
+    assert page.locator('[data-backlog-outcomes], [data-outcome-picker]').count() == 0
+    assert page.locator('[data-backlog-tickets] > .section-heading').count() == 0
     first_ticket = page.locator('[data-ticket-id="ticket_0"]')
     assert first_ticket.get_attribute("href") == "#/workspace/ticket_0"
-    assert "A bounded recap for ticket_0" in first_ticket.inner_text()
+    assert first_ticket.locator('.list-row-title').inner_text() == 'Ticket ticket_0'
+    assert "A bounded recap for ticket_0" not in first_ticket.inner_text()
+    assert first_ticket.locator('.chip').count() == 1
+    assert first_ticket.locator('.chip--project').count() == 1
+    assert first_ticket.locator('.chip--project').inner_text() == 'Vylo'
 
     # Each bounded list moves by its own page facts.
     page.locator('[data-pagination="tickets"] button', has_text="Next").click()
@@ -257,8 +260,6 @@ with sync_playwright() as playwright:
     assert page.locator('[data-pagination="tickets"] [data-page-range]').inner_text() == "31–31 of 31"
     page.locator('[data-pagination="tickets"] button', has_text="Previous").click()
     page.locator('[data-ticket-id="ticket_0"]').wait_for()
-
-    page.locator('[data-backlog-outcomes] > summary').click()
 
     # The dormant compose writes an ordinary explicitly unscheduled Ticket through
     # the real mutation/query invalidation path.
@@ -290,6 +291,20 @@ with sync_playwright() as playwright:
         "sprint_id": None,
         "sprint_item_id": None,
     }
+    assert not any("sprint-item-summaries" in request["path"] for request in page.evaluate("window.__requests()"))
+    page.locator('[data-create="ticket"] > summary').click()
+    def assert_backlog_layout(width):
+        page.set_viewport_size({"width": width, "height": 900})
+        page.wait_for_timeout(50)
+        assert page.evaluate("""() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth + 1""")
+        row = page.locator('[data-ticket-id="ticket_0"]')
+        title_box = row.locator('.list-row-title').bounding_box()
+        chip_box = row.locator('.chip--project').bounding_box()
+        assert title_box and chip_box
+        assert title_box['x'] + title_box['width'] <= chip_box['x'] + 1
+    assert_backlog_layout(1280)
+    assert_backlog_layout(390)
+    page.set_viewport_size({"width": 1280, "height": 900})
 
     # A canonical direct Item address survives the empty board response and mounts
     # the real Item workspace, even though the board rail has no row for it.

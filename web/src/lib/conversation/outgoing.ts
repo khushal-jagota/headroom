@@ -180,6 +180,7 @@ export function senderMessageIdsInTheRecord(
     if (
       event.kind === "prompt"
       || event.kind === "prompt_delivery_refused"
+      || event.kind === "prompt_delivery_uncertain"
       || event.kind === "prompt_discarded"
     ) {
       const messageId = event.payload.sender_message_id;

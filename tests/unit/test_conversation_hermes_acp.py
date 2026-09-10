@@ -26,6 +26,7 @@ import pytest
 from tests.support.conversation_scripted_acp_agent import (
     ARM_REJECT_LOAD_SESSION,
     ARM_REJECT_NEW_SESSION,
+    ARM_REPORT_CURRENT_MODEL,
     ScriptedAcpAgentControl,
     scripted_acp_agent_launch,
 )
@@ -37,6 +38,9 @@ from tests.support.conversation_system_under_test import (
 from planner.conversation.backends import hermes_acp
 from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
+    BackendSteerAccepted,
+    BackendSteerRefused,
+    BackendSteerUncertain,
     BackendUserInputRequest,
     PermissionAnswerWriteFailed,
     PromptWriteFailed,
@@ -55,8 +59,11 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
+    HeldPromptPromotionMode,
+    PromptDeliveryInjected,
     PromptDeliveryMode,
     PromptDeliveryQueued,
+    PromptDeliveryRefusalReason,
     PromptDeliveryStarted,
     ResolvedConversationStart,
 )
@@ -195,6 +202,201 @@ def test_the_role_text_rides_the_first_prompt_and_no_other(tmp_path: Path) -> No
                 f"{ROLE_TEXT}\n\nfirst",
                 "second",
             ]
+
+    _run(exercise)
+
+
+# --- correlated steering ---------------------------------------------------------------
+
+
+def test_text_is_admitted_only_to_the_exact_running_turn(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, _):
+            await _start_the_child_and_a_turn(child, tmp_path)
+            token = TurnToken("c", 1)
+
+            assert await child.steer(
+                token, text_message_content("change the result"), sender_label="captain"
+            ) == BackendSteerAccepted()
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert report["steer_writes"] == [
+                {
+                    "sessionId": "scripted-session-1",
+                    "turnToken": {"conversationId": "c", "turnNumber": 1},
+                    "text": "change the result",
+                    "senderLabel": "captain",
+                }
+            ]
+            assert len(report["prompt_writes"]) == 1
+
+            await control.send({"command": "complete_turn"})
+
+        async with _scripted_child(tmp_path) as (child, control, _):
+            await _start_the_child_and_a_turn(child, tmp_path)
+            outcome = await child.steer(
+                TurnToken("c", 2), text_message_content("wrong turn"), sender_label="captain"
+            )
+            assert outcome == BackendSteerRefused(
+                PromptDeliveryRefusalReason.running_turn_changed_before_steer
+            )
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert report["steer_attempts"] == []
+
+    _run(exercise)
+
+
+def test_direct_and_held_text_use_the_same_correlated_steer_path(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        async with open_conversation_system_under_test() as subject:
+            await subject.system.start_conversation(
+                ConversationStartRequest(
+                    conversation_id="c",
+                    model="a-model",
+                    backend_key=ConversationBackendKey.hermes,
+                    workspace_folder=tmp_path,
+                )
+            )
+            await subject.system.send(
+                "c", text_message_content("incumbent"), sender_label="owner"
+            )
+            assert await subject.system.send(
+                "c",
+                text_message_content("direct guidance"),
+                sender_label="captain",
+                mode=PromptDeliveryMode.steer,
+            ) == PromptDeliveryInjected()
+
+            await subject.system.send(
+                "c", text_message_content("held guidance"), sender_label="captain"
+            )
+            held = (await subject.system.held_prompts("c"))[0]
+            assert await subject.system.promote_held_prompt(
+                "c", held.held_prompt_id, HeldPromptPromotionMode.steer
+            ) == PromptDeliveryInjected()
+
+            account = await subject.agent_account("c")
+            assert [write["text"] for write in account["steer_writes"]] == [
+                "direct guidance",
+                "held guidance",
+            ]
+            assert [write["turnToken"] for write in account["steer_writes"]] == [
+                {"conversationId": "c", "turnNumber": 1},
+                {"conversationId": "c", "turnNumber": 1},
+            ]
+
+    _run(exercise)
+
+
+def test_a_structured_rejection_and_an_uncorrelated_answer_stay_distinct(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, _):
+            await _start_the_child_and_a_turn(child, tmp_path)
+            await control.send({"command": "reject_steer"})
+            assert await child.steer(
+                TurnToken("c", 1), text_message_content("reject this"), sender_label="owner"
+            ) == BackendSteerRefused(PromptDeliveryRefusalReason.backend_rejected_steer)
+
+        async with _scripted_child(tmp_path) as (child, control, _):
+            await _start_the_child_and_a_turn(child, tmp_path)
+            await control.send({"command": "return_malformed_steer_response"})
+            assert await child.steer(
+                TurnToken("c", 1), text_message_content("answer badly"), sender_label="owner"
+            ) == BackendSteerUncertain()
+
+    _run(exercise)
+
+
+def test_rich_steering_is_refused_before_the_extension_wire(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await _start_the_child_and_a_turn(child, tmp_path)
+            assert sink.message_files is not None
+            kept = await sink.message_files.keep("c", b"image", media_type="image/png")
+            outcome = await child.steer(
+                TurnToken("c", 1),
+                (
+                    MessageText(text="look"),
+                    MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
+                ),
+                sender_label="owner",
+            )
+            assert outcome == BackendSteerRefused(
+                PromptDeliveryRefusalReason.message_cannot_be_steered
+            )
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert report["steer_attempts"] == []
+
+    _run(exercise)
+
+
+def test_completion_and_cancellation_prevent_later_admission(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await _start_the_child_and_a_turn(child, tmp_path)
+            token = TurnToken("c", 1)
+            await control.send({"command": "complete_turn"})
+            await sink.wait_for_the_turn_to_end()
+            assert await child.steer(
+                token, text_message_content("too late"), sender_label="owner"
+            ) == BackendSteerRefused(
+                PromptDeliveryRefusalReason.running_turn_changed_before_steer
+            )
+
+        async with _scripted_child(tmp_path) as (child, control, _):
+            await _start_the_child_and_a_turn(child, tmp_path)
+            token = TurnToken("c", 1)
+            await child.cancel_running_turn()
+            assert await child.steer(
+                token, text_message_content("after stop"), sender_label="owner"
+            ) == BackendSteerRefused(
+                PromptDeliveryRefusalReason.running_turn_changed_before_steer
+            )
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert report["steer_writes"] == []
+
+    _run(exercise)
+
+
+def test_exact_current_model_metadata_avoids_only_the_redundant_legacy_write(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, arms=(ARM_REPORT_CURRENT_MODEL,)) as (
+            child,
+            control,
+            _,
+        ):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert report["model_writes"] == []
+
+            await child._apply_model("different-model")
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert report["model_writes"] == ["different-model"]
+
+        async with _scripted_child(tmp_path, arms=(ARM_REPORT_CURRENT_MODEL,)) as (
+            child,
+            control,
+            _,
+        ):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor="saved-session")
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert report["model_writes"] == []
+
+        async with _scripted_child(tmp_path) as (child, control, _):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert report["model_writes"] == ["a-model"]
 
     _run(exercise)
 
@@ -655,7 +857,11 @@ def test_an_answer_the_wire_would_not_take_leaves_the_ask_answerable(tmp_path: P
             # knows — and only then is the ask answered.
             await control.send({"command": "break_wire"})
             with pytest.raises(PromptWriteFailed):
-                await child.steer(text_message_content("are you there"), sender_label="owner")
+                await child.steer(
+                    TurnToken("c", 1),
+                    text_message_content("are you there"),
+                    sender_label="owner",
+                )
 
             with pytest.raises(PermissionAnswerWriteFailed):
                 await child.answer_permission_ask(ask_id, "allow-once")
@@ -967,7 +1173,7 @@ def _resolved_start(
 
 def _real_hermes_launch() -> AcpChildLaunch:
     return hermes_acp_child_launch(
-        hermes_executable=HERMES_EXECUTABLE,
+        hermes_python=HERMES_EXECUTABLE.with_name("python"),
         hermes_home=HERMES_HOME,
         hermes_python_source_root=HERMES_PYTHON_SOURCE_ROOT,
         panels_server_url="http://127.0.0.1:8811",

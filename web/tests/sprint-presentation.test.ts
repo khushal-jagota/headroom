@@ -64,10 +64,10 @@ describe("Sprint ticket conditions", () => {
 });
 
 describe("Outcome presentation", () => {
-  it("qualifies Ticket progress and never calls a zero-child Outcome done", () => {
-    expect(outcomeTicketProgress(item())).toBe("No Tickets");
-    expect(outcomeTicketProgress(item({ tickets: [ticket()] }))).toBe("0/1 Tickets done");
-    expect(outcomeTicketProgress(item({ tickets: [ticket({ stage: "done" }), ticket()] }))).toBe("1/2 Tickets done");
+  it("shows only the done and total counts, including an empty Outcome", () => {
+    expect(outcomeTicketProgress(item())).toBe("0/0");
+    expect(outcomeTicketProgress(item({ tickets: [ticket()] }))).toBe("0/1");
+    expect(outcomeTicketProgress(item({ tickets: [ticket({ stage: "done" }), ticket()] }))).toBe("1/2");
   });
 
   it("presents unclassified Sprint Tickets without a Sprint Item identity", () => {
@@ -83,7 +83,7 @@ describe("Outcome presentation", () => {
 
   it("excludes dropped Tickets from sections and rollups", () => {
     const value = item({ tickets: [ticket({ stage: "done" }), ticket({ id: "t_drop", stage: "dropped" })] });
-    expect(outcomeTicketProgress(value)).toBe("1/1 Tickets done");
+    expect(outcomeTicketProgress(value)).toBe("1/1");
     expect(sprintTicketSectionsForTickets(value.tickets || [], new Set())).toEqual({
       today: [],
       later: [],

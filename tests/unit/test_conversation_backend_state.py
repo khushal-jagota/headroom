@@ -87,7 +87,7 @@ def test_a_success_replaces_usage_atomically_and_a_failure_cannot_replace_it(
     assert replaced.windows == ()
 
 
-def test_a_claude_scope_becomes_the_unique_catalogue_model_id() -> None:
+def test_a_provider_scope_becomes_the_unique_catalogue_model_id() -> None:
     snapshot = BackendSnapshot(
         backend_key=ConversationBackendKey.claude,
         installed=True,
@@ -95,11 +95,11 @@ def test_a_claude_scope_becomes_the_unique_catalogue_model_id() -> None:
         version="1.0.0",
         identity=None,
         available_models=(
-            BackendModel(model_id="opus[1m]", display_name="Opus 5 (1M)"),
+            BackendModel(model_id="spark[1m]", display_name="Spark 5 (1M)"),
             BackendModel(model_id="sonnet", display_name="Sonnet 5"),
         ),
         reasoning_effort_options=(),
-        default_model_id="opus[1m]",
+        default_model_id="spark[1m]",
         default_reasoning_effort=None,
         update_advisory=None,
         diagnoses=(),
@@ -111,13 +111,13 @@ def test_a_claude_scope_becomes_the_unique_catalogue_model_id() -> None:
         windows=(
             BackendUsageWindow(
                 kind=BackendUsageWindowKind.seven_day,
-                model_scope="Opus",
+                model_scope="Spark",
                 used_percent=3,
                 resets_at=RESET,
             ),
             BackendUsageWindow(
                 kind=BackendUsageWindowKind.seven_day,
-                model_scope="unknown family",
+                model_scope="gpt-reserve",
                 used_percent=4,
                 resets_at=RESET,
             ),
@@ -126,4 +126,4 @@ def test_a_claude_scope_becomes_the_unique_catalogue_model_id() -> None:
 
     resolved = resolve_usage_model_scopes(result, snapshot)
 
-    assert [window.model_scope for window in resolved.windows] == ["opus[1m]"]
+    assert [window.model_scope for window in resolved.windows] == ["spark[1m]"]

@@ -14,10 +14,12 @@ system gives for the path it actually tried.
 
 from __future__ import annotations
 
+import os
 import shutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 
 from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChildFactory,
@@ -44,6 +46,17 @@ from planner.environments.hermes_home import (
 # How a binary is found by name. Named as a parameter so a test can compose the real
 # factories against a machine it describes rather than the one it is running on.
 type ExecutablePathResolver = Callable[[str], str | None]
+
+CLAUDE_EXECUTABLE_OVERRIDE: Final = "PLAN_CLAUDE_EXECUTABLE"
+PANELS_OWNED_CLAUDE_EXECUTABLE: Final = (
+    Path(os.environ.get("PLAN_APP_ROOT", Path(__file__).resolve().parents[3]))
+    / "agent_backends"
+    / "node_modules"
+    / "@anthropic-ai"
+    / "claude-code"
+    / "bin"
+    / "claude.exe"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +91,7 @@ def production_backend_launches(
             codex_executable=_on_path(executable_path, "codex"),
             panels_server_url=panels_server_url,
         ),
-        claude=_claude_launch(executable_path, panels_server_url),
+        claude=_claude_launch(panels_server_url),
     )
 
 
@@ -101,33 +114,28 @@ def production_backend_child_factories(
 def _hermes_launch(panels_server_url: str) -> AcpChildLaunch:
     """Hermes as today's layer resolves it: from its interpreter, not from PATH.
 
-    Hermes is a checkout with a virtualenv rather than a packaged binary, so the
-    interpreter is the thing that is configured and everything else is derived from it —
-    the executable beside it, and the source tree two levels up that the agent imports
-    itself from. The home is the one Panels already uses for hermes.
+    Hermes is a checkout with a virtualenv rather than a packaged binary. Its configured
+    interpreter runs the Panels-owned ACP extension, which imports Hermes from that same
+    environment. The source tree and home remain Hermes' normal values.
     """
     hermes_python = resolve_hermes_python()
     return hermes_acp_child_launch(
-        hermes_executable=hermes_python.with_name("hermes"),
+        hermes_python=hermes_python,
         hermes_home=resolve_planner_home(),
         hermes_python_source_root=hermes_src_root(hermes_python),
         panels_server_url=panels_server_url,
     )
 
 
-def _claude_launch(
-    executable_path: ExecutablePathResolver, panels_server_url: str
-) -> ClaudeAgentSdkChildLaunch:
-    """Claude as the CLI this machine has, when it has one.
-
-    Naming the installed CLI is what makes a conversation run on the agent the owner
-    logged in — the SDK would otherwise use the copy it ships with, which knows nothing
-    about this machine's login. When there is no CLI to name, that shipped copy is the
-    honest fallback and the backend card already says the CLI is missing.
-    """
-    found = executable_path("claude")
+def _claude_launch(panels_server_url: str) -> ClaudeAgentSdkChildLaunch:
+    """Claude as Panels' tested CLI, unless the operator names another executable."""
+    override = os.environ.get(CLAUDE_EXECUTABLE_OVERRIDE)
     return ClaudeAgentSdkChildLaunch(
-        claude_executable=None if found is None else Path(found),
+        claude_executable=(
+            Path(override).expanduser()
+            if override is not None
+            else PANELS_OWNED_CLAUDE_EXECUTABLE
+        ),
         environment_overrides=(("PLAN_SERVER_URL", panels_server_url),),
     )
 

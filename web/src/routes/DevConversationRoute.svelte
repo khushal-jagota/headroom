@@ -150,7 +150,7 @@
       conversationId={liveConversationId}
       persistenceKey={`owner:dev:${conversationId}`}
       label={`${runningBackendKey ?? newBackendKey} · ${liveConversationId ?? conversationId}`}
-      {backends}
+      bind:backends
       senderLabel={SENDER_LABEL}
       startValues={{
         backend_key: newBackendKey,
@@ -164,7 +164,7 @@
       {#snippet emptyState()}
         <NewConversationForm
           {conversationId}
-          {backends}
+          bind:backends
           bind:backendKey={newBackendKey}
           bind:model={newModel}
           bind:reasoningEffort={newReasoningEffort}

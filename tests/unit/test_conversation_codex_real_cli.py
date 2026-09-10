@@ -15,6 +15,8 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import subprocess
+import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from tempfile import mkdtemp
@@ -24,11 +26,17 @@ from tests.unit.test_conversation_codex_adapter import _RecordingSink
 
 from planner.conversation.backends.codex_app_server.adapter import (
     CodexAppServerBackendChild,
+    CodexChildLaunch,
     codex_app_server_child_launch,
 )
 from planner.conversation.backends.codex_app_server.client import (
     CodexAppServerClient,
+    CodexRequestRejected,
     child_environment,
+)
+from planner.conversation.backends.contracts import (
+    BackendSteerAccepted,
+    TurnToken,
 )
 from planner.conversation.contracts import (
     ConversationAccess,
@@ -41,7 +49,7 @@ from planner.conversation.message_content import MessageContent, text_message_co
 from planner.conversation.message_files import ConversationMessageFiles
 
 
-def _message_files() -> ConversationMessageFiles:
+def _message_files(root: Path | None = None) -> ConversationMessageFiles:
     """A file store for this exercise, under a database path of its own.
 
     Every adapter is handed one, because a message can carry a file and an adapter is
@@ -49,7 +57,9 @@ def _message_files() -> ConversationMessageFiles:
     adapter is built the way production builds it rather than with a hole where the file
     store goes.
     """
-    return ConversationMessageFiles(str(Path(mkdtemp()) / "planner.db"))
+    directory = Path(mkdtemp()) if root is None else root
+    directory.mkdir(parents=True, exist_ok=True)
+    return ConversationMessageFiles(str(directory / "planner.db"))
 
 
 REAL_CODEX_TESTS_ENVIRONMENT_NAME = "PANELS_REAL_CODEX_TESTS"
@@ -57,7 +67,7 @@ CODEX_EXECUTABLE = shutil.which("codex")
 
 # The cheapest models in the catalog this account can reach, used so that a test costs as
 # little as a test can. ``model/list`` is what says which they are.
-CHEAP_MODEL = "gpt-5.4-mini"
+CHEAP_MODEL = "gpt-5.6-luna"
 OTHER_CHEAP_MODEL = "gpt-5.3-codex-spark"
 
 real_codex_only = pytest.mark.skipif(
@@ -83,17 +93,44 @@ def _resolved_start(workspace: Path, *, model: str = CHEAP_MODEL) -> ResolvedCon
 
 
 def _real_child(
-    workspace: Path, sink: _RecordingSink, *, model: str = CHEAP_MODEL
+    workspace: Path,
+    sink: _RecordingSink,
+    *,
+    model: str = CHEAP_MODEL,
+    environment_overrides: tuple[tuple[str, str], ...] = (),
 ) -> CodexAppServerBackendChild:
     assert CODEX_EXECUTABLE is not None
+    launch = codex_app_server_child_launch(
+        codex_executable=Path(CODEX_EXECUTABLE),
+        panels_server_url="http://127.0.0.1:8811",
+    )
     return CodexAppServerBackendChild(
-        launch=codex_app_server_child_launch(
-            codex_executable=Path(CODEX_EXECUTABLE),
-            panels_server_url="http://127.0.0.1:8811",
+        launch=CodexChildLaunch(
+            argv=launch.argv,
+            environment_overrides=launch.environment_overrides + environment_overrides,
         ),
         resolved_start=_resolved_start(workspace, model=model),
         event_sink=sink,
-        message_files=_message_files(),
+        message_files=_message_files(
+            workspace.parent / "message-files" if environment_overrides else None
+        ),
+    )
+
+
+def _isolated_codex_environment(root: Path) -> tuple[tuple[str, str], ...]:
+    """Copy only login inputs into a test-owned home and isolate all runtime state."""
+    codex_home = root / "codex-home"
+    temporary_directory = root / "tmp"
+    codex_home.mkdir(parents=True)
+    temporary_directory.mkdir(parents=True)
+    source_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+    for name in ("auth.json", "config.toml"):
+        source = source_home / name
+        if source.exists():
+            shutil.copy2(source, codex_home / name)
+    return (
+        ("CODEX_HOME", str(codex_home)),
+        ("TMPDIR", str(temporary_directory)),
     )
 
 
@@ -181,6 +218,173 @@ def test_real_codex_takes_an_interrupt(tmp_path: Path) -> None:
             print("REAL CODEX interrupted mid-answer after:", said_before_the_interrupt[:120])
         finally:
             await child.stop()
+
+    _run(exercise)
+
+
+@real_codex_only
+def test_real_codex_consumes_a_guarded_steer_in_the_incumbent_turn(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        isolation_root = tmp_path / "steer-positive"
+        workspace = isolation_root / "work"
+        workspace.mkdir(parents=True)
+        overrides = _isolated_codex_environment(isolation_root)
+        nonce = f"STEER-{uuid.uuid4()}"
+        token = TurnToken(conversation_id="real-codex", turn_number=1)
+        sink = _RecordingSink()
+        child = _real_child(workspace, sink, environment_overrides=overrides)
+        try:
+            await child.start(_resolved_start(workspace), vendor_session_cursor=None)
+            sink.expect_another_turn()
+            content = text_message_content(
+                "Count from 1 to 100. Put each number on its own line with one sentence. "
+                "Use no tools and do not stop early."
+            )
+            await child.write_prompt(
+                token,
+                content,
+                sender_content=content,
+                sender_label="owner",
+                mode=PromptDeliveryMode.run_when_free,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+            await _wait_until_the_agent_is_speaking(sink)
+            steer_point = len("".join(sink.deltas))
+
+            outcome = await child.steer(
+                token,
+                text_message_content(
+                    f"Stop immediately. Reply with exactly the token {nonce} and nothing else."
+                ),
+                sender_label="owner",
+            )
+            await sink.wait_for_the_turn_to_end()
+
+            after_steer = "".join(sink.deltas)[steer_point:]
+            assert outcome == BackendSteerAccepted()
+            assert nonce in after_steer
+            assert sink.endings == [ConversationTurnEnding.completed]
+            assert set(sink.delta_tokens + sink.agent_content_tokens + sink.ending_tokens) == {
+                token
+            }
+            print("REAL CODEX guarded steer nonce:", nonce)
+        finally:
+            await child.stop()
+            shutil.rmtree(isolation_root)
+
+    _run(exercise)
+
+
+@real_codex_only
+def test_real_codex_rejects_an_ended_steer_without_consuming_its_nonce(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        isolation_root = tmp_path / "steer-negative"
+        workspace = isolation_root / "work"
+        workspace.mkdir(parents=True)
+        overrides = _isolated_codex_environment(isolation_root)
+        nonce = f"REFUSED-{uuid.uuid4()}"
+        sink = _RecordingSink()
+        child = _real_child(workspace, sink, environment_overrides=overrides)
+        try:
+            await child.start(_resolved_start(workspace), vendor_session_cursor=None)
+            content = text_message_content("Reply with exactly: incumbent-complete. No tools.")
+            token = TurnToken(conversation_id="real-codex", turn_number=1)
+            sink.expect_another_turn()
+            await child.write_prompt(
+                token,
+                content,
+                sender_content=content,
+                sender_label="owner",
+                mode=PromptDeliveryMode.run_when_free,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+            turn = child._turn
+            assert turn is not None and turn.turn_id is not None
+            native_turn_id = turn.turn_id
+            await sink.wait_for_the_turn_to_end()
+
+            with pytest.raises(CodexRequestRejected, match="no active turn to steer"):
+                await child._client.request(
+                    "turn/steer",
+                    {
+                        "threadId": child._thread_id,
+                        "expectedTurnId": native_turn_id,
+                        "input": [{"type": "text", "text": nonce}],
+                    },
+                    poison_wire_on_timeout=False,
+                )
+
+            complete_stream = "".join(sink.deltas)
+            assert sink.endings == [ConversationTurnEnding.completed]
+            assert "incumbent-complete" in complete_stream.lower()
+            assert nonce not in complete_stream
+            print("REAL CODEX rejected ended target nonce:", nonce)
+        finally:
+            await child.stop()
+            shutil.rmtree(isolation_root)
+
+    _run(exercise)
+
+
+@real_codex_only
+def test_real_codex_steer_review_interrupt_uses_its_nested_id(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        isolation_root = tmp_path / "review-cancel"
+        workspace = isolation_root / "work"
+        workspace.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
+        tracked = workspace / "review_me.py"
+        tracked.write_text("value = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "review_me.py"], cwd=workspace, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Panels Test",
+                "-c",
+                "user.email=panels-test@example.invalid",
+                "commit",
+                "-qm",
+                "baseline",
+            ],
+            cwd=workspace,
+            check=True,
+        )
+        tracked.write_text("value = 2\n", encoding="utf-8")
+        overrides = _isolated_codex_environment(isolation_root)
+        token = TurnToken(conversation_id="real-codex", turn_number=1)
+        sink = _RecordingSink()
+        child = _real_child(workspace, sink, environment_overrides=overrides)
+        try:
+            await child.start(_resolved_start(workspace), vendor_session_cursor=None)
+            content = text_message_content(
+                "/review inspect the complete change and explain every possible concern"
+            )
+            sink.expect_another_turn()
+            await child.write_prompt(
+                token,
+                content,
+                sender_content=content,
+                sender_label="owner",
+                mode=PromptDeliveryMode.run_when_free,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+            parent_id, nested_id = await _wait_for_review_ids(child)
+
+            await child.cancel_running_turn()
+
+            assert parent_id != nested_id
+            assert sink.endings == [ConversationTurnEnding.interrupted]
+            assert sink.ending_tokens == [token]
+            print("REAL CODEX review ids:", parent_id, nested_id)
+        finally:
+            await child.stop()
+            shutil.rmtree(isolation_root)
 
     _run(exercise)
 
@@ -314,6 +518,25 @@ async def _wait_until_the_agent_is_speaking(sink: _RecordingSink, *, seconds: fl
         await asyncio.sleep(0.2)
         waited += 0.2
     assert sink.deltas, "codex never started answering"
+
+
+async def _wait_for_review_ids(
+    child: CodexAppServerBackendChild, *, seconds: float = 90.0
+) -> tuple[str, str]:
+    waited = 0.0
+    while waited < seconds:
+        turn = child._turn
+        if (
+            turn is not None
+            and turn.kind == "review"
+            and turn.turn_id is not None
+            and turn.interrupt_turn_id is not None
+            and turn.turn_id != turn.interrupt_turn_id
+        ):
+            return turn.turn_id, turn.interrupt_turn_id
+        await asyncio.sleep(0.05)
+        waited += 0.05
+    raise AssertionError("Codex never exposed distinct parent and nested review ids")
 
 
 async def _turn_with_effort(

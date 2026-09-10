@@ -2,9 +2,9 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
-  import { labelize, PRIORITY_ORDER } from "../lib/ui";
+  import { PRIORITY_ORDER } from "../lib/ui";
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import type { ListPageFacts, OutcomeSummary, TicketSummary } from "../lib/types";
+  import type { ListPageFacts, TicketSummary } from "../lib/types";
   import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
@@ -15,7 +15,6 @@
   import ScreenHeader from "../components/ScreenHeader.svelte";
   import SectionHeading from "../components/SectionHeading.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
-  import OutcomePicker from "../components/OutcomePicker.svelte";
 
   const PAGE_SIZE = 30;
 
@@ -37,7 +36,6 @@
   let kickoffNote = $state("");
   let createError = $state<unknown>(null);
   let creating = $state(false);
-  let outcomesOpen = $state(false);
 
   let ticketGroups = $derived.by(() => {
     const byPriority: Record<string, TicketSummary[]> = {};
@@ -75,12 +73,6 @@
     return Math.max(0, page.offset - page.limit);
   }
 
-  function ticketTitle(ticket: TicketSummary): string {
-    return ticket.recap_preview
-      ? `${ticket.title} — ${ticket.recap_preview}`
-      : ticket.title;
-  }
-
   async function createTicket(): Promise<void> {
     if (!title.trim() || !project || !workerType) return;
     creating = true;
@@ -107,9 +99,6 @@
     }
   }
 
-  function openOutcome(outcome: OutcomeSummary): void {
-    window.location.hash = workspaceAddress({ kind: "item", id: outcome.id }).slice(1);
-  }
 </script>
 
 <section class="backlog-screen" data-screen="backlog">
@@ -144,7 +133,6 @@
       </Disclosure>
 
       <section class="groups" data-backlog-tickets>
-        <SectionHeading label="Tickets" count={tickets.data?.page.match_count || 0} />
         <ResourceState error={tickets.error} loading={tickets.isFetching} hasData={Boolean(tickets.data)} loadingText="Loading tickets...">
           {#if !(tickets.data?.tickets || []).length}
             <div class="quiet-line">No active unscheduled tickets.</div>
@@ -158,15 +146,13 @@
                   {#each ticketGroups[value] as ticket (ticket.id)}
                     <ListRow
                       variant="backlog"
-                      title={ticketTitle(ticket)}
+                      title={ticket.title}
                       href={workspaceAddress({ kind: "ticket", id: ticket.id })}
                       data-ticket-id={ticket.id}
                     >
                       {#snippet trailing()}
                         <span class="chips">
                           {#if ticket.project}<Chip variant="project" value={ticket.project} />{/if}
-                          <Chip variant="state" value={ticket.ticket_status} />
-                          <Chip value={labelize(ticket.worker_type)} />
                         </span>
                       {/snippet}
                     </ListRow>
@@ -189,11 +175,6 @@
           </div>
         {/if}
       </section>
-
-      <details class="groups backlog-outcomes" bind:open={outcomesOpen} data-backlog-outcomes>
-        <summary><SectionHeading label="Outcomes" /></summary>
-        {#if outcomesOpen}<OutcomePicker projects={projects.data?.projects || []} chooseLabel="Open" onChoose={openOutcome} />{/if}
-      </details>
     </div>
   </div>
 </section>

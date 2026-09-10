@@ -136,9 +136,9 @@ One screen per part of the system:
   board, because the Ticket resource answers for it rather than the board card.
 - **Ticket** — the whole story of one piece of work. A quiet identity eyebrow puts
   priority, effective project, Sprint Item, and Worker above a serif title. The Sprint
-  Item is a link back to that Item on the Workspace. The eyebrow states no Sprint, and
-  it does not reassign the Ticket to another Sprint or Sprint Item. Scope, takeover or
-  release, and copy actions live in the Ticket details disclosure. Direct blockers get
+  Item appears only when the Ticket has one. Project and Sprint Item are static facts.
+  The eyebrow states no Sprint and has no placement controls. The Ticket details
+  disclosure contains only the ceiling and cap selects. Direct blockers get
   their own **Blocked by** line in the masthead, and the exact backend Worker failure
   reason remains visible when one exists. The inline-editable recap is always open on a
   recessed surface, without another label.
@@ -153,33 +153,29 @@ One screen per part of the system:
   The section stays absent when no trouble was recorded.
 
   The stages and their workflow remain the Ticket's Worker type's, derived from the
-  served manifest (see below and `worker-types.md`). One collapsed Guidance editor sits
-  above the stage history. The current Stage mark speaks without a second status pill.
+  served manifest (see below and `worker-types.md`). Guidance and the archive stay off
+  this page. Review still shows Guidance with an approval. The current Stage mark speaks without a second status pill.
   Its summary adds words only where the mark would otherwise be ambiguous:
   **you're on it** for user-owned or taken-over work, with **Release**, and
   **awaiting approval** for a parked proposal. Running,
   completed, and upcoming marks need no
   extra label. Stage bodies, editing and approval behavior, and the worker conversation
-  in serif along the bottom remain in place. **Copy** still produces a plain-text block
-  for pasting anywhere. During pristine Kickoff, the approval context also shows a restrained
+  in serif along the bottom remain in place. During pristine Kickoff, the approval context also shows a restrained
   **Worker** picker whose choices come only from the backends this machine actually has —
   the same answer the conversation composer's model and effort pickers read. Changing
   it writes the stored Ticket choice but does not create a session. The first prompt attaches
   through that choice; accepting Kickoff may eagerly attach. Once Kickoff advances or the
-  Ticket has a conversation, the pill becomes read-only. Its Project, Sprint, and
-  optional Sprint Item controls edit one coherent Ticket placement. Changing Project or
-  Sprint clears an incompatible Item classification. The selectors use the shared
-  Project, Sprint, and Item resources.
+  Ticket has a conversation, the pill becomes read-only.
 - **Sprint** — one tracking overview that presents Projects and their Sprint Items,
   plus a dedicated view for each Item and a separate documents page. The overview shows
-  Item progress and presents unclassified Tickets in a view-only Other group. Other has
-  no Item identity or route. An Item view joins today's Day membership
+  Item progress as `done/total`. One collapsed **No Outcome** row follows all Projects
+  when unclassified Tickets exist. It opens their canonical Ticket links. An Item view joins today's Day membership
   to split its Tickets into on-today, off-today, and folded done work. Project priority
   orders the Project folds. The documents page presents Kickoff, Checkpoint, and Sprint
   Review. See `sprints.md`.
-- **Backlog** — active unscheduled Tickets as bounded summaries, followed by separately
-  paged unscheduled Sprint Item briefs. Both open their canonical Workspace screens.
-  Its compact form creates an ordinary explicitly unscheduled Ticket. **Ideas** keeps
+- **Backlog** — active unscheduled Tickets as bounded summaries. Each row shows only its
+  title and Project chip, and opens its canonical Workspace screen. The page does not
+  request Outcomes. Its compact form creates an ordinary explicitly unscheduled Ticket. **Ideas** keeps
   the separate loose-capture surface (see `backlog-and-ideas.md`).
 - **Chief of Staff** — the Chief is the first row in Workspace. On wide screens,
   selecting it opens the canonical Chief conversation beside the Workspace rail at
@@ -253,7 +249,13 @@ refresh shows each provider window as its remaining percentage, reset time, and
 observation time. The backend source still reports the used percentage. The shared
 ring derives the remaining value and empties counter-clockwise from the top as the
 allowance falls. One provider failure does not discard the other's new answer. Hermes
-has no usage source.
+has no usage source. Codex uses its app-server rate-limit read, so Refresh starts no
+model turn and consumes no allowance.
+
+The shared model picker offers the same Refresh action beside Reasoning. It replaces
+the picker owner's backend snapshots with that same refresh response, so model choices
+and usage rings update together. The picker stays open while it reads and reports a
+provider or transport failure in its existing feedback line.
 
 ## The two rules that shape it
 
@@ -385,7 +387,7 @@ has no usage source.
   the Ticket, so a reload, Back, and a shared link all show it. The
   `#/preview` address remains the way in from anywhere else — a shared link, a
   notification, or another screen — and it draws the same document.
-- **Editable Markdown stays one surface.** Ticket guidance, recaps, passed fields,
+- **Editable Markdown stays one surface.** Ticket recaps, passed fields,
   approval drafts, and future Markdown surfaces remain directly editable with their
   existing focus, blur/save, keyboard, paste, and Escape behavior. What is being typed
   belongs to the editor, not to the cache: a refetch that lands mid-composition never
@@ -412,10 +414,10 @@ The screens are assembled from a small kit of shared pieces rather than
 hand-rolling the same shapes per screen. Each does one job:
 
 - **Disclosure** — the one expand/collapse surface (a native details/summary with a
-  chevron): Ticket guidance and recaps, sprint phases and items, ideas with bodies, the
+  chevron): Ticket recaps, sprint phases and items, ideas with bodies, the
   Backlog Ticket form, board project sections.
 - **ListRow** — the one row shape (title on the left, metadata on the right, hover):
-  sprint tickets, Backlog Tickets and briefs, flat ideas, board cards. Renders as a
+  sprint tickets, Backlog Tickets, flat ideas, and board cards. Renders as a
   link, a button, or a plain non-interactive row.
 - **SectionHeading** — a quiet "Label · count" group heading.
 - **ScreenHeader** — a screen's title row plus an optional meta pill.

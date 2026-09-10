@@ -44,7 +44,7 @@
     askNote = null,
     current = { model: null, reasoningEffort: null },
     models = [],
-    backends = [],
+    backends = $bindable([]),
     ownSenderLabel = null,
     livenessPulse = 0,
     effortOptions = [],
@@ -52,6 +52,7 @@
     startsOnModel = null,
     startsOnReasoningEffort = null,
     heldPromptRows = [],
+    supportsSteer = false,
     fateNote = null,
     errorNote = null,
     connectionTrouble = false,
@@ -112,6 +113,7 @@
     startsOnModel?: string | null;
     startsOnReasoningEffort?: string | null;
     heldPromptRows?: readonly HeldPromptRow[];
+    supportsSteer?: boolean;
     fateNote?: string | null;
     errorNote?: string | null;
     connectionTrouble?: boolean;
@@ -355,12 +357,13 @@
       {askNote}
       {current}
       {models}
-      {backends}
+      bind:backends
       {effortOptions}
       {composerCatalog}
       {startsOnModel}
       {startsOnReasoningEffort}
       {heldPromptRows}
+      {supportsSteer}
       {fateNote}
       {errorNote}
       placeholder={composerPlaceholder}

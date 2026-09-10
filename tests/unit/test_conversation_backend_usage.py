@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+import planner.conversation.backend_usage as backend_usage
 from planner.conversation.backend_usage import (
     CLAUDE_USAGE_BETA,
     CLAUDE_USAGE_URL,
@@ -20,24 +20,28 @@ from planner.conversation.backend_usage import (
     ClaudeUsageAdapter,
     CodexUsageAdapter,
     UsageHttpResponse,
-    codex_usage_refresh_command,
-    newest_codex_rate_limit_snapshot,
+)
+from planner.conversation.backends.codex_app_server.client import (
+    CodexRequestRejected,
+    CodexWireFailed,
 )
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.snapshot import CommandOutcome
 
 NOW = datetime(2026, 7, 31, 12, 0, tzinfo=UTC)
 
 
-@dataclass
+def test_usage_outcomes_keep_the_public_wire_values() -> None:
+    assert [outcome.value for outcome in BackendUsageOutcome] == [
+        "succeeded",
+        "unavailable",
+        "unauthenticated",
+        "failed",
+    ]
+
+
 class _Machine:
-    executable: str | None = "/fixture/bin/codex"
-    outcome: CommandOutcome = CommandOutcome(0, "OK\n", "")
-    commands: list[tuple[str, ...]] = field(default_factory=list)
-    work_directories: list[Path] = field(default_factory=list)
-    work_directory_contents: list[tuple[str, ...]] = field(default_factory=list)
-    timeouts: list[float] = field(default_factory=list)
-    after_run: object | None = None
+    def __init__(self, executable: str | None = "/fixture/bin/codex") -> None:
+        self.executable = executable
 
     def executable_path(self, name: str) -> str | None:
         assert name == "codex"
@@ -57,151 +61,166 @@ class _Machine:
         del prefix
         return False
 
-    async def run(
+class _CodexClient:
+    def __init__(self, answer: object) -> None:
+        self.answer = answer
+        self.started: tuple[tuple[str, ...], Path] | None = None
+        self.requests: list[tuple[str, object, float | None]] = []
+        self.notifications: list[str] = []
+        self.events: list[str] = []
+        self.stopped = False
+
+    async def start(
         self,
-        argv: Sequence[str],
         *,
-        timeout_seconds: float,
-        environment_overrides: Mapping[str, str] | None = None,
-    ) -> CommandOutcome:
-        assert environment_overrides is None
-        self.commands.append(tuple(argv))
-        self.timeouts.append(timeout_seconds)
-        work_directory = Path(argv[argv.index("--cd") + 1])
-        self.work_directories.append(work_directory)
-        self.work_directory_contents.append(tuple(path.name for path in work_directory.iterdir()))
-        if callable(self.after_run):
-            self.after_run()
-        return self.outcome
+        argv: Sequence[str],
+        environment: Mapping[str, str],
+        working_directory: Path,
+    ) -> None:
+        assert environment
+        self.started = (tuple(argv), working_directory)
+        self.events.append("start")
 
-    async def latest_released_version(
-        self, package_name: str, *, timeout_seconds: float
-    ) -> str | None:
-        del package_name, timeout_seconds
-        return None
+    async def request(
+        self,
+        method: str,
+        params: Mapping[str, object] | None = None,
+    ) -> object:
+        self.requests.append((method, params, None))
+        self.events.append(method)
+        if isinstance(self.answer, Exception) and method == "account/rateLimits/read":
+            raise self.answer
+        return {} if method == "initialize" else self.answer
 
+    async def notify(
+        self, method: str, params: Mapping[str, object] | None = None
+    ) -> None:
+        del params
+        self.notifications.append(method)
+        self.events.append(method)
 
-def _write_codex_snapshot(
-    root: Path,
-    observed_at: datetime,
-    secondary: dict[str, object] | None = None,
-) -> None:
-    root.mkdir(parents=True, exist_ok=True)
-    event = {
-        "timestamp": observed_at.isoformat().replace("+00:00", "Z"),
-        "payload": {
-            "rate_limits": {
-                "primary": {
-                    "used_percent": 12.5,
-                    "window_minutes": 300,
-                    "resets_at": 1785502800,
-                },
-                "secondary": secondary,
-                "credits": {"has_credits": True},
-            }
-        },
-    }
-    with (root / "fixture.jsonl").open("a", encoding="utf-8") as fixture:
-        fixture.write(json.dumps(event) + "\n")
+    async def stop(self) -> None:
+        self.stopped = True
+        self.events.append("stop")
 
 
-def _write_raw_codex_event(root: Path, event: object) -> None:
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "raw.jsonl").write_text(json.dumps(event) + "\n", encoding="utf-8")
+class _NeverAnswerCodexClient(_CodexClient):
+    async def request(
+        self,
+        method: str,
+        params: Mapping[str, object] | None = None,
+    ) -> object:
+        self.requests.append((method, params, None))
+        self.events.append(method)
+        if method == "account/rateLimits/read":
+            await asyncio.Event().wait()
+        return {}
 
 
-def test_a_fresh_codex_rollout_is_read_without_running_codex(tmp_path: Path) -> None:
+def _codex_adapter(client: _CodexClient) -> CodexUsageAdapter:
+    return CodexUsageAdapter(
+        environment=_Machine(),
+        now=lambda: NOW,
+        client_factory=lambda **kwargs: client,
+    )
+
+
+def test_codex_reads_account_and_named_model_windows_without_starting_a_turn() -> None:
     async def exercise() -> None:
-        root = tmp_path / "sessions"
-        _write_codex_snapshot(root, NOW - timedelta(minutes=9))
-        machine = _Machine()
-        result = await CodexUsageAdapter(
-            environment=machine, rollout_root=root, now=lambda: NOW
-        ).refresh()
+        client = _CodexClient(
+            {
+                "accountId": "discarded-account",
+                "rateLimits": {
+                    "limitId": "codex",
+                    "primary": {
+                        "usedPercent": 12,
+                        "windowDurationMins": 300,
+                        "resetsAt": 1785502800,
+                    },
+                    "secondary": {
+                        "usedPercent": 30,
+                        "windowDurationMins": 10080,
+                        "resetsAt": 1786104000,
+                    },
+                    "credits": {"balance": "discarded"},
+                },
+                "rateLimitsByLimitId": {
+                    "codex": {"limitId": "codex"},
+                    "gpt-5.3-codex": {
+                        "limitId": "gpt-5.3-codex",
+                        "limitName": "GPT-5.3-Codex",
+                        "secondary": {
+                            "usedPercent": 7,
+                            "windowDurationMins": 10080,
+                            "resetsAt": 1786104000,
+                        },
+                    },
+                },
+                "rateLimitResetCredits": {"credits": ["discarded"]},
+            }
+        )
+
+        result = await _codex_adapter(client).refresh()
 
         assert result.outcome is BackendUsageOutcome.succeeded
+        assert result.observed_at == NOW
         assert [(window.name, window.used_percent) for window in result.windows] == [
-            ("5 hours", 12.5)
+            ("5 hours", 12.0),
+            ("7 days", 30.0),
+            ("7 days · GPT-5.3-Codex", 7.0),
         ]
-        assert machine.commands == []
+        assert client.started == (("/fixture/bin/codex", "app-server"), Path.home())
+        assert [request[0] for request in client.requests] == [
+            "initialize",
+            "account/rateLimits/read",
+        ]
+        assert client.requests[1] == ("account/rateLimits/read", {}, None)
+        assert client.notifications == ["initialized"]
+        assert client.stopped is True
+        assert client.events == [
+            "start",
+            "initialize",
+            "initialized",
+            "account/rateLimits/read",
+            "stop",
+        ]
 
     asyncio.run(exercise())
 
 
-def test_a_future_codex_rollout_is_not_accepted_as_fresh(tmp_path: Path) -> None:
+def test_codex_keeps_named_buckets_when_optional_limit_ids_are_absent() -> None:
     async def exercise() -> None:
-        root = tmp_path / "sessions"
-        _write_codex_snapshot(root, NOW + timedelta(minutes=1))
-        machine = _Machine()
+        client = _CodexClient(
+            {
+                "rateLimits": {
+                    "secondary": {
+                        "usedPercent": 30,
+                        "windowDurationMins": 10080,
+                        "resetsAt": 1786104000,
+                    }
+                },
+                "rateLimitsByLimitId": {
+                    "named-model": {
+                        "limitName": "Named Model",
+                        "primary": {
+                            "usedPercent": 7,
+                            "windowDurationMins": 300,
+                            "resetsAt": 1785502800,
+                        },
+                    }
+                },
+            }
+        )
 
-        result = await CodexUsageAdapter(
-            environment=machine, rollout_root=root, now=lambda: NOW
-        ).refresh()
+        result = await _codex_adapter(client).refresh()
 
-        assert result.outcome is BackendUsageOutcome.failed
-        assert len(machine.commands) == 1
+        assert result.outcome is BackendUsageOutcome.succeeded
+        assert [window.name for window in result.windows] == [
+            "7 days",
+            "5 hours · Named Model",
+        ]
 
     asyncio.run(exercise())
-
-
-def test_codex_refresh_command_has_the_exact_isolation_boundary() -> None:
-    command = codex_usage_refresh_command("/fixture/bin/codex", Path("/fixture/empty"))
-
-    assert command == (
-        "/fixture/bin/codex",
-        "exec",
-        "--cd",
-        "/fixture/empty",
-        "--ignore-user-config",
-        "--ignore-rules",
-        "--model",
-        "gpt-5.6-luna",
-        "--config",
-        'model_reasoning_effort="low"',
-        "--sandbox",
-        "read-only",
-        "--skip-git-repo-check",
-        "--disable",
-        "shell_tool",
-        "--disable",
-        "unified_exec",
-        "--disable",
-        "browser_use",
-        "--disable",
-        "browser_use_external",
-        "--disable",
-        "browser_use_full_cdp_access",
-        "--disable",
-        "in_app_browser",
-        "--disable",
-        "standalone_web_search",
-        "--disable",
-        "computer_use",
-        "--disable",
-        "apps",
-        "--disable",
-        "image_generation",
-        "--disable",
-        "skill_search",
-        "--disable",
-        "skill_mcp_dependency_install",
-        "--disable",
-        "plugins",
-        "--disable",
-        "remote_plugin",
-        "--disable",
-        "multi_agent",
-        "--disable",
-        "multi_agent_v2",
-        "--disable",
-        "code_mode",
-        "--disable",
-        "code_mode_host",
-        "--disable",
-        "code_mode_only",
-        "Do not use tools. Reply with OK.",
-    )
-    assert "--ephemeral" not in command
 
 
 def test_claude_config_dir_is_the_default_credential_home(
@@ -233,104 +252,131 @@ def test_claude_config_dir_is_the_default_credential_home(
     asyncio.run(exercise())
 
 
-def test_stale_codex_usage_runs_only_the_minimal_request(tmp_path: Path) -> None:
+def test_codex_skips_absent_and_malformed_optional_windows() -> None:
     async def exercise() -> None:
-        root = tmp_path / "sessions"
-        _write_codex_snapshot(root, NOW - timedelta(minutes=11))
-        machine = _Machine()
-        machine.after_run = lambda: _write_codex_snapshot(
-            root,
-            NOW,
+        client = _CodexClient(
             {
-                "used_percent": 30,
-                "window_minutes": 10080,
-                "resets_at": "2026-08-07T12:00:00Z",
-            },
+                "rateLimits": {
+                    "primary": {
+                        "usedPercent": 4,
+                        "windowDurationMins": 300,
+                        "resetsAt": 1785502800,
+                    },
+                    "secondary": {
+                        "usedPercent": 4,
+                        "windowDurationMins": None,
+                        "resetsAt": None,
+                    },
+                    "unrelated": {"changed": True},
+                },
+                "rateLimitsByLimitId": None,
+                "newTopLevelField": "ignored",
+            }
         )
-        result = await CodexUsageAdapter(
-            environment=machine, rollout_root=root, now=lambda: NOW
-        ).refresh()
+        result = await _codex_adapter(client).refresh()
 
         assert result.outcome is BackendUsageOutcome.succeeded
-        assert [window.name for window in result.windows] == ["5 hours", "7 days"]
-        assert len(machine.commands) == 1
-        assert machine.timeouts == [120.0]
-        assert machine.work_directory_contents == [()]
-        assert machine.work_directories[0].name.startswith("panels-codex-usage-")
-        assert not machine.work_directories[0].exists()
+        assert [window.name for window in result.windows] == ["5 hours"]
 
     asyncio.run(exercise())
 
 
-def test_codex_unavailable_is_typed_without_starting_a_command(tmp_path: Path) -> None:
+def test_codex_unavailable_is_typed_without_starting_a_child() -> None:
     async def exercise() -> None:
         machine = _Machine(executable=None)
         result = await CodexUsageAdapter(
-            environment=machine, rollout_root=tmp_path / "sessions", now=lambda: NOW
+            environment=machine,
+            now=lambda: NOW,
+            client_factory=lambda **kwargs: pytest.fail("client must not be created"),
         ).refresh()
 
         assert result.outcome is BackendUsageOutcome.unavailable
-        assert machine.commands == []
 
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize(
-    "outcome",
-    [pytest.param(CommandOutcome(2, "", "request failed"), id="command-failure")],
-)
-def test_codex_command_failure_and_timeout_are_typed(
-    tmp_path: Path, outcome: CommandOutcome
-) -> None:
+@pytest.mark.parametrize("failure", [CodexWireFailed("ended")])
+def test_codex_child_failure_is_typed_and_the_child_stops(failure: Exception) -> None:
     async def exercise() -> None:
-        result = await CodexUsageAdapter(
-            environment=_Machine(outcome=outcome),
-            rollout_root=tmp_path / "sessions",
-            now=lambda: NOW,
-        ).refresh()
+        client = _CodexClient(failure)
+        result = await _codex_adapter(client).refresh()
 
         assert result.outcome is BackendUsageOutcome.failed
         assert result.detail == "Codex could not refresh its usage. Try again."
+        assert client.stopped is True
 
     asyncio.run(exercise())
 
 
-def test_codex_success_without_a_new_snapshot_fails_calmly(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        root = tmp_path / "sessions"
-        result = await CodexUsageAdapter(
-            environment=_Machine(), rollout_root=root, now=lambda: NOW
-        ).refresh()
-        assert result.outcome is BackendUsageOutcome.failed
-        assert "did not write" in (result.detail or "")
-
-    asyncio.run(exercise())
-
-
-
-
-@pytest.mark.parametrize("window_minutes", [-1])
-def test_codex_window_minutes_must_be_a_positive_integer(
-    tmp_path: Path, window_minutes: object
+def test_codex_whole_probe_timeout_stops_the_child(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root = tmp_path / "sessions"
-    _write_raw_codex_event(
-        root,
-        {
-            "timestamp": "2026-07-31T12:00:00Z",
-            "payload": {
-                "rate_limits": {
+    async def exercise() -> None:
+        monkeypatch.setattr(backend_usage, "CODEX_USAGE_REFRESH_TIMEOUT_SECONDS", 0.01)
+        client = _NeverAnswerCodexClient({})
+
+        result = await _codex_adapter(client).refresh()
+
+        assert result.outcome is BackendUsageOutcome.failed
+        assert result.detail == "Codex usage did not answer in time. Try again."
+        assert client.stopped is True
+
+    asyncio.run(exercise())
+
+
+def test_codex_authentication_rejection_is_typed_without_provider_detail() -> None:
+    async def exercise() -> None:
+        client = _CodexClient(
+            CodexRequestRejected(
+                "account/rateLimits/read",
+                None,
+                "secret codex account authentication required to read rate limits",
+            )
+        )
+        result = await _codex_adapter(client).refresh()
+
+        assert result.outcome is BackendUsageOutcome.unauthenticated
+        assert result.detail == "Codex is not logged in. Run `codex login` and try again."
+        assert "secret" not in repr(result)
+        assert client.stopped is True
+
+    asyncio.run(exercise())
+
+
+
+
+def test_codex_malformed_response_is_typed() -> None:
+    async def exercise() -> None:
+        client = _CodexClient({"rateLimits": "changed"})
+        result = await _codex_adapter(client).refresh()
+
+        assert result.outcome is BackendUsageOutcome.failed
+        assert result.detail == "Codex could not refresh its usage. Try again."
+        assert client.stopped is True
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("used_percent", [True, "4", 4.5])
+def test_codex_numbers_do_not_coerce(used_percent: object) -> None:
+    async def exercise() -> None:
+        client = _CodexClient(
+            {
+                "rateLimits": {
                     "primary": {
-                        "used_percent": 1,
-                        "window_minutes": window_minutes,
-                        "resets_at": 1785502800,
+                        "usedPercent": used_percent,
+                        "windowDurationMins": 300,
+                        "resetsAt": 1785502800,
                     }
                 }
-            },
-        },
-    )
+            }
+        )
+        result = await _codex_adapter(client).refresh()
 
-    assert newest_codex_rate_limit_snapshot(root) is None
+        assert result.outcome is BackendUsageOutcome.failed
+        assert client.stopped is True
+
+    asyncio.run(exercise())
 
 
 def test_claude_oauth_translates_only_present_windows(tmp_path: Path) -> None:
@@ -360,6 +406,10 @@ def test_claude_oauth_translates_only_present_windows(tmp_path: Path) -> None:
                         "utilization": 3,
                         "reset_at": "2026-08-07T12:00:00Z",
                     },
+                    "spark": {
+                        "utilization": 8,
+                        "resets_at": "2026-08-07T12:00:00Z",
+                    },
                     "extra_usage": {"used_credits": 99},
                 },
             )
@@ -372,6 +422,7 @@ def test_claude_oauth_translates_only_present_windows(tmp_path: Path) -> None:
             "5 hours",
             "7 days",
             "7 days · Oauth Apps",
+            "7 days · Spark",
         ]
         assert calls[0][0] == CLAUDE_USAGE_URL
         assert calls[0][1] == {
@@ -484,6 +535,46 @@ def test_claude_missing_login_and_unauthorized_are_typed(tmp_path: Path) -> None
         ).refresh()
         assert result.outcome is BackendUsageOutcome.unauthenticated
         assert "expired" not in repr(result)
+
+    asyncio.run(exercise())
+
+
+def test_claude_expired_login_is_typed_without_using_the_refresh_token(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        credentials = tmp_path / "credentials"
+        credentials.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "expired-access",
+                        "expiresAt": int(NOW.timestamp() * 1000) - 1,
+                        "refreshToken": "must-not-be-used",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        called = False
+
+        async def get(url: str, headers: Mapping[str, str], timeout: float) -> UsageHttpResponse:
+            nonlocal called
+            del url, headers, timeout
+            called = True
+            return UsageHttpResponse(200, {})
+
+        result = await ClaudeUsageAdapter(
+            credential_path=credentials, http_get=get, now=lambda: NOW
+        ).refresh()
+
+        assert result.outcome is BackendUsageOutcome.unauthenticated
+        assert result.detail == (
+            "Claude's login has expired. Run `claude auth login` and try again."
+        )
+        assert called is False
+        assert "expired-access" not in repr(result)
+        assert "must-not-be-used" not in repr(result)
 
     asyncio.run(exercise())
 

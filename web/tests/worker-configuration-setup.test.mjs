@@ -21,8 +21,8 @@ for (const fileName of ["WorkerConfigurationSetup.svelte", "ManagedLaunchDefault
   assert.match(source, /UnifiedModelPicker/, fileName);
   assert.match(source, /resolveModelPicker/, fileName);
   assert.match(source, /readBackends/, fileName);
+  assert.match(source, /bind:snapshots=\{backends\}/, fileName);
   assert.doesNotMatch(source, /<select/, fileName);
-  assert.doesNotMatch(source, /Refresh/, fileName);
 }
 
 try {
@@ -32,8 +32,15 @@ try {
   import ManagedLaunchDefaults from "../src/components/ManagedLaunchDefaults.svelte";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../src/lib/types";
 
-  const requests: Array<(response: Response) => void> = [];
-  globalThis.fetch = (() => new Promise<Response>((resolve) => requests.push(resolve))) as typeof fetch;
+  const requests: Array<{
+    input: RequestInfo | URL;
+    init?: RequestInit;
+    resolve: (response: Response) => void;
+    reject: (reason: Error) => void;
+  }> = [];
+  globalThis.fetch = ((input, init) => new Promise<Response>((resolve, reject) => {
+    requests.push({ input, init, resolve, reject });
+  })) as typeof fetch;
   const response = (payload: unknown) => ({
     ok: true,
     status: 200,
@@ -80,7 +87,12 @@ try {
     return defaults;
   }
 
-  (window as any).__respond = (index: number, payload: unknown) => requests[index]?.(response(payload));
+  (window as any).__respond = (index: number, payload: unknown) => requests[index]?.resolve(response(payload));
+  (window as any).__reject = (index: number) => requests[index]?.reject(new Error("transport stopped"));
+  (window as any).__request = (index: number) => ({
+    url: String(requests[index]?.input),
+    method: requests[index]?.init?.method ?? "GET"
+  });
   (window as any).__requestCount = () => requests.length;
   (window as any).__ticketSaves = () => ticketSaves;
   (window as any).__defaultSaves = () => defaultSaves;
@@ -138,6 +150,7 @@ mount(Host, { target: document.getElementById("app")! });
 
   const browserScript = String.raw`
 from playwright.sync_api import sync_playwright
+import copy
 import sys
 
 def model(model_id, name, efforts):
@@ -165,6 +178,10 @@ machine = {"backends": [
     ], "codex-native", "low", ["low", "high"]),
     backend("hermes", [], None, diagnoses=["Hermes has no configured model."])
 ]}
+refreshed_machine = copy.deepcopy(machine)
+refreshed_machine["backends"][1]["available_models"].append(
+    model("codex-refreshed", "Codex refreshed", ["low", "high"])
+)
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
@@ -187,6 +204,34 @@ with sync_playwright() as p:
     assert panel.evaluate("el => el.scrollHeight <= el.clientHeight")
     assert picker.locator(".model-picker-list").evaluate("el => el.scrollHeight <= el.clientHeight")
     assert panel.bounding_box()["height"] < 844
+
+    refresh = picker.locator("[data-conversation-picker-refresh]")
+    assert refresh.inner_text() == "Refresh"
+    refresh.click()
+    page.wait_for_function("window.__requestCount() === 2")
+    assert page.evaluate("window.__request(1)") == {
+        "url": "/api/conversation/backends/refresh", "method": "POST"
+    }
+    assert refresh.inner_text() == "Reading…"
+    assert refresh.get_attribute("aria-busy") == "true"
+    assert refresh.is_disabled()
+    page.evaluate("payload => window.__respond(1, payload)", {
+        **refreshed_machine,
+        "usage_outcomes": [
+            {"backend_key": "codex", "outcome": "succeeded", "detail": None},
+            {"backend_key": "claude", "outcome": "failed", "detail": "Claude usage failed."},
+            {"backend_key": "hermes", "outcome": "unavailable", "detail": "No usage source."}
+        ]
+    })
+    page.wait_for_function("document.querySelector('[data-conversation-picker-refresh]').textContent.includes('Refresh')")
+    assert picker.locator('[data-conversation-picker-choice="codex-refreshed"]').count() == 1
+    assert picker.locator("[data-conversation-picker-feedback]").inner_text() == "Claude usage failed."
+
+    refresh.click()
+    page.wait_for_function("window.__requestCount() === 3")
+    page.evaluate("window.__reject(2)")
+    page.wait_for_function("document.querySelector('[data-conversation-picker-feedback]').textContent.includes('server could not be reached')")
+    assert picker.locator('[data-conversation-picker-choice="codex-refreshed"]').count() == 1
 
     page.evaluate("window.__rejectNextTicketSave()")
     picker.locator('[data-conversation-picker-choice="codex-native"]').click()
@@ -239,11 +284,10 @@ with sync_playwright() as p:
     page.keyboard.press("Enter")
     assert picker.locator("[data-conversation-picker-feedback]").inner_text() == "Claude A takes no reasoning effort."
     page.keyboard.press("Escape")
-    assert page.locator("[data-employee-configuration-refresh]").count() == 0
 
     page.evaluate("window.__showDefaults()")
-    page.wait_for_function("window.__requestCount() === 2")
-    page.evaluate("payload => window.__respond(1, payload)", machine)
+    page.wait_for_function("window.__requestCount() === 4")
+    page.evaluate("payload => window.__respond(3, payload)", machine)
     defaults = page.locator("[data-launch-defaults]")
     default_picker = defaults.locator("[data-conversation-model-picker]")
     default_picker.locator("[data-conversation-picker-trigger]").click()
@@ -264,7 +308,6 @@ with sync_playwright() as p:
     assert default_picker.locator("[data-conversation-picker-panel]").get_attribute("aria-busy") == "true"
     page.evaluate("window.__releaseDefaultSave()")
     page.wait_for_function("!document.querySelector('[data-launch-defaults] [data-conversation-picker-trigger]').disabled")
-    assert page.locator("[data-launch-defaults-refresh]").count() == 0
     browser.close()
 
 print("unified persisted picker assertions passed")

@@ -29,9 +29,9 @@ class ConversationBackendKey(StrEnum):
     """The production catalog of agent backends a conversation can run on.
 
     The catalog is a closed set rather than an open string because this contract states
-    a per-backend capability as a fact: hermes can take text into a turn that is already
-    running, codex and claude cannot. A fact stated about backends needs a closed set of
-    backends to be stated about.
+    a per-backend capability as a fact. All three adapters can admit guidance to work
+    owned by a captured running turn. Each adapter proves that admission through its
+    own provider protocol.
     """
 
     hermes = "hermes"
@@ -83,16 +83,15 @@ FLOOR_DEFAULT_WORKSPACE_FOLDER: Final[Path] = Path.home() / "projects"
 FLOOR_DEFAULT_ACCESS: Final = ConversationAccess.full
 
 BACKEND_KEYS_SUPPORTING_STEER: Final[frozenset[ConversationBackendKey]] = frozenset(
-    {ConversationBackendKey.hermes}
+    {ConversationBackendKey.codex, ConversationBackendKey.hermes, ConversationBackendKey.claude}
 )
 
 
 def backend_supports_steer(backend_key: ConversationBackendKey) -> bool:
     """Whether this backend can take text into a turn that is already running.
 
-    Steering support is a per-backend fact, not a runtime negotiation: hermes supports
-    it, codex and claude do not. A steer aimed at a backend that cannot steer is refused
-    with ``PromptDeliveryRefusalReason.backend_cannot_steer``.
+    Steering support is a per-backend fact, not a runtime negotiation. A backend enters
+    this set only after its focused provider gate proves the shared steering contract.
     """
     return backend_key in BACKEND_KEYS_SUPPORTING_STEER
 
@@ -201,9 +200,9 @@ class PromptDeliveryMode(StrEnum):
     from that point.
 
     ``steer`` injects the text into the turn that is already running, without ending it.
-    Whether a backend can do this is a per-backend fact: hermes can, codex and claude
-    cannot. A steer is refused when no turn is running, or when the backend cannot
-    steer.
+    Whether a backend can do this is a per-backend fact. A steer is refused when no
+    turn is running, or when the backend cannot steer. Admission may include a native
+    continuation owned by the same captured Panels turn.
     """
 
     run_when_free = "run_when_free"
@@ -248,6 +247,10 @@ class PromptDeliveryRefusalReason(StrEnum):
     write_to_backend_failed = "write_to_backend_failed"
     no_running_turn_to_steer_into = "no_running_turn_to_steer_into"
     backend_cannot_steer = "backend_cannot_steer"
+    running_turn_changed_before_steer = "running_turn_changed_before_steer"
+    running_turn_cannot_accept_steer = "running_turn_cannot_accept_steer"
+    message_cannot_be_steered = "message_cannot_be_steered"
+    backend_rejected_steer = "backend_rejected_steer"
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,21 +286,20 @@ class PromptDeliveryQueued:
 
 @dataclass(frozen=True, slots=True)
 class PromptDeliveryInjected:
-    """The steered text actually entered the running turn's wire before this call
-    returned. The turn was not ended by it and is still running.
+    """The backend admitted the steered message to the exact turn that Panels targeted.
 
-    It does not claim the agent read or acted on the text; only that the text reached
-    the wire of the turn that is running.
+    The turn can finish before this result returns. Admission does not claim that the
+    model read the message, complied with it, or left the turn running.
     """
 
 
 @dataclass(frozen=True, slots=True)
 class PromptDeliveryRefused:
-    """The delivery was impossible, for the named reason. This text reached no backend.
+    """The message was definitely not admitted, for the named reason.
 
-    The claim is about this text and nothing else. A refused send-now has already killed
-    the incumbent turn, recorded that interruption, and let the held messages run — the
-    refusal says only that the send-now's own text never got anywhere.
+    A local refusal happens before any backend write. A provider can also reject a steer
+    after it receives the request. Both cases prove non-admission, but only the local case
+    proves that no bytes crossed the provider boundary.
 
     A refusal is only ever a genuine impossibility. It never means the system chose not
     to deliver, and it never means the agent was busy — a busy agent produces a held
@@ -310,18 +312,37 @@ class PromptDeliveryRefused:
     refusal_reason: PromptDeliveryRefusalReason
 
 
+@dataclass(frozen=True, slots=True)
+class PromptDeliveryUncertain:
+    """The steering attempt can have reached the backend, but admission is not known.
+
+    Panels records this fate and never retries the message automatically. It makes no
+    claim about provider receipt, model receipt, or later compliance.
+    """
+
+
 # The fate of one delivery. Fate means it happened, never that it was attempted. Each
 # member claims exactly the layer it names and no more: started means written to a live
-# backend's wire, queued means held by the conversation system, injected means entered
-# the running turn's wire, refused means impossible. No member carries a turn outcome,
-# because a turn's ending is an event and never a return value.
+# backend's wire, queued means held by the conversation system, injected means admitted
+# to the captured running turn, refused means proven non-admission, and uncertain means a
+# steering attempt may have crossed the backend boundary without a trustworthy answer.
+# No member carries a turn outcome, because a turn's ending is an event and never a
+# return value.
 type PromptDeliveryFate = (
-    PromptDeliveryStarted | PromptDeliveryQueued | PromptDeliveryInjected | PromptDeliveryRefused
+    PromptDeliveryStarted
+    | PromptDeliveryQueued
+    | PromptDeliveryInjected
+    | PromptDeliveryRefused
+    | PromptDeliveryUncertain
 )
 
 
 type HeldPromptPromotionFate = (
-    PromptDeliveryStarted | PromptDeliveryQueued | PromptDeliveryInjected | PromptDeliveryRefused
+    PromptDeliveryStarted
+    | PromptDeliveryQueued
+    | PromptDeliveryInjected
+    | PromptDeliveryRefused
+    | PromptDeliveryUncertain
 )
 
 

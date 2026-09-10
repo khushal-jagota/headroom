@@ -56,7 +56,10 @@ from tests.support.conversation_scripted_acp_agent import (
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
+    BackendSteerOutcome,
+    BackendSteerRefused,
     BackendUserInputRequest,
+    PromptWriteFailed,
     TurnToken,
 )
 from planner.conversation.backends.hermes_acp import (
@@ -68,6 +71,7 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationSystem,
     PromptDeliveryMode,
+    PromptDeliveryRefusalReason,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
@@ -77,6 +81,7 @@ from planner.conversation.events import (
     PermissionAskedEventPayload,
     PlanEntry,
     PromptDeliveryRefusedEventPayload,
+    PromptDeliveryUncertainEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
     ToolCallStatus,
@@ -140,9 +145,11 @@ class _ScriptedConversation:
     pulse: _Pulse
     arms: set[str] = field(default_factory=set)
     spawn_fails: bool = False
+    known_prewrite_failure: bool = False
     expected_prompt_writes: int = 0
     expected_cancellations: int = 0
     expected_permission_answers: int = 0
+    prompt_turn_numbers: list[int] = field(default_factory=list)
     turn_endings_reported: int = 0
     permission_asks_reported: int = 0
     ask_ids_in_order: list[str] = field(default_factory=list)
@@ -150,6 +157,7 @@ class _ScriptedConversation:
     # child was stopped and started again is the same agent on the same session — so what
     # the backend side has been told is not reset by a respawn.
     writes_to_agents_before_this_one: list[dict[str, Any]] = field(default_factory=list)
+    steer_writes_before_this_agent: list[dict[str, Any]] = field(default_factory=list)
     cancellations_before_this_agent: int = 0
     asks_before_this_agent: list[dict[str, Any]] = field(default_factory=list)
 
@@ -319,6 +327,8 @@ class _CountedChild:
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
     ) -> None:
+        if self._conversation.known_prewrite_failure:
+            raise PromptWriteFailed("the controlled backend refused before transmission")
         await self._child.write_prompt(
             turn_token,
             content,
@@ -329,11 +339,17 @@ class _CountedChild:
             reasoning_effort_change=reasoning_effort_change,
             automatic_compaction=automatic_compaction,
         )
+        self._conversation.prompt_turn_numbers.append(turn_token.turn_number)
         self._conversation.expected_prompt_writes += 1
 
-    async def steer(self, content: MessageContent, *, sender_label: str) -> None:
-        await self._child.steer(content, sender_label=sender_label)
-        self._conversation.expected_prompt_writes += 1
+    async def steer(
+        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+    ) -> BackendSteerOutcome:
+        if self._conversation.known_prewrite_failure:
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.write_to_backend_failed
+            )
+        return await self._child.steer(turn_token, content, sender_label=sender_label)
 
     async def cancel_running_turn(self) -> None:
         await self._child.cancel_running_turn()
@@ -359,6 +375,7 @@ class _CountedChild:
         report = await conversation.control.send({"command": "report"})
         if report is not None:
             conversation.writes_to_agents_before_this_one.extend(report["prompt_writes"])
+            conversation.steer_writes_before_this_agent.extend(report["steer_writes"])
             conversation.cancellations_before_this_agent += int(report["cancellations"])
             conversation.asks_before_this_agent.extend(report["asks"])
         # A new agent has seen nothing yet, so nothing is owed to it either.
@@ -466,15 +483,9 @@ class ConversationSystemUnderTest:
         return await self._store.read_conversation(conversation_id)
 
     async def backend_writes(self, conversation_id: str) -> tuple[BackendWrite, ...]:
+        conversation = self._conversation(conversation_id)
         report = await self._account(conversation_id)
-        return tuple(
-            BackendWrite(
-                content=_message_from_reported_blocks(write["blocks"]),
-                sender_label=write["sender_label"],
-                mode=PromptDeliveryMode(write["delivery_mode"]),
-            )
-            for write in report["prompt_writes"]
-        )
+        return _backend_writes_from_report(report, conversation.prompt_turn_numbers)
 
     async def backend_permission_answer(self, conversation_id: str, ask_id: str) -> str | None:
         conversation = self._conversation(conversation_id)
@@ -555,10 +566,12 @@ class ConversationSystemUnderTest:
         conversation.arms.add(ARM_REJECT_LOAD_SESSION)
 
     async def arm_backend_write_failure(self, conversation_id: str) -> None:
+        """Refuse every later write before transmission, with definite non-admission."""
+        self._conversation(conversation_id).known_prewrite_failure = True
+
+    async def arm_backend_connection_loss(self, conversation_id: str) -> None:
+        """Break the live ACP wire, so a later request cannot prove what crossed it."""
         conversation = self._conversation(conversation_id)
-        # An agent spawned from here on breaks its wire as soon as it has a session on the
-        # model the conversation named, so the first prompt write is the first thing that
-        # fails. One that is already running is told to break it now.
         conversation.arms.add(ARM_BREAK_WIRE_ON_SESSION)
         await conversation.control.send({"command": "break_wire"})
 
@@ -582,6 +595,7 @@ def _everything_this_conversation_has_told_its_backend(
     """One conversation's backend account: the agent running now, and the ones before it."""
     carried: dict[str, Any] = {
         "prompt_writes": list(conversation.writes_to_agents_before_this_one),
+        "steer_writes": list(conversation.steer_writes_before_this_agent),
         "cancellations": conversation.cancellations_before_this_agent,
         "asks": list(conversation.asks_before_this_agent),
         "answered": sum(
@@ -592,10 +606,51 @@ def _everything_this_conversation_has_told_its_backend(
         return carried
     merged = dict(live)
     merged["prompt_writes"] = carried["prompt_writes"] + list(live["prompt_writes"])
+    merged["steer_writes"] = carried["steer_writes"] + list(live["steer_writes"])
     merged["cancellations"] = carried["cancellations"] + int(live["cancellations"])
     merged["asks"] = carried["asks"] + list(live["asks"])
     merged["answered"] = carried["answered"] + int(live["answered"])
     return merged
+
+
+def _backend_writes_from_report(
+    report: dict[str, Any], prompt_turn_numbers: list[int]
+) -> tuple[BackendWrite, ...]:
+    """Merge ordinary prompts and private steering admissions in turn order."""
+    prompt_writes = report["prompt_writes"]
+    if len(prompt_writes) != len(prompt_turn_numbers):
+        raise AssertionError(
+            "the backend prompt account and captured turn tokens diverged: "
+            f"{len(prompt_writes)} writes, {len(prompt_turn_numbers)} tokens"
+        )
+    steers_by_turn: dict[int, list[dict[str, Any]]] = {}
+    for write in report["steer_writes"]:
+        turn_token = write["turnToken"]
+        turn_number = int(turn_token["turnNumber"])
+        steers_by_turn.setdefault(turn_number, []).append(write)
+
+    writes: list[BackendWrite] = []
+    for turn_number, write in zip(prompt_turn_numbers, prompt_writes, strict=True):
+        writes.append(
+            BackendWrite(
+                content=_message_from_reported_blocks(write["blocks"]),
+                sender_label=write["sender_label"],
+                mode=PromptDeliveryMode(write["delivery_mode"]),
+            )
+        )
+        writes.extend(
+            BackendWrite(
+                content=(MessageText(text=str(steer["text"])),),
+                sender_label=str(steer["senderLabel"]),
+                mode=PromptDeliveryMode.steer,
+            )
+            for steer in steers_by_turn.pop(turn_number, ())
+        )
+    if steers_by_turn:
+        raise AssertionError(
+            f"steering writes named turns with no recorded prompt: {steers_by_turn!r}"
+        )
+    return tuple(writes)
 
 
 def _message_from_reported_blocks(blocks: list[dict[str, Any]]) -> MessageContent:
@@ -643,6 +698,13 @@ def _recorded_fact(event: StoredConversationEvent) -> RecordedFact | None:
                 sender_label=payload.sender_label,
                 mode=payload.mode,
                 refusal_reason=payload.refusal_reason,
+            )
+        case PromptDeliveryUncertainEventPayload():
+            return RecordedFact(
+                kind=RecordedFactKind.prompt_delivery_uncertain,
+                content=payload.content,
+                sender_label=payload.sender_label,
+                mode=payload.mode,
             )
         case PromptDiscardedEventPayload():
             return RecordedFact(

@@ -107,7 +107,7 @@ describe("change stream", () => {
     expect(fakes.invalidateQueries).not.toHaveBeenCalled();
   });
 
-  it("collapses a burst into one trailing invalidation and later changes into another", async () => {
+  it("collapses a finite burst into one invalidation at the first frame's deadline", async () => {
     const { startChangeStream } = await loadChangeStream();
     startChangeStream();
     const source = FakeEventSource.instances[0];
@@ -119,8 +119,6 @@ describe("change stream", () => {
     expect(fakes.invalidateQueries).toHaveBeenCalledTimes(1);
 
     source.onmessage?.();
-    await vi.advanceTimersByTimeAsync(INVALIDATE_DEBOUNCE_MS - 1);
-    expect(fakes.invalidateQueries).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(fakes.invalidateQueries).toHaveBeenCalledTimes(2);
     expect(debug.flushes).toBe(2);
@@ -128,6 +126,38 @@ describe("change stream", () => {
     source.onmessage?.();
     await vi.advanceTimersByTimeAsync(INVALIDATE_DEBOUNCE_MS);
     expect(fakes.invalidateQueries).toHaveBeenCalledTimes(3);
+  });
+
+  it("invalidates at each fixed deadline while frames stay sustained beyond two windows", async () => {
+    const { startChangeStream } = await loadChangeStream();
+    startChangeStream();
+    const source = FakeEventSource.instances[0];
+    source.onopen?.();
+
+    source.onmessage?.();
+    await vi.advanceTimersByTimeAsync(500);
+    source.onmessage?.();
+    await vi.advanceTimersByTimeAsync(500);
+    source.onmessage?.();
+    await vi.advanceTimersByTimeAsync(500);
+    source.onmessage?.();
+    expect(fakes.invalidateQueries).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(500);
+    source.onmessage?.();
+    await vi.advanceTimersByTimeAsync(500);
+    source.onmessage?.();
+    await vi.advanceTimersByTimeAsync(500);
+    source.onmessage?.();
+    expect(fakes.invalidateQueries).toHaveBeenCalledTimes(3);
+
+    await vi.advanceTimersByTimeAsync(500);
+    source.onmessage?.();
+    await vi.advanceTimersByTimeAsync(500);
+    source.onmessage?.();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fakes.invalidateQueries).toHaveBeenCalledTimes(4);
+    expect(debug.flushes).toBe(4);
   });
 
   it("reports reconnecting on error and catches up when the same stream reopens", async () => {

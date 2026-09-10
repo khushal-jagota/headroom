@@ -60,21 +60,32 @@ def test_a_codex_that_is_nowhere_is_still_composed_under_its_own_name() -> None:
     assert launches.codex.argv == ("codex", "app-server")
 
 
-def test_claude_runs_on_the_cli_this_machine_has() -> None:
+def test_claude_runs_on_the_panels_owned_tested_cli() -> None:
     launches = production_backend_launches(
         panels_server_url=SERVER_URL,
         executable_path=_machine(claude="/Users/someone/.local/bin/claude")
     )
 
-    assert launches.claude.claude_executable == Path("/Users/someone/.local/bin/claude")
+    assert launches.claude.claude_executable is not None
+    assert launches.claude.claude_executable.parts[-6:] == (
+        "agent_backends",
+        "node_modules",
+        "@anthropic-ai",
+        "claude-code",
+        "bin",
+        "claude.exe",
+    )
 
 
-def test_a_claude_that_is_nowhere_leaves_the_sdk_its_own_copy() -> None:
+def test_an_explicit_claude_executable_override_remains_authoritative(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PLAN_CLAUDE_EXECUTABLE", "/opt/claude-tested")
     launches = production_backend_launches(
         panels_server_url=SERVER_URL,
         executable_path=_machine())
 
-    assert launches.claude.claude_executable is None
+    assert launches.claude.claude_executable == Path("/opt/claude-tested")
 
 
 def test_hermes_is_derived_from_its_interpreter_rather_than_the_path(
@@ -90,7 +101,10 @@ def test_hermes_is_derived_from_its_interpreter_rather_than_the_path(
         panels_server_url=SERVER_URL,
         executable_path=_machine())
 
-    assert launches.hermes.argv == ("/tmp/hermes-install/hermes-agent/venv/bin/hermes", "acp")
+    assert launches.hermes.argv[0] == "/tmp/hermes-install/hermes-agent/venv/bin/python"
+    assert launches.hermes.argv[1].endswith(
+        "/planner/conversation/backends/hermes_acp_extension.py"
+    )
     environment = dict(launches.hermes.environment_overrides)
     assert environment["HERMES_HOME"] == "/tmp/hermes-home"
     # Two levels up from the interpreter: the source tree the agent imports itself from.

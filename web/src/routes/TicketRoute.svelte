@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
-  import { fetchText } from "../lib/api";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import { workspaceAddress } from "../lib/workspaceAddress";
@@ -28,10 +27,8 @@
   } from "../lib/conversation/wire";
   import WorkerConfigurationSetup from "../components/WorkerConfigurationSetup.svelte";
   import ClampedText from "../components/ClampedText.svelte";
-  import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
-  import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import StageMark from "../components/StageMark.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
@@ -67,9 +64,6 @@
   const conversationStartValues = createQuery(() =>
     queries.ticketConversationStartValues(stableId)
   );
-  const projects = createQuery(() => queries.projects());
-  const sprintItems = createQuery(() => queries.sprintItems());
-  const sprintSummaries = createQuery(() => queries.sprintSummaries());
   const manifest = createQuery(() => queries.workerTypeManifests());
 
   // Derive the per-Worker-type lifecycle from the QUERY (ticket.data?.worker_type), not
@@ -88,7 +82,6 @@
   const emptyTicketFieldText = "Not written yet.";
 
   let headerError = $state<unknown>(null);
-  let copied = $state(false);
   let conversationBackends = $state<readonly BackendSnapshot[]>([]);
   let leashMenu = $state<HTMLDetailsElement | null>(null);
 
@@ -205,14 +198,6 @@
     showFile(null);
   }
 
-  let projectOptions = $derived([
-    { value: "", label: "No project" },
-    ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
-  ]);
-  function sprintItemTitle(itemId: string): string {
-    return (sprintItems.data?.items || []).find((item) => item.id === itemId)?.title || "Sprint Item";
-  }
-
   onMount(() => {
     // What the conversation's model and effort pickers offer. Read once on arrival rather
     // than through the query catalogue: it is a fact about the machine's agents, and
@@ -268,22 +253,6 @@
     return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body });
   }
 
-  async function patchPlacement(
-    detail: TicketDetail,
-    changes: Partial<Pick<TicketDetail, "project_id" | "sprint_id" | "sprint_item_id">>
-  ): Promise<void> {
-    const placement = { ...changes };
-    if (changes.project_id !== undefined && changes.project_id !== (detail.project_id ?? null)) {
-      placement.sprint_item_id = null;
-    }
-    headerError = null;
-    try {
-      await patch(placement);
-    } catch (err) {
-      headerError = err;
-    }
-  }
-
   function saveScope(body: Record<string, unknown>): Promise<unknown> {
     return mutateJson(`/api/tickets/${stableId}/scope`, { method: "POST", body });
   }
@@ -329,13 +298,6 @@
     );
   }
 
-  function replaceGuidance(body: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/guidance`, {
-      method: "PUT",
-      body: { body }
-    });
-  }
-
   function saveValue(field: string, body: string): Promise<unknown> {
     return mutateJson(`/api/tickets/${stableId}/value/${field}`, {
       method: "PUT",
@@ -368,42 +330,6 @@
 
   function acceptField(field: string, body: Record<string, unknown>): Promise<unknown> {
     return mutateJson(`/api/tickets/${stableId}/accept/${field}`, { method: "POST", body });
-  }
-
-  function writeClipboard(text: string): Promise<void> {
-    if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    const copiedFallback = document.execCommand("copy");
-    document.body.removeChild(textarea);
-    return copiedFallback ? Promise.resolve() : Promise.reject(new Error("copy failed"));
-  }
-
-  async function copyTicket(): Promise<void> {
-    headerError = null;
-    try {
-      const text = await fetchText(`/api/tickets/${stableId}/copy-text`);
-      await writeClipboard(text);
-      copied = true;
-      window.setTimeout(() => (copied = false), 1500);
-    } catch (err) {
-      headerError = err;
-    }
-  }
-
-  async function copyFromLeash(): Promise<void> {
-    await copyTicket();
-    closeLeash();
-  }
-
-  async function takeoverFromLeash(detail: TicketDetail): Promise<void> {
-    await takeover(detail);
-    closeLeash();
   }
 
   async function takeover(detail: TicketDetail): Promise<void> {
@@ -502,44 +428,15 @@
             />
             <span class="ticket-identity-group" data-ticket-placement>
               <span class="ticket-identity-separator" aria-hidden="true">·</span>
-              <span
-                class="ticket-identity-fact"
-                class:ticket-identity-add={!detail.project_id}
-                data-project-control
-              >
-                {#if detail.project_id}
-                  {detail.project}
-                {:else}
-                  No project
-                {/if}
-                <select
-                  aria-label={detail.project_id ? "Ticket project" : "Add ticket project"}
-                  value={detail.project_id || ""}
-                  onchange={(event) => void patchPlacement(detail, {
-                    project_id: event.currentTarget.value || null
-                  })}
-                >
-                  {#each projectOptions as option}
-                    <option value={option.value}>{option.label}</option>
-                  {/each}
-                </select>
+              <span class="ticket-identity-fact" data-project-fact>
+                {detail.project || "No project"}
               </span>
-              <span class="ticket-identity-separator" aria-hidden="true">·</span>
-              <span class="ticket-identity-fact" data-outcome-control>
-                {detail.sprint_item_id ? sprintItemTitle(detail.sprint_item_id) : "No outcome"}
-                <select aria-label="Ticket outcome" value={detail.sprint_item_id || ""} onchange={(event) => void patchPlacement(detail, { sprint_item_id: event.currentTarget.value || null })}>
-                  <option value="">No outcome</option>
-                  {#each (sprintItems.data?.items || []).filter((item) => item.project_id === detail.project_id) as item}<option value={item.id}>{item.title}</option>{/each}
-                </select>
-              </span>
-              <span class="ticket-identity-separator" aria-hidden="true">·</span>
-              <span class="ticket-identity-fact" data-sprint-control>
-                {detail.sprint_id ? (sprintSummaries.data?.sprints || []).find((entry) => entry.id === detail.sprint_id)?.name || detail.sprint_id : "Backlog"}
-                <select aria-label="Ticket Sprint" value={detail.sprint_id || ""} onchange={(event) => void patchPlacement(detail, { sprint_id: event.currentTarget.value || null })}>
-                  <option value="">Backlog</option>
-                  {#each sprintSummaries.data?.sprints || [] as sprint}<option value={sprint.id}>{sprint.name}</option>{/each}
-                </select>
-              </span>
+              {#if detail.sprint_item_id}
+                <span class="ticket-identity-separator" aria-hidden="true">·</span>
+                <span class="ticket-identity-fact" data-outcome-fact>
+                  {detail.resolved_priority_anchors.sprint_item?.title || "Sprint Item"}
+                </span>
+              {/if}
             </span>
             {#if lc}
               <span class="ticket-identity-group">
@@ -614,37 +511,8 @@
                       <option value="propose">then propose</option>
                     </select>
                   </div>
-                  <div class="ticket-leash-rule"></div>
-                  {#if detail.stage !== "needs_kickoff" && detail.stage !== "done"}
-                    <button
-                      type="button"
-                      class="ticket-leash-option"
-                      data-ticket-takeover-toggle=""
-                      onclick={() => void takeoverFromLeash(detail)}
-                    >
-                      <span class="ticket-leash-option-mark"></span>
-                      {userOwnsCurrentStage(detail) ? "Release" : "Take over"}
-                    </button>
-                  {/if}
-                  <button
-                    type="button"
-                    class="ticket-leash-option"
-                    data-copy=""
-                    onclick={() => void copyFromLeash()}
-                  >
-                    <span class="ticket-leash-option-mark"></span>
-                    {copied ? "Copied" : "Copy"}
-                  </button>
                 </div>
               </details>
-            {/if}
-            {#if detail.stage === "needs_kickoff" || detail.stage === "done"}
-              <button
-                type="button"
-                class="ticket-operating-copy"
-                data-copy=""
-                onclick={() => void copyTicket()}
-              >{copied ? "Copied" : "Copy"}</button>
             {/if}
           </div>
           {#if detail.blocker_summary?.blocked_by.length}
@@ -675,9 +543,6 @@
         <div class="ticket-col">
           <TicketVerdict stage={detail.stage} verdict={detail.verdict} onSave={saveVerdict} />
           <TicketTroubleNotes notes={detail.trouble_notes} />
-          <Disclosure title="Guidance" variant="support" defaultOpen={false} data-ticket-guidance>
-            <InlineEdit value={detail.guidance} markdown multiline placeholder="Guidance..." onSave={replaceGuidance} />
-          </Disclosure>
           <div class="fields">
             {#snippet kickoffContextRow()}
               {#if detail.employee_configuration_editable}
@@ -766,11 +631,6 @@
               {/each}
             {/if}
           </div>
-          {#if detail.archived_field_content}
-            <Disclosure title="Historical record" variant="support" defaultOpen={false} data-ticket-history>
-              <MarkdownBlock text={detail.archived_field_content} />
-            </Disclosure>
-          {/if}
         </div>
       </main>
       {#if shownFile}
@@ -822,7 +682,7 @@
             ticketId={detail.id}
             label={conversationWorkerTypeLabel(detail)}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
-            backends={conversationBackends}
+            bind:backends={conversationBackends}
             startValues={conversationStartValues.data ?? null}
             senderLabel="owner"
             sendMessage={sendToTicketWorker}

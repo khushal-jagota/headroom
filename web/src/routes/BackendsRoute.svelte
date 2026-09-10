@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import UsageRings from "../components/conversation/UsageRings.svelte";
+  import { refreshBackendSnapshots } from "../lib/conversation/backendRefresh";
   import {
     ConversationWireError,
     readBackends,
-    refreshBackends,
     setBackendModelEnabled,
     updateBackend,
     type BackendSnapshot,
@@ -43,15 +43,9 @@
     refreshing = true;
     error = null;
     try {
-      const result = await refreshBackends();
-      backends = result.backends;
-      const failures = result.usage_outcomes
-        .filter((outcome) => outcome.outcome === "failed")
-        .map((outcome) => outcome.detail)
-        .filter((detail): detail is string => detail !== null);
-      if (failures.length > 0) error = failures.join(" ");
-    } catch (problem) {
-      error = sentenceFor(problem);
+      const result = await refreshBackendSnapshots();
+      if (result.snapshots !== null) backends = result.snapshots;
+      error = result.error;
     } finally {
       refreshing = false;
     }

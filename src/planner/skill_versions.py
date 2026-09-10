@@ -174,7 +174,9 @@ def reconcile_provisional_worker_step_bindings(conn: sqlite3.Connection) -> None
         for sender_message_id in sender_message_ids:
             terminal = conn.execute(
                 "SELECT kind, payload FROM conversation_events "
-                "WHERE kind IN ('prompt', 'prompt_delivery_refused', 'prompt_discarded') "
+                "WHERE kind IN "
+                "('prompt', 'prompt_delivery_refused', 'prompt_delivery_uncertain', "
+                "'prompt_discarded') "
                 "AND json_extract(payload, '$.sender_message_id') = ? LIMIT 1",
                 (sender_message_id,),
             ).fetchone()

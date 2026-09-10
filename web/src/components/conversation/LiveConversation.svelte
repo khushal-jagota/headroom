@@ -75,7 +75,7 @@
     conversationId = null,
     persistenceKey,
     label,
-    backends = [],
+    backends = $bindable([]),
     senderLabel = "owner",
     startValues = null,
     runningBackendKey = $bindable(),
@@ -140,7 +140,7 @@
   let composerStackMessageIds = $state<readonly string[]>([]);
   let connectionTrouble = $state(false);
   let fateNote = $state<string | null>(null);
-  let fateNoteIsRefusal = $state(false);
+  let fateNoteIsTerminal = $state(false);
   let errorNote = $state<string | null>(null);
   let askNote = $state<string | null>(null);
   let busy = $state(false);
@@ -218,10 +218,11 @@
   );
   let heldRows = $derived(heldPromptRows(view?.held_prompts ?? [], stackOutgoingMessages));
 
-  // A queued or steered note describes traffic that a turn ending settles. A refusal
-  // outlives endings: it is cleared by the next send, not by a turn it never touched.
+  // A queued or accepted-steer note describes traffic that a turn ending settles. A
+  // refusal or uncertainty outlives endings: it is cleared by the next send, not by a
+  // turn that never conclusively admitted it.
   $effect(() => {
-    if (!running && fateNote !== null && !fateNoteIsRefusal) fateNote = null;
+    if (!running && fateNote !== null && !fateNoteIsTerminal) fateNote = null;
   });
 
   /** What the system said about itself last time it was asked, as far as turns go.
@@ -463,9 +464,10 @@
         openedId = delivered.conversation_id;
         await openConversation(delivered.conversation_id);
       }
-      fateNote = fate.fate === "refused" ? fateSentence(fate) : null;
-      fateNoteIsRefusal = fate.fate === "refused";
-      if (fate.fate === "refused") {
+      const terminalFate = fate.fate === "refused" || fate.fate === "uncertain";
+      fateNote = terminalFate ? fateSentence(fate) : null;
+      fateNoteIsTerminal = terminalFate;
+      if (terminalFate) {
         await stopDrawing(message.messageId);
         await refreshView();
         return false;
@@ -479,8 +481,8 @@
         }
       }
       await refreshView();
-      // Told after the conversation took it, and never for a refusal: a message that
-      // reached nothing is not something a caller should act on.
+      // Told only after the conversation took it. Refusal and uncertainty are both
+      // terminal here, so neither can trigger caller work or an automatic resend.
       await onMessageAccepted?.();
       return true;
     } catch (error) {
@@ -580,9 +582,9 @@
     errorNote = null;
     try {
       const result = await promoteHeldPrompt(openedId, heldPromptId, mode);
-      if (result.promoted && result.fate === "refused") {
+      if (result.promoted && (result.fate === "refused" || result.fate === "uncertain")) {
         fateNote = fateSentence(result);
-        fateNoteIsRefusal = true;
+        fateNoteIsTerminal = true;
       }
       await refreshView();
     } catch (error) {
@@ -669,11 +671,12 @@
   {label}
   {backendKey}
   conversationExists={started}
-  {backends}
+  bind:backends
   workspaceFolder={view?.workspace_folder ?? null}
   {rows}
   outgoingMessages={transcriptOutgoingMessages}
   heldPromptRows={heldRows}
+  supportsSteer={view?.supports_steer ?? false}
   ownSenderLabel={senderLabel}
   {livenessPulse}
   {running}

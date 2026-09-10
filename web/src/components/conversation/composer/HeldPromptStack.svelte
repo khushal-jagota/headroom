@@ -7,14 +7,14 @@
   let {
     rows,
     conversationId = null,
-    hermes = false,
+    supportsSteer = false,
     running = false,
     onDiscard,
     onPromote
   }: {
     rows: readonly HeldPromptRow[];
     conversationId?: string | null;
-    hermes?: boolean;
+    supportsSteer?: boolean;
     running?: boolean;
     onDiscard?: (heldPromptId: string) => Promise<void> | void;
     onPromote?: (heldPromptId: string, mode: "send_now" | "steer") => Promise<void> | void;
@@ -79,7 +79,7 @@
               ? undefined
               : void act(row.key, () => onPromote?.(row.heldPromptId!, "send_now"))}
           >Send now</button>
-          {#if hermes}
+          {#if supportsSteer}
             <button
               type="button"
               class="chat-qrow-act"
@@ -90,7 +90,7 @@
               onclick={() => row.heldPromptId === null
                 ? undefined
                 : void act(row.key, () => onPromote?.(row.heldPromptId!, "steer"))}
-            >Hermes Steer</button>
+            >Steer</button>
           {/if}
           {#each row.content as piece}
             {#if piece.piece === "file" && ("data" in piece || conversationId !== null)}

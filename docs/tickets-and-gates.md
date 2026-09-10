@@ -220,14 +220,14 @@ The proposal stays pending, and the edit keeps its
 author, creation time, settled value, Ticket status, Stage, and scope. Direct edits
 of saved values use a separate editor and remain limited to passed fields and direct callers.
 
-The collapsed **Historical record** keeps earlier unapproved drafts and text from retired
-fields readable. Dropping a Ticket moves its pending draft here without approving it.
-Historical text cannot be approved or resumed; the current proposal is the only approval
-choice. The CLI exposes this record as `archive`, and copy text and search include it.
+The archive keeps earlier unapproved drafts and text from retired fields. Dropping a
+Ticket moves its pending draft here without approval. Historical text cannot be approved
+or resumed. The Ticket page does not show the archive. The CLI exposes it as `archive`,
+and copy text and search include it.
 
 Each Ticket has one **guidance** document for durable user corrections and constraints.
-It is separate from settled field values and is never approved as a proposal. The Ticket
-screen offers one editor; Review shows this same document once. The CLI reads it with
+It is separate from settled field values and is never approved as a proposal. Review
+shows this document, while the Ticket page does not. The CLI reads it with
 `panels worker my-ticket guidance` and writes it with `panels worker note <id>` from
 stdin; `--append` preserves the existing text. Copy text, Ticket search, and supervisor
 context include it too.
@@ -281,8 +281,8 @@ straight to **done**. (The threshold used by sprint-in-progress behavior is the
 Whenever the human approves a step, they must say in the same breath how far the
 worker can go next. The system refuses an approval that does not answer that
 question. The Ticket details disclosure shows the same scope as a readable leash:
-"approved until [a stage], then [stop or propose]." The disclosure includes selects for the
-ceiling and cap, plus Take over or Release. A fresh approval starts on **Propose**, so
+"approved until [a stage], then [stop or propose]." The disclosure includes only the
+ceiling and cap selects. A fresh approval starts on **Propose**, so
 the worker runs to the new ceiling and parks there for the user unless **Stop** is
 chosen instead. At Kickoff, an unchosen
 ceiling starts from that Worker type's managed suggestion. Other approvals start from

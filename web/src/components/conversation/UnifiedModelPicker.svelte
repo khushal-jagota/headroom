@@ -6,13 +6,17 @@
     type ModelPickerChoice,
     type ModelPickerView
   } from "../../lib/conversation/modelPicker";
+  import {
+    backendRefreshControl,
+    refreshBackendSnapshots
+  } from "../../lib/conversation/backendRefresh";
   import type { BackendModel, BackendSnapshot, ConversationBackendKey } from "../../lib/conversation/wire";
   import BackendMark from "./BackendMark.svelte";
   import UsageRings from "./UsageRings.svelte";
 
   let {
     view,
-    snapshots,
+    snapshots = $bindable(),
     models,
     backendEffortOptions,
     disabled = false,
@@ -52,6 +56,7 @@
   let showing = $state<"models" | "efforts">("models");
   let activeIndex = $state(0);
   let feedback = $state<string | null>(null);
+  let refreshing = $state(false);
   let root = $state<HTMLDivElement | null>(null);
   let trigger = $state<HTMLButtonElement | null>(null);
   let list = $state<HTMLDivElement | null>(null);
@@ -60,6 +65,8 @@
   let chosenValue = $derived(showing === "models" ? view.modelValue : view.reasoningEffort);
   let active = $derived(rows.length === 0 ? 0 : Math.min(activeIndex, rows.length - 1));
   let foot = $derived(feedback ?? view.staleModelReason);
+  let pickerDisabled = $derived(disabled || refreshing);
+  let refreshControl = $derived(backendRefreshControl(refreshing));
 
   function snapshotFor(key: ConversationBackendKey): BackendSnapshot | null {
     return snapshots.find((snapshot) => snapshot.backend_key === key) ?? null;
@@ -181,6 +188,18 @@
     void tick().then(() => list?.focus());
   }
 
+  async function runRefresh(): Promise<void> {
+    if (refreshing) return;
+    refreshing = true;
+    feedback = null;
+    const result = await refreshBackendSnapshots();
+    if (result.snapshots !== null) snapshots = result.snapshots;
+    feedback = result.error;
+    refreshing = false;
+    await tick();
+    list?.focus();
+  }
+
   function onPanelKeydown(event: KeyboardEvent): void {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -226,7 +245,7 @@
       class="model-picker-panel"
       class:below
       data-conversation-picker-panel
-      aria-busy={disabled}
+      aria-busy={pickerDisabled}
       role="presentation"
       onkeydown={onPanelKeydown}
       onfocusout={(event) => {
@@ -247,7 +266,7 @@
             data-conversation-backend-showing={backend.selected ? "true" : undefined}
             aria-pressed={backend.selected && showing === "models"}
             aria-disabled={backend.unavailableReason !== null}
-            disabled={disabled}
+            disabled={pickerDisabled}
             onmousedown={(event) => event.preventDefault()}
             onclick={() => chooseBackend(backend.key, backend.unavailableReason)}
           >
@@ -258,7 +277,19 @@
             {/if}
           </button>
         {/each}
-        <div class="model-picker-reasoning">
+        <div class="model-picker-tools">
+          <button
+            type="button"
+            class="model-picker-rail-row"
+            data-conversation-picker-refresh
+            aria-busy={refreshControl.busy}
+            disabled={pickerDisabled}
+            onmousedown={(event) => event.preventDefault()}
+            onclick={() => void runRefresh()}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" d="M19 8a8 8 0 1 0 1 7M19 3v5h-5" /></svg>
+            <span>{refreshControl.label}</span>
+          </button>
           <button
             type="button"
             class="model-picker-rail-row"
@@ -267,7 +298,7 @@
             data-conversation-picker-reasoning
             aria-pressed={showing === "efforts"}
             aria-disabled={view.reasoningUnavailableReason !== null}
-            disabled={disabled}
+            disabled={pickerDisabled}
             onmousedown={(event) => event.preventDefault()}
             onclick={showReasoning}
           >
@@ -298,7 +329,7 @@
             data-conversation-picker-choice={choice.value}
             data-conversation-picker-active={index === active ? "true" : undefined}
             data-conversation-picker-chosen={choice.value === chosenValue ? "true" : undefined}
-            disabled={disabled}
+            disabled={pickerDisabled}
             onmouseenter={() => (activeIndex = index)}
             onmousedown={(event) => event.preventDefault()}
             onclick={() => take(choice)}
@@ -361,8 +392,8 @@
   .model-picker-rail-row.dim :global(.model-picker-mark:not(.hermes)) { filter: grayscale(1); }
   .model-picker-panel[aria-busy="true"] .model-picker-rail-row,
   .model-picker-panel[aria-busy="true"] .model-picker-choice { cursor: progress; opacity: .55; }
-  .model-picker-reasoning { margin-top: auto; padding-top: var(--space-1); border-top: var(--border-hairline) solid var(--border-color); }
-  .model-picker-reasoning svg { width: 13px; height: 13px; }
+  .model-picker-tools { margin-top: auto; padding-top: var(--space-1); border-top: var(--border-hairline) solid var(--border-color); }
+  .model-picker-tools svg { width: 13px; height: 13px; }
   .model-picker-list { min-width: 0; padding-block: var(--space-1); outline: none; }
   .model-picker-choice {
     display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);

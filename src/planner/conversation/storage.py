@@ -40,6 +40,7 @@ from planner.conversation.events import (
     ConversationEventPayload,
     ModelChangedEventPayload,
     PromptDeliveryRefusedEventPayload,
+    PromptDeliveryUncertainEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
     conversation_event_kinds_need_the_change_signal,
@@ -493,7 +494,11 @@ class ConversationStore:
             elif (
                 isinstance(
                     payload,
-                    (PromptDeliveryRefusedEventPayload, PromptDiscardedEventPayload),
+                    (
+                        PromptDeliveryRefusedEventPayload,
+                        PromptDeliveryUncertainEventPayload,
+                        PromptDiscardedEventPayload,
+                    ),
                 )
                 and payload.sender_message_id is not None
             ):
@@ -541,7 +546,9 @@ class ConversationStore:
             row = conn.execute(
                 "SELECT conversation_id,sequence,kind,payload,created_at FROM conversation_events "
                 "WHERE conversation_id=? AND json_extract(payload,'$.sender_message_id')=? "
-                "AND kind IN ('prompt','prompt_delivery_refused','prompt_discarded') LIMIT 1",
+                "AND kind IN "
+                "('prompt','prompt_delivery_refused','prompt_delivery_uncertain',"
+                "'prompt_discarded') LIMIT 1",
                 (conversation_id, sender_message_id),
             ).fetchone()
         finally:
@@ -592,11 +599,13 @@ class ConversationStore:
     def _replace_composer_catalog_sync(
         self, conversation_id: str, composer_catalog: tuple[ComposerCatalogEntry, ...]
     ) -> None:
+        serialized_catalog = _composer_catalog_to_json(composer_catalog)
         conn = self._connect()
         try:
             conn.execute(
-                "UPDATE conversations SET composer_catalog = ? WHERE conversation_id = ?",
-                (_composer_catalog_to_json(composer_catalog), conversation_id),
+                "UPDATE conversations SET composer_catalog = ? "
+                "WHERE conversation_id = ? AND composer_catalog IS NOT ?",
+                (serialized_catalog, conversation_id, serialized_catalog),
             )
         finally:
             conn.close()

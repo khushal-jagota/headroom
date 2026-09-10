@@ -15,21 +15,20 @@ are on the wire, and a background task turns the eventual response into the turn
 That is also why a prompt the agent refuses cannot be a ``PromptWriteFailed``: refusal
 arrives long after the write, and the contract says so in as many words.
 
-**A steer is a second prompt.** Hermes takes text into a running turn as another
-``session/prompt`` on the same session whose text begins ``/steer ``. Its response is the
-steer's own, not the turn's, so it is consumed and dropped.
+**A steer uses a Panels-owned extension.** The original prompt carries its Panels turn
+token. A ``_panels/steer`` request carries that token again, and the extension admits text
+only while the same Hermes turn is live. Stock prompt responses and agent prose say
+nothing about admission, and the adapter never parses them as an answer.
 
 **Permission asks come the other way.** The agent calls back with
 ``session/request_permission`` and waits for the answer, so an ask is a request left open
 until a person answers it or the turn it belongs to dies.
 
-**Hermes changes model the old way.** It does not advertise the model as an ACP session
-config option; it implements the retired ``session/set_model`` method instead. The adapter
-uses a session's advertised config option when there is one for that semantic category and
-falls back to the legacy method for the model, which is the path real hermes takes. A
-reasoning effort has no legacy method, so a hermes session that advertises no
-``thought_level`` option cannot be put on one, and the adapter says so rather than running
-on a value nobody asked for.
+**Hermes changes model the old way.** The extension copies Hermes' exact current model
+from new and loaded sessions into stable metadata. The adapter skips only an exactly
+redundant request. A different requested model still uses an advertised model option or
+the retired ``session/set_model`` method. A reasoning effort has no legacy method, so a
+session without a ``thought_level`` option refuses it.
 
 **The commands a person may type arrive unasked, and before any turn.** ACP has no way to
 ask an agent what its commands are: hermes pushes them as a session update the moment a
@@ -97,6 +96,10 @@ from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendSteerAccepted,
+    BackendSteerOutcome,
+    BackendSteerRefused,
+    BackendSteerUncertain,
     NeedsRebind,
     PermissionAnswerWriteFailed,
     PromptWriteFailed,
@@ -109,6 +112,7 @@ from planner.conversation.contracts import (
     ComposerCatalogEntryKind,
     ConversationAccess,
     PromptDeliveryMode,
+    PromptDeliveryRefusalReason,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
@@ -126,7 +130,6 @@ from planner.conversation.message_content import (
     MessagePiece,
     MessageText,
     joined_runs_of_text,
-    prefix_message_content_text,
     text_message_content,
 )
 from planner.conversation.message_files import (
@@ -136,15 +139,19 @@ from planner.conversation.message_files import (
 
 LOGGER = logging.getLogger("planner.conversation.backends.hermes_acp")
 
-# What hermes reads as text meant for the turn that is already running.
-HERMES_STEER_COMMAND_PREFIX = "/steer "
-
 # Hermes' ACP mode that realizes Panels' full-access posture for file edits. Terminal
 # commands use HERMES_YOLO_MODE; ACP edits are a separate session-level permission surface.
 HERMES_FULL_ACCESS_MODE_ID = "dont_ask"
 
 # The retired ACP method hermes still answers for a mid-session model change.
 LEGACY_SET_SESSION_MODEL_METHOD = "session/set_model"
+
+# Panels' private Hermes extension. The original prompt and every steer carry the same
+# token, so Hermes can answer about admission to that exact turn rather than later work.
+PANELS_STEER_EXTENSION_METHOD = "panels/steer"
+PANELS_TURN_TOKEN_METADATA_KEY = "panelsTurnToken"
+PANELS_METADATA_KEY = "panels"
+PANELS_CURRENT_MODEL_METADATA_KEY = "currentModelId"
 
 # The semantic categories an ACP session labels its own config options with. They are the
 # agent's words, not ours: an option in the ``model`` category is the session's model.
@@ -217,6 +224,27 @@ _HERMES_COMPACTION_RESPONSE = re.compile(
 _DOLLAR_CURRENCY_CODES: frozenset[str] = frozenset({"USD"})
 
 
+def _turn_token_wire_value(turn_token: TurnToken) -> dict[str, str | int]:
+    """The private wire form shared by an original prompt and its steering requests."""
+    return {
+        "conversationId": turn_token.conversation_id,
+        "turnNumber": turn_token.turn_number,
+    }
+
+
+def _current_model_from_metadata(metadata: Any) -> str | None:
+    """Read the exact current model that the Panels Hermes extension retained."""
+    if not isinstance(metadata, dict):
+        return None
+    panels_metadata = metadata.get(PANELS_METADATA_KEY)
+    if not isinstance(panels_metadata, dict):
+        return None
+    current_model = panels_metadata.get(PANELS_CURRENT_MODEL_METADATA_KEY)
+    if not isinstance(current_model, str) or not current_model:
+        return None
+    return current_model
+
+
 class _ConfigurationNotApplied(Exception):
     """The session could not be put on a value it was asked for."""
 
@@ -236,14 +264,14 @@ class AcpChildLaunch:
 
 def hermes_acp_child_launch(
     *,
-    hermes_executable: Path,
+    hermes_python: Path,
     hermes_home: Path,
     hermes_python_source_root: Path,
     panels_server_url: str,
 ) -> AcpChildLaunch:
     """The launch for the hermes on this machine, with the environment it needs."""
     return AcpChildLaunch(
-        argv=(str(hermes_executable), "acp"),
+        argv=(str(hermes_python), str(Path(__file__).with_name("hermes_acp_extension.py"))),
         environment_overrides=(
             ("HERMES_HOME", str(hermes_home)),
             ("HERMES_PYTHON_SRC_ROOT", str(hermes_python_source_root)),
@@ -413,7 +441,7 @@ class HermesAcpBackendChild:
 
         try:
             prompt = await self._write_prompt_to_the_wire(
-                content, sender_label=sender_label, mode=mode
+                turn_token, content, sender_label=sender_label, mode=mode
             )
         except PromptWriteFailed:
             if model_change is not None or reasoning_effort_change is not None:
@@ -447,21 +475,39 @@ class HermesAcpBackendChild:
             )
         return text_message_content(HERMES_COMPACTION_PROMPT)
 
-    async def steer(self, content: MessageContent, *, sender_label: str) -> None:
-        """Send hermes' steer command, which joins the turn instead of starting one.
+    async def steer(
+        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+    ) -> BackendSteerOutcome:
+        """Ask the Panels extension to admit text to this exact Hermes turn."""
+        turn = self._turn
+        if turn is None or turn.token != turn_token:
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.running_turn_changed_before_steer
+            )
+        if not content or not all(isinstance(piece, MessageText) for piece in content):
+            return BackendSteerRefused(PromptDeliveryRefusalReason.message_cannot_be_steered)
 
-        The command word goes in front of the message the way it always did — onto its
-        opening words when it has them, and as a piece of its own when the message opens
-        with something else, so a steered picture still arrives as a steer.
-        """
-        prompt = await self._write_prompt_to_the_wire(
-            prefix_message_content_text(content, HERMES_STEER_COMMAND_PREFIX, ""),
-            sender_label=sender_label,
-            mode=PromptDeliveryMode.steer,
+        connection, session_id = self._bound_session()
+        self._require_a_live_wire()
+        wire_token = _turn_token_wire_value(turn_token)
+        response = await self._guarded(
+            connection.ext_method(
+                PANELS_STEER_EXTENSION_METHOD,
+                {
+                    "sessionId": session_id,
+                    "turnToken": wire_token,
+                    "text": "\n\n".join(cast(MessageText, piece).text for piece in content),
+                    "senderLabel": sender_label,
+                },
+            )
         )
-        # The steer's own response says how the injection went, not how the turn goes, so
-        # it is read and let go. Nothing about the running turn changes here.
-        self._forget(prompt, "steer")
+        if not isinstance(response, dict) or response.get("turnToken") != wire_token:
+            return BackendSteerUncertain()
+        if response.get("accepted") is True:
+            return BackendSteerAccepted()
+        if response.get("accepted") is False:
+            return BackendSteerRefused(PromptDeliveryRefusalReason.backend_rejected_steer)
+        return BackendSteerUncertain()
 
     async def cancel_running_turn(self) -> None:
         """Stop the turn, and do not come back until hermes says it has stopped.
@@ -636,6 +682,7 @@ class HermesAcpBackendChild:
             raise SessionLoadFailed(str(would_not_create)) from would_not_create
         self._session_id = response.session_id
         self._session_configuration_options = tuple(response.config_options or ())
+        self._session_model = _current_model_from_metadata(response.field_meta)
         await self._sink.vendor_session_cursor_rebound(response.session_id)
 
     async def _load_session(
@@ -660,6 +707,7 @@ class HermesAcpBackendChild:
             raise SessionLoadFailed(str(would_not_load)) from would_not_load
         self._session_id = vendor_session_cursor
         self._session_configuration_options = tuple(response.config_options or ())
+        self._session_model = _current_model_from_metadata(response.field_meta)
 
     async def _apply_start_values(self, resolved_start: ResolvedConversationStart) -> None:
         """Put the session on the values this conversation runs on now.
@@ -696,6 +744,8 @@ class HermesAcpBackendChild:
             await self._apply_reasoning_effort(reasoning_effort)
 
     async def _apply_model(self, model: str) -> None:
+        if model == self._session_model:
+            return
         option = self._configuration_option(MODEL_CONFIGURATION_CATEGORY)
         if option is not None:
             await self._set_configuration_option(option.id, model)
@@ -866,7 +916,12 @@ class HermesAcpBackendChild:
         return MessageImage(stored_file_id=kept.stored_file_id, media_type=media_type)
 
     async def _write_prompt_to_the_wire(
-        self, content: MessageContent, *, sender_label: str, mode: PromptDeliveryMode
+        self,
+        turn_token: TurnToken,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode,
     ) -> asyncio.Task[Any]:
         """Start a ``session/prompt`` and return once its bytes are out, not once it answers.
 
@@ -887,6 +942,7 @@ class HermesAcpBackendChild:
                 prompt=prompt_blocks,
                 sender_label=sender_label,
                 delivery_mode=str(mode),
+                **{PANELS_TURN_TOKEN_METADATA_KEY: _turn_token_wire_value(turn_token)},
             ),
             name=f"planner.conversation.prompt.{self._resolved_start.conversation_id}",
         )

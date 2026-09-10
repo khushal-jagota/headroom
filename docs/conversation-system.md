@@ -212,22 +212,35 @@ sent into a turn that is already running.
 
 The composer shows the held line in one inset tray above its recessed input on desktop
 and phone. Messages stack inside that tray. Each row stays on one line and can discard
-the message or make it run next. A Hermes row can also steer its text into the running
-turn. The server snapshot is the shared answer, so a second tab or device shows the same
-held line. A tab merges its immediate copy with that snapshot by the sender's message id
-rather than drawing it twice.
+the message or make it run next. When the server reports steering support, a row can also
+steer its text into the running turn. The server snapshot is the shared answer, so a
+second tab or device shows the same held line. A tab merges its immediate copy with that
+snapshot by the sender's message id rather than drawing it twice.
 
 The queue actions and the input action row use the same order, labels, and button treatment
 on desktop and phone. Width changes the available text space, not the control design.
 
 The answer to a send is the fate of that delivery, and fate means it happened:
-started (the text reached a live agent), queued at a position, injected, or
-refused with a named reason. The only refusals are genuine impossibilities — no
+started (the text reached a live agent), queued at a position, injected into the exact
+captured turn's owned work, refused with a named reason, or uncertain after a steering
+attempt may have crossed the backend boundary. Uncertain is terminal: Panels records it
+and does not retry it. The only refusals are genuine impossibilities — no
 such conversation, the agent would not start, its session would not load, the
 write failed, a steer with no running turn to join, or a steer at a backend that
 cannot steer. A busy agent is never a refusal. A message with nothing in it is not a refusal
 either — it is not a message, and it is turned away where it is sent. How a turn later ends is never
 part of the answer — endings are notebook rows.
+
+Codex steering targets the captured native turn through its steering request. A changed
+turn is refused. A lost response after a possible write stays uncertain, and Stop remains
+available. Panels never retargets or retries that guidance.
+
+Hermes steering uses a small Panels-owned ACP extension. The original prompt and steer
+carry the same turn token. Under Hermes' session lock, the extension redirects only that
+live turn and returns a structured admission result. It never uses Hermes' later-work
+queue. Standard prompt responses end turns, and uncorrelated agent prose never counts as
+admission. Hermes steering accepts text only. Panels refuses images, files, and mixed
+content before any steering write.
 
 A held message has one server-owned line id. The browser sender id stays beside
 it when the browser supplied one, which is how the optimistic copy matches the
@@ -238,15 +251,30 @@ Discard takes one held message out of the line and writes it down as discarded.
 Send now stops the running turn, records that interruption honestly, and runs
 the selected message ahead of the line. A refusal still records the selected
 message, then the remaining FIFO line continues. Steer consumes the selected
-text into a running Hermes turn and does not apply model choices that waited with
+text into the captured running turn and does not apply model choices that waited with
 that message. Being told that the message is gone is an ordinary answer because
 automatic delivery may win the same race.
+
+Claude gives every steered message a UUID. Its queue receipt admits the message to work
+owned by the captured Panels turn. Claude can fold that work into its current model loop
+or run a native continuation. Panels does not classify those paths. It keeps their
+messages, tools, asks, results, and running usage under one turn token until Claude marks
+each UUID on a correlated result. That result supplies the exact terminal receipt.
+
+Claude Stop sends one interrupt that also cancels queued UUIDs. Panels waits for the
+provider receipt, verifies that no owned UUID remains queued, and waits for the active
+command result. If any proof is absent, Panels discards the child. The next prompt resumes
+the stored session without replay of the steer.
 
 A send may also carry a model or reasoning-effort change. The change rides the
 message: browsing a picker does nothing, the change lands when the message is
 delivered, a waiting message applies it when it runs, and a refused delivery
 changes nothing. Codex and hermes take the change in place; claude is restarted
 under the same conversation with its memory carried over.
+
+Hermes new and loaded sessions also return their exact current model through extension
+metadata. Panels omits the legacy model request only when that value exactly matches the
+requested model. A different model or absent metadata keeps the existing model route.
 
 Claude uses that same restart when its message stream fails for good. The failed turn
 stays failed. The next message stops the broken child, resumes one replacement from the
@@ -439,15 +467,18 @@ source through `POST /backends/refresh`. Codex and Claude refresh independently,
 failure does not discard the other provider's new answer. A failed refresh also leaves
 that backend's prior reading in place.
 
-Codex first reads the newest rate-limit event in its local rollout record. A reading
-no more than ten minutes old is returned without starting Codex. Otherwise Panels runs
-one minimal Luna request at low reasoning and reads the newly written event. Claude
-uses the CLI's existing OAuth login for one bounded request to its usage endpoint. The
-credential never appears in the result or logs. Both providers are translated into the
-same answer: the observed time and only the rolling windows the provider returned, with
-percentage used and reset time. A window also says whether it is five hours or seven
-days. A model-scoped Claude window names the stable model id from Claude's current
-catalogue. Hermes has no usage source here.
+Codex starts one short-lived app-server child and asks its native
+`account/rateLimits/read` method. The request does not start a thread, run a model turn,
+spend allowance, or scan rollout files. Panels accepts the account bucket and distinct
+named model buckets, then always stops the child. Claude uses the CLI's existing OAuth
+login for one bounded request to its usage endpoint. Panels refuses an expired access
+token locally and never reads or uses the refresh token. Credentials never appear in a
+result or log.
+
+Both providers are translated into the same answer: the observed time and only the
+valid rolling windows the provider returned, with percentage used and reset time. A
+window also says whether it is five hours or seven days. A model-scoped window names the
+stable model id from that provider's current catalogue. Hermes has no usage source here.
 
 Unavailable, logged-out, transport, and changed-response cases are calm typed refresh
 results. They do not affect another backend, invent missing windows, or turn ordinary

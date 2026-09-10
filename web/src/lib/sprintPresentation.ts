@@ -141,7 +141,7 @@ export function sprintTicketSectionsForTickets(
 export function outcomeTicketProgress(item: SprintOutcomeGroup): string {
   const tickets = item.tickets.filter((ticket) => ticket.stage !== "dropped");
   const done = tickets.filter((ticket) => ticket.stage === "done").length;
-  return tickets.length ? `${done}/${tickets.length} Tickets done` : "No Tickets";
+  return `${done}/${tickets.length}`;
 }
 
 function fallbackProjectRank(label: string): number {

@@ -27,13 +27,14 @@ SCRIPT_PATH_ENVIRONMENT_NAME = "PANELS_CODEX_SCRIPTED_APP_SERVER_SCRIPT"
 # cares about. Codex's own shapes require them, and a fake that skipped them would be
 # testing the adapter against a protocol nobody speaks.
 _THREAD_FILLER: dict[str, Any] = {
-    "cliVersion": "0.147.0",
+    "cliVersion": "0.153.3",
     "createdAt": 0,
     "updatedAt": 0,
     "ephemeral": False,
     "turns": [],
     "modelProvider": "openai",
     "preview": "",
+    "projectId": None,
     "source": "appServer",
     "status": {"type": "idle"},
 }
@@ -54,7 +55,9 @@ class ScriptedAppServer:
         self._thread_id: str = script.get("thread_id", "thread-1")
         self._turns: list[dict[str, Any]] = list(script.get("turns", []))
         self._turns_started = 0
+        self._steers_answered = 0
         self._interrupted = asyncio.Event()
+        self._turn_completed = asyncio.Event()
         self._server_request_answered = asyncio.Event()
         self._writing = asyncio.Lock()
         self._exit_code: int | None = None
@@ -116,6 +119,8 @@ class ScriptedAppServer:
                 running = asyncio.create_task(self._run_turn(request_id, parameters))
                 self._turn_tasks.add(running)
                 running.add_done_callback(self._turn_tasks.discard)
+            case "turn/steer":
+                await self._answer_turn_steer(request_id, parameters)
             case "review/start":
                 running = asyncio.create_task(
                     self._run_turn(request_id, parameters, response_kind="review")
@@ -164,7 +169,7 @@ class ScriptedAppServer:
                 "codexHome": str(Path.home() / ".codex"),
                 "platformFamily": "unix",
                 "platformOs": "macos",
-                "userAgent": "codex-cli/0.147.0 (scripted)",
+                "userAgent": "codex-cli/0.153.3 (scripted)",
             },
         )
 
@@ -276,16 +281,27 @@ class ScriptedAppServer:
         script = self._turns[self._turns_started] if self._turns_started < len(self._turns) else {}
         self._turns_started += 1
         turn_id = script.get("turn_id", f"turn-{self._turns_started}")
+        started_turn_id = script.get("started_turn_id", turn_id)
         self._interrupted.clear()
+        self._turn_completed.clear()
 
         if script.get("respond") == "error" and request_id is not None:
             await self._respond_with_error(request_id, script.get("message", "turn refused"))
             return
-        await self._notify("turn/started", {"threadId": self._thread_id, "turn": _turn(turn_id)})
-        if request_id is not None and script.get("respond") != "never":
-            response: dict[str, Any] = {"turn": _turn(turn_id)}
-            if response_kind == "review":
-                response["reviewThreadId"] = self._thread_id
+        response: dict[str, Any] = {"turn": _turn(turn_id)}
+        if response_kind == "review":
+            response["reviewThreadId"] = self._thread_id
+        if request_id is not None and script.get("response_order") == "before_started":
+            await self._respond(request_id, response)
+            await asyncio.sleep(script.get("started_delay", 0))
+        await self._notify(
+            "turn/started", {"threadId": self._thread_id, "turn": _turn(started_turn_id)}
+        )
+        if (
+            request_id is not None
+            and script.get("respond") != "never"
+            and script.get("response_order") not in {"before_started", "after_actions"}
+        ):
             await self._respond(request_id, response)
         # A turn nobody wrote actions for is a turn that simply finishes. An empty list is
         # a turn that deliberately does not.
@@ -296,6 +312,33 @@ class ScriptedAppServer:
         )
         for action in actions:
             await self._act(action, turn_id, parameters)
+        if request_id is not None and script.get("response_order") == "after_actions":
+            await self._respond(request_id, response)
+
+    async def _answer_turn_steer(self, request_id: Any, parameters: dict[str, Any]) -> None:
+        configured = self._script.get("steers", [{}])
+        outcome = configured[min(self._steers_answered, len(configured) - 1)]
+        self._steers_answered += 1
+        kind = outcome.get("outcome", "accepted")
+        if outcome.get("after_turn_completion"):
+            await self._turn_completed.wait()
+        if kind == "never":
+            return
+        if kind == "malformed":
+            await self._respond(request_id, {})
+            return
+        if kind == "mismatched":
+            await self._respond(request_id, {"turnId": outcome.get("turn_id", "other-turn")})
+            return
+        if kind == "rejected":
+            await self._respond_with_error(
+                request_id,
+                outcome.get("message", "steer rejected"),
+                code=outcome.get("code", -32600),
+                data=outcome.get("data"),
+            )
+            return
+        await self._respond(request_id, {"turnId": parameters["expectedTurnId"]})
 
     async def _act(self, action: dict[str, Any], turn_id: str, parameters: dict[str, Any]) -> None:
         del parameters
@@ -424,6 +467,7 @@ class ScriptedAppServer:
                         ),
                     },
                 )
+                self._turn_completed.set()
             case "stop_reading":
                 self._exit_code = 0
             case "die":
@@ -454,8 +498,13 @@ class ScriptedAppServer:
     async def _respond(self, request_id: Any, result: dict[str, Any]) -> None:
         await self._send({"id": request_id, "result": result})
 
-    async def _respond_with_error(self, request_id: Any, message: str) -> None:
-        await self._send({"id": request_id, "error": {"code": -32000, "message": message}})
+    async def _respond_with_error(
+        self, request_id: Any, message: str, *, code: int = -32000, data: Any = None
+    ) -> None:
+        error = {"code": code, "message": message}
+        if data is not None:
+            error["data"] = data
+        await self._send({"id": request_id, "error": error})
 
     async def _notify(self, method: str, parameters: dict[str, Any]) -> None:
         await self._send({"method": method, "params": parameters})

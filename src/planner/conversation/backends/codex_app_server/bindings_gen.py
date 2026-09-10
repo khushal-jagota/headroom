@@ -5,14 +5,14 @@ Regenerate with:
 
 The pin these models were generated under:
 
-    codex binary version   codex-cli 0.147.0
-    upstream openai/codex  rust-v0.147.0 = be6e8eac029b183056b7e4402879f15d2c85f61b
+    codex binary version   codex-cli 0.153.3
+    upstream openai/codex  rust-v0.153.3 = b1a547b1f73ce86205d9222ac19cff334b3b7a2e
     schema obtained by     codex app-server generate-json-schema --out <dir>
     from the dump's        codex_app_server_protocol.schemas.json
-    dump digest (sha256)   684b49ae64bd09cb27dbf85b6d2ad0380d16d267307a9ec2eae27277045ff4c7
+    dump digest (sha256)   90760ee89ab33a9795a8876ff16e0024f37a4086e3c6bd6673f8f634116fe2da
     pruned and vendored    schema/codex_app_server_protocol.subset.schema.json
-    subset digest (sha256) 3f7d4cafcf87e6e7feb9d6c46ace86497cd4ff0b3b698575b5127554022fcc99
-    definitions generated  163
+    subset digest (sha256) 53b9bb7f8d8181a7ba9a20eb653564a33e9de8fa8d940190d818618fb00d07d7
+    definitions generated  177
 
 The digests are taken over the JSON's meaning — keys sorted — so they change
 when the protocol changes and not when the dump is printed differently.
@@ -158,6 +158,14 @@ class GranularAskForApproval(BaseModel):
     granular: Granular
 
 
+class AsyncUserInputQuestion(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    options: list[str] | None = None
+    title: str
+
+
 class ByteRange(BaseModel):
     end: Annotated[int, Field(ge=0)]
     start: Annotated[int, Field(ge=0)]
@@ -253,6 +261,28 @@ class InputAudioDynamicToolCallOutputContentItem(BaseModel):
     ]
 
 
+class InputTextFunctionCallOutputContentItem(BaseModel):
+    text: str
+    type: Annotated[
+        Literal["input_text"], Field(title="InputTextFunctionCallOutputContentItemType")
+    ]
+
+
+class InputAudioFunctionCallOutputContentItem(BaseModel):
+    audio_url: str
+    type: Annotated[
+        Literal["input_audio"], Field(title="InputAudioFunctionCallOutputContentItemType")
+    ]
+
+
+class EncryptedContentFunctionCallOutputContentItem(BaseModel):
+    encrypted_content: str
+    type: Annotated[
+        Literal["encrypted_content"],
+        Field(title="EncryptedContentFunctionCallOutputContentItemType"),
+    ]
+
+
 class GetAccountParams(BaseModel):
     refreshToken: bool | None = None
 
@@ -266,6 +296,18 @@ class GitInfo(BaseModel):
 class HookPromptFragment(BaseModel):
     hookRunId: str
     text: str
+
+
+class UsageLimitExceededImageGenerationFailure(BaseModel):
+    limitId: str
+    resetsAt: int | None = None
+    type: Annotated[
+        Literal["usageLimitExceeded"], Field(title="UsageLimitExceededImageGenerationFailureType")
+    ]
+
+
+class ImageGenerationFailure(RootModel[UsageLimitExceededImageGenerationFailure]):
+    root: UsageLimitExceededImageGenerationFailure
 
 
 class InstalledApp(BaseModel):
@@ -316,6 +358,10 @@ class MemoryCitationEntry(BaseModel):
     path: str
 
 
+class MisalignmentSteer(BaseModel):
+    message: str
+
+
 class ModelAvailabilityNux(BaseModel):
     message: str
 
@@ -336,6 +382,7 @@ class ModelUpgradeInfo(BaseModel):
     migrationMarkdown: str | None = None
     model: str
     modelLink: str | None = None
+    retirementAt: int | None = None
     upgradeCopy: str | None = None
 
 
@@ -603,7 +650,7 @@ class SubAgentActivityThreadItem(BaseModel):
     agentPath: str
     agentThreadId: str
     id: str
-    kind: Literal["started", "interacted", "interrupted"]
+    kind: Literal["started", "interacted", "interrupted", "completed"]
     type: Annotated[Literal["subAgentActivity"], Field(title="SubAgentActivityThreadItemType")]
 
 
@@ -620,6 +667,7 @@ class SleepThreadItem(BaseModel):
 
 
 class ImageGenerationThreadItem(BaseModel):
+    failure: ImageGenerationFailure | None = None
     id: str
     result: str
     revisedPrompt: str | None = None
@@ -655,6 +703,7 @@ class ThreadResumeParams(BaseModel):
     config: dict[str, Any] | None = None
     cwd: str | None = None
     developerInstructions: str | None = None
+    excludeTurns: bool | None = None
     model: str | None = None
     modelProvider: str | None = None
     personality: Literal["none", "friendly", "pragmatic"] | None = None
@@ -663,9 +712,9 @@ class ThreadResumeParams(BaseModel):
     threadId: str
 
 
-class ThreadSection(BaseModel):
-    id: str
-    name: str
+class ThreadSectionAppearance(BaseModel):
+    color: str | None = None
+    icon: str | None = None
 
 
 class NotLoadedThreadStatus(BaseModel):
@@ -701,6 +750,10 @@ class TurnInterruptParams(BaseModel):
 
 class TurnInterruptResponse(BaseModel):
     pass
+
+
+class TurnSteerResponse(BaseModel):
+    turnId: str
 
 
 class TextUserInput(BaseModel):
@@ -807,6 +860,8 @@ class ChatgptAccount(BaseModel):
         "enterprise_cbp_usage_based",
         "enterprise",
         "edu",
+        "edu_plus",
+        "edu_pro",
         "unknown",
     ]
     type: Annotated[Literal["chatgpt"], Field(title="ChatgptAccountType")]
@@ -861,6 +916,14 @@ class FileUpdateChange(BaseModel):
     path: str
 
 
+class InputImageFunctionCallOutputContentItem(BaseModel):
+    detail: Literal["auto", "low", "high", "original"] | None = None
+    image_url: str
+    type: Annotated[
+        Literal["input_image"], Field(title="InputImageFunctionCallOutputContentItemType")
+    ]
+
+
 class GetAccountResponse(BaseModel):
     account: ApiKeyAccount | ChatgptAccount | AmazonBedrockAccount | None = None
     requiresOpenaiAuth: bool
@@ -869,6 +932,12 @@ class GetAccountResponse(BaseModel):
 class MemoryCitation(BaseModel):
     entries: list[MemoryCitationEntry]
     threadIds: list[str]
+
+
+class MisalignmentErrorDetails(BaseModel):
+    detailedExplanation: str | None = None
+    errorType: str | None = None
+    steer: MisalignmentSteer | None = None
 
 
 class Model1(BaseModel):
@@ -887,6 +956,7 @@ class Model1(BaseModel):
     isDefault: bool
     model: str
     modelSpecialty: str | None = None
+    multiAgentVersion: Literal["disabled", "v1", "v2"] | None = None
     serviceTiers: Annotated[list[ModelServiceTier] | None, Field(validate_default=True)] = []
     supportedReasoningEfforts: list[ReasoningEffortOption]
     supportsPersonality: bool | None = False
@@ -928,6 +998,7 @@ class SkillMetadata(BaseModel):
     interface: SkillInterface | None = None
     name: str
     path: str
+    pluginId: str | None = None
     scope: Literal["user", "repo", "system", "admin"]
     shortDescription: str | None = None
 
@@ -1001,9 +1072,11 @@ class UserMessageThreadItem(BaseModel):
 
 
 class AgentMessageThreadItem(BaseModel):
+    delivery: Literal["async"] | None = None
     id: str
     memoryCitation: MemoryCitation | None = None
     phase: Literal["commentary"] | Literal["final_answer"] | None = None
+    questions: list[AsyncUserInputQuestion] | None = None
     text: str
     type: Annotated[Literal["agentMessage"], Field(title="AgentMessageThreadItemType")]
 
@@ -1043,8 +1116,18 @@ class CollabAgentToolCallThreadItem(BaseModel):
     reasoningEffort: ReasoningEffort | None = None
     receiverThreadIds: list[str]
     senderThreadId: str
-    status: Literal["inProgress", "completed", "failed"]
-    tool: Literal["spawnAgent", "sendInput", "resumeAgent", "wait", "closeAgent"]
+    status: Literal["inProgress", "completed", "failed", "interrupted"]
+    tool: Literal[
+        "spawnAgent",
+        "sendInput",
+        "resumeAgent",
+        "wait",
+        "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
+    ]
     type: Annotated[
         Literal["collabAgentToolCall"], Field(title="CollabAgentToolCallThreadItemType")
     ]
@@ -1062,6 +1145,12 @@ class WebSearchThreadItem(BaseModel):
     query: str
     results: list[Any] | None = None
     type: Annotated[Literal["webSearch"], Field(title="WebSearchThreadItemType")]
+
+
+class ThreadSection(BaseModel):
+    appearance: ThreadSectionAppearance | None = None
+    id: str
+    name: str
 
 
 class ThreadStartParams(BaseModel):
@@ -1103,8 +1192,10 @@ class TurnError(BaseModel):
             "contextWindowExceeded",
             "sessionBudgetExceeded",
             "usageLimitExceeded",
+            "rateLimitExceeded",
             "serverOverloaded",
             "cyberPolicy",
+            "misalignmentPolicyViolation",
             "internalServerError",
             "unauthorized",
             "badRequest",
@@ -1120,6 +1211,7 @@ class TurnError(BaseModel):
         | None
     ) = None
     message: str
+    misalignment: MisalignmentErrorDetails | None = None
 
 
 class TurnPlanStep(BaseModel):
@@ -1134,14 +1226,9 @@ class TurnPlanUpdatedNotification(BaseModel):
     turnId: str
 
 
-class TurnStartParams(BaseModel):
-    approvalPolicy: Literal["untrusted", "on-request", "never"] | GranularAskForApproval | None = (
-        None
-    )
-    approvalsReviewer: Literal["user", "auto_review", "guardian_subagent"] | None = None
+class TurnSteerParams(BaseModel):
     clientUserMessageId: str | None = None
-    cwd: str | None = None
-    effort: ReasoningEffort | None = None
+    expectedTurnId: str
     input: list[
         TextUserInput
         | ImageUserInput
@@ -1151,18 +1238,6 @@ class TurnStartParams(BaseModel):
         | SkillUserInput
         | MentionUserInput
     ]
-    model: str | None = None
-    outputSchema: Any | None = None
-    personality: Literal["none", "friendly", "pragmatic"] | None = None
-    sandboxPolicy: (
-        DangerFullAccessSandboxPolicy
-        | ReadOnlySandboxPolicy
-        | ExternalSandboxSandboxPolicy
-        | WorkspaceWriteSandboxPolicy
-        | None
-    ) = None
-    serviceTier: str | None = None
-    summary: Literal["auto", "concise", "detailed"] | Literal["none"] | None = None
     threadId: str
 
 
@@ -1189,6 +1264,7 @@ class CommandExecutionRequestApprovalParams(BaseModel):
     cwd: str | None = None
     environmentId: str | None = None
     itemId: str
+    kind: Literal["command", "writeStdin"] | None = "command"
     networkApprovalContext: NetworkApprovalContext | None = None
     proposedExecpolicyAmendment: list[str] | None = None
     proposedNetworkPolicyAmendments: list[NetworkPolicyAmendment] | None = None
@@ -1243,58 +1319,6 @@ class ErrorNotification(BaseModel):
     willRetry: bool
 
 
-class ItemCompletedNotification(BaseModel):
-    completedAtMs: int
-    item: (
-        UserMessageThreadItem
-        | HookPromptThreadItem
-        | AgentMessageThreadItem
-        | PlanThreadItem
-        | ReasoningThreadItem
-        | CommandExecutionThreadItem
-        | FileChangeThreadItem
-        | McpToolCallThreadItem
-        | DynamicToolCallThreadItem
-        | CollabAgentToolCallThreadItem
-        | SubAgentActivityThreadItem
-        | WebSearchThreadItem
-        | ImageViewThreadItem
-        | SleepThreadItem
-        | ImageGenerationThreadItem
-        | EnteredReviewModeThreadItem
-        | ExitedReviewModeThreadItem
-        | ContextCompactionThreadItem
-    )
-    threadId: str
-    turnId: str
-
-
-class ItemStartedNotification(BaseModel):
-    item: (
-        UserMessageThreadItem
-        | HookPromptThreadItem
-        | AgentMessageThreadItem
-        | PlanThreadItem
-        | ReasoningThreadItem
-        | CommandExecutionThreadItem
-        | FileChangeThreadItem
-        | McpToolCallThreadItem
-        | DynamicToolCallThreadItem
-        | CollabAgentToolCallThreadItem
-        | SubAgentActivityThreadItem
-        | WebSearchThreadItem
-        | ImageViewThreadItem
-        | SleepThreadItem
-        | ImageGenerationThreadItem
-        | EnteredReviewModeThreadItem
-        | ExitedReviewModeThreadItem
-        | ContextCompactionThreadItem
-    )
-    startedAtMs: int
-    threadId: str
-    turnId: str
-
-
 class PluginShareContext(BaseModel):
     canPublishToWorkspace: bool | None = None
     creatorAccountUserId: str | None = None
@@ -1342,6 +1366,22 @@ class SubAgentSessionSource(BaseModel):
     )
 
 
+class FunctionCallOutputThreadItem(BaseModel):
+    id: str
+    name: str
+    namespace: str | None = None
+    output: (
+        str
+        | list[
+            InputTextFunctionCallOutputContentItem
+            | InputImageFunctionCallOutputContentItem
+            | InputAudioFunctionCallOutputContentItem
+            | EncryptedContentFunctionCallOutputContentItem
+        ]
+    )
+    type: Annotated[Literal["functionCallOutput"], Field(title="FunctionCallOutputThreadItemType")]
+
+
 class Turn(BaseModel):
     completedAt: int | None = None
     durationMs: int | None = None
@@ -1351,6 +1391,7 @@ class Turn(BaseModel):
         UserMessageThreadItem
         | HookPromptThreadItem
         | AgentMessageThreadItem
+        | FunctionCallOutputThreadItem
         | PlanThreadItem
         | ReasoningThreadItem
         | CommandExecutionThreadItem
@@ -1386,6 +1427,74 @@ class TurnStartedNotification(BaseModel):
     turn: Turn
 
 
+class TurnToolOutput(BaseModel):
+    name: str
+    namespace: str | None = None
+    output: (
+        str
+        | list[
+            InputTextFunctionCallOutputContentItem
+            | InputImageFunctionCallOutputContentItem
+            | InputAudioFunctionCallOutputContentItem
+            | EncryptedContentFunctionCallOutputContentItem
+        ]
+    )
+
+
+class ItemCompletedNotification(BaseModel):
+    completedAtMs: int
+    item: (
+        UserMessageThreadItem
+        | HookPromptThreadItem
+        | AgentMessageThreadItem
+        | FunctionCallOutputThreadItem
+        | PlanThreadItem
+        | ReasoningThreadItem
+        | CommandExecutionThreadItem
+        | FileChangeThreadItem
+        | McpToolCallThreadItem
+        | DynamicToolCallThreadItem
+        | CollabAgentToolCallThreadItem
+        | SubAgentActivityThreadItem
+        | WebSearchThreadItem
+        | ImageViewThreadItem
+        | SleepThreadItem
+        | ImageGenerationThreadItem
+        | EnteredReviewModeThreadItem
+        | ExitedReviewModeThreadItem
+        | ContextCompactionThreadItem
+    )
+    threadId: str
+    turnId: str
+
+
+class ItemStartedNotification(BaseModel):
+    item: (
+        UserMessageThreadItem
+        | HookPromptThreadItem
+        | AgentMessageThreadItem
+        | FunctionCallOutputThreadItem
+        | PlanThreadItem
+        | ReasoningThreadItem
+        | CommandExecutionThreadItem
+        | FileChangeThreadItem
+        | McpToolCallThreadItem
+        | DynamicToolCallThreadItem
+        | CollabAgentToolCallThreadItem
+        | SubAgentActivityThreadItem
+        | WebSearchThreadItem
+        | ImageViewThreadItem
+        | SleepThreadItem
+        | ImageGenerationThreadItem
+        | EnteredReviewModeThreadItem
+        | ExitedReviewModeThreadItem
+        | ContextCompactionThreadItem
+    )
+    startedAtMs: int
+    threadId: str
+    turnId: str
+
+
 class PluginMarketplaceEntry(BaseModel):
     interface: MarketplaceInterface | None = None
     name: str
@@ -1407,12 +1516,16 @@ class Thread(BaseModel):
     ephemeral: bool
     forkedFromId: str | None = None
     gitInfo: GitInfo | None = None
+    historyMode: Literal["legacy", "paginated"] | None = "legacy"
     id: str
+    model: str | None = None
     modelProvider: str
     name: str | None = None
     parentThreadId: str | None = None
     path: str | None = None
     preview: str
+    projectId: str | None
+    reasoningEffort: ReasoningEffort | None = None
     recencyAt: int | None = None
     section: ThreadSection | None = None
     sectionEnteredAt: int | None = None
@@ -1433,6 +1546,7 @@ class ThreadResumeResponse(BaseModel):
     approvalsReviewer: Literal["user", "auto_review", "guardian_subagent"]
     cwd: str
     instructionSources: list[str] | None = []
+    itemsBackwardsCursor: str | None = None
     model: str
     modelProvider: str
     reasoningEffort: ReasoningEffort | None = None
@@ -1444,6 +1558,7 @@ class ThreadResumeResponse(BaseModel):
     )
     serviceTier: str | None = None
     thread: Thread
+    turnsBackwardsCursor: str | None = None
 
 
 class ThreadStartResponse(BaseModel):
@@ -1466,6 +1581,41 @@ class ThreadStartResponse(BaseModel):
 
 class ThreadStartedNotification(BaseModel):
     thread: Thread
+
+
+class TurnStartParams(BaseModel):
+    approvalPolicy: Literal["untrusted", "on-request", "never"] | GranularAskForApproval | None = (
+        None
+    )
+    approvalsReviewer: Literal["user", "auto_review", "guardian_subagent"] | None = None
+    clientUserMessageId: str | None = None
+    cwd: str | None = None
+    effort: ReasoningEffort | None = None
+    input: list[
+        TextUserInput
+        | ImageUserInput
+        | LocalImageUserInput
+        | AudioUserInput
+        | LocalAudioUserInput
+        | SkillUserInput
+        | MentionUserInput
+    ]
+    model: str | None = None
+    outputSchema: Any | None = None
+    personality: Literal["none", "friendly", "pragmatic"] | None = None
+    sandboxPolicy: (
+        DangerFullAccessSandboxPolicy
+        | ReadOnlySandboxPolicy
+        | ExternalSandboxSandboxPolicy
+        | WorkspaceWriteSandboxPolicy
+        | None
+    ) = None
+    serviceTier: str | None = None
+    serviceTierForTurn: str | None = None
+    summary: Literal["auto", "concise", "detailed"] | Literal["none"] | None = None
+    threadId: str
+    toolOutput: TurnToolOutput | None = None
+    turnTrigger: str | None = None
 
 
 class PluginInstalledResponse(BaseModel):

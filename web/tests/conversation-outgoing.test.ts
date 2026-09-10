@@ -22,7 +22,11 @@ function outgoing(text: string): OutgoingMessage {
 
 function senderMessageRecordEvent(
   sequence: number,
-  kind: "prompt" | "prompt_delivery_refused" | "prompt_discarded",
+  kind:
+    | "prompt"
+    | "prompt_delivery_refused"
+    | "prompt_delivery_uncertain"
+    | "prompt_discarded",
   message: OutgoingMessage
 ): ConversationEvent {
   const base = {
@@ -52,6 +56,18 @@ function senderMessageRecordEvent(
         sender_label: "owner",
         mode: "run_when_free",
         refusal_reason: "backend_did_not_start",
+        sender_message_id: message.messageId
+      }
+    };
+  }
+  if (kind === "prompt_delivery_uncertain") {
+    return {
+      ...base,
+      kind,
+      payload: {
+        text: "one",
+        sender_label: "owner",
+        mode: "steer",
         sender_message_id: message.messageId
       }
     };
@@ -103,7 +119,12 @@ describe("outgoing Conversation messages", () => {
       .toBe("the server never said whether this arrived");
   });
 
-  it.each(["prompt", "prompt_delivery_refused", "prompt_discarded"] as const)(
+  it.each([
+    "prompt",
+    "prompt_delivery_refused",
+    "prompt_delivery_uncertain",
+    "prompt_discarded"
+  ] as const)(
     "stops drawing a message when its %s row arrives",
     (kind) => {
       const first = outgoing("one");

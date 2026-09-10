@@ -13,7 +13,7 @@
     sprintTicketSectionsForTickets,
     type SprintTicket
   } from "../lib/sprintPresentation";
-  import type { OutcomeSummary, SprintOutcomeGroup } from "../lib/types";
+  import type { OutcomeSummary } from "../lib/types";
   import ClampedText from "../components/ClampedText.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
@@ -24,7 +24,6 @@
   import StageMark from "../components/StageMark.svelte";
   import OutcomePicker from "../components/OutcomePicker.svelte";
   import Button from "../components/Button.svelte";
-  import ErrorLine from "../components/ErrorLine.svelte";
 
   let {
     sub = "tracking",
@@ -35,7 +34,6 @@
   const current = createQuery(() => sprintId ? queries.sprintTracking(sprintId) : queries.currentSprint());
   const projects = createQuery(() => queries.projects());
   const today = createQuery(() => queries.todayDay());
-  const sprintSummaries = createQuery(() => queries.sprintSummaries());
 
   let documents = $derived(sub === "documents");
   let resource = $derived(
@@ -45,15 +43,18 @@
   );
   let projectGroups = $derived(sprintProjectGroups(current.data?.outcome_groups || [], projects.data?.projects || []));
   let todayTicketIds = $derived(new Set((today.data?.tickets || []).map((ticket) => ticket.id)));
-  let otherSections = $derived(
+  let looseTicketSections = $derived(
     sprintTicketSectionsForTickets(
       (current.data?.unclassified_tickets || []) as SprintTicket[],
       todayTicketIds
     )
   );
-  let otherTicketCount = $derived(
-    otherSections.today.length + otherSections.later.length + otherSections.done.length
-  );
+  let looseTickets = $derived([
+    ...looseTicketSections.today,
+    ...looseTicketSections.later,
+    ...looseTicketSections.done
+  ]);
+  let looseTicketProgress = $derived(`${looseTicketSections.done.length}/${looseTickets.length}`);
 
   // The bet is its own control: there is no "Show more" under it, the text itself opens
   // and closes, and a new bet arrives closed.
@@ -85,35 +86,11 @@
   }
 
   let addOutcomeOpen = $state(false);
-  let actionError = $state<unknown>(null);
-  let carryOutcome = $state<SprintOutcomeGroup | null>(null);
-  let carryTargetSprintId = $state("");
-  let carryTicketIds = $state<string[]>([]);
 
   async function commitOutcome(sprintId: string, outcome: OutcomeSummary): Promise<void> {
     await mutateJson(`/api/sprints/${encodeURIComponent(sprintId)}/outcomes/${encodeURIComponent(outcome.id)}`, { method: "PUT" });
     addOutcomeOpen = false;
   }
-  async function removeOutcome(sprintId: string, outcomeId: string): Promise<void> {
-    actionError = null;
-    try { await mutateJson(`/api/sprints/${encodeURIComponent(sprintId)}/outcomes/${encodeURIComponent(outcomeId)}`, { method: "DELETE" }); }
-    catch (error) { actionError = error; }
-  }
-  function openCarry(group: SprintOutcomeGroup): void {
-    carryOutcome = group; carryTargetSprintId = ""; carryTicketIds = [];
-  }
-  function toggleCarryTicket(ticketId: string): void {
-    carryTicketIds = carryTicketIds.includes(ticketId) ? carryTicketIds.filter((id) => id !== ticketId) : [...carryTicketIds, ticketId];
-  }
-  async function submitCarry(sourceSprintId: string): Promise<void> {
-    if (!carryOutcome || !carryTargetSprintId) return;
-    actionError = null;
-    try {
-      await mutateJson(`/api/sprints/${encodeURIComponent(sourceSprintId)}/outcomes/${encodeURIComponent(carryOutcome.outcome.id)}/carry`, { method: "POST", body: { target_sprint_id: carryTargetSprintId, ticket_ids: carryTicketIds } });
-      carryOutcome = null;
-    } catch (error) { actionError = error; }
-  }
-
   function sprintDate(iso: string): string {
     const parsed = Date.parse(`${iso}T00:00:00`);
     return Number.isNaN(parsed) ? iso : shortMonthDayLabel(new Date(parsed));
@@ -236,20 +213,15 @@
               {/if}
               <div class="sprint-meta-line">
                 <span>{sprintDate(sprint.date_start)} – {sprintDate(sprint.date_end)}</span>
-                <span class="sep">·</span>
-                <span>{sprintDayLabel(sprint, current.data.planning_date)}</span>
-                <span class="sep">·</span>
-                <span>{current.data.outcome_groups.filter((group) => group.committed).length} committed outcomes</span>
+                {#if sprintDayLabel(sprint, current.data.planning_date)}
+                  <span class="sep">·</span>
+                  <span>{sprintDayLabel(sprint, current.data.planning_date)}</span>
+                {/if}
                 <a class="sprint-docs-link" href={sprintHref(sprint.id, "/documents")}>Sprint documents ›</a>
               </div>
             </header>
 
             <div class="sprint-projects" data-sprint-projects>
-              {#if actionError}<ErrorLine error={actionError} />{/if}
-              <div class="sprint-outcome-actions"><Button onclick={() => (addOutcomeOpen = !addOutcomeOpen)}>Add outcome</Button></div>
-              {#if addOutcomeOpen}
-                <OutcomePicker projects={projects.data?.projects || []} chooseLabel="Add" onChoose={(outcome) => commitOutcome(sprint.id, outcome)} />
-              {/if}
               {#each projectGroups as group (group.key)}
                 <Disclosure
                   variant="workspace-bucket"
@@ -259,62 +231,35 @@
                 >
                   {#snippet summary()}
                     <span class="board-workspace-bucket-label">{group.label}</span>
-                    <span class="board-workspace-bucket-count" aria-label={`${group.outcomes.length} Outcomes`}>
-                      {group.outcomes.length}
-                    </span>
                   {/snippet}
                   <div class="sprint-project-items">
                     {#each group.outcomes as outcomeGroup (outcomeGroup.outcome.id)}
                       {@const outcome = outcomeGroup.outcome}
-                      {@const visibleTickets = outcomeGroup.tickets.filter((ticket) => ticket.stage !== "dropped")}
                       <div class="sprint-outcome-block" data-outcome-id={outcome.id} data-committed={outcomeGroup.committed}>
                         <a class="list-row sprint-item-row" href={`${sprintHref(sprint.id)}&item=${encodeURIComponent(outcome.id)}`}>
                           <PriorityTile priority={outcome.priority} /><span class="list-row-title">{outcome.title}</span>
                           <span class="sprint-item-rollup">{outcomeTicketProgress(outcomeGroup)}</span>
                         </a>
-                        <div class="sprint-outcome-meta">{outcomeGroup.committed ? "Committed outcome" : "Other work"}</div>
-                        {#if outcomeGroup.committed}
-                          <details class="sprint-outcome-menu"><summary>Actions</summary><div><Button onclick={() => void removeOutcome(sprint.id, outcome.id)}>Remove from Sprint</Button><Button onclick={() => openCarry(outcomeGroup)}>Carry forward</Button></div></details>
-                        {/if}
-                        {#if visibleTickets.length}<details class="sprint-outcome-tickets"><summary>{visibleTickets.length} Tickets</summary><div class="sprint-project-items">{@render ticketRows(visibleTickets)}</div></details>{/if}
                       </div>
                     {/each}
                   </div>
                 </Disclosure>
               {/each}
-              {#if otherTicketCount}
-                <Disclosure
-                  variant="workspace-bucket"
-                  defaultOpen={true}
-                  data-sprint-other
-                >
-                  {#snippet summary()}
-                    <span class="board-workspace-bucket-label">Other work</span>
-                    <span class="board-workspace-bucket-count" aria-label={`${otherTicketCount} Tickets`}>
-                      {otherTicketCount}
-                    </span>
-                  {/snippet}
-                  <div class="sprint-project-items" data-sprint-other-tickets>
-                    {@render ticketRows(otherSections.today)}
-                    {@render ticketRows(otherSections.later)}
-                    {@render ticketRows(otherSections.done)}
+              {#if looseTickets.length}
+                <details class="sprint-no-outcome" data-sprint-no-outcome>
+                  <summary class="list-row sprint-item-row">
+                    <span class="priority-tile priority-tile--blank" aria-hidden="true"></span>
+                    <span class="list-row-title">No Outcome</span>
+                    <span class="sprint-item-rollup">{looseTicketProgress}</span>
+                  </summary>
+                  <div class="sprint-project-items" data-sprint-no-outcome-tickets>
+                    {@render ticketRows(looseTickets)}
                   </div>
-                </Disclosure>
+                </details>
               {/if}
-              {#if carryOutcome}
-                <section class="carry-outcome" data-carry-outcome={carryOutcome.outcome.id}>
-                  <h2>Carry {carryOutcome.outcome.title}</h2>
-                  <select class="in" aria-label="Target Sprint" bind:value={carryTargetSprintId}>
-                    <option value="">Choose target Sprint</option>
-                    {#each sprintSummaries.data?.sprints || [] as target}
-                      {#if target.id !== sprint.id}<option value={target.id}>{target.name}</option>{/if}
-                    {/each}
-                  </select>
-                  {#each carryOutcome.tickets.filter((ticket) => ticket.stage !== "done" && ticket.stage !== "dropped") as ticket}
-                    <label class="carry-ticket"><input type="checkbox" checked={carryTicketIds.includes(ticket.id)} onchange={() => toggleCarryTicket(ticket.id)} /> {ticket.title}</label>
-                  {/each}
-                  <div class="foot"><Button onclick={() => (carryOutcome = null)}>Cancel</Button><Button variant="primary" disabled={!carryTargetSprintId} onclick={() => void submitCarry(sprint.id)}>Carry selected</Button></div>
-                </section>
+              <div class="sprint-outcome-actions"><Button onclick={() => (addOutcomeOpen = !addOutcomeOpen)}>Add outcome</Button></div>
+              {#if addOutcomeOpen}
+                <OutcomePicker projects={projects.data?.projects || []} chooseLabel="Add" onChoose={(outcome) => commitOutcome(sprint.id, outcome)} />
               {/if}
             </div>
           {/if}
