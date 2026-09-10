@@ -1208,10 +1208,16 @@ def test_forced_hermes_snapshot_refreshes_inventory_without_probing_for_updates(
         await service.snapshot(ConversationBackendKey.hermes)
         assert machine.run_commands.count(first_inventory_command) == 1
 
+        version_probes_before_forced = machine.run_commands.count(
+            (HERMES_PATH, "--version")
+        )
         refreshed = await service.snapshot(ConversationBackendKey.hermes, refresh=True)
 
         assert refreshed.version == "0.18.2"
         assert refreshed.update_advisory is None
+        assert machine.run_commands.count(
+            (HERMES_PATH, "--version")
+        ) == version_probes_before_forced + 1
         assert any(
             "hermes_model_catalog.py" in " ".join(command) and "--refresh" in command
             for command in machine.run_commands

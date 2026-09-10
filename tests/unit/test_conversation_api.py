@@ -2340,12 +2340,6 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
         # The worker path and the browser's conversation are the same system. A worker's
         # prompt goes into a real conversation, not a stand-in beside it.
         assert app.state.conversation_system is app.state.conversation.system
-        # Backend cards and child startup share the same lifecycle arbiter. This is what
-        # makes the update route's check atomic with a real conversation spawn.
-        assert (
-            app.state.conversation.system._backend_lifecycle
-            is app.state.conversation.backend_snapshots._backend_lifecycle
-        )
 
     assert app.state.conversation is None
 

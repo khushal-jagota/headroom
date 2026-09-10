@@ -445,7 +445,7 @@ Panels process until that explicit refresh. It is not polled or copied onto
 Tickets. Hermes still offers no Panels reasoning control.
 
 Panels does not ask Hermes for update advice and does not offer a Hermes update action.
-Hermes version and model catalogue discovery remain independent of update maintenance.
+Hermes version and model catalogue discovery remain available.
 
 Panels keeps the last successful usage reading for each backend in its database.
 Opening the Backends page, reading `GET /backends`, receiving a change signal, or

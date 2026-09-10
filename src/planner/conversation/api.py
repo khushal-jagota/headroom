@@ -29,7 +29,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
-from planner.conversation.backend_lifecycle import BackendLifecycleCoordinator
 from planner.conversation.backend_state import (
     BackendStateStore,
     resolve_usage_model_scopes,
@@ -156,7 +155,6 @@ def build_conversation_runtime(
     store = ConversationStore(db_path, busy_timeout_ms=db_busy_timeout_ms)
     live_tail = ConversationLiveTail()
     message_files = ConversationMessageFiles(db_path)
-    backend_lifecycle = BackendLifecycleCoordinator()
     return ConversationRuntime(
         store=store,
         system=SqliteProcessConversationSystem(
@@ -164,7 +162,6 @@ def build_conversation_runtime(
             backend_child_factories=backend_child_factories,
             message_files=message_files,
             live_tail=live_tail,
-            backend_lifecycle=backend_lifecycle,
         ),
         live_tail=live_tail,
         backend_snapshots=BackendSnapshotService(),
