@@ -29,8 +29,8 @@ class ConversationBackendKey(StrEnum):
     """The production catalog of agent backends a conversation can run on.
 
     The catalog is a closed set rather than an open string because this contract states
-    a per-backend capability as a fact: Codex can take text into a turn that is already
-    running, while Hermes and Claude cannot. A fact about backends needs a closed set of
+    a per-backend capability as a fact: hermes can take text into a turn that is already
+    running, codex and claude cannot. A fact stated about backends needs a closed set of
     backends to be stated about.
     """
 
@@ -200,8 +200,8 @@ class PromptDeliveryMode(StrEnum):
     from that point.
 
     ``steer`` injects the text into the turn that is already running, without ending it.
-    Whether a backend can do this is a per-backend fact: Codex can, while Hermes and
-    Claude cannot. A steer is refused when no turn is running, or when the backend cannot
+    Whether a backend can do this is a per-backend fact: hermes can, codex and claude
+    cannot. A steer is refused when no turn is running, or when the backend cannot
     steer.
     """
 
