@@ -39,6 +39,7 @@ The command tree matches the system model:
 - `send-message ...` — send text to one Panels conversation owner.
 - `day ...` — plan and inspect a day.
 - `project ...` — list and create project catalog rows.
+- `feedback ...` — list open feedback and mark notes as used in a Ticket.
 - `worker-type ...` — discover the Worker types registered on this Panels server.
 - `schedule ...` — configure exact-time creation of ordinary Tickets.
 - `ticket ...` — create, inspect, organize, and approve tickets.
@@ -97,6 +98,10 @@ record shapes. Direct `show` commands also keep their full record shapes.
   `--priority P0|P1|P2|P3`; existing Projects may report `null` priority when they
   have not yet been assessed. `project set <project_id> priority --value P0|P1|P2|P3`
   reassesses an existing Project. It cannot clear an assessed priority.
+- **`feedback list / use`** — list open feedback with its page and time, or mark one or
+  more notes as used in a Ticket. The use operation is atomic. A Ticket Worker can use
+  notes only in its own Ticket. A Sprint Item supervisor can use notes only in a current
+  child Ticket.
 - **`worker-type list`** — list the registered Worker type identifiers in registry
   order. Its normal output is one identifier per line; `--json` returns the complete
   served Worker-type manifest for automation. Commands that require `--worker-type`

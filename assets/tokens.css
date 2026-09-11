@@ -108,6 +108,12 @@
      given works it out from the viewport, so its height has to be a value and not a
      number written twice. */
   --shell-nav-height: 50px;
+  --feedback-capture-width: 380px;
+  --feedback-input-min-height: 76px;
+  --feedback-trigger-touch-size: 40px;
+  --feedback-icon-size: 15px;
+  --feedback-icon-touch-size: 20px;
+  --feedback-dot-size: 6px;
 
   /* Borders — widths plus the hairline seam colour */
   --border-hairline: 1px;

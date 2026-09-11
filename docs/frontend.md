@@ -179,8 +179,11 @@ One screen per part of the system:
   Review. See `sprints.md`.
 - **Backlog** — active unscheduled Tickets as bounded summaries. Each row shows only its
   title and Project chip, and opens its canonical Workspace screen. The page does not
-  request Outcomes. Its compact form creates an ordinary explicitly unscheduled Ticket. **Ideas** keeps
-  the separate loose-capture surface (see `backlog-and-ideas.md`).
+  request Outcomes. Its compact form creates an ordinary explicitly unscheduled Ticket.
+- **Ideas** — remembered possibilities with an optional note and Project. See
+  `backlog-and-ideas.md`.
+- **Feedback** — open notes and handled history. Open notes link to their source page.
+  Handled notes are grouped by their Ticket, with dismissed notes last. See `feedback.md`.
 - **Chief of Staff** — the Chief is the first row in Workspace. On wide screens,
   selecting it opens the canonical Chief conversation beside the Workspace rail at
   `#/workspace/chief-of-staff`. On narrow screens, the same address opens the focused
@@ -212,7 +215,7 @@ One screen per part of the system:
   does not start Workers or delete schedules. See `scheduled-tickets.md`.
 
 The shell has three primary destinations in order: Home, Review, and Workspace. More
-groups Sprint, Backlog, and Ideas under Planning. It groups Config, Backends,
+groups Sprint, Backlog, Ideas, and Feedback under Planning. It groups Config, Backends,
 Notifications, and Scheduled tasks under System. On desktop, the three destinations
 and More live in the top bar. On mobile, the same four controls form a fixed,
 full-width bottom bar and More opens a bottom sheet. A slim mobile top bar
@@ -228,6 +231,11 @@ Worker presence is the adjacent spinner and "N working" readout from the global
 running-worker count. Review's count is the only navigation accent; active destinations
 use strong text. The shell uses the dynamic viewport and never scrolls the navigation
 horizontally.
+
+The Feedback control is the last item in the status strip on every page. It opens a
+desktop popover or a phone sheet and saves a text note with optional page context. A
+device-local draft survives a close. The Feedback page and agent CLI read the durable
+record from the server.
 
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens

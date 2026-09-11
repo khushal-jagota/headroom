@@ -40,8 +40,8 @@ live in `src/planner/sprints/`.
 
 ## Handoffs
 
-- **Days** (`days.md`) — the Day page is only the daily overview right now; loose
-  capture is not wired there.
+- **Feedback** (`feedback.md`) — the loose capture path available from every page.
+- **Days** (`days.md`) — the daily overview and its planned Tickets.
 - **Sprints** (`sprints.md`) — where Tickets are scheduled and Outcomes are chosen for a Sprint.
 - **Projects** (`projects.md`) — where the project list comes from.
 
@@ -53,4 +53,4 @@ live in `src/planner/sprints/`.
 
 ---
 
-_Last verified: 2026-09-05._
+_Last verified: 2026-09-11._

@@ -214,7 +214,7 @@
               <span>·</span><span>{item.project}</span>
               <span>·</span><span>{workspaceProgress(item)}</span>
             </div>
-            <h1 class="sprint-workspace-title">
+            <h1 class="sprint-workspace-title" data-feedback-page-title>
               <InlineEdit
                 value={item.title}
                 placeholder="(untitled Outcome)"

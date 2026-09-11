@@ -55,8 +55,9 @@ Days orient one planning date. Tickets carry bounded work and own their Project 
 optional Sprint placement. Outcomes hold shared context and their supervisor across
 Sprints. A commitment chooses an Outcome for a Sprint before Tickets exist. Carrying
 selected unfinished Tickets never moves completed history. Backlog lists unscheduled
-Tickets and offers a collapsed Outcome browser. Ideas remember possibilities. Projects
-classify Tickets, Outcomes and Ideas.
+Tickets and offers a collapsed Outcome browser. Ideas remember possibilities. Feedback
+records loose notes and their handled Ticket history. Projects classify Tickets, Outcomes,
+and Ideas.
 
 Each domain owns its contracts, rules, writers, views, and HTTP routes. Cross-domain
 actions use those owners. The planning date changes at 05:00 local time. Stored Sprint
@@ -67,6 +68,7 @@ Read the focused pages for the product surfaces:
 - **Days** (`days.md`)
 - **Sprints** (`sprints.md`)
 - **Backlog & Ideas** (`backlog-and-ideas.md`)
+- **Feedback** (`feedback.md`)
 - **Projects** (`projects.md`)
 
 _Code paths:_ `src/planner/days/`, `src/planner/sprints/`,
@@ -155,7 +157,7 @@ _Code paths:_ `src/planner/conversation/` and
 ### 7. The human interface
 
 The Svelte app is built by Vite and served by FastAPI. Home, Review, Workspace, Ticket,
-Sprint, Backlog, Ideas, Config, Backends, Notifications, and Scheduled tasks are server
+Sprint, Backlog, Ideas, Feedback, Config, Backends, Notifications, and Scheduled tasks are server
 projections. The Chief conversation is the first Workspace row. Former Agents routes
 redirect to Workspace or Config.
 

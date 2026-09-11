@@ -208,6 +208,28 @@ def require_direct_write(ctx: RequestContext) -> None:
     )
 
 
+def require_feedback_use(
+    conn: sqlite3.Connection, ctx: RequestContext, ticket_id: str
+) -> None:
+    """Permit direct callers, an exact Ticket worker, or its Item supervisor."""
+    if not ctx.is_attributed or ctx.is_chief:
+        return
+    if ctx.actor == _WORKER_ACTOR and ctx.ticket_id == ticket_id:
+        if conn.execute("SELECT 1 FROM tickets WHERE id = ?", (ticket_id,)).fetchone():
+            return
+    if (
+        ctx.actor == SPRINT_ITEM_SUPERVISOR_ACTOR
+        and ctx.sprint_item_id is not None
+        and _is_current_child_ticket(conn, ctx.sprint_item_id, ticket_id)
+    ):
+        return
+    raise PlannerError(
+        ErrorCode.agent_forbidden,
+        "feedback use is not available to this actor",
+        {"actor": ctx.actor, "ticket_id": ticket_id},
+    )
+
+
 def require_ticket_worker_write(
     conn: sqlite3.Connection,
     ctx: RequestContext,

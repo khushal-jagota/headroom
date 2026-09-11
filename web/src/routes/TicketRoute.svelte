@@ -446,7 +446,7 @@
             {/if}
           </div>
           <div class="ticket-title-row">
-            <div class="ticket-title">
+            <div class="ticket-title" data-feedback-page-title>
               <InlineEdit
                 value={detail.title}
                 placeholder="Untitled"
