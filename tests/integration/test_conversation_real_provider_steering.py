@@ -361,11 +361,9 @@ async def _wait_for_event_count(
 
 def _agent_text(events: list[dict[str, Any]]) -> str:
     return " ".join(
-        str(piece["text"])
+        str(event["payload"].get("text", ""))
         for event in events
         if event["kind"] == "agent_message"
-        for piece in event["payload"]["content"]
-        if piece["piece"] == "text"
     )
 
 
