@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import sqlite3
 
-from planner.conversation.contracts import ConversationSystem
+from planner.conversation.contracts import ConversationSystem, PromptDeliveryMode
 from planner.conversation.message_content import text_message_content
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
 from planner.core.errors import ErrorCode, PlannerError
 from planner.message_delivery.contracts import (
+    MessageDeliveryMode,
     MessageDeliveryResult,
     MessageTarget,
     MessageTargetType,
@@ -42,10 +43,15 @@ async def send_message(
     ctx: RequestContext,
     target: MessageTarget,
     message: str,
+    mode: MessageDeliveryMode = MessageDeliveryMode.queue,
 ) -> MessageDeliveryResult:
     """Send one text message to one resolved Panels conversation owner."""
     label = sender_label(ctx)
     content = text_message_content(message)
+    prompt_mode = {
+        MessageDeliveryMode.queue: PromptDeliveryMode.run_when_free,
+        MessageDeliveryMode.steer: PromptDeliveryMode.steer,
+    }[mode]
 
     if target.target_type is MessageTargetType.ticket:
         ticket_id = _required_target_id(target)
@@ -58,6 +64,7 @@ async def send_message(
             conversation_id=ticket.conversation_id,
             created_conversation_id=conversation_start.new_conversation_id(),
             sender_label=label,
+            mode=prompt_mode,
             now=clock.now_unix(),
         )
         resolved = ResolvedMessageDestination("ticket", ticket_id)
@@ -71,6 +78,7 @@ async def send_message(
             conversation_id=conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY),
             created_conversation_id=conversation_start.new_conversation_id(),
             sender_label=label,
+            mode=prompt_mode,
         )
         resolved = ResolvedMessageDestination("agent", CHIEF_SETTINGS_KEY)
     elif target.target_type is MessageTargetType.sprint_item:
@@ -88,6 +96,7 @@ async def send_message(
                 ),
                 created_conversation_id=conversation_start.new_conversation_id(),
                 sender_label=label,
+                mode=prompt_mode,
                 required_sprint_item_id=item_id,
             )
         resolved = ResolvedMessageDestination("agent", item.supervisor_agent_key)
@@ -103,7 +112,7 @@ async def send_message(
                 {"agent_key": agent_key},
             )
         conversation_id = None if row["conversation_id"] is None else str(row["conversation_id"])
-        if conversation_id is None:
+        if conversation_id is None and mode is MessageDeliveryMode.queue:
             raise PlannerError(
                 ErrorCode.validation,
                 "agent has no current conversation and no start configuration",
@@ -117,6 +126,7 @@ async def send_message(
             None,
             conversation_id=conversation_id,
             sender_label=label,
+            mode=prompt_mode,
         )
         resolved = ResolvedMessageDestination("agent", agent_key)
 

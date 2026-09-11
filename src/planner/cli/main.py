@@ -32,6 +32,7 @@ from planner.cli.record_projection import (
 )
 from planner.environments.cli import environment as environment_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
+from planner.message_delivery.contracts import MessageDeliveryMode
 from planner.tickets.contracts import AtCap
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
@@ -469,6 +470,13 @@ main.add_command(environment_group)
 )
 @click.option("--agent", "agent_key", default=None, help="Send to a registered agent.")
 @click.option(
+    "--mode",
+    type=click.Choice([mode.value for mode in MessageDeliveryMode]),
+    default=MessageDeliveryMode.queue.value,
+    show_default=True,
+    help="Run when free (queue if busy) or steer into the running turn.",
+)
+@click.option(
     "--message",
     default=None,
     help="Message text. If you would like a reply, ask the recipient to send a message back.",
@@ -480,6 +488,7 @@ def send_message(
     ticket_id: str | None,
     sprint_item_id: str | None,
     agent_key: str | None,
+    mode: str,
     message: str | None,
     body_file: str | None,
     as_json: bool,
@@ -523,7 +532,7 @@ def send_message(
         "POST",
         "/api/messages/send",
         as_json=as_json,
-        json_body={"target": target, "message": text},
+        json_body={"target": target, "message": text, "mode": mode},
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"message {data['fate']}")

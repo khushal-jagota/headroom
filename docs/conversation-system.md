@@ -181,18 +181,23 @@ success, refusal, failure, or a completed turn with no compaction confirmation.
 The top-level `panels send-message` command is the plain-text command-line door into this
 same send operation. It resolves a Chief, Ticket, Sprint Item, or registered agent, then
 uses that owner's current conversation path. It creates the normal conversation for the
-first three owner types when needed. A general agent row has no launch configuration, so
-it can receive a message only while it points to a current conversation. The command adds
-no second transport, queue, or conversation record.
+first three owner types when a queue send needs one. A steer never creates a conversation
+or starts a turn. A general agent row has no launch configuration, so it can receive a
+message only while it points to a current conversation. The command adds no second
+transport, queue, or conversation record.
 
 The composer accepts pictures and supported files from its pickers, the clipboard, or
 a drop. Attachments wait beside the draft and can be removed one at a time. They can
 travel with words or form the whole message. There is no separate upload conversation
 or attachment record.
 
-Send has no delivery knob. Every new message runs when the agent is free, and a
-busy agent holds it in a FIFO line. Enter and the send arrow use that same rule,
-including while a turn runs.
+The command accepts `--mode queue|steer`. Queue is the default. It runs the message when
+the agent is free and holds it in the FIFO line while the agent is busy. Steer asks the
+conversation system to inject text into the current running turn. The Send Message API
+accepts the same `queue` or `steer` value and defaults an omitted value to `queue`.
+
+The browser composer always uses the queue rule. Enter and the send arrow use that same
+rule, including while a turn runs.
 
 When the agent frees, everything waiting goes to it as one prompt rather than one
 turn each. The messages keep their order and each keeps its sender's name in front
@@ -573,4 +578,4 @@ child process runs. A conversation with no report yet offers nothing.
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-09-04._
+_Last verified: 2026-09-11._
