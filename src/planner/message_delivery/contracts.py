@@ -8,6 +8,13 @@ from enum import StrEnum
 from planner.conversation.contracts import PromptDeliveryFate
 
 
+class MessageDeliveryMode(StrEnum):
+    """The public Send Message choices."""
+
+    queue = "queue"
+    steer = "steer"
+
+
 class MessageTargetType(StrEnum):
     chief = "chief"
     ticket = "ticket"

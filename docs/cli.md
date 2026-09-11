@@ -75,13 +75,18 @@ record shapes. Direct `show` commands also keep their full record shapes.
 - **`send-message`** — send one text message through the existing conversation path.
   Select exactly one destination with `--chief`, `--ticket <id>`, `--sprint-item <id>`,
   or `--agent <key>`. Supply the text with `--message` or `--body-file`; `--body-file -`
-  reads stdin. A Ticket, the Chief, or a Sprint Item supervisor starts its normal
-  conversation on the first message. An arbitrary registered agent must already have a
-  current conversation because its row does not contain launch settings. The result names
-  the resolved destination, conversation, and delivery fate. Started means delivery began,
-  queued names its position while it waits for the busy conversation, and refused means
-  the existing conversation system could not deliver it. It does not report whether the
-  recipient completed the requested work.
+  reads stdin. Use `--mode queue` to run the message when the agent is free, or use
+  `--mode steer` to inject text into its current running turn. The default is `queue`.
+  A queue send to a Ticket, the Chief, or a Sprint Item supervisor starts its normal
+  conversation on the first message. A steer never starts a conversation or a turn.
+  An arbitrary registered agent must already have a current conversation because its row
+  does not contain launch settings. The result names the resolved destination,
+  conversation, and delivery fate. Started means delivery began. Queued names its position
+  while it waits for the busy conversation. Injected means the current turn admitted a
+  steer. Refused includes the reason that delivery was impossible. Uncertain means a steer
+  may have crossed the backend boundary, but Panels cannot confirm admission. Panels does
+  not retry an uncertain send. The result does not report whether the recipient completed
+  the requested work.
 - **`day show / list-tickets / set / add-ticket / remove-ticket`** — plan a day and
   assign tickets to it. `day show` returns the Day header and authored parts;
   `day list-tickets` returns the ticket list explicitly. `day set
@@ -315,4 +320,4 @@ and creation options have been removed.
 
 ---
 
-_Last verified: 2026-08-15._
+_Last verified: 2026-09-11._

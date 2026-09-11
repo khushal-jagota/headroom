@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from click.testing import CliRunner
@@ -45,9 +46,27 @@ def test_each_selector_posts_one_general_send(
         "method": "POST",
         "path": "/api/messages/send",
         "as_json": True,
-        "json_body": {"target": target, "message": "Hello"},
+        "json_body": {"target": target, "message": "Hello", "mode": "queue"},
         "request_actor": "ordinary",
     }
+
+
+@pytest.mark.parametrize("mode", ["queue", "steer"])
+def test_explicit_mode_is_sent_to_the_api(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    captured: dict[str, Any] = {}
+
+    def send(_method: str, _path: str, **kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs["json_body"])
+        return {"conversation_id": "c_one", "fate": "injected"}
+
+    monkeypatch.setattr(http, "send", send)
+    result = CliRunner().invoke(
+        main,
+        ["send-message", "--chief", "--message", "Hello", "--mode", mode, "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["mode"] == mode
 
 
 @pytest.mark.parametrize("body_file", ["message.txt", "-"])
@@ -91,3 +110,40 @@ def test_cli_rejects_ambiguous_or_empty_input(args: tuple[str, ...]) -> None:
 
     assert result.exit_code == 1
     assert json.loads(result.stderr)["error"]["code"] == "validation"
+
+
+def test_uncertain_fate_is_preserved_in_json_and_normal_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = {"conversation_id": "c_one", "fate": "uncertain"}
+    monkeypatch.setattr(http, "send", lambda *_args, **_kwargs: response)
+
+    json_result = CliRunner().invoke(
+        main,
+        ["send-message", "--chief", "--message", "Guide it", "--mode", "steer", "--json"],
+    )
+    normal_result = CliRunner().invoke(
+        main,
+        ["send-message", "--chief", "--message", "Guide it", "--mode", "steer"],
+    )
+
+    assert json_result.exit_code == 0, json_result.output
+    assert json.loads(json_result.stdout) == response
+    assert normal_result.exit_code == 0, normal_result.output
+    assert normal_result.stdout == "message uncertain\n"
+
+
+def test_cli_rejects_a_mode_outside_the_public_choices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    send = Mock()
+    monkeypatch.setattr(http, "send", send)
+
+    result = CliRunner().invoke(
+        main,
+        ["send-message", "--chief", "--message", "Hello", "--mode", "send_now"],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid value for '--mode'" in result.output
+    send.assert_not_called()

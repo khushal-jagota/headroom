@@ -9,6 +9,7 @@ from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.message_delivery import service
 from planner.message_delivery.contracts import (
+    MessageDeliveryMode,
     MessageDeliveryResult,
     MessageTarget,
     MessageTargetType,
@@ -16,6 +17,8 @@ from planner.message_delivery.contracts import (
 from planner.tickets.api import Clk, Conversations, Ctx, DbConn
 
 router = APIRouter()
+
+_MISSING = object()
 
 
 def _message_target(raw: object) -> MessageTarget:
@@ -60,6 +63,21 @@ def _message_text(raw: object) -> str:
     return raw
 
 
+def _message_delivery_mode(raw: object = _MISSING) -> MessageDeliveryMode:
+    if raw is _MISSING:
+        return MessageDeliveryMode.queue
+    if isinstance(raw, str):
+        try:
+            return MessageDeliveryMode(raw)
+        except ValueError:
+            pass
+    raise PlannerError(
+        ErrorCode.validation,
+        "mode must be queue or steer",
+        {"mode": raw},
+    )
+
+
 def _result_json(result: MessageDeliveryResult) -> JsonDict:
     target: JsonDict = {"type": result.target.target_type.value}
     if result.target.target_id is not None:
@@ -86,5 +104,6 @@ async def send_message(
 ) -> JsonDict:
     target = _message_target(body.get("target"))
     message = _message_text(body.get("message"))
-    result = await service.send_message(conversations, conn, clock, ctx, target, message)
+    mode = _message_delivery_mode(body.get("mode", _MISSING))
+    result = await service.send_message(conversations, conn, clock, ctx, target, message, mode)
     return _result_json(result)
