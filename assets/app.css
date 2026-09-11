@@ -6098,6 +6098,9 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 
   .sprint-item-column .ticket-row {
     align-items: flex-start;
+    /* The phone rule gives placement its own line. Wrap that line so it cannot take
+     * the Ticket title's width away. */
+    flex-wrap: wrap;
   }
 
   .sprint-item-column .ticket-row-title {

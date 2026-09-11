@@ -109,6 +109,16 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
             "sprint_id": sprint["id"],
         },
     )
+    backlog_ticket = _post(
+        server,
+        "/api/tickets",
+        {
+            "title": "Keep the Backlog Ticket name visible",
+            "worker_type": "coding",
+            "kickoff_note": "Start.",
+            "sprint_item_id": item["id"],
+        },
+    )
     removed = httpx.delete(
         f"{server.base}/api/day/today/tickets/{review_ticket['id']}", timeout=10.0
     )
@@ -139,6 +149,10 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     past_id = "conv_workspace_past"
     active_id = "conv_workspace_active"
     with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "UPDATE tickets SET ticket_status = 'agent', sprint_id = NULL WHERE id = ?",
+            (backlog_ticket["id"],),
+        )
         _store_supervisor_conversation(
             conn,
             item_id=str(item["id"]),
@@ -165,6 +179,31 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
         f'[data-sprint-item-view="{item["id"]}"]',
     )
     page.locator(f'[data-sprint-ticket-id="{today_ticket["id"]}"]').wait_for(timeout=WAIT_MS)
+    backlog_row = page.locator(f'[data-sprint-ticket-id="{backlog_ticket["id"]}"]')
+    backlog_title = backlog_row.get_by_text("Keep the Backlog Ticket name visible", exact=True)
+    backlog_placement = backlog_row.locator(".ticket-row-sprint")
+    backlog_title.wait_for(timeout=WAIT_MS)
+    backlog_placement.wait_for(state="attached", timeout=WAIT_MS)
+    assert backlog_placement.text_content() == "Backlog"
+    assert backlog_placement.get_attribute("data-ticket-sprint") == "backlog"
+    assert backlog_row.get_attribute("data-ticket-state") == "current-running"
+    assert backlog_row.get_attribute("href") == (
+        f"#/workspace/item/{item['id']}/{backlog_ticket['id']}"
+    )
+    assert backlog_row.locator("xpath=ancestor::details[1]").get_attribute(
+        "data-workspace-group"
+    ) == "current-running"
+    desktop_geometry = page.evaluate(
+        """([rowSelector]) => {
+            const row = document.querySelector(rowSelector);
+            const title = row.querySelector('.ticket-row-title').getBoundingClientRect();
+            const placement = row.querySelector('.ticket-row-sprint').getBoundingClientRect();
+            return { titleWidth: title.width, titleTop: title.top, placementTop: placement.top };
+        }""",
+        [f'[data-sprint-ticket-id="{backlog_ticket["id"]}"]'],
+    )
+    assert desktop_geometry["titleWidth"] > 200, desktop_geometry
+    assert abs(desktop_geometry["titleTop"] - desktop_geometry["placementTop"]) < 2
     # Remaining Tickets starts collapsed, and its rows carry the shared row grammar:
     # the condition is the stage mark's label, not a separate word.
     remaining = page.locator('[data-workspace-section="remaining"]')
@@ -200,6 +239,22 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     page.locator("[data-sprint-item-view]").wait_for(timeout=WAIT_MS)
     assert page.locator("[data-conversation-input]").is_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= 390") is True
+    narrow_geometry = page.evaluate(
+        """([rowSelector]) => {
+            const row = document.querySelector(rowSelector);
+            const title = row.querySelector('.ticket-row-title').getBoundingClientRect();
+            const placement = row.querySelector('.ticket-row-sprint').getBoundingClientRect();
+            return {
+                rowWidth: row.getBoundingClientRect().width,
+                titleWidth: title.width,
+                titleBottom: title.bottom,
+                placementTop: placement.top
+            };
+        }""",
+        [f'[data-sprint-ticket-id="{backlog_ticket["id"]}"]'],
+    )
+    assert narrow_geometry["titleWidth"] > narrow_geometry["rowWidth"] / 2, narrow_geometry
+    assert narrow_geometry["placementTop"] >= narrow_geometry["titleBottom"], narrow_geometry
 
     # The same component also renders from the Workspace route, where no Sprint screen
     # surrounds it. That route is where the pane's own rules were dead, so a phone is
