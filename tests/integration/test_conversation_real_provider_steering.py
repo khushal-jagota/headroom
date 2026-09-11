@@ -9,6 +9,7 @@ opt-in because every case makes real model calls.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -77,9 +78,9 @@ async def _exercise(
 ) -> None:
     _required_evidence_root()
     planner_file = Path(_planner_file())
-    assert planner_file.is_relative_to(
-        REPOSITORY_ROOT
-    ), f"planner resolved outside the proof worktree: {planner_file}"
+    assert planner_file.is_relative_to(REPOSITORY_ROOT), (
+        f"planner resolved outside the proof worktree: {planner_file}"
+    )
     _prepare_isolated_provider_home(case.backend_key, runtime_root, monkeypatch)
     database_path = runtime_root / "state" / "planner.db"
     workspace = runtime_root / "workspace"
@@ -92,16 +93,20 @@ async def _exercise(
 
     conversation_id = f"real-system-steer-{case.backend_key}"
     model_nonce = f"MODEL-STEER-{uuid.uuid4()}"
+    refused_nonce = f"REFUSED-STEER-{uuid.uuid4()}"
     forbidden_nonce = f"STOPPED-STEER-{uuid.uuid4()}"
     ordinary_nonce = f"AFTER-STOP-{uuid.uuid4()}"
     resume_nonce = f"AFTER-RESUME-{uuid.uuid4()}"
     forbidden_file = workspace / f"{forbidden_nonce}.txt"
+    source_sha = _command_output(("git", "rev-parse", "HEAD"), cwd=REPOSITORY_ROOT)
+    source_status = _command_output(("git", "status", "--short"), cwd=REPOSITORY_ROOT)
+    assert source_status == "", f"real-provider proof requires a clean tree: {source_status}"
     receipts: dict[str, Any] = {
         "backend": str(case.backend_key),
         "model": case.model,
-        "source_sha": _command_output(
-            ("git", "rev-parse", "HEAD"), cwd=REPOSITORY_ROOT
-        ),
+        "source_sha": source_sha,
+        "source_status": source_status,
+        "test_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "planner_file": str(planner_file),
         "provider_versions": _provider_versions(case.backend_key),
         "runtime_root": str(runtime_root),
@@ -126,17 +131,29 @@ async def _exercise(
         first = await _send(
             client,
             conversation_id,
-            "Run the shell command `sleep 6`. After it finishes, reply with exactly "
-            "ORIGINAL-DONE.",
+            "Run the shell command `sleep 6`. After it finishes, reply with exactly ORIGINAL-DONE.",
         )
         _keep_response(receipts, "first_prompt", first)
         assert first.json() == {"fate": "started"}
-        await _wait_for_event_count(
+        first_tool_events = await _wait_for_event_count(
             client,
             conversation_id,
             "tool_call_started",
             1,
             receipts=receipts,
+        )
+        first_prompt_sequence = _prompt_sequence(
+            first_tool_events,
+            "Run the shell command `sleep 6`. After it finishes, reply with exactly ORIGINAL-DONE.",
+        )
+        first_tool = _open_tool_after(first_tool_events, first_prompt_sequence)
+        receipts["first_active_tool"] = first_tool
+        await _keep_and_assert_view(
+            client,
+            conversation_id,
+            receipts,
+            "active_before_model_steer",
+            is_running=True,
         )
 
         steered = await _send(
@@ -157,20 +174,65 @@ async def _exercise(
         )
         assert model_nonce in _agent_text(first_events)
 
+        refused = await _send(
+            client,
+            conversation_id,
+            refused_nonce,
+            mode="steer",
+        )
+        _keep_response(receipts, "idle_steer_refused", refused)
+        assert refused.json() == {
+            "fate": "refused",
+            "refusal_reason": "no_running_turn_to_steer_into",
+        }
+        refused_events = await _events(client, conversation_id)
+        matching_refusals = [
+            event
+            for event in refused_events
+            if event["kind"] == "prompt_delivery_refused"
+            and event["payload"].get("text") == refused_nonce
+        ]
+        assert len(matching_refusals) == 1
+        assert matching_refusals[0]["payload"]["mode"] == "steer"
+        assert matching_refusals[0]["payload"]["refusal_reason"] == "no_running_turn_to_steer_into"
+        assert not any(
+            event["kind"] == "prompt" and event["payload"].get("text") == refused_nonce
+            for event in refused_events
+        )
+        await _keep_and_assert_view(
+            client,
+            conversation_id,
+            receipts,
+            "idle_after_refused_steer",
+            is_running=False,
+        )
+
+        stop_prompt_text = (
+            "Run the shell command `sleep 6`. After it finishes, reply with exactly "
+            "SECOND-ORIGINAL-DONE."
+        )
         stop_prompt = await _send(
             client,
             conversation_id,
-            "Run the shell command `sleep 30`. After it finishes, reply with exactly "
-            "SECOND-ORIGINAL-DONE.",
+            stop_prompt_text,
         )
         _keep_response(receipts, "stop_prompt", stop_prompt)
         assert stop_prompt.json() == {"fate": "started"}
-        await _wait_for_event_count(
+        stop_prompt_events = await _events(client, conversation_id)
+        stop_prompt_sequence = _prompt_sequence(stop_prompt_events, stop_prompt_text)
+        _, stop_tool = await _wait_for_open_tool_after(
             client,
             conversation_id,
-            "tool_call_started",
-            2,
+            stop_prompt_sequence,
             receipts=receipts,
+        )
+        receipts["stop_active_tool"] = stop_tool
+        await _keep_and_assert_view(
+            client,
+            conversation_id,
+            receipts,
+            "active_before_stop_steer",
+            is_running=True,
         )
 
         stop_steer = await _send(
@@ -184,6 +246,14 @@ async def _exercise(
         )
         _keep_response(receipts, "stop_steer", stop_steer)
         assert stop_steer.json() == {"fate": "injected"}
+        stop_admission_events = await _events(client, conversation_id)
+        assert _tool_is_open(stop_admission_events, stop_tool["payload"]["tool_call_id"])
+        assert any(
+            event["kind"] == "prompt"
+            and event["payload"].get("mode") == "steer"
+            and event["payload"].get("text", "").endswith(forbidden_nonce + ".")
+            for event in stop_admission_events
+        )
         interrupted = await client.post(
             f"/api/conversation/conversations/{conversation_id}/interrupt"
         )
@@ -199,11 +269,9 @@ async def _exercise(
         )
         endings = [event for event in stopped_events if event["kind"] == "turn_ended"]
         assert endings[-1]["payload"]["ending"] == "interrupted"
-        await asyncio.sleep(3)
-        assert not forbidden_file.exists()
-        assert forbidden_nonce not in _agent_text(
-            await _events(client, conversation_id)
-        )
+        await asyncio.sleep(7)
+        bounded_stop_events = await _events(client, conversation_id)
+        _assert_stopped_effect_absent(bounded_stop_events, forbidden_nonce, forbidden_file)
 
         ordinary = await _send(
             client,
@@ -221,11 +289,14 @@ async def _exercise(
             receipts=receipts,
         )
         assert ordinary_nonce in _agent_text(ordinary_events)
-        final_view = await client.get(
-            f"/api/conversation/conversations/{conversation_id}"
+        _assert_stopped_effect_absent(ordinary_events, forbidden_nonce, forbidden_file)
+        await _keep_and_assert_view(
+            client,
+            conversation_id,
+            receipts,
+            "view_before_resume",
+            is_running=False,
         )
-        _keep_response(receipts, "view_before_resume", final_view)
-        assert final_view.json()["is_running"] is False
 
     async with _api(database_path) as resumed_client:
         resumed = await _send(
@@ -244,11 +315,14 @@ async def _exercise(
             receipts=receipts,
         )
         assert resume_nonce in _agent_text(final_events)
-        final_view = await resumed_client.get(
-            f"/api/conversation/conversations/{conversation_id}"
+        _assert_stopped_effect_absent(final_events, forbidden_nonce, forbidden_file)
+        await _keep_and_assert_view(
+            resumed_client,
+            conversation_id,
+            receipts,
+            "final_view",
+            is_running=False,
         )
-        _keep_response(receipts, "final_view", final_view)
-        assert final_view.json()["is_running"] is False
 
     steer_prompts = [
         event
@@ -264,21 +338,29 @@ async def _exercise(
     assert len(ordinary_prompts) == 4
     turn_endings = [event for event in final_events if event["kind"] == "turn_ended"]
     assert len(turn_endings) == 4
+    assert [event["payload"]["ending"] for event in turn_endings] == [
+        "completed",
+        "interrupted",
+        "completed",
+        "completed",
+    ]
+    assert all(event["payload"]["error_summary"] is None for event in turn_endings)
     assert ordinary_prompts[0]["sequence"] < steer_prompts[0]["sequence"]
     assert steer_prompts[0]["sequence"] < turn_endings[0]["sequence"]
     assert ordinary_prompts[1]["sequence"] < steer_prompts[1]["sequence"]
     assert steer_prompts[1]["sequence"] < turn_endings[1]["sequence"]
     assert ordinary_prompts[2]["sequence"] < turn_endings[2]["sequence"]
     assert ordinary_prompts[3]["sequence"] < turn_endings[3]["sequence"]
-    assert not forbidden_file.exists()
-    assert forbidden_nonce not in _agent_text(final_events)
+    _assert_stopped_effect_absent(final_events, forbidden_nonce, forbidden_file)
     receipts["events"] = final_events
     receipts["assertions"] = {
         "active_steer_changed_model_output": True,
         "accepted_steers_are_durable": True,
+        "idle_steer_refusal_is_durable_and_not_held": True,
         "one_panels_turn_ended_for_each_ordinary_prompt": True,
-        "stop_interrupted_the_active_turn": True,
+        "stop_interrupted_an_open_tool": True,
         "stopped_guidance_did_not_execute_later": True,
+        "endings_are_exact_and_error_free": True,
         "ordinary_prompt_after_stop_completed": True,
         "resumed_prompt_completed": True,
         "final_api_view_is_idle": True,
@@ -328,12 +410,8 @@ async def _send(
     )
 
 
-async def _events(
-    client: httpx.AsyncClient, conversation_id: str
-) -> list[dict[str, Any]]:
-    response = await client.get(
-        f"/api/conversation/conversations/{conversation_id}/events"
-    )
+async def _events(client: httpx.AsyncClient, conversation_id: str) -> list[dict[str, Any]]:
+    response = await client.get(f"/api/conversation/conversations/{conversation_id}/events")
     assert response.status_code == 200, response.text
     return list(response.json()["events"])
 
@@ -357,6 +435,84 @@ async def _wait_for_event_count(
             return events
         await asyncio.sleep(0.1)
     raise AssertionError(f"conversation never recorded {count} {kind} events")
+
+
+async def _wait_for_open_tool_after(
+    client: httpx.AsyncClient,
+    conversation_id: str,
+    prompt_sequence: int,
+    *,
+    timeout: float = 60.0,
+    receipts: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        events = await _events(client, conversation_id)
+        if receipts is not None:
+            receipts["latest_events"] = events
+            _write_evidence_from_receipts(receipts)
+        try:
+            return events, _open_tool_after(events, prompt_sequence)
+        except AssertionError:
+            await asyncio.sleep(0.1)
+    raise AssertionError("the selected prompt never recorded an open tool call")
+
+
+def _prompt_sequence(events: list[dict[str, Any]], text: str) -> int:
+    matches = [
+        event["sequence"]
+        for event in events
+        if event["kind"] == "prompt" and event["payload"].get("text") == text
+    ]
+    assert len(matches) == 1
+    return int(matches[0])
+
+
+def _open_tool_after(events: list[dict[str, Any]], prompt_sequence: int) -> dict[str, Any]:
+    starts = [
+        event
+        for event in events
+        if event["kind"] == "tool_call_started" and event["sequence"] > prompt_sequence
+    ]
+    assert starts
+    for started in starts:
+        if _tool_is_open(events, started["payload"]["tool_call_id"]):
+            return started
+    raise AssertionError("all tool calls after the selected prompt already finished")
+
+
+def _tool_is_open(events: list[dict[str, Any]], tool_call_id: str) -> bool:
+    return not any(
+        event["kind"] == "tool_call_finished" and event["payload"]["tool_call_id"] == tool_call_id
+        for event in events
+    )
+
+
+def _assert_stopped_effect_absent(
+    events: list[dict[str, Any]], forbidden_nonce: str, forbidden_file: Path
+) -> None:
+    assert not forbidden_file.exists()
+    assert forbidden_nonce not in _agent_text(events)
+    assert not any(
+        event["kind"] == "tool_call_started"
+        and forbidden_nonce in str(event["payload"].get("detail", ""))
+        for event in events
+    )
+
+
+async def _keep_and_assert_view(
+    client: httpx.AsyncClient,
+    conversation_id: str,
+    receipts: dict[str, Any],
+    name: str,
+    *,
+    is_running: bool,
+) -> None:
+    response = await client.get(f"/api/conversation/conversations/{conversation_id}")
+    _keep_response(receipts, name, response)
+    assert response.status_code == 200
+    assert response.json()["is_running"] is is_running
+    assert response.json()["held_prompts"] == []
 
 
 def _agent_text(events: list[dict[str, Any]]) -> str:
@@ -436,23 +592,17 @@ def _provider_versions(backend_key: ConversationBackendKey) -> dict[str, str]:
         return {
             "python": _command_output((executable, "--version")),
             "hermes_source": str(source_root),
-            "hermes_source_sha": _command_output(
-                ("git", "rev-parse", "HEAD"), cwd=source_root
-            ),
+            "hermes_source_sha": _command_output(("git", "rev-parse", "HEAD"), cwd=source_root),
             "hermes_agent": str(package_versions["hermes-agent"]),
             "agent_client_protocol": str(package_versions["agent-client-protocol"]),
         }
     if backend_key is ConversationBackendKey.codex:
-        return {
-            "codex_cli": _command_output(
-                (shutil.which("codex") or "codex", "--version")
-            )
-        }
+        return {"codex_cli": _command_output((shutil.which("codex") or "codex", "--version"))}
     executable = os.environ.get(
         "PLAN_CLAUDE_EXECUTABLE",
         str(
             Path(__file__).resolve().parents[2]
-            / "agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude"
+            / "agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
         ),
     )
     return {
@@ -478,9 +628,7 @@ def _command_output(argv: tuple[str, ...], *, cwd: Path | None = None) -> str:
     ).stdout.strip()
 
 
-def _keep_response(
-    receipts: dict[str, Any], name: str, response: httpx.Response
-) -> None:
+def _keep_response(receipts: dict[str, Any], name: str, response: httpx.Response) -> None:
     body: object = None
     if response.content:
         body = response.json()
@@ -501,9 +649,7 @@ def _write_evidence_from_receipts(receipts: dict[str, Any]) -> None:
     _write_evidence(ConversationBackendKey(str(receipts["backend"])), receipts)
 
 
-def _write_evidence(
-    backend_key: ConversationBackendKey, receipts: dict[str, Any]
-) -> None:
+def _write_evidence(backend_key: ConversationBackendKey, receipts: dict[str, Any]) -> None:
     destination = _required_evidence_root()
     (destination / f"{backend_key}-system-api.json").write_text(
         json.dumps(receipts, indent=2) + "\n", encoding="utf-8"
@@ -513,9 +659,7 @@ def _write_evidence(
 def _required_evidence_root() -> Path:
     value = os.environ.get(EVIDENCE_ROOT_ENVIRONMENT_NAME)
     if value is None:
-        pytest.fail(
-            f"{EVIDENCE_ROOT_ENVIRONMENT_NAME} is required for durable provider receipts"
-        )
+        pytest.fail(f"{EVIDENCE_ROOT_ENVIRONMENT_NAME} is required for durable provider receipts")
     destination = Path(value).expanduser()
     if not destination.is_absolute():
         pytest.fail(f"{EVIDENCE_ROOT_ENVIRONMENT_NAME} must be an absolute path")
