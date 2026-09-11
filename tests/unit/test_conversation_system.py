@@ -170,6 +170,8 @@ class _FakeBackend:
     # something while another caller arrives.
     writes_wait_for_release: asyncio.Event | None = None
     write_has_begun: asyncio.Event | None = None
+    steers_wait_for_release: asyncio.Event | None = None
+    steer_has_begun: asyncio.Event | None = None
     cancels_wait_for_release: asyncio.Event | None = None
     cancel_has_begun: asyncio.Event | None = None
     stops_wait_for_release: asyncio.Event | None = None
@@ -280,6 +282,10 @@ class _FakeBackendChild:
         self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
     ) -> BackendSteerOutcome:
         del sender_label
+        if self._backend.steer_has_begun is not None:
+            self._backend.steer_has_begun.set()
+        if self._backend.steers_wait_for_release is not None:
+            await self._backend.steers_wait_for_release.wait()
         if self._backend.write_fails:
             raise PromptWriteFailed(self._backend.conversation_id)
         self._backend.steer_tokens.append(turn_token)
@@ -675,6 +681,60 @@ def test_an_unconfirmed_steer_is_uncertain_and_leaves_the_turn_alone(
             ConversationEventKind.prompt,
             ConversationEventKind.prompt_delivery_uncertain,
         )
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("replacement_starts", [False, True])
+def test_an_accepted_steer_receipt_can_follow_its_turn_and_a_replacement(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    replacement_starts: bool,
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        backend = harness.backend("c")
+        backend.steer_has_begun = asyncio.Event()
+        backend.steers_wait_for_release = asyncio.Event()
+
+        steering = asyncio.create_task(
+            harness.system.send(
+                "c",
+                text_message_content("steered"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
+                sender_message_id="steer-id",
+            )
+        )
+        await backend.steer_has_begun.wait()
+        await harness.complete_turn("c")
+
+        if replacement_starts:
+            assert await harness.system.send(
+                "c", text_message_content("replacement"), sender_label="owner"
+            ) == PromptDeliveryStarted()
+
+        backend.steers_wait_for_release.set()
+        assert await steering == PromptDeliveryInjected()
+
+        expected_prompts = [
+            ("incumbent", "owner", "run_when_free"),
+            ("steered", "owner", "steer"),
+        ]
+        expected_kinds = [
+            ConversationEventKind.prompt,
+            ConversationEventKind.turn_ended,
+            ConversationEventKind.prompt,
+        ]
+        if replacement_starts:
+            expected_prompts.insert(1, ("replacement", "owner", "run_when_free"))
+            expected_kinds.insert(2, ConversationEventKind.prompt)
+        assert list(await harness.recorded_prompts("c")) == expected_prompts
+        assert list(await harness.recorded_kinds("c")) == expected_kinds
+        assert await harness.system.is_running("c") is replacement_starts
+        assert backend.steer_tokens == [TurnToken("c", 1)]
 
     _run(exercise)
 

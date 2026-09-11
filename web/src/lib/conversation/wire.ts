@@ -25,13 +25,6 @@ export const CONVERSATION_BACKEND_KEYS: readonly ConversationBackendKey[] = [
   "claude"
 ];
 
-/** Steering is a per-backend fact the server states, not a runtime negotiation. */
-export const BACKEND_KEYS_SUPPORTING_STEER: readonly ConversationBackendKey[] = ["hermes"];
-
-export function backendSupportsSteer(backendKey: ConversationBackendKey | null): boolean {
-  return backendKey !== null && BACKEND_KEYS_SUPPORTING_STEER.includes(backendKey);
-}
-
 export type PromptDeliveryMode = "run_when_free" | "send_now" | "steer";
 
 export type ConversationTurnEnding = "completed" | "failed" | "interrupted";

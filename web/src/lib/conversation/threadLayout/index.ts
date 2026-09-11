@@ -204,9 +204,9 @@ export function threadItems(rows: readonly TranscriptRow[]): ThreadItem[] {
       turn.messageIndexes = [...turn.messageIndexes, items.length - 1];
     }
 
-    if (row.kind === "prompt" && turn.startedAt === null) {
-      // The prompt that started this turn. A steer's prompt joins one already running,
-      // so it is not allowed to reset when the turn began, nor to open a second head.
+    if (row.kind === "prompt" && row.mode !== "steer" && turn.startedAt === null) {
+      // An ordinary prompt starts a turn. A steer receipt joins an existing turn, so it
+      // cannot reset that turn or open a new head when its provider answer arrives late.
       turn = {
         turnKey: `turn:${row.key}`,
         startedAt: row.createdAt,
