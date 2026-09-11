@@ -406,8 +406,13 @@ export type SprintItemWorkspace = SprintItemSummary & {
   planning_day_id: string;
   today_ticket_ids: string[];
   tickets: SprintItemWorkspaceTicket[];
-  artifacts: string[];
+  artifacts: SprintItemArtifact[];
   conversation_history: TicketConversationHistoryEntry[];
+};
+
+export type SprintItemArtifact = {
+  path: string;
+  modified_at: number;
 };
 
 export type ReviewProposalItem = {

@@ -622,12 +622,11 @@ textarea {
 .outcome-picker-list, .sprint-outcome-block { display: grid; gap: var(--space-1); }
 .outcome-picker-row { width: 100%; border: 0; color: inherit; text-align: left; cursor: pointer; }
 .sprint-outcome-block { padding-block: var(--space-2); }
-.sprint-outcome-meta, .ticket-row-sprint { color: var(--text-muted); font-size: var(--type-sm); }
+.sprint-outcome-meta { color: var(--text-muted); font-size: var(--type-sm); }
 .sprint-outcome-menu { justify-content: flex-end; }
 .carry-ticket { display: block; padding-block: var(--space-1); }
 .backlog-outcomes > summary { cursor: pointer; }
-.ticket-row-sprint { margin-left: auto; padding-left: var(--space-2); }
-@media (max-width: 640px) { .ticket-row-sprint { width: 100%; margin-left: var(--space-5); } }
+.ticket-row-backlog { margin-left: auto; padding-left: var(--space-2); color: var(--text-faintest); font-size: var(--type-sm); }
 
 @media (max-width: 390px) {
   .vps-status-popover {
@@ -4495,6 +4494,14 @@ select {
   flex: 1;
 }
 
+.sprint-item-reading {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
 /* The ticket takes what the conversation is not using, and scrolls inside it. */
 .ticket-doc {
   min-width: 0;
@@ -5086,6 +5093,63 @@ select {
 .ticket-col {
   min-width: 0;
   padding: var(--space-4) var(--page-gutter) var(--space-6);
+}
+
+/* One compact file index is shared by Ticket and Sprint Item reading columns. */
+.artifact-strip {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  min-width: 0;
+  margin-top: var(--space-4);
+}
+
+.artifact-strip-label {
+  flex: none;
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.artifact-strip-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.artifact-chip {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.artifact-chip small {
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  font-weight: 400;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+a.artifact-chip:hover,
+.artifact-strip-more:hover {
+  color: var(--text-strong);
+  background-image: var(--interaction-hover);
+}
+
+.artifact-chip--unavailable {
+  color: var(--text-faintest);
+}
+
+.artifact-strip-more {
+  border: 0;
+  cursor: pointer;
+}
+
+.artifact-strip[data-expanded="false"] .artifact-chip--overflow {
+  display: none;
 }
 
 @media (max-width: 720px) {
@@ -5889,6 +5953,12 @@ select {
   border-top: var(--border-hairline) solid var(--border-color);
 }
 
+.sprint-workspace-section-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .sprint-workspace-section > summary {
   display: flex;
   align-items: center;
@@ -6098,9 +6168,6 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 
   .sprint-item-column .ticket-row {
     align-items: flex-start;
-    /* The phone rule gives placement its own line. Wrap that line so it cannot take
-     * the Ticket title's width away. */
-    flex-wrap: wrap;
   }
 
   .sprint-item-column .ticket-row-title {
@@ -6109,6 +6176,58 @@ details:not([open]) > summary > .sprint-workspace-chevron {
     line-height: 1.35;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
+  }
+}
+
+@container ticket-pane (max-width: 720px) {
+  .artifact-strip {
+    display: block;
+  }
+
+  .artifact-strip-label {
+    display: block;
+    margin-bottom: var(--space-2);
+  }
+
+  .artifact-strip-items {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+  }
+
+  .artifact-strip[data-expanded="false"] .artifact-chip--overflow {
+    display: inline-flex;
+  }
+
+  .artifact-strip-more {
+    display: none;
+  }
+}
+
+@container sprint-item-pane (max-width: 720px) {
+  .artifact-strip {
+    display: block;
+  }
+
+  .artifact-strip-label {
+    display: block;
+    margin-bottom: var(--space-2);
+  }
+
+  .artifact-strip-items {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+  }
+
+  .artifact-strip[data-expanded="false"] .artifact-chip--overflow {
+    display: inline-flex;
+  }
+
+  .artifact-strip-more {
+    display: none;
   }
 }
 

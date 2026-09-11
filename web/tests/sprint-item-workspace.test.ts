@@ -2,9 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   remainingWorkspaceTicketGroups,
   todayWorkspaceTicketGroups,
-  workspaceArtifactRows,
   workspaceProgress,
-  workspaceTicketSprintLabel
+  workspaceTicketIsBacklog
 } from "../src/lib/sprintItemWorkspace";
 import { previewHashHref, resolvePreview, sprintItemFileTarget } from "../src/lib/filePreview";
 import type { SprintItemWorkspace } from "../src/lib/types";
@@ -77,7 +76,7 @@ function workspace(): SprintItemWorkspace {
         day_ids: [], sprint_id: null, sprint_name: null
       }
     ],
-    artifacts: ["proof.md"],
+    artifacts: [{ path: "proof.md", modified_at: 1 }],
     conversation_history: []
   };
 }
@@ -93,19 +92,27 @@ describe("Sprint Item workspace presentation", () => {
       ["Done", ["t_done"]]
     ]);
     expect(shape(remainingWorkspaceTicketGroups(value))).toEqual([["Agent", ["t_later"]]]);
-    expect(workspaceProgress(value)).toBe("1/3 Tickets done");
+    expect(workspaceProgress(value)).toBe("2 open");
+    expect(
+      workspaceProgress({
+        ...value,
+        tickets: [{ ...value.tickets[0], ticket_status: "needs_user", has_pending_proposal: false }]
+      })
+    ).toBe("1 open · 1 needs you");
   });
 
-  it("labels each Ticket from its own Sprint placement, including historical and backlog work", () => {
+  it("marks only open Tickets without a Sprint as backlog", () => {
     const value = workspace();
-    expect(value.tickets.map(workspaceTicketSprintLabel)).toEqual(["Previous", "Current", "Backlog"]);
-    expect(workspaceTicketSprintLabel({ ...value.tickets[0], sprint_name: "" })).toBe("sp_old");
+    expect(value.tickets.map(workspaceTicketIsBacklog)).toEqual([false, false, true]);
+    expect(workspaceTicketIsBacklog({ ...value.tickets[2], stage: "done" })).toBe(false);
+    expect(workspaceTicketIsBacklog({ ...value.tickets[2], stage: "dropped" })).toBe(false);
   });
 
   it("calls zero non-dropped children No Tickets", () => {
     const value = workspace();
     expect(workspaceProgress({ ...value, tickets: [] })).toBe("No Tickets");
     expect(workspaceProgress({ ...value, tickets: [{ ...value.tickets[0], stage: "dropped" }] })).toBe("No Tickets");
+    expect(workspaceProgress({ ...value, tickets: [{ ...value.tickets[0], stage: "done" }] })).toBe("All 1 done");
   });
 
   it("gathers every parked proposal into the one Awaiting approval group", () => {
@@ -235,18 +242,4 @@ describe("Sprint Item workspace presentation", () => {
     );
   });
 
-  it("gives a real artifact row a working href and a genuinely unresolvable one null, never empty", () => {
-    const value = { ...workspace(), artifacts: ["artifacts/proof.md", "../escape.md"] };
-    const rows = workspaceArtifactRows(value);
-    expect(rows).toEqual([
-      {
-        path: "artifacts/proof.md",
-        label: "proof.md",
-        kind: "md",
-        href: "#/preview?source=sprint-item&item=si_workspace&path=artifacts%2Fproof.md"
-      },
-      { path: "../escape.md", label: "escape.md", kind: "md", href: null }
-    ]);
-    expect(rows.every((row) => row.href !== "")).toBe(true);
-  });
 });

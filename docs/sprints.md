@@ -64,9 +64,11 @@ a side effect of carrying an Outcome.
 Removing a commitment does not remove a Ticket's Outcome classification. Those Tickets
 remain under that Outcome on Sprint tracking. Only Tickets without an Outcome appear
 under **No Outcome**. The Outcome workspace always holds its full brief, artifacts, and
-Tickets across Sprints, with Today and Remaining groups as before. The Ticket page does
-not show Sprint or Backlog placement. Commitment links and a Ticket's stored schedule
-can differ: they state different facts.
+Tickets across Sprints. Its header shows open work and work that needs the user. Its
+artifact strip lists files newest first. Today and Other Tickets use the same status
+groups. Other Tickets starts collapsed. Ticket rows omit Sprint names and mark only open,
+unsprinted work as Backlog. The Ticket page does not show Sprint or Backlog placement.
+Commitment links and a Ticket's stored schedule can differ: they state different facts.
 
 Outcome and Ticket Projects remain coherent. Classifying a Ticket aligns its Project
 and preserves its Sprint. Removing its Outcome preserves both Project and Sprint.

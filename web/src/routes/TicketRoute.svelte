@@ -35,10 +35,11 @@
   import TicketPriorityControl from "../components/TicketPriorityControl.svelte";
   import TicketVerdict from "../components/TicketVerdict.svelte";
   import TicketTroubleNotes from "../components/TicketTroubleNotes.svelte";
-  import FileDocument from "../components/FileDocument.svelte";
+  import ArtifactPreview from "../components/ArtifactPreview.svelte";
+  import ArtifactStrip from "../components/ArtifactStrip.svelte";
+  import { ticketArtifactStripItems } from "../lib/artifactStrip";
   import { isPlainLinkClick } from "../lib/linkClick";
   import {
-    resolvePreview,
     targetFromPreviewHref,
     type ManagedFileTarget
   } from "../lib/filePreview";
@@ -129,8 +130,6 @@
   /** The artifact this screen is showing, when the host does not keep it in an address. */
   let heldFile = $state<ManagedFileTarget | null>(null);
   let shownFile = $derived(onOpenFile ? openFile : heldFile);
-  let shownFileLabel = $derived(shownFile ? resolvePreview(shownFile).label : "");
-  let shownFileIsHtml = $derived(shownFile ? resolvePreview(shownFile).kind === "html" : false);
   let artifactReloadSignal = $state(0);
 
   /** Show a file on this screen, or close the one it is showing.
@@ -148,8 +147,9 @@
     else heldFile = file;
     if (file && conversationState === "opened") conversationState = "peeked";
     if (!file) {
-      whatHadFocus?.focus();
+      const restoreFocus = whatHadFocus;
       whatHadFocus = null;
+      queueMicrotask(() => restoreFocus?.focus());
     }
   }
 
@@ -541,6 +541,9 @@
         </header>
 
         <div class="ticket-col">
+          {#if lc}
+            <ArtifactStrip items={ticketArtifactStripItems(lc.fieldIds, detail.field_values, detail.pending_proposal)} />
+          {/if}
           <TicketVerdict stage={detail.stage} verdict={detail.verdict} onSave={saveVerdict} />
           <TicketTroubleNotes notes={detail.trouble_notes} />
           <div class="fields">
@@ -634,39 +637,13 @@
         </div>
       </main>
       {#if shownFile}
-        <!-- The artifact fills the document's box and is drawn over it. The Ticket keeps
-             its layout and its scroll place underneath, so closing gives back the page
-             the reader left, and the conversation below keeps its own share. -->
-        <aside
-          class="ticket-artifact"
-          data-ticket-artifact
-          aria-label={shownFileLabel}
-          tabindex="-1"
-          bind:this={artifactElement}
-        >
-          <div class="ticket-artifact-bar">
-            <span class="ticket-artifact-name">{shownFileLabel}</span>
-            <div class="ticket-artifact-actions">
-              {#if shownFileIsHtml}
-                <button
-                  type="button"
-                  class="ticket-artifact-action"
-                  data-ticket-artifact-refresh
-                  onclick={() => artifactReloadSignal += 1}
-                >Refresh</button>
-              {/if}
-              <button
-                type="button"
-                class="ticket-artifact-action"
-                data-ticket-artifact-close
-                onclick={() => showFile(null)}
-              >Close</button>
-            </div>
-          </div>
-          <div class="ticket-artifact-body">
-            <FileDocument target={shownFile} reloadSignal={artifactReloadSignal} />
-          </div>
-        </aside>
+        <ArtifactPreview
+          target={shownFile}
+          reloadSignal={artifactReloadSignal}
+          bind:element={artifactElement}
+          onRefresh={() => artifactReloadSignal += 1}
+          onClose={() => showFile(null)}
+        />
       {/if}
       </div>
       <div

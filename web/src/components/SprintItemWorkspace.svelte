@@ -7,9 +7,8 @@
   import {
     remainingWorkspaceTicketGroups,
     todayWorkspaceTicketGroups,
-    workspaceArtifactRows,
     workspaceProgress,
-    workspaceTicketSprintLabel,
+    workspaceTicketIsBacklog,
     type WorkspaceTicketGroup
   } from "../lib/sprintItemWorkspace";
   import { sprintTicketCondition } from "../lib/sprintPresentation";
@@ -27,6 +26,14 @@
   import StageMark from "./StageMark.svelte";
   import TicketConversationHistory from "./TicketConversationHistory.svelte";
   import TicketPriorityControl from "./TicketPriorityControl.svelte";
+  import ArtifactStrip from "./ArtifactStrip.svelte";
+  import ArtifactPreview from "./ArtifactPreview.svelte";
+  import {
+    managedFileTargetFromLinkHref,
+    sprintItemArtifactStripItems
+  } from "../lib/artifactStrip";
+  import { isPlainLinkClick } from "../lib/linkClick";
+  import type { ManagedFileTarget } from "../lib/filePreview";
 
   let {
     itemId,
@@ -92,8 +99,51 @@
     conversationState = "rest";
   }
 
-  let artifactRows = $derived(workspace.data ? workspaceArtifactRows(workspace.data) : []);
+  let artifactRows = $derived(
+    workspace.data ? sprintItemArtifactStripItems(workspace.data.id, workspace.data.artifacts) : []
+  );
+  let shownFile = $state<ManagedFileTarget | null>(null);
+  let artifactReloadSignal = $state(0);
+  let artifactElement = $state<HTMLElement | null>(null);
+  let whatHadFocus: HTMLElement | null = null;
+
+  function showFile(file: ManagedFileTarget | null): void {
+    if (file && !shownFile) {
+      whatHadFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
+    shownFile = file;
+    if (file && conversationState === "opened") conversationState = "peeked";
+    if (!file) {
+      const restoreFocus = whatHadFocus;
+      whatHadFocus = null;
+      queueMicrotask(() => restoreFocus?.focus());
+    }
+  }
+
+  $effect(() => {
+    if (shownFile && artifactElement) artifactElement.focus();
+  });
+
+  function openManagedFileInPlace(event: MouseEvent): void {
+    if (event.defaultPrevented) return;
+    const anchor = (event.target as Element | null)?.closest?.("a[href]");
+    if (!anchor) return;
+    const link = { href: anchor.getAttribute("href"), target: anchor.getAttribute("target") };
+    if (!isPlainLinkClick(link, event)) return;
+    const file = managedFileTargetFromLinkHref(link.href);
+    if (!file) return;
+    event.preventDefault();
+    showFile(file);
+  }
+
+  function closeFileOnEscape(event: KeyboardEvent): void {
+    if (event.key !== "Escape" || event.defaultPrevented || !shownFile) return;
+    event.preventDefault();
+    showFile(null);
+  }
 </script>
+
+<svelte:window onkeydown={closeFileOnEscape} />
 
 {#snippet statusGroups(groups: WorkspaceTicketGroup[], emptyText: string)}
   {#each groups as group (group.key)}
@@ -119,7 +169,9 @@
           >
             <StageMark state={condition.mark} aria-label={condition.word} />
             <span class="ticket-row-title">{ticket.title}</span>
-            <span class="ticket-row-sprint" data-ticket-sprint={ticket.sprint_id || "backlog"}>{workspaceTicketSprintLabel(ticket)}</span>
+            {#if workspaceTicketIsBacklog(ticket)}
+              <span class="ticket-row-backlog" data-ticket-backlog>Backlog</span>
+            {/if}
           </a>
         {/each}
       </div>
@@ -135,7 +187,11 @@
   data-sprint-item-workspace={itemId}
   data-sprint-item-view={itemId}
 >
-  <main class="sprint-item-doc" onclickcapture={dismissConversationToRest}>
+  <div class="sprint-item-reading">
+  <!-- Links keep their keyboard behavior. This catcher only redirects plain clicks. -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <main class="sprint-item-doc" onclickcapture={dismissConversationToRest} onclick={openManagedFileInPlace}>
     <ResourceState
       error={workspace.error}
       loading={workspace.isLoading}
@@ -157,11 +213,6 @@
               />
               <span>·</span><span>{item.project}</span>
               <span>·</span><span>{workspaceProgress(item)}</span>
-              {#if item.committed_sprints.length}
-                <span>·</span><span class="sprint-workspace-commitments">
-                  {#each item.committed_sprints as sprint, index (sprint.id)}{#if index}, {/if}<a href={`#/sprint?sprint=${encodeURIComponent(sprint.id)}`}>{sprint.name}</a>{/each}
-                </span>
-              {/if}
             </div>
             <h1 class="sprint-workspace-title">
               <InlineEdit
@@ -186,37 +237,15 @@
             </ClampedText>
           </header>
 
-          <div class="sprint-workspace-work" data-workspace-section="today">
-            {@render statusGroups(todayGroups, "Nothing from this outcome is on today.")}
-          </div>
+          <ArtifactStrip items={artifactRows} />
 
-          <details class="sprint-workspace-section" data-workspace-section="artifacts">
-            <summary>
-              <span class="sprint-workspace-section-label">Artifacts</span>
-              <span class="sprint-workspace-count">{artifactRows.length}</span>
-              <span class="sprint-workspace-chevron" aria-hidden="true"></span>
-            </summary>
-            <div class="sprint-workspace-section-body">
-              {#if artifactRows.length}
-                {#each artifactRows as row (row.path)}
-                  {#if row.href}
-                    <a class="sprint-workspace-artifact" href={row.href}>
-                      <span>{row.label}</span><small>{row.kind}</small>
-                    </a>
-                  {:else}
-                    <span
-                      class="sprint-workspace-artifact quiet-line"
-                      data-artifact-unavailable
-                    >
-                      <span>{row.label}</span><small>unavailable</small>
-                    </span>
-                  {/if}
-                {/each}
-              {:else}
-                <div class="sprint-workspace-empty">Nothing kept here yet.</div>
-              {/if}
+          <section class="sprint-workspace-work" data-workspace-section="today">
+            <div class="sprint-workspace-section-heading">
+              <span class="sprint-workspace-section-label">Today</span>
+              <span class="sprint-workspace-count">{todayGroups.reduce((sum, group) => sum + group.tickets.length, 0)}</span>
             </div>
-          </details>
+            {@render statusGroups(todayGroups, "Nothing from this outcome is on today.")}
+          </section>
 
           <details class="sprint-workspace-section" data-workspace-section="remaining">
             <summary>
@@ -234,6 +263,16 @@
       {/if}
     </ResourceState>
   </main>
+  {#if shownFile}
+    <ArtifactPreview
+      target={shownFile}
+      reloadSignal={artifactReloadSignal}
+      bind:element={artifactElement}
+      onRefresh={() => artifactReloadSignal += 1}
+      onClose={() => showFile(null)}
+    />
+  {/if}
+  </div>
   <div class="conversation-layer" onclickcapture={dismissConversation}>
     <div class="conversation-column">
       {#if workspace.data}

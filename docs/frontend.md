@@ -41,9 +41,8 @@ One screen per part of the system:
   Agent, Waiting to Closeout, Awaiting approval, Waiting for Kickoff, Empty, Blocked,
   Done. Every parked proposal sits under Awaiting approval, because there is one
   approval gate; a proposal still gated on its kickoff splits out into its own group. A
-  ticket whose own run errored reaches the rail as Errored; the Sprint Item page files
-  it under Blocked with the tickets that are waiting on something. A group with no
-  tickets is not drawn.
+  ticket whose own run errored reaches the rail and Sprint Item page as Errored. A group
+  with no tickets is not drawn.
 
   Three groups arrive shut: Waiting for Kickoff, Blocked and Done. Every other group
   arrives open. A shut group is still its own group, with its own name and count, and
@@ -166,11 +165,16 @@ One screen per part of the system:
   it writes the stored Ticket choice but does not create a session. The first prompt attaches
   through that choice; accepting Kickoff may eagerly attach. Once Kickoff advances or the
   Ticket has a conversation, the pill becomes read-only.
+
+  A compact artifact strip is the first element under the header when lifecycle fields
+  link to managed Ticket or Sprint Item files. It reads the pending proposal first, then
+  the lifecycle fields from latest to earliest. It removes duplicate links.
 - **Sprint** — one tracking overview that presents Projects and their Sprint Items,
   plus a dedicated view for each Item and a separate documents page. The overview shows
   Item progress as `done/total`. One collapsed **No Outcome** row follows all Projects
   when unclassified Tickets exist. It opens their canonical Ticket links. An Item view joins today's Day membership
-  to split its Tickets into on-today, off-today, and folded done work. Project priority
+  to split its Tickets into Today and Other Tickets. Each section uses the same status
+  groups and includes its own Done group. Project priority
   orders the Project folds. The documents page presents Kickoff, Checkpoint, and Sprint
   Review. See `sprints.md`.
 - **Backlog** — active unscheduled Tickets as bounded summaries. Each row shows only its
@@ -378,8 +382,8 @@ provider or transport failure in its existing feedback line.
   Conversation images and files use conversation-owned managed bytes. Images render
   inline. Supported documents and data files render as named cards with preview and
   download actions. PDF uses a document frame. Text and data use a bounded text preview.
-- **On a Ticket screen, that link opens the file in place.** A file clicked inside a
-  Ticket does not go to the preview address at all. The Ticket screen catches the click
+- **On a Ticket or Sprint Item screen, that link opens the file in place.** A managed
+  file clicked inside either reading area does not go to the preview address. The screen catches the click
   and draws the file over its own reading area, with a strip carrying the file's name and
   a way out. The Ticket keeps its layout and its scroll place underneath, so closing gives
   back the page the reader left, and the conversation keeps its own section at the bottom
@@ -391,6 +395,12 @@ provider or transport failure in its existing feedback line.
   the Ticket, so a reload, Back, and a shared link all show it. The
   `#/preview` address remains the way in from anywhere else — a shared link, a
   notification, or another screen — and it draws the same document.
+- **Artifact strips use one component.** Sprint Items list their files newest first.
+  Tickets list only managed files linked from their lifecycle fields and pending proposal.
+  A chip shows the file name without its extension and then the file type. Matching names
+  add their parent folder. More than six files collapse to five chips and a count on a
+  wide pane. At 720 pixels or less, every chip stays on one horizontally scrolling line.
+  The strip is absent when it has no files.
 - **Editable Markdown stays one surface.** Ticket recaps, passed fields,
   approval drafts, and future Markdown surfaces remain directly editable with their
   existing focus, blur/save, keyboard, paste, and Escape behavior. What is being typed

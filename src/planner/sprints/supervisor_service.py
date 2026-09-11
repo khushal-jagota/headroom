@@ -381,6 +381,24 @@ def list_artifacts(
     return {"sprint_item_id": sprint_item_id, "artifacts": paths}
 
 
+def list_artifact_details(
+    conn: sqlite3.Connection, ctx: RequestContext, sprint_item_id: str, db_path: str
+) -> list[dict[str, object]]:
+    """Return read-only file facts for the Sprint Item workspace."""
+    _require_item(conn, ctx, sprint_item_id)
+    root = _artifact_root(db_path, sprint_item_id, create=False)
+    if root is None:
+        return []
+    return [
+        {
+            "path": f"{SUPERVISOR_ARTIFACTS_DIRECTORY}/{path.relative_to(root).as_posix()}",
+            "modified_at": path.stat().st_mtime,
+        }
+        for path in root.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    ]
+
+
 def write_artifact(
     conn: sqlite3.Connection,
     ctx: RequestContext,

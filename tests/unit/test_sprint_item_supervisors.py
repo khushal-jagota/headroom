@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 from pathlib import Path
 from typing import Any, cast
@@ -90,6 +91,41 @@ def _supervisor_headers(item_id: str) -> dict[str, str]:
         "X-Plan-Actor": "sprint_item_supervisor",
         "X-Plan-Sprint-Item-ID": item_id,
     }
+
+
+def test_workspace_artifacts_include_each_file_modified_time(tmp_path: Path) -> None:
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        headers = _supervisor_headers(str(item["id"]))
+        first = client.put(
+            f"/api/items/{item['id']}/supervisor/artifacts/old/proof.md",
+            headers=headers,
+            json={"content": "old"},
+        )
+        second = client.put(
+            f"/api/items/{item['id']}/supervisor/artifacts/new/proof.png",
+            headers=headers,
+            json={"content": "new"},
+        )
+        assert first.status_code == 200, first.text
+        assert second.status_code == 200, second.text
+        files_root = tmp_path / "data" / "files" / "sprint-items" / str(item["id"])
+        os.utime(
+            files_root / "artifacts" / "old" / "proof.md",
+            ns=(10_000_000_000, 10_000_000_000),
+        )
+        os.utime(
+            files_root / "artifacts" / "new" / "proof.png",
+            ns=(20_000_000_000, 20_000_000_000),
+        )
+        workspace = client.get(f"/api/items/{item['id']}/workspace")
+
+    assert workspace.status_code == 200, workspace.text
+    assert sorted(workspace.json()["artifacts"], key=lambda artifact: artifact["path"]) == [
+        {"path": "artifacts/new/proof.png", "modified_at": 20.0},
+        {"path": "artifacts/old/proof.md", "modified_at": 10.0},
+    ]
 
 
 def test_supervisor_item_routes_refuse_a_cross_item_actor(tmp_path: Path) -> None:

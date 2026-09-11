@@ -176,6 +176,29 @@ export function renderMarkdownToElement(source: string): HTMLElement {
   return root;
 }
 
+/** The link and image destinations that rendered Markdown exposes to a reader. */
+export function markdownLinkHrefs(source: string): string[] {
+  const parsed = unified().use(remarkParse).use(remarkGfm).parse(source) as unknown as MarkdownNode;
+  const definitions = new Map(
+    collectReferenceDefinitions(parsed).map((definition) => [
+      definition.identifier.toLocaleLowerCase(),
+      definition.url
+    ])
+  );
+  const hrefs: string[] = [];
+  visit(parsed as never, (node: MarkdownNode) => {
+    if ((node.type === "link" || node.type === "image") && node.url) {
+      hrefs.push(node.url);
+      return;
+    }
+    if ((node.type === "linkReference" || node.type === "imageReference") && node.identifier) {
+      const href = definitions.get(node.identifier.toLocaleLowerCase());
+      if (href) hrefs.push(href);
+    }
+  });
+  return hrefs;
+}
+
 export function serializeMarkdownDomToSource(root: Node): string {
   const placeholders: AtomicPlaceholder[] = [];
   const placeholderBase = unusedPlaceholderBase(root);

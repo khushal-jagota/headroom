@@ -8,7 +8,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from datetime import date
-from typing import Any, cast
+from typing import Any
 
 from fastapi import APIRouter, Request
 
@@ -203,13 +203,9 @@ async def get_item_workspace(item_id: str, conn: DbConn, ctx: Ctx, cfg: Cfg, clk
     require_sprint_item_supervisor_read(conn, ctx, item_id)
     planning_day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
     result = sprints_views.item_workspace(conn, item_id, planning_day_id)
-    artifact_paths = cast(
-        "list[str]",
-        supervisor_service.list_artifacts(conn, ctx, item_id, cfg.db_path)["artifacts"],
+    result["artifacts"] = supervisor_service.list_artifact_details(
+        conn, ctx, item_id, cfg.db_path
     )
-    result["artifacts"] = [
-        f"{supervisor_service.SUPERVISOR_ARTIFACTS_DIRECTORY}/{path}" for path in artifact_paths
-    ]
     return result
 
 
