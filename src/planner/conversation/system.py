@@ -1236,12 +1236,14 @@ class SqliteProcessConversationSystem:
             state.lock.release()
 
         if reservation is not None:
+            # Steer names how to address active work. With no turn to join, this message
+            # opens an ordinary turn, so its durable mode and backend metadata are queue.
             return await self._deliver_and_finalize(
                 state,
                 reservation,
                 content=content,
                 sender_label=sender_label,
-                mode=PromptDeliveryMode.steer,
+                mode=PromptDeliveryMode.queue,
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
                 sender_message_id=sender_message_id,

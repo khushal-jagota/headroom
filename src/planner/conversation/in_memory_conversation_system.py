@@ -237,7 +237,7 @@ class InMemoryConversationSystem:
                 state,
                 content,
                 sender_label,
-                mode,
+                PromptDeliveryMode.queue if mode is PromptDeliveryMode.steer else mode,
                 model_change,
                 reasoning_effort_change,
                 sender_message_id=sender_message_id,

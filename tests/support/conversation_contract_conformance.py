@@ -535,7 +535,7 @@ class ConversationContractConformanceSuite:
         self._run(exercise)
 
     def test_steer_while_idle_starts_a_turn(self) -> None:
-        """Coverage 12."""
+        """Coverage 12. An idle steer opens and records an ordinary turn."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(
@@ -548,6 +548,22 @@ class ConversationContractConformanceSuite:
                 mode=PromptDeliveryMode.steer,
             )
             assert fate == PromptDeliveryStarted()
+            expected_write = BackendWrite(
+                content=text_message_content("steered"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+            )
+            assert await subject.backend_writes("c") == (expected_write,)
+            assert _facts_of_kind(
+                await subject.recorded_facts("c"), RecordedFactKind.prompt_delivered
+            ) == (
+                RecordedFact(
+                    kind=RecordedFactKind.prompt_delivered,
+                    content=text_message_content("steered"),
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.queue,
+                ),
+            )
 
         self._run(exercise)
 
