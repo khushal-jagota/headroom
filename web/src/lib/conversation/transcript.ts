@@ -12,6 +12,7 @@
  */
 
 import type {
+  AutomaticCompactionResult,
   ConversationTurnEnding,
   MessagePiece,
   PermissionAskOption,
@@ -162,6 +163,7 @@ export type TranscriptRow =
       createdAt: number;
       ending: ConversationTurnEnding;
       errorSummary: string | null;
+      automaticCompactionResult: AutomaticCompactionResult | null;
     }
   /** The agent's plan as of this row. It is never drawn as a line of its own — the plan
    *  strip is its rendering — so it exists here only to reach the turn it belongs to. */
@@ -193,6 +195,7 @@ export function refusalSentence(reason: PromptDeliveryRefusalReason): string {
 /** What a message that was taken back before anything received it says about itself. The
  *  thread says it beside the message, and the rest line says it on its own. */
 export const PROMPT_DISCARDED_SENTENCE = "discarded without being delivered";
+export const AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE = "context was not compacted";
 
 const TURN_ENDING_SENTENCES: Record<ConversationTurnEnding, string> = {
   completed: "turn complete",
@@ -525,7 +528,8 @@ export function transcriptRows(
           sequence,
           createdAt,
           ending: event.payload.ending,
-          errorSummary: event.payload.error_summary
+          errorSummary: event.payload.error_summary,
+          automaticCompactionResult: event.payload.automatic_compaction_result ?? null
         });
         break;
     }

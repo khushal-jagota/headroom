@@ -114,6 +114,12 @@ class ConversationTurnEnding(StrEnum):
     interrupted = "interrupted"
 
 
+class AutomaticCompactionResult(StrEnum):
+    """The terminal maintenance result that needs an explicit durable distinction."""
+
+    not_compacted = "not_compacted"
+
+
 class ToolCallStatus(StrEnum):
     """How a tool call finished."""
 
@@ -472,14 +478,15 @@ class ContextCompactedEventPayload:
 class TurnEndedEventPayload:
     """A turn that has stopped running, and why.
 
-    ``error_summary`` is filled only for a failure. A completed or interrupted turn has
-    nothing to summarise.
+    ``error_summary`` is filled only for a failure. ``automatic_compaction_result`` is
+    filled when a completed maintenance turn did not produce a confirmed boundary.
     """
 
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.turn_ended
 
     ending: ConversationTurnEnding
     error_summary: str | None = None
+    automatic_compaction_result: AutomaticCompactionResult | None = None
 
 
 type ConversationEventPayload = (
@@ -708,7 +715,13 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
         case ContextCompactedEventPayload():
             return {}
         case TurnEndedEventPayload():
-            return {"ending": str(payload.ending), "error_summary": payload.error_summary}
+            return {
+                "ending": str(payload.ending),
+                "error_summary": payload.error_summary,
+                **_entry_if_minted(
+                    "automatic_compaction_result", payload.automatic_compaction_result
+                ),
+            }
         case _:
             assert_never(payload)
 
@@ -893,6 +906,11 @@ def _payload_from_json_object(
             return TurnEndedEventPayload(
                 ending=ConversationTurnEnding(_text(stored, "ending")),
                 error_summary=_optional_text(stored, "error_summary"),
+                automatic_compaction_result=(
+                    None
+                    if (result := _optional_text(stored, "automatic_compaction_result")) is None
+                    else AutomaticCompactionResult(result)
+                ),
             )
         case _:
             assert_never(kind)

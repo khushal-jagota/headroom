@@ -69,6 +69,7 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.events import (
     AgentMessageDeltaFrame,
+    AutomaticCompactionResult,
     ContextCompactedEventPayload,
     ConversationEventKind,
     ConversationTurnEnding,
@@ -2176,7 +2177,7 @@ def test_real_core_and_scripted_acp_persist_confirmed_compaction_and_release_the
     _run(exercise)
 
 
-def test_real_core_and_scripted_acp_keep_the_watermark_on_unconfirmed_compaction(
+def test_real_core_and_scripted_acp_settle_unconfirmed_compaction_without_a_retry_loop(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
@@ -2202,6 +2203,7 @@ def test_real_core_and_scripted_acp_keep_the_watermark_on_unconfirmed_compaction
             assert after is not None
             assert after.latest_agent_activity_sequence == activity_sequence
             assert after.automatically_compacted_through_sequence == 0
+            assert after.automatic_compaction_attempted_through_sequence == activity_sequence
             assert [
                 write["text"] for write in (await subject.agent_account("c"))["prompt_writes"]
             ] == ["owner:\nfirst", "/compress", "owner:\nreleased after failure"]
@@ -2210,7 +2212,15 @@ def test_real_core_and_scripted_acp_keep_the_watermark_on_unconfirmed_compaction
                 for event in await subject.recorded_events("c")
                 if isinstance(event.payload, TurnEndedEventPayload)
             ]
-            assert endings[-1].ending is ConversationTurnEnding.failed
+            assert endings[-1] == TurnEndedEventPayload(
+                ending=ConversationTurnEnding.completed,
+                automatic_compaction_result=AutomaticCompactionResult.not_compacted,
+            )
             await subject.complete_running_turn("c")
+            clock.advance(5 * 60)
+            await subject.sweep_idle_children()
+            assert [
+                write["text"] for write in (await subject.agent_account("c"))["prompt_writes"]
+            ] == ["owner:\nfirst", "/compress", "owner:\nreleased after failure"]
 
     _run(exercise)

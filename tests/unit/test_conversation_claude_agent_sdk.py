@@ -2453,6 +2453,77 @@ def test_a_turn_that_was_stopped_still_says_what_has_been_spent(tmp_path: Path) 
 # --- when claude drops what it has summarised --------------------------------------------------
 
 
+@pytest.mark.parametrize("model", ("fable[1m]", "opus[1m]"))
+def test_automatic_compaction_uses_claudes_exact_command_and_typed_boundary(
+    tmp_path: Path, model: str
+) -> None:
+    async def exercise() -> None:
+        resolved = _start_request(workspace_folder=tmp_path, model=model)
+        child, sink, clients = _bench(resolved)
+        await child.start(resolved, vendor_session_cursor=None)
+        content = text_message_content("/compact")
+        await child.write_prompt(
+            TURN,
+            content,
+            sender_content=content,
+            sender_label="Panels",
+            mode=PromptDeliveryMode.queue,
+            model_change=None,
+            reasoning_effort_change=None,
+            automatic_compaction=True,
+        )
+        assert clients[0].prompts == ["/compact"]
+        clients[0].say(
+            SystemMessage(
+                subtype="compact_boundary",
+                data={"session_id": SESSION_ID, "compactMetadata": {}},
+            ),
+            _result(session_id=SESSION_ID),
+        )
+        await clients[0].until_taken_in()
+
+        assert sink.compactions == [TURN]
+        assert sink.endings[-1]["ending"] is ConversationTurnEnding.completed
+        await child.stop()
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    "response_text", ("Not enough messages to compact.", None),
+    ids=("refusal", "silent"),
+)
+def test_automatic_compaction_completion_without_a_boundary_stays_completed(
+    tmp_path: Path, response_text: str | None
+) -> None:
+    async def exercise() -> None:
+        resolved = _start_request(workspace_folder=tmp_path, model="opus[1m]")
+        child, sink, clients = _bench(resolved)
+        await child.start(resolved, vendor_session_cursor=None)
+        content = text_message_content("/compact")
+        await child.write_prompt(
+            TURN,
+            content,
+            sender_content=content,
+            sender_label="Panels",
+            mode=PromptDeliveryMode.queue,
+            model_change=None,
+            reasoning_effort_change=None,
+            automatic_compaction=True,
+        )
+        if response_text is not None:
+            clients[0].say(_assistant(TextBlock(text=response_text), session_id=SESSION_ID))
+        clients[0].say(_result(session_id=SESSION_ID))
+        await clients[0].until_taken_in()
+
+        assert sink.compactions == []
+        assert sink.message_texts == ([] if response_text is None else [(TURN, response_text)])
+        assert sink.endings[-1]["ending"] is ConversationTurnEnding.completed
+        await child.stop()
+
+    _run(exercise)
+
+
 def test_a_compaction_is_reported_and_the_rest_of_the_news_is_left_alone(
     tmp_path: Path,
 ) -> None:

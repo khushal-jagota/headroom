@@ -78,6 +78,7 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.events import (
     AgentMessageDeltaFrame,
+    AutomaticCompactionResult,
     ContextCompactedEventPayload,
     ConversationEventPayload,
     ConversationLiveTailFrame,
@@ -1262,7 +1263,7 @@ class SqliteProcessConversationSystem:
             <= activity_age
             < AUTOMATIC_COMPACTION_BEFORE_SECONDS
             and state.record.latest_agent_activity_sequence
-            > state.record.automatically_compacted_through_sequence
+            > state.record.automatic_compaction_attempted_through_sequence
         )
 
     async def _send_now(
@@ -2139,7 +2140,18 @@ class SqliteProcessConversationSystem:
         state.last_ended_turn_token = running.token
         state.last_ended_turn_was_automatic_compaction = running.automatic_compaction
         state.running_turn = None
-        ending_payload = TurnEndedEventPayload(ending=ending, error_summary=error_summary)
+        automatic_compaction_result = (
+            AutomaticCompactionResult.not_compacted
+            if running.automatic_compaction
+            and ending is ConversationTurnEnding.completed
+            and not running.compaction_confirmed
+            else None
+        )
+        ending_payload = TurnEndedEventPayload(
+            ending=ending,
+            error_summary=error_summary,
+            automatic_compaction_result=automatic_compaction_result,
+        )
         payloads: tuple[ConversationEventPayload, ...] = (
             *(
                 ExplicitReplyMissingEventPayload(prompt_sender=prompt_sender)
@@ -2153,6 +2165,7 @@ class SqliteProcessConversationSystem:
             payloads,
             agent_activity=not running.automatic_compaction,
             automatic_compaction_confirmed=running.compaction_confirmed,
+            automatic_compaction_result=automatic_compaction_result,
         )
         self._take_in_written_rows(state, written)
         ended = written[-1]
@@ -2166,6 +2179,16 @@ class SqliteProcessConversationSystem:
             state.record = replace(
                 state.record,
                 automatically_compacted_through_sequence=(
+                    state.record.latest_agent_activity_sequence
+                ),
+                automatic_compaction_attempted_through_sequence=(
+                    state.record.latest_agent_activity_sequence
+                ),
+            )
+        elif automatic_compaction_result is AutomaticCompactionResult.not_compacted:
+            state.record = replace(
+                state.record,
+                automatic_compaction_attempted_through_sequence=(
                     state.record.latest_agent_activity_sequence
                 ),
             )
@@ -2509,14 +2532,6 @@ class SqliteProcessConversationSystem:
             # cancel landing, not a second thing that happened.
             state.lock.release()
             return
-        if (
-            running.automatic_compaction
-            and ending is ConversationTurnEnding.completed
-            and state.record.automatically_compacted_through_sequence
-            < state.record.latest_agent_activity_sequence
-        ):
-            ending = ConversationTurnEnding.failed
-            error_summary = "automatic compaction ended without a confirmed boundary"
         recorded_at_sequence: int | None = None
         try:
             try:
@@ -2700,6 +2715,9 @@ class SqliteProcessConversationSystem:
             state.record = replace(
                 state.record,
                 automatically_compacted_through_sequence=(
+                    state.record.latest_agent_activity_sequence
+                ),
+                automatic_compaction_attempted_through_sequence=(
                     state.record.latest_agent_activity_sequence
                 ),
             )

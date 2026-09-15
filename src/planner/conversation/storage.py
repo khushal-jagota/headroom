@@ -36,6 +36,7 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
+    AutomaticCompactionResult,
     ConversationEventKind,
     ConversationEventPayload,
     MessageToOwnerEventPayload,
@@ -108,6 +109,7 @@ class ConversationRecord:
     latest_agent_activity_at: int | None
     latest_agent_activity_sequence: int
     automatically_compacted_through_sequence: int
+    automatic_compaction_attempted_through_sequence: int
     owner_read_through_sequence: int
     created_at: int
 
@@ -201,6 +203,7 @@ class ConversationStore:
         *,
         agent_activity: bool,
         automatic_compaction_confirmed: bool,
+        automatic_compaction_result: AutomaticCompactionResult | None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Atomically append silence markers followed by their turn ending."""
         return await asyncio.to_thread(
@@ -209,6 +212,7 @@ class ConversationStore:
             payloads,
             agent_activity,
             automatic_compaction_confirmed,
+            automatic_compaction_result,
         )
 
     async def advance_owner_read_through_sequence(
@@ -356,6 +360,7 @@ class ConversationStore:
             latest_agent_activity_at=None,
             latest_agent_activity_sequence=0,
             automatically_compacted_through_sequence=0,
+            automatic_compaction_attempted_through_sequence=0,
             owner_read_through_sequence=0,
             created_at=self._integer_now(),
         )
@@ -367,8 +372,9 @@ class ConversationStore:
                 "identity_environment_variables, access, vendor_session_cursor, "
                 "composer_catalog, latest_sequence, latest_agent_activity_at, "
                 "latest_agent_activity_sequence, automatically_compacted_through_sequence, "
+                "automatic_compaction_attempted_through_sequence, "
                 "owner_read_through_sequence, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     record.conversation_id,
                     str(record.backend_key),
@@ -384,6 +390,7 @@ class ConversationStore:
                     record.latest_agent_activity_at,
                     record.latest_agent_activity_sequence,
                     record.automatically_compacted_through_sequence,
+                    record.automatic_compaction_attempted_through_sequence,
                     record.owner_read_through_sequence,
                     record.created_at,
                 ),
@@ -402,7 +409,9 @@ class ConversationStore:
                 "workspace_folder, role_text, identity_environment_variables, access, "
                 "vendor_session_cursor, composer_catalog, latest_sequence, "
                 "latest_agent_activity_at, latest_agent_activity_sequence, "
-                "automatically_compacted_through_sequence, owner_read_through_sequence, "
+                "automatically_compacted_through_sequence, "
+                "automatic_compaction_attempted_through_sequence, "
+                "owner_read_through_sequence, "
                 "created_at "
                 "FROM conversations WHERE conversation_id = ?",
                 (conversation_id,),
@@ -454,6 +463,8 @@ class ConversationStore:
             if automatic_compaction_confirmed:
                 conn.execute(
                     "UPDATE conversations SET automatically_compacted_through_sequence = "
+                    "latest_agent_activity_sequence, "
+                    "automatic_compaction_attempted_through_sequence = "
                     "latest_agent_activity_sequence WHERE conversation_id = ?",
                     (conversation_id,),
                 )
@@ -476,7 +487,8 @@ class ConversationStore:
                 "WHERE latest_agent_activity_at IS NOT NULL "
                 "AND latest_agent_activity_at <= ? "
                 "AND latest_agent_activity_at > ? "
-                "AND latest_agent_activity_sequence > automatically_compacted_through_sequence "
+                "AND latest_agent_activity_sequence > "
+                "automatic_compaction_attempted_through_sequence "
                 "ORDER BY latest_agent_activity_at, conversation_id",
                 (due_at_or_before, activity_after),
             ).fetchall()
@@ -533,6 +545,7 @@ class ConversationStore:
         payloads: tuple[ConversationEventPayload, ...],
         agent_activity: bool,
         automatic_compaction_confirmed: bool,
+        automatic_compaction_result: AutomaticCompactionResult | None,
     ) -> tuple[StoredConversationEvent, ...]:
         conn = self._connect()
         try:
@@ -548,6 +561,15 @@ class ConversationStore:
             if automatic_compaction_confirmed:
                 conn.execute(
                     "UPDATE conversations SET automatically_compacted_through_sequence = "
+                    "latest_agent_activity_sequence, "
+                    "automatic_compaction_attempted_through_sequence = "
+                    "latest_agent_activity_sequence WHERE conversation_id = ?",
+                    (conversation_id,),
+                )
+            elif automatic_compaction_result is AutomaticCompactionResult.not_compacted:
+                conn.execute(
+                    "UPDATE conversations SET "
+                    "automatic_compaction_attempted_through_sequence = "
                     "latest_agent_activity_sequence WHERE conversation_id = ?",
                     (conversation_id,),
                 )
@@ -850,6 +872,9 @@ def _conversation_record(row: sqlite3.Row) -> ConversationRecord:
         latest_agent_activity_sequence=int(row["latest_agent_activity_sequence"]),
         automatically_compacted_through_sequence=int(
             row["automatically_compacted_through_sequence"]
+        ),
+        automatic_compaction_attempted_through_sequence=int(
+            row["automatic_compaction_attempted_through_sequence"]
         ),
         owner_read_through_sequence=int(row["owner_read_through_sequence"]),
         created_at=int(row["created_at"]),

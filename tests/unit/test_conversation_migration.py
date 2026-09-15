@@ -53,6 +53,7 @@ def test_a_conversation_holds_what_it_was_started_with_and_where_it_has_got_to(
         ("latest_agent_activity_sequence", "INTEGER", 1, 0),
         ("automatically_compacted_through_sequence", "INTEGER", 1, 0),
         ("owner_read_through_sequence", "INTEGER", 1, 0),
+        ("automatic_compaction_attempted_through_sequence", "INTEGER", 1, 0),
     ]
 
 
@@ -118,6 +119,29 @@ def test_automatic_compaction_migration_restores_latest_agent_activity(tmp_path:
         "WHERE conversation_id = 'later'"
     ).fetchone()
     assert tuple(later) == (70, 7, 0)
+    conn.close()
+
+
+def test_automatic_compaction_attempt_migration_starts_at_the_confirmed_boundary(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "before-automatic-compaction-attempts.db"
+    conn = _build_a_database_at(db_path, "addressed_messages")
+    conn.execute(
+        "INSERT INTO conversations (conversation_id, backend_key, model, workspace_folder, "
+        "access, latest_agent_activity_sequence, "
+        "automatically_compacted_through_sequence, created_at) "
+        "VALUES ('c', 'claude', 'opus[1m]', '/tmp', 'full', 12, 7, 1)"
+    )
+
+    create_schema(conn)
+
+    row = conn.execute(
+        "SELECT automatically_compacted_through_sequence, "
+        "automatic_compaction_attempted_through_sequence "
+        "FROM conversations WHERE conversation_id = 'c'"
+    ).fetchone()
+    assert tuple(row) == (7, 7)
     conn.close()
 
 

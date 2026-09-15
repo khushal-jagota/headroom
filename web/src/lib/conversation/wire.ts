@@ -34,6 +34,7 @@ export type PromptQueueReason =
   | "steer_refused";
 
 export type ConversationTurnEnding = "completed" | "failed" | "interrupted";
+export type AutomaticCompactionResult = "not_compacted";
 
 export type ToolCallStatus = "completed" | "failed";
 
@@ -310,7 +311,14 @@ export type ConversationEvent =
   /** The agent's plan as it stands now. Each row is the whole plan, not a change to it,
    *  so the newest one is the plan and the ones before it are history. */
   | Row<"plan_updated", { entries: PlanEntry[] }>
-  | Row<"turn_ended", { ending: ConversationTurnEnding; error_summary: string | null }>;
+  | Row<
+      "turn_ended",
+      {
+        ending: ConversationTurnEnding;
+        error_summary: string | null;
+        automatic_compaction_result?: AutomaticCompactionResult;
+      }
+    >;
 
 export type ConversationEventKind = ConversationEvent["kind"];
 

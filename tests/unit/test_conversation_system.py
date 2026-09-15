@@ -58,6 +58,7 @@ from planner.conversation.contracts import (
 from planner.conversation.events import (
     AgentMessageDeltaFrame,
     AgentMessageEventPayload,
+    AutomaticCompactionResult,
     ConversationEventKind,
     ConversationTurnEnding,
     ExplicitReplyMissingEventPayload,
@@ -1792,17 +1793,30 @@ def test_automatic_compaction_intent_survives_a_backend_rebind(
     _run(exercise)
 
 
-def test_confirmed_compaction_waits_for_new_agent_activity_before_repeating(
-    harness: _Harness,
+@pytest.mark.parametrize("model", ("fable[1m]", "opus[1m]"))
+def test_confirmed_claude_compaction_waits_for_new_agent_activity_before_repeating(
+    harness: _Harness, model: str
 ) -> None:
     async def exercise() -> None:
-        await _start(harness, "c")
+        await _start(
+            harness,
+            "c",
+            backend_key=ConversationBackendKey.claude,
+            model=model,
+        )
         await harness.system.send("c", text_message_content("first"), sender_label="owner")
         await harness.complete_turn("c")
         harness.clock.advance(50 * 60)
         await harness.system._sweep_idle_children()
         await harness.confirm_compaction("c")
         await harness.complete_turn("c")
+        record = await harness.store.read_conversation("c")
+        assert record is not None
+        assert record.automatically_compacted_through_sequence > 0
+        assert (
+            record.automatic_compaction_attempted_through_sequence
+            == record.automatically_compacted_through_sequence
+        )
         harness.clock.advance(50 * 60 + 1)
         await harness.system._sweep_idle_children()
         assert harness.backend("c").written_texts() == ("first", "/compact")
@@ -1879,7 +1893,170 @@ def test_compaction_failure_releases_the_boundary_message_once(harness: _Harness
         )
         await harness.complete_turn("c")
         assert harness.backend("c").written_texts().count("after no boundary") == 1
-        assert (await harness.recorded_endings("c"))[-1] is ConversationTurnEnding.failed
+        endings = [
+            event.payload
+            for event in await harness.events("c")
+            if isinstance(event.payload, TurnEndedEventPayload)
+        ]
+        assert endings[-1].automatic_compaction_result is AutomaticCompactionResult.not_compacted
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    "backend_text",
+    ("Not enough messages to compact.", None),
+    ids=("claude-refusal", "silent-completion"),
+)
+def test_completed_unconfirmed_compaction_records_a_terminal_attempt_and_retries_new_activity(
+    harness: _Harness, backend_text: str | None
+) -> None:
+    async def exercise() -> None:
+        await _start(
+            harness,
+            "c",
+            backend_key=ConversationBackendKey.claude,
+            model="opus[1m]",
+        )
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.complete_turn("c")
+        before = await harness.store.read_conversation("c")
+        assert before is not None
+        activity_sequence = before.latest_agent_activity_sequence
+        harness.clock.advance(50 * 60)
+        await harness.system._sweep_idle_children()
+        if backend_text is not None:
+            await harness.agent_message("c", text_message_content(backend_text))
+        await harness.complete_turn("c")
+
+        after = await harness.store.read_conversation("c")
+        assert after is not None
+        assert after.automatically_compacted_through_sequence == 0
+        assert after.automatic_compaction_attempted_through_sequence == activity_sequence
+        endings = [
+            event.payload
+            for event in await harness.events("c")
+            if isinstance(event.payload, TurnEndedEventPayload)
+        ]
+        assert endings[-1] == TurnEndedEventPayload(
+            ending=ConversationTurnEnding.completed,
+            automatic_compaction_result=AutomaticCompactionResult.not_compacted,
+        )
+
+        harness.clock.advance(5 * 60)
+        await harness.system._sweep_idle_children()
+        assert harness.backend("c").written_texts() == ("first", "/compact")
+
+        await harness.system.send("c", text_message_content("later"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60)
+        await harness.system._sweep_idle_children()
+        assert harness.backend("c").written_texts()[-2:] == ("later", "/compact")
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    "ending", (ConversationTurnEnding.failed, ConversationTurnEnding.interrupted)
+)
+def test_failed_or_interrupted_compaction_remains_retryable(
+    harness: _Harness, ending: ConversationTurnEnding
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c", backend_key=ConversationBackendKey.claude)
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60)
+        await harness.system._sweep_idle_children()
+        await harness._end_turn("c", ending, "provider failed" if ending == "failed" else None)
+
+        record = await harness.store.read_conversation("c")
+        assert record is not None
+        assert record.automatic_compaction_attempted_through_sequence == 0
+        harness.clock.advance(5 * 60)
+        await harness.system._sweep_idle_children()
+        assert harness.backend("c").written_texts() == ("first", "/compact", "/compact")
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("confirmed", (True, False), ids=("confirmed", "not-compacted"))
+def test_maintenance_releases_owner_and_worker_messages_in_order(
+    harness: _Harness, confirmed: bool
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c", backend_key=ConversationBackendKey.claude)
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.complete_turn("c")
+        harness.clock.advance(50 * 60)
+        await harness.system._sweep_idle_children()
+        ticket = Principal(PrincipalKind.ticket, "t_worker")
+        await harness.system.send(
+            "c",
+            text_message_content("owner message"),
+            sender_label="owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=ticket,
+        )
+        await harness.system.send(
+            "c",
+            text_message_content("worker opener"),
+            sender_label="Ticket t_worker",
+            sender=ticket,
+            recipient=OWNER_PRINCIPAL,
+        )
+
+        if confirmed:
+            await harness.confirm_compaction("c")
+        await harness.complete_turn("c")
+        released = harness.backend("c").written_texts()[-1]
+        assert released == "owner message\n\nTicket t_worker:\nworker opener"
+        assert released.count("owner message") == 1
+        assert released.count("worker opener") == 1
+        await harness.complete_turn("c")
+
+        prompts = [
+            event.payload
+            for event in await harness.events("c")
+            if isinstance(event.payload, PromptEventPayload)
+        ]
+        assert [message_content_text(prompt.content) for prompt in prompts[-2:]] == [
+            "owner message",
+            "worker opener",
+        ]
+        assert [prompt.sender for prompt in prompts[-2:]] == [OWNER_PRINCIPAL, ticket]
+
+    _run(exercise)
+
+
+def test_restart_keeps_a_completed_compaction_attempt_from_repeating(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        db_path = tmp_path / "restart-after-attempt.db"
+        conn = connect(str(db_path))
+        create_schema(conn)
+        conn.close()
+        clock = _FakeMonotonicClock()
+        first = _Harness(db_path, clock=clock)
+        await _start(first, "c", backend_key=ConversationBackendKey.claude)
+        await first.system.send("c", text_message_content("first"), sender_label="owner")
+        await first.complete_turn("c")
+        clock.advance(50 * 60)
+        await first.system._sweep_idle_children()
+        await first.complete_turn("c")
+        before = await first.store.read_conversation("c")
+        assert before is not None
+        assert before.automatic_compaction_attempted_through_sequence > 0
+        await first.system.shutdown()
+
+        clock.advance(5 * 60)
+        restarted = _Harness(db_path, clock=clock)
+        try:
+            await restarted.system._sweep_idle_children()
+            assert restarted.spawned_conversation_ids == []
+            after = await restarted.store.read_conversation("c")
+            assert after == before
+        finally:
+            await restarted.system.shutdown()
 
     _run(exercise)
 

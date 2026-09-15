@@ -16,6 +16,7 @@
     type ThreadItem
   } from "../../lib/conversation/threadLayout";
   import {
+    AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE,
     askDeadSentence,
     CONTEXT_COMPACTED_SENTENCE,
     explicitReplyMissingSentence,
@@ -213,6 +214,10 @@
            mentioning it would read as an agent that forgot. -->
       <div class="acp-compaction" role="separator" data-conversation-row="context_compacted">
         <span>{CONTEXT_COMPACTED_SENTENCE}</span>
+      </div>
+    {:else if item.row.kind === "turn_ended" && item.row.automaticCompactionResult === "not_compacted"}
+      <div class="acp-compaction" role="status" data-conversation-row="turn_ended">
+        {AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE}
       </div>
     {:else if item.row.kind === "turn_ended" && item.row.ending === "failed"}
       <div class="acp-turn-end acp-turn-end--error" role="alert" data-conversation-row="turn_ended">

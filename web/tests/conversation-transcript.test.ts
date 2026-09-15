@@ -7,6 +7,7 @@ import {
   feedWithLiveFrame
 } from "../src/lib/conversation/feed";
 import {
+  AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE,
   askDeadSentence,
   liveAskFrom,
   liveUserInputFrom,
@@ -240,6 +241,27 @@ describe("Conversation transcript", () => {
     expect(refusalSentence("backend_did_not_start")).toBe("the backend would not start");
     expect(turnEndingSentence("failed", "child died")).toBe("turn failed · child died");
     expect(turnEndingSentence("interrupted", null)).toBe("turn interrupted");
+  });
+
+  it("projects a completed unconfirmed maintenance turn as a neutral result", () => {
+    const ended = {
+      conversation_id: "c1",
+      sequence: 1,
+      kind: "turn_ended",
+      payload: {
+        ending: "completed",
+        error_summary: null,
+        automatic_compaction_result: "not_compacted"
+      },
+      created_at: 1_700_000_000
+    } satisfies ConversationEvent;
+
+    expect(rowOfKind(rowsFrom([ended]), "turn_ended")).toMatchObject({
+      ending: "completed",
+      errorSummary: null,
+      automaticCompactionResult: "not_compacted"
+    });
+    expect(AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE).toBe("context was not compacted");
   });
 
   it("projects uncertain steering as its own terminal message row", () => {

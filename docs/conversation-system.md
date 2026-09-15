@@ -167,11 +167,20 @@ lower. Missing or malformed output, failure text, extra messages, and equal or
 higher counts do not confirm compaction. Hermes session provenance still records
 compaction during ordinary turns, but it cannot confirm this maintenance turn.
 
-A successful boundary suppresses another automatic run until a later ordinary
-turn produces agent activity. The maintenance turn does not reset its own clock.
-If a message arrives after the deadline, the conversation lock reserves compaction
-first and holds the message behind it. The message proceeds once after confirmed
-success, refusal, failure, or a completed turn with no compaction confirmation.
+Panels keeps two sequence positions. The confirmed-compaction position records the
+ordinary activity protected by a proven boundary. The maintenance-attempt position
+records the ordinary activity for which a maintenance turn reached a terminal result.
+
+A confirmed boundary advances both positions. A completed maintenance turn without a
+boundary records `not_compacted` and advances only the attempt position. The next sweep
+does not retry the same activity. Later ordinary agent activity advances past that
+position and can become eligible after 50 minutes. A failed or interrupted maintenance
+turn advances neither position, so a later sweep can retry it.
+
+The maintenance turn does not count as ordinary activity. If a message arrives after
+the deadline, the conversation lock reserves compaction first and holds the message
+behind it. The message proceeds once after confirmed success, refusal, failure, or a
+completed turn with no compaction confirmation.
 
 ## Sending
 

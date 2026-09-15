@@ -23,6 +23,7 @@ from planner.conversation.contracts import (
 from planner.conversation.events import (
     CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION,
     AgentMessageEventPayload,
+    AutomaticCompactionResult,
     ContextCompactedEventPayload,
     ConversationEventKind,
     ConversationEventPayload,
@@ -584,6 +585,65 @@ def test_rows_are_numbered_from_one_and_move_the_conversations_marker(
         assert read.latest_sequence == 2
 
     asyncio.run(exercise())
+
+
+def test_turn_settlement_moves_the_matching_automatic_compaction_markers(
+    store: ConversationStore,
+) -> None:
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        activity = await store.append_event("c", AN_AGENT_MESSAGE, agent_activity=True)
+
+        await store.append_turn_ending(
+            "c",
+            (
+                TurnEndedEventPayload(
+                    ending=ConversationTurnEnding.completed,
+                    automatic_compaction_result=AutomaticCompactionResult.not_compacted,
+                ),
+            ),
+            agent_activity=False,
+            automatic_compaction_confirmed=False,
+            automatic_compaction_result=AutomaticCompactionResult.not_compacted,
+        )
+        not_compacted = await store.read_conversation("c")
+        assert not_compacted is not None
+        assert not_compacted.automatically_compacted_through_sequence == 0
+        assert (
+            not_compacted.automatic_compaction_attempted_through_sequence
+            == activity.sequence
+        )
+
+        later_activity = await store.append_event("c", AN_AGENT_MESSAGE, agent_activity=True)
+        await store.append_event(
+            "c", ContextCompactedEventPayload(), automatic_compaction_confirmed=True
+        )
+        compacted = await store.read_conversation("c")
+        assert compacted is not None
+        assert compacted.automatically_compacted_through_sequence == later_activity.sequence
+        assert (
+            compacted.automatic_compaction_attempted_through_sequence
+            == later_activity.sequence
+        )
+
+    asyncio.run(exercise())
+
+
+def test_not_compacted_turn_result_round_trips_and_old_turn_endings_still_read() -> None:
+    payload = TurnEndedEventPayload(
+        ending=ConversationTurnEnding.completed,
+        automatic_compaction_result=AutomaticCompactionResult.not_compacted,
+    )
+    encoded = conversation_event_payload_to_canonical_json(payload)
+    assert '"automatic_compaction_result":"not_compacted"' in encoded
+    assert (
+        conversation_event_payload_from_canonical_json(ConversationEventKind.turn_ended, encoded)
+        == payload
+    )
+    assert conversation_event_payload_from_canonical_json(
+        ConversationEventKind.turn_ended,
+        '{"ending":"completed","error_summary":null}',
+    ) == TurnEndedEventPayload(ending=ConversationTurnEnding.completed)
 
 
 def test_the_record_is_read_back_in_order_from_any_position(store: ConversationStore) -> None:
