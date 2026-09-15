@@ -180,6 +180,7 @@ class ConversationStore:
         *,
         agent_activity: bool = False,
         automatic_compaction_confirmed: bool = False,
+        owner_read_through_sequence: int | None = None,
     ) -> StoredConversationEvent:
         """Write the next row of this conversation's record and return it as written."""
         return await asyncio.to_thread(
@@ -188,6 +189,7 @@ class ConversationStore:
             payload,
             agent_activity,
             automatic_compaction_confirmed,
+            owner_read_through_sequence,
         )
 
     async def append_message_to_owner(
@@ -242,6 +244,7 @@ class ConversationStore:
         prompt: PromptEventPayload,
         model_change: ModelChangedEventPayload | None,
         extra_prompts: tuple[PromptEventPayload, ...] = (),
+        owner_read_through_sequence: int | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Write everything one delivery leaves behind, as one thing that either all
         happened or none of it did.
@@ -258,6 +261,8 @@ class ConversationStore:
         that is not there, or a conversation moved onto a model its record never mentions.
 
         The change is written before the prompt, because it is what the prompt ran under.
+        A held owner prompt can supply its earlier admission position. This prevents its
+        later delivery from crediting rows that arrived after the owner left.
         Returns the rows in the order they were written.
         """
         return await asyncio.to_thread(
@@ -266,6 +271,7 @@ class ConversationStore:
             prompt,
             model_change,
             extra_prompts,
+            owner_read_through_sequence,
         )
 
     async def read_events_after(
@@ -448,6 +454,7 @@ class ConversationStore:
         payload: ConversationEventPayload,
         agent_activity: bool,
         automatic_compaction_confirmed: bool,
+        owner_read_through_sequence: int | None,
     ) -> StoredConversationEvent:
         conn = self._connect()
         try:
@@ -467,6 +474,12 @@ class ConversationStore:
                     "automatic_compaction_attempted_through_sequence = "
                     "latest_agent_activity_sequence WHERE conversation_id = ?",
                     (conversation_id,),
+                )
+            if owner_read_through_sequence is not None:
+                conn.execute(
+                    "UPDATE conversations SET owner_read_through_sequence = "
+                    "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
+                    (owner_read_through_sequence, conversation_id),
                 )
             _commit_appended_rows(conn, (payload,))
         except BaseException:
@@ -502,6 +515,7 @@ class ConversationStore:
         prompt: PromptEventPayload,
         model_change: ModelChangedEventPayload | None,
         extra_prompts: tuple[PromptEventPayload, ...] = (),
+        owner_read_through_sequence: int | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         prompts: tuple[ConversationEventPayload, ...] = (prompt, *extra_prompts)
         payloads: tuple[ConversationEventPayload, ...] = (
@@ -525,10 +539,15 @@ class ConversationStore:
                 and event.payload.sender.kind is PrincipalKind.owner
             ]
             if owner_reply_sequences:
+                read_through = (
+                    max(owner_reply_sequences)
+                    if owner_read_through_sequence is None
+                    else owner_read_through_sequence
+                )
                 conn.execute(
                     "UPDATE conversations SET owner_read_through_sequence = "
                     "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
-                    (max(owner_reply_sequences), conversation_id),
+                    (read_through, conversation_id),
                 )
             _commit_appended_rows(conn, payloads)
         except BaseException:

@@ -29,6 +29,10 @@
   import { heldPromptRows } from "../../lib/conversation/heldPrompts";
   import type { ConversationState } from "../../lib/conversation/conversationState";
   import {
+    eligibleOwnerReadSequence,
+    watchOwnerReadAttention
+  } from "../../lib/conversation/ownerRead";
+  import {
     afterTheRecordHasBeenRead,
     mintOutgoingMessage,
     moveRememberedOutgoingMessages,
@@ -121,9 +125,6 @@
     onNewConversation?: () => Promise<void>;
     /** One display boundary for historical transcripts. The pane removes every action. */
     readOnly?: boolean;
-    /** A message typed here reached the conversation — started, held, or steered into the
-     *  running turn. Not called for a refusal, which reached nothing. What that means is
-     *  the caller's business; this only says it happened. */
   } = $props();
 
   let view = $state<ConversationView | null>(null);
@@ -151,6 +152,8 @@
    *  remain the stable owner key when session storage refuses a canonical-id migration;
    *  record reconciliation then empties that exact key instead of orphaning it. */
   let activePersistenceId = $state<string | null>(null);
+  let documentIsVisible = $state(false);
+  let windowIsFocused = $state(false);
 
   let stream: ConversationStream | null = null;
 
@@ -174,18 +177,30 @@
   let userInput = $derived(liveUserInputFrom(rows));
   let advancingRead: { conversationId: string; sequence: number } | null = null;
   $effect(() => {
-    if (
-      view !== null
-      && view.latest_sequence > view.owner_read_through_sequence
-      && (advancingRead?.conversationId !== view.conversation_id
-        || view.latest_sequence > advancingRead.sequence)
-    ) {
+    if (view !== null) {
+      const eligibleSequence = eligibleOwnerReadSequence({
+        conversationState,
+        documentIsVisible,
+        // Focus can leave the top document through a preview iframe without a window
+        // blur event. Ask the document again when a new row is about to be credited.
+        windowIsFocused: windowIsFocused && document.hasFocus(),
+        transcriptLatestSequence: feed.latestSequence,
+        snapshot: {
+          latestSequence: view.latest_sequence,
+          ownerReadThroughSequence: view.owner_read_through_sequence
+        }
+      });
+      if (
+        eligibleSequence === null
+        || (advancingRead?.conversationId === view.conversation_id
+          && eligibleSequence <= advancingRead.sequence)
+      ) return;
       const reading = view;
       advancingRead = {
         conversationId: reading.conversation_id,
-        sequence: reading.latest_sequence
+        sequence: eligibleSequence
       };
-      void advanceOwnerRead(reading.conversation_id, reading.latest_sequence)
+      void advanceOwnerRead(reading.conversation_id, eligibleSequence)
         .then((advanced) => {
           if (view?.conversation_id === reading.conversation_id) {
             view = { ...view, owner_read_through_sequence: advanced };
@@ -198,6 +213,11 @@
         });
     }
   });
+
+  onMount(() => watchOwnerReadAttention(document, window, (attention) => {
+    documentIsVisible = attention.documentIsVisible;
+    windowIsFocused = attention.windowIsFocused;
+  }));
   let running = $derived(liveness.isRunning);
   // The conversation's own backend, and before there is one what starting it would use.
   // Those are the only two answers there are: a backend nobody has said is not shown.
@@ -498,8 +518,6 @@
         }
       }
       await refreshView();
-      // Told only after the conversation took it. Refusal and uncertainty are both
-      // terminal here, so neither can trigger caller work or an automatic resend.
       return true;
     } catch (error) {
       errorNote = sentenceFor(error);
