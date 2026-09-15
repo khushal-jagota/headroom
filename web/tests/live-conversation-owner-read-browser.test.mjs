@@ -224,6 +224,7 @@ with sync_playwright() as playwright:
     assert page.get_by_text("automatic loop prompt", exact=True).count() == 0
     assert page.get_by_text("runtime-only result", exact=True).count() == 0
     assert page.locator("[data-conversation-task-progress]").count() == 0
+    assert page.locator("[data-conversation-turn]").count() == 0
     lens_toggle = page.locator("[data-conversation-lens-toggle]")
     lens_toggle.click()
     page.get_by_text("automatic loop prompt", exact=True).wait_for()
@@ -242,6 +243,7 @@ with sync_playwright() as playwright:
     })""")
     page.wait_for_timeout(100)
     assert owner_reads[-1] == 5, owner_reads
+    assert page.locator("[data-conversation-turn]").count() == 0
 
     page.evaluate("""window.__emitConversationRow({
       conversation_id: "focus-fixture",

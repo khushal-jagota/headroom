@@ -183,7 +183,12 @@
   let taskProgress = $derived(taskProgressFrom(rowsForLens));
   let restLine = $derived(
     conversationState === "rest"
-      ? restLineFrom(rowsForLens, ownSenderLabel ?? "", { ...taskProgress, turnRunning: running })
+      ? restLineFrom(
+          rows,
+          ownSenderLabel ?? "",
+          { ...taskProgress, turnRunning: running },
+          { visibleRows: rowsForLens, lens }
+        )
       : null
   );
 
