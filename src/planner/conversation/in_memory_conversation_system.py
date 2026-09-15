@@ -45,6 +45,7 @@ from planner.conversation.message_content import (
     MessageContent,
     message_content_text,
     require_message_content,
+    sender_labeled_message_content,
 )
 
 
@@ -691,7 +692,9 @@ class InMemoryConversationSystem:
             )
         established.prompt_writes.append(
             InMemoryBackendPromptWrite(
-                content=content, sender_label=sender_label, mode=mode
+                content=sender_labeled_message_content(content, sender_label),
+                sender_label=sender_label,
+                mode=mode,
             )
         )
         if recorded_messages:

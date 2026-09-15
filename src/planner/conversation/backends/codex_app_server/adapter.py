@@ -97,6 +97,7 @@ from planner.conversation.message_content import (
     MessageFile,
     MessageImage,
     MessageText,
+    sender_labeled_message_content,
     text_message_content,
 )
 from planner.conversation.message_files import (
@@ -373,12 +374,11 @@ class CodexAppServerBackendChild:
     ) -> None:
         """Start a turn with this message, on these values, and return when codex has it.
 
-        The label and the mode have nowhere to go: codex's turn carries the text and the
-        values it runs on, and has no place to say who sent it or how it was meant to
-        arrive. They are dropped here rather than encoded into the text, because text put
-        in front of the agent is the agent's instructions and this is not that.
+        The sender label goes at the start of ordinary wire content. The delivery mode has
+        no Codex wire field and does not alter the turn. Native commands and automatic
+        maintenance still use their dedicated routes without rewritten command text.
         """
-        del sender_label, mode, automatic_compaction
+        del mode
         thread_id = self._bound_thread()
         model = self._model if model_change is None else model_change
         reasoning_effort = (
@@ -402,6 +402,8 @@ class CodexAppServerBackendChild:
         native_command = (
             invocation is not None and invocation.kind is ComposerCatalogEntryKind.command
         )
+        if not native_command and not automatic_compaction:
+            content = sender_labeled_message_content(content, sender_label)
         if native_command:
             assert invocation is not None
             turn.kind = (
@@ -441,7 +443,6 @@ class CodexAppServerBackendChild:
         self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
     ) -> BackendSteerOutcome:
         """Ask Codex to admit this content to the exact captured ordinary turn."""
-        del sender_label
         turn = self._turn
         if turn is None:
             return BackendSteerRefused(
@@ -469,7 +470,9 @@ class CodexAppServerBackendChild:
             parameters = bindings.TurnSteerParams(
                 threadId=thread_id,
                 expectedTurnId=captured_native_turn_id,
-                input=self._turn_input(content),
+                input=self._turn_input(
+                    sender_labeled_message_content(content, sender_label)
+                ),
             )
         except (PromptWriteFailed, ValidationError):
             return BackendSteerRefused(

@@ -138,6 +138,8 @@ from planner.conversation.message_content import (
     MessageFile,
     MessageImage,
     MessageText,
+    message_content_starts_with_command,
+    sender_labeled_message_content,
     text_message_content,
 )
 from planner.conversation.message_files import (
@@ -604,6 +606,7 @@ class ClaudeAgentSdkBackendChild:
         self._wire_broken = False
         self._standard_error: deque[str] = deque()
         self._asks_raised = 0
+        self._available_command_names: frozenset[str] = frozenset()
 
     # --- the seam -----------------------------------------------------------------------
 
@@ -660,6 +663,9 @@ class ClaudeAgentSdkBackendChild:
         )
         if composer_catalog is None:
             return
+        self._available_command_names = frozenset(
+            entry.display_text.removeprefix("/") for entry in composer_catalog
+        )
         await self._sink.composer_catalog_reported(composer_catalog)
 
     async def write_prompt(
@@ -676,22 +682,26 @@ class ClaudeAgentSdkBackendChild:
     ) -> None:
         """Start a turn with this message, on values this child is already running.
 
-        The label and the mode are dropped: the SDK's wire carries a user message and
-        nothing alongside it, so there is nowhere for a backend's own metadata to go. The
-        turn runs the same either way, which is what the seam says of a backend with no
-        such channel.
+        The sender label goes at the start of ordinary wire content. The delivery mode has
+        no SDK wire field and does not alter the turn. Automatic maintenance keeps its
+        exact command text.
 
         A carried change cannot be made to a child that is already running, so it is never
         half-made here: the adapter asks for a rebind before it writes anything, and the
         child that is written to is one that was started on the new values.
         """
-        del sender_content, sender_label, mode, automatic_compaction
+        del mode
         self._require_the_carried_values_are_in_force(
             model_change, reasoning_effort_change
         )
         client = self._connected_client()
         self._require_a_live_wire()
-        asked = await self._query_argument(content)
+        delivered_content = (
+            sender_content
+            if automatic_compaction or self._is_catalog_command(sender_content)
+            else sender_labeled_message_content(content, sender_label)
+        )
+        asked = await self._query_argument(delivered_content)
         try:
             await client.query(asked)
         except Exception as did_not_reach:
@@ -704,10 +714,9 @@ class ClaudeAgentSdkBackendChild:
     ) -> str | AsyncIterator[dict[str, Any]]:
         """The message in the form the SDK takes it.
 
-        A message that is only words stays a string. That is not an optimisation — the SDK
-        wraps a string in exactly the envelope it would build here, so keeping the string
-        keeps every ordinary prompt byte for byte the thing it has always been, and the
-        richer form is reached only by messages that need it.
+        A message that is only words stays a string. The SDK wraps a string in exactly the
+        envelope it would build here, so sender-labeled ordinary text and exact native
+        commands keep the direct form. Rich content uses the block form.
 
         A message with more in it goes as one user message carrying content blocks, which
         is the SDK's other documented input.
@@ -791,7 +800,6 @@ class ClaudeAgentSdkBackendChild:
         that Claude owns the command. A correlated result settles it. Neither signal is
         used to classify which native path Claude chose.
         """
-        del sender_label
         turn = self._turn
         if turn is None or turn.token != turn_token:
             return BackendSteerRefused(
@@ -802,7 +810,12 @@ class ClaudeAgentSdkBackendChild:
         try:
             self._require_a_live_wire()
             asked = await self._query_argument(
-                content, user_message_uuid=user_message_uuid
+                (
+                    content
+                    if self._is_catalog_command(content)
+                    else sender_labeled_message_content(content, sender_label)
+                ),
+                user_message_uuid=user_message_uuid,
             )
         except (NeedsRebind, PromptWriteFailed):
             return BackendSteerRefused(
@@ -836,6 +849,11 @@ class ClaudeAgentSdkBackendChild:
                 PromptDeliveryRefusalReason.write_to_backend_failed
             )
         return BackendSteerUncertain()
+
+    def _is_catalog_command(self, content: MessageContent) -> bool:
+        return message_content_starts_with_command(
+            content, self._available_command_names
+        )
 
     async def cancel_running_turn(self) -> None:
         """Stop active work and prove that no owned queued command remains."""

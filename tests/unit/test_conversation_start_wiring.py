@@ -636,7 +636,7 @@ def test_resetting_discards_a_message_the_conversation_was_holding(
         # Freeing the agent would have let the held message run. It never reached the
         # backend, and its discard is on the record rather than silent.
         assert [write.text for write in system.backend_prompt_writes(conversation_id)] == [
-            "running work"
+            "loop:\nrunning work"
         ]
         discarded = [
             (observation.text, observation.sender_label)

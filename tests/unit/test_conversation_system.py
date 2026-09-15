@@ -2018,7 +2018,7 @@ def test_everything_waiting_goes_in_as_one_turn_with_a_row_for_each_sender(
 
         assert harness.backend("c").written_texts() == (
             "incumbent",
-            "owner:\nwaiting-1\n\nloop:\nwaiting-2\n\nowner:\nwaiting-3",
+            "waiting-1\n\nloop:\nwaiting-2\n\nowner:\nwaiting-3",
         )
         prompts = [
             (event.payload.sender_message_id, message_content_text(event.payload.content))
@@ -2058,7 +2058,7 @@ def test_a_waiting_message_that_names_another_model_starts_its_own_turn(
         assert harness.backend("c").written_texts() == (
             "incumbent",
             "plain",
-            "owner:\non another model\n\nowner:\nafter it",
+            "on another model\n\nowner:\nafter it",
         )
         assert harness.backend("c").model == "other-model"
 
@@ -2438,7 +2438,7 @@ def test_promoted_send_now_claims_one_message_and_preserves_fifo(harness: _Harne
         assert harness.backend("c").written_texts() == (
             "incumbent",
             "selected",
-            "owner:\nfirst\n\nowner:\nlast",
+            "first\n\nowner:\nlast",
         )
 
     _run(exercise)
