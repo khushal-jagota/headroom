@@ -310,6 +310,7 @@ def _past_kickoff(db_path: Path, ticket_id: str) -> None:
             now=1,
             next_ceiling=NO_FURTHER,
             at_cap=AtCap.propose,
+            next_holder=OWNER_PRINCIPAL,
         )
         conn.commit()
     finally:

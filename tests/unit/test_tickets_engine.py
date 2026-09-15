@@ -335,6 +335,7 @@ def test_accept_kickoff_field_advances_to_success_and_leaves_title_independent(
         edited_body="approved note",
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
 
     assert settled.stage == "needs_success"
@@ -435,6 +436,7 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert t.ticket_status is TicketStatus.empty
 
@@ -568,6 +570,7 @@ def test_pending_proposal_accept_rests_the_ticket(
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert t.ticket_status is TicketStatus.empty
 
@@ -733,6 +736,7 @@ def test_a06_edit_accept_stores_edited_text(
         edited_body="edited body exactly",
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert t.field_values.get("success") == "edited body exactly"
     assert t.pending_proposal is None
@@ -775,6 +779,7 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert t1.stage == "done"
     assert t1.field_values.get("closeout") == "c"
@@ -830,6 +835,7 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
         now=now,
         next_ceiling="done",
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert t3.stage == "needs_closeout"
 
@@ -884,6 +890,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
             now=now,
             next_ceiling=None,
             at_cap=AtCap.stop,
+            next_holder=OWNER_PRINCIPAL,
         )
     assert e_missing_ceiling.value.code is ErrorCode.scope_missing
     with pytest.raises(PlannerError) as e_missing_at_cap:
@@ -895,6 +902,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
             now=now,
             next_ceiling=NO_FURTHER,
             at_cap=None,
+            next_holder=OWNER_PRINCIPAL,
         )
     assert e_missing_at_cap.value.code is ErrorCode.scope_missing
 
@@ -916,6 +924,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
             now=now,
             next_ceiling="needs_success",
             at_cap=AtCap.propose,
+            next_holder=OWNER_PRINCIPAL,
         )
     assert e_before.value.code is ErrorCode.scope_invalid
     with pytest.raises(PlannerError) as e_dropped:
@@ -927,6 +936,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
             now=now,
             next_ceiling="dropped",
             at_cap=AtCap.propose,
+            next_holder=OWNER_PRINCIPAL,
         )
     assert e_dropped.value.code is ErrorCode.scope_invalid
     assert data.read_ticket(tmp_db, t.id).stage == "needs_success"
@@ -941,6 +951,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
             now=now,
             next_ceiling=NO_FURTHER,
             at_cap=AtCap.propose,
+            next_holder=OWNER_PRINCIPAL,
         )
     assert e_agent.value.code is ErrorCode.agent_forbidden
     assert _ticket_row(tmp_db, t.id) == row_before
@@ -953,6 +964,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.stop,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert t.stage == "needs_approach"
     assert t.ceiling == "needs_approach"
@@ -975,6 +987,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert t2.stage == "needs_approach"
     t2 = data.file_current_proposal_with_recap(
@@ -995,6 +1008,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
         now=now,
         next_ceiling="needs_plan",
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert t3.ceiling == "needs_plan"
     t3 = data.file_current_proposal_with_recap(
@@ -1273,6 +1287,7 @@ def test_direct_plan_accept_derives_implementation_ownership_status(
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
 
     assert ticket.stage == "needs_implementation"

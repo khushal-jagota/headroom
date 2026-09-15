@@ -115,6 +115,7 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
         now=now,
         next_ceiling=B,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert ticket.stage == A and ticket.field_values == {"kickoff": ""}
     ticket = data.file_current_proposal_with_recap(
@@ -141,6 +142,7 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.stop,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert (
         ticket.stage == "done"
@@ -162,6 +164,7 @@ def test_recap_writer_infers_probe_gate(
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     ticket = data.file_current_proposal_with_recap(
         tmp_db, tid, body="alpha", recap="probe recap", principal=TEST_TICKET_PRINCIPAL, now=now

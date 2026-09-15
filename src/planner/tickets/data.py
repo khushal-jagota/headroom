@@ -1573,7 +1573,7 @@ def accept_proposal(
     edited_body: str | None = None,
     next_ceiling: NextCeiling | None = None,
     at_cap: AtCap | None = None,
-    next_holder: Principal | None = None,
+    next_holder: Principal,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
     with _txn(conn):
@@ -1588,7 +1588,7 @@ def accept_proposal(
             edited_body,
             next_ceiling,
             at_cap,
-            principal if next_holder is None else next_holder,
+            next_holder,
             worker_type_definition=worker_type_definition,
         )
         updated = _apply_decision(conn, ticket, decision, now)

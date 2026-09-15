@@ -99,6 +99,7 @@ def _settle_success(
                 now=2,
                 next_ceiling="none",
                 at_cap=AtCap.propose,
+                next_holder=OWNER_PRINCIPAL,
             )
         assert ticket.stage == "needs_approach"
         assert ticket.field_values["success"] == body

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+import sqlite3
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
@@ -106,6 +108,11 @@ def test_only_holder_or_owner_can_decide_and_approval_requires_next_holder(
         next_holder=CHIEF_PRINCIPAL,
     )
     assert approved.ceiling_holder == CHIEF_PRINCIPAL
+
+
+def test_canonical_approval_writer_requires_an_explicit_next_holder() -> None:
+    parameter = inspect.signature(data.accept_proposal).parameters["next_holder"]
+    assert parameter.default is inspect.Parameter.empty
 
 
 def test_scope_cannot_retarget_a_pending_proposal(tmp_db: Connection) -> None:
@@ -285,6 +292,21 @@ def test_migration_backfills_owner_and_startup_audits_holder_integrity(tmp_path:
     upgraded = connect(str(db_path))
     create_schema(upgraded)
     assert data.read_ticket(upgraded, "t_old").ceiling_holder == OWNER_PRINCIPAL
+    invalid_holders = (
+        "{}",
+        '{"kind":"ticket"}',
+        '{"id":"t_old"}',
+        '{"kind":"owner","id":"chief"}',
+        '{"kind":"chief","id":"owner"}',
+        '{"kind":"ticket","id":" t_old"}',
+        '{"kind":"ticket","id":"t_old "}',
+    )
+    for invalid_holder in invalid_holders:
+        with pytest.raises(sqlite3.IntegrityError):
+            upgraded.execute(
+                "UPDATE tickets SET ceiling_holder = ? WHERE id = 't_old'",
+                (invalid_holder,),
+            )
     upgraded.execute("PRAGMA ignore_check_constraints=ON")
     upgraded.execute(
         "UPDATE tickets SET ceiling_holder = ? WHERE id = 't_old'",

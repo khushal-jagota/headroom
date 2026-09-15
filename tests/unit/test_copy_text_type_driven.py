@@ -100,6 +100,7 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
         now=3,
         next_ceiling="needs_success",
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     replace_guidance(tmp_db, ticket.id, body="success note", principal=OWNER_PRINCIPAL, now=4)
     assert copy_text(tmp_db, ticket.id) == _CODING_COPY_TEXT_GOLDEN
