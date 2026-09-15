@@ -389,8 +389,7 @@
     if ((!trimmed && pendingImages.length === 0 && pendingFiles.length === 0) || inputDisabled) return;
     const attempt = beginComposerSend(
       currentComposerDraft(),
-      runControlsView.carriedRunValues,
-      deliveryMode
+      runControlsView.carriedRunValues
     );
     applyComposerDraft(attempt.draftAfterSend);
     cursorAt = 0;

@@ -597,14 +597,15 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
   });
   if (pieces.length !== content.length) return null;
   if (typeof senderLabel !== "string") return null;
-  if (!DELIVERY_MODES.includes(mode as PromptDeliveryMode)) return null;
+  const decodedMode = mode === "run_when_free" ? "queue" : mode;
+  if (!DELIVERY_MODES.includes(decodedMode as PromptDeliveryMode)) return null;
   if (typeof sentAtUnixMilliseconds !== "number") return null;
   if (!KNOWN_FATES.includes(knownFate as OutgoingMessageKnownFate)) return null;
   return {
     messageId,
     content: pieces,
     senderLabel,
-    mode: mode as PromptDeliveryMode,
+    mode: decodedMode as PromptDeliveryMode,
     sentAtUnixMilliseconds,
     knownFate: knownFate as OutgoingMessageKnownFate
   };

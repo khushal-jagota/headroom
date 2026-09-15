@@ -941,6 +941,8 @@ class SqliteProcessConversationSystem:
         reasoning_effort_change: str | None,
         sender_message_id: str | None,
         sent_at_unix_milliseconds: int | None,
+        *,
+        queue_reason: PromptQueueReason = PromptQueueReason.requested,
     ) -> PromptDeliveryFate:
         automatic_reservation: _ReservedTurn | None = None
         async with state.lock:
@@ -971,6 +973,7 @@ class SqliteProcessConversationSystem:
                     reasoning_effort_change=reasoning_effort_change,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    queue_reason=queue_reason,
                 )
             if self._automatic_compaction_is_due(state):
                 held_fate = self._hold_prompt(
@@ -981,6 +984,7 @@ class SqliteProcessConversationSystem:
                     reasoning_effort_change=reasoning_effort_change,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    queue_reason=queue_reason,
                 )
                 automatic_reservation = self._reserve_turn(state, automatic_compaction=True)
             else:
@@ -1254,18 +1258,22 @@ class SqliteProcessConversationSystem:
         except PromptWriteFailed:
             steer_outcome = BackendSteerUncertain()
 
+        if isinstance(steer_outcome, BackendSteerRefused):
+            # The target may have ended while the backend decided. Re-enter the shared
+            # queue path so an idle conversation starts this message and a replacement
+            # turn holds it. Merely appending here can strand it after the last drain.
+            return await self._queue(
+                state,
+                content,
+                sender_label,
+                model_change,
+                reasoning_effort_change,
+                sender_message_id,
+                sent_at_unix_milliseconds,
+                queue_reason=PromptQueueReason.steer_refused,
+            )
+
         async with state.lock:
-            if isinstance(steer_outcome, BackendSteerRefused):
-                return self._hold_prompt(
-                    state,
-                    content=content,
-                    sender_label=sender_label,
-                    model_change=model_change,
-                    reasoning_effort_change=reasoning_effort_change,
-                    sender_message_id=sender_message_id,
-                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                    queue_reason=PromptQueueReason.steer_refused,
-                )
             return await self._record_steer_outcome(
                 state,
                 steer_outcome,

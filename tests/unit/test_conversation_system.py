@@ -779,6 +779,63 @@ def test_a_provider_refused_steer_falls_back_to_one_queued_message(
     _run(exercise)
 
 
+def test_a_refused_steer_starts_after_its_target_turn_ends(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        backend = harness.backend("c")
+        backend.steer_outcome = BackendSteerRefused(
+            PromptDeliveryRefusalReason.backend_rejected_steer
+        )
+        backend.steer_has_begun = asyncio.Event()
+        backend.steers_wait_for_release = asyncio.Event()
+        content = text_message_content("refused after ending")
+
+        steering = asyncio.create_task(
+            harness.system.send(
+                "c",
+                content,
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
+                sender_message_id="late-refusal-id",
+            )
+        )
+        await backend.steer_has_begun.wait()
+        await harness.complete_turn("c")
+        duplicate = asyncio.create_task(
+            harness.system.send(
+                "c",
+                content,
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
+                sender_message_id="late-refusal-id",
+            )
+        )
+        await asyncio.sleep(0)
+        assert duplicate.done() is False
+        backend.steers_wait_for_release.set()
+
+        assert await steering == PromptDeliveryStarted()
+        assert await duplicate == PromptDeliveryStarted()
+        assert await harness.recorded_prompts("c") == (
+            ("incumbent", "owner", "queue"),
+            ("refused after ending", "owner", "queue"),
+        )
+        assert await harness.recorded_kinds("c") == (
+            ConversationEventKind.prompt,
+            ConversationEventKind.turn_ended,
+            ConversationEventKind.prompt,
+        )
+        assert await harness.system.held_prompts("c") == ()
+        assert await harness.system.is_running("c") is True
+        assert backend.steer_tokens == [TurnToken("c", 1)]
+
+    _run(exercise)
+
+
 def test_active_steer_with_attachment_or_run_change_queues_with_reason(
     harness: _Harness,
 ) -> None:

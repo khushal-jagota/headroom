@@ -52,10 +52,23 @@ describe("Conversation composer delivery", () => {
     )).toBe(true);
   });
 
-  it("does not carry a model or effort change when steering", () => {
+  it("carries a model or effort change when steering so the server can queue it", () => {
     const picked = { model: "sonnet", reasoningEffort: "low" };
-    expect(armedChangeFor(current, picked, "steer")).toEqual({});
-    expect(hasArmedChange(current, picked, "steer")).toBe(false);
+    expect(armedChangeFor(current, picked, "steer")).toEqual({
+      model_change: "sonnet",
+      reasoning_effort_change: "low"
+    });
+    expect(hasArmedChange(current, picked, "steer")).toBe(true);
+    expect(sendBodyFor({
+      message: { ...message, mode: "steer" },
+      current,
+      picked,
+      conversationId: "conversation-1"
+    })).toMatchObject({
+      mode: "steer",
+      model: "sonnet",
+      reasoning_effort: "low"
+    });
   });
 
   it("sends the exact already-drawn message and armed model", () => {
