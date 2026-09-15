@@ -1,6 +1,7 @@
 import { shortMonthDayLabel } from "./dates";
 import type { FieldStageVisualState } from "./ui";
 import type { WorkAttention } from "./types";
+import { primaryWorkAttention } from "./workAttentionPresentation";
 
 export type FeedbackNote = {
   id: string;
@@ -110,9 +111,10 @@ export function feedbackRelativeTime(value: number, now = new Date()): string {
 export function feedbackTicketStageState(ticket: FeedbackTicket): FieldStageVisualState {
   if (ticket.stage === "done") return "completed";
   if (ticket.ticket_status === "errored" || ticket.ticket_status === "blocked") return "errored";
-  if (ticket.awaiting_reply) return "needs-me";
-  if (ticket.awaiting_approval) return "current-awaiting-approval";
-  if (ticket.assigned) return "current-paired";
+  const attention = primaryWorkAttention(ticket);
+  if (attention === "awaiting_approval") return "current-awaiting-approval";
+  if (attention === "assigned") return "current-paired";
+  if (attention === "awaiting_reply") return "needs-me";
   if (ticket.agent_state === "working") return "current-running";
   if (ticket.agent_state === "errored") return "errored";
   if (ticket.stage === "needs_closeout") return "current-waiting";
@@ -122,9 +124,10 @@ export function feedbackTicketStageState(ticket: FeedbackTicket): FieldStageVisu
 export function feedbackTicketStateLabel(ticket: FeedbackTicket): string {
   if (ticket.stage === "done") return "Done";
   if (ticket.ticket_status === "blocked") return "Blocked";
-  if (ticket.awaiting_reply) return "Needs you";
-  if (ticket.awaiting_approval) return "Awaiting approval";
-  if (ticket.assigned) return "Assigned";
+  const attention = primaryWorkAttention(ticket);
+  if (attention === "awaiting_approval") return "Awaiting approval";
+  if (attention === "assigned") return "Assigned";
+  if (attention === "awaiting_reply") return "Needs you";
   if (ticket.agent_state === "working") return "Running";
   if (ticket.agent_state === "errored") return "Errored";
   const labels: Record<string, string> = { errored: "Errored", blocked: "Blocked" };

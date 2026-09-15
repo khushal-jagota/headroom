@@ -1,5 +1,6 @@
 import type { FieldStageVisualState } from "./ui";
 import type { Priority, ProjectSummary, SprintOutcomeGroup } from "./types";
+import { primaryWorkAttention } from "./workAttentionPresentation";
 
 export type SprintTicket = {
   id: string;
@@ -98,11 +99,12 @@ export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicke
   // Ticket another Ticket holds. They read the same red, and never the same word.
   if (ticket.agent_state === "errored") return { mark: "errored", word: "errored" };
   if (ticket.ticket_status === "blocked") return { mark: "errored", word: "blocked" };
-  if (ticket.awaiting_approval) {
+  const attention = primaryWorkAttention(ticket);
+  if (attention === "awaiting_approval") {
     return { mark: "current-awaiting-approval", word: "to review" };
   }
-  if (ticket.awaiting_reply) return { mark: "needs-me", word: "need you" };
-  if (ticket.assigned) return { mark: "current-paired", word: "assigned" };
+  if (attention === "assigned") return { mark: "current-paired", word: "assigned" };
+  if (attention === "awaiting_reply") return { mark: "needs-me", word: "need you" };
   if (ticket.agent_state === "working") return { mark: "current-running", word: "working" };
   if (ticket.waiting_to_closeout) return { mark: "current-waiting", word: "waiting for closeout" };
   return { mark: "upcoming", word: "to do" };

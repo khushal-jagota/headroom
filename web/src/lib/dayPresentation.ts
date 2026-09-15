@@ -1,6 +1,7 @@
 import { conversationSignalPresentation } from "./conversationSignalPresentation";
 import type { DayTicket } from "./types";
 import type { FieldStageVisualState } from "./ui";
+import { primaryWorkAttention } from "./workAttentionPresentation";
 
 export type DayVisualTicket = {
   ticket: DayTicket;
@@ -19,12 +20,15 @@ export type DayActionTile = {
 function groupKeyFor(ticket: DayTicket): string {
   if (ticket.is_done || ticket.stage === "done") return "done";
   if (ticket.waiting_to_closeout) return "waiting_to_closeout";
-  if (ticket.awaiting_approval && ticket.gating_field === "kickoff") {
+  const attention = primaryWorkAttention({
+    awaiting_reply: Boolean(ticket.awaiting_reply),
+    awaiting_approval: Boolean(ticket.awaiting_approval),
+    assigned: Boolean(ticket.assigned)
+  });
+  if (attention === "awaiting_approval" && ticket.gating_field === "kickoff") {
     return "waiting_for_kickoff";
   }
-  if (ticket.awaiting_approval) return "awaiting_approval";
-  if (ticket.assigned) return "assigned";
-  if (ticket.awaiting_reply) return "awaiting_reply";
+  if (attention !== null) return attention;
   return String(ticket.ticket_status);
 }
 
@@ -42,14 +46,12 @@ export function dayVisualTicket(
   if (ticket.is_done || ticket.stage === "done") {
     return { ticket, state: "completed", ariaLabel: "Done", group };
   }
-  if (presentation.state === "upcoming" && group === "assigned") {
+  if (group === "assigned") {
     return { ticket, state: "current-paired", ariaLabel: "Assigned", group };
   }
   if (
-    presentation.state === "upcoming" &&
     (group === "awaiting_approval" ||
-      group === "waiting_for_kickoff" ||
-      group === "awaiting_reply")
+      group === "waiting_for_kickoff")
   ) {
     return { ticket, state: "current-awaiting-approval", ariaLabel: "To review", group };
   }

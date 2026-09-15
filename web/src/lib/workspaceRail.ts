@@ -1,6 +1,7 @@
 import type { ConversationSignals } from "./conversationSignalPresentation";
 import { labelize } from "./ui";
 import type { BoardCard, BoardSprintItem, Priority } from "./types";
+import { primaryWorkAttention } from "./workAttentionPresentation";
 
 // Presentation only: the top-to-bottom order of the status groups. A group with no
 // Tickets is not drawn, and a status not named here appends as its own group after
@@ -69,12 +70,11 @@ const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
 export function workspaceCardGroupKey(card: BoardCard): string {
   if (card.is_done) return "done";
   if (card.waiting_to_closeout) return "waiting_to_closeout";
-  if (card.awaiting_approval && card.gating_field === "kickoff") {
+  const attention = primaryWorkAttention(card);
+  if (attention === "awaiting_approval" && card.gating_field === "kickoff") {
     return "waiting_for_kickoff";
   }
-  if (card.awaiting_approval) return "awaiting_approval";
-  if (card.assigned) return "assigned";
-  if (card.awaiting_reply) return "awaiting_reply";
+  if (attention !== null) return attention;
   return String(card.ticket_status);
 }
 
