@@ -269,6 +269,11 @@ A busy agent is never a refusal. A message with nothing in it is not a refusal
 either — it is not a message, and it is turned away where it is sent. How a turn later ends is never
 part of the answer — endings are notebook rows.
 
+An addressed owner prompt advances the durable owner read position only through the
+rows that existed when the send entered the conversation. That admission position stays
+with immediate writes, held messages, steer outcomes, fallback delivery, and promotions.
+Rows that arrive while a write or steer is in flight remain unread.
+
 Codex steering targets the captured native turn through its steering request. A changed
 turn is refused. A lost response after a possible write stays uncertain, and Stop remains
 available. Panels never retargets or retries that guidance.

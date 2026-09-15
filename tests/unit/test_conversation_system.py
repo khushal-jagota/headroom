@@ -1144,6 +1144,51 @@ def test_a_refused_steer_starts_after_its_target_turn_ends(
     _run(exercise)
 
 
+def test_a_refused_owner_steer_keeps_its_original_admission_position(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        recipient = Principal(PrincipalKind.ticket, "t_worker")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="system")
+        backend = harness.backend("c")
+        backend.steer_outcome = BackendSteerRefused(
+            PromptDeliveryRefusalReason.backend_rejected_steer
+        )
+        backend.steer_has_begun = asyncio.Event()
+        backend.steers_wait_for_release = asyncio.Event()
+
+        steering = asyncio.create_task(
+            harness.system.send(
+                "c",
+                text_message_content("owner steer"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
+                sender=OWNER_PRINCIPAL,
+                recipient=recipient,
+            )
+        )
+        await backend.steer_has_begun.wait()
+        await harness.system.record_message_to_owner(
+            "c",
+            text_message_content("reply while steer was in flight"),
+            sender_label="Worker",
+            sender=recipient,
+            recipient=OWNER_PRINCIPAL,
+        )
+        await harness.complete_turn("c")
+        backend.steers_wait_for_release.set()
+
+        assert await steering == PromptDeliveryStarted()
+        record = await harness.store.read_conversation("c")
+        assert record is not None
+        assert record.latest_sequence == 4
+        assert record.owner_read_through_sequence == 1
+
+    _run(exercise)
+
+
 def test_active_steer_with_attachment_or_run_change_queues_with_reason(
     harness: _Harness,
 ) -> None:
@@ -1202,6 +1247,46 @@ def test_a_queued_owner_prompt_does_not_mark_later_replies_as_read(
         last = (await harness.events("c"))[-1]
         assert isinstance(last.payload, PromptEventPayload)
         assert message_content_text(last.payload.content) == "queued before the reply"
+
+    _run(exercise)
+
+
+def test_an_immediate_owner_prompt_credits_only_rows_present_when_sent(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        recipient = Principal(PrincipalKind.ticket, "t_worker")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="system")
+        await harness.complete_turn("c")
+        backend = harness.backend("c")
+        backend.write_has_begun = asyncio.Event()
+        backend.writes_wait_for_release = asyncio.Event()
+
+        sending = asyncio.create_task(
+            harness.system.send(
+                "c",
+                text_message_content("immediate owner prompt"),
+                sender_label="owner",
+                sender=OWNER_PRINCIPAL,
+                recipient=recipient,
+            )
+        )
+        await backend.write_has_begun.wait()
+        await harness.system.record_message_to_owner(
+            "c",
+            text_message_content("reply while the prompt write was in flight"),
+            sender_label="Worker",
+            sender=recipient,
+            recipient=OWNER_PRINCIPAL,
+        )
+        backend.writes_wait_for_release.set()
+
+        assert await sending == PromptDeliveryStarted()
+        record = await harness.store.read_conversation("c")
+        assert record is not None
+        assert record.latest_sequence == 4
+        assert record.owner_read_through_sequence == 2
 
     _run(exercise)
 
@@ -3057,6 +3142,41 @@ def test_promoted_send_now_claims_one_message_and_preserves_fifo(harness: _Harne
             "selected",
             "first\n\nowner:\nlast",
         )
+
+    _run(exercise)
+
+
+def test_promoted_send_now_keeps_the_held_owner_prompt_admission_position(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        recipient = Principal(PrincipalKind.ticket, "t_worker")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="system")
+        await harness.system.send(
+            "c",
+            text_message_content("held owner prompt"),
+            sender_label="owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=recipient,
+        )
+        selected = (await harness.system.held_prompts("c"))[0]
+        await harness.system.record_message_to_owner(
+            "c",
+            text_message_content("later unseen reply"),
+            sender_label="Worker",
+            sender=recipient,
+            recipient=OWNER_PRINCIPAL,
+        )
+
+        assert await harness.system.promote_held_prompt(
+            "c", selected.held_prompt_id, HeldPromptPromotionMode.send_now
+        ) == PromptDeliveryStarted()
+
+        record = await harness.store.read_conversation("c")
+        assert record is not None
+        assert record.latest_sequence == 4
+        assert record.owner_read_through_sequence == 1
 
     _run(exercise)
 

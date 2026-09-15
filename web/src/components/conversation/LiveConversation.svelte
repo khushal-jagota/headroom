@@ -154,6 +154,9 @@
   let activePersistenceId = $state<string | null>(null);
   let documentIsVisible = $state(false);
   let windowIsFocused = $state(false);
+  /** Every browser attention event moves this value. Focus can return without changing
+   *  the cached booleans, and that event must still retry rows that arrived while away. */
+  let attentionPulse = $state(0);
 
   let stream: ConversationStream | null = null;
 
@@ -177,6 +180,7 @@
   let userInput = $derived(liveUserInputFrom(rows));
   let advancingRead: { conversationId: string; sequence: number } | null = null;
   $effect(() => {
+    void attentionPulse;
     if (view !== null) {
       const eligibleSequence = eligibleOwnerReadSequence({
         conversationState,
@@ -217,6 +221,7 @@
   onMount(() => watchOwnerReadAttention(document, window, (attention) => {
     documentIsVisible = attention.documentIsVisible;
     windowIsFocused = attention.windowIsFocused;
+    attentionPulse += 1;
   }));
   let running = $derived(liveness.isRunning);
   // The conversation's own backend, and before there is one what starting it would use.

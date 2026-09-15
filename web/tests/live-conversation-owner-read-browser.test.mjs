@@ -180,15 +180,10 @@ with sync_playwright() as playwright:
     })""")
     page.evaluate("window.dispatchEvent(new Event('focus'))")
     page.wait_for_function("document.hasFocus()")
-    page.evaluate("""window.__emitConversationRow({
-      conversation_id: "focus-fixture",
-      sequence: 2,
-      kind: "agent_message",
-      payload: { text: "arrived after focus returned" },
-      created_at: 2
-    })""")
     page.wait_for_timeout(100)
-    assert owner_reads == [2], owner_reads
+    # The focus event must retry the row that arrived while focus was elsewhere.
+    # No later transcript row exists to move the component's read effect.
+    assert owner_reads == [1], owner_reads
     browser.close()
 
 print("live-conversation-owner-read-browser.test.mjs: all assertions passed")
