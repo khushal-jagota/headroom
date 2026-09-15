@@ -11,10 +11,11 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 from tests.support.ticket_progress import advance_ticket
 
-from planner.core.contracts import LinkKind, Priority
+from planner.core.contracts import LinkKind, Principal, PrincipalKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
 from planner.projects import data as projects_data
@@ -58,7 +59,7 @@ def _create(conn: Connection, cfg: Config, clock: TestClock, **kw: Any) -> Ticke
         conn,
         worker_type="coding",
         title=kw.pop("title", "Test ticket"),
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=clock.now_unix(),
         title_max_chars=TITLE_MAX_CHARS,
         **kw,
@@ -69,7 +70,7 @@ def _create(conn: Connection, cfg: Config, clock: TestClock, **kw: Any) -> Ticke
         conn,
         ticket.id,
         field="kickoff",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=clock.now_unix(),
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
@@ -79,7 +80,7 @@ def _create(conn: Connection, cfg: Config, clock: TestClock, **kw: Any) -> Ticke
 
 def _scope(conn: Connection, t: Ticket, ceiling: str, at_cap: AtCap, clock: TestClock) -> Ticket:
     return data.change_scope(
-        conn, t.id, ceiling=ceiling, at_cap=at_cap, actor="human", now=clock.now_unix()
+        conn, t.id, ceiling=ceiling, at_cap=at_cap, principal=OWNER_PRINCIPAL, now=clock.now_unix()
     )
 
 
@@ -118,7 +119,7 @@ def test_ticket_guidance_round_trip_keeps_kickoff_separate(
         t.id,
         field="kickoff",
         new_body="updated intake direction",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=fake_clock.now_unix(),
     )
     assert t.field_values.get("kickoff") == "updated intake direction"
@@ -127,7 +128,7 @@ def test_ticket_guidance_round_trip_keeps_kickoff_separate(
         tmp_db,
         t.id,
         body="approach guidance",
-        actor="agent",
+        principal=TEST_TICKET_PRINCIPAL,
         now=fake_clock.now_unix(),
     )
     assert t.guidance == "approach guidance"
@@ -252,7 +253,7 @@ def test_action_create_uses_worker_default_or_registered_override_before_mutatio
     defaulted = actions.create_ticket(
         tmp_db,
         title="Probe default",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=fake_clock.now_unix(),
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="probe",
@@ -260,7 +261,7 @@ def test_action_create_uses_worker_default_or_registered_override_before_mutatio
     overridden = actions.create_ticket(
         tmp_db,
         title="Probe override",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=fake_clock.now_unix(),
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="probe",
@@ -272,7 +273,7 @@ def test_action_create_uses_worker_default_or_registered_override_before_mutatio
         actions.create_ticket(
             tmp_db,
             title="Probe rejected",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=fake_clock.now_unix(),
             title_max_chars=TITLE_MAX_CHARS,
             worker_type="probe",
@@ -285,7 +286,7 @@ def test_action_create_uses_worker_default_or_registered_override_before_mutatio
         actions.create_ticket(
             tmp_db,
             title="Probe unnamed",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=fake_clock.now_unix(),
             title_max_chars=TITLE_MAX_CHARS,
             worker_type="probe",
@@ -318,7 +319,7 @@ def test_accept_kickoff_field_advances_to_success_and_leaves_title_independent(
         t.id,
         edit=TicketEdit(title="Approved title"),
         title_max_chars=TITLE_MAX_CHARS,
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=fake_clock.now_unix(),
     )
     assert renamed.stage == "needs_kickoff"
@@ -328,7 +329,7 @@ def test_accept_kickoff_field_advances_to_success_and_leaves_title_independent(
         tmp_db,
         t.id,
         field="kickoff",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=fake_clock.now_unix(),
         edited_body="approved note",
         next_ceiling=NO_FURTHER,
@@ -421,7 +422,7 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
     assert claimed_again is not None
     t = claimed_again
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="parked", actor="agent", now=now, recap="Current work"
+        tmp_db, t.id, body="parked", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
     )
     assert t.ticket_status is TicketStatus.awaiting_approval
 
@@ -429,7 +430,7 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
         tmp_db,
         t.id,
         field="success",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
@@ -455,7 +456,7 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
     assert t.ticket_status is TicketStatus.errored
     assert t.backend_error == "boom"
 
-    t = data.drop_ticket(tmp_db, t.id, actor="human", now=now + 1)
+    t = data.drop_ticket(tmp_db, t.id, principal=OWNER_PRINCIPAL, now=now + 1)
     assert t.ticket_status is TicketStatus.empty
     assert t.backend_error is None
     assert tuple(
@@ -544,7 +545,7 @@ def _park_paired(
         (f"conv-{t.id}", t.id),
     )
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="parked", actor="agent", now=now, recap="Current work"
+        tmp_db, t.id, body="parked", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
     )
     assert t.ticket_status is TicketStatus.awaiting_approval
     t = data.enter_paired_on_human_reply(tmp_db, t.id, now=now)
@@ -570,7 +571,7 @@ def test_enter_paired_on_human_reply_flips_only_from_awaiting_approval(
     assert t.ticket_status is TicketStatus.agent
     # Flips from awaiting_approval.
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="parked", actor="agent", now=now, recap="Current work"
+        tmp_db, t.id, body="parked", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
     )
     assert t.ticket_status is TicketStatus.awaiting_approval
     t = data.enter_paired_on_human_reply(tmp_db, t.id, now=now)
@@ -582,12 +583,14 @@ def test_paired_exit_accept_rests_the_ticket(
 ) -> None:
     now = fake_clock.now_unix()
     t = _park_paired(tmp_db, cfg, fake_clock, now)
-    data.replace_guidance(tmp_db, t.id, body="Keep this boundary", actor="human", now=now)
+    data.replace_guidance(
+        tmp_db, t.id, body="Keep this boundary", principal=OWNER_PRINCIPAL, now=now
+    )
     t = data.accept_proposal(
         tmp_db,
         t.id,
         field="success",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
@@ -602,8 +605,12 @@ def test_paired_exit_send_back_reopens_and_clears_proposal(
 ) -> None:
     now = fake_clock.now_unix()
     t = _park_paired(tmp_db, cfg, fake_clock, now)
-    data.replace_guidance(tmp_db, t.id, body="Keep this boundary", actor="human", now=now)
-    t = data.return_for_revision(tmp_db, t.id, message="please revise", actor="human", now=now)
+    data.replace_guidance(
+        tmp_db, t.id, body="Keep this boundary", principal=OWNER_PRINCIPAL, now=now
+    )
+    t = data.return_for_revision(
+        tmp_db, t.id, message="please revise", principal=OWNER_PRINCIPAL, now=now
+    )
     assert t.ticket_status is TicketStatus.agent
     assert t.pending_proposal is None
     assert t.field_values.get("success") is None
@@ -618,26 +625,46 @@ def test_a02_gating_chain_one_state_per_accept(
     _scope(tmp_db, t, "needs_closeout", AtCap.propose, fake_clock)
 
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="success body", actor="agent", now=now, recap="Current work"
+        tmp_db,
+        t.id,
+        body="success body",
+        principal=TEST_TICKET_PRINCIPAL,
+        now=now,
+        recap="Current work",
     )
     assert t.stage == "needs_approach"
     assert t.field_values.get("success") == "success body"
     assert t.pending_proposal is None
 
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="approach body", actor="agent", now=now, recap="Current work"
+        tmp_db,
+        t.id,
+        body="approach body",
+        principal=TEST_TICKET_PRINCIPAL,
+        now=now,
+        recap="Current work",
     )
     assert t.stage == "needs_plan"
     assert t.field_values.get("approach") == "approach body"
 
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="plan body", actor="agent", now=now, recap="Current work"
+        tmp_db,
+        t.id,
+        body="plan body",
+        principal=TEST_TICKET_PRINCIPAL,
+        now=now,
+        recap="Current work",
     )
     assert t.stage == "needs_implementation"
     assert t.field_values.get("plan") == "plan body"
 
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="implementation body", actor="agent", now=now, recap="Current work"
+        tmp_db,
+        t.id,
+        body="implementation body",
+        principal=TEST_TICKET_PRINCIPAL,
+        now=now,
+        recap="Current work",
     )
     assert t.stage == "needs_closeout"
     assert t.field_values.get("implementation") == "implementation body"
@@ -652,22 +679,27 @@ def test_a03_ceiling_auto_accept_until_cap_then_pending(
     _scope(tmp_db, t, "needs_plan", AtCap.propose, fake_clock)
 
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="s", actor="agent", now=now, recap="Current work"
+        tmp_db, t.id, body="s", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
     )
     assert t.stage == "needs_approach"
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="a", actor="agent", now=now, recap="Current work"
+        tmp_db, t.id, body="a", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
     )
     assert t.stage == "needs_plan"
 
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="plan body", actor="agent", now=now, recap="Current work"
+        tmp_db,
+        t.id,
+        body="plan body",
+        principal=TEST_TICKET_PRINCIPAL,
+        now=now,
+        recap="Current work",
     )
     assert t.stage == "needs_plan"
     assert t.field_values.get("plan") is None
     assert t.pending_proposal is not None
     assert t.pending_proposal.body == "plan body"
-    assert t.pending_proposal.proposed_by == "agent"
+    assert t.pending_proposal.proposed_by == "worker"
     assert (t.pending_proposal is not None) is True
 
     assert t.ticket_status is TicketStatus.awaiting_approval
@@ -680,13 +712,23 @@ def test_a05_one_pending_proposal_per_ticket_supersede(
     t = _create(tmp_db, cfg, fake_clock)
 
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="first body", actor="agent", now=now, recap="Current work"
+        tmp_db,
+        t.id,
+        body="first body",
+        principal=TEST_TICKET_PRINCIPAL,
+        now=now,
+        recap="Current work",
     )
     assert t.pending_proposal is not None
     assert t.pending_proposal.body == "first body"
 
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="second body", actor="agent", now=now, recap="Current work"
+        tmp_db,
+        t.id,
+        body="second body",
+        principal=TEST_TICKET_PRINCIPAL,
+        now=now,
+        recap="Current work",
     )
     assert t.pending_proposal is not None
     assert t.pending_proposal.body == "second body"
@@ -700,14 +742,19 @@ def test_a06_edit_accept_stores_edited_text(
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="draft body", actor="agent", now=now, recap="Current work"
+        tmp_db,
+        t.id,
+        body="draft body",
+        principal=TEST_TICKET_PRINCIPAL,
+        now=now,
+        recap="Current work",
     )
 
     t = data.accept_proposal(
         tmp_db,
         t.id,
         field="success",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=now,
         edited_body="edited body exactly",
         next_ceiling=NO_FURTHER,
@@ -736,11 +783,11 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
         ("implementation", "i"),
     ]:
         t1 = data.file_current_proposal_with_recap(
-            tmp_db, t1.id, body=body, actor="agent", now=now, recap="Current work"
+            tmp_db, t1.id, body=body, principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
         )
     assert t1.stage == "needs_closeout"
     t1 = data.file_current_proposal_with_recap(
-        tmp_db, t1.id, body="c", actor="agent", now=now, recap="Current work"
+        tmp_db, t1.id, body="c", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
     )
     assert t1.stage == "needs_closeout"
     assert t1.pending_proposal is not None
@@ -750,7 +797,7 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
         tmp_db,
         t1.id,
         field="closeout",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
@@ -772,7 +819,7 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
         ("closeout", "c"),
     ]:
         t2 = data.file_current_proposal_with_recap(
-            tmp_db, t2.id, body=body, actor="agent", now=now, recap="Current work"
+            tmp_db, t2.id, body=body, principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
         )
     assert t2.stage == "done"
     assert all(
@@ -792,11 +839,11 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
     _scope(tmp_db, t3, "needs_implementation", AtCap.propose, fake_clock)
     for _field, body in [("success", "s"), ("approach", "a"), ("plan", "p")]:
         t3 = data.file_current_proposal_with_recap(
-            tmp_db, t3.id, body=body, actor="agent", now=now, recap="Current work"
+            tmp_db, t3.id, body=body, principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
         )
     assert t3.stage == "needs_implementation"
     t3 = data.file_current_proposal_with_recap(
-        tmp_db, t3.id, body="i", actor="agent", now=now, recap="Current work"
+        tmp_db, t3.id, body="i", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
     )
     assert t3.stage == "needs_implementation"
     assert t3.pending_proposal is not None
@@ -806,7 +853,7 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
         tmp_db,
         t3.id,
         field="implementation",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.stop,
@@ -820,35 +867,37 @@ def test_a08_recap_rules(tmp_db: Connection, cfg: Config, fake_clock: TestClock)
 
     # Recap is never blocked: writable from the first worker stage.
     assert t.stage == "needs_success"
-    t = data.write_recap(tmp_db, t.id, body="first recap", actor="agent", now=now)
+    t = data.write_recap(tmp_db, t.id, body="first recap", principal=TEST_TICKET_PRINCIPAL, now=now)
     assert t.recap == "first recap"
     assert t.stage == "needs_success"
 
     _scope(tmp_db, t, "needs_approach", AtCap.propose, fake_clock)
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="s", actor="agent", now=now, recap="Current work"
+        tmp_db, t.id, body="s", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
     )
     assert t.stage == "needs_approach"
 
-    t = data.write_recap(tmp_db, t.id, body="second recap", actor="agent", now=now)
+    t = data.write_recap(
+        tmp_db, t.id, body="second recap", principal=TEST_TICKET_PRINCIPAL, now=now
+    )
     assert t.recap == "second recap"
     assert t.stage == "needs_approach"
 
     # And still writable on a terminal ticket.
-    t = data.drop_ticket(tmp_db, t.id, actor="human", now=now)
+    t = data.drop_ticket(tmp_db, t.id, principal=OWNER_PRINCIPAL, now=now)
     assert t.stage == "dropped"
-    t = data.write_recap(tmp_db, t.id, body="post-drop recap", actor="agent", now=now)
+    t = data.write_recap(
+        tmp_db, t.id, body="post-drop recap", principal=TEST_TICKET_PRINCIPAL, now=now
+    )
     assert t.recap == "post-drop recap"
 
 
-def test_a36_onward_scope(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock
-) -> None:
+def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
     now = fake_clock.now_unix()
 
     t = _create(tmp_db, cfg, fake_clock)
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="body", actor="agent", now=now, recap="Current work"
+        tmp_db, t.id, body="body", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
     )
     assert t.pending_proposal is not None
     row_before = _ticket_row(tmp_db, t.id)
@@ -858,7 +907,7 @@ def test_a36_onward_scope(
             tmp_db,
             t.id,
             field="success",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=now,
             next_ceiling=None,
             at_cap=AtCap.stop,
@@ -869,7 +918,7 @@ def test_a36_onward_scope(
             tmp_db,
             t.id,
             field="success",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=now,
             next_ceiling=NO_FURTHER,
             at_cap=None,
@@ -890,7 +939,7 @@ def test_a36_onward_scope(
             tmp_db,
             t.id,
             field="success",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=now,
             next_ceiling="needs_success",
             at_cap=AtCap.propose,
@@ -901,7 +950,7 @@ def test_a36_onward_scope(
             tmp_db,
             t.id,
             field="success",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=now,
             next_ceiling="dropped",
             at_cap=AtCap.propose,
@@ -915,7 +964,7 @@ def test_a36_onward_scope(
             tmp_db,
             t.id,
             field="success",
-            actor="agent",
+            principal=TEST_TICKET_PRINCIPAL,
             now=now,
             next_ceiling=NO_FURTHER,
             at_cap=AtCap.propose,
@@ -927,7 +976,7 @@ def test_a36_onward_scope(
         tmp_db,
         t.id,
         field="success",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.stop,
@@ -937,46 +986,46 @@ def test_a36_onward_scope(
     assert t.at_cap is AtCap.stop
     with pytest.raises(PlannerError) as e_rest:
         data.file_current_proposal_with_recap(
-            tmp_db, t.id, body="x", actor="agent", now=now, recap="Current work"
+            tmp_db, t.id, body="x", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
         )
     assert e_rest.value.code is ErrorCode.at_cap_stop
 
     t2 = _create(tmp_db, cfg, fake_clock)
     t2 = data.file_current_proposal_with_recap(
-        tmp_db, t2.id, body="body", actor="agent", now=now, recap="Current work"
+        tmp_db, t2.id, body="body", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
     )
     t2 = data.accept_proposal(
         tmp_db,
         t2.id,
         field="success",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
     )
     assert t2.stage == "needs_approach"
     t2 = data.file_current_proposal_with_recap(
-        tmp_db, t2.id, body="draft", actor="agent", now=now, recap="Current work"
+        tmp_db, t2.id, body="draft", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
     )
     assert t2.pending_proposal is not None
     assert t2.stage == "needs_approach"
 
     t3 = _create(tmp_db, cfg, fake_clock)
     t3 = data.file_current_proposal_with_recap(
-        tmp_db, t3.id, body="body", actor="agent", now=now, recap="Current work"
+        tmp_db, t3.id, body="body", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
     )
     t3 = data.accept_proposal(
         tmp_db,
         t3.id,
         field="success",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=now,
         next_ceiling="needs_plan",
         at_cap=AtCap.propose,
     )
     assert t3.ceiling == "needs_plan"
     t3 = data.file_current_proposal_with_recap(
-        tmp_db, t3.id, body="a", actor="agent", now=now, recap="Current work"
+        tmp_db, t3.id, body="a", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
     )
     assert t3.stage == "needs_plan"
     assert t3.ceiling == "needs_plan"
@@ -994,7 +1043,7 @@ def test_a36_onward_scope(
         ("closeout", "c"),
     ]:
         t4 = data.file_current_proposal_with_recap(
-            tmp_db, t4.id, body=body, actor="agent", now=now, recap="Current work"
+            tmp_db, t4.id, body=body, principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
         )
     assert t4.stage == "done"
     assert t4.ceiling == ceiling_before
@@ -1090,10 +1139,10 @@ def test_a_second_live_blocker_holds_the_target_blocked_until_both_clear(
     # The second acquisition finds the target already blocked and changes nothing.
     assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.blocked
 
-    advance_ticket(tmp_db, first.id, new_stage="done", actor="human", now=now)
+    advance_ticket(tmp_db, first.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
     assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.blocked
 
-    advance_ticket(tmp_db, second.id, new_stage="done", actor="human", now=now)
+    advance_ticket(tmp_db, second.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
     assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
 
 
@@ -1108,13 +1157,13 @@ def test_completing_a_blocker_releases_its_links_and_frees_the_target(
     assert _links_from(tmp_db, blocker.id) == [(target.id, "blocks")]
 
     if completion == "done":
-        advance_ticket(tmp_db, blocker.id, new_stage="done", actor="human", now=now)
+        advance_ticket(tmp_db, blocker.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
     else:
         draft = "  Earlier draft\n\n```text\nΔ unapproved\n```\n"
         data.file_current_proposal_with_recap(
-            tmp_db, blocker.id, body=draft, recap="work", actor="agent", now=now
+            tmp_db, blocker.id, body=draft, recap="work", principal=TEST_TICKET_PRINCIPAL, now=now
         )
-        dropped = data.drop_ticket(tmp_db, blocker.id, actor="human", now=now)
+        dropped = data.drop_ticket(tmp_db, blocker.id, principal=OWNER_PRINCIPAL, now=now)
         assert dropped.pending_proposal is None
         assert draft in dropped.archived_field_content
         assert "Unapproved proposal" in dropped.archived_field_content
@@ -1137,7 +1186,12 @@ def test_a_failed_completion_rolls_back_its_link_release_and_settlements(
     target = _create(tmp_db, cfg, fake_clock, title="Target")
     _block(tmp_db, blocker_id=blocker.id, target_id=target.id, now=now)
     blocker = data.file_current_proposal_with_recap(
-        tmp_db, blocker.id, body="retain draft", recap="work", actor="agent", now=now
+        tmp_db,
+        blocker.id,
+        body="retain draft",
+        recap="work",
+        principal=TEST_TICKET_PRINCIPAL,
+        now=now,
     )
     blocker_row_before = _ticket_row(tmp_db, blocker.id)
     stage_before = blocker.stage
@@ -1148,13 +1202,65 @@ def test_a_failed_completion_rolls_back_its_link_release_and_settlements(
 
     monkeypatch.setattr(data, "settle_blocked_standin_for_link_target", failing_settle)
     with pytest.raises(RuntimeError, match="mid-completion"):
-        data.drop_ticket(tmp_db, blocker.id, actor="human", now=now)
+        data.drop_ticket(tmp_db, blocker.id, principal=OWNER_PRINCIPAL, now=now)
 
     assert data.read_ticket(tmp_db, blocker.id).stage == stage_before
     assert _ticket_row(tmp_db, blocker.id) == blocker_row_before
     assert _links_from(tmp_db, blocker.id) == [(target.id, "blocks")]
     assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.blocked
     assert _ticket_row(tmp_db, target.id) == target_row_before
+
+
+def test_delete_admission_uses_the_exact_sprint_item_principal(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    project = projects_data.create_project(
+        tmp_db,
+        name="Parent project",
+        priority=Priority.P3,
+        now=fake_clock.now_unix(),
+    )
+    item = sprints_data.create_item(
+        tmp_db,
+        title="Parent item",
+        project_id=project.id,
+        clock=fake_clock,
+    )
+    ticket = _create(
+        tmp_db,
+        cfg,
+        fake_clock,
+        sprint_item_id=item.id,
+        settle_kickoff=False,
+    )
+
+    with pytest.raises(PlannerError) as worker_error:
+        data.delete_ticket(
+            tmp_db,
+            ticket.id,
+            principal=Principal(PrincipalKind.ticket, ticket.id),
+            now=fake_clock.now_unix(),
+        )
+    assert worker_error.value.code is ErrorCode.agent_forbidden
+
+    with pytest.raises(PlannerError) as wrong_supervisor_error:
+        data.delete_ticket(
+            tmp_db,
+            ticket.id,
+            principal=Principal(PrincipalKind.sprint_item, "item_other"),
+            supervisor_sprint_item_id=item.id,
+            now=fake_clock.now_unix(),
+        )
+    assert wrong_supervisor_error.value.code is ErrorCode.agent_forbidden
+
+    data.delete_ticket(
+        tmp_db,
+        ticket.id,
+        principal=Principal(PrincipalKind.sprint_item, item.id),
+        supervisor_sprint_item_id=item.id,
+        now=fake_clock.now_unix(),
+    )
+    assert tmp_db.execute("SELECT 1 FROM tickets WHERE id = ?", (ticket.id,)).fetchone() is None
 
 
 @pytest.mark.parametrize("implementation_owner", [StageOwnershipMode.user, None])
@@ -1176,7 +1282,12 @@ def test_direct_plan_accept_derives_implementation_ownership_status(
     _scope(tmp_db, ticket, "needs_plan", AtCap.propose, fake_clock)
     for field in ("success", "approach", "plan"):
         ticket = data.file_current_proposal_with_recap(
-            tmp_db, ticket.id, body=f"{field} body", actor="agent", now=now, recap="Current work"
+            tmp_db,
+            ticket.id,
+            body=f"{field} body",
+            principal=TEST_TICKET_PRINCIPAL,
+            now=now,
+            recap="Current work",
         )
     assert ticket.stage == "needs_plan"
     assert ticket.ticket_status is TicketStatus.awaiting_approval
@@ -1185,7 +1296,7 @@ def test_direct_plan_accept_derives_implementation_ownership_status(
         tmp_db,
         ticket.id,
         field="plan",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
@@ -1215,13 +1326,23 @@ def test_auto_accepted_plan_derives_implementation_ownership_status(
     _scope(tmp_db, ticket, "needs_implementation", AtCap.propose, fake_clock)
     for field in ("success", "approach"):
         ticket = data.file_current_proposal_with_recap(
-            tmp_db, ticket.id, body=f"{field} body", actor="agent", now=now, recap="Current work"
+            tmp_db,
+            ticket.id,
+            body=f"{field} body",
+            principal=TEST_TICKET_PRINCIPAL,
+            now=now,
+            recap="Current work",
         )
     started = _claim_ready_worker_step(tmp_db, ticket.id, now=now)
     assert started is not None
 
     ticket = data.file_current_proposal_with_recap(
-        tmp_db, ticket.id, body="plan body", actor="agent", now=now, recap="Current work"
+        tmp_db,
+        ticket.id,
+        body="plan body",
+        principal=TEST_TICKET_PRINCIPAL,
+        now=now,
+        recap="Current work",
     )
     assert ticket.stage == "needs_implementation"
     before_settlement = (

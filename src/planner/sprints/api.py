@@ -22,7 +22,7 @@ from planner.core.authctx import (
     require_sprint_item_supervisor_ticket_write,
     require_ticket_worker_write,
 )
-from planner.core.contracts import JsonDict, LinkKind, Priority
+from planner.core.contracts import JsonDict, LinkKind, PrincipalKind, Priority
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import actions as days_actions
@@ -203,9 +203,7 @@ async def get_item_workspace(item_id: str, conn: DbConn, ctx: Ctx, cfg: Cfg, clk
     require_sprint_item_supervisor_read(conn, ctx, item_id)
     planning_day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
     result = sprints_views.item_workspace(conn, item_id, planning_day_id)
-    result["artifacts"] = supervisor_service.list_artifact_details(
-        conn, ctx, item_id, cfg.db_path
-    )
+    result["artifacts"] = supervisor_service.list_artifact_details(conn, ctx, item_id, cfg.db_path)
     return result
 
 
@@ -439,7 +437,7 @@ async def supervisor_update_ticket(
         ticket_id,
         edit=edit,
         title_max_chars=TITLE_MAX_CHARS,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=clk.now_unix(),
         supervisor_sprint_item_id=item_id,
     )
@@ -469,7 +467,7 @@ async def supervisor_change_ticket_scope(
         ticket_id,
         ceiling=ceiling,
         at_cap=at_cap,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=clk.now_unix(),
         supervisor_sprint_item_id=item_id,
     )
@@ -642,7 +640,7 @@ async def supervisor_approve_ticket(
         conn,
         ticket_id,
         field=field,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
         edited_body=body["edited_body"],
         next_ceiling=_parse_next_ceiling(body["next_ceiling"], worker_type_definition),
@@ -672,7 +670,7 @@ async def supervisor_reject_ticket(
         conn,
         ticket_id,
         message=message,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
         supervisor_sprint_item_id=item_id,
     )
@@ -755,7 +753,7 @@ async def _send_to_item_supervisor(
                 employee_launch_model=resolved_start.model,
                 employee_launch_reasoning_effort=resolved_start.reasoning_effort,
             ),
-            actor=ctx.actor,
+            principal=ctx.principal,
             clock=clk,
         )
     return {"conversation_id": delivered.conversation_id, **delivery_fate_json(delivered.fate)}
@@ -779,7 +777,9 @@ async def delete_item(
     item_id: str, conn: DbConn, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
     require_direct_write(ctx)
-    deleted = await sprints_service.delete_item(conversations, conn, item_id, actor=ctx.actor)
+    deleted = await sprints_service.delete_item(
+        conversations, conn, item_id, principal=ctx.principal
+    )
     return {
         "ok": True,
         "sprint_item_id": deleted.sprint_item_id,
@@ -797,7 +797,7 @@ async def classify_item_ticket(
         conn,
         ticket_id,
         sprint_item_id=item_id,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=clk.now_unix(),
         admit=lambda: require_ticket_worker_write(conn, ctx),
     )
@@ -812,7 +812,7 @@ async def unclassify_item_ticket(
         conn,
         ticket_id,
         sprint_item_id=item_id,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=clk.now_unix(),
         admit=lambda: require_ticket_worker_write(conn, ctx),
     )
@@ -829,7 +829,7 @@ async def patch_item(
             raise PlannerError(ErrorCode.validation, "unknown item field", {"field": key})
     if not body:
         raise PlannerError(ErrorCode.validation, "no item fields to update", {})
-    if ctx.is_attributed and not ctx.is_chief and ctx.actor != "worker":
+    if ctx.principal.kind is PrincipalKind.sprint_item:
         reject_agent_fields(ctx, body, recognized)
     edits: dict[str, str | None] = {}
     for field in _ITEM_PLAIN_FIELDS:
@@ -1027,7 +1027,7 @@ async def carry_outcome(
             body_str(body, "target_sprint_id"),
             outcome_id,
             body_str_list(body, "ticket_ids"),
-            actor=ctx.actor,
+            principal=ctx.principal,
             now=clk.now_unix(),
             admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
         )

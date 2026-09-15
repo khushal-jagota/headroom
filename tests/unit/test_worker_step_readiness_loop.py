@@ -18,6 +18,7 @@ from time import monotonic, sleep
 from typing import cast
 
 import pytest
+from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.ticket_progress import advance_ticket
 
 from planner.conversation.contracts import (
@@ -83,7 +84,7 @@ class _World:
                 conn,
                 worker_type="coding",
                 title=title,
-                actor="human",
+                principal=OWNER_PRINCIPAL,
                 now=0,
                 title_max_chars=200,
             )
@@ -91,7 +92,7 @@ class _World:
                 conn,
                 ticket.id,
                 field="kickoff",
-                actor="human",
+                principal=OWNER_PRINCIPAL,
                 now=0,
                 next_ceiling="none",
                 at_cap=AtCap.propose,
@@ -489,7 +490,9 @@ def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _Worl
     world.start_conversation("conv-opener")
     guidance = "Keep the owner’s boundary.\n\n  Exact whitespace stays.  "
     with world.connect() as conn:
-        tickets_data.replace_guidance(conn, ticket_id, body=guidance, actor="human", now=0)
+        tickets_data.replace_guidance(
+            conn, ticket_id, body=guidance, principal=OWNER_PRINCIPAL, now=0
+        )
     world.add_pending_context(ticket_id, "ticket_changed", "The user renamed the ticket.")
 
     assert world.start_step(ticket_id) is True
@@ -664,7 +667,9 @@ def test_one_closeout_lane_takes_one_ticket_per_pass(world: _World) -> None:
     second = world.ready_ticket(title="Closeout two")
     with world.connect() as conn:
         for ticket_id in (first, second):
-            advance_ticket(conn, ticket_id, new_stage="needs_closeout", actor="human", now=0)
+            advance_ticket(
+                conn, ticket_id, new_stage="needs_closeout", principal=OWNER_PRINCIPAL, now=0
+            )
         conn.execute("UPDATE tickets SET updated_at = 10 WHERE id = ?", (first,))
         conn.execute("UPDATE tickets SET updated_at = 20 WHERE id = ?", (second,))
     readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)

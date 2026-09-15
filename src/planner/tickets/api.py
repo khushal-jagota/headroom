@@ -545,7 +545,7 @@ async def create_ticket(
     ticket = tickets_actions.create_ticket(
         conn,
         title=body["title"],
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         kickoff_note=body["kickoff_note"],
@@ -596,7 +596,7 @@ async def create_ticket_from_external_work(
         target_stage=target_stage,
         provided_values=_external_values(raw, body["kickoff_note"], worker_type_definition),
         recap=body.get("recap"),
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         project_id=project.id if project is not None else None,
@@ -638,7 +638,7 @@ async def reconcile_ticket_from_external_work(
         target_stage=target_stage,
         provided_values=_external_values(raw, body["kickoff_note"], worker_type_definition),
         recap=body.get("recap"),
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -1017,7 +1017,7 @@ async def delete_ticket(
     deleted = tickets_data.delete_ticket(
         conn,
         ticket_id,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=clk.now_unix(),
         even_while_running=even_while_running,
         supervisor_sprint_item_id=supervisor_sprint_item_id,
@@ -1078,7 +1078,7 @@ async def patch_ticket(
         ticket_id,
         edit=edit,
         title_max_chars=TITLE_MAX_CHARS,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -1102,7 +1102,7 @@ async def propose_current_field(
         ticket_id,
         body=body["body"],
         recap=body["recap"],
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -1128,7 +1128,7 @@ async def accept_field(
         conn,
         ticket_id,
         field=field,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
         edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
@@ -1156,7 +1156,7 @@ async def return_ticket_for_revision(
         conn,
         ticket_id,
         message=body["message"],
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -1381,7 +1381,7 @@ async def put_guidance(
 ) -> JsonDict:
     body = _marshal_guidance(raw)
     ticket = tickets_data.replace_guidance(
-        conn, ticket_id, body=body["body"], actor=ctx.actor, now=clk.now_unix()
+        conn, ticket_id, body=body["body"], principal=ctx.principal, now=clk.now_unix()
     )
     return tickets_views.ticket_json(ticket, clk.now_unix())
 
@@ -1392,7 +1392,7 @@ async def append_guidance(
 ) -> JsonDict:
     body = _marshal_guidance(raw)
     ticket = tickets_data.append_guidance(
-        conn, ticket_id, body=body["body"], actor=ctx.actor, now=clk.now_unix()
+        conn, ticket_id, body=body["body"], principal=ctx.principal, now=clk.now_unix()
     )
     return tickets_views.ticket_json(ticket, clk.now_unix())
 
@@ -1403,7 +1403,9 @@ async def put_recap(
 ) -> JsonDict:
     body = RecapBody(body=body_str(raw, "body"))
     now = clk.now_unix()
-    ticket = tickets_data.write_recap(conn, ticket_id, body=body["body"], actor=ctx.actor, now=now)
+    ticket = tickets_data.write_recap(
+        conn, ticket_id, body=body["body"], principal=ctx.principal, now=now
+    )
     return tickets_views.ticket_json(ticket, now)
 
 
@@ -1414,7 +1416,12 @@ async def edit_pending_proposal(
     body = PendingProposalEditBody(field=body_str(raw, "field"), body=body_str(raw, "body"))
     now = clk.now_unix()
     ticket = tickets_data.edit_pending_proposal(
-        conn, ticket_id, field=body["field"], new_body=body["body"], actor=ctx.actor, now=now
+        conn,
+        ticket_id,
+        field=body["field"],
+        new_body=body["body"],
+        principal=ctx.principal,
+        now=now,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1437,7 +1444,7 @@ async def put_value(
         ticket_id,
         field=field,
         new_body=body["body"],
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -1478,7 +1485,7 @@ async def scope_ticket(
         ticket_id,
         ceiling=ceiling_raw,
         at_cap=at_cap,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -1496,7 +1503,7 @@ async def drop_ticket(
     ticket = tickets_data.drop_ticket(
         conn,
         ticket_id,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -1547,7 +1554,7 @@ async def request_user_help(
     ticket = tickets_data.request_user_help(
         conn,
         ticket_id,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
     )
     return tickets_views.ticket_json(ticket, now)

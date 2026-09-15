@@ -12,6 +12,7 @@ from typing import Any, cast
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.contracts import ConversationStartRequest
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
@@ -495,7 +496,7 @@ def test_supervisor_rejection_delivers_before_it_mutates(
                         str(ticket["id"]),
                         field="success",
                         new_body="A newer pending draft",
-                        actor="human",
+                        principal=OWNER_PRINCIPAL,
                         now=5,
                     )
             return result
@@ -638,7 +639,7 @@ def test_delete_between_backend_start_and_link_cannot_recreate_the_agent(
             )
         )
         await system.started.wait()
-        await sprints_service.delete_item(system, deleter, item.id, actor="human")
+        await sprints_service.delete_item(system, deleter, item.id, principal=OWNER_PRINCIPAL)
         system.release.set()
         with pytest.raises(PlannerError, match="no longer exists"):
             await send

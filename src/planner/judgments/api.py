@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from planner.core.authctx import RequestContext, request_context, require_direct_write
-from planner.core.contracts import JsonDict
+from planner.core.contracts import JsonDict, Principal, PrincipalKind, principal_legacy_actor
 from planner.core.errors import ErrorCode, PlannerError
 from planner.judgments import data
 from planner.judgments.contracts import TroubleNoteBody, VerdictBody
@@ -21,12 +21,12 @@ Ctx = Annotated[RequestContext, Depends(request_context)]
 
 
 def _require_current_worker(ctx: RequestContext, ticket_id: str) -> None:
-    if ctx.actor == "worker" and ctx.ticket_id == ticket_id:
+    if ctx.principal == Principal(PrincipalKind.ticket, ticket_id):
         return
     raise PlannerError(
         ErrorCode.agent_forbidden,
         "trouble can be recorded only by this ticket's worker",
-        {"actor": ctx.actor, "ticket_id": ticket_id},
+        {"actor": principal_legacy_actor(ctx.principal), "ticket_id": ticket_id},
     )
 
 
@@ -48,9 +48,7 @@ def _optional_text(body: JsonDict) -> str | None:
     if text is None:
         return None
     if not isinstance(text, str):
-        raise PlannerError(
-            ErrorCode.validation, "invalid verdict text", {"text": text}
-        )
+        raise PlannerError(ErrorCode.validation, "invalid verdict text", {"text": text})
     return text
 
 
@@ -74,9 +72,7 @@ async def put_ticket_verdict(
     )
     return {
         "verdict": (
-            {"rating": verdict.rating, "text": verdict.text}
-            if verdict is not None
-            else None
+            {"rating": verdict.rating, "text": verdict.text} if verdict is not None else None
         )
     }
 

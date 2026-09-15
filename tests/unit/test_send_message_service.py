@@ -23,13 +23,10 @@ from planner.conversation.contracts import (
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as PlannerTestClock
+from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.message_delivery import service
-from planner.message_delivery.contracts import (
-    MessageDeliveryMode,
-    MessageTarget,
-    MessageTargetType,
-)
+from planner.message_delivery.contracts import MessageDeliveryMode
 from planner.runtime import conversation_start
 from planner.runtime.conversation_start import DeliveredMessage
 from planner.sprints import data as sprints_data
@@ -39,12 +36,11 @@ from planner.tickets import data as tickets_data
 
 @pytest.mark.parametrize("mode", list(MessageDeliveryMode))
 @pytest.mark.parametrize(
-    ("target", "existing_conversation_id", "expected_door"),
+    ("recipient", "existing_conversation_id", "expected_door"),
     [
-        (MessageTarget(MessageTargetType.chief), "c_chief", "agent"),
-        (MessageTarget(MessageTargetType.ticket, "t_one"), "c_ticket", "ticket"),
-        (MessageTarget(MessageTargetType.sprint_item, "si_one"), "c_supervisor", "agent"),
-        (MessageTarget(MessageTargetType.agent, "reviewer"), "c_agent", "agent"),
+        (Principal(PrincipalKind.chief, "chief"), "c_chief", "agent"),
+        (Principal(PrincipalKind.ticket, "t_one"), "c_ticket", "ticket"),
+        (Principal(PrincipalKind.sprint_item, "si_one"), "c_supervisor", "agent"),
     ],
 )
 def test_each_public_mode_reaches_each_destination_door_once(
@@ -52,7 +48,7 @@ def test_each_public_mode_reaches_each_destination_door_once(
     fake_clock: PlannerTestClock,
     monkeypatch: pytest.MonkeyPatch,
     mode: MessageDeliveryMode,
-    target: MessageTarget,
+    recipient: Principal,
     existing_conversation_id: str,
     expected_door: str,
 ) -> None:
@@ -93,17 +89,13 @@ def test_each_public_mode_reaches_each_destination_door_once(
         yield
 
     monkeypatch.setattr(sprints_service, "supervisor_lifecycle_lock", supervisor_lock)
-    tmp_db.execute(
-        "INSERT OR REPLACE INTO agents (agent_key, conversation_id) VALUES (?, ?)",
-        ("reviewer", "c_agent"),
-    )
     result = asyncio.run(
         service.send_message(
             cast(ConversationSystem, object()),
             tmp_db,
             fake_clock,
-            RequestContext("unattributed", False, False),
-            target,
+            RequestContext(OWNER_PRINCIPAL),
+            recipient,
             "Hello",
             mode,
         )
@@ -127,49 +119,24 @@ def test_each_public_mode_reaches_each_destination_door_once(
     assert isinstance(result.fate, PromptDeliveryStarted)
 
 
-def test_registered_agent_without_conversation_keeps_queue_validation(
+def test_owner_has_no_deliverable_conversation(
     tmp_db: Connection, fake_clock: PlannerTestClock
 ) -> None:
-    tmp_db.execute("INSERT INTO agents (agent_key, conversation_id) VALUES (?, NULL)", ("idle",))
-
     with pytest.raises(PlannerError) as caught:
         asyncio.run(
             service.send_message(
                 InMemoryConversationSystem(),
                 tmp_db,
                 fake_clock,
-                RequestContext("unattributed", False, False),
-                MessageTarget(MessageTargetType.agent, "idle"),
+                RequestContext(OWNER_PRINCIPAL),
+                OWNER_PRINCIPAL,
                 "Hello",
                 MessageDeliveryMode.queue,
             )
         )
 
     assert caught.value.code is ErrorCode.validation
-    assert caught.value.message == "agent has no current conversation and no start configuration"
-
-
-def test_registered_agent_without_conversation_gets_the_conversation_steer_refusal(
-    tmp_db: Connection, fake_clock: PlannerTestClock
-) -> None:
-    tmp_db.execute("INSERT INTO agents (agent_key, conversation_id) VALUES (?, NULL)", ("idle",))
-
-    result = asyncio.run(
-        service.send_message(
-            InMemoryConversationSystem(),
-            tmp_db,
-            fake_clock,
-            RequestContext("unattributed", False, False),
-            MessageTarget(MessageTargetType.agent, "idle"),
-            "Guide it",
-            MessageDeliveryMode.steer,
-        )
-    )
-
-    assert result.conversation_id is None
-    assert result.fate == PromptDeliveryRefused(
-        PromptDeliveryRefusalReason.no_running_turn_to_steer_into
-    )
+    assert caught.value.message == "the owner does not have a deliverable conversation"
 
 
 @pytest.mark.parametrize(
@@ -200,8 +167,8 @@ def test_service_preserves_terminal_steer_fates_without_another_send(
             cast(ConversationSystem, object()),
             tmp_db,
             fake_clock,
-            RequestContext("unattributed", False, False),
-            MessageTarget(MessageTargetType.ticket, "t_one"),
+            RequestContext(OWNER_PRINCIPAL),
+            Principal(PrincipalKind.ticket, "t_one"),
             "Guide it",
             MessageDeliveryMode.steer,
         )

@@ -18,6 +18,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.core.clock import TestClock
 from planner.core.contracts import ErrorCode, PlannerError
@@ -212,7 +213,7 @@ def test_create_door_rejects_unknown_type(tmp_db: Connection, fake_clock: TestCl
         tickets_data.create_ticket(
             tmp_db,
             title="Bad type",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=now,
             title_max_chars=TITLE_MAX_CHARS,
             project_id="project_vylo",
@@ -232,13 +233,15 @@ def test_guidance_is_independent_of_the_worker_type_fields(
         title="Note target",
         target_stage="needs_approach",
         provided_values={"success": "success value"},
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         kickoff_note="k",
         project_id="project_vylo",
     )
-    updated = tickets_data.replace_guidance(tmp_db, ticket.id, body="x", actor="human", now=now)
+    updated = tickets_data.replace_guidance(
+        tmp_db, ticket.id, body="x", principal=OWNER_PRINCIPAL, now=now
+    )
     assert updated.guidance == "x"
     assert updated.field_values == ticket.field_values
     assert updated.pending_proposal == ticket.pending_proposal
@@ -258,7 +261,7 @@ def test_created_second_type_ticket_ceiling_is_its_registry_default(
     ticket = tickets_data.create_ticket(
         tmp_db,
         title="Probe ceiling",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         project_id="project_vylo",

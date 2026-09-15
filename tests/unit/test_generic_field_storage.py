@@ -6,6 +6,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
 from tests.support.probe import FIELD_ALPHA as A_FIELD
 from tests.support.probe import FIELD_BETA as B_FIELD
 from tests.support.probe import NEEDS_ALPHA as A
@@ -92,7 +93,7 @@ def _create(conn: Connection, now: int) -> str:
         conn,
         worker_type="probe",
         title="Probe",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
     ).id
@@ -107,11 +108,17 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
         tmp_db, tid, stage=A, ownership_mode=StageOwnershipMode.worker, now=now
     )
     ticket = data.accept_proposal(
-        tmp_db, tid, field="kickoff", actor="human", now=now, next_ceiling=B, at_cap=AtCap.propose
+        tmp_db,
+        tid,
+        field="kickoff",
+        principal=OWNER_PRINCIPAL,
+        now=now,
+        next_ceiling=B,
+        at_cap=AtCap.propose,
     )
     assert ticket.stage == A and ticket.field_values == {"kickoff": ""}
     ticket = data.file_current_proposal_with_recap(
-        tmp_db, tid, body="alpha", recap="r1", actor="agent", now=now
+        tmp_db, tid, body="alpha", recap="r1", principal=TEST_TICKET_PRINCIPAL, now=now
     )
     assert (
         ticket.stage == B
@@ -119,18 +126,18 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
         and ticket.pending_proposal is None
     )
     ticket = data.file_current_proposal_with_recap(
-        tmp_db, tid, body="beta 1", recap="r2", actor="agent", now=now
+        tmp_db, tid, body="beta 1", recap="r2", principal=TEST_TICKET_PRINCIPAL, now=now
     )
-    assert ticket.pending_proposal == PendingTicketProposal(B_FIELD, "beta 1", "agent", now)
+    assert ticket.pending_proposal == PendingTicketProposal(B_FIELD, "beta 1", "worker", now)
     ticket = data.file_current_proposal_with_recap(
-        tmp_db, tid, body="beta 2", recap="r3", actor="agent", now=now
+        tmp_db, tid, body="beta 2", recap="r3", principal=TEST_TICKET_PRINCIPAL, now=now
     )
-    assert ticket.pending_proposal == PendingTicketProposal(B_FIELD, "beta 2", "agent", now)
+    assert ticket.pending_proposal == PendingTicketProposal(B_FIELD, "beta 2", "worker", now)
     ticket = data.accept_proposal(
         tmp_db,
         tid,
         field=B_FIELD,
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.stop,
@@ -151,13 +158,13 @@ def test_recap_writer_infers_probe_gate(
         tmp_db,
         tid,
         field="kickoff",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
     )
     ticket = data.file_current_proposal_with_recap(
-        tmp_db, tid, body="alpha", recap="probe recap", actor="agent", now=now
+        tmp_db, tid, body="alpha", recap="probe recap", principal=TEST_TICKET_PRINCIPAL, now=now
     )
     assert ticket.pending_proposal is not None
     assert ticket.recap == "probe recap" and ticket.pending_proposal.field == A_FIELD

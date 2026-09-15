@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Final
 
-from planner.tickets.logic.admission import DIRECT_ACTORS
+from planner.core.contracts import Principal, PrincipalKind
 from planner.worker_context import data as worker_context_data
 
 TICKET_CHANGED_CONTEXT_KEY: Final = "ticket_changed"
@@ -14,9 +14,9 @@ TICKET_CHANGED_TEXT: Final = (
 )
 
 
-def set_ticket_changed(conn: sqlite3.Connection, ticket_id: str, actor: str) -> None:
+def set_ticket_changed(conn: sqlite3.Connection, ticket_id: str, principal: Principal) -> None:
     """Coalesce a notice for direct edits, never worker-owned writes."""
-    if actor not in DIRECT_ACTORS:
+    if principal.kind not in {PrincipalKind.owner, PrincipalKind.chief}:
         return
     worker_context_data.set_context(
         conn, ticket_id, TICKET_CHANGED_CONTEXT_KEY, TICKET_CHANGED_TEXT
