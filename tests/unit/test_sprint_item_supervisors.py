@@ -20,11 +20,13 @@ from planner.conversation.message_content import text_message_content
 from planner.core import change_signal
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.core.server import create_app
 from planner.message_delivery import service as message_delivery_service
 from planner.runtime import conversation_start
+from planner.runtime.logic.worker_step_prompt import proposal_returned_for_revision_prompt
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
 from planner.sprints import supervisor_service
@@ -33,6 +35,12 @@ from planner.tickets import views as tickets_views
 from planner.worker_context import data as context_data
 
 _OWNER_HOLDER = {"kind": "owner", "id": "owner"}
+
+
+def test_return_for_revision_lifecycle_copy_states_the_rejection() -> None:
+    assert proposal_returned_for_revision_prompt() == (
+        "Your proposal was rejected and returned for revision. The decider's comment follows."
+    )
 
 
 def _app(tmp_path: Path, *, fake_now: str | None = None) -> tuple[FastAPI, Path]:
@@ -491,6 +499,7 @@ def test_supervisor_rejection_delivers_before_it_mutates(
         original_send = message_delivery_service.send_message
 
         async def send_then_replace(*args: Any, **kwargs: Any) -> object:
+            assert kwargs["required_sprint_item_id"] == str(item["id"])
             result = await original_send(*args, **kwargs)
             if outcome == "superseded":
                 with connect(str(db_path)) as conn:
@@ -510,6 +519,10 @@ def test_supervisor_rejection_delivers_before_it_mutates(
             json={"message": "State the verification evidence."},
             headers=_supervisor_headers(str(item["id"])),
         )
+        if outcome != "refused":
+            # The lifecycle message starts the turn and the comment queues behind it.
+            # Completing that turn materializes the transcript in delivery order.
+            system.complete_running_turn(conversation_id)
 
     with connect(str(db_path)) as conn:
         after = tickets_data.read_ticket(conn, str(ticket["id"]))
@@ -521,9 +534,29 @@ def test_supervisor_rejection_delivers_before_it_mutates(
         assert after.pending_proposal is not None
         assert any(item.text == "Read exact guidance." for item in pending_context)
     else:
-        write = system.backend_prompt_writes(conversation_id)[0]
-        assert "State the verification evidence." in write.text
-        assert "Read exact guidance." not in write.text
+        expected_messages = [
+            proposal_returned_for_revision_prompt(),
+            "State the verification evidence.",
+        ]
+        message_observations = [
+            observation
+            for observation in system.observations(conversation_id)
+            if observation.text in expected_messages
+        ]
+        assert [observation.text for observation in message_observations] == expected_messages
+        assert [observation.sender_label for observation in message_observations] == [
+            "Panels",
+            f"Sprint Item {item['id']}",
+        ]
+        assert message_observations[0].sender is None
+        assert message_observations[0].recipient is None
+        assert message_observations[1].sender == Principal(
+            PrincipalKind.sprint_item, str(item["id"])
+        )
+        assert message_observations[1].recipient == Principal(
+            PrincipalKind.ticket, str(ticket["id"])
+        )
+        assert "Read exact guidance." not in str(message_observations[1].text)
         if outcome == "superseded":
             assert rejected.status_code == 400
             assert "proposal changed" in rejected.json()["error"]["message"]

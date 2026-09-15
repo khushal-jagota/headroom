@@ -145,16 +145,20 @@ already had five minutes.
 
 ## Sending a proposal back
 
-When the holder returns a proposal for revision, Send Message delivers the decider's
-comment to the worker. The Ticket then goes back out to the worker.
+When the holder returns a proposal for revision, Panels first delivers a system-authored
+rejection-and-return lifecycle fact, then Send Message delivers the decider's separately
+attributed comment. The Ticket then goes back out to the worker.
 
-The order is: check everything, send, and only then write. It has to be that way round,
+The order is: check every authorization and current-parent route, send both messages in
+that order, and only then write. It has to be that way round,
 because the write is the one part that cannot be undone honestly — it deletes the
 pending proposal, so undoing a failed send afterwards would leave nothing to approve. A
-refused delivery changes nothing at all and comes back as an error the owner can retry
-cleanly. The one residue is a send that succeeded and a write that then failed: the
-guidance is out and the proposal is intact, so a retry may deliver the same guidance
-twice. Visible, harmless, and far better than losing the proposal.
+refused delivery changes no Ticket state and comes back as an error the decider can
+retry. The first message records the rejection as a lifecycle fact, separately from the
+comment and its sender. Panels repeats the authorization, route, and proposal-identity
+checks between the messages and again in the final transaction for races. A send that succeeded before that recheck can
+leave a message with an intact proposal; a retry may duplicate it. Visible, harmless,
+and far better than losing the proposal.
 
 _Code path:_ `src/planner/tickets/actions.py`.
 

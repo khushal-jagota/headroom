@@ -452,7 +452,7 @@
             </ClampedText>
           </div>
           <div class="ticket-operating">
-            {#if detail.stage !== "done" && detail.stage !== "needs_kickoff"}
+            {#if detail.stage !== "done" && detail.stage !== "needs_kickoff" && detail.pending_proposal === null}
               <details class="ticket-leash" bind:this={leashMenu} data-leash>
                 <summary
                   class="ticket-leash-face"

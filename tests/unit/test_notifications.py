@@ -19,6 +19,7 @@ from planner.core.server import create_app
 from planner.notifications import data as notifications_data
 from planner.notifications.contracts import NOTIFICATION_SUBJECTS, NotificationFact
 from planner.notifications.logic.policy import decide_notification
+from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket
 
@@ -116,6 +117,53 @@ def test_status_projection_policy_and_delivery_are_exact_once(tmp_path: Path) ->
     assert notifications_data.apply_policy(restarted, 3) == 0
     assert len(notifications_data.pending_deliveries(restarted, 3)) == 1
     restarted.close()
+
+
+def test_needs_approval_fact_exists_only_for_owner_held_proposals(tmp_path: Path) -> None:
+    conn = connect(str(tmp_path / "holder-notifications.db"))
+    create_schema(conn)
+    holder_ticket = _ticket(conn, 1)
+    holder_item = sprints_data.create_item(
+        conn,
+        title="Proposal holder",
+        project_id="project_vylo",
+        clock=MutableClock(parse_fake_now("2026-09-15T12:00:00+02:00")),
+    )
+    holders = (
+        OWNER_PRINCIPAL,
+        Principal(PrincipalKind.chief, "chief"),
+        Principal(PrincipalKind.sprint_item, holder_item.id),
+        Principal(PrincipalKind.ticket, holder_ticket.id),
+    )
+    tickets = [_ticket(conn, index + 2) for index in range(len(holders))]
+    for index, (ticket, holder) in enumerate(zip(tickets, holders, strict=True), start=1):
+        conn.execute(
+            "UPDATE tickets SET ceiling_holder = ?, ticket_status = 'awaiting_approval', "
+            "ticket_status_revision = 1, ticket_status_changed_at = ? WHERE id = ?",
+            (
+                json.dumps({"kind": holder.kind.value, "id": holder.id}),
+                index,
+                ticket.id,
+            ),
+        )
+
+    notifications_data.project_facts(conn)
+
+    rows = conn.execute(
+        "SELECT source_id, notification_type FROM notification_facts ORDER BY source_id"
+    ).fetchall()
+    assert [(row["source_id"], row["notification_type"]) for row in rows] == [
+        (tickets[0].id, "ticket_needs_approval")
+    ]
+    cursors = conn.execute(
+        "SELECT source_id, sequence FROM notification_projection_cursors "
+        "WHERE source_kind = 'ticket' AND source_id IN (?, ?, ?, ?)",
+        tuple(ticket.id for ticket in tickets),
+    ).fetchall()
+    assert {(row["source_id"], row["sequence"]) for row in cursors} == {
+        (ticket.id, 1) for ticket in tickets
+    }
+    conn.close()
 
 
 def test_conversation_events_project_to_the_catalogue_once(tmp_path: Path) -> None:

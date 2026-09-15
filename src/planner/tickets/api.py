@@ -1113,21 +1113,22 @@ async def propose_current_field(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
+    conversations: Conversations,
 ) -> JsonDict:
     body = ProposeWithRecapBody(
         body=body_str(raw, "body"),
         recap=body_str(raw, "recap"),
     )
-    now = clk.now_unix()
-    ticket = tickets_data.file_current_proposal_with_recap(
+    ticket = await tickets_actions.file_current_proposal(
+        conversations,
         conn,
         ticket_id,
         body=body["body"],
         recap=body["recap"],
-        principal=ctx.principal,
-        now=now,
+        ctx=ctx,
+        clock=clk,
     )
-    return tickets_views.ticket_json(ticket, now)
+    return tickets_views.ticket_json(ticket, clk.now_unix())
 
 
 @router.post("/tickets/{ticket_id}/accept/{field}")

@@ -13,6 +13,7 @@ directly without resolving a Worker type.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
 from sqlite3 import Connection
@@ -87,6 +88,16 @@ def test_coding_ticket_accepts_coding_field_and_ceiling(
         )
         assert missing_holder.status_code == 400, missing_holder.json()
         assert missing_holder.json()["error"]["code"] == "scope_missing"
+        self_held = client.post(
+            f"/api/tickets/{tid}/accept/kickoff",
+            json={
+                "next_ceiling": "needs_approach",
+                "at_cap": "stop",
+                "next_holder": {"kind": "ticket", "id": tid},
+            },
+        )
+        assert self_held.status_code == 400, self_held.json()
+        assert self_held.json()["error"]["code"] == "validation"
         approved = client.post(
             f"/api/tickets/{tid}/accept/kickoff",
             json={
@@ -97,6 +108,34 @@ def test_coding_ticket_accepts_coding_field_and_ceiling(
         )
         assert approved.status_code == 200, approved.json()
         assert approved.json()["ceiling"] == "needs_approach"
+
+
+def test_worker_api_cannot_decide_a_corrupted_self_held_proposal(app_db: AppDb) -> None:
+    app, db_path = app_db
+    with TestClient(app) as client:
+        ticket_id = _create(client, "coding")
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET ceiling_holder = ? WHERE id = ?",
+                (
+                    json.dumps({"kind": "ticket", "id": ticket_id}),
+                    ticket_id,
+                ),
+            )
+            conn.commit()
+        decided = client.post(
+            f"/api/tickets/{ticket_id}/accept/kickoff",
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
+            json={
+                "next_ceiling": "needs_success",
+                "at_cap": "propose",
+                "next_holder": OWNER,
+            },
+        )
+
+    assert decided.status_code == 400, decided.json()
+    assert decided.json()["error"]["code"] == "validation"
+    assert "own ceiling" in decided.json()["error"]["message"]
 
 
 def test_accept_rejects_foreign_field_and_foreign_next_ceiling(

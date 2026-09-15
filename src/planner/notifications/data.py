@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
+from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.notifications.contracts import (
     NOTIFICATION_SUBJECTS,
     NOTIFICATION_TYPE_BY_ID,
@@ -258,6 +258,17 @@ def _ticket_fact_type(status: str) -> str | None:
     }.get(status)
 
 
+def _owner_holds_ticket_ceiling(raw_holder: str) -> bool:
+    stored = json.loads(raw_holder)
+    if not isinstance(stored, dict):
+        return False
+    try:
+        holder = Principal(PrincipalKind(str(stored["kind"])), str(stored["id"]))
+    except (KeyError, TypeError, ValueError):
+        return False
+    return holder == OWNER_PRINCIPAL
+
+
 def _agent_label(agent_key: str) -> str:
     if agent_key == CHIEF_SETTINGS_KEY:
         return CHIEF_LABEL
@@ -270,7 +281,8 @@ def project_facts(conn: sqlite3.Connection) -> int:
     with _txn(conn):
         ticket_rows = conn.execute(
             "SELECT t.id, t.title, t.ticket_status, t.ticket_status_revision, "
-            "t.ticket_status_changed_at, c.sequence AS projected_sequence "
+            "t.ticket_status_changed_at, t.ceiling_holder, "
+            "c.sequence AS projected_sequence "
             "FROM tickets t LEFT JOIN notification_projection_cursors c "
             "ON c.source_kind = 'ticket' AND c.source_id = t.id "
             "WHERE c.source_id IS NULL OR t.ticket_status_revision > c.sequence"
@@ -278,6 +290,10 @@ def project_facts(conn: sqlite3.Connection) -> int:
         for row in ticket_rows:
             revision = int(row["ticket_status_revision"])
             notification_type = _ticket_fact_type(str(row["ticket_status"]))
+            if notification_type == "ticket_needs_approval" and not _owner_holds_ticket_ceiling(
+                str(row["ceiling_holder"])
+            ):
+                notification_type = None
             if notification_type is not None and revision > 0:
                 _insert_fact(
                     conn,

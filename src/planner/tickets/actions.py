@@ -14,11 +14,16 @@ from planner.core.contracts import LinkKind, Principal, PrincipalKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.message_delivery import service as message_delivery_service
+from planner.runtime.logic.worker_step_prompt import proposal_returned_for_revision_prompt
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, Ticket
-from planner.tickets.logic import admission, resolution
-from planner.worker_types.configuration import configured_worker_type_registry
+from planner.tickets.logic import admission
+
+
+def proposal_ready_message(ticket_id: str) -> str:
+    """A concise wake-up; the holder reads the proposal from canonical Ticket state."""
+    return f"Ticket {ticket_id} has filed a proposal for your approval."
 
 
 def resolve_creation_placement(
@@ -225,6 +230,60 @@ def remove_link(
         conn.execute("COMMIT")
 
 
+async def file_current_proposal(
+    conversation_system: ConversationSystem,
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    body: str,
+    recap: str,
+    ctx: RequestContext,
+    clock: Clock,
+) -> Ticket:
+    """Park a proposal and wake its recorded non-owner holder.
+
+    The Ticket write is canonical and commits first. If delivery is refused the parked
+    proposal is deliberately preserved, and the retryable error says so; losing the
+    durable proposal would be worse than requiring the caller to retry its wake-up.
+    Owner-held proposals use Review and the owner-only notification projection instead.
+    """
+    ticket = tickets_data.file_current_proposal_with_recap(
+        conn,
+        ticket_id,
+        body=body,
+        recap=recap,
+        principal=ctx.principal,
+        now=clock.now_unix(),
+    )
+    if ticket.pending_proposal is None or ticket.ceiling_holder.kind is PrincipalKind.owner:
+        return ticket
+    fate = (
+        await message_delivery_service.send_message(
+            conversation_system,
+            conn,
+            clock,
+            ctx,
+            ticket.ceiling_holder,
+            proposal_ready_message(ticket.id),
+        )
+    ).fate
+    if isinstance(fate, PromptDeliveryRefused):
+        raise PlannerError(
+            ErrorCode.gateway_offline,
+            "proposal was parked but its holder could not be notified",
+            {
+                "ticket_id": ticket.id,
+                "proposal_parked": True,
+                "holder": {
+                    "kind": ticket.ceiling_holder.kind.value,
+                    "id": ticket.ceiling_holder.id,
+                },
+                "refusal_reason": fate.refusal_reason.value,
+            },
+        )
+    return ticket
+
+
 async def return_ticket_for_revision(
     conversation_system: ConversationSystem,
     conn: sqlite3.Connection,
@@ -235,34 +294,59 @@ async def return_ticket_for_revision(
     clock: Clock,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
-    """Send the decider's guidance to the worker, then hand the Ticket back to it.
+    """Tell the worker its proposal was returned, send the comment, then apply it.
 
     The order is validate, send, and only then write, because the write is the one thing
     that cannot be undone honestly: the decision deletes the pending proposal, so a revert
     after a failed send would leave nothing to approve. Everything that can be checked
     without changing anything is checked first, against a read of the Ticket.
 
-    A refused delivery changes nothing at all and is reported as the error it is. The one
-    residue is a send that succeeded and a write that then failed: the guidance is out and
-    the proposal is intact, so a retry may deliver the same guidance twice — visible,
-    harmless, and far better than losing the proposal.
+    A refused delivery changes no Ticket state and is reported as the error it is. The
+    rejection lifecycle fact is distinct from the still-pending database transition if
+    the comment is refused. A send that succeeds before a later race check can still
+    leave a message with an intact proposal; a retry may duplicate it, which is preferable
+    to losing the proposal.
     """
     admission.validate_body(message, "revision guidance")
     principal = ctx.principal
     now = clock.now_unix()
-    ticket = tickets_data.read_ticket(conn, ticket_id)
-    # The decision is the whole check, run here on a read of the Ticket: wrong actor,
-    # wrong status, terminal stage, and no conversation to send into all fail here,
-    # before a word has been sent and before anything has been written.
-    worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
-    resolution.decide_return_for_revision(
-        ticket,
-        principal,
-        worker_type_definition=worker_type_definition,
+    ticket = tickets_data.require_return_for_revision(
+        conn,
+        ticket_id,
+        principal=principal,
+        supervisor_sprint_item_id=supervisor_sprint_item_id,
     )
     expected_proposal = ticket.pending_proposal
-    # Into the conversation the decision above proved is there: returning for revision is
-    # something said to a worker already at work, never the thing that first speaks to one.
+    lifecycle_fate = (
+        await message_delivery_service.send_ticket_system_message(
+            conversation_system,
+            conn,
+            clock,
+            ticket_id,
+            proposal_returned_for_revision_prompt(),
+            required_sprint_item_id=supervisor_sprint_item_id,
+        )
+    ).fate
+    if isinstance(lifecycle_fate, PromptDeliveryRefused):
+        raise PlannerError(
+            ErrorCode.gateway_offline,
+            "proposal return lifecycle could not be delivered",
+            {"ticket_id": ticket_id, "refusal_reason": lifecycle_fate.refusal_reason.value},
+        )
+    current = tickets_data.require_return_for_revision(
+        conn,
+        ticket_id,
+        principal=principal,
+        supervisor_sprint_item_id=supervisor_sprint_item_id,
+    )
+    if current.pending_proposal != expected_proposal:
+        raise PlannerError(
+            ErrorCode.validation,
+            "proposal changed before revision guidance could be delivered",
+            {"ticket_id": ticket_id},
+        )
+    # The lifecycle fact is Panels-authored and arrives first. The decider's comment stays
+    # a distinct addressed message with its real sender.
     fate = (
         await message_delivery_service.send_message(
             conversation_system,
@@ -271,6 +355,7 @@ async def return_ticket_for_revision(
             ctx,
             Principal(PrincipalKind.ticket, ticket_id),
             message.strip(),
+            required_sprint_item_id=supervisor_sprint_item_id,
         )
     ).fate
     if isinstance(fate, PromptDeliveryRefused):

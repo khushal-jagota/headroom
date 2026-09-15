@@ -76,6 +76,8 @@ def respond(route):
         result=ticket
     elif path == 'tickets/t_kickoff':
         result={**ticket, 'id': 't_kickoff', 'stage': 'needs_kickoff', 'sprint_item_id': None, 'resolved_priority_anchors': {**ticket['resolved_priority_anchors'], 'sprint_item': None}, 'pending_proposal': None, 'field_values': {}}
+    elif path == 'tickets/t_open':
+        result={**ticket, 'id': 't_open', 'ticket_status': 'empty', 'pending_proposal': None}
     elif path == 'tickets/t_done':
         result={**ticket, 'id': 't_done', 'stage': 'done', 'ticket_status': 'empty', 'pending_proposal': None}
     elif path == 'worker-types': result=manifest
@@ -96,6 +98,9 @@ with sync_playwright() as p:
     assert page.get_by_label('Ticket Sprint').count() == 0
     assert page.locator('[data-ticket-guidance], [data-ticket-history]').count() == 0
     assert page.get_by_text('Old unapproved draft').count() == 0
+    assert page.locator('[data-leash]').count() == 0
+    page.evaluate("window.__showTicket('t_open')")
+    page.locator('[data-ticket-id="t_open"]').wait_for()
     leash=page.locator('[data-leash]')
     leash.locator(':scope > summary').click()
     assert leash.locator('select').count() == 2
@@ -118,6 +123,8 @@ with sync_playwright() as p:
     assert_ticket_layout(1280)
     assert_ticket_layout(390)
     page.set_viewport_size({'width': 1280, 'height': 900})
+    page.evaluate("window.__showTicket('t_guidance')")
+    page.locator('[data-ticket-id="t_guidance"]').wait_for()
     assert page.locator('[data-accept]').count() == 1
     proposal=page.locator('[data-field="success"] [contenteditable]')
     proposal.click()

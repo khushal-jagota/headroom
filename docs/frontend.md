@@ -520,6 +520,10 @@ hand-rolling the same shapes per screen. Each does one job:
 - **ScopePairPicker** — the "approve until … then …" scope control.
 - **ErrorLine** — a single error message line.
 
+The Ticket page shows its leash only while scope is editable. A pending proposal hides
+the leash entirely, matching the server rule that the proposal's holder and scope remain
+stable until the proposal is decided.
+
 A ticket's stage labels and order are not baked into the frontend: they come from the
 server's per-Worker-type manifest through `web/src/lib/lifecycle.ts`, keyed by each
 Ticket's own Worker type (see `worker-types.md`). `labelize` in `web/src/lib/ui.ts`

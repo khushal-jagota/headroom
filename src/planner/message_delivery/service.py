@@ -32,6 +32,32 @@ from planner.tickets import data as tickets_data
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 
 
+async def send_ticket_system_message(
+    conversations: ConversationSystem,
+    conn: sqlite3.Connection,
+    clock: Clock,
+    ticket_id: str,
+    message: str,
+    *,
+    required_sprint_item_id: str | None = None,
+) -> conversation_start.DeliveredMessage:
+    """Send one Panels-authored lifecycle fact under the Ticket conversation lock."""
+    async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
+        ticket = tickets_data.read_ticket(conn, ticket_id)
+        return await conversation_start.send_to_ticket_conversation(
+            conversations,
+            conn,
+            ticket_id,
+            text_message_content(message),
+            conversation_id=ticket.conversation_id,
+            sender_label="Panels",
+            sender=None,
+            recipient=None,
+            now=clock.now_unix(),
+            required_sprint_item_id=required_sprint_item_id,
+        )
+
+
 def sender_label(ctx: RequestContext) -> str:
     """Name the ordinary Panels caller without treating the label as authority."""
     if ctx.principal.kind is PrincipalKind.owner:

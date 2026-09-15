@@ -90,7 +90,15 @@ def _principal_from_json(raw: str) -> Principal:
     return Principal(PrincipalKind(str(stored["kind"])), str(stored["id"]))
 
 
-def _validate_ceiling_holder(conn: sqlite3.Connection, holder: Principal) -> None:
+def _validate_ceiling_holder(
+    conn: sqlite3.Connection, holder: Principal, *, ticket_id: str
+) -> None:
+    if holder == Principal(PrincipalKind.ticket, ticket_id):
+        raise PlannerError(
+            ErrorCode.validation,
+            "a Ticket cannot hold its own ceiling",
+            {"ticket_id": ticket_id},
+        )
     table = {
         PrincipalKind.ticket: "tickets",
         PrincipalKind.sprint_item: "sprint_items",
@@ -435,7 +443,7 @@ def _load_ticket_and_worker_type_definition_for_write(
     worker_type_definition = configured_worker_type_registry().require(str(row["worker_type"]))
     worker_type_definition.validate_ticket_position(str(row["stage"]), str(row["ceiling"]))
     ticket = _row_to_ticket(row)
-    _validate_ceiling_holder(conn, ticket.ceiling_holder)
+    _validate_ceiling_holder(conn, ticket.ceiling_holder, ticket_id=ticket.id)
     fields_codec.validate_state(
         ticket.field_values,
         ticket.pending_proposal,
@@ -626,7 +634,7 @@ def _apply_decision(
     new_stage = decision.stage
     new_ceiling = decision.ceiling
     new_at_cap = decision.at_cap
-    _validate_ceiling_holder(conn, decision.ceiling_holder)
+    _validate_ceiling_holder(conn, decision.ceiling_holder, ticket_id=ticket.id)
     # Pre-persist door: the prospective (stage, ceiling) must be registry-valid for
     # this ticket's type before any SQL — the enforcement the dropped DB CHECKs gave.
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
@@ -1061,7 +1069,7 @@ def create_ticket(
     )
     ticket_id = new_id(ID_PREFIXES["ticket"])
     with _txn(conn):
-        _validate_ceiling_holder(conn, principal)
+        _validate_ceiling_holder(conn, principal, ticket_id=ticket_id)
         if sprint_item_id is not None and project_id is None:
             item = conn.execute(
                 "SELECT project_id FROM sprint_items WHERE id = ?",
@@ -1201,7 +1209,7 @@ def create_ticket_from_external_work(
         {"kickoff": kickoff_note} if worker_type_definition.has_field("kickoff") else {}
     )
     with _txn(conn):
-        _validate_ceiling_holder(conn, principal)
+        _validate_ceiling_holder(conn, principal, ticket_id=ticket_id)
         if sprint_item_id is not None and project_id is None:
             item = conn.execute(
                 "SELECT project_id FROM sprint_items WHERE id = ?",
@@ -1854,6 +1862,32 @@ def edit_field_value(
         updated = _apply_decision(conn, ticket, decision, now)
         ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return updated
+
+
+def require_return_for_revision(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    principal: Principal,
+    supervisor_sprint_item_id: str | None = None,
+) -> Ticket:
+    """Run every current authorization check without sending or writing."""
+    ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
+        conn, ticket_id
+    )
+    _require_current_supervisor_parent(
+        conn,
+        ticket,
+        supervisor_sprint_item_id,
+        principal,
+        "Ticket proposal rejection",
+    )
+    resolution.decide_return_for_revision(
+        ticket,
+        principal,
+        worker_type_definition=worker_type_definition,
+    )
+    return ticket
 
 
 def return_for_revision(

@@ -257,6 +257,8 @@ Every ticket carries a **scope** with two controls, plus a holder for its ceilin
 
 The holder is a full principal kind and ID, not a display label or current conversation.
 Existing Tickets receive the owner principal when the holder column is introduced.
+A Ticket cannot hold its own ceiling: its Worker is the proposal author, never its own
+reviewer. Holder Tickets and Sprint Items must exist when the scope is written.
 
 Below the ceiling, a worker-owned Stage's proposal is accepted automatically and the
 ticket advances. At the ceiling, the cap decides whether a worker-owned Stage can propose
@@ -296,6 +298,8 @@ are always the current one and the
 ones after it, never an earlier one, so you can't hand back ground the ticket has
 already covered. One shared source of the allowed stages feeds both the Ticket leash
 and the approval screen, so the two cannot disagree.
+While a proposal is pending, the Ticket page hides the leash because scope cannot change
+without silently changing the proposal's stable address.
 
 Review's single, oldest-first walk shows today's owner-addressed proposals and
 `needs_user` Tickets.
@@ -309,11 +313,14 @@ addressed to its holder until a decision or a replacement proposal arrives.
 
 The Review screen can also send an owner-addressed ticket back instead of accepting it,
 whatever field is currently gated. The owner writes short guidance in the review card.
-Panels sends that comment from the deciding principal to the exact Ticket worker
-conversation, and only then hands the Ticket back to the worker — that order matters,
+Panels first records a concise system lifecycle message, then sends the comment from the
+deciding principal to the exact Ticket worker conversation, and only then hands the
+Ticket back to the worker — that order matters,
 because the hand-back deletes the pending proposal and could not be honestly undone if
 the send had failed.
-A refused send changes nothing and can simply be retried. The ticket's stage never changes: a pending
+A refused send changes no Ticket state and can be retried. The system lifecycle message
+states the rejection separately from the decider's comment; if that comment is refused,
+the database proposal remains pending so its delivery can be retried safely. The ticket's stage never changes: a pending
 gated proposal is cleared, settled values remain, and the ticket leaves Review while
 its control status is `agent`. The gated field can therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
@@ -326,11 +333,11 @@ and either way the canonical proposal resolver does the work. Review contains on
 owner-addressed proposals. Other holders use their scoped controls.
 Scope cannot change while a proposal waits, so its address stays stable.
 
-A parked proposal reaches only its holder. A Sprint Item conversation is not told
-that one is waiting, and nothing starts it to go and look: the user asks it, or it stays
-quiet. When they do ask, it reads the waiting proposal from current state itself, and the
-Sprint Item can decide only when that exact Item is the holder. Worker messages use the
-separate targeted message path and require an existing Worker conversation.
+A parked proposal reaches only its holder. Owner-held proposals appear in Review and
+produce the owner's needs-approval notification. For a Chief, Sprint Item, or other
+Ticket holder, Panels sends a concise addressed wake-up from the proposing Ticket; the
+holder then reads the proposal from canonical Ticket state. If that delivery is refused,
+the API reports a retryable error and preserves the already parked proposal.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`

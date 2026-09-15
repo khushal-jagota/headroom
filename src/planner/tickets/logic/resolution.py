@@ -9,6 +9,7 @@ from planner.core.contracts import (
     ErrorCode,
     PlannerError,
     Principal,
+    PrincipalKind,
     principal_legacy_actor,
 )
 from planner.tickets.contracts import (
@@ -251,6 +252,12 @@ def decide_scope_change(
 
 def _require_proposal_decider(ticket: Ticket, principal: Principal, action: str) -> None:
     """Permit the addressed holder, plus Khushal's owner override."""
+    if principal == Principal(PrincipalKind.ticket, ticket.id):
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            f"{action} cannot be decided by the Ticket's own worker",
+            {"action": action, "ticket_id": ticket.id},
+        )
     if principal == OWNER_PRINCIPAL or principal == ticket.ceiling_holder:
         return
     raise PlannerError(

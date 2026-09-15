@@ -65,9 +65,11 @@ never supplies independent approval for its own work. Your confidence is not evi
 - `approve` resolves a parked proposal. Supply `--ceiling` and `--at-cap`. The next holder
   defaults to this Sprint Item. Use `--holder-kind` and `--holder-id` to address another
   principal explicitly.
-- `reject` sends focused guidance from this Sprint Item to the exact Ticket worker
-  conversation. Panels clears the proposal only after the conversation accepts the
-  comment. A refused send leaves the proposal unchanged.
+- `reject` first records Panels' rejection-and-return lifecycle fact, then sends focused
+  guidance from this Sprint Item to the exact Ticket worker conversation. Every
+  authorization and current-child check runs before either message. Panels clears the
+  proposal only after both messages are accepted and repeats the checks transactionally;
+  a refused send leaves the proposal unchanged.
 - `add-to-day` and `remove-from-day` change Day membership.
 - `block` and `unblock` change blocker links inside the Item boundary.
 - `artifact-list`, `artifact-write`, and `artifact-delete` manage Item artifacts.
