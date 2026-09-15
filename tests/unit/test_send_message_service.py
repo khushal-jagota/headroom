@@ -109,11 +109,7 @@ def test_each_public_mode_reaches_each_destination_door_once(
         )
     )
 
-    expected_mode = (
-        PromptDeliveryMode.run_when_free
-        if mode is MessageDeliveryMode.queue
-        else PromptDeliveryMode.steer
-    )
+    expected_mode = PromptDeliveryMode(mode.value)
     selected_send = ticket_send if expected_door == "ticket" else agent_send
     other_send = agent_send if expected_door == "ticket" else ticket_send
     assert selected_send.await_count == 1
@@ -127,8 +123,9 @@ def test_each_public_mode_reaches_each_destination_door_once(
     assert isinstance(result.fate, PromptDeliveryStarted)
 
 
-def test_registered_agent_without_conversation_keeps_queue_validation(
-    tmp_db: Connection, fake_clock: PlannerTestClock
+@pytest.mark.parametrize("mode", list(MessageDeliveryMode))
+def test_registered_agent_without_conversation_requires_start_configuration(
+    tmp_db: Connection, fake_clock: PlannerTestClock, mode: MessageDeliveryMode
 ) -> None:
     tmp_db.execute("INSERT INTO agents (agent_key, conversation_id) VALUES (?, NULL)", ("idle",))
 
@@ -141,35 +138,12 @@ def test_registered_agent_without_conversation_keeps_queue_validation(
                 RequestContext("unattributed", False, False),
                 MessageTarget(MessageTargetType.agent, "idle"),
                 "Hello",
-                MessageDeliveryMode.queue,
+                mode,
             )
         )
 
     assert caught.value.code is ErrorCode.validation
     assert caught.value.message == "agent has no current conversation and no start configuration"
-
-
-def test_registered_agent_without_conversation_gets_the_conversation_steer_refusal(
-    tmp_db: Connection, fake_clock: PlannerTestClock
-) -> None:
-    tmp_db.execute("INSERT INTO agents (agent_key, conversation_id) VALUES (?, NULL)", ("idle",))
-
-    result = asyncio.run(
-        service.send_message(
-            InMemoryConversationSystem(),
-            tmp_db,
-            fake_clock,
-            RequestContext("unattributed", False, False),
-            MessageTarget(MessageTargetType.agent, "idle"),
-            "Guide it",
-            MessageDeliveryMode.steer,
-        )
-    )
-
-    assert result.conversation_id is None
-    assert result.fate == PromptDeliveryRefused(
-        PromptDeliveryRefusalReason.no_running_turn_to_steer_into
-    )
 
 
 @pytest.mark.parametrize(

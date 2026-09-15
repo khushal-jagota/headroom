@@ -142,7 +142,7 @@ async def start_ready_worker_step(
                 conversation_id=conversation_id,
                 created_conversation_id=conversation_start.new_conversation_id(),
                 sender_label=LOOP_SENDER_LABEL,
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 sender_message_id=sender_message_id,
                 worker_type_registry=worker_type_registry,
                 now=now(),

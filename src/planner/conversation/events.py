@@ -254,7 +254,7 @@ class PromptDiscardedEventPayload:
     must never disappear without a trace — so each discarded message is written down,
     with who sent it, in the order it was waiting in.
 
-    There is no mode: only a run-when-free message is ever held, so there is nothing a
+    There is no mode: only a queue message is ever held, so there is nothing a
     mode could tell anyone here.
 
     ``sender_message_id`` is here for the same reason it is on a refusal: this is one of
@@ -654,6 +654,12 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             assert_never(payload)
 
 
+def _prompt_delivery_mode_from_stored(stored: dict[str, Any]) -> PromptDeliveryMode:
+    """Read the retired persisted name while every new row uses ``queue``."""
+    value = _text(stored, "mode")
+    return PromptDeliveryMode.queue if value == "run_when_free" else PromptDeliveryMode(value)
+
+
 def _payload_from_json_object(
     kind: ConversationEventKind, stored: dict[str, Any]
 ) -> ConversationEventPayload:
@@ -662,7 +668,7 @@ def _payload_from_json_object(
             return PromptEventPayload(
                 content=message_content_from_stored(stored),
                 sender_label=_text(stored, "sender_label"),
-                mode=PromptDeliveryMode(_text(stored, "mode")),
+                mode=_prompt_delivery_mode_from_stored(stored),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
                 sent_at_unix_milliseconds=_optional_whole_number(
                     stored, "sent_at_unix_milliseconds"
@@ -672,7 +678,7 @@ def _payload_from_json_object(
             return PromptDeliveryRefusedEventPayload(
                 content=message_content_from_stored(stored),
                 sender_label=_text(stored, "sender_label"),
-                mode=PromptDeliveryMode(_text(stored, "mode")),
+                mode=_prompt_delivery_mode_from_stored(stored),
                 refusal_reason=PromptDeliveryRefusalReason(_text(stored, "refusal_reason")),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
             )
@@ -680,7 +686,7 @@ def _payload_from_json_object(
             return PromptDeliveryUncertainEventPayload(
                 content=message_content_from_stored(stored),
                 sender_label=_text(stored, "sender_label"),
-                mode=PromptDeliveryMode(_text(stored, "mode")),
+                mode=_prompt_delivery_mode_from_stored(stored),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
             )
         case ConversationEventKind.prompt_discarded:

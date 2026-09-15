@@ -397,7 +397,7 @@ async def _send(
     conversation_id: str,
     text: str,
     *,
-    mode: str = "run_when_free",
+    mode: str = "queue",
 ) -> httpx.Response:
     return await client.post(
         f"/api/conversation/conversations/{conversation_id}/send",

@@ -188,7 +188,7 @@ class ResolvedConversationStart:
 class PromptDeliveryMode(StrEnum):
     """How a sent message should meet the agent. One parameter, three values.
 
-    ``run_when_free`` is the default. If the agent is idle the message starts a turn
+    ``queue`` is the default. If the agent is idle the message starts a turn
     straight away. If the agent is busy the message is held, and it runs when the agent
     frees up.
 
@@ -199,13 +199,13 @@ class PromptDeliveryMode(StrEnum):
     dead all the same and the agent is free, so the messages that were already held run
     from that point.
 
-    ``steer`` injects the text into the turn that is already running, without ending it.
-    Whether a backend can do this is a per-backend fact. A steer is refused when no
-    turn is running, or when the backend cannot steer. Admission may include a native
-    continuation owned by the same captured Panels turn.
+    ``steer`` injects text into a running turn without ending it. It starts a turn when
+    the agent is idle. Attachments, run changes, and confirmed admission refusals enter
+    the queue. An uncertain admission never enters the queue because the backend may
+    already hold the message.
     """
 
-    run_when_free = "run_when_free"
+    queue = "queue"
     send_now = "send_now"
     steer = "steer"
 
@@ -215,6 +215,15 @@ class HeldPromptPromotionMode(StrEnum):
 
     send_now = "send_now"
     steer = "steer"
+
+
+class PromptQueueReason(StrEnum):
+    """Why a message entered the held line instead of steering a running turn."""
+
+    requested = "requested"
+    attachment = "attachment"
+    run_change = "run_change"
+    steer_refused = "steer_refused"
 
 
 class PromptDeliveryRefusalReason(StrEnum):
@@ -360,6 +369,7 @@ class HeldPrompt:
     sender_label: str
     sender_message_id: str | None
     sent_at_unix_milliseconds: int
+    queue_reason: PromptQueueReason = PromptQueueReason.requested
 
 
 class ConversationAlreadyStarted(Exception):
@@ -420,7 +430,7 @@ class ConversationSystem(Protocol):
         content: MessageContent,
         *,
         sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
@@ -434,8 +444,8 @@ class ConversationSystem(Protocol):
         (``MessageContentEmpty``, which is a ``ValueError``), because an empty send would
         put an empty prompt in front of an agent and tell nobody it had.
 
-        ``mode`` decides how the text meets the agent — run when free, send now, or
-        steer into the running turn — and defaults to run-when-free. See
+        ``mode`` decides how the text meets the agent — queue, send now, or
+        steer into the running turn — and defaults to queue. See
         ``PromptDeliveryMode`` for what each one does against an idle and a busy agent.
 
         ``model_change`` and ``reasoning_effort_change`` let this message carry a
@@ -444,11 +454,10 @@ class ConversationSystem(Protocol):
         no other way to change either, so browsing a picker changes nothing and an
         abandoned choice never touches the conversation. The change lands with the
         delivery: a held message applies it when it runs, and a refused delivery
-        changes nothing. How a backend realizes it — a per-turn parameter, or
+        changes nothing. A steer with a change falls back to the queue. How a backend
+        realizes it — a per-turn parameter, or
         restarting the backend session under the same conversation id — is internal,
-        and the change is recorded as an event. A steer cannot carry a change, because
-        the turn it joins is already running; that is a caller error (``ValueError``),
-        not a delivery fate.
+        and the change is recorded as an event.
 
         The return value is the fate of this delivery, and fate means it happened, never
         that it was attempted. See ``PromptDeliveryFate``: started, queued, injected, or

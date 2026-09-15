@@ -16,7 +16,7 @@ const message: OutgoingMessage = {
   messageId: "message-1",
   content: [{ piece: "text", text: "go" }],
   senderLabel: "owner",
-  mode: "run_when_free",
+  mode: "queue",
   sentAtUnixMilliseconds: 1_700_000_000_123,
   knownFate: "nothing_yet"
 };
@@ -28,17 +28,17 @@ describe("Conversation composer delivery", () => {
     expect(armedChangeFor(
       current,
       { model: null, reasoningEffort: null },
-      "run_when_free"
+      "queue"
     )).toEqual({});
     expect(armedChangeFor(
       current,
       { model: "opus", reasoningEffort: "high" },
-      "run_when_free"
+      "queue"
     )).toEqual({});
     expect(armedChangeFor(
       current,
       { model: "sonnet", reasoningEffort: null },
-      "run_when_free"
+      "queue"
     )).toEqual({ model_change: "sonnet" });
     expect(armedChangeFor(
       current,
@@ -48,7 +48,7 @@ describe("Conversation composer delivery", () => {
     expect(hasArmedChange(
       current,
       { model: "sonnet", reasoningEffort: null },
-      "run_when_free"
+      "queue"
     )).toBe(true);
   });
 
@@ -68,7 +68,7 @@ describe("Conversation composer delivery", () => {
       conversation_id: "conversation-1",
       content: [{ piece: "text", text: "go" }],
       sender_label: "owner",
-      mode: "run_when_free",
+      mode: "queue",
       sender_message_id: "message-1",
       sent_at_unix_milliseconds: 1_700_000_000_123,
       model: "sonnet"
@@ -112,7 +112,7 @@ describe("Conversation composer delivery", () => {
       conversation_id: "conversation-1",
       content: [{ piece: "text", text: "go" }],
       sender_label: "owner",
-      mode: "run_when_free",
+      mode: "queue",
       sender_message_id: "message-1",
       sent_at_unix_milliseconds: 1_700_000_000_123,
       model: "sonnet"

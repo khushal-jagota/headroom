@@ -51,6 +51,7 @@ from planner.conversation.contracts import (
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     PromptDeliveryUncertain,
+    PromptQueueReason,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
@@ -78,6 +79,7 @@ from planner.conversation.live_tail import (
 )
 from planner.conversation.message_content import (
     MessageContent,
+    MessageImage,
     message_content_text,
     text_message_content,
 )
@@ -720,7 +722,7 @@ def test_an_accepted_steer_receipt_can_follow_its_turn_and_a_replacement(
         assert await steering == PromptDeliveryInjected()
 
         expected_prompts = [
-            ("incumbent", "owner", "run_when_free"),
+            ("incumbent", "owner", "queue"),
             ("steered", "owner", "steer"),
         ]
         expected_kinds = [
@@ -729,7 +731,7 @@ def test_an_accepted_steer_receipt_can_follow_its_turn_and_a_replacement(
             ConversationEventKind.prompt,
         ]
         if replacement_starts:
-            expected_prompts.insert(1, ("replacement", "owner", "run_when_free"))
+            expected_prompts.insert(1, ("replacement", "owner", "queue"))
             expected_kinds.insert(2, ConversationEventKind.prompt)
         assert list(await harness.recorded_prompts("c")) == expected_prompts
         assert list(await harness.recorded_kinds("c")) == expected_kinds
@@ -739,7 +741,7 @@ def test_an_accepted_steer_receipt_can_follow_its_turn_and_a_replacement(
     _run(exercise)
 
 
-def test_a_provider_refused_steer_is_durable_and_deduplicated(
+def test_a_provider_refused_steer_falls_back_to_one_queued_message(
     harness: _Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def exercise() -> None:
@@ -767,16 +769,44 @@ def test_a_provider_refused_steer_is_durable_and_deduplicated(
             sender_message_id="refused-id",
         )
 
-        expected = PromptDeliveryRefused(
-            refusal_reason=PromptDeliveryRefusalReason.backend_rejected_steer
-        )
-        assert first == expected
-        assert duplicate == expected
+        assert first == PromptDeliveryQueued(queue_position=1)
+        assert duplicate == PromptDeliveryQueued(queue_position=1)
         assert backend.steer_tokens == [TurnToken("c", 1)]
-        assert await harness.recorded_kinds("c") == (
-            ConversationEventKind.prompt,
-            ConversationEventKind.prompt_delivery_refused,
+        assert await harness.recorded_kinds("c") == (ConversationEventKind.prompt,)
+        [held] = await harness.system.held_prompts("c")
+        assert held.queue_reason is PromptQueueReason.steer_refused
+
+    _run(exercise)
+
+
+def test_active_steer_with_attachment_or_run_change_queues_with_reason(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+
+        attachment = await harness.system.send(
+            "c",
+            (MessageImage("image-1", "image/png"),),
+            sender_label="owner",
+            mode=PromptDeliveryMode.steer,
         )
+        run_change = await harness.system.send(
+            "c",
+            text_message_content("change model"),
+            sender_label="owner",
+            mode=PromptDeliveryMode.steer,
+            model_change="next-model",
+        )
+
+        assert attachment == PromptDeliveryQueued(queue_position=1)
+        assert run_change == PromptDeliveryQueued(queue_position=2)
+        held = await harness.system.held_prompts("c")
+        assert [message.queue_reason for message in held] == [
+            PromptQueueReason.attachment,
+            PromptQueueReason.run_change,
+        ]
 
     _run(exercise)
 
@@ -962,8 +992,8 @@ def test_a_broken_claude_child_resumes_once_for_only_the_follow_up(
         assert backend.most_live_children_at_once == 1
         assert backend.written_texts() == ("first", "follow-up")
         assert await harness.recorded_prompts("c") == (
-            ("first", "owner", "run_when_free"),
-            ("follow-up", "owner", "run_when_free"),
+            ("first", "owner", "queue"),
+            ("follow-up", "owner", "queue"),
         )
         assert not any(
             isinstance(event.payload, AgentMessageEventPayload)
@@ -1197,8 +1227,8 @@ def test_the_role_text_rides_the_very_first_prompt_and_only_that_one(harness: _H
         assert harness.backend("c").sender_written_texts() == ("first", "second")
         # The record keeps what the sender wrote: the role belongs to the conversation.
         assert await harness.recorded_prompts("c") == (
-            ("first", "owner", "run_when_free"),
-            ("second", "owner", "run_when_free"),
+            ("first", "owner", "queue"),
+            ("second", "owner", "queue"),
         )
 
     _run(exercise)

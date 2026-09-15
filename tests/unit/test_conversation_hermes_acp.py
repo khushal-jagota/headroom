@@ -173,7 +173,7 @@ def test_the_start_requests_values_reach_the_child_process(tmp_path: Path) -> No
             account = await subject.agent_account("c")
             assert account["prompt_writes"][0]["text"] == f"{ROLE_TEXT}\n\nhello"
             assert account["prompt_writes"][0]["sender_label"] == "owner"
-            assert account["prompt_writes"][0]["delivery_mode"] == "run_when_free"
+            assert account["prompt_writes"][0]["delivery_mode"] == "queue"
             assert Path(account["working_directory"]) == tmp_path.resolve()
             assert account["identity_environment"] == {IDENTITY_VARIABLE[0]: IDENTITY_VARIABLE[1]}
             assert account["environment"]["HERMES_YOLO_MODE"] == "1"
@@ -845,7 +845,7 @@ def test_an_answer_the_wire_would_not_take_leaves_the_ask_answerable(tmp_path: P
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -897,7 +897,7 @@ def test_an_answer_that_cannot_be_shown_to_have_landed_does_not_wait_for_good(
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -927,7 +927,7 @@ def test_an_answer_that_reached_the_wire_uses_the_ask_up(tmp_path: Path) -> None
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -991,7 +991,7 @@ def test_real_hermes_holds_a_turn_and_records_what_it_said(tmp_path: Path) -> No
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -1078,7 +1078,7 @@ def test_real_hermes_answers_the_message_that_replaced_a_running_turn(tmp_path: 
                 first_content,
                 sender_content=first_content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -1133,7 +1133,7 @@ def test_real_hermes_stops_a_running_turn_when_it_is_cancelled(tmp_path: Path) -
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -1194,7 +1194,7 @@ async def _real_turn(
         content,
         sender_content=content,
         sender_label="owner",
-        mode=PromptDeliveryMode.run_when_free,
+        mode=PromptDeliveryMode.queue,
         model_change=model,
         reasoning_effort_change=None,
     )
@@ -1383,7 +1383,7 @@ def test_a_picture_reaches_hermes_as_its_bytes(tmp_path: Path) -> None:
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -1445,7 +1445,7 @@ def test_a_picture_hermes_hands_back_is_kept_and_becomes_a_piece_of_its_message(
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -1487,7 +1487,7 @@ async def _write_the_turns_prompt(child: HermesAcpBackendChild, turn_number: int
         content,
         sender_content=content,
         sender_label="owner",
-        mode=PromptDeliveryMode.run_when_free,
+        mode=PromptDeliveryMode.queue,
         model_change=None,
         reasoning_effort_change=None,
     )
@@ -1772,7 +1772,7 @@ async def _write_automatic_compaction(child: HermesAcpBackendChild) -> None:
         content,
         sender_content=content,
         sender_label="Panels",
-        mode=PromptDeliveryMode.run_when_free,
+        mode=PromptDeliveryMode.queue,
         model_change=None,
         reasoning_effort_change=None,
         automatic_compaction=True,

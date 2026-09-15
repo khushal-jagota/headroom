@@ -51,7 +51,7 @@ def test_each_selector_posts_one_general_send(
     }
 
 
-@pytest.mark.parametrize("mode", ["queue", "steer"])
+@pytest.mark.parametrize("mode", ["queue", "steer", "send_now"])
 def test_explicit_mode_is_sent_to_the_api(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
     captured: dict[str, Any] = {}
 
@@ -141,7 +141,7 @@ def test_cli_rejects_a_mode_outside_the_public_choices(
 
     result = CliRunner().invoke(
         main,
-        ["send-message", "--chief", "--message", "Hello", "--mode", "send_now"],
+        ["send-message", "--chief", "--message", "Hello", "--mode", "run_when_free"],
     )
 
     assert result.exit_code == 2

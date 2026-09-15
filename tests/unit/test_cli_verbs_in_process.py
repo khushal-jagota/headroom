@@ -222,6 +222,16 @@ def test_send_message_cli_mode_reaches_the_current_conversation_system(
         "--mode",
         "steer",
     )
+    sent_now = cli(
+        server,
+        "send-message",
+        "--ticket",
+        ticket["id"],
+        "--message",
+        "Interrupt and run this.",
+        "--mode",
+        "send_now",
+    )
     idle_steer = cli(
         server,
         "send-message",
@@ -236,9 +246,9 @@ def test_send_message_cli_mode_reaches_the_current_conversation_system(
     assert queued["fate"] == "queued"
     assert queued["queue_position"] == 1
     assert injected["fate"] == "injected"
-    assert idle_steer["fate"] == "refused"
-    assert idle_steer["refusal_reason"] == "no_running_turn_to_steer_into"
-    assert idle_steer["conversation_id"] is None
+    assert sent_now["fate"] == "started"
+    assert idle_steer["fate"] == "started"
+    assert idle_steer["conversation_id"] is not None
 
 
 def test_record_reads_share_manifests_selection_and_identity(

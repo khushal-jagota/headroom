@@ -377,7 +377,7 @@ class _QueueingConversationSystem:
         text: str,
         *,
         sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
@@ -497,7 +497,7 @@ def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _Worl
     writes = world.conversations.backend_prompt_writes("conv-opener")
     assert len(writes) == 1
     assert writes[0].sender_label == "loop"
-    assert writes[0].mode is PromptDeliveryMode.run_when_free
+    assert writes[0].mode is PromptDeliveryMode.queue
     sender_message_id = world.conversations.observations("conv-opener")[-1].sender_message_id
     assert sender_message_id is not None
     assert f"Work ticket {ticket_id} — Ship it" in writes[0].text
@@ -574,7 +574,7 @@ class _HeldAtTheOccupancyCheck:
         text: str,
         *,
         sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,

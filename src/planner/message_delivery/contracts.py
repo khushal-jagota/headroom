@@ -13,6 +13,7 @@ class MessageDeliveryMode(StrEnum):
 
     queue = "queue"
     steer = "steer"
+    send_now = "send_now"
 
 
 class MessageTargetType(StrEnum):

@@ -22,6 +22,7 @@ from planner.conversation.contracts import (
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     PromptDeliveryUncertain,
+    PromptQueueReason,
     ResolvedConversationStart,
     backend_supports_steer,
 )
@@ -60,6 +61,7 @@ __all__ = [
     "PromptDeliveryFate",
     "PromptDeliveryInjected",
     "PromptDeliveryMode",
+    "PromptQueueReason",
     "PromptDeliveryQueued",
     "PromptDeliveryRefusalReason",
     "PromptDeliveryRefused",

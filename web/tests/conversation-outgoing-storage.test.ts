@@ -50,7 +50,7 @@ function mint(
   return outgoing.mintOutgoingMessage({
     content,
     senderLabel: "owner",
-    mode: "run_when_free",
+    mode: "queue",
     sentAtUnixMilliseconds
   });
 }

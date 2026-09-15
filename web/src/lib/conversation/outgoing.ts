@@ -582,7 +582,7 @@ export function afterTheRecordHasBeenRead(
   );
 }
 
-const DELIVERY_MODES: readonly PromptDeliveryMode[] = ["run_when_free", "send_now", "steer"];
+const DELIVERY_MODES: readonly PromptDeliveryMode[] = ["queue", "send_now", "steer"];
 const KNOWN_FATES = Object.keys(KNOWN_FATE_NOTES) as readonly OutgoingMessageKnownFate[];
 
 function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {

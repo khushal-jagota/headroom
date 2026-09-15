@@ -71,6 +71,7 @@ from planner.conversation.contracts import (
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     PromptDeliveryUncertain,
+    PromptQueueReason,
     backend_supports_steer,
 )
 from planner.conversation.events import (
@@ -113,6 +114,7 @@ from planner.conversation.logic.held_line import (
 )
 from planner.conversation.message_content import (
     MessageContent,
+    MessageText,
     prefix_message_content_text,
     require_message_content,
     text_message_content,
@@ -233,6 +235,7 @@ class _HeldPrompt:
     sender_message_id: str | None
     sent_at_unix_milliseconds: int | None
     snapshot_sent_at_unix_milliseconds: int
+    queue_reason: PromptQueueReason
 
 
 @dataclass(frozen=True, slots=True)
@@ -347,7 +350,7 @@ class SqliteProcessConversationSystem:
         content: MessageContent,
         *,
         sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
@@ -360,13 +363,6 @@ class SqliteProcessConversationSystem:
         that mints neither — every caller inside Panels today — leaves both absent and
         nothing about its rows changes.
         """
-        if mode is PromptDeliveryMode.steer and (
-            model_change is not None or reasoning_effort_change is not None
-        ):
-            raise ValueError(
-                "a steer cannot carry a model or reasoning-effort change: the turn it "
-                "joins is already running"
-            )
         require_message_content(content)
 
         state = await self._conversation_state(conversation_id)
@@ -436,7 +432,13 @@ class SqliteProcessConversationSystem:
         try:
             if mode is PromptDeliveryMode.steer:
                 return await self._steer(
-                    state, content, sender_label, sender_message_id, sent_at_unix_milliseconds
+                    state,
+                    content,
+                    sender_label,
+                    model_change,
+                    reasoning_effort_change,
+                    sender_message_id,
+                    sent_at_unix_milliseconds,
                 )
             if mode is PromptDeliveryMode.send_now:
                 return await self._send_now(
@@ -448,7 +450,7 @@ class SqliteProcessConversationSystem:
                     sender_message_id,
                     sent_at_unix_milliseconds,
                 )
-            return await self._run_when_free(
+            return await self._queue(
                 state,
                 content,
                 sender_label,
@@ -577,6 +579,7 @@ class SqliteProcessConversationSystem:
                     sender_label=held.sender_label,
                     sender_message_id=held.sender_message_id,
                     sent_at_unix_milliseconds=held.snapshot_sent_at_unix_milliseconds,
+                    queue_reason=held.queue_reason,
                 )
                 for held in state.held_prompts
             )
@@ -929,7 +932,7 @@ class SqliteProcessConversationSystem:
 
     # --- the three modes ----------------------------------------------------------------
 
-    async def _run_when_free(
+    async def _queue(
         self,
         state: _ConversationState,
         content: MessageContent,
@@ -992,7 +995,7 @@ class SqliteProcessConversationSystem:
             reservation,
             content=content,
             sender_label=sender_label,
-            mode=PromptDeliveryMode.run_when_free,
+            mode=PromptDeliveryMode.queue,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
             sender_message_id=sender_message_id,
@@ -1009,6 +1012,7 @@ class SqliteProcessConversationSystem:
         reasoning_effort_change: str | None,
         sender_message_id: str | None,
         sent_at_unix_milliseconds: int | None,
+        queue_reason: PromptQueueReason = PromptQueueReason.requested,
     ) -> PromptDeliveryQueued:
         """Put one admitted message at the tail. The conversation lock must be held."""
         state.held_prompts.append(
@@ -1025,6 +1029,7 @@ class SqliteProcessConversationSystem:
                     if sent_at_unix_milliseconds is not None
                     else int(self._unix_time_now() * 1000)
                 ),
+                queue_reason=queue_reason,
             )
         )
         self._publish_held_prompts_changed(state)
@@ -1165,51 +1170,83 @@ class SqliteProcessConversationSystem:
         state: _ConversationState,
         content: MessageContent,
         sender_label: str,
+        model_change: str | None,
+        reasoning_effort_change: str | None,
         sender_message_id: str | None,
         sent_at_unix_milliseconds: int | None,
     ) -> PromptDeliveryFate:
-        # Whether a backend can steer is a fact about the backend, settled before any
-        # child is touched: an unsupported steer spawns nothing.
-        if not backend_supports_steer(state.record.backend_key):
-            refusal = PromptDeliveryRefusalReason.backend_cannot_steer
-            async with state.lock:
-                fate = await self._record_steer_outcome(
-                    state,
-                    BackendSteerRefused(refusal),
-                    content=content,
-                    sender_label=sender_label,
-                    sender_message_id=sender_message_id,
-                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                )
-            return fate
-
+        """Steer active work, or apply the shared idle and fallback rules."""
+        reservation: _ReservedTurn | None = None
+        queued: PromptDeliveryQueued | None = None
+        child: BackendChild | None = None
+        running: _RunningTurn | None = None
         await self._acquire_settled(state)
         try:
             running = state.running_turn
             child = state.child
-            if state.child_is_quarantined:
-                refusal = PromptDeliveryRefusalReason.write_to_backend_failed
-                return await self._record_steer_outcome(
+            if (
+                not state.child_is_quarantined
+                and state.phase is _ConversationPhase.idle
+                and not state.held_prompts
+            ):
+                reservation = self._reserve_turn(state)
+            elif any(not isinstance(piece, MessageText) for piece in content):
+                queued = self._hold_prompt(
                     state,
-                    BackendSteerRefused(refusal),
                     content=content,
                     sender_label=sender_label,
+                    model_change=model_change,
+                    reasoning_effort_change=reasoning_effort_change,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    queue_reason=PromptQueueReason.attachment,
                 )
-            if running is None or child is None:
-                refusal = PromptDeliveryRefusalReason.no_running_turn_to_steer_into
-                return await self._record_steer_outcome(
+            elif model_change is not None or reasoning_effort_change is not None:
+                queued = self._hold_prompt(
                     state,
-                    BackendSteerRefused(refusal),
                     content=content,
                     sender_label=sender_label,
+                    model_change=model_change,
+                    reasoning_effort_change=reasoning_effort_change,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    queue_reason=PromptQueueReason.run_change,
+                )
+            elif (
+                state.child_is_quarantined
+                or running is None
+                or child is None
+                or not backend_supports_steer(state.record.backend_key)
+            ):
+                queued = self._hold_prompt(
+                    state,
+                    content=content,
+                    sender_label=sender_label,
+                    model_change=model_change,
+                    reasoning_effort_change=reasoning_effort_change,
+                    sender_message_id=sender_message_id,
+                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    queue_reason=PromptQueueReason.steer_refused,
                 )
         finally:
             state.lock.release()
 
+        if reservation is not None:
+            return await self._deliver_and_finalize(
+                state,
+                reservation,
+                content=content,
+                sender_label=sender_label,
+                mode=PromptDeliveryMode.steer,
+                model_change=model_change,
+                reasoning_effort_change=reasoning_effort_change,
+                sender_message_id=sender_message_id,
+                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            )
+        if queued is not None:
+            return queued
+        assert child is not None
+        assert running is not None
         try:
             steer_outcome = await child.steer(
                 running.token, content, sender_label=sender_label
@@ -1218,6 +1255,17 @@ class SqliteProcessConversationSystem:
             steer_outcome = BackendSteerUncertain()
 
         async with state.lock:
+            if isinstance(steer_outcome, BackendSteerRefused):
+                return self._hold_prompt(
+                    state,
+                    content=content,
+                    sender_label=sender_label,
+                    model_change=model_change,
+                    reasoning_effort_change=reasoning_effort_change,
+                    sender_message_id=sender_message_id,
+                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    queue_reason=PromptQueueReason.steer_refused,
+                )
             return await self._record_steer_outcome(
                 state,
                 steer_outcome,
@@ -1239,7 +1287,7 @@ class SqliteProcessConversationSystem:
                 reservation,
                 content=text_message_content(AUTOMATIC_COMPACTION_PROMPT),
                 sender_label=AUTOMATIC_COMPACTION_SENDER_LABEL,
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
                 sender_message_id=None,
@@ -1617,7 +1665,7 @@ class SqliteProcessConversationSystem:
                     reservation.token,
                     content=combined,
                     sender_label=held.sender_label,
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                     model_change=held.model_change,
                     reasoning_effort_change=held.reasoning_effort_change,
                     automatic_compaction=False,
@@ -1656,7 +1704,7 @@ class SqliteProcessConversationSystem:
                     delivery.refusal_reason,
                     content=held.content,
                     sender_label=held.sender_label,
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                     model_change=held.model_change,
                     reasoning_effort_change=held.reasoning_effort_change,
                     sender_message_id=held.sender_message_id,

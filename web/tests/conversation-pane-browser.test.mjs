@@ -47,6 +47,18 @@ try {
   let supportsSteer = $state(false);
   let conversationState = $state<ConversationState>("rest");
 
+  async function captureSend(content: any[], mode: string): Promise<boolean> {
+    (window as any).__sentModes = [...((window as any).__sentModes ?? []), mode];
+    heldPromptRows = [{
+      key: "composer-fallback",
+      heldPromptId: "composer-fallback",
+      content,
+      state: "held",
+      queueReason: "steer_refused"
+    }];
+    return true;
+  }
+
   function dismissConversation(): void {
     conversationState = "rest";
   }
@@ -102,7 +114,7 @@ try {
         createdAt: 2_000,
         content: [{ piece: "text", text: "Continue" }],
         senderLabel: "owner",
-        mode: "run_when_free",
+        mode: "queue",
         sentAtUnixMilliseconds: 2_000
       },
       {
@@ -125,7 +137,8 @@ try {
       key: "held-1",
       heldPromptId: "held-1",
       content: [{ piece: "text", text: "waiting guidance" }],
-      state: "queued"
+      state: "held",
+      queueReason: "steer_refused"
     }];
   };
 </script>
@@ -151,8 +164,7 @@ try {
         {supportsSteer}
         outgoingMessages={[]}
         ownSenderLabel="owner"
-        showRunPicker={false}
-        onSend={async () => true}
+        onSend={captureSend}
       />
     </div>
   </section>
@@ -291,6 +303,9 @@ with sync_playwright() as playwright:
     state(page, "peeked")
     assert page.locator(THREAD).is_visible()
     assert page.locator("[data-conversation-rest-bar]").count() == 0
+    send_mode = page.locator("[data-conversation-send-mode]")
+    assert send_mode.input_value() == "steer"
+    assert send_mode.locator("option").all_text_contents() == ["Steer", "Queue", "Send now"]
 
     page.locator(INPUT).fill("the draft stays exactly here")
     page.locator(INPUT).evaluate("box => box.setSelectionRange(9, 9)")
@@ -391,6 +406,14 @@ with sync_playwright() as playwright:
     assert strip_box is not None and composer_box is not None
     assert round(strip_box["height"]) == 34
     assert round(composer_box["y"] - strip_box["y"] - strip_box["height"]) == 8
+
+    # The composer defaults to steer, and its queued fallback reason reaches the held row.
+    page.locator(INPUT).fill("default steer")
+    page.locator(INPUT).press("Enter")
+    page.wait_for_function("window.__sentModes?.length === 1")
+    assert page.evaluate("window.__sentModes") == ["steer"]
+    page.locator('[data-conversation-held-row="composer-fallback"]').wait_for()
+    assert "turn did not accept steering" in page.locator("[data-conversation-held-stack]").inner_text()
 
     # The server capability controls one provider-neutral steering action.
     page.evaluate("window.__showHeldPrompt(false)")

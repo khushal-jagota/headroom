@@ -2533,6 +2533,16 @@ button.list-row:hover .list-row-title {
   align-items: center;
   gap: var(--space-2);
 }
+.chat-send-mode {
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--type-xs);
+  padding: var(--space-1) var(--space-2);
+}
+.chat-send-mode:disabled { opacity: 0.5; }
 .chat-send {
   width: var(--space-5); height: var(--space-5);
   border: none;

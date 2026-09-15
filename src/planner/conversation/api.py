@@ -277,7 +277,7 @@ class SendBody(BaseModel):
 
     content: list[SentPiece]
     sender_label: str
-    mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free
+    mode: PromptDeliveryMode = PromptDeliveryMode.queue
     model_change: str | None = None
     reasoning_effort_change: str | None = None
     sender_message_id: str | None = None
@@ -307,7 +307,7 @@ class OwnerSendBody(BaseModel):
     reasoning_effort: str | None = None
     content: list[SentPiece]
     sender_label: str
-    mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free
+    mode: PromptDeliveryMode = PromptDeliveryMode.queue
     sender_message_id: str | None = None
     sent_at_unix_milliseconds: int | None = None
 
@@ -814,6 +814,7 @@ async def _conversation_view(
                 "sender_label": held.sender_label,
                 "sender_message_id": held.sender_message_id,
                 "sent_at_unix_milliseconds": held.sent_at_unix_milliseconds,
+                "queue_reason": str(held.queue_reason),
             }
             for held in await runtime.system.held_prompts(conversation_id)
         ],

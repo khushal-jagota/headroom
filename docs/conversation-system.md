@@ -181,8 +181,8 @@ success, refusal, failure, or a completed turn with no compaction confirmation.
 The top-level `panels send-message` command is the plain-text command-line door into this
 same send operation. It resolves a Chief, Ticket, Sprint Item, or registered agent, then
 uses that owner's current conversation path. It creates the normal conversation for the
-first three owner types when a queue send needs one. A steer never creates a conversation
-or starts a turn. A general agent row has no launch configuration, so it can receive a
+first three owner types when any send needs one. Every mode starts a turn for an idle
+agent. A general agent row has no launch configuration, so it can receive a
 message only while it points to a current conversation. The command adds no second
 transport, queue, or conversation record.
 
@@ -191,13 +191,16 @@ a drop. Attachments wait beside the draft and can be removed one at a time. They
 travel with words or form the whole message. There is no separate upload conversation
 or attachment record.
 
-The command accepts `--mode queue|steer`. Queue is the default. It runs the message when
-the agent is free and holds it in the FIFO line while the agent is busy. Steer asks the
-conversation system to inject text into the current running turn. The Send Message API
-accepts the same `queue` or `steer` value and defaults an omitted value to `queue`.
+The command accepts `--mode queue|steer|send_now`. Queue is the default for agent sends.
+Queue holds behind active work. Steer asks the current turn to admit the message. Send now
+interrupts current work and starts the message first. The Send Message API accepts the
+same three values and defaults an omitted value to `queue`.
 
-The browser composer always uses the queue rule. Enter and the send arrow use that same
-rule, including while a turn runs.
+The browser composer defaults to steer. Its mode control also exposes queue and send now.
+Enter and the send arrow use the selected mode. Every selected mode starts an idle turn.
+Attachments and run changes cannot steer, so they enter the queue with a visible reason.
+A confirmed steer refusal does the same. An uncertain steer remains terminal and never
+enters the queue, because a retry can deliver the same message twice.
 
 When the agent frees, everything waiting goes to it as one prompt rather than one
 turn each. The messages keep their order and each keeps its sender's name in front
@@ -219,8 +222,8 @@ The composer shows the held line in one inset tray above its recessed input on d
 and phone. Messages stack inside that tray. Each row stays on one line and can discard
 the message or make it run next. When the server reports steering support, a row can also
 steer its text into the running turn. The server snapshot is the shared answer, so a
-second tab or device shows the same held line. A tab merges its immediate copy with that
-snapshot by the sender's message id rather than drawing it twice.
+second tab or device shows the same held line and its queue reason. A tab merges its
+immediate copy with that snapshot by the sender's message id rather than drawing it twice.
 
 The queue actions and the input action row use the same order, labels, and button treatment
 on desktop and phone. Width changes the available text space, not the control design.
@@ -230,9 +233,9 @@ started (the text reached a live agent), queued at a position, injected into the
 captured turn's owned work, refused with a named reason, or uncertain after a steering
 attempt may have crossed the backend boundary. Uncertain is terminal: Panels records it
 and does not retry it. The only refusals are genuine impossibilities — no
-such conversation, the agent would not start, its session would not load, the
-write failed, a steer with no running turn to join, or a steer at a backend that
-cannot steer. A busy agent is never a refusal. A message with nothing in it is not a refusal
+such conversation, the agent would not start, its session would not load, or the
+write failed. Confirmed steer refusals enter the queue.
+A busy agent is never a refusal. A message with nothing in it is not a refusal
 either — it is not a message, and it is turned away where it is sent. How a turn later ends is never
 part of the answer — endings are notebook rows.
 

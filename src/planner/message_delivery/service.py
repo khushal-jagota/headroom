@@ -49,8 +49,9 @@ async def send_message(
     label = sender_label(ctx)
     content = text_message_content(message)
     prompt_mode = {
-        MessageDeliveryMode.queue: PromptDeliveryMode.run_when_free,
+        MessageDeliveryMode.queue: PromptDeliveryMode.queue,
         MessageDeliveryMode.steer: PromptDeliveryMode.steer,
+        MessageDeliveryMode.send_now: PromptDeliveryMode.send_now,
     }[mode]
 
     if target.target_type is MessageTargetType.ticket:
@@ -112,7 +113,7 @@ async def send_message(
                 {"agent_key": agent_key},
             )
         conversation_id = None if row["conversation_id"] is None else str(row["conversation_id"])
-        if conversation_id is None and mode is MessageDeliveryMode.queue:
+        if conversation_id is None:
             raise PlannerError(
                 ErrorCode.validation,
                 "agent has no current conversation and no start configuration",

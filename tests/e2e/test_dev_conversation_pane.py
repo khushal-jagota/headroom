@@ -294,7 +294,7 @@ def _a_turn_full_of_tool_calls(first_call: int) -> tuple[ConversationEventPayloa
         PromptEventPayload(
             content=text_message_content("the question with the work"),
             sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
+            mode=PromptDeliveryMode.queue,
         )
     ]
     for call in range(12):
@@ -330,7 +330,7 @@ def _a_conversation_worth_scrolling() -> tuple[ConversationEventPayload, ...]:
             PromptEventPayload(
                 content=text_message_content(f"question {turn}"),
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
             )
         )
         rows.append(
@@ -380,7 +380,7 @@ def test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers(
         PromptEventPayload(
             content=text_message_content("ask me the implementation questions"),
             sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
+            mode=PromptDeliveryMode.queue,
         ),
         UserInputRequestedEventPayload(request_id="input-1", questions=questions),
     )

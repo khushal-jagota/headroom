@@ -25,7 +25,13 @@ export const CONVERSATION_BACKEND_KEYS: readonly ConversationBackendKey[] = [
   "claude"
 ];
 
-export type PromptDeliveryMode = "run_when_free" | "send_now" | "steer";
+export type PromptDeliveryMode = "queue" | "send_now" | "steer";
+
+export type PromptQueueReason =
+  | "requested"
+  | "attachment"
+  | "run_change"
+  | "steer_refused";
 
 export type ConversationTurnEnding = "completed" | "failed" | "interrupted";
 
@@ -157,6 +163,7 @@ export type HeldPrompt = StoredMessageContent & {
   sender_message_id?: string | null;
   sender_label: string;
   sent_at_unix_milliseconds: number;
+  queue_reason: PromptQueueReason;
 };
 
 /** What a conversation is, what it is doing, and what it is waiting on. */

@@ -519,7 +519,7 @@ async def _write(
         content,
         sender_content=content,
         sender_label="owner",
-        mode=PromptDeliveryMode.run_when_free,
+        mode=PromptDeliveryMode.queue,
         model_change=None,
         reasoning_effort_change=None,
     )
@@ -1189,7 +1189,7 @@ def test_a_model_change_asks_for_a_child_started_on_it(tmp_path: Path) -> None:
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change="claude-sonnet-4-5",
                 reasoning_effort_change=None,
             )
@@ -1215,7 +1215,7 @@ def test_a_reasoning_effort_change_asks_for_a_child_started_on_it(
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change="high",
             )
@@ -1247,7 +1247,7 @@ def test_the_rebound_child_takes_the_prompt_that_asked_for_it(tmp_path: Path) ->
             content,
             sender_content=content,
             sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
+            mode=PromptDeliveryMode.queue,
             model_change="claude-sonnet-4-5",
             reasoning_effort_change="high",
         )
@@ -3066,7 +3066,7 @@ def test_real_claude_keeps_the_conversation_across_a_model_change(
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=CLAUDE_OTHER_MODEL,
                 reasoning_effort_change=None,
             )
@@ -3082,7 +3082,7 @@ def test_real_claude_keeps_the_conversation_across_a_model_change(
             content,
             sender_content=content,
             sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
+            mode=PromptDeliveryMode.queue,
             model_change=CLAUDE_OTHER_MODEL,
             reasoning_effort_change=None,
         )
@@ -3208,7 +3208,7 @@ def test_a_picture_reaches_claude_as_a_content_block_beside_the_words(
             content,
             sender_content=content,
             sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
+            mode=PromptDeliveryMode.queue,
             model_change=None,
             reasoning_effort_change=None,
         )
@@ -3252,7 +3252,7 @@ def test_a_file_reaches_claude_as_explicit_managed_path_context(tmp_path: Path) 
             content,
             sender_content=content,
             sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
+            mode=PromptDeliveryMode.queue,
             model_change=None,
             reasoning_effort_change=None,
         )

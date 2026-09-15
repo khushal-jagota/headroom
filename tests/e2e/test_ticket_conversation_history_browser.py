@@ -33,7 +33,7 @@ def _store_conversation(
         (
             1,
             "prompt",
-            {"text": request, "sender_label": "owner", "mode": "run_when_free"},
+            {"text": request, "sender_label": "owner", "mode": "queue"},
         ),
         (2, "agent_message", {"text": reply}),
         (3, "turn_ended", {"ending": "completed", "error_summary": None}),

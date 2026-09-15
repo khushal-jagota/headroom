@@ -110,7 +110,7 @@ class _LinkWatchingConversationSystem:
         content: MessageContent,
         *,
         sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
@@ -212,7 +212,7 @@ async def _sent(
     *,
     model: str | None = None,
     reasoning_effort: str | None = None,
-    mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+    mode: PromptDeliveryMode = PromptDeliveryMode.queue,
     sender_label: str = "loop",
     now: int,
 ) -> PromptDeliveryFate:
@@ -312,7 +312,7 @@ def test_the_start_request_carries_every_resolved_value(
                 content: MessageContent,
                 *,
                 sender_label: str,
-                mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+                mode: PromptDeliveryMode = PromptDeliveryMode.queue,
                 model_change: str | None = None,
                 reasoning_effort_change: str | None = None,
             ) -> PromptDeliveryFate:
@@ -359,12 +359,12 @@ def test_a_change_on_a_held_message_records_nothing_yet(
     async def exercise() -> None:
         system = InMemoryConversationSystem()
         conversation_id = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
-        # Put a turn on the agent, so the next run-when-free message is held.
+        # Put a turn on the agent, so the next queue message is held.
         await system.send(conversation_id, text_message_content("incumbent"), sender_label="owner")
 
         fate = await _sent(
             system, tmp_db, ticket.id, "work the step",
-            mode=PromptDeliveryMode.run_when_free, model="sonnet", now=20,
+            mode=PromptDeliveryMode.queue, model="sonnet", now=20,
         )
 
         assert isinstance(fate, PromptDeliveryQueued)
@@ -430,7 +430,7 @@ class _RelinkingConversationSystem:
         content: MessageContent,
         *,
         sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,

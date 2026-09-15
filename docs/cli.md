@@ -76,10 +76,10 @@ record shapes. Direct `show` commands also keep their full record shapes.
 - **`send-message`** — send one text message through the existing conversation path.
   Select exactly one destination with `--chief`, `--ticket <id>`, `--sprint-item <id>`,
   or `--agent <key>`. Supply the text with `--message` or `--body-file`; `--body-file -`
-  reads stdin. Use `--mode queue` to run the message when the agent is free, or use
-  `--mode steer` to inject text into its current running turn. The default is `queue`.
-  A queue send to a Ticket, the Chief, or a Sprint Item supervisor starts its normal
-  conversation on the first message. A steer never starts a conversation or a turn.
+  reads stdin. Use `--mode queue`, `--mode steer`, or `--mode send_now`. Queue holds a
+  busy message. Steer injects into current work. Send now interrupts current work.
+  Queue remains the command default. Every mode starts a turn when the agent is idle.
+  Any mode can create the normal conversation for a Ticket, Chief, or supervisor.
   An arbitrary registered agent must already have a current conversation because its row
   does not contain launch settings. The result names the resolved destination,
   conversation, and delivery fate. Started means delivery began. Queued names its position

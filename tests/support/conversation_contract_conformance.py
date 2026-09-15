@@ -38,6 +38,7 @@ from planner.conversation.contracts import (
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     PromptDeliveryUncertain,
+    PromptQueueReason,
 )
 from planner.conversation.message_content import (
     MessageContent,
@@ -334,7 +335,7 @@ class ConversationContractConformanceSuite:
                 BackendWrite(
                     content=text_message_content("first"),
                     sender_label="owner",
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                 ),
             )
 
@@ -342,7 +343,7 @@ class ConversationContractConformanceSuite:
 
     # --- Every mode x idle/busy ---
 
-    def test_run_when_free_while_idle_starts_the_turn(self) -> None:
+    def test_queue_while_idle_starts_the_turn(self) -> None:
         """Coverage 5."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
@@ -351,14 +352,14 @@ class ConversationContractConformanceSuite:
                 "c",
                 text_message_content("first"),
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
             )
             assert fate == PromptDeliveryStarted()
             assert await subject.system.is_running("c") is True
 
         self._run(exercise)
 
-    def test_run_when_free_while_busy_queues_at_ascending_one_based_positions(self) -> None:
+    def test_queue_while_busy_queues_at_ascending_one_based_positions(self) -> None:
         """Coverage 6, including that a position is a place in the queue and not a count
         of everything ever queued."""
 
@@ -499,13 +500,10 @@ class ConversationContractConformanceSuite:
 
         self._run(exercise)
 
-    def test_capability_off_refuses_steer_on_every_backend_running_or_idle(self) -> None:
+    def test_capability_off_starts_when_idle_and_queues_when_running(self) -> None:
         """Coverage 11."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
-            cannot_steer = PromptDeliveryRefused(
-                refusal_reason=PromptDeliveryRefusalReason.backend_cannot_steer
-            )
             with _steering_supported_by():
                 for backend_key in ConversationBackendKey:
                     idle_id = f"{backend_key}-idle"
@@ -515,7 +513,7 @@ class ConversationContractConformanceSuite:
                         text_message_content("steered"),
                         sender_label="owner",
                         mode=PromptDeliveryMode.steer,
-                    ) == cannot_steer
+                    ) == PromptDeliveryStarted()
 
                     running_id = f"{backend_key}-running"
                     await subject.system.start_conversation(
@@ -532,11 +530,11 @@ class ConversationContractConformanceSuite:
                         text_message_content("steered"),
                         sender_label="owner",
                         mode=PromptDeliveryMode.steer,
-                    ) == cannot_steer
+                    ) == PromptDeliveryQueued(queue_position=1)
 
         self._run(exercise)
 
-    def test_steer_while_idle_is_refused_for_want_of_a_running_turn(self) -> None:
+    def test_steer_while_idle_starts_a_turn(self) -> None:
         """Coverage 12."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
@@ -549,9 +547,7 @@ class ConversationContractConformanceSuite:
                 sender_label="owner",
                 mode=PromptDeliveryMode.steer,
             )
-            assert fate == PromptDeliveryRefused(
-                refusal_reason=PromptDeliveryRefusalReason.no_running_turn_to_steer_into
-            )
+            assert fate == PromptDeliveryStarted()
 
         self._run(exercise)
 
@@ -576,7 +572,7 @@ class ConversationContractConformanceSuite:
                 BackendWrite(
                     content=text_message_content("incumbent"),
                     sender_label="owner",
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                 ),
                 BackendWrite(
                     content=text_message_content("steered"),
@@ -615,7 +611,7 @@ class ConversationContractConformanceSuite:
                 BackendWrite(
                     content=message,
                     sender_label="owner",
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                 ),
             )
             delivered = _facts_of_kind(
@@ -642,7 +638,7 @@ class ConversationContractConformanceSuite:
                 BackendWrite(
                     content=text_message_content("the exact text"),
                     sender_label="owner",
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                 ),
             )
 
@@ -737,10 +733,10 @@ class ConversationContractConformanceSuite:
                 text_message_content("refused-text"),
                 sender_label="owner",
                 mode=PromptDeliveryMode.steer,
-            ) == PromptDeliveryRefused(
-                refusal_reason=PromptDeliveryRefusalReason.no_running_turn_to_steer_into
+            ) == PromptDeliveryStarted()
+            assert _written_texts(await subject.backend_writes("idle-steer")) == (
+                "refused-text",
             )
-            assert await subject.backend_writes("idle-steer") == ()
 
             await subject.system.start_conversation(
                 _start_request("no-steer", ConversationBackendKey.codex)
@@ -756,9 +752,7 @@ class ConversationContractConformanceSuite:
                     text_message_content("refused-text"),
                     sender_label="owner",
                     mode=PromptDeliveryMode.steer,
-                ) == PromptDeliveryRefused(
-                    refusal_reason=PromptDeliveryRefusalReason.backend_cannot_steer
-                )
+                ) == PromptDeliveryQueued(queue_position=1)
             assert _written_texts(await subject.backend_writes("no-steer")) == ("incumbent",)
 
         self._run(exercise)
@@ -780,7 +774,7 @@ class ConversationContractConformanceSuite:
                     kind=RecordedFactKind.prompt_delivered,
                     content=text_message_content("incumbent"),
                     sender_label="owner",
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                 ),
                 RecordedFact(
                     kind=RecordedFactKind.turn_ended,
@@ -790,7 +784,7 @@ class ConversationContractConformanceSuite:
                     kind=RecordedFactKind.prompt_delivered,
                     content=text_message_content("held"),
                     sender_label="automatic-loop",
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                 ),
             )
             assert _written_texts(await subject.backend_writes("c")) == ("incumbent", "held")
@@ -841,7 +835,7 @@ class ConversationContractConformanceSuite:
 
     # --- Busyness never refuses ---
 
-    def test_ten_run_when_free_sends_against_a_busy_agent_all_queue(self) -> None:
+    def test_ten_queue_sends_against_a_busy_agent_all_queue(self) -> None:
         """Coverage 21."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
@@ -925,47 +919,11 @@ class ConversationContractConformanceSuite:
             assert isinstance(fate, PromptDeliveryRefused)
             produced["write fails"] = fate.refusal_reason
 
-            await subject.system.start_conversation(
-                _start_request("idle-steer", ConversationBackendKey.hermes)
-            )
-            fate = await subject.system.send(
-                "idle-steer",
-                text_message_content("text"),
-                sender_label="owner",
-                mode=PromptDeliveryMode.steer,
-            )
-            assert isinstance(fate, PromptDeliveryRefused)
-            produced["steer with no running turn"] = fate.refusal_reason
-
-            await subject.system.start_conversation(
-                _start_request("no-steer", ConversationBackendKey.codex)
-            )
-            await subject.system.send(
-                "no-steer",
-                text_message_content("incumbent"),
-                sender_label="owner",
-            )
-            with _steering_supported_by():
-                fate = await subject.system.send(
-                    "no-steer",
-                    text_message_content("text"),
-                    sender_label="owner",
-                    mode=PromptDeliveryMode.steer,
-                )
-            assert isinstance(fate, PromptDeliveryRefused)
-            produced["steer on a backend that cannot"] = fate.refusal_reason
-
             assert produced == {
                 "never started": PromptDeliveryRefusalReason.no_such_conversation,
                 "backend will not spawn": PromptDeliveryRefusalReason.backend_did_not_start,
                 "session will not load": PromptDeliveryRefusalReason.session_did_not_load,
                 "write fails": PromptDeliveryRefusalReason.write_to_backend_failed,
-                "steer with no running turn": (
-                    PromptDeliveryRefusalReason.no_running_turn_to_steer_into
-                ),
-                "steer on a backend that cannot": (
-                    PromptDeliveryRefusalReason.backend_cannot_steer
-                ),
             }
         self._run(exercise)
 
@@ -1031,7 +989,7 @@ class ConversationContractConformanceSuite:
 
         self._run(exercise)
 
-    def test_write_to_backend_failed_arises_on_a_plain_send_and_on_a_steer(self) -> None:
+    def test_confirmed_failed_steer_falls_back_to_queue(self) -> None:
         """Coverage 26."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
@@ -1064,9 +1022,11 @@ class ConversationContractConformanceSuite:
                 text_message_content("text"),
                 sender_label="owner",
                 mode=PromptDeliveryMode.steer,
-            ) == write_failed
+            ) == PromptDeliveryQueued(queue_position=1)
             assert _written_texts(await subject.backend_writes("steered")) == ("incumbent",)
             assert await subject.system.is_running("steered") is True
+            [held] = await subject.system.held_prompts("steered")
+            assert held.queue_reason is PromptQueueReason.steer_refused
 
         self._run(exercise)
 
@@ -1665,23 +1625,24 @@ class ConversationContractConformanceSuite:
 
         self._run(exercise)
 
-    def test_a_steer_cannot_carry_a_change(self) -> None:
-        """Coverage 47: the turn a steer joins is already running — caller error, not
-        a delivery fate."""
+    def test_a_steer_with_a_change_falls_back_to_queue(self) -> None:
+        """Coverage 47."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(
                 _start_request("c", backend_key=ConversationBackendKey.hermes)
             )
             await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
-            with pytest.raises(ValueError):
-                await subject.system.send(
-                    "c",
-                    text_message_content("steered"),
-                    sender_label="owner",
-                    mode=PromptDeliveryMode.steer,
-                    model_change="other-model",
-                )
+            fate = await subject.system.send(
+                "c",
+                text_message_content("steered"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
+                model_change="other-model",
+            )
+            assert fate == PromptDeliveryQueued(queue_position=1)
+            [held] = await subject.system.held_prompts("c")
+            assert held.queue_reason is PromptQueueReason.run_change
             assert await subject.system.is_running("c")
 
         self._run(exercise)

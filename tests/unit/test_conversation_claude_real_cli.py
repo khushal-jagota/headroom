@@ -151,7 +151,7 @@ def test_claude_really_takes_a_picture_in_a_message_and_can_see_it(tmp_path: Pat
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -187,7 +187,7 @@ def test_a_message_of_only_words_still_reaches_the_real_claude_unchanged(
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )

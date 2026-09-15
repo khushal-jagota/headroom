@@ -36,7 +36,6 @@ from planner.conversation.contracts import (
     ConversationSystem,
     PromptDeliveryFate,
     PromptDeliveryMode,
-    PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
 )
@@ -197,16 +196,6 @@ def sprint_item_supervisor_resolve(
     )
 
 
-def _no_turn_to_steer_into() -> DeliveredMessage:
-    """A steer aimed at nothing, said as the fate the contract already has for it."""
-    return DeliveredMessage(
-        conversation_id=None,
-        fate=PromptDeliveryRefused(
-            refusal_reason=PromptDeliveryRefusalReason.no_running_turn_to_steer_into
-        ),
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class LinkedConversation:
     """The conversation an owner is now in, and whether this call is what made it.
@@ -304,7 +293,7 @@ async def send_to_ticket_conversation(
     created_conversation_id: str | None = None,
     runs_under: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     sender_label: str,
-    mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+    mode: PromptDeliveryMode = PromptDeliveryMode.queue,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
     worker_type_registry: WorkerTypeRegistry | None = None,
@@ -363,11 +352,6 @@ async def send_to_ticket_conversation(
                 {"ticket_id": ticket_id},
             )
     if conversation_id is None and ticket.conversation_id is None:
-        if mode is PromptDeliveryMode.steer:
-            # A steer is text for a turn that is already running, and there is no
-            # conversation here, let alone a turn. Making one in order to refuse a steer
-            # into it would leave a conversation nobody asked for.
-            return _no_turn_to_steer_into()
         return await _make_a_conversation_and_send_into_it(
             system,
             conn,
@@ -698,7 +682,7 @@ async def send_to_agent_conversation(
     created_conversation_id: str | None = None,
     runs_under: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     sender_label: str,
-    mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+    mode: PromptDeliveryMode = PromptDeliveryMode.queue,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
     required_sprint_item_id: str | None = None,
@@ -716,8 +700,6 @@ async def send_to_agent_conversation(
     """
     in_now = read_agent_conversation(conn, agent_key)
     if conversation_id is None and in_now is None:
-        if mode is PromptDeliveryMode.steer:
-            return _no_turn_to_steer_into()
         if values is None:
             raise PlannerError(
                 ErrorCode.validation,

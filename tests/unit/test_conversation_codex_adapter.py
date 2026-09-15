@@ -312,7 +312,7 @@ def test_structured_skill_keeps_attachments_and_run_value_changes(tmp_path: Path
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change="gpt-5.6-codex",
                 reasoning_effort_change="high",
             )
@@ -1054,7 +1054,7 @@ def test_native_commands_with_attachments_are_refused(tmp_path: Path, prompt: st
                     content,
                     sender_content=content,
                     sender_label="owner",
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                     model_change=None,
                     reasoning_effort_change=None,
                 )
@@ -2939,7 +2939,7 @@ class _ScriptedChild:
             content,
             sender_content=content,
             sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
+            mode=PromptDeliveryMode.queue,
             model_change=model,
             reasoning_effort_change=reasoning_effort,
         )
@@ -3058,7 +3058,7 @@ def test_a_picture_reaches_codex_as_the_file_it_is(tmp_path: Path) -> None:
                     MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
                 ),
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -3090,7 +3090,7 @@ def test_a_file_reaches_codex_as_explicit_managed_path_context(tmp_path: Path) -
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )

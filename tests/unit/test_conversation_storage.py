@@ -69,12 +69,12 @@ from planner.core.db import connect, create_schema
 A_PROMPT = PromptEventPayload(
     content=text_message_content("hello"),
     sender_label="owner",
-    mode=PromptDeliveryMode.run_when_free,
+    mode=PromptDeliveryMode.queue,
 )
 A_REFUSED_DELIVERY = PromptDeliveryRefusedEventPayload(
     content=text_message_content("held"),
     sender_label="automatic-loop",
-    mode=PromptDeliveryMode.run_when_free,
+    mode=PromptDeliveryMode.queue,
     refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed,
 )
 A_UNCERTAIN_DELIVERY = PromptDeliveryUncertainEventPayload(
@@ -182,12 +182,25 @@ def test_every_payload_survives_the_round_trip_through_its_stored_text() -> None
         assert conversation_event_payload_from_canonical_json(kind, stored) == payload
 
 
+def test_legacy_run_when_free_rows_decode_as_queue() -> None:
+    decoded = conversation_event_payload_from_canonical_json(
+        ConversationEventKind.prompt,
+        '{"mode":"run_when_free","sender_label":"owner","text":"old"}',
+    )
+
+    assert decoded == PromptEventPayload(
+        content=text_message_content("old"),
+        sender_label="owner",
+        mode=PromptDeliveryMode.queue,
+    )
+
+
 def test_what_a_sender_minted_is_stored_and_read_back_exactly() -> None:
     """The sender's id and instant are kept as given, and survive the round trip."""
     minted = PromptEventPayload(
         content=text_message_content("go"),
         sender_label="owner",
-        mode=PromptDeliveryMode.run_when_free,
+        mode=PromptDeliveryMode.queue,
         sender_message_id="m-1",
         sent_at_unix_milliseconds=1_700_000_000_123,
     )
@@ -195,7 +208,7 @@ def test_what_a_sender_minted_is_stored_and_read_back_exactly() -> None:
     stored = conversation_event_payload_to_canonical_json(minted)
 
     assert stored == (
-        '{"mode":"run_when_free","sender_label":"owner","sender_message_id":"m-1",'
+        '{"mode":"queue","sender_label":"owner","sender_message_id":"m-1",'
         '"sent_at_unix_milliseconds":1700000000123,"text":"go"}'
     )
     assert (
@@ -210,13 +223,13 @@ def test_a_sent_message_carries_its_id_into_whichever_row_it_becomes() -> None:
         PromptEventPayload(
             content=text_message_content("go"),
             sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
+            mode=PromptDeliveryMode.queue,
             sender_message_id="m-1",
         ),
         PromptDeliveryRefusedEventPayload(
             content=text_message_content("go"),
             sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
+            mode=PromptDeliveryMode.queue,
             refusal_reason=PromptDeliveryRefusalReason.backend_did_not_start,
             sender_message_id="m-1",
         ),
@@ -555,7 +568,7 @@ A_MESSAGE_WITH_MORE_THAN_WORDS = PromptEventPayload(
         MessageText(text="and tell me what it is"),
     ),
     sender_label="owner",
-    mode=PromptDeliveryMode.run_when_free,
+    mode=PromptDeliveryMode.queue,
 )
 
 
@@ -579,13 +592,13 @@ def test_a_row_written_before_messages_could_hold_anything_else_still_reads() ->
     message in the record looks like today. It reads back as one piece of written words,
     because that is what it always was.
     """
-    as_it_was_written = '{"mode":"run_when_free","sender_label":"owner","text":"hello"}'
+    as_it_was_written = '{"mode":"queue","sender_label":"owner","text":"hello"}'
     assert conversation_event_payload_from_canonical_json(
         ConversationEventKind.prompt, as_it_was_written
     ) == PromptEventPayload(
         content=(MessageText(text="hello"),),
         sender_label="owner",
-        mode=PromptDeliveryMode.run_when_free,
+        mode=PromptDeliveryMode.queue,
     )
     assert conversation_event_payload_from_canonical_json(
         ConversationEventKind.agent_message, '{"text":"the answer"}'

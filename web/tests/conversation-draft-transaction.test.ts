@@ -67,7 +67,7 @@ describe("composer draft transaction", () => {
     const suppliedDraft = draft({ pendingImages });
     const suppliedRunValues = { ...carriedRunValues };
 
-    const attempt = beginComposerSend(suppliedDraft, suppliedRunValues, "run_when_free");
+    const attempt = beginComposerSend(suppliedDraft, suppliedRunValues, "queue");
 
     expect(attempt.content).toEqual([
       { piece: "text", text: "look here" },
@@ -105,7 +105,7 @@ describe("composer draft transaction", () => {
     const attempt = beginComposerSend(
       draft({ pendingFiles: [pendingFile(4, "facts.json", "e30=")] }),
       carriedRunValues,
-      "run_when_free"
+      "queue"
     );
 
     expect(attempt.content.at(-1)).toEqual({
@@ -129,7 +129,7 @@ describe("composer draft transaction", () => {
   });
 
   it("restores the sent text, images, picks, ids, and revision after a definite refusal", () => {
-    const attempt = beginComposerSend(draft(), carriedRunValues, "run_when_free");
+    const attempt = beginComposerSend(draft(), carriedRunValues, "queue");
 
     const restoration = restoreRefusedComposerSend(
       attempt.draftAfterSend,
