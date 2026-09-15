@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
+from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 from tests.support.ticket_progress import advance_ticket
 
 from planner.core.contracts import LinkKind, Priority
@@ -219,7 +219,7 @@ def test_scope_permission_uses_the_ticket_worker_type_definition(
                 conn,
                 ticket.id,
                 body="understanding",
-                principal=TEST_TICKET_PRINCIPAL,
+                principal=ticket_principal(ticket.id),
                 now=3,
                 recap="Current work",
             )

@@ -6,4 +6,15 @@ from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, 
 
 TEST_TICKET_PRINCIPAL: Final = Principal(PrincipalKind.ticket, "t_test_worker")
 
-__all__ = ["CHIEF_PRINCIPAL", "OWNER_PRINCIPAL", "TEST_TICKET_PRINCIPAL"]
+
+def ticket_principal(ticket_id: str) -> Principal:
+    """Return the Worker identity for a generated Ticket fixture."""
+    return Principal(PrincipalKind.ticket, ticket_id)
+
+
+__all__ = [
+    "CHIEF_PRINCIPAL",
+    "OWNER_PRINCIPAL",
+    "TEST_TICKET_PRINCIPAL",
+    "ticket_principal",
+]

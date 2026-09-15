@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Mapping
 from typing import assert_type
 
-from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
+from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL, ticket_principal
 
 from planner.runtime import worker_step_readiness
 from planner.tickets import data as tickets_data
@@ -26,7 +26,7 @@ def _cases(
     foreign_field: str = "alpha"
 
     _t1: Ticket = tickets_data.file_current_proposal_with_recap(
-        conn, "t_1", body="b", principal=TEST_TICKET_PRINCIPAL, now=0, recap="Current work"
+        conn, "t_1", body="b", principal=ticket_principal("t_1"), now=0, recap="Current work"
     )
     _t2: Ticket = tickets_data.accept_proposal(
         conn,

@@ -13,7 +13,7 @@ from collections.abc import Iterator
 from sqlite3 import Connection
 
 import pytest
-from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
+from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 from tests.support.probe import (
     FIELD_ALPHA,
     FIELD_BETA,
@@ -85,7 +85,7 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
         tmp_db,
         ticket.id,
         body="kickoff body",
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=ticket_principal(ticket.id),
         now=2,
         recap="Current work",
     )
