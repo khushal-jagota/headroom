@@ -167,8 +167,13 @@ with sync_playwright() as playwright:
     page.evaluate("""window.__emitConversationRow({
       conversation_id: "focus-fixture",
       sequence: 1,
-      kind: "agent_message",
-      payload: { text: "arrived while the preview had focus" },
+      kind: "message_to_owner",
+      payload: {
+        text: "arrived while the preview had focus",
+        sender_label: "Worker",
+        sender: { kind: "ticket", id: "fixture" },
+        recipient: { kind: "owner", id: "owner" }
+      },
       created_at: 1
     })""")
     page.wait_for_timeout(100)

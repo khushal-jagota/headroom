@@ -46,6 +46,7 @@ try {
   let heldPromptRows = $state<any[]>([]);
   let supportsSteer = $state(false);
   let conversationState = $state<ConversationState>("rest");
+  let lens = $state<"focus" | "full">("focus");
 
   async function captureSend(content: any[], mode: string, picked: any): Promise<boolean> {
     (window as any).__sentModes = [...((window as any).__sentModes ?? []), mode];
@@ -156,6 +157,7 @@ try {
     <div class="conversation-column">
       <ConversationPane
         bind:conversationState
+        bind:lens
         conversationId="browser-fixture"
         label="Worker"
         conversationExists
@@ -325,6 +327,20 @@ with sync_playwright() as playwright:
     state(page, "opened")
     assert draft(page) == expected_draft, (draft(page), expected_draft)
     assert page.evaluate("window.__conversationInputSurvived()") is True
+
+    # One shared header control and the F shortcut switch the lens in place. Editable
+    # controls keep ordinary F input, and modified shortcuts do nothing.
+    lens_toggle = page.locator("[data-conversation-lens-toggle]")
+    assert lens_toggle.inner_text() == "Focus"
+    lens_toggle.click()
+    assert lens_toggle.inner_text() == "Full"
+    page.keyboard.press("f")
+    assert lens_toggle.inner_text() == "Focus"
+    page.keyboard.press("Control+f")
+    assert lens_toggle.inner_text() == "Focus"
+    page.locator(INPUT).press("f")
+    assert lens_toggle.inner_text() == "Focus"
+    expected_draft = draft(page)
 
     # Ticket content dismisses opened in one step without replacing or clearing the draft.
     page.locator("[data-ticket-behind]").click()

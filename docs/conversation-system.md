@@ -41,6 +41,18 @@ listen for new ones. Opening a conversation, reconnecting after a dropped
 connection, and a second device are all that same fetch. Nothing re-downloads
 mid-read.
 
+Every conversation opens through the Focus lens. Focus shows the owner's prompts,
+explicit messages addressed to the owner, permission requests, agent questions, and
+the answers that settle those requests. Historical owner prompts without principals use
+their established owner label, so they remain readable without a record migration.
+Full shows the complete runtime notebook. The header toggle and the unmodified `f` key
+switch the lens without replacing the conversation. Editable controls keep the key.
+
+The lens changes only what the person reads. Liveness, streaming, reconnects, and
+snapshots continue to use the complete feed. A switch to another conversation invalidates
+the old read and tail. A late snapshot, row, frame, or refresh from the old conversation
+cannot change the newly opened conversation.
+
 An open conversation is handed each new row directly, so it never has to be told to
 come and look. That is why most rows are written quietly: a historical agent-message row, a tool
 call starting or finishing, a plan, a token count, and a compaction are shown only

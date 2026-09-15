@@ -15,6 +15,10 @@
   import type { ConversationState } from "../../lib/conversation/conversationState";
   import type { OutgoingMessage } from "../../lib/conversation/outgoing";
   import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
+  import {
+    keyTogglesConversationLens,
+    type ConversationLens
+  } from "../../lib/conversation/lens";
   import { restLineFrom } from "../../lib/conversation/restLine";
   import { taskProgressFrom } from "../../lib/conversation/taskProgress";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
@@ -60,6 +64,7 @@
     composerDisabled = false,
     showRunPicker = true,
     readOnly = false,
+    lens = $bindable("focus"),
     conversationState = $bindable(null),
     emptyState,
     onSend,
@@ -123,6 +128,8 @@
     /** A historical transcript is visible through this single boundary. No mutation
      *  control is rendered inside it. */
     readOnly?: boolean;
+    /** Which projection of this conversation record is visible. */
+    lens?: ConversationLens;
     /** How far open the conversation is, or null for a page that is not making a layer of
      *  it. The page sets what it opens in; this writes back when the person moves it. */
     conversationState?: ConversationState | null;
@@ -212,6 +219,16 @@
   }
 
   function onWindowKeydown(event: KeyboardEvent): void {
+    if (
+      keyTogglesConversationLens(event)
+      && conversationState !== "rest"
+      && paneElement !== null
+      && paneElement.offsetParent !== null
+    ) {
+      event.preventDefault();
+      lens = lens === "focus" ? "full" : "focus";
+      return;
+    }
     if (event.key !== "Escape" || event.defaultPrevented) return;
     if (menuOpen) {
       closeMenu();
@@ -259,6 +276,15 @@
       </span>
     {/if}
     <div class="chat-head-right">
+      <button
+        type="button"
+        class="chat-lens-toggle"
+        data-conversation-lens-toggle
+        data-conversation-lens={lens}
+        aria-label={`Show ${lens === "focus" ? "Full" : "Focus"} conversation (F)`}
+        title={`Show ${lens === "focus" ? "Full" : "Focus"} conversation (F)`}
+        onclick={() => (lens = lens === "focus" ? "full" : "focus")}
+      >{lens === "focus" ? "Focus" : "Full"}</button>
       {#if workspaceFolder && conversationState !== "opened"}
         <span class="chat-usage" data-conversation-workspace>{workspaceFolder}</span>
       {/if}
@@ -389,6 +415,21 @@
   :global([data-conversation-pane][data-conversation-state="rest"] .chat-head),
   :global([data-conversation-pane][data-conversation-state="rest"] .chat-thread-shell) {
     display: none;
+  }
+  .chat-lens-toggle {
+    border: var(--border-hairline) solid var(--border-color);
+    border-radius: var(--radius-pill);
+    background: transparent;
+    color: var(--text-muted);
+    padding: 2px var(--space-2);
+    font: inherit;
+    font-size: var(--type-xs);
+    cursor: pointer;
+  }
+  .chat-lens-toggle:hover,
+  .chat-lens-toggle:focus-visible {
+    border-color: var(--accent-bright);
+    color: var(--text-default);
   }
   .conversation-read-only {
     flex: none;
