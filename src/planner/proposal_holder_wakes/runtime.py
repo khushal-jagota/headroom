@@ -229,7 +229,17 @@ class ProposalHolderWakeLoop:
                 future.cancel()
             if pending:
                 return False
-        return True
+        # A queued prompt is process-local, but its scheduling future is complete.
+        # Its durable claim therefore remains the final proof that this process still
+        # owns work which can reach a backend.
+        conn = connect(self._db_path, self._busy_timeout_ms)
+        try:
+            return not data.has_delivering(conn)
+        except Exception:
+            _LOG.exception("proposal holder wake shutdown state check failed")
+            return False
+        finally:
+            conn.close()
 
     def _run_loop(self, interval: int) -> None:
         while not self._stop.is_set():

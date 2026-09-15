@@ -639,7 +639,121 @@ def test_unsettled_shutdown_refuses_same_process_restart(
         assert _other_process_can_lock(lock_path) is False
     finally:
         release_machine_lock(str(lock_path))
-        monkeypatch.setattr(core_loops, "_active", None)
+        core_loops._active = None
+        asyncio_loop.close()
+
+
+def test_queued_delivery_retains_lock_and_refuses_restart_after_future_completes(
+    tmp_db: Connection,
+    fake_clock: Clock,
+    cfg: Config,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
+    _file(tmp_db, ticket_id, body="Queued at shutdown", now=2)
+    db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()["file"])
+    lock_path = tmp_path / "queued-shutdown.lock"
+    config = replace(
+        cfg,
+        db_path=db_path,
+        dispatcher_lock_path=str(lock_path),
+        dispatch_enabled=True,
+        tick_seconds=3600,
+    )
+
+    class IdleLoop:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def start(self, _interval: int) -> None:
+            pass
+
+        def stop(self, *, deadline: float | None = None) -> bool:
+            del deadline
+            return True
+
+        def wake(self) -> None:
+            pass
+
+    monkeypatch.setattr(core_loops, "ScheduledTicketLoop", IdleLoop)
+    monkeypatch.setattr(core_loops, "WorkerStepReadinessLoop", IdleLoop)
+    monkeypatch.setattr(core_loops, "NotificationLoop", IdleLoop)
+    send = AsyncMock(
+        return_value=MessageDeliveryResult(CHIEF_PRINCIPAL, "c", PromptDeliveryQueued(1))
+    )
+    monkeypatch.setattr(
+        "planner.proposal_holder_wakes.runtime.message_delivery_service.send_system_message",
+        send,
+    )
+
+    async def exercise() -> None:
+        owner = start_background_loops(
+            config,
+            fake_clock,
+            conversation_system=object(),  # type: ignore[arg-type]
+            worker_context_service=object(),  # type: ignore[arg-type]
+            asyncio_loop=asyncio.get_running_loop(),
+        )
+        wake_loop = owner.proposal_holder_wake_loop
+        assert wake_loop is not None
+        try:
+            for _ in range(100):
+                with wake_loop._in_flight_lock:
+                    future_completed = not wake_loop._in_flight
+                if _wake_state(tmp_db, ticket_id) == "delivering" and future_completed:
+                    break
+                await asyncio.sleep(0.01)
+            assert send.await_count >= 1
+            assert {
+                call.kwargs["sender_message_id"] for call in send.await_args_list
+            } == {send.await_args_list[0].kwargs["sender_message_id"]}
+            assert _wake_state(tmp_db, ticket_id) == "delivering"
+            with wake_loop._in_flight_lock:
+                assert not wake_loop._in_flight
+            assert await owner.stop() is False
+            assert _other_process_can_lock(lock_path) is False
+            with pytest.raises(RuntimeError, match="background loops already running"):
+                start_background_loops(
+                    config,
+                    fake_clock,
+                    conversation_system=object(),  # type: ignore[arg-type]
+                    worker_context_service=object(),  # type: ignore[arg-type]
+                    asyncio_loop=asyncio.get_running_loop(),
+                )
+        finally:
+            await owner.stop()
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release_machine_lock(str(lock_path))
+        core_loops._active = None
+
+
+@pytest.mark.parametrize("terminal_state", ["delivered", "cancelled", "uncertain"])
+def test_terminal_wake_state_does_not_retain_machine_lock(
+    tmp_db: Connection,
+    fake_clock: Clock,
+    terminal_state: str,
+) -> None:
+    ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
+    _file(tmp_db, ticket_id, body="Settled", now=2)
+    tmp_db.execute(
+        "UPDATE proposal_holder_wakes SET state=? WHERE ticket_id=?",
+        (terminal_state, ticket_id),
+    )
+    db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()["file"])
+    asyncio_loop = asyncio.new_event_loop()
+    loop = ProposalHolderWakeLoop(
+        db_path,
+        fake_clock,
+        conversation_system=object(),  # type: ignore[arg-type]
+        asyncio_loop=asyncio_loop,
+    )
+    try:
+        assert loop.stop() is True
+    finally:
         asyncio_loop.close()
 
 

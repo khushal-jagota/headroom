@@ -176,8 +176,9 @@ owns the machine lock, startup returns crash-abandoned `delivering` rows to `pen
 without changing their attempt identity. A second server therefore cannot reset a live
 delivery claim. Conversation idempotency either discovers the earlier success or safely
 recreates a lost queue. Shutdown retains the lock if a delivery does not settle before
-the deadline; process exit then releases it. A post-wire transcript failure becomes
-terminal `uncertain`; it is visible for repair and never retried automatically.
+the deadline or a durable `delivering` row still represents a process-local queue.
+Process exit then releases the lock. A post-wire transcript failure becomes terminal
+`uncertain`; it is visible for repair and never retried automatically.
 
 _Code paths:_ `src/planner/proposal_holder_wakes/`, `src/planner/core/loops.py`.
 

@@ -165,6 +165,16 @@ def due_ticket_ids(conn: sqlite3.Connection, *, now: int) -> tuple[str, ...]:
     )
 
 
+def has_delivering(conn: sqlite3.Connection) -> bool:
+    """Return whether this process can still own a durable delivery claim."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM proposal_holder_wakes WHERE state='delivering' LIMIT 1"
+        ).fetchone()
+        is not None
+    )
+
+
 def _wake_from_row(row: sqlite3.Row) -> ProposalHolderWake:
     return ProposalHolderWake(
         ticket_id=str(row["ticket_id"]),
