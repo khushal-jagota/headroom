@@ -259,9 +259,14 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     history = page.get_by_label("Sprint Item conversation")
     history.select_option(past_id)
     page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
+    assert page.get_by_text("Past supervisor marker", exact=True).count() == 0
+    page.locator("[data-conversation-lens-toggle]").click()
     page.get_by_text("Past supervisor marker", exact=True).wait_for(timeout=WAIT_MS)
     assert page.locator('[data-conversation-read-only-boundary="true"]').count() == 1
     history.select_option("__current__")
+    assert page.locator("[data-conversation-lens-toggle]").inner_text() == "Focus"
+    assert page.get_by_text("Current supervisor marker", exact=True).count() == 0
+    page.locator("[data-conversation-lens-toggle]").click()
     page.get_by_text("Current supervisor marker", exact=True).wait_for(timeout=WAIT_MS)
 
     api.direct_patch(

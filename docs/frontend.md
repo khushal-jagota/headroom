@@ -114,9 +114,16 @@ One screen per part of the system:
   Item is what puts its mark out.
 
   The owner read position is durable and server-side, so reading a conversation clears
-  the same dot on every browser. The client advances it only while the conversation pane
-  is open, the document is visible, and the window has focus. It advances only through
-  the newest transcript row that this browser received, even when a newer conversation
+  the same dot on every browser. Every conversation opens in Focus. Focus shows the
+  owner's prompts, explicit messages to the owner, permission requests, agent questions,
+  and their settled answers. Full shows all runtime rows. One header toggle switches the
+  lens, and the unmodified `f` key does the same when no editable control owns it. The
+  choice belongs to the mounted conversation and resets to Focus when its identity changes.
+  Notification links therefore open Focus through the ordinary conversation route.
+
+  The client advances the read position only while Focus is selected, the conversation
+  pane is open, the document is visible, and the window has focus. It advances only
+  through the newest focused row that this browser received, even when a newer conversation
   snapshot arrived first. The client checks document focus again for each advance, so a
   click into a preview frame cannot leave stale focus permission. Each focus, blur, or
   visibility event retries the check, so focus return credits rows that arrived while

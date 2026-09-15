@@ -102,6 +102,8 @@ def test_ticket_history_shows_only_the_active_writable_conversation(
 
     page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
     page.locator('[data-conversation-state="peeked"]').wait_for(timeout=WAIT_MS)
+    assert page.get_by_text("Current reply marker", exact=True).count() == 0
+    page.locator("[data-conversation-lens-toggle]").click()
     page.locator('[data-conversation-row="agent_message"]').get_by_text(
         "Current reply marker", exact=True
     ).wait_for(timeout=WAIT_MS)
