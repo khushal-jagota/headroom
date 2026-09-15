@@ -371,6 +371,8 @@ def test_tenth_refusal_visibility_is_retried_after_later_ticket_changes(
         assert wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
     elif later_action == "replacement":
         _file(tmp_db, ticket_id, body="Replacement", now=3)
+        assert tickets_data.read_ticket(tmp_db, ticket_id).ticket_status is TicketStatus.errored
+        assert wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
     else:
         tickets_data.clear_ticket_error_for_restart(tmp_db, ticket_id, now=3)
 

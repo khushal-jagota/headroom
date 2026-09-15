@@ -45,9 +45,10 @@ Every conversation opens through the Focus lens. Focus shows the owner's prompts
 explicit messages addressed to the owner, permission requests, agent questions, and
 the answers that settle those requests. Historical owner prompts without principals use
 their established owner label, so they remain readable without a record migration.
-Failed turns, stopped turns, and missing explicit replies remain visible as compact
-system rows. Complete turn boundaries still settle the Focus thread and rest line when
-runtime rows are hidden. A turn with a hidden opening prompt has no Focus turn head.
+Failed turns, stopped turns, missing explicit replies, and terminal proposal-alert
+delivery failures remain visible as compact system rows. Complete turn boundaries still
+settle the Focus thread and rest line when runtime rows are hidden. A turn with a hidden
+opening prompt has no Focus turn head.
 Full shows the complete runtime notebook. The header toggle and the unmodified `f` key
 switch the lens without replacing the conversation. Editable controls keep the key.
 
@@ -62,8 +63,9 @@ needs the owner's attention.
 
 An open conversation is handed each new row directly, so it never has to be told to
 come and look. That is why most rows are written quietly: a historical agent-message row, a tool
-call starting or finishing, a plan, a token count, and a compaction are shown only
-inside the conversation, and writing them does not send every other open screen back
+call starting or finishing, a plan, a token count, a compaction, and a terminal
+proposal-alert delivery failure are shown only inside the conversation. Writing them
+does not send every other open screen back
 for a fresh copy of itself. A working agent writes dozens of those a minute, and
 announcing each one sends every open tab back for everything it is showing.
 

@@ -1645,7 +1645,13 @@ def file_current_proposal_with_recap(
                 message=proposal_ready_message(ticket_id),
                 now=now,
             )
-            _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
+            if not (
+                ticket.ticket_status is TicketStatus.errored
+                and proposal_holder_wakes_data.has_unresolved_proposal_delivery_failure(
+                    conn, ticket_id
+                )
+            ):
+                _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
         else:
             updated = _load_ticket_for_write(conn, ticket_id)
             if decision.stage != ticket.stage:

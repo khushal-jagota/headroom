@@ -73,6 +73,7 @@ class ConversationEventKind(StrEnum):
 CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION: Final = frozenset(
     {
         ConversationEventKind.agent_message,
+        ConversationEventKind.proposal_delivery_failed,
         ConversationEventKind.tool_call_started,
         ConversationEventKind.tool_call_finished,
         ConversationEventKind.plan_updated,

@@ -99,8 +99,9 @@ One screen per part of the system:
 
   The Chief of Staff keeps its separate conversation mark. Every conversation opens in
   Focus. Focus shows the owner's prompts, explicit messages to the owner, permission
-  requests, agent questions, and their settled answers. Failed turns, stopped turns, and
-  missing explicit replies remain visible as compact system rows. Full shows all runtime
+  requests, agent questions, and their settled answers. Failed turns, stopped turns,
+  missing explicit replies, and terminal proposal-alert delivery failures remain visible
+  as compact system rows. Full shows all runtime
   rows. One header toggle switches the lens, and the unmodified `f` key does the same
   when no editable control owns it. The choice belongs to the mounted conversation and
   resets to Focus when its identity changes.
@@ -567,4 +568,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-08-15._
+_Last verified: 2026-09-15._
