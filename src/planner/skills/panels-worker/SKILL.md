@@ -46,7 +46,7 @@ Everything runs through the `panels` command — `panels --help` for full usage.
   manifest, or expand named saved fields, `proposal`, `recap`, `guidance`, and `archive`.
 - **`panels ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** —
   set or clear a Stage ownership override when the user directly instructs that change.
-- **`panels worker propose <id> --recap "…"`**, piping the proposal text on stdin — propose the ticket's current gated field; the body arrives on stdin only, and every proposal must also set a recap with `--recap TEXT`.
+- **`panels worker propose <id> --recap "…"`**, piping the proposal text on stdin — propose your own Ticket's current gated field. No supervisor, holder Ticket, or other Worker can file it for you. The body arrives on stdin only, and every proposal must also set a recap with `--recap TEXT`.
 - **`panels worker recap <id>`**, piping the recap text on stdin — update the running recap outside a proposal.
 - **`panels worker trouble`**, piping the note on stdin — record one short trouble note on your
   current Ticket during the active claimed worker step. Use it for a harness, tool, or

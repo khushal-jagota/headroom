@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
+from typing import cast
 
 from planner.conversation.contracts import (
+    AtomicPromptBatchConversationSystem,
+    AtomicPromptMessage,
     ConversationMessageContent,
     ConversationSystem,
+    ConversationTurnReference,
     PromptDeliveryMode,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
@@ -32,30 +37,64 @@ from planner.tickets import data as tickets_data
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 
 
-async def send_ticket_system_message(
+async def send_ticket_revision_batch(
     conversations: ConversationSystem,
     conn: sqlite3.Connection,
-    clock: Clock,
     ticket_id: str,
-    message: str,
     *,
+    lifecycle_message: str,
+    comment: str,
+    ctx: RequestContext,
+    commit_mutation: Callable[[], None],
     required_sprint_item_id: str | None = None,
 ) -> conversation_start.DeliveredMessage:
-    """Send one Panels-authored lifecycle fact under the Ticket conversation lock."""
+    """Deliver the rejection fact and attributed comment as one indivisible prompt."""
     async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
         ticket = tickets_data.read_ticket(conn, ticket_id)
-        return await conversation_start.send_to_ticket_conversation(
-            conversations,
-            conn,
-            ticket_id,
-            text_message_content(message),
-            conversation_id=ticket.conversation_id,
-            sender_label="Panels",
-            sender=None,
-            recipient=None,
-            now=clock.now_unix(),
-            required_sprint_item_id=required_sprint_item_id,
+        if required_sprint_item_id is not None and ticket.sprint_item_id != required_sprint_item_id:
+            raise PlannerError(
+                ErrorCode.agent_forbidden,
+                "the ticket is not a current child of this Sprint Item supervisor",
+                {"ticket_id": ticket_id, "sprint_item_id": required_sprint_item_id},
+            )
+        if ticket.conversation_id is None:
+            raise PlannerError(
+                ErrorCode.not_found,
+                "the ticket has no current Worker conversation",
+                {"ticket_id": ticket_id},
+            )
+        fate = await cast(
+            AtomicPromptBatchConversationSystem, conversations
+        ).send_atomic_prompt_batch(
+            ticket.conversation_id,
+            (
+                AtomicPromptMessage(text_message_content(lifecycle_message), "Panels"),
+                AtomicPromptMessage(
+                    text_message_content(comment),
+                    sender_label(ctx),
+                    sender=ctx.principal,
+                    recipient=Principal(PrincipalKind.ticket, ticket_id),
+                ),
+            ),
+            transaction_connection=conn,
+            commit_mutation=commit_mutation,
         )
+        return conversation_start.DeliveredMessage(ticket.conversation_id, fate, True)
+
+
+async def revision_source_turn(
+    conversations: ConversationSystem,
+    conn: sqlite3.Connection,
+    *,
+    ctx: RequestContext,
+) -> ConversationTurnReference | None:
+    """Capture the exact source turn that the committed rejection answers."""
+    if ctx.principal.kind is PrincipalKind.owner:
+        return None
+    source_conversation_id = _sender_conversation_id(conn, ctx.principal)
+    if source_conversation_id is None:
+        return None
+    return await conversations.active_turn_reference(source_conversation_id)
 
 
 def sender_label(ctx: RequestContext) -> str:
@@ -67,6 +106,81 @@ def sender_label(ctx: RequestContext) -> str:
     if ctx.principal.kind is PrincipalKind.ticket:
         return f"Ticket {ctx.principal.id}"
     return f"Sprint Item {ctx.principal.id}"
+
+
+async def send_system_message(
+    conversations: ConversationSystem,
+    conn: sqlite3.Connection,
+    clock: Clock,
+    recipient: Principal,
+    message: str,
+    *,
+    sender_message_id: str,
+) -> MessageDeliveryResult:
+    """Send one idempotently named Panels-authored message to an agent principal."""
+    content = text_message_content(message)
+    if recipient.kind is PrincipalKind.ticket:
+        async with conversation_start.conversation_link_lock(f"ticket:{recipient.id}"):
+            ticket = tickets_data.read_ticket(conn, recipient.id)
+            delivered = await conversation_start.send_to_ticket_conversation(
+                conversations,
+                conn,
+                recipient.id,
+                content,
+                conversation_id=ticket.conversation_id,
+                created_conversation_id=conversation_start.new_conversation_id(),
+                sender_label="Panels",
+                sender_message_id=sender_message_id,
+                sender=None,
+                recipient=None,
+                now=clock.now_unix(),
+            )
+    elif recipient.kind is PrincipalKind.chief:
+        async with conversation_start.conversation_link_lock(f"agent:{CHIEF_SETTINGS_KEY}"):
+            delivered = await conversation_start.send_to_agent_conversation(
+                conversations,
+                conn,
+                CHIEF_SETTINGS_KEY,
+                content,
+                conversation_start.agent_resolve(conn),
+                conversation_id=conversation_start.read_agent_conversation(
+                    conn, CHIEF_SETTINGS_KEY
+                ),
+                created_conversation_id=conversation_start.new_conversation_id(),
+                sender_label="Panels",
+                sender_message_id=sender_message_id,
+                sender=None,
+                recipient=None,
+            )
+    elif recipient.kind is PrincipalKind.sprint_item:
+        async with sprints_service.supervisor_lifecycle_lock(recipient.id):
+            item = sprints_data.read_item(conn, recipient.id).item
+            async with conversation_start.conversation_link_lock(
+                f"agent:{item.supervisor_agent_key}"
+            ):
+                delivered = await conversation_start.send_to_agent_conversation(
+                    conversations,
+                    conn,
+                    item.supervisor_agent_key,
+                    content,
+                    conversation_start.sprint_item_supervisor_resolve(item),
+                    conversation_id=conversation_start.read_agent_conversation(
+                        conn, item.supervisor_agent_key
+                    ),
+                    created_conversation_id=conversation_start.new_conversation_id(),
+                    sender_label="Panels",
+                    sender_message_id=sender_message_id,
+                    sender=None,
+                    recipient=None,
+                    required_sprint_item_id=recipient.id,
+                )
+    else:
+        raise PlannerError(
+            ErrorCode.validation,
+            "the proposal holder has no agent conversation",
+            {"kind": recipient.kind.value, "id": recipient.id},
+        )
+    return MessageDeliveryResult(recipient, delivered.conversation_id, delivered.fate)
 
 
 def _prompt_mode(mode: MessageDeliveryMode | PromptDeliveryMode) -> PromptDeliveryMode:

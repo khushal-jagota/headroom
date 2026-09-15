@@ -179,6 +179,20 @@ def create_app(
         )
         await conversation.system.start_idle_child_janitor()
 
+        # The proposal and its wake intent commit together. This startup pass closes the
+        # crash window between that commit and the best-effort immediate delivery.
+        from planner.proposal_holder_wakes.runtime import deliver_pending_wakes
+
+        wake_conn = conn_factory()
+        try:
+            await deliver_pending_wakes(
+                app.state.conversation_system,
+                wake_conn,
+                clock,
+            )
+        finally:
+            wake_conn.close()
+
         lifecycle_observer = asyncio.create_task(
             observe_path_changes(deployment_lifecycle_path, change_signal.emit)
         )

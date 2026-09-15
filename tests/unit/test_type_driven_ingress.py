@@ -179,11 +179,57 @@ def test_probe_proposal_parks_on_registry_selected_field(
         )
         # A position-relative propose parks on ALPHA — the field probe's needs_alpha gates.
         parked = client.post(
-            f"/api/tickets/{tid}/propose", json={"body": "alpha body", "recap": "r"}
+            f"/api/tickets/{tid}/propose",
+            json={"body": "alpha body", "recap": "r"},
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": tid},
         )
         assert parked.status_code == 200, parked.json()
         assert parked.json()["pending_proposal"]["body"] == "alpha body"
         assert parked.json()["pending_proposal"]["field"] == "alpha"
+
+
+def test_proposal_route_accepts_only_the_ticket_own_worker(app_db: AppDb) -> None:
+    app, _db = app_db
+    with TestClient(app) as client:
+        target = _create(client, "coding")
+        parent = _create(client, "coding")
+        unrelated = _create(client, "coding")
+        scoped = client.post(
+            f"/api/tickets/{target}/accept/kickoff",
+            json={
+                "next_ceiling": "needs_success",
+                "at_cap": "propose",
+                "next_holder": {"kind": "ticket", "id": parent},
+            },
+        )
+        assert scoped.status_code == 200, scoped.text
+        item = client.post(
+            "/api/items", json={"title": "Supervisor", "project_id": "project_vylo"}
+        ).json()
+        attempts = (
+            {
+                "X-Plan-Actor": "sprint_item_supervisor",
+                "X-Plan-Sprint-Item-ID": str(item["id"]),
+            },
+            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": parent},
+            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": unrelated},
+        )
+        for headers in attempts:
+            refused = client.post(
+                f"/api/tickets/{target}/propose",
+                json={"body": "Foreign", "recap": "Foreign"},
+                headers=headers,
+            )
+            assert refused.status_code == 400
+            assert refused.json()["error"]["code"] == "agent_forbidden"
+
+        own = client.post(
+            f"/api/tickets/{target}/propose",
+            json={"body": "Own Worker", "recap": "Own"},
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": target},
+        )
+        assert own.status_code == 200, own.text
+        assert own.json()["pending_proposal"]["body"] == "Own Worker"
 
 
 def test_ticket_note_routes_make_replace_and_append_explicit(app_db: AppDb) -> None:

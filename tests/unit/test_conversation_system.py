@@ -38,6 +38,7 @@ from planner.conversation.backends.contracts import (
     UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
+    AtomicPromptMessage,
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
     ConversationBackendKey,
@@ -560,6 +561,35 @@ def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
     is a system that has stopped rather than one that is slow.
     """
     asyncio.run(asyncio.wait_for(exercise(), 20.0))
+
+
+def test_atomic_prompt_batch_quarantines_post_wire_transaction_failure(
+    harness: _Harness, tmp_path: Path
+) -> None:
+    async def exercise() -> None:
+        await _start(harness)
+        conn = connect(str(tmp_path / "conversations.db"))
+        conn.execute("BEGIN IMMEDIATE")
+
+        def fail_mutation() -> None:
+            raise sqlite3.OperationalError("injected mutation failure")
+
+        fate = await harness.system.send_atomic_prompt_batch(
+            "c",
+            (AtomicPromptMessage(text_message_content("rejection"), "Panels"),),
+            transaction_connection=conn,
+            commit_mutation=fail_mutation,
+        )
+        conn.close()
+
+        assert isinstance(fate, PromptDeliveryUncertain)
+        assert harness.backend("c").written_texts() == ("rejection",)
+        assert harness.backend("c").stops == 1
+        assert harness.backend("c").live_children == 0
+        assert not await harness.system.is_running("c")
+        assert await harness.events("c") == ()
+
+    _run(exercise)
 
 
 async def _start(

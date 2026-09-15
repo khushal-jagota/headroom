@@ -12,13 +12,15 @@ treated as one.
 
 from __future__ import annotations
 
+import sqlite3
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
 from planner.conversation.contracts import (
     AddressedPromptDeliveryReceipt,
+    AtomicPromptMessage,
     ConversationAlreadyStarted,
     ConversationStartRequest,
     ConversationTurnReference,
@@ -32,6 +34,7 @@ from planner.conversation.contracts import (
     PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliveryUncertain,
     PromptQueueReason,
     ResolvedConversationStart,
     backend_supports_steer,
@@ -253,6 +256,49 @@ class InMemoryConversationSystem:
             recipient=recipient,
         )
         return receipt.fate
+
+    async def send_atomic_prompt_batch(
+        self,
+        conversation_id: str,
+        messages: tuple[AtomicPromptMessage, ...],
+        *,
+        transaction_connection: sqlite3.Connection,
+        commit_mutation: Callable[[], None],
+    ) -> PromptDeliveryFate:
+        if not messages:
+            raise ValueError("an atomic prompt batch must contain a message")
+        for message in messages:
+            require_message_content(message.content)
+        state = self._conversations.get(conversation_id)
+        if state is None:
+            return PromptDeliveryRefused(PromptDeliveryRefusalReason.no_such_conversation)
+        if state.running_turn is not None or state.held_prompts:
+            return PromptDeliveryRefused(
+                PromptDeliveryRefusalReason.running_turn_cannot_accept_steer
+            )
+        recorded = tuple(
+            _HeldPrompt(
+                held_prompt_id="",
+                content=message.content,
+                sender_label=message.sender_label,
+                sender=message.sender,
+                recipient=message.recipient,
+            )
+            for message in messages
+        )
+        try:
+            return self._start_turn(
+                state,
+                one_prompt_from(recorded),
+                recorded[0].sender_label,
+                PromptDeliveryMode.queue,
+                recorded_messages=recorded,
+                accepted_mutation=commit_mutation,
+            )
+        except BaseException:
+            if transaction_connection.in_transaction:
+                transaction_connection.execute("ROLLBACK")
+            return PromptDeliveryUncertain()
 
     async def send_with_receipt(
         self,
@@ -874,6 +920,7 @@ class InMemoryConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         recorded_messages: Sequence[_HeldPrompt] = (),
+        accepted_mutation: Callable[[], None] | None = None,
     ) -> _InMemoryBackendSession | PromptDeliveryRefused:
         established = self._establish_backend_session(state)
         if isinstance(established, PromptDeliveryRefusalReason):
@@ -882,6 +929,8 @@ class InMemoryConversationSystem:
             return PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed
             )
+        if accepted_mutation is not None:
+            accepted_mutation()
         if model_change is not None or reasoning_effort_change is not None:
             # The change lands with the delivery, so it is applied only once the write
             # is known to go through — a refused delivery must change nothing.
@@ -951,6 +1000,7 @@ class InMemoryConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         recorded_messages: Sequence[_HeldPrompt] = (),
+        accepted_mutation: Callable[[], None] | None = None,
     ) -> PromptDeliveryStarted | PromptDeliveryRefused:
         written = self._write_to_backend(
             state,
@@ -964,6 +1014,7 @@ class InMemoryConversationSystem:
             sender=sender,
             recipient=recipient,
             recorded_messages=recorded_messages,
+            accepted_mutation=accepted_mutation,
         )
         if isinstance(written, PromptDeliveryRefused):
             return written
