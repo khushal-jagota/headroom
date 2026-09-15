@@ -58,8 +58,8 @@ contradictions; an implementation report is evidence, not automatic proof of its
 outcome.
 
 Show the factual picture, then ask for the user's reflection before giving the final
-worker interpretation. Send that bounded opening in Ticket Chat and call
-`panels worker request-user-help <ticket-id>`. Useful questions include what happened,
+worker interpretation. Pipe that bounded opening to
+`panels worker request-help <ticket-id> --owner`. Useful questions include what happened,
 what the user learned, which assumptions changed, and what deserves to carry forward.
 Use the questions that can change the next decision; do not fill a questionnaire.
 
@@ -68,7 +68,7 @@ truthful review over reconstructing fictional precision. For a genuine first spr
 state that no prior review exists and obtain the user's agreement before skipping it.
 
 Preserve direct guidance as it settles. Do not propose while strategic questions remain
-open. After the user explicitly Releases the Ticket, synthesize one concise **review**
+open. After the user answers, synthesize one concise **review**
 document. Use headings when they help. Explain the important judgment rather than
 replaying status history.
 
@@ -76,8 +76,7 @@ replaying status history.
 
 Begin only from the approved Review. Refresh evidence whose change could alter planning,
 then prepare a bounded opening with plausible constraints and material candidate work,
-not a predetermined sprint. Send it in Ticket Chat and call
-`panels worker request-user-help <ticket-id>`.
+not a predetermined sprint. Pipe it to `panels worker request-help <ticket-id> --owner`.
 
 Start with the constraint and a concrete primary bet. Discuss supporting work and what
 could make the plan fail when those questions can change the commitment. Then choose

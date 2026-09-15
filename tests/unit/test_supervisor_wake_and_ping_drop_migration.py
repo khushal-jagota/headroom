@@ -127,7 +127,7 @@ def test_upgrade_clears_the_ping_ahead_of_the_loop_and_keeps_the_decided_one(
     )
     preferences = notifications_data.resolved_preferences(conn)
     assert ("sprint_item_supervisors", "sprint_item_ping") not in preferences
-    assert preferences[("sprint_item_supervisors", "worker_failed")] is False
+    assert preferences[("sprint_item_supervisors", "errored")] is False
     # Deciding the remaining facts is the loop's real move, and it no longer raises.
     notifications_data.apply_policy(conn, now=20)
     conn.close()

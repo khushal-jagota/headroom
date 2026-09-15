@@ -1,14 +1,8 @@
 import type { FieldStageVisualState } from "./ui";
 
 export type ConversationSignals = {
-  conversation_id: string | null;
-  needs_me: boolean;
-  agent_working: boolean;
-  // The position the reader must reach for this row to count as read. Every kind of row
-  // supplies where its own conversation last ended a turn. 0 is before every real
-  // position, so a row with nothing to show is never lit.
-  unread_position: number;
-  owner_read_through_sequence: number;
+  awaiting_reply: boolean;
+  agent_state: "working" | "idle" | "errored";
 };
 
 export type ConversationSignalPresentation = {
@@ -26,18 +20,14 @@ export type ConversationSignalPresentation = {
 export function conversationSignalPresentation(
   signals: ConversationSignals
 ): ConversationSignalPresentation {
-  if (signals.needs_me) {
-    return { state: "needs-me", ariaLabel: "Needs you" };
+  if (signals.awaiting_reply) {
+    return { state: "needs-me", ariaLabel: "Message" };
   }
-  if (signals.agent_working) {
+  if (signals.agent_state === "working") {
     return { state: "current-running", ariaLabel: "Agent working" };
   }
-  const unreadPosition = Number(signals.unread_position ?? 0);
-  if (unreadPosition === 0 || typeof signals.conversation_id !== "string") {
-    return { state: "upcoming", ariaLabel: "Nothing waiting" };
+  if (signals.agent_state === "errored") {
+    return { state: "errored", ariaLabel: "Agent errored" };
   }
-  if (unreadPosition > Number(signals.owner_read_through_sequence ?? 0)) {
-    return { state: "current-awaiting-approval", ariaLabel: "Unseen agent reply" };
-  }
-  return { state: "reply-seen", ariaLabel: "Agent reply seen" };
+  return { state: "upcoming", ariaLabel: "Nothing waiting" };
 }

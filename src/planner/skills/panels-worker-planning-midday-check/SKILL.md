@@ -19,8 +19,8 @@ Read the Day, its `planning-day` Ticket, and live Ticket state. Lead with what a
 happened. Raise only slippage or blockers that matter to action now. If morning planning
 is missing, say so and continue without inventing a baseline.
 
-Give one compact confrontation and bounded recommendation, then call
-`panels worker request-user-help`. Make no changes before explicit Release and approval.
+Pipe one compact confrontation and bounded recommendation to
+`panels worker request-help --owner`. Make no changes before the user answers and approves.
 After the exchange, propose only the settled changes or `No action`.
 
 ### needs_closeout

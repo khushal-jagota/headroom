@@ -303,12 +303,10 @@ and the approval screen, so the two cannot disagree.
 While a proposal is pending, the Ticket page hides the leash because scope cannot change
 without silently changing the proposal's stable address.
 
-Review's single, oldest-first walk shows today's owner-addressed proposals and
-`needs_user` Tickets.
-A parked proposal keeps its approval and revision controls. A Worker help request uses the same
-Ticket title, Skip, and Open Ticket structure without proposal controls; the answer
-belongs in the Ticket conversation. Either kind leaves Review the moment its status
-changes, whichever way that happens.
+Review's single, oldest-first walk shows today's owner-addressed proposals.
+A parked proposal keeps its approval and revision controls. A Worker help request is an
+addressed conversation message. Its unread state feeds the shared attention projection,
+and the answer belongs in that conversation.
 
 Replying to the worker does not decide its proposal. The proposal stays pending and
 addressed to its holder until a decision or a replacement proposal arrives. A non-owner

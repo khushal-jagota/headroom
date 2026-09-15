@@ -22,14 +22,12 @@ One screen per part of the system:
 
 - **Home** — the daily hub. It combines focus, what makes the day land, brief take,
   and watchout with one progress mark per Ticket. Action tiles lead to work that needs
-  the user, needs review, is working, is paired, or is done. Day fields are written by
+  Khushal, needs review, is working, is assigned, or is done. Day fields are written by
   the planning Workers, not edited on this page.
-- **Review** — the human chamber for owner-addressed Ticket proposals and today's Worker
-  help requests: one oldest-first walk with a centred item, its Ticket title, and Skip
-  and Open Ticket top-right. Proposal items add their labelled recap, ask, approval, and
-  send-back controls; needs-user items direct the human to the Ticket conversation
-  without those proposal controls. Proposals addressed to another holder do not appear
-  here. Keyboard shortcuts drive the actions that apply to the current item when the
+- **Review** — the human chamber for owner-addressed Ticket proposals: one oldest-first
+  walk with a centred item, its Ticket title, and Skip and Open Ticket top-right.
+  Proposal items add their labelled recap, ask, approval, and send-back controls.
+  Proposals addressed to another holder do not appear here. Keyboard shortcuts drive the actions that apply to the current item when the
   cursor is not in a text field, and each item fades in as it arrives. A proposal's
   approve button sends the next ceiling, cap, and owner holder together. Send-back
   delivers the owner's comment to the exact Ticket worker conversation before it clears
@@ -40,7 +38,7 @@ One screen per part of the system:
   appear. The Chief of Staff row leads, and under it a selector chooses one of two views
   over the same tickets: **Tickets** or **Sprint Items**.
 
-  The rail holds every status group, in one order: Errored, Needs you, User, Paired,
+  The rail holds every derived work group, in one order: Errored, Needs you, Assigned,
   Agent, Waiting to Closeout, Awaiting approval, Waiting for Kickoff, Empty, Blocked,
   Done. Every parked proposal sits under Awaiting approval, because there is one
   approval gate; a proposal still gated on its kickoff splits out into its own group. A
@@ -221,7 +219,8 @@ One screen per part of the system:
   Config.
 - **Notifications** — the personal notification settings at `#/notifications`.
   “What counts” renders the Ticket and Chief of Staff groups from the server's
-  notification catalogue. Tickets have five switches, and the Chief has four. Each
+  notification catalogue. Tickets have four switches. The Chief and Sprint Item
+  supervisors each have two. Each
   subject-and-type switch saves and reports errors independently. “This device” asks
   for browser permission only after the user
   presses Enable, registers the browser's Web Push subscription, and can remove it

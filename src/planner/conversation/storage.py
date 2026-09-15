@@ -143,6 +143,14 @@ class ConversationRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ConversationAttentionFacts:
+    """Durable conversation facts used by work-list attention projection."""
+
+    unread_message_to_owner: bool
+    last_turn_failed: bool
+
+
+@dataclass(frozen=True, slots=True)
 class StoredConversationEvent:
     """One row of a conversation's record, as it was written."""
 
@@ -331,6 +339,12 @@ class ConversationStore:
     ) -> dict[str, int]:
         """Return the owner's durable position for each existing conversation."""
         return await asyncio.to_thread(self._owner_read_through_sequences_sync, conversation_ids)
+
+    async def attention_facts(
+        self, conversation_ids: Collection[str]
+    ) -> dict[str, ConversationAttentionFacts]:
+        """Return owner-message and last-turn facts for a list of conversations."""
+        return await asyncio.to_thread(self._attention_facts_sync, conversation_ids)
 
     async def has_delivered_prompt(self, conversation_id: str) -> bool:
         """Whether any prompt has ever reached this conversation's backend.
@@ -776,6 +790,41 @@ class ConversationStore:
             conn.close()
         return {
             str(row["conversation_id"]): int(row["owner_read_through_sequence"]) for row in rows
+        }
+
+    def _attention_facts_sync(
+        self, conversation_ids: Collection[str]
+    ) -> dict[str, ConversationAttentionFacts]:
+        ids = tuple(dict.fromkeys(conversation_ids))
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT c.conversation_id, c.owner_read_through_sequence, "
+                "MAX(CASE WHEN e.kind = 'message_to_owner' THEN e.sequence END) "
+                "AS latest_owner_message, "
+                "(SELECT json_extract(te.payload, '$.ending') "
+                " FROM conversation_events te "
+                " WHERE te.conversation_id = c.conversation_id AND te.kind = 'turn_ended' "
+                " ORDER BY te.sequence DESC LIMIT 1) AS last_turn_ending "
+                "FROM conversations c LEFT JOIN conversation_events e "
+                "ON e.conversation_id = c.conversation_id "
+                f"WHERE c.conversation_id IN ({placeholders}) GROUP BY c.conversation_id",
+                ids,
+            ).fetchall()
+        finally:
+            conn.close()
+        return {
+            str(row["conversation_id"]): ConversationAttentionFacts(
+                unread_message_to_owner=(
+                    row["latest_owner_message"] is not None
+                    and int(row["latest_owner_message"]) > int(row["owner_read_through_sequence"])
+                ),
+                last_turn_failed=str(row["last_turn_ending"] or "") == "failed",
+            )
+            for row in rows
         }
 
     def _has_delivered_prompt_sync(self, conversation_id: str) -> bool:

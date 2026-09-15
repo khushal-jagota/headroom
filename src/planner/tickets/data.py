@@ -762,13 +762,7 @@ def _entered_stage_status_for_ticket(
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> TicketStatus:
-    ownership_mode = machine.effective_stage_ownership_mode(
-        ticket.stage,
-        ticket.stage_ownership_overrides,
-        worker_type_definition=worker_type_definition,
-        default_stage_ownership_mode=ticket.default_stage_ownership_mode,
-    )
-    entered = TicketStatus.user if ownership_mode is StageOwnershipMode.user else TicketStatus.empty
+    entered = TicketStatus.empty
     return _blocked_standin(conn, ticket.id, entered)
 
 
@@ -1330,8 +1324,6 @@ def reconcile_ticket_from_external_work(
         if ticket.ticket_status not in (
             TicketStatus.empty,
             TicketStatus.blocked,
-            TicketStatus.user,
-            TicketStatus.paired,
             TicketStatus.errored,
         ):
             raise PlannerError(
@@ -1769,17 +1761,6 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
                 "kickoff must be settled before release",
                 {"ticket_id": ticket_id},
             )
-        if (
-            ticket.ticket_status is TicketStatus.needs_user
-            and ticket.stage not in ticket.stage_ownership_overrides
-        ):
-            _write_entered_stage_ticket_status(
-                conn,
-                ticket,
-                worker_type_definition=worker_type_definition,
-                now=now,
-            )
-            return _load_ticket_for_write(conn, ticket_id)
         if ticket.stage not in ticket.stage_ownership_overrides:
             return ticket
         effective_before = ticket.effective_stage_ownership_mode
@@ -1809,32 +1790,6 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
             )
             updated = _load_ticket_for_write(conn, ticket_id)
         return updated
-
-
-def request_user_help(
-    conn: sqlite3.Connection, ticket_id: str, *, principal: Principal, now: int
-) -> Ticket:
-    """Pause a Worker-owned Ticket for explicit human help."""
-    admission.require_ticket_principal(principal, "request user help")
-    with _txn(conn):
-        ticket, _worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
-        )
-        if ticket.stage in ("done", "dropped"):
-            raise PlannerError(
-                ErrorCode.validation,
-                "terminal tickets cannot request user help",
-                {"ticket_id": ticket_id},
-            )
-        if ticket.stage == "needs_kickoff":
-            raise PlannerError(
-                ErrorCode.validation,
-                "kickoff must be settled before requesting user help",
-                {"ticket_id": ticket_id},
-            )
-        if ticket.ticket_status is not TicketStatus.needs_user:
-            _write_ticket_status(conn, ticket_id, TicketStatus.needs_user, now)
-        return _load_ticket_for_write(conn, ticket_id)
 
 
 def edit_pending_proposal(
@@ -2099,8 +2054,6 @@ def change_scope(
         if ticket.ticket_status in {
             TicketStatus.empty,
             TicketStatus.blocked,
-            TicketStatus.paired,
-            TicketStatus.user,
         }:
             _write_resting_ticket_status(
                 conn,

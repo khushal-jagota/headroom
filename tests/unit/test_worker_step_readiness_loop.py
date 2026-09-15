@@ -515,7 +515,7 @@ def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _Worl
     assert {row["sender_message_id"] for row in bindings} == {sender_message_id}
 
 
-def test_a_paired_owned_stage_departs_at_paired_and_gets_the_paired_opener(
+def test_a_paired_owned_stage_departs_at_agent_and_gets_the_paired_opener(
     world: _World,
 ) -> None:
     ticket_id = world.ready_ticket(
@@ -527,7 +527,7 @@ def test_a_paired_owned_stage_departs_at_paired_and_gets_the_paired_opener(
 
     assert world.start_step(ticket_id) is True
 
-    assert world.ticket(ticket_id).ticket_status is TicketStatus.paired
+    assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
     text = world.conversations.backend_prompt_writes("conv-paired")[0].text
     assert "open the paired discussion for the 'success' field" in text
     assert "Stage owner: paired" in text

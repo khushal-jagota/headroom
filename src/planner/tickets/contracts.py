@@ -52,10 +52,7 @@ class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer 
     empty = "empty"
     blocked = "blocked"  # empty's stand-in while a live blocker exists
     agent = "agent"
-    paired = "paired"
     awaiting_approval = "awaiting_approval"
-    needs_user = "needs_user"
-    user = "user"
     errored = "errored"
 
 
@@ -88,29 +85,27 @@ class BoardCard(TypedDict):
     sprint_item_id: str | None
     sprint_item_title: str | None
     sprint_item_priority: str | None
-    agent_working: NotRequired[bool]
-    needs_me: NotRequired[bool]
-    latest_turn_ended_sequence: NotRequired[int]
-    owner_read_through_sequence: NotRequired[int]
+    awaiting_reply: NotRequired[bool]
+    awaiting_approval: NotRequired[bool]
+    assigned: NotRequired[bool]
+    agent_state: NotRequired[str]
 
 
 class BoardSprintItem(TypedDict):
     """A Sprint Item's own identity and its supervisor's conversation.
 
-    The rail marks an Item's title from the same fact a card uses: an unread reply from
-    the conversation. That reply only ever follows something the user said, because
-    nothing else starts an Item conversation. ``latest_turn_ended_sequence`` and the two
-    live conversation signals all arrive later than this read, exactly as a card's do, so
-    none of them is required here.
+    The shared attention projection adds the Item's own supervisor state and one rollup
+    over its child Tickets after this database read.
     """
 
     id: str
     created_at: int
     conversation_id: str | None
-    latest_turn_ended_sequence: NotRequired[int]
-    owner_read_through_sequence: NotRequired[int]
-    agent_working: NotRequired[bool]
-    needs_me: NotRequired[bool]
+    awaiting_reply: NotRequired[bool]
+    awaiting_approval: NotRequired[bool]
+    assigned: NotRequired[bool]
+    agent_state: NotRequired[str]
+    ticket_rollup: NotRequired[dict[str, object]]
 
 
 @dataclass(frozen=True, slots=True)

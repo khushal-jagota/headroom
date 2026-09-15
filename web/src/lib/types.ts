@@ -64,6 +64,15 @@ export type SprintsResponse = {
 
 export type Priority = "P0" | "P1" | "P2" | "P3";
 
+export type AgentState = "working" | "idle" | "errored";
+
+export type WorkAttention = {
+  awaiting_reply: boolean;
+  awaiting_approval: boolean;
+  assigned: boolean;
+  agent_state: AgentState;
+};
+
 export type ListPageFacts = {
   match_count: number;
   return_count: number;
@@ -75,7 +84,7 @@ export type ListPageFacts = {
   next_offset: number | null;
 };
 
-export type TicketSummary = {
+export type TicketSummary = WorkAttention & {
   id: string;
   title: string;
   worker_type: string;
@@ -96,7 +105,7 @@ export type TicketSummariesResponse = {
   page: ListPageFacts;
 };
 
-export type OutcomeSummary = {
+export type OutcomeSummary = WorkAttention & {
   id: string;
   title: string;
   priority: Priority;
@@ -302,6 +311,10 @@ export type TicketDetail = {
   field_values: TicketFieldValues;
   pending_proposal: PendingTicketProposal | null;
   archived_field_content: string;
+  awaiting_reply?: boolean;
+  awaiting_approval?: boolean;
+  assigned?: boolean;
+  agent_state?: AgentState;
 };
 
 export type TicketVerdict = {
@@ -346,7 +359,7 @@ export type SprintWireBody = {
 
 export type CurrentSprint = SprintWireBody;
 
-export type SprintTicketSummary = {
+export type SprintTicketSummary = WorkAttention & {
   id: string;
   title: string;
   stage: string;
@@ -384,7 +397,7 @@ export type CarryOutcomeResult = {
   ticket_ids: string[];
 };
 
-export type SprintItemWorkspaceTicket = {
+export type SprintItemWorkspaceTicket = WorkAttention & {
   id: string;
   title: string;
   stage: string;
@@ -430,14 +443,7 @@ export type ReviewProposalItem = {
   waiting_since: number;
 };
 
-export type ReviewNeedsUserItem = {
-  review_item_type: "needs_user";
-  ticket_id: string;
-  title: string;
-  waiting_since: number;
-};
-
-export type ReviewItem = ReviewProposalItem | ReviewNeedsUserItem;
+export type ReviewItem = ReviewProposalItem;
 
 export type ReviewResponse = {
   items: ReviewItem[];
@@ -458,14 +464,14 @@ export type BoardSprintItem = {
   id: string;
   created_at: number;
   conversation_id: string | null;
-  agent_working: boolean;
-  needs_me: boolean;
-  // Where that conversation last ended a turn. An unseen reply is what lights an Item row.
-  latest_turn_ended_sequence: number;
-  owner_read_through_sequence: number;
+  awaiting_reply: boolean;
+  awaiting_approval: boolean;
+  assigned: boolean;
+  agent_state: AgentState;
+  ticket_rollup: WorkAttention;
 };
 
-export type BoardCard = {
+export type BoardCard = WorkAttention & {
   id: string;
   title: string;
   priority: Priority;
@@ -492,10 +498,6 @@ export type BoardCard = {
   sprint_item_id: string | null;
   sprint_item_title: string | null;
   sprint_item_priority: Priority | null;
-  agent_working: boolean;
-  needs_me: boolean;
-  latest_turn_ended_sequence: number;
-  owner_read_through_sequence: number;
 };
 
 export type DayTicket = AnyRecord & {
@@ -507,10 +509,10 @@ export type DayTicket = AnyRecord & {
   is_done?: boolean;
   waiting_to_closeout?: boolean;
   gating_field?: string | null;
-  agent_working?: boolean;
-  needs_me?: boolean;
-  latest_turn_ended_sequence?: number;
-  owner_read_through_sequence?: number;
+  awaiting_reply?: boolean;
+  awaiting_approval?: boolean;
+  assigned?: boolean;
+  agent_state?: AgentState;
 };
 
 export type DayResponse = {

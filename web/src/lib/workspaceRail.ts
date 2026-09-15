@@ -7,9 +7,8 @@ import type { BoardCard, BoardSprintItem, Priority } from "./types";
 // these, in the order first seen.
 const GROUP_ORDER: readonly string[] = [
   "errored",
-  "needs_user",
-  "user",
-  "paired",
+  "awaiting_reply",
+  "assigned",
   "agent",
   "waiting_to_closeout",
   "awaiting_approval",
@@ -29,7 +28,8 @@ const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set([
 ]);
 
 const GROUP_LABELS: Readonly<Record<string, string>> = {
-  needs_user: "Needs you",
+  awaiting_reply: "Needs you",
+  assigned: "Assigned",
   waiting_to_closeout: "Waiting to Closeout",
   waiting_for_kickoff: "Waiting for Kickoff"
 };
@@ -69,9 +69,12 @@ const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
 export function workspaceCardGroupKey(card: BoardCard): string {
   if (card.is_done) return "done";
   if (card.waiting_to_closeout) return "waiting_to_closeout";
-  if (card.ticket_status === "awaiting_approval" && card.gating_field === "kickoff") {
+  if (card.awaiting_approval && card.gating_field === "kickoff") {
     return "waiting_for_kickoff";
   }
+  if (card.awaiting_approval) return "awaiting_approval";
+  if (card.assigned) return "assigned";
+  if (card.awaiting_reply) return "awaiting_reply";
   return String(card.ticket_status);
 }
 
@@ -133,11 +136,15 @@ export function buildWorkspaceRail(
       // The Item's own conversation, read exactly as a card's is. Its reply only ever
       // follows a message of the reader's, because nothing else starts one.
       signals: {
-        conversation_id: summary?.conversation_id ?? null,
-        needs_me: summary?.needs_me ?? false,
-        agent_working: summary?.agent_working ?? false,
-        unread_position: summary?.latest_turn_ended_sequence ?? 0,
-        owner_read_through_sequence: summary?.owner_read_through_sequence ?? 0
+        awaiting_reply: Boolean(
+          summary?.awaiting_reply || summary?.ticket_rollup?.awaiting_reply
+        ),
+        agent_state:
+          summary?.agent_state === "working" || summary?.ticket_rollup?.agent_state === "working"
+            ? "working"
+            : summary?.agent_state === "errored" || summary?.ticket_rollup?.agent_state === "errored"
+              ? "errored"
+              : "idle"
       },
       groups: workspaceGroups(groupedCards),
       rested: groupedCards.every((groupedCard) => groupedCard.is_done)

@@ -150,9 +150,8 @@ def test_membership_must_match_the_explicit_planning_day(tmp_path: Path) -> None
         conn.close()
 
 
-def test_paired_owned_ticket_resting_at_paired_is_never_startable(tmp_path: Path) -> None:
-    # `paired` is a control status like any other, so a paired-owned Ticket resting at
-    # `paired` is never loop-startable. Only the same Ticket at `empty` is.
+def test_paired_owned_ticket_resting_at_agent_is_never_startable(tmp_path: Path) -> None:
+    # A paired-owned Ticket gets one opener from `empty`, then its claim is `agent`.
     conn = _db(tmp_path)
     try:
         ticket = _ticket(conn, worker_type="new_worker")
@@ -165,7 +164,7 @@ def test_paired_owned_ticket_resting_at_paired_is_never_startable(tmp_path: Path
         )
         conn.execute(
             "UPDATE tickets SET ticket_status = ? WHERE id = ?",
-            (TicketStatus.paired.value, ticket.id),
+            (TicketStatus.agent.value, ticket.id),
         )
         assert not _ready(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
 
@@ -186,9 +185,6 @@ _READY_UNDER_WORKER_OWNERSHIP: dict[TicketStatus, bool] = {
     TicketStatus.blocked: False,
     TicketStatus.agent: False,
     TicketStatus.awaiting_approval: False,
-    TicketStatus.paired: False,
-    TicketStatus.user: False,
-    TicketStatus.needs_user: False,
     TicketStatus.errored: False,
 }
 
@@ -297,8 +293,6 @@ def _to_closeout(conn: sqlite3.Connection, ticket_id: str) -> None:
     [
         TicketStatus.agent,
         TicketStatus.awaiting_approval,
-        TicketStatus.user,
-        TicketStatus.paired,
         TicketStatus.errored,
     ],
 )

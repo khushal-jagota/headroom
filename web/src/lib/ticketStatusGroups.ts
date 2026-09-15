@@ -7,7 +7,7 @@ import { sprintTicketCondition, type TicketConditionFacts } from "./sprintPresen
 // `DEFAULT_COLLAPSED_GROUPS`. The two lists are not the same, because the two screens
 // are read for different reasons, so neither one follows the other.
 //
-// The workspace rail groups by raw `ticket_status` and holds its own order in
+// The workspace rail groups by the shared attention projection and holds its own order in
 // `workspaceRail.ts`. The two screens split a Ticket up differently, but they call the
 // same thing by the same name: a group here and a group there that hold the same
 // Tickets carry one label, and `GROUP_LABELS` in the rail is where the other half of
@@ -26,10 +26,9 @@ export type TicketStatusGroupDefinition = {
 export const TICKET_STATUS_GROUPS: readonly TicketStatusGroupDefinition[] = [
   { key: "errored", label: "Errored", quiet: false },
   { key: "needs-me", label: "Needs you", quiet: false },
-  { key: "user", label: "User", quiet: false },
   { key: "waiting-for-kickoff", label: "Waiting for kickoff", quiet: false },
   { key: "current-awaiting-approval", label: "Awaiting approval", quiet: false },
-  { key: "current-paired", label: "Paired", quiet: false },
+  { key: "current-paired", label: "Assigned", quiet: false },
   { key: "current-running", label: "Agent", quiet: false },
   { key: "current-waiting", label: "Waiting for closeout", quiet: true },
   { key: "upcoming", label: "Empty", quiet: true },
@@ -56,7 +55,7 @@ export function ticketStatusGroupKey(ticket: TicketStatusGroupFacts): string {
   if (ticket.ticket_status === "errored") return "errored";
   if (ticket.ticket_status === "blocked") return "blocked";
   const mark = sprintTicketCondition(ticket).mark;
-  if (mark === "needs-me") return ticket.ticket_status === "user" ? "user" : "needs-me";
+  if (mark === "needs-me") return "needs-me";
   if (mark !== "current-awaiting-approval") return mark;
   return ticket.gating_field === "kickoff" ? "waiting-for-kickoff" : mark;
 }

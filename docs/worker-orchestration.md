@@ -28,9 +28,8 @@ all of these hold right now:
 1. It is on today's planning day.
 2. Its Stage is not terminal and has a next blank to fill.
 3. The Stage's owner is not the user.
-4. Its status is `empty`. This one fact carries most of the rule: a Ticket that is
-   blocked, paired, waiting for approval, asking for help, held by the user, already
-   out with a worker, or errored is by definition not `empty`.
+4. Its status is `empty`. This fact keeps blocked work, parked approvals, active claims,
+   and errors out of the runnable set. User-owned Stages are already excluded by rule 3.
 5. Nothing is already parked on that blank waiting for approval.
 6. Scope permits work at the current ceiling.
 7. If the blank is Closeout, no other Ticket in the same project-and-Worker-type lane
@@ -41,9 +40,9 @@ Then one more question that the record cannot answer: **is this Ticket's worker 
 right now?** The conversation system is asked directly, and a busy worker is left alone
 for this pass.
 
-If everything says yes, Panels takes the Ticket out of `empty` in a single guarded
-write — to `agent` for a worker-owned Stage, to `paired` for a paired one. That flip
-**is** the claim. There is no claim stamp and no separate run record. The readiness
+If everything says yes, Panels takes the Ticket from `empty` to `agent` in one guarded
+write. A paired Stage gets its paired opener only on this first claim. That flip **is**
+the claim. There is no claim stamp and no separate run record. The readiness
 questions are all asked again inside that write, so two racers both re-check under the
 same lock and only one of them writes.
 

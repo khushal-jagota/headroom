@@ -15,7 +15,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
-from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
+from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.core.db import MIGRATIONS_DIRECTORY, connect, create_schema
 from planner.tickets import data as tickets_data
@@ -179,14 +179,7 @@ def test_review_serves_the_backfilled_time_as_the_wait(
 ) -> None:
     review = tickets_views.review_view(upgraded, day_id="day_2026-07-04")
 
-    assert review["items"] == [
-        {
-            "review_item_type": "needs_user",
-            "ticket_id": "t_needs_user",
-            "title": "Ticket t_needs_user",
-            "waiting_since": 3_000,
-        }
-    ]
+    assert review["items"] == []
 
 
 def test_a_new_ticket_and_a_status_change_keep_the_column_current(
@@ -215,13 +208,9 @@ def test_a_new_ticket_and_a_status_change_keep_the_column_current(
     assert settled.ticket_status is not created.ticket_status
     assert _status_changed_at(upgraded, created.id) == 11_000
 
-    tickets_data.request_user_help(
-        upgraded, created.id, principal=TEST_TICKET_PRINCIPAL, now=12_000
-    )
+    tickets_data.mark_ticket_errored(upgraded, created.id, error="boom", now=12_000)
     assert _status_changed_at(upgraded, created.id) == 12_000
 
-    # Asking again changes nothing, so the time stays where it was.
-    tickets_data.request_user_help(
-        upgraded, created.id, principal=TEST_TICKET_PRINCIPAL, now=13_000
-    )
+    # Recording the same status again changes no status, so the time stays where it was.
+    tickets_data.mark_ticket_errored(upgraded, created.id, error="still boom", now=13_000)
     assert _status_changed_at(upgraded, created.id) == 12_000

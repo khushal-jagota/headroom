@@ -106,12 +106,6 @@ def test_upgrade_preserves_delivery_graph_and_seeds_agent_no_history_cursor(
             ticket_id,
             '{"ticket_title":"Existing Ticket"}',
         ),
-        (
-            "old:undecided",
-            "ticket",
-            ticket_id,
-            '{"ticket_title":"Existing Ticket"}',
-        ),
     ]
     assert tuple(
         upgraded.execute(
@@ -137,12 +131,7 @@ def test_upgrade_preserves_delivery_graph_and_seeds_agent_no_history_cursor(
         == 1
     )
     notifications_data.project_facts(upgraded)
-    assert upgraded.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 2
-    assert notifications_data.apply_policy(upgraded, 6) == 1
-    assert tuple(
-        upgraded.execute(
-            "SELECT outcome FROM notification_decisions WHERE fact_id = 'old:undecided'"
-        ).fetchone()
-    ) == ("notify",)
+    assert upgraded.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 1
+    assert notifications_data.apply_policy(upgraded, 6) == 0
     assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
     upgraded.close()

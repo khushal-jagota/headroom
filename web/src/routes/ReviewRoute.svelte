@@ -15,9 +15,7 @@
   let screenElement = $state<HTMLElement | null>(null);
 
   function itemKey(item: ReviewItem): string {
-    return item.review_item_type === "proposal"
-      ? `${item.ticket_id}:${item.field}`
-      : `${item.ticket_id}:needs_user`;
+    return `${item.ticket_id}:${item.field}`;
   }
 
   let items = $derived(review.data?.items || []);
@@ -107,47 +105,17 @@
         <div class="review-empty-meta">{runningWorkersText(runningWorkerCount)}</div>
       </div>
     {:else if currentItem}
-      {#if currentItem.review_item_type === "needs_user"}
-        {#key itemKey(currentItem)}
-          <div
-            class="modern-review-content"
-            data-review-card
-            data-review-item-type="needs_user"
-            data-ticket-id={currentItem.ticket_id}
-          >
-            <div class="review-ticket-decision-line review-arrive review-arrive--1">
-              <button data-skip="" onclick={() => skip(currentItem)}>Skip &rsaquo;</button>
-              <a data-open-ticket href={workspaceAddress({ kind: "ticket", id: currentItem.ticket_id })}>Open ticket &rsaquo;</a>
-            </div>
-
-            <div class="review-ticket-title review-arrive review-arrive--2">
-              {currentItem.title}
-            </div>
-
-            <div class="review-context review-arrive review-arrive--3">
-              <div class="review-context-label review-needs-user-label">
-                Worker needs your input
-              </div>
-            </div>
-          </div>
-        {/key}
-
-        <div class="review-keys">
-          <kbd>S</kbd> skip &nbsp;·&nbsp; <kbd>O</kbd> open ticket
-        </div>
-      {:else}
-        {@const proposal = currentItem}
-        {#key itemKey(proposal)}
-          <ReviewProposalCard
-            ticketId={proposal.ticket_id}
-            field={proposal.field}
-            title={proposal.title}
-            onSkip={() => skip(proposal)}
-            onResolved={proposalResolved}
-            footer={proposalKeys}
-          />
-        {/key}
-      {/if}
+      {@const proposal = currentItem}
+      {#key itemKey(proposal)}
+        <ReviewProposalCard
+          ticketId={proposal.ticket_id}
+          field={proposal.field}
+          title={proposal.title}
+          onSkip={() => skip(proposal)}
+          onResolved={proposalResolved}
+          footer={proposalKeys}
+        />
+      {/key}
     {:else}
       <div class="review-empty-state" data-review-empty>
         <div class="review-empty-mark" aria-hidden="true"><span></span></div>

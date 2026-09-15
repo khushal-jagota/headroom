@@ -101,17 +101,17 @@
    */
   let seededConversationStateFromStatus = false;
   $effect(() => {
-    const status = ticket.data?.ticket_status;
+    const ownership = ticket.data?.effective_stage_ownership_mode;
     if (
       !ticket.isFetchedAfterMount ||
       !ticket.isSuccess ||
-      status === undefined ||
+      ownership === undefined ||
       seededConversationStateFromStatus
     ) {
       return;
     }
     seededConversationStateFromStatus = true;
-    conversationState = initialTicketConversationState(status);
+    conversationState = initialTicketConversationState(ownership);
   });
 
   /** A click outside the conversation dismisses it to rest. */
@@ -259,15 +259,10 @@
     return currentStageOwnershipOverride(detail) === "user";
   }
 
-  function isWaitingForUser(detail: TicketDetail): boolean {
-    return detail.ticket_status === "needs_user";
-  }
-
   function userOwnsCurrentStage(detail: TicketDetail): boolean {
     return (
       detail.effective_stage_ownership_mode === "user" ||
-      hasExplicitCurrentStageUserOverride(detail) ||
-      isWaitingForUser(detail)
+      hasExplicitCurrentStageUserOverride(detail)
     );
   }
 
@@ -316,8 +311,7 @@
     try {
       if (
         userOwnsCurrentStage(detail) &&
-        !hasExplicitCurrentStageUserOverride(detail) &&
-        !isWaitingForUser(detail)
+        !hasExplicitCurrentStageUserOverride(detail)
       ) {
         await saveStageOwner(detail, "worker");
       } else {
@@ -331,8 +325,8 @@
 
   function currentStageRunLabel(detail: TicketDetail): string | null {
     if (detail.blocked || detail.ticket_status === "blocked") return null;
-    if (detail.ticket_status === "awaiting_approval") return "awaiting approval";
-    if (userOwnsCurrentStage(detail)) {
+    if (detail.awaiting_approval) return "awaiting approval";
+    if (detail.assigned) {
       return "you're on it";
     }
     return null;

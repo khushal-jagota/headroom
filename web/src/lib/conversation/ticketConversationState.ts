@@ -1,6 +1,8 @@
 import type { ConversationState } from "./conversationState";
 
 /** Select the conversation state for a new Ticket visit. */
-export function initialTicketConversationState(ticketStatus: string): ConversationState {
-  return ticketStatus === "paired" ? "opened" : "rest";
+export function initialTicketConversationState(
+  effectiveOwnership: string | null | undefined
+): ConversationState {
+  return effectiveOwnership === "paired" ? "opened" : "rest";
 }

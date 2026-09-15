@@ -20,6 +20,10 @@ function workspace(): SprintItemWorkspace {
     created_at: 1,
     updated_at: 1,
     kind: "normal",
+    awaiting_reply: false,
+    awaiting_approval: false,
+    assigned: false,
+    agent_state: "idle",
     committed_sprints: [{ id: "sp_current", name: "Current", date_start: "2026-08-10", date_end: "2026-08-16" }],
     planning_day_id: "day_2026-08-12",
     today_ticket_ids: ["t_review", "t_done"],
@@ -39,6 +43,10 @@ function workspace(): SprintItemWorkspace {
         stage: "needs_implementation",
         priority: "P1",
         ticket_status: "awaiting_approval",
+        awaiting_reply: false,
+        awaiting_approval: true,
+        assigned: false,
+        agent_state: "idle",
         waiting_to_closeout: false,
         has_pending_proposal: true,
         gating_field: "implementation",
@@ -53,6 +61,10 @@ function workspace(): SprintItemWorkspace {
         stage: "done",
         priority: "P3",
         ticket_status: "empty",
+        awaiting_reply: false,
+        awaiting_approval: false,
+        assigned: false,
+        agent_state: "idle",
         waiting_to_closeout: false,
         has_pending_proposal: false,
         gating_field: null,
@@ -67,6 +79,10 @@ function workspace(): SprintItemWorkspace {
         stage: "needs_success",
         priority: "P2",
         ticket_status: "agent",
+        awaiting_reply: false,
+        awaiting_approval: false,
+        assigned: false,
+        agent_state: "working",
         waiting_to_closeout: false,
         has_pending_proposal: false,
         gating_field: null,
@@ -96,7 +112,7 @@ describe("Sprint Item workspace presentation", () => {
     expect(
       workspaceProgress({
         ...value,
-        tickets: [{ ...value.tickets[0], ticket_status: "needs_user", has_pending_proposal: false }]
+        tickets: [{ ...value.tickets[0], awaiting_reply: true, awaiting_approval: false, has_pending_proposal: false }]
       })
     ).toBe("1 open · 1 needs you");
   });
@@ -131,7 +147,7 @@ describe("Sprint Item workspace presentation", () => {
 
   it("labels a resting Ticket with the word the rail uses", () => {
     const value = workspace();
-    const upcoming = { ...value.tickets[0], id: "t_upcoming", ticket_status: "empty", has_pending_proposal: false };
+    const upcoming = { ...value.tickets[0], id: "t_upcoming", ticket_status: "empty", awaiting_approval: false, has_pending_proposal: false };
     expect(
       todayWorkspaceTicketGroups({
         ...value,
@@ -155,6 +171,7 @@ describe("Sprint Item workspace presentation", () => {
       ...value.tickets[0],
       id: "t_ready",
       ticket_status: "empty",
+      awaiting_approval: false,
       has_pending_proposal: false,
       waiting_to_closeout: true
     };
