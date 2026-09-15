@@ -26,7 +26,11 @@ import {
 } from "./transcript";
 import type { ToolCallRow, TranscriptRow } from "./transcript";
 import { taskProgressFrom, type ConversationTaskProgress } from "./taskProgress";
-import { threadItems, type ThreadItem } from "./threadLayout";
+import type { ThreadItem } from "./threadLayout";
+import {
+  conversationThreadItemsForLens,
+  type ConversationLens
+} from "./lens";
 import { presentToolCall } from "./toolCallPresentation";
 import { messageContentText } from "./wire";
 
@@ -43,6 +47,12 @@ export type RestLine = {
   waiting: boolean;
   /** When a turn is running, when it started — so the bar counts as the turn head does. */
   workingSinceUnixMilliseconds: number | null;
+};
+
+export type RestLinePresentation = {
+  /** Rows this lens can put on the line. Complete rows still settle turn structure. */
+  visibleRows: readonly TranscriptRow[];
+  lens: ConversationLens;
 };
 
 /** What this line calls the person reading it.
@@ -68,9 +78,10 @@ export const REST_LINE_MAXIMUM_CHARACTERS = 120;
 export function restLineFrom(
   rows: readonly TranscriptRow[],
   ownSenderLabel: string,
-  progress: ConversationTaskProgress = taskProgressFrom(rows)
+  progress: ConversationTaskProgress = taskProgressFrom(rows),
+  presentation: RestLinePresentation = { visibleRows: rows, lens: "full" }
 ): RestLine | null {
-  const ask = liveAskFrom(rows);
+  const ask = liveAskFrom(presentation.visibleRows);
   if (ask !== null) {
     return {
       who: null,
@@ -84,9 +95,13 @@ export function restLineFrom(
     };
   }
 
-  const items = threadItems(rows);
+  const items = conversationThreadItemsForLens(
+    rows,
+    presentation.visibleRows,
+    presentation.lens
+  );
   const turn = newestTurn(items);
-  const happened = whateverHappenedLast(rows, ownSenderLabel);
+  const happened = whateverHappenedLast(presentation.visibleRows, ownSenderLabel);
 
   if (progress.turnRunning && progress.currentEntry !== null) {
     return {

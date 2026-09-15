@@ -42,6 +42,7 @@ const transpiledModules = [
   ["conversationDetail.ts", "conversationDetail.mjs"],
   ["toolCallPresentation/index.ts", "toolCallPresentation.mjs"],
   ["taskProgress.ts", "taskProgress.mjs"],
+  ["lens.ts", "lens.mjs"],
   ["restLine.ts", "restLine.mjs"]
 ];
 
@@ -69,6 +70,10 @@ for (const [sourcePath, outputName] of transpiledModules) {
     .replace(
       /from\s+["']\.\/taskProgress["']/g,
       'from "./taskProgress.mjs"'
+    )
+    .replace(
+      /from\s+["']\.\/lens["']/g,
+      'from "./lens.mjs"'
     );
   await writeFile(join(directory, outputName), output, "utf8");
 }
@@ -77,6 +82,7 @@ const { emptyConversationFeed, feedWithCommittedEvents } = await import(
   join(directory, "feed.mjs")
 );
 const { transcriptRows } = await import(join(directory, "transcript.mjs"));
+const { taskProgressFrom } = await import(join(directory, "taskProgress.mjs"));
 const { restLineFrom, REST_LINE_MAXIMUM_CHARACTERS } = await import(
   join(directory, "restLine.mjs")
 );
@@ -303,6 +309,21 @@ const PLAN = [
   // the rule the transcript already keeps, and the line keeps it too.
   const line = restLineFrom([prompt("go"), agentMessage("done"), turnEnded("completed")], "owner");
   assert.equal(line.text, "done");
+}
+
+{
+  // Focus hides the completed ending as a row, but the complete record still settles the
+  // turn behind the collapsed pane. The reply must not keep a live timer forever.
+  const rows = [prompt("go"), agentMessage("done"), turnEnded("completed")];
+  const visibleRows = rows.slice(0, -1);
+  const line = restLineFrom(
+    rows,
+    "owner",
+    taskProgressFrom(visibleRows),
+    { visibleRows, lens: "focus" }
+  );
+  assert.equal(line.text, "done");
+  assert.equal(line.workingSinceUnixMilliseconds, null);
 }
 
 {

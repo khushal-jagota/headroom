@@ -156,6 +156,33 @@ describe("Conversation lenses", () => {
     expect(turns[1]).toMatchObject({ turnKey: "turn:e4", settled: false, isLatest: true });
   });
 
+  it("does not draw a turn head when Focus hides its opening prompt", () => {
+    const fullFeed = feedWithCommittedEvents(emptyConversationFeed(), [
+      event(1, "prompt", {
+        text: "supervisor prompt",
+        sender_label: "Supervisor",
+        mode: "queue",
+        sender: { kind: "sprint_item", id: "item" },
+        recipient: ticket
+      }),
+      event(2, "tool_call_started", {
+        tool_call_id: "tool-1",
+        title: "Inspect",
+        tool_kind: "read",
+        detail: null
+      }),
+      event(3, "agent_message", { text: "runtime result" }),
+      event(4, "turn_ended", { ending: "completed", error_summary: null })
+    ]);
+    const rows = transcriptRows(fullFeed);
+    const visibleRows = conversationRowsForLens(
+      transcriptRows(conversationFeedForLens(fullFeed, "focus", "owner")),
+      "focus"
+    );
+
+    expect(conversationThreadItemsForLens(rows, visibleRows, "focus")).toEqual([]);
+  });
+
   it("applies the same principal and legacy rules to held prompts", () => {
     const prompt = (sender: HeldPrompt["sender"], senderLabel: string): HeldPrompt => ({
       held_prompt_id: "held",
