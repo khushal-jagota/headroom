@@ -8,10 +8,45 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 JsonDict = dict[str, Any]  # structured errors and adapter data
 UnixTime = int  # unix seconds
+
+
+class PrincipalKind(StrEnum):
+    """The complete set of people and work objects that can act in Panels."""
+
+    owner = "owner"
+    chief = "chief"
+    sprint_item = "sprint_item"
+    ticket = "ticket"
+
+
+OWNER_PRINCIPAL_ID: Final = "owner"
+CHIEF_PRINCIPAL_ID: Final = "chief"
+
+
+@dataclass(frozen=True, slots=True)
+class Principal:
+    """One stable Panels identity, independent of an agent or conversation."""
+
+    kind: PrincipalKind
+    id: str
+
+    def __post_init__(self) -> None:
+        if not self.id or self.id != self.id.strip():
+            raise ValueError("principal id must be non-empty and must not contain outer whitespace")
+        singleton_id = {
+            PrincipalKind.owner: OWNER_PRINCIPAL_ID,
+            PrincipalKind.chief: CHIEF_PRINCIPAL_ID,
+        }.get(self.kind)
+        if singleton_id is not None and self.id != singleton_id:
+            raise ValueError(f"{self.kind.value} principal id must be {singleton_id}")
+
+
+OWNER_PRINCIPAL: Final = Principal(PrincipalKind.owner, OWNER_PRINCIPAL_ID)
+CHIEF_PRINCIPAL: Final = Principal(PrincipalKind.chief, CHIEF_PRINCIPAL_ID)
 
 
 class Priority(StrEnum):  # SPEC §3.2/§3.3 — homed in core (shared vocabulary)

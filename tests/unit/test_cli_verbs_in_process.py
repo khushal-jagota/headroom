@@ -671,6 +671,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "worker",
         "note",
         tid,
+        ticket_id=tid,
         stdin="approach note",
     )
     cli(
@@ -679,6 +680,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "note",
         tid,
         "--append",
+        ticket_id=tid,
         stdin="additional approach note",
     )
     appended_detail = api.get(server, f"/api/tickets/{tid}")
@@ -688,6 +690,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "worker",
         "note",
         tid,
+        ticket_id=tid,
         stdin="replaced approach note",
     )
     detail = api.get(server, f"/api/tickets/{tid}")
@@ -707,6 +710,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "worker",
         "note",
         new_worker_id,
+        ticket_id=new_worker_id,
         stdin="stages note",
     )
     new_worker_detail = api.get(server, f"/api/tickets/{new_worker_id}")

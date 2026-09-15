@@ -206,10 +206,7 @@ def _lines(rows: list[Any], fmt: Callable[[Any], str]) -> str:
 def _feedback_list_line(note: dict[str, Any]) -> str:
     captured_at = datetime.fromtimestamp(int(note["created_at"])).astimezone()
     page = note["page_label"] or "No page"
-    return (
-        f"{note['id']} · {captured_at.strftime('%Y-%m-%d %H:%M')} · "
-        f"{page} · {note['text']}"
-    )
+    return f"{note['id']} · {captured_at.strftime('%Y-%m-%d %H:%M')} · {page} · {note['text']}"
 
 
 def _current_sprint_id(as_json: bool) -> str:
@@ -480,9 +477,7 @@ def feedback_group() -> None:
 @feedback_group.command("list")
 @json_option
 def feedback_list(as_json: bool) -> None:
-    result = http.send(
-        "GET", "/api/feedback", as_json=as_json, request_actor="ordinary"
-    )
+    result = http.send("GET", "/api/feedback", as_json=as_json, request_actor="ordinary")
     http.emit(
         result,
         as_json,
@@ -521,7 +516,6 @@ def feedback_use(ticket_id: str, feedback_ids: tuple[str, ...], as_json: bool) -
     default=None,
     help="Send to a Sprint Item supervisor.",
 )
-@click.option("--agent", "agent_key", default=None, help="Send to a registered agent.")
 @click.option(
     "--mode",
     type=click.Choice([mode.value for mode in MessageDeliveryMode]),
@@ -540,7 +534,6 @@ def send_message(
     chief: bool,
     ticket_id: str | None,
     sprint_item_id: str | None,
-    agent_key: str | None,
     mode: str,
     message: str | None,
     body_file: str | None,
@@ -556,13 +549,12 @@ def send_message(
             chief,
             ticket_id is not None,
             sprint_item_id is not None,
-            agent_key is not None,
         )
         if selected
     )
     if targets != 1:
         http.fail_validation(
-            "send-message requires exactly one of --chief, --ticket, --sprint-item, or --agent",
+            "send-message requires exactly one of --chief, --ticket, or --sprint-item",
             as_json,
         )
     if (message is None) == (body_file is None):
@@ -573,19 +565,17 @@ def send_message(
     if not text.strip():
         http.fail_validation("empty message", as_json)
     if chief:
-        target: dict[str, str] = {"type": "chief"}
+        recipient: dict[str, str] = {"kind": "chief", "id": "chief"}
     elif ticket_id is not None:
-        target = {"type": "ticket", "id": ticket_id}
-    elif sprint_item_id is not None:
-        target = {"type": "sprint_item", "id": sprint_item_id}
+        recipient = {"kind": "ticket", "id": ticket_id}
     else:
-        assert agent_key is not None
-        target = {"type": "agent", "id": agent_key}
+        assert sprint_item_id is not None
+        recipient = {"kind": "sprint_item", "id": sprint_item_id}
     data = http.send(
         "POST",
         "/api/messages/send",
         as_json=as_json,
-        json_body={"target": target, "message": text, "mode": mode},
+        json_body={"target": recipient, "message": text, "mode": mode},
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"message {data['fate']}")

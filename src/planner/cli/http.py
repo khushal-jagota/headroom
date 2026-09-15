@@ -38,14 +38,17 @@ def _headers(request_actor: RequestActor) -> dict[str, str]:
     ticket_id = os.environ.get("PLAN_TICKET_ID", "").strip()
     sprint_item_id = os.environ.get("PLAN_SPRINT_ITEM_ID", "").strip()
     if request_actor == "worker":
-        headers = {"X-Plan-Actor": ambient or "agent"}
+        resolved_actor = ambient or "worker"
+        headers = {"X-Plan-Actor": resolved_actor}
     elif ambient:
+        resolved_actor = ambient
         headers = {"X-Plan-Actor": ambient}
     else:
+        resolved_actor = ""
         headers = {}
-    if ambient == "worker" and ticket_id:
+    if resolved_actor == "worker" and ticket_id:
         headers["X-Plan-Ticket-ID"] = ticket_id
-    if ambient == "sprint_item_supervisor" and sprint_item_id:
+    if resolved_actor == "sprint_item_supervisor" and sprint_item_id:
         headers["X-Plan-Sprint-Item-ID"] = sprint_item_id
     return headers
 

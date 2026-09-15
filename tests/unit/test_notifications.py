@@ -12,10 +12,11 @@ from fastapi.testclient import TestClient
 from planner.core.clock import TestClock as MutableClock
 from planner.core.clock import parse_fake_now
 from planner.core.config import load_config
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.notifications import data as notifications_data
-from planner.notifications.contracts import NotificationFact
+from planner.notifications.contracts import NOTIFICATION_SUBJECTS, NotificationFact
 from planner.notifications.logic.policy import decide_notification
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket
@@ -58,8 +59,7 @@ def test_policy_is_the_one_privacy_safe_fact_to_intent_door() -> None:
     fact = NotificationFact(
         fact_id="ticket:t_example:1",
         notification_type="ticket_needs_approval",
-        subject_kind="ticket",
-        subject_id="t_example",
+        subject=Principal(PrincipalKind.ticket, "t_example"),
         subject_label="Private ticket title",
         occurred_at=1,
     )
@@ -70,6 +70,14 @@ def test_policy_is_the_one_privacy_safe_fact_to_intent_door() -> None:
     assert intent.route == "/#/workspace/t_example"
     assert intent.tag == "panels-ticket-t_example"
     assert "transcript" not in intent.body.lower()
+
+
+def test_preference_subjects_use_the_shared_principal_kinds() -> None:
+    assert {subject.key: subject.principal_kind for subject in NOTIFICATION_SUBJECTS} == {
+        "tickets": PrincipalKind.ticket,
+        "chief_of_staff": PrincipalKind.chief,
+        "sprint_item_supervisors": PrincipalKind.sprint_item,
+    }
 
 
 def test_status_projection_policy_and_delivery_are_exact_once(tmp_path: Path) -> None:

@@ -5,15 +5,10 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from planner.conversation.api import delivery_fate_json
-from planner.core.contracts import JsonDict
+from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.message_delivery import service
-from planner.message_delivery.contracts import (
-    MessageDeliveryMode,
-    MessageDeliveryResult,
-    MessageTarget,
-    MessageTargetType,
-)
+from planner.message_delivery.contracts import MessageDeliveryMode, MessageDeliveryResult
 from planner.tickets.api import Clk, Conversations, Ctx, DbConn
 
 router = APIRouter()
@@ -21,40 +16,35 @@ router = APIRouter()
 _MISSING = object()
 
 
-def _message_target(raw: object) -> MessageTarget:
+def _principal(raw: object) -> Principal:
     if not isinstance(raw, dict):
-        raise PlannerError(ErrorCode.validation, "target must be an object", {})
-    raw_type = raw.get("type")
-    if not isinstance(raw_type, str):
+        raise PlannerError(ErrorCode.validation, "target must be a principal object", {})
+    raw_kind = raw.get("kind")
+    if not isinstance(raw_kind, str):
         raise PlannerError(
             ErrorCode.validation,
-            "target type must be chief, ticket, sprint_item, or agent",
-            {"type": raw_type},
+            "recipient kind must be owner, chief, sprint_item, or ticket",
+            {"kind": raw_kind},
         )
     try:
-        target_type = MessageTargetType(raw_type)
+        kind = PrincipalKind(raw_kind)
     except ValueError as exc:
         raise PlannerError(
             ErrorCode.validation,
-            "target type must be chief, ticket, sprint_item, or agent",
-            {"type": raw_type},
+            "recipient kind must be owner, chief, sprint_item, or ticket",
+            {"kind": raw_kind},
         ) from exc
     raw_id = raw.get("id")
-    if target_type is MessageTargetType.chief:
-        if raw_id is not None:
-            raise PlannerError(
-                ErrorCode.validation,
-                "a chief target does not take an id",
-                {"id": raw_id},
-            )
-        return MessageTarget(target_type)
     if not isinstance(raw_id, str) or not raw_id.strip():
         raise PlannerError(
             ErrorCode.validation,
-            f"{target_type.value} target id is required",
+            f"{kind.value} recipient id is required",
             {"id": raw_id},
         )
-    return MessageTarget(target_type, raw_id.strip())
+    try:
+        return Principal(kind, raw_id.strip())
+    except ValueError as exc:
+        raise PlannerError(ErrorCode.validation, str(exc), {"id": raw_id}) from exc
 
 
 def _message_text(raw: object) -> str:
@@ -79,15 +69,11 @@ def _message_delivery_mode(raw: object = _MISSING) -> MessageDeliveryMode:
 
 
 def _result_json(result: MessageDeliveryResult) -> JsonDict:
-    target: JsonDict = {"type": result.target.target_type.value}
-    if result.target.target_id is not None:
-        target["id"] = result.target.target_id
     fate = delivery_fate_json(result.fate)
     return {
-        "target": target,
-        "resolved_destination": {
-            "type": result.resolved_destination.destination_type,
-            "id": result.resolved_destination.destination_id,
+        "target": {
+            "kind": result.recipient.kind.value,
+            "id": result.recipient.id,
         },
         "conversation_id": result.conversation_id,
         **fate,
@@ -102,8 +88,8 @@ async def send_message(
     clock: Clk,
     conversations: Conversations,
 ) -> JsonDict:
-    target = _message_target(body.get("target"))
+    recipient = _principal(body.get("target"))
     message = _message_text(body.get("message"))
     mode = _message_delivery_mode(body.get("mode", _MISSING))
-    result = await service.send_message(conversations, conn, clock, ctx, target, message, mode)
+    result = await service.send_message(conversations, conn, clock, ctx, recipient, message, mode)
     return _result_json(result)

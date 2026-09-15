@@ -8,11 +8,11 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import cast
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
 from planner.notifications.contracts import (
     NOTIFICATION_SUBJECTS,
     NOTIFICATION_TYPE_BY_ID,
@@ -20,7 +20,6 @@ from planner.notifications.contracts import (
     TICKET_NOTIFICATION_SUBJECT_KEY,
     NotificationFact,
     NotificationIntent,
-    NotificationSubjectKind,
     PendingDelivery,
     PushSubscription,
     WebPushIdentity,
@@ -177,14 +176,14 @@ def _insert_fact(
     *,
     fact_id: str,
     notification_type: str,
-    subject_kind: NotificationSubjectKind,
-    subject_id: str,
+    subject: Principal,
     subject_label: str,
     source_kind: str,
     source_id: str,
     source_sequence: int,
     occurred_at: int,
 ) -> None:
+    stored_kind, stored_id = _stored_notification_subject(subject)
     payload = json.dumps(
         {"subject_label": subject_label},
         sort_keys=True,
@@ -199,10 +198,10 @@ def _insert_fact(
         (
             fact_id,
             notification_type,
-            subject_kind,
-            subject_id if subject_kind == "ticket" else None,
-            subject_id if subject_kind == "agent" else None,
-            subject_id if subject_kind == "sprint_item" else None,
+            stored_kind,
+            stored_id if stored_kind == "ticket" else None,
+            stored_id if stored_kind == "agent" else None,
+            stored_id if stored_kind == "sprint_item" else None,
             source_kind,
             source_id,
             source_sequence,
@@ -210,6 +209,28 @@ def _insert_fact(
             payload,
         ),
     )
+
+
+def _stored_notification_subject(subject: Principal) -> tuple[str, str]:
+    """Translate a Principal to the unchanged notification table columns."""
+    if subject.kind is PrincipalKind.ticket:
+        return "ticket", subject.id
+    if subject.kind is PrincipalKind.sprint_item:
+        return "sprint_item", subject.id
+    if subject.kind is PrincipalKind.chief:
+        return "agent", CHIEF_SETTINGS_KEY
+    raise ValueError(f"unsupported notification subject: {subject.kind.value}")
+
+
+def _principal_from_stored_subject(subject_kind: str, subject_id: str) -> Principal:
+    """Translate unchanged notification rows to the shared identity contract."""
+    if subject_kind == "ticket":
+        return Principal(PrincipalKind.ticket, subject_id)
+    if subject_kind == "sprint_item":
+        return Principal(PrincipalKind.sprint_item, subject_id)
+    if subject_kind == "agent" and subject_id == CHIEF_SETTINGS_KEY:
+        return CHIEF_PRINCIPAL
+    raise ValueError(f"unknown notification subject: {subject_kind}/{subject_id}")
 
 
 def _preference_subject_key(fact: NotificationFact) -> str:
@@ -220,11 +241,13 @@ def _preference_subject_key(fact: NotificationFact) -> str:
     be a screen of rows that die. An agent is its own subject, because there is one of
     each.
     """
-    if fact.subject_kind == "ticket":
+    if fact.subject.kind is PrincipalKind.ticket:
         return TICKET_NOTIFICATION_SUBJECT_KEY
-    if fact.subject_kind == "sprint_item":
+    if fact.subject.kind is PrincipalKind.sprint_item:
         return SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY
-    return fact.subject_id
+    if fact.subject.kind is PrincipalKind.chief:
+        return CHIEF_SETTINGS_KEY
+    raise ValueError(f"unsupported notification subject: {fact.subject.kind.value}")
 
 
 def _ticket_fact_type(status: str) -> str | None:
@@ -260,8 +283,7 @@ def project_facts(conn: sqlite3.Connection) -> int:
                     conn,
                     fact_id=f"ticket:{row['id']}:{revision}",
                     notification_type=notification_type,
-                    subject_kind="ticket",
-                    subject_id=str(row["id"]),
+                    subject=Principal(PrincipalKind.ticket, str(row["id"])),
                     subject_label=str(row["title"]),
                     source_kind="ticket",
                     source_id=str(row["id"]),
@@ -291,16 +313,21 @@ def project_facts(conn: sqlite3.Connection) -> int:
             "LEFT JOIN sprint_items i ON i.supervisor_agent_key = a.agent_key "
             "LEFT JOIN notification_projection_cursors pc "
             "ON pc.source_kind = 'conversation' AND pc.source_id = c.conversation_id "
-            "WHERE (t.id IS NOT NULL OR a.agent_key IS NOT NULL) "
-            "AND (pc.source_id IS NULL OR c.latest_sequence > pc.sequence)"
+            "WHERE (t.id IS NOT NULL OR i.id IS NOT NULL OR a.agent_key = ?) "
+            "AND (pc.source_id IS NULL OR c.latest_sequence > pc.sequence)",
+            (CHIEF_SETTINGS_KEY,),
         ).fetchall()
         for conversation in conversations:
             conversation_id = str(conversation["conversation_id"])
-            subject_kind = cast(NotificationSubjectKind, str(conversation["subject_kind"]))
+            stored_subject_kind = str(conversation["subject_kind"])
             subject_id = str(conversation["subject_id"])
+            try:
+                subject = _principal_from_stored_subject(stored_subject_kind, subject_id)
+            except ValueError:
+                continue
             subject_label = (
                 str(conversation["subject_title"])
-                if subject_kind in {"ticket", "sprint_item"}
+                if subject.kind in {PrincipalKind.ticket, PrincipalKind.sprint_item}
                 else _agent_label(subject_id)
             )
             after = (
@@ -331,8 +358,7 @@ def project_facts(conn: sqlite3.Connection) -> int:
                         conn,
                         fact_id=f"conversation:{conversation_id}:{sequence}",
                         notification_type=event_notification_type,
-                        subject_kind=subject_kind,
-                        subject_id=subject_id,
+                        subject=subject,
                         subject_label=subject_label,
                         source_kind="conversation",
                         source_id=conversation_id,
@@ -368,8 +394,9 @@ def apply_policy(conn: sqlite3.Connection, now: int) -> int:
             fact = NotificationFact(
                 fact_id=str(row["fact_id"]),
                 notification_type=str(row["notification_type"]),
-                subject_kind=cast(NotificationSubjectKind, str(row["subject_kind"])),
-                subject_id=str(row["subject_id"]),
+                subject=_principal_from_stored_subject(
+                    str(row["subject_kind"]), str(row["subject_id"])
+                ),
                 # Facts copied by notification_subjects retain their original payload
                 # so an undecided pre-upgrade fact remains usable without rewriting history.
                 subject_label=str(

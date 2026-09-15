@@ -179,12 +179,11 @@ success, refusal, failure, or a completed turn with no compaction confirmation.
 ## Sending
 
 The top-level `panels send-message` command is the plain-text command-line door into this
-same send operation. It resolves a Chief, Ticket, Sprint Item, or registered agent, then
-uses that owner's current conversation path. It creates the normal conversation for the
-first three owner types when a queue send needs one. A steer never creates a conversation
-or starts a turn. A general agent row has no launch configuration, so it can receive a
-message only while it points to a current conversation. The command adds no second
-transport, queue, or conversation record.
+same send operation. It accepts a Chief, Ticket, or Sprint Item principal, then uses that
+principal's current conversation path. It creates the normal conversation when a queue
+send needs one. A steer never creates a conversation or starts a turn. Agent keys remain
+a private resolution detail. The command adds no second transport, queue, or conversation
+record.
 
 The composer accepts pictures and supported files from its pickers, the clipboard, or
 a drop. Attachments wait beside the draft and can be removed one at a time. They can
@@ -578,4 +577,4 @@ child process runs. A conversation with no report yet offers nothing.
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-09-11._
+_Last verified: 2026-09-15._

@@ -22,7 +22,7 @@ from planner.core.authctx import (
     require_sprint_item_supervisor_ticket_write,
     require_ticket_worker_write,
 )
-from planner.core.contracts import JsonDict, LinkKind, Priority
+from planner.core.contracts import JsonDict, LinkKind, PrincipalKind, Priority
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import actions as days_actions
@@ -829,7 +829,7 @@ async def patch_item(
             raise PlannerError(ErrorCode.validation, "unknown item field", {"field": key})
     if not body:
         raise PlannerError(ErrorCode.validation, "no item fields to update", {})
-    if ctx.is_attributed and not ctx.is_chief and ctx.actor != "worker":
+    if ctx.principal.kind is PrincipalKind.sprint_item:
         reject_agent_fields(ctx, body, recognized)
     edits: dict[str, str | None] = {}
     for field in _ITEM_PLAIN_FIELDS:

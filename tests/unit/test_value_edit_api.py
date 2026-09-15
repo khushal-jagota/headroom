@@ -20,8 +20,6 @@ from planner.tickets.data import (
     file_current_proposal_with_recap,
 )
 
-_AGENT = {"X-Plan-Actor": "agent"}  # a plain (non-dispatched) agent context
-
 
 def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "planning-test.db"
@@ -112,7 +110,7 @@ def test_put_proposal_agent_edits_pending_proposal_in_place(tmp_path: Path) -> N
         response = client.put(
             f"/api/tickets/{tid}/proposal",
             json={"field": "plan", "body": "edited plan draft"},
-            headers=_AGENT,
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": tid},
         )
 
     assert response.status_code == 200, response.json()
