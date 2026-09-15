@@ -324,8 +324,10 @@ The Ticket transaction validates authority and route, then commits the decision 
 ordered delivery records. The first is a concise Panels lifecycle fact. The second is
 the comment from the deciding principal. The transaction performs no backend I/O. The
 same machine-lock-owned recovery loop sends both records after the commit and preserves
-their separate attribution. Durable sender identities make retries idempotent. The
-ticket's stage never changes: a pending
+their separate attribution. Durable sender identities make retries idempotent. A
+post-wire record failure stays terminal and visible as `uncertain`, but it is settled
+for ordering. The messages after it continue without a retry of the uncertain message.
+The ticket's stage never changes: a pending
 gated proposal is cleared, settled values remain, and the ticket leaves Review while
 its control status is `agent`. The gated field can therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker

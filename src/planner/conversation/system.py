@@ -1656,6 +1656,27 @@ class SqliteProcessConversationSystem:
             if child is not None:
                 await self._discard_child(state, child)
             self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
+            try:
+                async with state.lock:
+                    await self._append_event(
+                        state,
+                        PromptDeliveryUncertainEventPayload(
+                            content=content,
+                            sender_label=sender_label,
+                            mode=mode,
+                            sender_message_id=sender_message_id,
+                            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                            sender=sender,
+                            recipient=recipient,
+                        ),
+                        owner_read_through_sequence=owner_read_through_sequence,
+                    )
+            except BaseException:
+                # The delivery remains uncertain even if the record is still unavailable.
+                LOGGER.exception(
+                    "conversation %s could not record an uncertain prompt delivery",
+                    state.record.conversation_id,
+                )
             return PromptDeliveryUncertain()
         if started:
             return PromptDeliveryStarted()

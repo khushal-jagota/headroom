@@ -252,7 +252,7 @@ def has_delivering(conn: sqlite3.Connection) -> bool:
 def claim_due_rejection_message(
     conn: sqlite3.Connection, *, ticket_id: str, now: int
 ) -> TicketRejectionMessage | None:
-    """Claim the first unfinished message for one rejection in transcript order."""
+    """Claim the first unsettled message for one Ticket in transcript order."""
     with _transaction(conn):
         row = conn.execute(
             "SELECT * FROM ticket_rejection_messages AS message "
@@ -262,7 +262,7 @@ def claim_due_rejection_message(
             "AND (earlier.rejection_generation < message.rejection_generation OR "
             "(earlier.rejection_generation=message.rejection_generation "
             "AND earlier.sequence < message.sequence)) "
-            "AND earlier.state != 'delivered') "
+            "AND earlier.state NOT IN ('delivered','uncertain')) "
             "ORDER BY rejection_generation,sequence LIMIT 1",
             (ticket_id, now),
         ).fetchone()

@@ -151,7 +151,7 @@ async def _deliver_rejection_messages(
                 error="conversation delivery outcome is uncertain; automatic retry disabled",
                 now=now,
             )
-            return delivered_count
+            continue
         if data.settle_rejection_message(
             conn, message, state="delivered", now=now
         ):

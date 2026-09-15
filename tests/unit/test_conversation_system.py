@@ -846,6 +846,126 @@ def test_comment_record_failure_rolls_back_before_real_backend_io(
     _run(exercise)
 
 
+def test_uncertain_rejection_fact_settles_and_later_rejections_continue(
+    harness: _Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        conn = connect(str(tmp_path / "conversations.db"))
+        target_id = _ticket_with_proposal(
+            conn, holder=OWNER_PRINCIPAL, title="Uncertain rejection", now=1
+        )
+        await _start(harness, "c-worker")
+        _link_ticket_conversation(conn, target_id, "c-worker", now=3)
+        clock = MutableClock(datetime.now().astimezone())
+        await ticket_actions.return_ticket_for_revision(
+            harness.system,
+            conn,
+            target_id,
+            message="First comment.",
+            ctx=RequestContext(OWNER_PRINCIPAL),
+            clock=clock,
+        )
+
+        append_delivered_prompt = harness.store.append_delivered_prompt
+        fail_next_prompt_record = True
+
+        async def fail_first_prompt_record(*args: Any, **kwargs: Any) -> Any:
+            nonlocal fail_next_prompt_record
+            if fail_next_prompt_record:
+                fail_next_prompt_record = False
+                raise sqlite3.OperationalError("injected prompt record failure")
+            return await append_delivered_prompt(*args, **kwargs)
+
+        monkeypatch.setattr(
+            harness.store, "append_delivered_prompt", fail_first_prompt_record
+        )
+
+        assert await deliver_pending_wakes(
+            harness.system, conn, clock, ticket_id=target_id
+        ) == 1
+        first_rows = conn.execute(
+            "SELECT rejection_generation,sequence,state "
+            "FROM ticket_rejection_messages WHERE ticket_id=? "
+            "ORDER BY rejection_generation,sequence",
+            (target_id,),
+        ).fetchall()
+        assert [tuple(row) for row in first_rows] == [
+            (1, 1, "uncertain"),
+            (1, 2, "delivered"),
+        ]
+        first_events = [event.payload for event in await harness.events("c-worker")]
+        uncertain = [
+            payload
+            for payload in first_events
+            if isinstance(payload, PromptDeliveryUncertainEventPayload)
+        ]
+        assert len(uncertain) == 1
+        assert message_content_text(uncertain[0].content) == (
+            "Your proposal was rejected and returned for revision. "
+            "The decider's comment follows."
+        )
+        assert uncertain[0].sender_label == "Panels"
+        assert harness.backend("c-worker").written_texts() == (
+            "Your proposal was rejected and returned for revision. "
+            "The decider's comment follows.",
+            "First comment.",
+        )
+
+        await harness.complete_turn("c-worker")
+        tickets_data.file_current_proposal_with_recap(
+            conn,
+            target_id,
+            body="Try again",
+            recap="Try again",
+            principal=Principal(PrincipalKind.ticket, target_id),
+            now=clock.now_unix() + 1,
+        )
+        await ticket_actions.return_ticket_for_revision(
+            harness.system,
+            conn,
+            target_id,
+            message="Second comment.",
+            ctx=RequestContext(OWNER_PRINCIPAL),
+            clock=clock,
+        )
+
+        assert await deliver_pending_wakes(
+            harness.system, conn, clock, ticket_id=target_id
+        ) == 1
+        await harness.complete_turn("c-worker")
+        assert await deliver_pending_wakes(
+            harness.system, conn, clock, ticket_id=target_id
+        ) == 1
+        await harness.complete_turn("c-worker")
+
+        rows = conn.execute(
+            "SELECT rejection_generation,sequence,state "
+            "FROM ticket_rejection_messages WHERE ticket_id=? "
+            "ORDER BY rejection_generation,sequence",
+            (target_id,),
+        ).fetchall()
+        assert [tuple(row) for row in rows] == [
+            (1, 1, "uncertain"),
+            (1, 2, "delivered"),
+            (2, 1, "delivered"),
+            (2, 2, "delivered"),
+        ]
+        assert harness.backend("c-worker").written_texts() == (
+            "Your proposal was rejected and returned for revision. "
+            "The decider's comment follows.",
+            "First comment.",
+            "Your proposal was rejected and returned for revision. "
+            "The decider's comment follows.",
+            "Second comment.",
+        )
+        from planner.proposal_holder_wakes import data as wake_data
+
+        assert wake_data.due_ticket_ids(conn, now=clock.now_unix()) == ()
+        conn.close()
+
+    _run(exercise)
+
+
 async def _start(
     harness: _Harness,
     conversation_id: str = "c",

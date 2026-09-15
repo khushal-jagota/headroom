@@ -154,8 +154,9 @@ The machine-lock-owned delivery loop sends those records after the commit. Durab
 sender identities preserve transcript order and prevent duplicates across retries and
 process restarts. A refusal leaves the message pending for retry. An accepted prompt
 with a failed transcript write becomes terminal `uncertain`, so Panels never sends it
-twice. Reply bookkeeping credits the source turn after the commit and cannot undo the
-rejection.
+twice. The conversation shows that uncertain attempt, and later rejection messages
+continue in order. Reply bookkeeping credits the source turn after the commit and cannot
+undo the rejection.
 
 _Code path:_ `src/planner/tickets/actions.py`.
 
