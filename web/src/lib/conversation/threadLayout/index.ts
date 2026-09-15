@@ -217,24 +217,26 @@ export function threadItems(
         turnKey: `turn:${row.key}`,
         startedAt: row.createdAt,
         startedAtUnixMilliseconds: row.sentAtUnixMilliseconds,
-        anchorIndex: items.length,
+        anchorIndex: visible ? items.length : null,
         groupIndexes: [],
         openGroupIndex: null,
         messageIndexes: []
       };
-      items.push({
-        kind: "turn",
-        key: `turn:${row.key}`,
-        turnKey: `turn:${row.key}`,
-        settled: false,
-        stopped: false,
-        startedAtUnixMilliseconds: row.sentAtUnixMilliseconds,
-        ending: null,
-        isLatest: false,
-        durationSeconds: null,
-        toolCallCount: 0,
-        foldedMessageCount: 0
-      });
+      if (visible) {
+        items.push({
+          kind: "turn",
+          key: `turn:${row.key}`,
+          turnKey: `turn:${row.key}`,
+          settled: false,
+          stopped: false,
+          startedAtUnixMilliseconds: row.sentAtUnixMilliseconds,
+          ending: null,
+          isLatest: false,
+          durationSeconds: null,
+          toolCallCount: 0,
+          foldedMessageCount: 0
+        });
+      }
       continue;
     }
 

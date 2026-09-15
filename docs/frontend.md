@@ -120,6 +120,10 @@ One screen per part of the system:
   choice belongs to the mounted conversation and resets to Focus when its identity changes.
   Notification links therefore open Focus through the ordinary conversation route.
 
+  Complete turn boundaries settle both the Focus transcript and its rest line. A turn
+  with a hidden automatic prompt has no Focus turn head. Its visible owner result rows
+  still appear.
+
   The client advances the read position only while Focus is selected, the conversation
   pane is open, the document is visible, and the window has focus. It advances through
   the newest delivered row that this browser received, even when a newer conversation

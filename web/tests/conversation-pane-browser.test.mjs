@@ -41,6 +41,7 @@ try {
       content: [{ piece: "text", text: words(index) }]
     }))
   );
+  let visibleRows = $state<any[] | null>(null);
   let nextRowIndex = 28;
   let running = $state(false);
   let heldPromptRows = $state<any[]>([]);
@@ -143,6 +144,40 @@ try {
       queueReason: "steer_refused"
     }];
   };
+  (window as any).__showSettledFocusRestLine = () => {
+    rows = [
+      {
+        key: "settled-prompt",
+        kind: "prompt",
+        sequence: 2_000,
+        createdAt: 3_000,
+        content: [{ piece: "text", text: "finish this" }],
+        senderLabel: "owner",
+        mode: "queue",
+        sentAtUnixMilliseconds: 3_000
+      },
+      {
+        key: "settled-reply",
+        kind: "agent_message",
+        sequence: 2_001,
+        createdAt: 3_001,
+        content: [{ piece: "text", text: "settled reply" }]
+      },
+      {
+        key: "settled-end",
+        kind: "turn_ended",
+        sequence: 2_002,
+        createdAt: 3_002,
+        ending: "completed",
+        errorSummary: null,
+        automaticCompactionResult: null
+      }
+    ];
+    visibleRows = rows.slice(0, -1);
+    lens = "focus";
+    running = false;
+    conversationState = "rest";
+  };
 </script>
 
 <main class="fixture-ticket">
@@ -162,6 +197,7 @@ try {
         label="Worker"
         conversationExists
         {rows}
+        {visibleRows}
         {running}
         {heldPromptRows}
         {supportsSteer}
@@ -460,6 +496,13 @@ with sync_playwright() as playwright:
     steer.wait_for()
     assert steer.inner_text() == "Steer"
     assert "Hermes" not in page.locator("[data-conversation-held-stack]").inner_text()
+
+    # A completed owner turn uses the hidden ending for structure. The collapsed Focus
+    # line shows the reply without a live working timer.
+    page.evaluate("window.__showSettledFocusRestLine()")
+    state(page, "rest")
+    assert page.locator("[data-conversation-rest-line]").inner_text() == "settled reply"
+    assert page.locator("[data-conversation-rest-bar] .c2-rest-working").count() == 0
 
     browser.close()
 

@@ -1902,6 +1902,7 @@ def return_for_revision(
     ticket_id: str,
     *,
     message: str,
+    lifecycle_message: str,
     principal: Principal,
     now: int,
     expected_proposal: PendingTicketProposal | None = None,
@@ -1925,6 +1926,14 @@ def return_for_revision(
             ticket,
             principal,
             worker_type_definition=worker_type_definition,
+        )
+        proposal_holder_wakes_data.record_rejection_messages(
+            conn,
+            ticket_id,
+            lifecycle_message=lifecycle_message,
+            comment=message,
+            sender=principal,
+            now=now,
         )
         _apply_decision(conn, ticket, decision, now)
         _write_ticket_status(conn, ticket_id, TicketStatus.agent, now)
@@ -1977,7 +1986,6 @@ def delete_ticket(
     admission.require_direct_or_supervisor_principal(principal, "delete_ticket")
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
-        proposal_holder_wakes_data.require_not_delivering(conn, ticket_id)
         _require_current_supervisor_parent(
             conn, ticket, supervisor_sprint_item_id, principal, "Ticket deletion"
         )

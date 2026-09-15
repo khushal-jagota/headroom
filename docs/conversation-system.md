@@ -46,8 +46,8 @@ explicit messages addressed to the owner, permission requests, agent questions, 
 the answers that settle those requests. Historical owner prompts without principals use
 their established owner label, so they remain readable without a record migration.
 Failed turns, stopped turns, and missing explicit replies remain visible as compact
-system rows. Complete turn boundaries still settle the Focus thread when runtime rows
-are hidden.
+system rows. Complete turn boundaries still settle the Focus thread and rest line when
+runtime rows are hidden. A turn with a hidden opening prompt has no Focus turn head.
 Full shows the complete runtime notebook. The header toggle and the unmodified `f` key
 switch the lens without replacing the conversation. Editable controls keep the key.
 

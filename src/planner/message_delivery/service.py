@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable
-from typing import cast
 
 from planner.conversation.contracts import (
-    AtomicPromptBatchConversationSystem,
-    AtomicPromptMessage,
     ConversationMessageContent,
     ConversationSystem,
     ConversationTurnReference,
@@ -35,51 +31,6 @@ from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
 from planner.tickets import data as tickets_data
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
-
-
-async def send_ticket_revision_batch(
-    conversations: ConversationSystem,
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    lifecycle_message: str,
-    comment: str,
-    ctx: RequestContext,
-    commit_mutation: Callable[[], None],
-    required_sprint_item_id: str | None = None,
-) -> conversation_start.DeliveredMessage:
-    """Deliver the rejection fact and attributed comment as one indivisible prompt."""
-    async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
-        ticket = tickets_data.read_ticket(conn, ticket_id)
-        if required_sprint_item_id is not None and ticket.sprint_item_id != required_sprint_item_id:
-            raise PlannerError(
-                ErrorCode.agent_forbidden,
-                "the ticket is not a current child of this Sprint Item supervisor",
-                {"ticket_id": ticket_id, "sprint_item_id": required_sprint_item_id},
-            )
-        if ticket.conversation_id is None:
-            raise PlannerError(
-                ErrorCode.not_found,
-                "the ticket has no current Worker conversation",
-                {"ticket_id": ticket_id},
-            )
-        fate = await cast(
-            AtomicPromptBatchConversationSystem, conversations
-        ).send_atomic_prompt_batch(
-            ticket.conversation_id,
-            (
-                AtomicPromptMessage(text_message_content(lifecycle_message), "Panels"),
-                AtomicPromptMessage(
-                    text_message_content(comment),
-                    sender_label(ctx),
-                    sender=ctx.principal,
-                    recipient=Principal(PrincipalKind.ticket, ticket_id),
-                ),
-            ),
-            transaction_connection=conn,
-            commit_mutation=commit_mutation,
-        )
-        return conversation_start.DeliveredMessage(ticket.conversation_id, fate, True)
 
 
 async def revision_source_turn(
@@ -118,6 +69,8 @@ async def send_system_message(
     sender_message_id: str,
 ) -> MessageDeliveryResult:
     """Send one idempotently named Panels-authored message to an agent principal."""
+    if conn.in_transaction:
+        raise RuntimeError("backend delivery requires a connection outside a transaction")
     content = text_message_content(message)
     if recipient.kind is PrincipalKind.ticket:
         async with conversation_start.conversation_link_lock(f"ticket:{recipient.id}"):
@@ -179,6 +132,47 @@ async def send_system_message(
             ErrorCode.validation,
             "the proposal holder has no agent conversation",
             {"kind": recipient.kind.value, "id": recipient.id},
+        )
+    return MessageDeliveryResult(recipient, delivered.conversation_id, delivered.fate)
+
+
+async def send_ticket_outbox_message(
+    conversations: ConversationSystem,
+    conn: sqlite3.Connection,
+    clock: Clock,
+    ticket_id: str,
+    message: str,
+    *,
+    sender: Principal | None,
+    sender_message_id: str,
+) -> MessageDeliveryResult:
+    """Deliver one durable Ticket message without source-turn bookkeeping."""
+    if conn.in_transaction:
+        raise RuntimeError("backend delivery requires a connection outside a transaction")
+    recipient = Principal(PrincipalKind.ticket, ticket_id)
+    if sender is None:
+        return await send_system_message(
+            conversations,
+            conn,
+            clock,
+            recipient,
+            message,
+            sender_message_id=sender_message_id,
+        )
+    async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
+        ticket = tickets_data.read_ticket(conn, ticket_id)
+        delivered = await conversation_start.send_to_ticket_conversation(
+            conversations,
+            conn,
+            ticket_id,
+            text_message_content(message),
+            conversation_id=ticket.conversation_id,
+            created_conversation_id=conversation_start.new_conversation_id(),
+            sender_label=sender_label(RequestContext(sender)),
+            sender_message_id=sender_message_id,
+            sender=sender,
+            recipient=recipient,
+            now=clock.now_unix(),
         )
     return MessageDeliveryResult(recipient, delivered.conversation_id, delivered.fate)
 

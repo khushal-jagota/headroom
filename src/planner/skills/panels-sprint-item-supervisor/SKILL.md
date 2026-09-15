@@ -68,12 +68,10 @@ canonical Ticket for the proposal itself rather than relying on message text.
 - `approve` resolves a parked proposal. Supply `--ceiling` and `--at-cap`. The next holder
   defaults to this Sprint Item. Use `--holder-kind` and `--holder-id` to address another
   principal explicitly.
-- `reject` sends one atomic prompt containing Panels' rejection-and-return lifecycle fact
-  followed by focused guidance attributed to this Sprint Item. Every authorization and
-  current-child check runs before the send. The decision and both durable transcript rows
-  share one SQLite commit; a definite refusal leaves no message, turn, or Ticket residue.
-  A post-wire commit failure is uncertain and non-retryable, and Panels discards that
-  backend child.
+- `reject` commits the Ticket decision and two ordered delivery records in one database
+  transaction. The first record is Panels' rejection-and-return lifecycle fact. The
+  second is focused guidance attributed to this Sprint Item. The transaction performs no
+  backend I/O. The singleton recovery loop delivers both records after the commit.
 - `add-to-day` and `remove-from-day` change Day membership.
 - `block` and `unblock` change blocker links inside the Item boundary.
 - `artifact-list`, `artifact-write`, and `artifact-delete` manage Item artifacts.

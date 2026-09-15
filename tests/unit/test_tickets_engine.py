@@ -599,7 +599,12 @@ def test_pending_proposal_send_back_reopens_and_clears_proposal(
         tmp_db, t.id, body="Keep this boundary", principal=OWNER_PRINCIPAL, now=now
     )
     t = data.return_for_revision(
-        tmp_db, t.id, message="please revise", principal=OWNER_PRINCIPAL, now=now
+        tmp_db,
+        t.id,
+        message="please revise",
+        lifecycle_message="Proposal rejected.",
+        principal=OWNER_PRINCIPAL,
+        now=now,
     )
     assert t.ticket_status is TicketStatus.agent
     assert t.pending_proposal is None

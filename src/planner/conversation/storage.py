@@ -1,9 +1,7 @@
 """SQLite ownership for conversations and the rows they record.
 
-Ordinary calls open their own connection inside a worker thread and close it before
-returning. The specialized atomic prompt batch instead receives an already-open
-application transaction so its transcript rows and the caller's mutation share one
-commit.
+Calls open their own connection inside a worker thread and close it before returning.
+Conversation delivery never receives or owns an application transaction.
 
 Appending a row is one immediate transaction: take the write lock, read where the
 conversation's record has got to, insert the next row, move the conversation's marker
@@ -254,8 +252,6 @@ class ConversationStore:
         model_change: ModelChangedEventPayload | None,
         extra_prompts: tuple[PromptEventPayload, ...] = (),
         owner_read_through_sequence: int | None = None,
-        transaction_connection: sqlite3.Connection | None = None,
-        commit_mutation: Callable[[], None] | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Write everything one delivery leaves behind, as one thing that either all
         happened or none of it did.
@@ -276,16 +272,6 @@ class ConversationStore:
         later delivery from crediting rows that arrived after the owner left.
         Returns the rows in the order they were written.
         """
-        if transaction_connection is not None:
-            return self._append_delivered_prompt_sync(
-                conversation_id,
-                prompt,
-                model_change,
-                extra_prompts,
-                owner_read_through_sequence,
-                transaction_connection=transaction_connection,
-                commit_mutation=commit_mutation,
-            )
         return await asyncio.to_thread(
             self._append_delivered_prompt_sync,
             conversation_id,
@@ -293,8 +279,6 @@ class ConversationStore:
             model_change,
             extra_prompts,
             owner_read_through_sequence,
-            None,
-            commit_mutation,
         )
 
     async def read_events_after(
@@ -545,20 +529,14 @@ class ConversationStore:
         model_change: ModelChangedEventPayload | None,
         extra_prompts: tuple[PromptEventPayload, ...] = (),
         owner_read_through_sequence: int | None = None,
-        transaction_connection: sqlite3.Connection | None = None,
-        commit_mutation: Callable[[], None] | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         prompts: tuple[ConversationEventPayload, ...] = (prompt, *extra_prompts)
         payloads: tuple[ConversationEventPayload, ...] = (
             prompts if model_change is None else (model_change, *prompts)
         )
-        conn = transaction_connection or self._connect()
-        owns_connection = transaction_connection is None
+        conn = self._connect()
         try:
-            if owns_connection:
-                conn.execute("BEGIN IMMEDIATE")
-            elif not conn.in_transaction:
-                raise ValueError("the shared conversation transaction is not open")
+            conn.execute("BEGIN IMMEDIATE")
             written = self._insert_rows(conn, conversation_id, payloads)
             if model_change is not None:
                 conn.execute(
@@ -584,22 +562,13 @@ class ConversationStore:
                     "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
                     (read_through, conversation_id),
                 )
-            if commit_mutation is not None:
-                commit_mutation()
-            if transaction_connection is None:
-                _commit_appended_rows(conn, payloads)
-            else:
-                # The shared unit can contain application-visible mutations, so it must
-                # use the ordinary signalling commit rather than the transcript-only
-                # quiet commit.
-                conn.execute("COMMIT")
+            _commit_appended_rows(conn, payloads)
         except BaseException:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
             raise
         finally:
-            if owns_connection:
-                conn.close()
+            conn.close()
         return written
 
     def _append_turn_ending_sync(

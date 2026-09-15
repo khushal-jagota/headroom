@@ -20,7 +20,6 @@ from planner.conversation.message_content import text_message_content
 from planner.core import change_signal
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
-from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.core.server import create_app
@@ -459,10 +458,7 @@ def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> Non
     assert approved.json()["field_values"].get("success") == "The result is verified."
 
 
-@pytest.mark.parametrize("outcome", ["refused", "delivered"])
-def test_supervisor_rejection_delivers_before_it_mutates(
-    tmp_path: Path, outcome: str
-) -> None:
+def test_supervisor_rejection_commits_messages_without_backend_io(tmp_path: Path) -> None:
     app, db_path = _app(tmp_path)
     conversation_id = "conv-supervisor-reject"
     with TestClient(app) as client:
@@ -493,56 +489,30 @@ def test_supervisor_rejection_delivers_before_it_mutates(
         assert cross.status_code == 400
         assert cross.json()["error"]["code"] == "agent_forbidden"
         assert system.backend_prompt_writes(conversation_id) == ()
-        if outcome == "refused":
-            system.arm_backend_write_failure(conversation_id)
         rejected = client.post(
             path,
             json={"message": "State the verification evidence."},
             headers=_supervisor_headers(str(item["id"])),
         )
-        if outcome != "refused":
-            # One atomic prompt carries both independently attributed transcript rows.
-            system.complete_running_turn(conversation_id)
 
     with connect(str(db_path)) as conn:
         after = tickets_data.read_ticket(conn, str(ticket["id"]))
         pending_context = context_data.snapshot(conn, str(ticket["id"])).items
-    if outcome == "refused":
-        assert rejected.status_code == 503
-        assert rejected.json()["error"]["code"] == "gateway_offline"
-        assert after.ticket_status.value == "awaiting_approval"
-        assert after.pending_proposal is not None
-        assert any(item.text == "Read exact guidance." for item in pending_context)
-        assert system.backend_prompt_writes(conversation_id) == ()
-        assert system.observations(conversation_id) == ()
-        assert not asyncio.run(system.is_running(conversation_id))
-    else:
-        expected_messages = [
-            proposal_returned_for_revision_prompt(),
-            "State the verification evidence.",
-        ]
-        message_observations = [
-            observation
-            for observation in system.observations(conversation_id)
-            if observation.text in expected_messages
-        ]
-        assert [observation.text for observation in message_observations] == expected_messages
-        assert [observation.sender_label for observation in message_observations] == [
-            "Panels",
-            f"Sprint Item {item['id']}",
-        ]
-        assert message_observations[0].sender is None
-        assert message_observations[0].recipient is None
-        assert message_observations[1].sender == Principal(
-            PrincipalKind.sprint_item, str(item["id"])
-        )
-        assert message_observations[1].recipient == Principal(
-            PrincipalKind.ticket, str(ticket["id"])
-        )
-        assert "Read exact guidance." not in str(message_observations[1].text)
-        assert rejected.status_code == 200, rejected.text
-        assert after.pending_proposal is None
-        assert after.ticket_status.value == "agent"
+        rows = conn.execute(
+            "SELECT sequence,message,sender_kind,sender_id,state "
+            "FROM ticket_rejection_messages WHERE ticket_id=? ORDER BY sequence",
+            (ticket["id"],),
+        ).fetchall()
+    assert rejected.status_code == 200, rejected.text
+    assert after.pending_proposal is None
+    assert after.ticket_status.value == "agent"
+    assert any(item.text == "Read exact guidance." for item in pending_context)
+    assert [tuple(row) for row in rows] == [
+        (1, proposal_returned_for_revision_prompt(), None, None, "pending"),
+        (2, "State the verification evidence.", "sprint_item", item["id"], "pending"),
+    ]
+    assert system.backend_prompt_writes(conversation_id) == ()
+    assert system.observations(conversation_id) == ()
 
 
 def test_rejection_mutation_failure_leaves_no_worker_visible_residue(
@@ -550,7 +520,7 @@ def test_rejection_mutation_failure_leaves_no_worker_visible_residue(
 ) -> None:
     app, db_path = _app(tmp_path)
     conversation_id = "conv-reject-mutation-failure"
-    with TestClient(app) as client:
+    with TestClient(app, raise_server_exceptions=False) as client:
         item = _create_item(client)
         ticket = _park_a_proposal(client, str(item["id"]))
         with connect(str(db_path)) as conn:
@@ -566,26 +536,32 @@ def test_rejection_mutation_failure_leaves_no_worker_visible_residue(
         )
         system = cast(InMemoryConversationSystem, app.state.conversation_system)
 
-        def fail_mutation(*_args: Any, **_kwargs: Any) -> None:
-            raise RuntimeError("injected decision failure")
+        from planner.proposal_holder_wakes import data as wake_data
 
-        monkeypatch.setattr(tickets_data, "return_for_revision", fail_mutation)
+        original_insert = wake_data._insert_rejection_message  # noqa: SLF001
+
+        def fail_comment(*args: Any, **kwargs: Any) -> None:
+            if kwargs["sequence"] == 2:
+                raise RuntimeError("injected comment record failure")
+            original_insert(*args, **kwargs)
+
+        monkeypatch.setattr(wake_data, "_insert_rejection_message", fail_comment)
         response = client.post(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/reject",
             json={"message": "Revise."},
             headers=_supervisor_headers(str(item["id"])),
         )
 
-    assert response.status_code == 503
-    assert response.json()["error"]["detail"] == {
-        "ticket_id": ticket["id"],
-        "delivery_uncertain": True,
-        "retryable": False,
-    }
+    assert response.status_code == 500
     with connect(str(db_path)) as conn:
         unchanged = tickets_data.read_ticket(conn, str(ticket["id"]))
+        message_count = conn.execute(
+            "SELECT COUNT(*) FROM ticket_rejection_messages WHERE ticket_id=?",
+            (ticket["id"],),
+        ).fetchone()[0]
     assert unchanged.pending_proposal is not None
     assert unchanged.ticket_status.value == "awaiting_approval"
+    assert message_count == 0
     assert system.backend_prompt_writes(conversation_id) == ()
     assert system.observations(conversation_id) == ()
     assert not asyncio.run(system.is_running(conversation_id))

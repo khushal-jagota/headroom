@@ -7,11 +7,7 @@ import sqlite3
 from collections.abc import Callable, Mapping
 from datetime import datetime
 
-from planner.conversation.contracts import (
-    ConversationSystem,
-    PromptDeliveryRefused,
-    PromptDeliveryUncertain,
-)
+from planner.conversation.contracts import ConversationSystem
 from planner.core import links as core_links
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
@@ -262,74 +258,29 @@ async def return_ticket_for_revision(
     clock: Clock,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
-    """Commit the rejection and its two prompt rows only after one backend batch lands."""
+    """Commit the rejection and two durable messages, then return without backend I/O."""
     admission.validate_body(message, "revision guidance")
     principal = ctx.principal
     now = clock.now_unix()
     source_turn = await message_delivery_service.revision_source_turn(
         conversation_system, conn, ctx=ctx
     )
-    if conn.in_transaction:
-        raise RuntimeError("return-for-revision requires an unshared database transaction")
-    conn.execute("BEGIN IMMEDIATE")
-    revised: Ticket | None = None
-
-    def apply_rejection() -> None:
-        nonlocal revised
-        revised = tickets_data.return_for_revision(
-            conn,
-            ticket_id,
-            message=message,
-            principal=principal,
-            now=now,
-            expected_proposal=expected_proposal,
-            supervisor_sprint_item_id=supervisor_sprint_item_id,
-        )
-
-    try:
-        ticket = tickets_data.require_return_for_revision(
-            conn,
-            ticket_id,
-            principal=principal,
-            supervisor_sprint_item_id=supervisor_sprint_item_id,
-        )
-        expected_proposal = ticket.pending_proposal
-        fate = (
-            await message_delivery_service.send_ticket_revision_batch(
-                conversation_system,
-                conn,
-                ticket_id,
-                lifecycle_message=proposal_returned_for_revision_prompt(),
-                comment=message.strip(),
-                ctx=ctx,
-                commit_mutation=apply_rejection,
-                required_sprint_item_id=supervisor_sprint_item_id,
-            )
-        ).fate
-        if isinstance(fate, PromptDeliveryRefused):
-            conn.execute("ROLLBACK")
-            raise PlannerError(
-                ErrorCode.gateway_offline,
-                "revision guidance could not be delivered",
-                {"ticket_id": ticket_id, "refusal_reason": fate.refusal_reason.value},
-            )
-        if isinstance(fate, PromptDeliveryUncertain):
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise PlannerError(
-                ErrorCode.gateway_offline,
-                "revision delivery outcome is uncertain; do not retry automatically",
-                {"ticket_id": ticket_id, "delivery_uncertain": True, "retryable": False},
-            )
-        # The real conversation store commits the shared transaction with its prompt
-        # rows. Contract fakes run the mutation inline and leave this commit to us.
-        if conn.in_transaction:
-            conn.execute("COMMIT")
-    except BaseException:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
-    assert revised is not None
+    ticket = tickets_data.require_return_for_revision(
+        conn,
+        ticket_id,
+        principal=principal,
+        supervisor_sprint_item_id=supervisor_sprint_item_id,
+    )
+    revised = tickets_data.return_for_revision(
+        conn,
+        ticket_id,
+        message=message,
+        lifecycle_message=proposal_returned_for_revision_prompt(),
+        principal=principal,
+        now=now,
+        expected_proposal=ticket.pending_proposal,
+        supervisor_sprint_item_id=supervisor_sprint_item_id,
+    )
     if source_turn is not None:
         try:
             await conversation_system.record_explicit_reply(

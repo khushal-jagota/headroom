@@ -39,7 +39,6 @@ from planner.conversation.backends.contracts import (
     UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
-    AtomicPromptMessage,
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
     ConversationBackendKey,
@@ -95,11 +94,13 @@ from planner.conversation.system import (
     MODEL_THINKING_PULSE_INTERVAL_SECONDS,
     SqliteProcessConversationSystem,
 )
+from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as MutableClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.proposal_holder_wakes.runtime import _deliver_pending_wakes as deliver_pending_wakes
 from planner.runtime import conversation_start
+from planner.tickets import actions as ticket_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
@@ -570,35 +571,6 @@ def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
     asyncio.run(asyncio.wait_for(exercise(), 20.0))
 
 
-def test_atomic_prompt_batch_quarantines_post_wire_transaction_failure(
-    harness: _Harness, tmp_path: Path
-) -> None:
-    async def exercise() -> None:
-        await _start(harness)
-        conn = connect(str(tmp_path / "conversations.db"))
-        conn.execute("BEGIN IMMEDIATE")
-
-        def fail_mutation() -> None:
-            raise sqlite3.OperationalError("injected mutation failure")
-
-        fate = await harness.system.send_atomic_prompt_batch(
-            "c",
-            (AtomicPromptMessage(text_message_content("rejection"), "Panels"),),
-            transaction_connection=conn,
-            commit_mutation=fail_mutation,
-        )
-        conn.close()
-
-        assert isinstance(fate, PromptDeliveryUncertain)
-        assert harness.backend("c").written_texts() == ("rejection",)
-        assert harness.backend("c").stops == 1
-        assert harness.backend("c").live_children == 0
-        assert not await harness.system.is_running("c")
-        assert await harness.events("c") == ()
-
-    _run(exercise)
-
-
 def test_system_wake_record_failure_is_terminal_uncertain_without_resend(
     harness: _Harness, tmp_path: Path
 ) -> None:
@@ -647,6 +619,228 @@ def test_system_wake_record_failure_is_terminal_uncertain_without_resend(
 
         assert await deliver_pending_wakes(harness.system, conn, clock) == 0
         assert len(backend.writes) == 1
+        conn.close()
+
+    _run(exercise)
+
+
+def _ticket_with_proposal(
+    conn: sqlite3.Connection,
+    *,
+    holder: Principal,
+    title: str,
+    now: int,
+) -> str:
+    ticket = tickets_data.create_ticket(
+        conn,
+        title=title,
+        principal=holder,
+        now=now,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note="Work",
+        stated_ceiling="needs_success",
+        stated_at_cap=AtCap.propose,
+    )
+    tickets_data.file_current_proposal_with_recap(
+        conn,
+        ticket.id,
+        body="Ready",
+        recap="Ready",
+        principal=Principal(PrincipalKind.ticket, ticket.id),
+        now=now + 1,
+    )
+    return ticket.id
+
+
+def _link_ticket_conversation(
+    conn: sqlite3.Connection, ticket_id: str, conversation_id: str, *, now: int
+) -> None:
+    tickets_data.write_ticket_conversation_start(
+        conn,
+        ticket_id,
+        conversation_id=conversation_id,
+        backend="hermes",
+        model="a-model",
+        reasoning_effort=None,
+        now=now,
+    )
+
+
+def test_queued_holder_wake_does_not_block_durable_rejection(
+    harness: _Harness, tmp_path: Path
+) -> None:
+    async def exercise() -> None:
+        conn = connect(str(tmp_path / "conversations.db"))
+        holder_ticket = tickets_data.create_ticket(
+            conn,
+            title="Decider",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=TITLE_MAX_CHARS,
+            worker_type="coding",
+            kickoff_note="Decide",
+        )
+        holder = Principal(PrincipalKind.ticket, holder_ticket.id)
+        target_id = _ticket_with_proposal(
+            conn, holder=holder, title="Reject me", now=2
+        )
+        await _start(harness, "c-holder")
+        await _start(harness, "c-worker")
+        _link_ticket_conversation(conn, holder_ticket.id, "c-holder", now=4)
+        _link_ticket_conversation(conn, target_id, "c-worker", now=4)
+        await harness.system.send(
+            "c-holder", text_message_content("incumbent"), sender_label="owner"
+        )
+        clock = MutableClock(datetime.now().astimezone())
+
+        assert await deliver_pending_wakes(
+            harness.system, conn, clock, ticket_id=target_id
+        ) == 0
+        assert conn.execute(
+            "SELECT state FROM proposal_holder_wakes WHERE ticket_id=?", (target_id,)
+        ).fetchone()["state"] == "delivering"
+
+        revised = await ticket_actions.return_ticket_for_revision(
+            harness.system,
+            conn,
+            target_id,
+            message="Add evidence.",
+            ctx=RequestContext(holder),
+            clock=clock,
+        )
+
+        assert revised.pending_proposal is None
+        assert harness.backend("c-worker").writes == []
+        rows = conn.execute(
+            "SELECT sequence,state FROM ticket_rejection_messages "
+            "WHERE ticket_id=? ORDER BY sequence",
+            (target_id,),
+        ).fetchall()
+        assert [tuple(row) for row in rows] == [(1, "pending"), (2, "pending")]
+        assert conn.execute(
+            "SELECT state FROM proposal_holder_wakes WHERE ticket_id=?", (target_id,)
+        ).fetchone()["state"] == "cancelled"
+
+        assert await deliver_pending_wakes(
+            harness.system, conn, clock, ticket_id=target_id
+        ) == 1
+        await harness.complete_turn("c-worker")
+        assert await deliver_pending_wakes(
+            harness.system, conn, clock, ticket_id=target_id
+        ) == 1
+        prompts = [
+            event.payload
+            for event in await harness.events("c-worker")
+            if isinstance(event.payload, PromptEventPayload)
+        ]
+        assert [message_content_text(prompt.content) for prompt in prompts] == [
+            "Your proposal was rejected and returned for revision. "
+            "The decider's comment follows.",
+            "Add evidence.",
+        ]
+        assert [prompt.sender_label for prompt in prompts] == [
+            "Panels",
+            f"Ticket {holder_ticket.id}",
+        ]
+        assert prompts[0].sender is None and prompts[0].recipient is None
+        assert prompts[1].sender == holder
+        assert prompts[1].recipient == Principal(PrincipalKind.ticket, target_id)
+        assert harness.backend("c-worker").written_texts() == (
+            "Your proposal was rejected and returned for revision. "
+            "The decider's comment follows.",
+            "Add evidence.",
+        )
+        conn.close()
+
+    _run(exercise)
+
+
+def test_slow_rejection_delivery_does_not_hold_the_ticket_database_transaction(
+    harness: _Harness, tmp_path: Path
+) -> None:
+    async def exercise() -> None:
+        db_path = tmp_path / "conversations.db"
+        conn = connect(str(db_path))
+        target_id = _ticket_with_proposal(
+            conn, holder=OWNER_PRINCIPAL, title="Slow delivery", now=1
+        )
+        await _start(harness, "c-worker")
+        _link_ticket_conversation(conn, target_id, "c-worker", now=3)
+        clock = MutableClock(datetime.now().astimezone())
+        await ticket_actions.return_ticket_for_revision(
+            harness.system,
+            conn,
+            target_id,
+            message="Revise.",
+            ctx=RequestContext(OWNER_PRINCIPAL),
+            clock=clock,
+        )
+        backend = harness.backend("c-worker")
+        backend.write_has_begun = asyncio.Event()
+        backend.writes_wait_for_release = asyncio.Event()
+        delivery = asyncio.create_task(
+            deliver_pending_wakes(harness.system, conn, clock, ticket_id=target_id)
+        )
+        await asyncio.wait_for(backend.write_has_begun.wait(), timeout=2)
+
+        other = connect(str(db_path))
+        unrelated = tickets_data.create_ticket(
+            other,
+            title="Unrelated writer",
+            principal=OWNER_PRINCIPAL,
+            now=4,
+            title_max_chars=TITLE_MAX_CHARS,
+            worker_type="coding",
+            kickoff_note="Independent",
+        )
+        assert tickets_data.read_ticket(other, unrelated.id).title == "Unrelated writer"
+        other.close()
+
+        backend.writes_wait_for_release.set()
+        assert await delivery == 1
+        conn.close()
+
+    _run(exercise)
+
+
+def test_comment_record_failure_rolls_back_before_real_backend_io(
+    harness: _Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        conn = connect(str(tmp_path / "conversations.db"))
+        target_id = _ticket_with_proposal(
+            conn, holder=OWNER_PRINCIPAL, title="Atomic records", now=1
+        )
+        await _start(harness, "c-worker")
+        _link_ticket_conversation(conn, target_id, "c-worker", now=3)
+        from planner.proposal_holder_wakes import data as wake_data
+
+        original_insert = wake_data._insert_rejection_message  # noqa: SLF001
+
+        def fail_comment(*args: Any, **kwargs: Any) -> None:
+            if kwargs["sequence"] == 2:
+                raise ValueError("comment record refused")
+            original_insert(*args, **kwargs)
+
+        monkeypatch.setattr(wake_data, "_insert_rejection_message", fail_comment)
+        with pytest.raises(ValueError, match="comment record refused"):
+            await ticket_actions.return_ticket_for_revision(
+                harness.system,
+                conn,
+                target_id,
+                message="Revise.",
+                ctx=RequestContext(OWNER_PRINCIPAL),
+                clock=MutableClock(datetime.now().astimezone()),
+            )
+
+        ticket = tickets_data.read_ticket(conn, target_id)
+        assert ticket.pending_proposal is not None
+        assert conn.execute(
+            "SELECT COUNT(*) FROM ticket_rejection_messages WHERE ticket_id=?",
+            (target_id,),
+        ).fetchone()[0] == 0
+        assert harness.backend("c-worker").writes == []
         conn.close()
 
     _run(exercise)

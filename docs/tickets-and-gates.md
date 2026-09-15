@@ -322,15 +322,12 @@ transcript rows. Owner-held proposals remain on Review and use the owner-only pu
 
 The Review screen can also send an owner-addressed ticket back instead of accepting it,
 whatever field is currently gated. The owner writes short guidance in the review card.
-Panels sends one backend prompt containing a concise system lifecycle fact followed by
-the comment from the deciding principal. They remain two separately attributed transcript
-rows. The already-open Ticket transaction validates authority and route, and the Ticket
-decision plus both prompt rows then commit as one SQLite unit. A definite backend refusal
-rolls that unit back, leaving no message, turn, or Ticket residue, and can be retried.
-The backend and SQLite cannot share a distributed transaction: a failure after the wire
-accepts the batch but before SQLite commits is reported as uncertain and non-retryable,
-and Panels stops and discards that backend child so no response can attach to the
-unrecorded prompt. The ticket's stage never changes: a pending
+The Ticket transaction validates authority and route, then commits the decision plus two
+ordered delivery records. The first is a concise Panels lifecycle fact. The second is
+the comment from the deciding principal. The transaction performs no backend I/O. The
+same machine-lock-owned recovery loop sends both records after the commit and preserves
+their separate attribution. Durable sender identities make retries idempotent. The
+ticket's stage never changes: a pending
 gated proposal is cleared, settled values remain, and the ticket leaves Review while
 its control status is `agent`. The gated field can therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
@@ -349,8 +346,9 @@ Ticket holder, Panels sends a concise system-authored wake-up to that holder's e
 conversation; the holder then reads the proposal from canonical Ticket state. Filing
 commits the parked proposal and its durable intent without contacting the holder. Only
 the machine-lock-owned recovery loop claims and delivers that intent. It wakes on the
-database change signal and retries definite refusals. While a send is claimed, approval
-and replacement are refused for retry rather than allowing a stale wake through. A
+database change signal and retries definite refusals. Approval, rejection, replacement,
+and deletion cancel or supersede undelivered wakes without waiting for delivery. A wake
+already on the wire is only a notice to inspect current Ticket state. A
 post-wire record failure becomes terminal `uncertain` state and is never retried
 automatically.
 

@@ -20,6 +20,7 @@ from planner.conversation.contracts import (
     PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliveryUncertain,
 )
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core import loops as core_loops
@@ -28,7 +29,6 @@ from planner.core.clock import TestClock as MutableClock
 from planner.core.config import Config
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect
-from planner.core.errors import ErrorCode, PlannerError
 from planner.core.loops import BackgroundLoops, start_background_loops
 from planner.message_delivery.contracts import MessageDeliveryResult
 from planner.message_delivery.service import send_system_message
@@ -41,6 +41,7 @@ from planner.proposal_holder_wakes.runtime import (
     _deliver_pending_wakes as deliver_pending_wakes,
 )
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
+from planner.runtime.logic.worker_step_prompt import proposal_returned_for_revision_prompt
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap
@@ -78,6 +79,20 @@ def _wake_state(conn: Connection, ticket_id: str) -> str:
     ).fetchone()
     assert row is not None
     return str(row["state"])
+
+
+def _reject(conn: Connection, ticket_id: str, *, now: int = 3) -> None:
+    conn.execute(
+        "UPDATE tickets SET conversation_id='c_worker' WHERE id=?", (ticket_id,)
+    )
+    tickets_data.return_for_revision(
+        conn,
+        ticket_id,
+        message="Add evidence.",
+        lifecycle_message=proposal_returned_for_revision_prompt(),
+        principal=OWNER_PRINCIPAL,
+        now=now,
+    )
 
 
 def _start_other_process_lock(lock_path: Path) -> subprocess.Popen[str]:
@@ -342,7 +357,7 @@ def test_queued_wake_crash_recovery_reuses_the_same_attempt(
 
 
 @pytest.mark.parametrize("operation", ["approve", "replace"])
-def test_claimed_wake_serializes_against_proposal_writers(
+def test_claimed_wake_does_not_block_proposal_writers(
     tmp_db: Connection,
     fake_clock: Clock,
     monkeypatch: pytest.MonkeyPatch,
@@ -379,30 +394,159 @@ def test_claimed_wake_serializes_against_proposal_writers(
         await asyncio.wait_for(started.wait(), timeout=2)
         racer = connect(db_path)
         try:
-            with pytest.raises(PlannerError) as refused:
-                if operation == "approve":
-                    tickets_data.accept_proposal(
-                        racer,
-                        ticket_id,
-                        field="success",
-                        principal=CHIEF_PRINCIPAL,
-                        now=3,
-                        next_ceiling="needs_approach",
-                        at_cap=AtCap.propose,
-                        next_holder=OWNER_PRINCIPAL,
-                    )
-                else:
-                    _file(racer, ticket_id, body="Replacement", now=3)
-            assert refused.value.code is ErrorCode.already_running
+            if operation == "approve":
+                tickets_data.accept_proposal(
+                    racer,
+                    ticket_id,
+                    field="success",
+                    principal=CHIEF_PRINCIPAL,
+                    now=3,
+                    next_ceiling="needs_approach",
+                    at_cap=AtCap.propose,
+                    next_holder=OWNER_PRINCIPAL,
+                )
+            else:
+                _file(racer, ticket_id, body="Replacement", now=3)
         finally:
             racer.close()
         release.set()
-        assert await delivery == 1
+        assert await delivery == 0
 
     asyncio.run(exercise())
     assert send_count == 1
     pending = tickets_data.read_ticket(tmp_db, ticket_id).pending_proposal
-    assert pending is not None and pending.body == "Original"
+    if operation == "approve":
+        assert pending is None
+        assert _wake_state(tmp_db, ticket_id) == "cancelled"
+    else:
+        assert pending is not None and pending.body == "Replacement"
+        assert _wake_state(tmp_db, ticket_id) == "pending"
+
+
+def test_claimed_wake_does_not_block_ticket_deletion(
+    tmp_db: Connection, fake_clock: Clock
+) -> None:
+    ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
+    _file(tmp_db, ticket_id, body="Delete", now=2)
+    assert len(
+        wake_data.claim_due(
+            tmp_db, now=fake_clock.now_unix(), ticket_id=ticket_id
+        )
+    ) == 1
+
+    deleted = tickets_data.delete_ticket(
+        tmp_db,
+        ticket_id,
+        principal=OWNER_PRINCIPAL,
+        now=3,
+    )
+
+    assert deleted.ticket_id == ticket_id
+    assert tmp_db.execute(
+        "SELECT 1 FROM proposal_holder_wakes WHERE ticket_id=?", (ticket_id,)
+    ).fetchone() is None
+
+
+def test_rejection_messages_retry_in_order_with_stable_attempt_identity(
+    tmp_db: Connection, fake_clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticket_id = _target(tmp_db, OWNER_PRINCIPAL)
+    _file(tmp_db, ticket_id, body="Reject", now=2)
+    _reject(tmp_db, ticket_id)
+    send = AsyncMock(
+        side_effect=(
+            MessageDeliveryResult(
+                Principal(PrincipalKind.ticket, ticket_id),
+                "c-worker",
+                PromptDeliveryRefused(
+                    PromptDeliveryRefusalReason.write_to_backend_failed
+                ),
+            ),
+            MessageDeliveryResult(
+                Principal(PrincipalKind.ticket, ticket_id),
+                "c-worker",
+                PromptDeliveryStarted(),
+            ),
+            MessageDeliveryResult(
+                Principal(PrincipalKind.ticket, ticket_id),
+                "c-worker",
+                PromptDeliveryStarted(),
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "planner.proposal_holder_wakes.runtime.message_delivery_service."
+        "send_ticket_outbox_message",
+        send,
+    )
+
+    assert asyncio.run(
+        deliver_pending_wakes(
+            object(),  # type: ignore[arg-type]
+            tmp_db,
+            fake_clock,
+            ticket_id=ticket_id,
+        )
+    ) == 0
+    tmp_db.execute(
+        "UPDATE ticket_rejection_messages SET retry_at=? WHERE ticket_id=?",
+        (fake_clock.now_unix(), ticket_id),
+    )
+    assert asyncio.run(
+        deliver_pending_wakes(
+            object(),  # type: ignore[arg-type]
+            tmp_db,
+            fake_clock,
+            ticket_id=ticket_id,
+        )
+    ) == 2
+    ids = [call.kwargs["sender_message_id"] for call in send.await_args_list]
+    assert ids == [
+        f"ticket-rejection:{ticket_id}:1:1:1",
+        f"ticket-rejection:{ticket_id}:1:1:2",
+        f"ticket-rejection:{ticket_id}:1:2:1",
+    ]
+    assert [call.args[4] for call in send.await_args_list[1:]] == [
+        proposal_returned_for_revision_prompt(),
+        "Add evidence.",
+    ]
+
+
+def test_uncertain_rejection_message_is_terminal_and_not_retried(
+    tmp_db: Connection, fake_clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticket_id = _target(tmp_db, OWNER_PRINCIPAL)
+    _file(tmp_db, ticket_id, body="Reject", now=2)
+    _reject(tmp_db, ticket_id)
+    send = AsyncMock(
+        return_value=MessageDeliveryResult(
+            Principal(PrincipalKind.ticket, ticket_id),
+            "c-worker",
+            PromptDeliveryUncertain(),
+        )
+    )
+    monkeypatch.setattr(
+        "planner.proposal_holder_wakes.runtime.message_delivery_service."
+        "send_ticket_outbox_message",
+        send,
+    )
+
+    for _ in range(2):
+        assert asyncio.run(
+            deliver_pending_wakes(
+                object(),  # type: ignore[arg-type]
+                tmp_db,
+                fake_clock,
+                ticket_id=ticket_id,
+            )
+        ) == 0
+    send.assert_awaited_once()
+    states = tmp_db.execute(
+        "SELECT sequence,state FROM ticket_rejection_messages "
+        "WHERE ticket_id=? ORDER BY sequence",
+        (ticket_id,),
+    ).fetchall()
+    assert [tuple(row) for row in states] == [(1, "uncertain"), (2, "pending")]
 
 
 def test_recurring_loop_retries_temporary_startup_refusal_without_restart(

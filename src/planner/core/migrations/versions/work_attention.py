@@ -1,7 +1,7 @@
 """Derive owner attention and retire human-control Ticket statuses.
 
 Revision ID: work_attention
-Revises: proposal_holder_wakes
+Revises: durable_rejection_messages
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from sqlalchemy import (
 )
 
 revision = "work_attention"
-down_revision = "proposal_holder_wakes"
+down_revision = "durable_rejection_messages"
 branch_labels = None
 depends_on = None
 

@@ -8,8 +8,11 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from planner.core.contracts import Principal, PrincipalKind
-from planner.core.errors import ErrorCode, PlannerError
-from planner.proposal_holder_wakes.contracts import ProposalHolderWake, proposal_ready_message
+from planner.proposal_holder_wakes.contracts import (
+    ProposalHolderWake,
+    TicketRejectionMessage,
+    proposal_ready_message,
+)
 
 
 @contextmanager
@@ -27,19 +30,6 @@ def _transaction(conn: sqlite3.Connection) -> Iterator[None]:
         conn.execute("COMMIT")
 
 
-def require_not_delivering(conn: sqlite3.Connection, ticket_id: str) -> None:
-    row = conn.execute(
-        "SELECT 1 FROM proposal_holder_wakes WHERE ticket_id=? AND state='delivering'",
-        (ticket_id,),
-    ).fetchone()
-    if row is not None:
-        raise PlannerError(
-            ErrorCode.already_running,
-            "the proposal holder wake is currently being delivered",
-            {"ticket_id": ticket_id},
-        )
-
-
 def record_replacement(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -49,7 +39,6 @@ def record_replacement(
     now: int,
 ) -> None:
     """Replace the current delivery intent and earn a fresh proposal generation."""
-    require_not_delivering(conn, ticket_id)
     if holder.kind is PrincipalKind.owner:
         cancel(conn, ticket_id, now=now)
         return
@@ -73,11 +62,80 @@ def record_replacement(
 
 
 def cancel(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> None:
-    require_not_delivering(conn, ticket_id)
     conn.execute(
         "UPDATE proposal_holder_wakes SET state='cancelled',updated_at=? "
-        "WHERE ticket_id=? AND state IN ('pending','delivered','uncertain')",
+        "WHERE ticket_id=? AND state != 'cancelled'",
         (now, ticket_id),
+    )
+
+
+def record_rejection_messages(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    lifecycle_message: str,
+    comment: str,
+    sender: Principal,
+    now: int,
+) -> None:
+    """Record the ordered Worker messages in the caller's decision transaction."""
+    lifecycle = lifecycle_message.strip()
+    guidance = comment.strip()
+    if not lifecycle or not guidance or not sender.id.strip():
+        raise ValueError("durable rejection messages require non-empty content and sender")
+    row = conn.execute(
+        "SELECT COALESCE(MAX(rejection_generation),0) AS generation "
+        "FROM ticket_rejection_messages WHERE ticket_id=?",
+        (ticket_id,),
+    ).fetchone()
+    generation = int(row["generation"]) + 1
+    values = (
+        (1, lifecycle, None, None),
+        (2, guidance, sender.kind.value, sender.id),
+    )
+    for sequence, message, sender_kind, sender_id in values:
+        _insert_rejection_message(
+            conn,
+            ticket_id=ticket_id,
+            generation=generation,
+            sequence=sequence,
+            message=message,
+            sender_kind=sender_kind,
+            sender_id=sender_id,
+            now=now,
+        )
+
+
+def _insert_rejection_message(
+    conn: sqlite3.Connection,
+    *,
+    ticket_id: str,
+    generation: int,
+    sequence: int,
+    message: str,
+    sender_kind: str | None,
+    sender_id: str | None,
+    now: int,
+) -> None:
+    """Insert one validated message. The decision transaction owns both calls."""
+    message_id = f"{ticket_id}:{generation}:{sequence}"
+    conn.execute(
+        "INSERT INTO ticket_rejection_messages "
+        "(id,ticket_id,rejection_generation,sequence,delivery_attempt,message,"
+        "sender_kind,sender_id,state,retry_at,last_error,created_at,updated_at,delivered_at) "
+        "VALUES (?,?,?,?,1,?,?,?,'pending',?,NULL,?,?,NULL)",
+        (
+            message_id,
+            ticket_id,
+            generation,
+            sequence,
+            message,
+            sender_kind,
+            sender_id,
+            now,
+            now,
+            now,
+        ),
     )
 
 
@@ -143,17 +201,23 @@ def claim_due(
 
 def recover_interrupted_deliveries(conn: sqlite3.Connection, *, now: int) -> int:
     """Return crash-abandoned claims to pending without changing their stable ID."""
-    cursor = conn.execute(
+    proposal_cursor = conn.execute(
         "UPDATE proposal_holder_wakes SET state='pending',retry_at=?,"
         "last_error='delivery interrupted by process restart',updated_at=? "
         "WHERE state='delivering'",
         (now, now),
     )
-    return cursor.rowcount
+    rejection_cursor = conn.execute(
+        "UPDATE ticket_rejection_messages SET state='pending',retry_at=?,"
+        "last_error='delivery interrupted by process restart',updated_at=? "
+        "WHERE state='delivering'",
+        (now, now),
+    )
+    return proposal_cursor.rowcount + rejection_cursor.rowcount
 
 
 def due_ticket_ids(conn: sqlite3.Connection, *, now: int) -> tuple[str, ...]:
-    return tuple(
+    proposal_ids = {
         str(row["ticket_id"])
         for row in conn.execute(
             "SELECT ticket_id FROM proposal_holder_wakes "
@@ -161,17 +225,102 @@ def due_ticket_ids(conn: sqlite3.Connection, *, now: int) -> tuple[str, ...]:
             "ORDER BY retry_at,ticket_id",
             (now,),
         ).fetchall()
-    )
+    }
+    rejection_ids = {
+        str(row["ticket_id"])
+        for row in conn.execute(
+            "SELECT DISTINCT ticket_id FROM ticket_rejection_messages "
+            "WHERE state IN ('pending','delivering') AND retry_at<=?",
+            (now,),
+        ).fetchall()
+    }
+    return tuple(sorted(proposal_ids | rejection_ids))
 
 
 def has_delivering(conn: sqlite3.Connection) -> bool:
     """Return whether this process can still own a durable delivery claim."""
     return (
         conn.execute(
-            "SELECT 1 FROM proposal_holder_wakes WHERE state='delivering' LIMIT 1"
+            "SELECT 1 FROM proposal_holder_wakes WHERE state='delivering' "
+            "UNION ALL SELECT 1 FROM ticket_rejection_messages "
+            "WHERE state='delivering' LIMIT 1"
         ).fetchone()
         is not None
     )
+
+
+def claim_due_rejection_message(
+    conn: sqlite3.Connection, *, ticket_id: str, now: int
+) -> TicketRejectionMessage | None:
+    """Claim the first unfinished message for one rejection in transcript order."""
+    with _transaction(conn):
+        row = conn.execute(
+            "SELECT * FROM ticket_rejection_messages AS message "
+            "WHERE ticket_id=? AND retry_at<=? AND state IN ('pending','delivering') "
+            "AND NOT EXISTS (SELECT 1 FROM ticket_rejection_messages AS earlier "
+            "WHERE earlier.ticket_id=message.ticket_id "
+            "AND (earlier.rejection_generation < message.rejection_generation OR "
+            "(earlier.rejection_generation=message.rejection_generation "
+            "AND earlier.sequence < message.sequence)) "
+            "AND earlier.state != 'delivered') "
+            "ORDER BY rejection_generation,sequence LIMIT 1",
+            (ticket_id, now),
+        ).fetchone()
+        if row is None:
+            return None
+        if str(row["state"]) == "pending":
+            cursor = conn.execute(
+                "UPDATE ticket_rejection_messages SET state='delivering',updated_at=? "
+                "WHERE id=? AND state='pending'",
+                (now, str(row["id"])),
+            )
+            if cursor.rowcount != 1:
+                return None
+        sender_kind = row["sender_kind"]
+        sender = (
+            None
+            if sender_kind is None
+            else Principal(PrincipalKind(str(sender_kind)), str(row["sender_id"]))
+        )
+        return TicketRejectionMessage(
+            id=str(row["id"]),
+            ticket_id=str(row["ticket_id"]),
+            rejection_generation=int(row["rejection_generation"]),
+            sequence=int(row["sequence"]),
+            delivery_attempt=int(row["delivery_attempt"]),
+            message=str(row["message"]),
+            sender=sender,
+            retry_at=int(row["retry_at"]),
+        )
+
+
+def settle_rejection_message(
+    conn: sqlite3.Connection,
+    message: TicketRejectionMessage,
+    *,
+    state: str,
+    now: int,
+    retry_at: int | None = None,
+    error: str | None = None,
+    advance_attempt: bool = False,
+) -> bool:
+    """Settle the exact claimed rejection message after one delivery outcome."""
+    cursor = conn.execute(
+        "UPDATE ticket_rejection_messages SET state=?,retry_at=?,last_error=?,updated_at=?,"
+        "delivered_at=?,delivery_attempt=delivery_attempt+? "
+        "WHERE id=? AND delivery_attempt=? AND state='delivering'",
+        (
+            state,
+            message.retry_at if retry_at is None else retry_at,
+            error,
+            now,
+            now if state == "delivered" else None,
+            1 if advance_attempt else 0,
+            message.id,
+            message.delivery_attempt,
+        ),
+    )
+    return cursor.rowcount == 1
 
 
 def _wake_from_row(row: sqlite3.Row) -> ProposalHolderWake:

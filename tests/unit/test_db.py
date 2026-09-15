@@ -42,7 +42,7 @@ RESHAPE_REVISION = "ticket_status_reshape"
 HEAD_REVISION = "work_attention"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
-CURRENT_SCHEMA_OBJECT_COUNT = 61
+CURRENT_SCHEMA_OBJECT_COUNT = 63
 
 # The five statuses this build ends on, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
@@ -245,6 +245,12 @@ def test_fresh_database_is_built_and_marked_at_the_current_revision(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='proposal_holder_wakes'"
     ).fetchone()[0]
     assert "'pending','delivering','delivered','uncertain','cancelled'" in wake_sql
+    rejection_sql = conn.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type='table' AND name='ticket_rejection_messages'"
+    ).fetchone()[0]
+    assert "UNIQUE(ticket_id,rejection_generation,sequence)" in rejection_sql
+    assert "sequence=1 AND sender_kind IS NULL AND sender_id IS NULL" in rejection_sql
     # Carried so a fresh database is not distinguishable from one the old ladder built.
     # An older checkout reads this marker to decide what it still has to do.
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 37
