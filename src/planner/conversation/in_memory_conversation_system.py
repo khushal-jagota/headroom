@@ -256,15 +256,15 @@ class InMemoryConversationSystem:
             elif model_change is not None or reasoning_effort_change is not None:
                 reason = PromptQueueReason.run_change
             else:
-                fate = self._steer(
+                steer_fate = self._steer(
                     state,
                     content,
                     sender_label,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 )
-                if isinstance(fate, PromptDeliveryInjected):
-                    return fate
+                if isinstance(steer_fate, PromptDeliveryInjected):
+                    return steer_fate
                 reason = PromptQueueReason.steer_refused
             return self._hold_prompt(
                 state, content, sender_label, model_change, reasoning_effort_change,
@@ -274,7 +274,7 @@ class InMemoryConversationSystem:
         # send-now against a busy agent: the incumbent dies first, and this message runs
         # next — ahead of everything already held, which keeps its order behind it.
         self._end_running_turn(state, InMemoryConversationTurnEnding.interrupted)
-        fate = self._start_turn(
+        start_fate = self._start_turn(
             state,
             content,
             sender_label,
@@ -284,11 +284,11 @@ class InMemoryConversationSystem:
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         )
-        if isinstance(fate, PromptDeliveryRefused):
+        if isinstance(start_fate, PromptDeliveryRefused):
             # The incumbent is already dead and the agent is free, so the held prompts
             # are owed their run even though this delivery could not happen.
             self._drain(state)
-        return fate
+        return start_fate
 
     def _hold_prompt(
         self,
