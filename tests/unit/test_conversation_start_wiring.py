@@ -111,7 +111,7 @@ class _LinkWatchingConversationSystem:
         content: MessageContent,
         *,
         sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
@@ -232,7 +232,7 @@ async def _sent(
     *,
     model: str | None = None,
     reasoning_effort: str | None = None,
-    mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+    mode: PromptDeliveryMode = PromptDeliveryMode.queue,
     sender_label: str = "loop",
     now: int,
 ) -> PromptDeliveryFate:
@@ -368,7 +368,7 @@ def test_the_start_request_carries_every_resolved_value(tmp_db: Connection, tick
                 content: MessageContent,
                 *,
                 sender_label: str,
-                mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+                mode: PromptDeliveryMode = PromptDeliveryMode.queue,
                 model_change: str | None = None,
                 reasoning_effort_change: str | None = None,
             ) -> PromptDeliveryFate:
@@ -413,7 +413,7 @@ def test_a_change_on_a_held_message_records_nothing_yet(tmp_db: Connection, tick
     async def exercise() -> None:
         system = InMemoryConversationSystem()
         conversation_id = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
-        # Put a turn on the agent, so the next run-when-free message is held.
+        # Put a turn on the agent, so the next queue message is held.
         await system.send(conversation_id, text_message_content("incumbent"), sender_label="owner")
 
         fate = await _sent(
@@ -421,7 +421,7 @@ def test_a_change_on_a_held_message_records_nothing_yet(tmp_db: Connection, tick
             tmp_db,
             ticket.id,
             "work the step",
-            mode=PromptDeliveryMode.run_when_free,
+            mode=PromptDeliveryMode.queue,
             model="sonnet",
             now=20,
         )
@@ -487,7 +487,7 @@ class _RelinkingConversationSystem:
         content: MessageContent,
         *,
         sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
@@ -712,7 +712,7 @@ def test_resetting_discards_a_message_the_conversation_was_holding(
         # Freeing the agent would have let the held message run. It never reached the
         # backend, and its discard is on the record rather than silent.
         assert [write.text for write in system.backend_prompt_writes(conversation_id)] == [
-            "running work"
+            "loop:\nrunning work"
         ]
         discarded = [
             (observation.text, observation.sender_label)

@@ -9,10 +9,7 @@ import {
   restoredPendingFiles,
   type PendingConversationFile
 } from "../../../lib/conversation/pendingFiles";
-import type {
-  PromptDeliveryMode,
-  SentMessagePiece
-} from "../../../lib/conversation/wire";
+import type { SentMessagePiece } from "../../../lib/conversation/wire";
 
 export type ComposerDraft = Readonly<{
   text: string;
@@ -87,8 +84,7 @@ function sentText(content: readonly SentMessagePiece[]): string {
 
 export function beginComposerSend(
   draft: ComposerDraft,
-  carriedRunValues: RunValues,
-  mode: PromptDeliveryMode
+  carriedRunValues: RunValues
 ): ComposerSendAttempt {
   const draftBeforeSend = snapshotDraft(draft);
   const trimmedText = draftBeforeSend.text.trim();
@@ -97,14 +93,12 @@ export function beginComposerSend(
     ...pendingImagesAsPieces(draftBeforeSend.pendingImages),
     ...pendingFilesAsPieces(draftBeforeSend.pendingFiles)
   ];
-  const retainsRunValuePicks = mode === "steer";
   const draftAfterSend: ComposerDraft = {
     text: "",
     pendingImages: [],
     pendingFiles: [],
-    pickedModel: retainsRunValuePicks ? draftBeforeSend.pickedModel : null,
-    pickedReasoningEffort:
-      retainsRunValuePicks ? draftBeforeSend.pickedReasoningEffort : null,
+    pickedModel: null,
+    pickedReasoningEffort: null,
     compositionRevision: draftBeforeSend.compositionRevision
   };
   return {

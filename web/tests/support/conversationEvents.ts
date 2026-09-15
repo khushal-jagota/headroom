@@ -58,7 +58,7 @@ function eventMetadata(sequence: number, metadata: ConversationEventMetadata) {
 export function promptEvent(
   sequence: number,
   text = "hello",
-  mode: PromptDeliveryMode = "run_when_free",
+  mode: PromptDeliveryMode = "queue",
   overrides: PromptOverrides = {}
 ): EventOf<"prompt"> {
   return {

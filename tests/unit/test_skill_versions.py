@@ -65,7 +65,7 @@ def _prompt(sender_message_id: str) -> PromptEventPayload:
     return PromptEventPayload(
         content=text_message_content("step"),
         sender_label="loop",
-        mode=PromptDeliveryMode.run_when_free,
+        mode=PromptDeliveryMode.queue,
         sender_message_id=sender_message_id,
     )
 
@@ -153,7 +153,7 @@ def test_queued_binding_is_removed_if_its_later_outcome_did_not_run(
                 PromptDeliveryRefusedEventPayload(
                     content=text_message_content("step"),
                     sender_label="loop",
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                     refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed,
                     sender_message_id="queued-message",
                 ),

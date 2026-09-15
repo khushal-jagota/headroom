@@ -180,9 +180,9 @@ same send operation. It accepts the owner, Chief, Ticket, or Sprint Item princip
 employee-to-owner send appends an addressed `message_to_owner` row to the employee's
 current conversation without invoking a backend. An employee without a current
 conversation cannot send to the owner. Employee recipients use their normal current
-conversation path, creating it when a queue send needs one. A steer never creates a
-conversation or starts a turn. Agent keys remain a private resolution detail. The command
-adds no second transport, queue, or conversation record.
+conversation path, creating it when any send needs one. Every mode starts a turn when the
+recipient is idle. Agent keys remain a private resolution detail. The command adds no
+second transport, queue, or conversation record.
 
 Every employee-authored send carries canonical sender and recipient principals derived
 from the authenticated request. Panels records that address on every durable outcome,
@@ -203,13 +203,16 @@ a drop. Attachments wait beside the draft and can be removed one at a time. They
 travel with words or form the whole message. There is no separate upload conversation
 or attachment record.
 
-The command accepts `--mode queue|steer`. Queue is the default. It runs the message when
-the agent is free and holds it in the FIFO line while the agent is busy. Steer asks the
-conversation system to inject text into the current running turn. The Send Message API
-accepts the same `queue` or `steer` value and defaults an omitted value to `queue`.
+The command accepts `--mode queue|steer|send_now`. Queue is the default for command sends.
+Queue holds behind active work. Steer asks the current turn to admit the message. Send now
+interrupts current work and starts the message first. The Send Message API accepts the
+same three values and defaults an omitted value to `queue`.
 
-The browser composer always uses the queue rule. Enter and the send arrow use that same
-rule, including while a turn runs.
+The browser composer defaults to steer. Its mode control also exposes queue and send now.
+Enter and the send arrow use the selected mode. Every selected mode starts an idle turn.
+Attachments and run changes cannot steer, so they enter the queue with a visible reason.
+A confirmed steer refusal does the same. An uncertain steer remains terminal and never
+enters the queue, because a retry can deliver the same message twice.
 
 The unlinked development conversation page keeps a lower-level raw send route for testing
 conversation mechanics in isolation. It rejects every conversation associated with a
@@ -220,12 +223,15 @@ Sprint Item composers never use it; they all use the addressed Send Message oper
 When the agent frees, everything waiting goes to it as one prompt rather than one
 turn each. The messages keep their order and each keeps its sender's name in front
 of its own words, so an agent handed one run of text can still tell who said what.
-Nothing is summarised or reworded, and a single waiting message is sent exactly as
-it was. The record is not collapsed with the prompt: each message still gets its own
-row, because a row names one sender's message id and that id is how a sender
+Nothing else is summarised or reworded. The adapter adds the first sender's name,
+and the held-line combiner adds each later sender's name exactly once. The record is
+not collapsed with the prompt: each message still gets its own row with its original
+content, because a row names one sender's message id and that id is how a sender
 recognises its own message when the record hands it back. A message that asks to run
 on a different model starts the next turn instead of joining this one, because a turn
-runs on one model and the messages in front of it never named that one.
+runs on one model and the messages in front of it never named that one. A message that
+starts with a slash token also gets its own turn. This keeps a possible native command at
+the absolute start and prevents a later command from becoming part of an earlier prompt.
 
 A waiting message that cannot be delivered at all is written down as discarded, and
 the line carries on to the next one. One message nobody can deliver does not take the
@@ -237,8 +243,8 @@ The composer shows the held line in one inset tray above its recessed input on d
 and phone. Messages stack inside that tray. Each row stays on one line and can discard
 the message or make it run next. When the server reports steering support, a row can also
 steer its text into the running turn. The server snapshot is the shared answer, so a
-second tab or device shows the same held line. A tab merges its immediate copy with that
-snapshot by the sender's message id rather than drawing it twice.
+second tab or device shows the same held line and its queue reason. A tab merges its
+immediate copy with that snapshot by the sender's message id rather than drawing it twice.
 
 The queue actions and the input action row use the same order, labels, and button treatment
 on desktop and phone. Width changes the available text space, not the control design.
@@ -248,9 +254,9 @@ started (the text reached a live agent), queued at a position, injected into the
 captured turn's owned work, refused with a named reason, or uncertain after a steering
 attempt may have crossed the backend boundary. Uncertain is terminal: Panels records it
 and does not retry it. The only refusals are genuine impossibilities — no
-such conversation, the agent would not start, its session would not load, the
-write failed, a steer with no running turn to join, or a steer at a backend that
-cannot steer. A busy agent is never a refusal. A message with nothing in it is not a refusal
+such conversation, the agent would not start, its session would not load, or the
+write failed. Confirmed steer refusals enter the queue.
+A busy agent is never a refusal. A message with nothing in it is not a refusal
 either — it is not a message, and it is turned away where it is sent. How a turn later ends is never
 part of the answer — endings are notebook rows.
 
@@ -517,13 +523,16 @@ line, or a trigger on a later line does not open the menu. The composer narrows 
 eligible list as text is typed.
 
 A choice replaces the active token with the entry's exact insertion text. That result is
-still an ordinary draft. Message delivery and transcript rendering do not interpret or
-rewrite it.
+still an ordinary draft. The backend adapter resolves a live catalog command from the
+sender's original draft and keeps the exact slash command for native dispatch. Other
+delivered content gets the sender's name at its start. Transcript rendering keeps the
+original draft.
 
 Hermes maps the command lists that it volunteers into slash command entries. Claude maps
 the command list from its process handshake in the same way, so project commands still
 follow the conversation folder. Their visible text is `/name`, and their insertion text
-is `/name `.
+is `/name `. Their adapters retain the live command names so ordinary and steered command
+dispatch keeps the slash token at the absolute start.
 
 Codex reads its catalog from the app-server after each thread starts or resumes. It joins
 enabled skills, callable installed apps, and enabled installed plugins with the native

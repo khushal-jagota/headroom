@@ -95,7 +95,7 @@ function prompt(text, senderLabel = "owner") {
   return row("prompt", {
     content: [{ piece: "text", text }],
     senderLabel,
-    mode: "run_when_free",
+    mode: "queue",
     sentAtUnixMilliseconds: SENT_AT
   });
 }
@@ -451,7 +451,7 @@ const PLAN = [
     event(1, "prompt", {
       text: "go",
       sender_label: "owner",
-      mode: "run_when_free",
+      mode: "queue",
       sent_at_unix_milliseconds: 1_700_000_000_400
     }),
     event(2, "plan_updated", { entries: PLAN }),

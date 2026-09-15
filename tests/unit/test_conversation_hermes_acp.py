@@ -171,9 +171,9 @@ def test_the_start_requests_values_reach_the_child_process(tmp_path: Path) -> No
             )
 
             account = await subject.agent_account("c")
-            assert account["prompt_writes"][0]["text"] == f"{ROLE_TEXT}\n\nhello"
+            assert account["prompt_writes"][0]["text"] == f"owner:\n{ROLE_TEXT}\n\nhello"
             assert account["prompt_writes"][0]["sender_label"] == "owner"
-            assert account["prompt_writes"][0]["delivery_mode"] == "run_when_free"
+            assert account["prompt_writes"][0]["delivery_mode"] == "queue"
             assert Path(account["working_directory"]) == tmp_path.resolve()
             assert account["identity_environment"] == {IDENTITY_VARIABLE[0]: IDENTITY_VARIABLE[1]}
             assert account["environment"]["HERMES_YOLO_MODE"] == "1"
@@ -199,8 +199,8 @@ def test_the_role_text_rides_the_first_prompt_and_no_other(tmp_path: Path) -> No
 
             account = await subject.agent_account("c")
             assert [write["text"] for write in account["prompt_writes"]] == [
-                f"{ROLE_TEXT}\n\nfirst",
-                "second",
+                f"owner:\n{ROLE_TEXT}\n\nfirst",
+                "owner:\nsecond",
             ]
 
     _run(exercise)
@@ -224,7 +224,7 @@ def test_text_is_admitted_only_to_the_exact_running_turn(tmp_path: Path) -> None
                 {
                     "sessionId": "scripted-session-1",
                     "turnToken": {"conversationId": "c", "turnNumber": 1},
-                    "text": "change the result",
+                    "text": "captain:\nchange the result",
                     "senderLabel": "captain",
                 }
             ]
@@ -278,8 +278,8 @@ def test_direct_and_held_text_use_the_same_correlated_steer_path(tmp_path: Path)
 
             account = await subject.agent_account("c")
             assert [write["text"] for write in account["steer_writes"]] == [
-                "direct guidance",
-                "held guidance",
+                "captain:\ndirect guidance",
+                "captain:\nheld guidance",
             ]
             assert [write["turnToken"] for write in account["steer_writes"]] == [
                 {"conversationId": "c", "turnNumber": 1},
@@ -681,7 +681,10 @@ def test_a_change_that_cannot_be_put_back_starts_the_child_again(tmp_path: Path)
             assert account["mode_writes"] == ["dont_ask"]
             # The account is the conversation's, not the process's: the child that was
             # started again is the same agent on the same session, and it was told both.
-            assert [write["text"] for write in account["prompt_writes"]] == ["one", "two"]
+            assert [write["text"] for write in account["prompt_writes"]] == [
+                "owner:\none",
+                "owner:\ntwo",
+            ]
             assert await subject.backend_model("c") == HERMES_OTHER_MODEL
 
     _run(exercise, seconds=90.0)
@@ -727,8 +730,8 @@ def test_a_send_now_waits_for_the_cancelled_turn_to_be_over_at_the_agent(tmp_pat
 
             account = await subject.agent_account("c")
             assert [write["text"] for write in account["prompt_writes"]] == [
-                "the long one",
-                "the urgent one",
+                "owner:\nthe long one",
+                "owner:\nthe urgent one",
             ]
             assert account["cancellations"] == 1
             assert [write["turn_open_on_arrival"] for write in account["prompt_writes"]] == [
@@ -768,8 +771,8 @@ def test_an_interrupt_waits_for_the_cancelled_turn_too(tmp_path: Path) -> None:
 
             account = await subject.agent_account("c")
             assert [write["text"] for write in account["prompt_writes"]] == [
-                "the long one",
-                "the held one",
+                "owner:\nthe long one",
+                "owner:\nthe held one",
             ]
             assert [write["turn_open_on_arrival"] for write in account["prompt_writes"]] == [
                 False,
@@ -845,7 +848,7 @@ def test_an_answer_the_wire_would_not_take_leaves_the_ask_answerable(tmp_path: P
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -897,7 +900,7 @@ def test_an_answer_that_cannot_be_shown_to_have_landed_does_not_wait_for_good(
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -927,7 +930,7 @@ def test_an_answer_that_reached_the_wire_uses_the_ask_up(tmp_path: Path) -> None
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -991,7 +994,7 @@ def test_real_hermes_holds_a_turn_and_records_what_it_said(tmp_path: Path) -> No
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -1078,7 +1081,7 @@ def test_real_hermes_answers_the_message_that_replaced_a_running_turn(tmp_path: 
                 first_content,
                 sender_content=first_content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -1133,7 +1136,7 @@ def test_real_hermes_stops_a_running_turn_when_it_is_cancelled(tmp_path: Path) -
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -1194,7 +1197,7 @@ async def _real_turn(
         content,
         sender_content=content,
         sender_label="owner",
-        mode=PromptDeliveryMode.run_when_free,
+        mode=PromptDeliveryMode.queue,
         model_change=model,
         reasoning_effort_change=None,
     )
@@ -1383,7 +1386,7 @@ def test_a_picture_reaches_hermes_as_its_bytes(tmp_path: Path) -> None:
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -1391,7 +1394,7 @@ def test_a_picture_reaches_hermes_as_its_bytes(tmp_path: Path) -> None:
             assert report is not None
 
             blocks = report["prompt_writes"][0]["blocks"]
-            assert blocks[0] == {"piece": "text", "text": "look at this"}
+            assert blocks[0] == {"piece": "text", "text": "owner:\nlook at this"}
             assert blocks[1]["piece"] == "image"
             assert blocks[1]["media_type"] == "image/png"
             assert b64decode(blocks[1]["data"]) == b"\x89PNG not really"
@@ -1426,6 +1429,44 @@ def test_a_file_reaches_hermes_as_an_acp_resource_link(tmp_path: Path) -> None:
     _run(exercise)
 
 
+def test_an_attachment_first_message_puts_the_sender_before_the_resource(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            assert sink.message_files is not None
+            kept = await sink.message_files.keep(
+                "c", b"answer,42\n", media_type="text/csv"
+            )
+            content = (
+                MessageFile(
+                    stored_file_id=kept.stored_file_id,
+                    media_type="text/csv",
+                    file_name="facts.csv",
+                    byte_count=10,
+                ),
+            )
+
+            await child.write_prompt(
+                TurnToken(conversation_id="c", turn_number=1),
+                content,
+                sender_content=content,
+                sender_label="owner",
+                    mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+
+            report = await control.send({"command": "report"})
+            assert report is not None
+            blocks = report["prompt_writes"][0]["blocks"]
+            assert blocks[0] == {"piece": "text", "text": "owner:"}
+            assert blocks[1] == {"piece": "unknown"}
+
+    _run(exercise)
+
+
 def test_a_picture_hermes_hands_back_is_kept_and_becomes_a_piece_of_its_message(
     tmp_path: Path,
 ) -> None:
@@ -1445,7 +1486,7 @@ def test_a_picture_hermes_hands_back_is_kept_and_becomes_a_piece_of_its_message(
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -1487,7 +1528,7 @@ async def _write_the_turns_prompt(child: HermesAcpBackendChild, turn_number: int
         content,
         sender_content=content,
         sender_label="owner",
-        mode=PromptDeliveryMode.run_when_free,
+        mode=PromptDeliveryMode.queue,
         model_change=None,
         reasoning_effort_change=None,
     )
@@ -1749,6 +1790,54 @@ def test_the_commands_pushed_a_second_time_replace_the_ones_before_them(
     _run(exercise)
 
 
+def test_an_ordinary_catalog_command_keeps_exact_native_dispatch_text(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            await _advertise_commands(control, sink, "plan")
+            sender_content = text_message_content("/plan focus on tests")
+
+            await child.write_prompt(
+                TurnToken("c", 1),
+                text_message_content("You are the worker.\n\n/plan focus on tests"),
+                sender_content=sender_content,
+                sender_label="owner",
+                    mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert report["prompt_writes"][0]["text"] == "/plan focus on tests"
+
+    _run(exercise)
+
+
+def test_a_steered_catalog_command_keeps_exact_native_dispatch_text(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await _start_the_child_and_a_turn(child, tmp_path)
+            await _advertise_commands(control, sink, "plan")
+
+            outcome = await child.steer(
+                TurnToken("c", 1),
+                text_message_content("/plan focus on tests"),
+                sender_label="owner",
+            )
+
+            assert outcome == BackendSteerAccepted()
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert report["steer_writes"][-1]["text"] == "/plan focus on tests"
+
+    _run(exercise)
+
+
 async def _advertise_commands(
     control: ScriptedAcpAgentControl,
     sink: _RecordingSink,
@@ -1772,7 +1861,7 @@ async def _write_automatic_compaction(child: HermesAcpBackendChild) -> None:
         content,
         sender_content=content,
         sender_label="Panels",
-        mode=PromptDeliveryMode.run_when_free,
+        mode=PromptDeliveryMode.queue,
         model_change=None,
         reasoning_effort_change=None,
         automatic_compaction=True,
@@ -2036,7 +2125,7 @@ def test_real_core_and_scripted_acp_persist_confirmed_compaction_and_release_the
             )
             assert [
                 write["text"] for write in (await subject.agent_account("c"))["prompt_writes"]
-            ] == ["first", "/compress"]
+            ] == ["owner:\nfirst", "/compress"]
 
             held = await subject.system.send(
                 "c", text_message_content("after maintenance"), sender_label="owner"
@@ -2072,7 +2161,7 @@ def test_real_core_and_scripted_acp_persist_confirmed_compaction_and_release_the
             ] == ["first", "/compact", "after maintenance"]
             assert [
                 write["text"] for write in (await subject.agent_account("c"))["prompt_writes"]
-            ] == ["first", "/compress", "after maintenance"]
+            ] == ["owner:\nfirst", "/compress", "owner:\nafter maintenance"]
             await subject.complete_running_turn("c")
 
     _run(exercise)
@@ -2106,7 +2195,7 @@ def test_real_core_and_scripted_acp_keep_the_watermark_on_unconfirmed_compaction
             assert after.automatically_compacted_through_sequence == 0
             assert [
                 write["text"] for write in (await subject.agent_account("c"))["prompt_writes"]
-            ] == ["first", "/compress", "released after failure"]
+            ] == ["owner:\nfirst", "/compress", "owner:\nreleased after failure"]
             endings = [
                 event.payload
                 for event in await subject.recorded_events("c")

@@ -67,7 +67,7 @@ def _message_delivery_mode(raw: object = _MISSING) -> MessageDeliveryMode:
             pass
     raise PlannerError(
         ErrorCode.validation,
-        "mode must be queue or steer",
+        "mode must be queue, steer, or send_now",
         {"mode": raw},
     )
 

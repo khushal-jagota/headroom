@@ -77,12 +77,12 @@ record shapes. Direct `show` commands also keep their full record shapes.
   Select exactly one destination with `--owner`, `--chief`, `--ticket <id>`, or
   `--sprint-item <id>`.
   Supply the text with `--message` or `--body-file`; `--body-file -` reads stdin. Use
-  `--mode queue` to run the message when the agent is free, or use
-  `--mode steer` to inject text into its current running turn. The default is `queue`.
+  `--mode queue`, `--mode steer`, or `--mode send_now`. Queue holds a busy message. Steer
+  injects into current work. Send now interrupts current work. The default is `queue`.
   An employee's `--owner` send records the addressed message in that employee's current
   conversation and reports `recorded`; it does not invoke a backend and fails if the
-  sender has no current conversation. A queue send to a Ticket, the Chief, or a Sprint Item supervisor starts its normal
-  conversation on the first message. A steer never starts a conversation or a turn.
+  sender has no current conversation. Every mode starts a turn when an employee recipient
+  is idle and can create its normal conversation on the first message.
   The recipient uses the shared principal shape: a kind and its stable ID. Agent keys and
   conversation resolution stay inside the server. The result names the recipient,
   conversation, and delivery fate. Started means delivery began. Queued names its position

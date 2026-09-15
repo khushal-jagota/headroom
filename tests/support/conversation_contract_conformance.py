@@ -38,11 +38,13 @@ from planner.conversation.contracts import (
     PromptDeliveryRefused,
     PromptDeliveryStarted,
     PromptDeliveryUncertain,
+    PromptQueueReason,
 )
 from planner.conversation.message_content import (
     MessageContent,
     MessageText,
     message_content_text,
+    sender_labeled_message_content,
     text_message_content,
 )
 
@@ -332,9 +334,11 @@ class ConversationContractConformanceSuite:
             assert await subject.system.is_running("c") is True
             assert await subject.backend_writes("c") == (
                 BackendWrite(
-                    content=text_message_content("first"),
+                    content=sender_labeled_message_content(
+                        text_message_content("first"), "owner"
+                    ),
                     sender_label="owner",
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                 ),
             )
 
@@ -342,7 +346,7 @@ class ConversationContractConformanceSuite:
 
     # --- Every mode x idle/busy ---
 
-    def test_run_when_free_while_idle_starts_the_turn(self) -> None:
+    def test_queue_while_idle_starts_the_turn(self) -> None:
         """Coverage 5."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
@@ -351,14 +355,14 @@ class ConversationContractConformanceSuite:
                 "c",
                 text_message_content("first"),
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
             )
             assert fate == PromptDeliveryStarted()
             assert await subject.system.is_running("c") is True
 
         self._run(exercise)
 
-    def test_run_when_free_while_busy_queues_at_ascending_one_based_positions(self) -> None:
+    def test_queue_while_busy_queues_at_ascending_one_based_positions(self) -> None:
         """Coverage 6, including that a position is a place in the queue and not a count
         of everything ever queued."""
 
@@ -407,7 +411,7 @@ class ConversationContractConformanceSuite:
             )
             assert fate == PromptDeliveryStarted()
             assert await subject.system.is_running("c") is True
-            assert _written_texts(await subject.backend_writes("c")) == ("first",)
+            assert _written_texts(await subject.backend_writes("c")) == ("owner:\nfirst",)
             facts = await subject.recorded_facts("c")
             assert _facts_of_kind(facts, RecordedFactKind.turn_ended) == ()
 
@@ -463,13 +467,16 @@ class ConversationContractConformanceSuite:
                 sender_label="owner",
                 mode=PromptDeliveryMode.send_now,
             ) == PromptDeliveryStarted()
-            assert _written_texts(await subject.backend_writes("c")) == ("incumbent", "urgent")
+            assert _written_texts(await subject.backend_writes("c")) == (
+                "owner:\nincumbent",
+                "owner:\nurgent",
+            )
             # The send-now went ahead of the line. What is left of the line keeps its
             # order and goes to the agent as one prompt.
             await subject.complete_running_turn("c")
             assert _written_texts(await subject.backend_writes("c")) == (
-                "incumbent",
-                "urgent",
+                "owner:\nincumbent",
+                "owner:\nurgent",
                 "owner:\nheld-a\n\nowner:\nheld-b",
             )
 
@@ -499,13 +506,87 @@ class ConversationContractConformanceSuite:
 
         self._run(exercise)
 
-    def test_capability_off_refuses_steer_on_every_backend_running_or_idle(self) -> None:
+    def test_a_command_shaped_first_held_message_gets_its_own_turn(self) -> None:
+        async def exercise(subject: ConversationSystemUnderTest) -> None:
+            await subject.system.start_conversation(_start_request("c"))
+            await subject.system.send(
+                "c", text_message_content("incumbent"), sender_label="owner"
+            )
+            await subject.system.send(
+                "c", text_message_content("/review focus"), sender_label="captain"
+            )
+            await subject.system.send(
+                "c", text_message_content("after command"), sender_label="loop"
+            )
+
+            await subject.complete_running_turn("c")
+            assert _written_texts(await subject.backend_writes("c")) == (
+                "owner:\nincumbent",
+                "captain:\n/review focus",
+            )
+            delivered = _facts_of_kind(
+                await subject.recorded_facts("c"), RecordedFactKind.prompt_delivered
+            )
+            assert tuple(fact.sender_label for fact in delivered) == (
+                "owner",
+                "captain",
+            )
+
+            await subject.complete_running_turn("c")
+            assert _written_texts(await subject.backend_writes("c"))[-1] == (
+                "loop:\nafter command"
+            )
+
+        self._run(exercise)
+
+    def test_a_command_shaped_later_held_message_starts_after_the_earlier_prompt(
+        self,
+    ) -> None:
+        async def exercise(subject: ConversationSystemUnderTest) -> None:
+            await subject.system.start_conversation(_start_request("c"))
+            await subject.system.send(
+                "c", text_message_content("incumbent"), sender_label="owner"
+            )
+            await subject.system.send(
+                "c", text_message_content("before command"), sender_label="loop"
+            )
+            await subject.system.send(
+                "c", text_message_content("/review focus"), sender_label="captain"
+            )
+            await subject.system.send(
+                "c", text_message_content("after command"), sender_label="owner"
+            )
+
+            await subject.complete_running_turn("c")
+            assert _written_texts(await subject.backend_writes("c"))[-1] == (
+                "loop:\nbefore command"
+            )
+
+            await subject.complete_running_turn("c")
+            assert _written_texts(await subject.backend_writes("c"))[-1] == (
+                "captain:\n/review focus"
+            )
+
+            await subject.complete_running_turn("c")
+            assert _written_texts(await subject.backend_writes("c"))[-1] == (
+                "owner:\nafter command"
+            )
+            delivered = _facts_of_kind(
+                await subject.recorded_facts("c"), RecordedFactKind.prompt_delivered
+            )
+            assert tuple(fact.sender_label for fact in delivered) == (
+                "owner",
+                "loop",
+                "captain",
+                "owner",
+            )
+
+        self._run(exercise)
+
+    def test_capability_off_starts_when_idle_and_queues_when_running(self) -> None:
         """Coverage 11."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
-            cannot_steer = PromptDeliveryRefused(
-                refusal_reason=PromptDeliveryRefusalReason.backend_cannot_steer
-            )
             with _steering_supported_by():
                 for backend_key in ConversationBackendKey:
                     idle_id = f"{backend_key}-idle"
@@ -515,7 +596,7 @@ class ConversationContractConformanceSuite:
                         text_message_content("steered"),
                         sender_label="owner",
                         mode=PromptDeliveryMode.steer,
-                    ) == cannot_steer
+                    ) == PromptDeliveryStarted()
 
                     running_id = f"{backend_key}-running"
                     await subject.system.start_conversation(
@@ -532,12 +613,12 @@ class ConversationContractConformanceSuite:
                         text_message_content("steered"),
                         sender_label="owner",
                         mode=PromptDeliveryMode.steer,
-                    ) == cannot_steer
+                    ) == PromptDeliveryQueued(queue_position=1)
 
         self._run(exercise)
 
-    def test_steer_while_idle_is_refused_for_want_of_a_running_turn(self) -> None:
-        """Coverage 12."""
+    def test_steer_while_idle_starts_a_turn(self) -> None:
+        """Coverage 12. An idle steer opens and records an ordinary turn."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(
@@ -549,8 +630,22 @@ class ConversationContractConformanceSuite:
                 sender_label="owner",
                 mode=PromptDeliveryMode.steer,
             )
-            assert fate == PromptDeliveryRefused(
-                refusal_reason=PromptDeliveryRefusalReason.no_running_turn_to_steer_into
+            assert fate == PromptDeliveryStarted()
+            expected_write = BackendWrite(
+                content=text_message_content("owner:\nsteered"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+            )
+            assert await subject.backend_writes("c") == (expected_write,)
+            assert _facts_of_kind(
+                await subject.recorded_facts("c"), RecordedFactKind.prompt_delivered
+            ) == (
+                RecordedFact(
+                    kind=RecordedFactKind.prompt_delivered,
+                    content=text_message_content("steered"),
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.queue,
+                ),
             )
 
         self._run(exercise)
@@ -574,12 +669,16 @@ class ConversationContractConformanceSuite:
             assert _facts_of_kind(facts, RecordedFactKind.turn_ended) == ()
             assert await subject.backend_writes("c") == (
                 BackendWrite(
-                    content=text_message_content("incumbent"),
+                    content=sender_labeled_message_content(
+                        text_message_content("incumbent"), "owner"
+                    ),
                     sender_label="owner",
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                 ),
                 BackendWrite(
-                    content=text_message_content("steered"),
+                    content=sender_labeled_message_content(
+                        text_message_content("steered"), "owner"
+                    ),
                     sender_label="owner",
                     mode=PromptDeliveryMode.steer,
                 ),
@@ -591,9 +690,9 @@ class ConversationContractConformanceSuite:
         """A message is what it holds, all the way through.
 
         Every piece the sender put in reaches the backend, in the order they were put in,
-        and the record holds the same message rather than the words out of it. A system
-        that carried only the words would pass every other exercise here and fail this
-        one, which is the point of it.
+        and the wire adds only the sender label. The record holds the original message
+        rather than the words out of it. A system that carried only the words would pass
+        every other exercise here and fail this one.
         """
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
@@ -613,9 +712,9 @@ class ConversationContractConformanceSuite:
             assert fate == PromptDeliveryStarted()
             assert await subject.backend_writes("c") == (
                 BackendWrite(
-                    content=message,
+                    content=sender_labeled_message_content(message, "owner"),
                     sender_label="owner",
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                 ),
             )
             delivered = _facts_of_kind(
@@ -640,9 +739,11 @@ class ConversationContractConformanceSuite:
             assert fate == PromptDeliveryStarted()
             assert await subject.backend_writes("c") == (
                 BackendWrite(
-                    content=text_message_content("the exact text"),
+                    content=sender_labeled_message_content(
+                        text_message_content("the exact text"), "owner"
+                    ),
                     sender_label="owner",
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                 ),
             )
 
@@ -664,7 +765,9 @@ class ConversationContractConformanceSuite:
             )
             assert fate == PromptDeliveryInjected()
             assert (await subject.backend_writes("c"))[-1] == BackendWrite(
-                content=text_message_content("the exact steer"),
+                content=sender_labeled_message_content(
+                    text_message_content("the exact steer"), "owner"
+                ),
                 sender_label="owner",
                 mode=PromptDeliveryMode.steer,
             )
@@ -737,10 +840,10 @@ class ConversationContractConformanceSuite:
                 text_message_content("refused-text"),
                 sender_label="owner",
                 mode=PromptDeliveryMode.steer,
-            ) == PromptDeliveryRefused(
-                refusal_reason=PromptDeliveryRefusalReason.no_running_turn_to_steer_into
+            ) == PromptDeliveryStarted()
+            assert _written_texts(await subject.backend_writes("idle-steer")) == (
+                "owner:\nrefused-text",
             )
-            assert await subject.backend_writes("idle-steer") == ()
 
             await subject.system.start_conversation(
                 _start_request("no-steer", ConversationBackendKey.codex)
@@ -756,10 +859,10 @@ class ConversationContractConformanceSuite:
                     text_message_content("refused-text"),
                     sender_label="owner",
                     mode=PromptDeliveryMode.steer,
-                ) == PromptDeliveryRefused(
-                    refusal_reason=PromptDeliveryRefusalReason.backend_cannot_steer
-                )
-            assert _written_texts(await subject.backend_writes("no-steer")) == ("incumbent",)
+                ) == PromptDeliveryQueued(queue_position=1)
+            assert _written_texts(await subject.backend_writes("no-steer")) == (
+                "owner:\nincumbent",
+            )
 
         self._run(exercise)
 
@@ -780,7 +883,7 @@ class ConversationContractConformanceSuite:
                     kind=RecordedFactKind.prompt_delivered,
                     content=text_message_content("incumbent"),
                     sender_label="owner",
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                 ),
                 RecordedFact(
                     kind=RecordedFactKind.turn_ended,
@@ -790,10 +893,13 @@ class ConversationContractConformanceSuite:
                     kind=RecordedFactKind.prompt_delivered,
                     content=text_message_content("held"),
                     sender_label="automatic-loop",
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                 ),
             )
-            assert _written_texts(await subject.backend_writes("c")) == ("incumbent", "held")
+            assert _written_texts(await subject.backend_writes("c")) == (
+                "owner:\nincumbent",
+                "automatic-loop:\nheld",
+            )
 
         self._run(exercise)
 
@@ -816,7 +922,9 @@ class ConversationContractConformanceSuite:
                 ("held-a", PromptDeliveryRefusalReason.write_to_backend_failed),
                 ("held-b", PromptDeliveryRefusalReason.write_to_backend_failed),
             )
-            assert _written_texts(await subject.backend_writes("c")) == ("incumbent",)
+            assert _written_texts(await subject.backend_writes("c")) == (
+                "owner:\nincumbent",
+            )
             assert await subject.system.is_running("c") is False
 
         self._run(exercise)
@@ -841,7 +949,7 @@ class ConversationContractConformanceSuite:
 
     # --- Busyness never refuses ---
 
-    def test_ten_run_when_free_sends_against_a_busy_agent_all_queue(self) -> None:
+    def test_ten_queue_sends_against_a_busy_agent_all_queue(self) -> None:
         """Coverage 21."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
@@ -925,47 +1033,11 @@ class ConversationContractConformanceSuite:
             assert isinstance(fate, PromptDeliveryRefused)
             produced["write fails"] = fate.refusal_reason
 
-            await subject.system.start_conversation(
-                _start_request("idle-steer", ConversationBackendKey.hermes)
-            )
-            fate = await subject.system.send(
-                "idle-steer",
-                text_message_content("text"),
-                sender_label="owner",
-                mode=PromptDeliveryMode.steer,
-            )
-            assert isinstance(fate, PromptDeliveryRefused)
-            produced["steer with no running turn"] = fate.refusal_reason
-
-            await subject.system.start_conversation(
-                _start_request("no-steer", ConversationBackendKey.codex)
-            )
-            await subject.system.send(
-                "no-steer",
-                text_message_content("incumbent"),
-                sender_label="owner",
-            )
-            with _steering_supported_by():
-                fate = await subject.system.send(
-                    "no-steer",
-                    text_message_content("text"),
-                    sender_label="owner",
-                    mode=PromptDeliveryMode.steer,
-                )
-            assert isinstance(fate, PromptDeliveryRefused)
-            produced["steer on a backend that cannot"] = fate.refusal_reason
-
             assert produced == {
                 "never started": PromptDeliveryRefusalReason.no_such_conversation,
                 "backend will not spawn": PromptDeliveryRefusalReason.backend_did_not_start,
                 "session will not load": PromptDeliveryRefusalReason.session_did_not_load,
                 "write fails": PromptDeliveryRefusalReason.write_to_backend_failed,
-                "steer with no running turn": (
-                    PromptDeliveryRefusalReason.no_running_turn_to_steer_into
-                ),
-                "steer on a backend that cannot": (
-                    PromptDeliveryRefusalReason.backend_cannot_steer
-                ),
             }
         self._run(exercise)
 
@@ -1031,7 +1103,7 @@ class ConversationContractConformanceSuite:
 
         self._run(exercise)
 
-    def test_write_to_backend_failed_arises_on_a_plain_send_and_on_a_steer(self) -> None:
+    def test_confirmed_failed_steer_falls_back_to_queue(self) -> None:
         """Coverage 26."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
@@ -1064,9 +1136,13 @@ class ConversationContractConformanceSuite:
                 text_message_content("text"),
                 sender_label="owner",
                 mode=PromptDeliveryMode.steer,
-            ) == write_failed
-            assert _written_texts(await subject.backend_writes("steered")) == ("incumbent",)
+            ) == PromptDeliveryQueued(queue_position=1)
+            assert _written_texts(await subject.backend_writes("steered")) == (
+                "owner:\nincumbent",
+            )
             assert await subject.system.is_running("steered") is True
+            [held] = await subject.system.held_prompts("steered")
+            assert held.queue_reason is PromptQueueReason.steer_refused
 
         self._run(exercise)
 
@@ -1099,7 +1175,9 @@ class ConversationContractConformanceSuite:
                 fact.text
                 for fact in _facts_of_kind(facts, RecordedFactKind.prompt_delivery_refused)
             ) == ("held-a", "held-b")
-            assert _written_texts(await subject.backend_writes("c")) == ("incumbent",)
+            assert _written_texts(await subject.backend_writes("c")) == (
+                "owner:\nincumbent",
+            )
 
         self._run(exercise)
 
@@ -1177,7 +1255,10 @@ class ConversationContractConformanceSuite:
             await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             await subject.system.send("c", text_message_content("held"), sender_label="owner")
             await subject.system.interrupt("c")
-            assert _written_texts(await subject.backend_writes("c")) == ("incumbent", "held")
+            assert _written_texts(await subject.backend_writes("c")) == (
+                "owner:\nincumbent",
+                "owner:\nheld",
+            )
             assert await subject.system.is_running("c") is True
 
         self._run(exercise)
@@ -1210,7 +1291,10 @@ class ConversationContractConformanceSuite:
             await subject.system.send("c", text_message_content("held"), sender_label="owner")
             await subject.complete_running_turn("c")
             assert await subject.system.is_running("c") is True
-            assert _written_texts(await subject.backend_writes("c")) == ("incumbent", "held")
+            assert _written_texts(await subject.backend_writes("c")) == (
+                "owner:\nincumbent",
+                "owner:\nheld",
+            )
 
         self._run(exercise)
 
@@ -1551,7 +1635,9 @@ class ConversationContractConformanceSuite:
 
             await subject.complete_running_turn("c")
             assert await subject.backend_model("c") == "next-model"
-            assert "held with change" in _written_texts(await subject.backend_writes("c"))
+            assert "owner:\nheld with change" in _written_texts(
+                await subject.backend_writes("c")
+            )
 
         self._run(exercise)
 
@@ -1661,27 +1747,30 @@ class ConversationContractConformanceSuite:
             )
             assert isinstance(fate, PromptDeliveryStarted)
             assert await subject.system.is_running("c")
-            assert "after the kill" in _written_texts(await subject.backend_writes("c"))
+            assert "owner:\nafter the kill" in _written_texts(
+                await subject.backend_writes("c")
+            )
 
         self._run(exercise)
 
-    def test_a_steer_cannot_carry_a_change(self) -> None:
-        """Coverage 47: the turn a steer joins is already running — caller error, not
-        a delivery fate."""
+    def test_a_steer_with_a_change_falls_back_to_queue(self) -> None:
+        """Coverage 47."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(
                 _start_request("c", backend_key=ConversationBackendKey.hermes)
             )
             await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
-            with pytest.raises(ValueError):
-                await subject.system.send(
-                    "c",
-                    text_message_content("steered"),
-                    sender_label="owner",
-                    mode=PromptDeliveryMode.steer,
-                    model_change="other-model",
-                )
+            fate = await subject.system.send(
+                "c",
+                text_message_content("steered"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
+                model_change="other-model",
+            )
+            assert fate == PromptDeliveryQueued(queue_position=1)
+            [held] = await subject.system.held_prompts("c")
+            assert held.queue_reason is PromptQueueReason.run_change
             assert await subject.system.is_running("c")
 
         self._run(exercise)

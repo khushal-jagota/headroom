@@ -88,7 +88,7 @@ describe("Conversation transcript", () => {
       status: "completed",
       detail: "42 lines"
     });
-    expect(rows[0]).toMatchObject({ kind: "prompt", mode: "run_when_free" });
+    expect(rows[0]).toMatchObject({ kind: "prompt", mode: "queue" });
     expect(tools[0]).toMatchObject({ cappedDetailSequence: null });
   });
 
@@ -226,7 +226,7 @@ describe("Conversation transcript", () => {
       payload: {
         text: "held text",
         sender_label: "owner",
-        mode: "run_when_free",
+        mode: "queue",
         refusal_reason: "backend_did_not_start"
       },
       created_at: 1_700_000_000
@@ -272,7 +272,7 @@ describe("Conversation transcript", () => {
         conversation_id: "c1",
         sequence: 1,
         kind: "prompt",
-        payload: { content, sender_label: "owner", mode: "run_when_free" },
+        payload: { content, sender_label: "owner", mode: "queue" },
         created_at: 1_700_000_000
       },
       {

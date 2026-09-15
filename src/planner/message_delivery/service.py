@@ -47,8 +47,9 @@ def _prompt_mode(mode: MessageDeliveryMode | PromptDeliveryMode) -> PromptDelive
     if isinstance(mode, PromptDeliveryMode):
         return mode
     return {
-        MessageDeliveryMode.queue: PromptDeliveryMode.run_when_free,
+        MessageDeliveryMode.queue: PromptDeliveryMode.queue,
         MessageDeliveryMode.steer: PromptDeliveryMode.steer,
+        MessageDeliveryMode.send_now: PromptDeliveryMode.send_now,
     }[mode]
 
 

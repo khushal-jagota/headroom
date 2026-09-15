@@ -416,7 +416,7 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
         conversation_id
     )[0]
     assert write.sender_label == f"Sprint Item {item['id']}"
-    assert write.text == "Check the acceptance evidence."
+    assert write.text == f"Sprint Item {item['id']}:\nCheck the acceptance evidence."
 
 
 def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> None:

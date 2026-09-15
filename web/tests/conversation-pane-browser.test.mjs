@@ -47,6 +47,19 @@ try {
   let supportsSteer = $state(false);
   let conversationState = $state<ConversationState>("rest");
 
+  async function captureSend(content: any[], mode: string, picked: any): Promise<boolean> {
+    (window as any).__sentModes = [...((window as any).__sentModes ?? []), mode];
+    (window as any).__sentRuns = [...((window as any).__sentRuns ?? []), picked];
+    heldPromptRows = [{
+      key: "composer-fallback",
+      heldPromptId: "composer-fallback",
+      content,
+      state: "held",
+      queueReason: picked.model === null ? "steer_refused" : "run_change"
+    }];
+    return true;
+  }
+
   function dismissConversation(): void {
     conversationState = "rest";
   }
@@ -102,7 +115,7 @@ try {
         createdAt: 2_000,
         content: [{ piece: "text", text: "Continue" }],
         senderLabel: "owner",
-        mode: "run_when_free",
+        mode: "queue",
         sentAtUnixMilliseconds: 2_000
       },
       {
@@ -125,7 +138,8 @@ try {
       key: "held-1",
       heldPromptId: "held-1",
       content: [{ piece: "text", text: "waiting guidance" }],
-      state: "queued"
+      state: "held",
+      queueReason: "steer_refused"
     }];
   };
 </script>
@@ -149,10 +163,17 @@ try {
         {running}
         {heldPromptRows}
         {supportsSteer}
+        backendKey="claude"
+        current={{ model: "opus", reasoningEffort: "high" }}
+        models={[
+          { model_id: "opus", display_name: "Opus", enabled: true },
+          { model_id: "sonnet", display_name: "Sonnet", enabled: true,
+            reasoning_effort_options: [] }
+        ]}
+        effortOptions={["high"]}
         outgoingMessages={[]}
         ownSenderLabel="owner"
-        showRunPicker={false}
-        onSend={async () => true}
+        onSend={captureSend}
       />
     </div>
   </section>
@@ -291,6 +312,9 @@ with sync_playwright() as playwright:
     state(page, "peeked")
     assert page.locator(THREAD).is_visible()
     assert page.locator("[data-conversation-rest-bar]").count() == 0
+    send_mode = page.locator("[data-conversation-send-mode]")
+    assert send_mode.input_value() == "steer"
+    assert send_mode.locator("option").all_text_contents() == ["Steer", "Queue", "Send now"]
 
     page.locator(INPUT).fill("the draft stays exactly here")
     page.locator(INPUT).evaluate("box => box.setSelectionRange(9, 9)")
@@ -391,6 +415,25 @@ with sync_playwright() as playwright:
     assert strip_box is not None and composer_box is not None
     assert round(strip_box["height"]) == 34
     assert round(composer_box["y"] - strip_box["y"] - strip_box["height"]) == 8
+
+    # The composer defaults to steer, and its queued fallback reason reaches the held row.
+    page.locator(INPUT).fill("default steer")
+    page.locator(INPUT).press("Enter")
+    page.wait_for_function("window.__sentModes?.length === 1")
+    assert page.evaluate("window.__sentModes") == ["steer"]
+    page.locator('[data-conversation-held-row="composer-fallback"]').wait_for()
+    assert "turn did not accept steering" in page.locator("[data-conversation-held-stack]").inner_text()
+
+    # A run change remains attached to the default steer send. The server-visible
+    # fallback is a queued message that explains it is waiting to apply that change.
+    page.locator("[data-conversation-picker-model] [data-conversation-picker-trigger]").click()
+    page.locator('[data-conversation-picker-choice="sonnet"]').click()
+    page.locator(INPUT).fill("steer with a run change")
+    page.locator(INPUT).press("Enter")
+    page.wait_for_function("window.__sentModes?.length === 2")
+    assert page.evaluate("window.__sentModes") == ["steer", "steer"]
+    assert page.evaluate("window.__sentRuns[1].model") == "sonnet"
+    assert "apply the run change" in page.locator("[data-conversation-held-stack]").inner_text()
 
     # The server capability controls one provider-neutral steering action.
     page.evaluate("window.__showHeldPrompt(false)")

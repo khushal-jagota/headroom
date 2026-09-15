@@ -522,7 +522,7 @@ def feedback_use(ticket_id: str, feedback_ids: tuple[str, ...], as_json: bool) -
     type=click.Choice([mode.value for mode in MessageDeliveryMode]),
     default=MessageDeliveryMode.queue.value,
     show_default=True,
-    help="Run when free (queue if busy) or steer into the running turn.",
+    help="Queue, steer into the running turn, or interrupt it and send now.",
 )
 @click.option(
     "--message",

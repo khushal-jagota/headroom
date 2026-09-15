@@ -105,11 +105,7 @@ def test_each_public_mode_reaches_each_destination_door_once(
         )
     )
 
-    expected_mode = (
-        PromptDeliveryMode.run_when_free
-        if mode is MessageDeliveryMode.queue
-        else PromptDeliveryMode.steer
-    )
+    expected_mode = PromptDeliveryMode(mode.value)
     selected_send = ticket_send if expected_door == "ticket" else agent_send
     other_send = agent_send if expected_door == "ticket" else ticket_send
     assert selected_send.await_count == 1
@@ -123,8 +119,9 @@ def test_each_public_mode_reaches_each_destination_door_once(
     assert isinstance(result.fate, PromptDeliveryStarted)
 
 
+@pytest.mark.parametrize("mode", list(MessageDeliveryMode))
 def test_owner_has_no_deliverable_conversation(
-    tmp_db: Connection, fake_clock: PlannerTestClock
+    tmp_db: Connection, fake_clock: PlannerTestClock, mode: MessageDeliveryMode
 ) -> None:
     with pytest.raises(PlannerError) as caught:
         asyncio.run(
@@ -135,7 +132,7 @@ def test_owner_has_no_deliverable_conversation(
                 RequestContext(OWNER_PRINCIPAL),
                 OWNER_PRINCIPAL,
                 "Hello",
-                MessageDeliveryMode.queue,
+                mode,
             )
         )
 

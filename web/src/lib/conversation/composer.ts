@@ -10,8 +10,8 @@
  * no recovery.
  *
  * **What a picker changes.** Nothing, until a message is sent. Browsing a model list is
- * browsing; the value rides the next delivery or it never happens at all. A steer cannot
- * carry one — the turn it joins is already running — so the change stays pending.
+ * browsing; the value rides the next delivery or it never happens at all. When a steer
+ * carries a change, the server queues that message so the next turn can apply it.
  */
 
 import type {
@@ -144,16 +144,15 @@ export type RunValues = {
 
 /** The change a send would carry, given what the conversation runs on and what was picked.
  *
- * A value equal to the current one is not a change and is not sent. A steer carries no
- * change at all: the turn it joins is already running, and the server treats a steer with
- * a change as a caller's mistake rather than a delivery outcome.
+ * A value equal to the current one is not a change and is not sent. Every delivery mode
+ * carries an explicitly picked change. The server decides whether that means joining the
+ * current turn or waiting for a new one.
  */
 export function armedChangeFor(
   current: RunValues,
   picked: RunValues,
-  mode: PromptDeliveryMode
+  _mode: PromptDeliveryMode
 ): { model_change?: string; reasoning_effort_change?: string } {
-  if (mode === "steer") return {};
   const change: { model_change?: string; reasoning_effort_change?: string } = {};
   if (picked.model !== null && picked.model !== current.model) {
     change.model_change = picked.model;

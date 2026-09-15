@@ -33,6 +33,7 @@ from planner.message_delivery.contracts import (
         (None, MessageDeliveryMode.queue),
         ("queue", MessageDeliveryMode.queue),
         ("steer", MessageDeliveryMode.steer),
+        ("send_now", MessageDeliveryMode.send_now),
     ],
 )
 def test_api_defaults_and_validates_the_public_mode(
@@ -119,13 +120,13 @@ def test_api_serializes_the_conversation_refusal_reason(
     assert result["refusal_reason"] == "no_running_turn_to_steer_into"
 
 
-@pytest.mark.parametrize("invalid", [None, "run_when_free", "send_now", "STEER", 1])
+@pytest.mark.parametrize("invalid", [None, "run_when_free", "STEER", 1])
 def test_api_rejects_values_outside_the_public_mode_contract(invalid: object) -> None:
     with pytest.raises(PlannerError) as caught:
         api._message_delivery_mode(invalid)
 
     assert caught.value.code is ErrorCode.validation
-    assert caught.value.message == "mode must be queue or steer"
+    assert caught.value.message == "mode must be queue, steer, or send_now"
     assert caught.value.detail == {"mode": invalid}
 
 

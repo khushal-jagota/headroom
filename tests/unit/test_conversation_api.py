@@ -839,7 +839,7 @@ def test_the_view_carries_the_typed_composer_catalog(
                 json={
                     "content": [{"piece": "text", "text": "first"}],
                     "sender_label": "owner",
-                    "mode": "run_when_free",
+                    "mode": "queue",
                 },
             )
             backend = harness.backend("c")
@@ -904,7 +904,7 @@ def test_every_fate_a_send_can_have_comes_back_tagged(
                 json={
                     "content": [{"piece": "text", "text": "first"}],
                     "sender_label": "owner",
-                    "mode": "run_when_free",
+                    "mode": "queue",
                 },
             )
             assert started.status_code == 200
@@ -915,7 +915,7 @@ def test_every_fate_a_send_can_have_comes_back_tagged(
                 json={
                     "content": [{"piece": "text", "text": "held"}],
                     "sender_label": "owner",
-                    "mode": "run_when_free",
+                    "mode": "queue",
                 },
             )
             assert queued.json() == {"fate": "queued", "queue_position": 1}
@@ -947,7 +947,7 @@ def test_every_fate_a_send_can_have_comes_back_tagged(
                 json={
                     "content": [{"piece": "text", "text": "nowhere"}],
                     "sender_label": "owner",
-                    "mode": "run_when_free",
+                    "mode": "queue",
                 },
             )
             assert refused.status_code == 200
@@ -1004,7 +1004,7 @@ def test_a_failed_claude_recovery_refusal_remains_after_an_api_reread(
         assert events[-1]["payload"] == {
             "text": "follow-up",
             "sender_label": "owner",
-            "mode": "run_when_free",
+            "mode": "queue",
             "refusal_reason": "session_did_not_load",
             "sender_message_id": "follow-up-id",
         }
@@ -1059,14 +1059,14 @@ def test_what_a_sender_minted_reaches_the_row_its_message_becomes(harness: _Harn
             assert payloads["prompt"] == {
                 "text": "first",
                 "sender_label": "owner",
-                "mode": "run_when_free",
+                "mode": "queue",
                 "sender_message_id": "m-1",
                 "sent_at_unix_milliseconds": 1_700_000_000_123,
             }
             assert payloads["prompt_delivery_refused"] == {
                 "text": "held",
                 "sender_label": "owner",
-                "mode": "run_when_free",
+                "mode": "queue",
                 "refusal_reason": "write_to_backend_failed",
                 "sender_message_id": "m-2",
                 "sent_at_unix_milliseconds": 1_700_000_000_456,
@@ -1268,6 +1268,7 @@ def test_a_waiting_message_can_be_promoted_by_its_server_owned_id(
                 "sent_at_unix_milliseconds": 1234,
                 "sender": None,
                 "recipient": None,
+                "queue_reason": "requested",
             }
 
             promoted = await client.post(
@@ -1459,7 +1460,7 @@ def test_the_rows_after_a_position_come_back_in_order_and_decoded(harness: _Harn
                 json={
                     "content": [{"piece": "text", "text": "work"}],
                     "sender_label": "owner",
-                    "mode": "run_when_free",
+                    "mode": "queue",
                 },
             )
             await harness.complete_turn("c")
@@ -1474,7 +1475,7 @@ def test_the_rows_after_a_position_come_back_in_order_and_decoded(harness: _Harn
                 # back, exactly as it always was. Nothing ordinary grew.
                 "text": "work",
                 "sender_label": "owner",
-                "mode": "run_when_free",
+                "mode": "queue",
             }
             assert everything[1]["payload"] == {"ending": "completed", "error_summary": None}
 

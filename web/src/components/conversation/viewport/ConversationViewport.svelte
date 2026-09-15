@@ -84,7 +84,7 @@
   function modeChip(mode: PromptDeliveryMode): string | null {
     if (mode === "send_now") return "sent now";
     if (mode === "steer") return "steered";
-    return null;
+    return "queued";
   }
 
   /** Move only far enough that the newest line is in sight, and only ever forwards. */

@@ -150,7 +150,7 @@ async def _turn(
         content,
         sender_content=content,
         sender_label="owner",
-        mode=PromptDeliveryMode.run_when_free,
+        mode=PromptDeliveryMode.queue,
         model_change=model,
         reasoning_effort_change=None,
     )
@@ -201,7 +201,7 @@ def test_real_codex_takes_an_interrupt(tmp_path: Path) -> None:
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -245,7 +245,7 @@ def test_real_codex_consumes_a_guarded_steer_in_the_incumbent_turn(tmp_path: Pat
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -298,7 +298,7 @@ def test_real_codex_rejects_an_ended_steer_without_consuming_its_nonce(
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -370,7 +370,7 @@ def test_real_codex_steer_review_interrupt_uses_its_nested_id(tmp_path: Path) ->
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -417,7 +417,7 @@ def test_real_codex_runs_a_send_now_written_the_instant_the_cancel_returns(
                 first_content,
                 sender_content=first_content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -435,7 +435,7 @@ def test_real_codex_runs_a_send_now_written_the_instant_the_cancel_returns(
                 urgent_content,
                 sender_content=urgent_content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -555,7 +555,7 @@ async def _turn_with_effort(
         content,
         sender_content=content,
         sender_label="owner",
-        mode=PromptDeliveryMode.run_when_free,
+        mode=PromptDeliveryMode.queue,
         model_change=CHEAP_MODEL,
         reasoning_effort_change=effort,
     )
@@ -674,7 +674,7 @@ def test_real_codex_goal_set_get_clear_never_calls_a_model(tmp_path: Path) -> No
                     content,
                     sender_content=content,
                     sender_label="owner",
-                    mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                     model_change=None,
                     reasoning_effort_change=None,
                 )

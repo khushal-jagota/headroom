@@ -236,6 +236,9 @@ def test_in_memory_steer_promotion_drops_queued_model_selections() -> None:
             == PromptDeliveryInjected()
         )
         assert system.backend_model("c") == "a-model"
-        assert message_content_text(system.backend_prompt_writes("c")[-1].content) == "held"
+        assert (
+            message_content_text(system.backend_prompt_writes("c")[-1].content)
+            == "owner:\nheld"
+        )
 
     asyncio.run(exercise())

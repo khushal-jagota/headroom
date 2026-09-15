@@ -26,6 +26,7 @@ export type ComposerRunControlsInput = Readonly<{
   inputDisabled: boolean;
   hasSendableContent: boolean;
   sendsInFlight: number;
+  deliveryMode?: import("../wire").PromptDeliveryMode;
 }>;
 
 export type ComposerRunSelectionIntent =
@@ -51,12 +52,14 @@ export type ComposerRunControlsView = Readonly<{
     ariaLabel: string;
   }>;
   showStop: boolean;
+  deliveryMode: import("../wire").PromptDeliveryMode;
 }>;
 
 export type ComposerRunControlIntents = Readonly<{
   chooseBackend: (backendKey: ConversationBackendKey) => void;
   chooseModel: (model: string, reasoningEffort: string | null) => void;
   chooseReasoningEffort: (reasoningEffort: string) => void;
+  chooseDeliveryMode: (mode: import("../wire").PromptDeliveryMode) => void;
   send: () => void;
   stop: () => void;
 }>;
