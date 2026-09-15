@@ -73,8 +73,9 @@ These actions own lifecycle facts. Do not simulate one with a message.
 ## Worker guidance
 
 Use `message-worker` only for guidance to a Worker with an existing current conversation.
-Read `ticket-context` first. Pass its exact `conversation_id` to `--conversation-id`. The
-server refuses a missing, stale, or unrelated conversation.
+Read `ticket-context` first. The server resolves the Ticket's current conversation when
+the send lands and refuses a missing conversation or a Ticket that is no longer a current
+child. Do not cache or pass a conversation id.
 
 A Worker message never changes the Ticket Stage, scope, status, or Day membership. Use the
 named action when one of those facts must change. Do not use a Worker message to claim or

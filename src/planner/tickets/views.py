@@ -409,13 +409,15 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
     Each card carries ``conversation_id``: the Ticket's conversation link, which under
     the new conversation system is the caller-owned conversation id stored in the
     ``conversation_id`` column. It is what the board route asks the conversation
-    system about, and what the browser keys its reply watermark by.
+    system about. The async route uses that link to add the owner's server-side read
+    position alongside the conversation signals.
 
     None of the three row signals is a database fact of the tickets domain, so none is
     answered here: whether the worker is running (``agent_working``), whether it is
     waiting on a permission ask (``needs_me``), and where its conversation last had a
-    turn end (``latest_turn_ended_sequence``) all belong to the conversation system and
-    are added by the async board route, which can await it.
+    turn end (``latest_turn_ended_sequence``), and the owner's durable read position
+    (``owner_read_through_sequence``) all belong to the conversation system and are added
+    by the async board route, which can await it.
 
     Beside the columns, ``sprint_items`` carries each represented Sprint Item's own
     supervisor conversation. A card answers for its Ticket's worker, and no card answers

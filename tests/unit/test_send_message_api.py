@@ -20,7 +20,11 @@ from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal
 from planner.core.errors import ErrorCode, PlannerError
 from planner.message_delivery import api
 from planner.message_delivery import service as message_delivery_service
-from planner.message_delivery.contracts import MessageDeliveryMode, MessageDeliveryResult
+from planner.message_delivery.contracts import (
+    MessageDeliveryMode,
+    MessageDeliveryResult,
+    MessageRecordedToOwner,
+)
 
 
 @pytest.mark.parametrize(
@@ -133,3 +137,26 @@ def test_api_uses_the_shared_principal_shape_and_rejects_agent_keys() -> None:
 
     assert caught.value.code is ErrorCode.validation
     assert caught.value.detail == {"kind": "agent"}
+
+
+def test_api_serializes_an_employee_message_to_owner_as_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def send_message(*_args: object, **_kwargs: object) -> MessageDeliveryResult:
+        return MessageDeliveryResult(OWNER_PRINCIPAL, "c_sender", MessageRecordedToOwner())
+
+    monkeypatch.setattr(message_delivery_service, "send_message", send_message)
+    result = asyncio.run(
+        api.send_message(
+            {
+                "target": {"kind": "owner", "id": "owner"},
+                "message": "Done.",
+            },
+            cast(Connection, object()),
+            RequestContext(CHIEF_PRINCIPAL),
+            cast(Clock, object()),
+            cast(ConversationSystem, object()),
+        )
+    )
+    assert result["fate"] == "recorded"
+    assert result["conversation_id"] == "c_sender"

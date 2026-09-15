@@ -38,6 +38,7 @@ from planner.conversation.contracts import (
 from planner.conversation.events import (
     ConversationEventKind,
     ConversationEventPayload,
+    MessageToOwnerEventPayload,
     ModelChangedEventPayload,
     PromptDeliveryRefusedEventPayload,
     PromptDeliveryUncertainEventPayload,
@@ -48,6 +49,7 @@ from planner.conversation.events import (
     conversation_event_payload_kind,
     conversation_event_payload_to_canonical_json,
 )
+from planner.core.contracts import PrincipalKind
 from planner.core.db import commit_without_change_signal, connect
 from planner.skill_versions import settle_worker_step_skill_bindings
 
@@ -106,6 +108,7 @@ class ConversationRecord:
     latest_agent_activity_at: int | None
     latest_agent_activity_sequence: int
     automatically_compacted_through_sequence: int
+    owner_read_through_sequence: int
     created_at: int
 
     def resolved_start(self) -> ResolvedConversationStart:
@@ -183,6 +186,22 @@ class ConversationStore:
             payload,
             agent_activity,
             automatic_compaction_confirmed,
+        )
+
+    async def append_message_to_owner(
+        self, conversation_id: str, payload: MessageToOwnerEventPayload
+    ) -> StoredConversationEvent:
+        """Write one owner-bound message without a backend call."""
+        return await self.append_event(conversation_id, payload)
+
+    async def advance_owner_read_through_sequence(
+        self, conversation_id: str, through_sequence: int
+    ) -> ConversationRecord | None:
+        """Move the owner's position forward, bounded by the current record."""
+        return await asyncio.to_thread(
+            self._advance_owner_read_through_sequence_sync,
+            conversation_id,
+            through_sequence,
         )
 
     async def conversations_due_for_automatic_compaction(
@@ -265,6 +284,12 @@ class ConversationStore:
         """
         return await asyncio.to_thread(self._latest_turn_ended_sequences_sync, conversation_ids)
 
+    async def owner_read_through_sequences(
+        self, conversation_ids: Collection[str]
+    ) -> dict[str, int]:
+        """Return the owner's durable position for each existing conversation."""
+        return await asyncio.to_thread(self._owner_read_through_sequences_sync, conversation_ids)
+
     async def has_delivered_prompt(self, conversation_id: str) -> bool:
         """Whether any prompt has ever reached this conversation's backend.
 
@@ -314,6 +339,7 @@ class ConversationStore:
             latest_agent_activity_at=None,
             latest_agent_activity_sequence=0,
             automatically_compacted_through_sequence=0,
+            owner_read_through_sequence=0,
             created_at=self._integer_now(),
         )
         conn = self._connect()
@@ -324,7 +350,8 @@ class ConversationStore:
                 "identity_environment_variables, access, vendor_session_cursor, "
                 "composer_catalog, latest_sequence, latest_agent_activity_at, "
                 "latest_agent_activity_sequence, automatically_compacted_through_sequence, "
-                "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "owner_read_through_sequence, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     record.conversation_id,
                     str(record.backend_key),
@@ -340,6 +367,7 @@ class ConversationStore:
                     record.latest_agent_activity_at,
                     record.latest_agent_activity_sequence,
                     record.automatically_compacted_through_sequence,
+                    record.owner_read_through_sequence,
                     record.created_at,
                 ),
             )
@@ -357,8 +385,31 @@ class ConversationStore:
                 "workspace_folder, role_text, identity_environment_variables, access, "
                 "vendor_session_cursor, composer_catalog, latest_sequence, "
                 "latest_agent_activity_at, latest_agent_activity_sequence, "
-                "automatically_compacted_through_sequence, created_at "
+                "automatically_compacted_through_sequence, owner_read_through_sequence, "
+                "created_at "
                 "FROM conversations WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        return None if row is None else _conversation_record(row)
+
+    def _advance_owner_read_through_sequence_sync(
+        self, conversation_id: str, through_sequence: int
+    ) -> ConversationRecord | None:
+        if through_sequence < 0:
+            raise ValueError("through_sequence must be non-negative")
+        conn = self._connect()
+        try:
+            with conn:
+                conn.execute(
+                    "UPDATE conversations SET owner_read_through_sequence = "
+                    "MAX(owner_read_through_sequence, MIN(?, latest_sequence)) "
+                    "WHERE conversation_id = ?",
+                    (through_sequence, conversation_id),
+                )
+            row = conn.execute(
+                "SELECT * FROM conversations WHERE conversation_id = ?",
                 (conversation_id,),
             ).fetchone()
         finally:
@@ -436,6 +487,19 @@ class ConversationStore:
                     "UPDATE conversations SET model = ?, reasoning_effort = ? "
                     "WHERE conversation_id = ?",
                     (model_change.model, model_change.reasoning_effort, conversation_id),
+                )
+            owner_reply_sequences = [
+                event.sequence
+                for event in written
+                if isinstance(event.payload, PromptEventPayload)
+                and event.payload.sender is not None
+                and event.payload.sender.kind is PrincipalKind.owner
+            ]
+            if owner_reply_sequences:
+                conn.execute(
+                    "UPDATE conversations SET owner_read_through_sequence = "
+                    "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
+                    (max(owner_reply_sequences), conversation_id),
                 )
             _commit_appended_rows(conn, payloads)
         except BaseException:
@@ -548,7 +612,7 @@ class ConversationStore:
                 "WHERE conversation_id=? AND json_extract(payload,'$.sender_message_id')=? "
                 "AND kind IN "
                 "('prompt','prompt_delivery_refused','prompt_delivery_uncertain',"
-                "'prompt_discarded') LIMIT 1",
+                "'prompt_discarded','message_to_owner') LIMIT 1",
                 (conversation_id, sender_message_id),
             ).fetchone()
         finally:
@@ -572,6 +636,26 @@ class ConversationStore:
         finally:
             conn.close()
         return {str(row["conversation_id"]): int(row["latest_turn_ended_sequence"]) for row in rows}
+
+    def _owner_read_through_sequences_sync(
+        self, conversation_ids: Collection[str]
+    ) -> dict[str, int]:
+        ids = tuple(dict.fromkeys(conversation_ids))
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT conversation_id, owner_read_through_sequence FROM conversations "
+                f"WHERE conversation_id IN ({placeholders})",
+                ids,
+            ).fetchall()
+        finally:
+            conn.close()
+        return {
+            str(row["conversation_id"]): int(row["owner_read_through_sequence"]) for row in rows
+        }
 
     def _has_delivered_prompt_sync(self, conversation_id: str) -> bool:
         conn = self._connect()
@@ -717,6 +801,7 @@ def _conversation_record(row: sqlite3.Row) -> ConversationRecord:
         automatically_compacted_through_sequence=int(
             row["automatically_compacted_through_sequence"]
         ),
+        owner_read_through_sequence=int(row["owner_read_through_sequence"]),
         created_at=int(row["created_at"]),
     )
 

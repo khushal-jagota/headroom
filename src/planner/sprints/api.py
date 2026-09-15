@@ -8,12 +8,13 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from datetime import date
+from functools import partial
 from typing import Any
 
 from fastapi import APIRouter, Request
 
 from planner.conversation.api import OwnerSendBody, conversation_message_content, delivery_fate_json
-from planner.conversation.contracts import PromptDeliveryStarted, require_conversation_backend_key
+from planner.conversation.contracts import require_conversation_backend_key
 from planner.core.authctx import (
     reject_agent_fields,
     require_direct_write,
@@ -22,13 +23,14 @@ from planner.core.authctx import (
     require_sprint_item_supervisor_ticket_write,
     require_ticket_worker_write,
 )
-from planner.core.contracts import JsonDict, LinkKind, PrincipalKind, Priority
+from planner.core.contracts import JsonDict, LinkKind, Principal, PrincipalKind, Priority
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import actions as days_actions
 from planner.days.logic.dates import planning_date, resolve_day_id
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
+from planner.message_delivery import service as message_delivery_service
 from planner.projects import data as projects_data
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
@@ -42,7 +44,6 @@ from planner.sprints.contracts import (
     CreateIdeaBody,
     CreateItemBody,
     CreateSprintBody,
-    SprintItemSupervisorLaunchConfiguration,
 )
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
@@ -303,9 +304,8 @@ async def supervisor_message_worker(
         ctx,
         item_id,
         ticket_id,
-        conversation_id=body_str(raw, "conversation_id"),
         message=body_str(raw, "message"),
-        now=clk.now_unix(),
+        clock=clk,
     )
 
 
@@ -688,10 +688,9 @@ async def send_to_item_supervisor(
     clk: Clk,
 ) -> JsonDict:
     require_direct_write(ctx)
-    async with sprints_service.supervisor_lifecycle_lock(item_id):
-        return await _send_to_item_supervisor(
-            item_id, body, conn, ctx, conversations, message_files, clk
-        )
+    return await _send_to_item_supervisor(
+        item_id, body, conn, ctx, conversations, message_files, clk
+    )
 
 
 async def _send_to_item_supervisor(
@@ -723,39 +722,20 @@ async def _send_to_item_supervisor(
             "an existing supervisor conversation cannot change backend",
             {"conversation_id": current, "backend_key": overrides.backend_key.value},
         )
-    resolved_start = conversation_start.sprint_item_supervisor_resolve(item, overrides)
-    delivered = await conversation_start.send_to_agent_conversation(
+    delivered = await message_delivery_service.send_message(
         conversations,
         conn,
-        item.supervisor_agent_key,
-        await conversation_message_content(
-            message_files,
-            body.conversation_id or current or created_conversation_id,
-            body.content,
-        ),
-        resolved_start,
+        clk,
+        ctx,
+        Principal(PrincipalKind.sprint_item, item_id),
+        partial(conversation_message_content, message_files, sent=body.content),
         conversation_id=body.conversation_id,
         created_conversation_id=created_conversation_id,
         runs_under=overrides,
-        sender_label=body.sender_label,
         mode=body.mode,
         sender_message_id=body.sender_message_id,
         sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
-        required_sprint_item_id=item_id,
     )
-    created_here = current is None and delivered.conversation_id == created_conversation_id
-    if created_here or isinstance(delivered.fate, PromptDeliveryStarted):
-        sprints_data.update_supervisor_launch_configuration(
-            conn,
-            item_id,
-            SprintItemSupervisorLaunchConfiguration(
-                employee_backend=resolved_start.backend_key,
-                employee_launch_model=resolved_start.model,
-                employee_launch_reasoning_effort=resolved_start.reasoning_effort,
-            ),
-            principal=ctx.principal,
-            clock=clk,
-        )
     return {"conversation_id": delivered.conversation_id, **delivery_fate_json(delivered.fate)}
 
 

@@ -21,6 +21,7 @@ function item(id: string, values: Partial<BoardSprintItem> = {}): BoardSprintIte
     agent_working: false,
     needs_me: false,
     latest_turn_ended_sequence: 0,
+    owner_read_through_sequence: 0,
     ...values
   };
 }
@@ -222,7 +223,8 @@ describe("Workspace rail", () => {
       conversation_id: "conv-supervisor",
       needs_me: true,
       agent_working: false,
-      unread_position: 0
+      unread_position: 0,
+      owner_read_through_sequence: 0
     });
   });
 
@@ -238,12 +240,15 @@ describe("Workspace rail", () => {
     );
 
     expect(rail.items[0].signals.unread_position).toBe(30);
-    expect(
-      conversationSignalPresentation(rail.items[0].signals, { "conv-supervisor": 29 }).state
-    ).toBe("current-awaiting-approval");
+    expect(conversationSignalPresentation(rail.items[0].signals).state).toBe(
+      "current-awaiting-approval"
+    );
     // Opening the Item carries the reader past the reply and puts the row out.
     expect(
-      conversationSignalPresentation(rail.items[0].signals, { "conv-supervisor": 40 }).state
+      conversationSignalPresentation({
+        ...rail.items[0].signals,
+        owner_read_through_sequence: 40
+      }).state
     ).toBe("reply-seen");
   });
 
@@ -254,7 +259,7 @@ describe("Workspace rail", () => {
     );
 
     expect(
-      conversationSignalPresentation(rail.items[0].signals, {}).state
+      conversationSignalPresentation(rail.items[0].signals).state
     ).toBe("current-awaiting-approval");
   });
 
@@ -265,7 +270,7 @@ describe("Workspace rail", () => {
     );
 
     expect(
-      conversationSignalPresentation(rail.items[0].signals, {}).state
+      conversationSignalPresentation(rail.items[0].signals).state
     ).toBe("upcoming");
   });
 

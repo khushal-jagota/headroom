@@ -108,6 +108,7 @@ from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core import sse
 from planner.core.clock import build_clock
 from planner.core.config import load_config
+from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.core.response_compression import (
     CompressExceptEventStreams,
@@ -707,7 +708,53 @@ def test_every_conversation_mutation_rejects_a_tickets_past_conversation(
                     "sender_label": "owner",
                 },
             )
-            assert active_send.status_code == 200
+            assert active_send.status_code == 409
+            assert active_send.json()["detail"] == (
+                "employee conversations accept messages only through Send Message"
+            )
+
+            assert (await _start(client, "agent-owned")).status_code == 201
+            conn = connect(str(harness.db_path))
+            conn.execute(
+                "INSERT INTO agents (agent_key, conversation_id) VALUES (?, ?)",
+                ("chief_of_staff", "agent-owned"),
+            )
+            conn.commit()
+            conn.close()
+            agent_send = await client.post(
+                "/api/conversation/conversations/agent-owned/send",
+                json={
+                    "content": [{"piece": "text", "text": "bypass"}],
+                    "sender_label": "owner",
+                },
+            )
+            assert agent_send.status_code == 409
+            assert agent_send.json()["detail"] == (
+                "employee conversations accept messages only through Send Message"
+            )
+            conn = connect(str(harness.db_path))
+            conn.execute(
+                "UPDATE conversations SET identity_environment_variables = ? "
+                "WHERE conversation_id = ?",
+                ('[["PLAN_ACTOR","chief"]]', "agent-owned"),
+            )
+            conn.execute(
+                "UPDATE agents SET conversation_id = NULL WHERE agent_key = ?",
+                ("chief_of_staff",),
+            )
+            conn.commit()
+            conn.close()
+            historical_agent_send = await client.post(
+                "/api/conversation/conversations/agent-owned/send",
+                json={
+                    "content": [{"piece": "text", "text": "historical bypass"}],
+                    "sender_label": "owner",
+                },
+            )
+            assert historical_agent_send.status_code == 409
+            assert historical_agent_send.json()["detail"] == (
+                "employee conversations accept messages only through Send Message"
+            )
 
             assert (await _start(client, "unassociated")).status_code == 201
             unassociated_send = await client.post(
@@ -1022,6 +1069,7 @@ def test_what_a_sender_minted_reaches_the_row_its_message_becomes(harness: _Harn
                 "mode": "run_when_free",
                 "refusal_reason": "write_to_backend_failed",
                 "sender_message_id": "m-2",
+                "sent_at_unix_milliseconds": 1_700_000_000_456,
             }
 
             await _start(client, "k")
@@ -1050,6 +1098,47 @@ def test_what_a_sender_minted_reaches_the_row_its_message_becomes(harness: _Harn
                 ]
                 if row["kind"] == "prompt_discarded"
             ] == [{"text": "never ran", "sender_label": "owner", "sender_message_id": "m-3"}]
+
+    _run(exercise)
+
+
+def test_owner_read_position_persists_and_refuses_employee_updates(harness: _Harness) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [{"piece": "text", "text": "first"}],
+                    "sender_label": "owner",
+                },
+            )
+            advanced = await client.post(
+                "/api/conversation/conversations/c/owner-read",
+                json={"through_sequence": 999},
+            )
+            assert advanced.status_code == 200
+            assert advanced.json() == {"owner_read_through_sequence": 1}
+            assert (await client.get("/api/conversation/conversations/c")).json()[
+                "owner_read_through_sequence"
+            ] == 1
+            async with harness.client() as second_device:
+                assert (await second_device.get("/api/conversation/conversations/c")).json()[
+                    "owner_read_through_sequence"
+                ] == 1
+
+            missing = await client.post(
+                "/api/conversation/conversations/missing/owner-read",
+                json={"through_sequence": 1},
+            )
+            assert missing.status_code == 404
+
+            with pytest.raises(PlannerError, match="only to the owner"):
+                await client.post(
+                    "/api/conversation/conversations/c/owner-read",
+                    json={"through_sequence": 1},
+                    headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_one"},
+                )
 
     _run(exercise)
 
@@ -1177,6 +1266,8 @@ def test_a_waiting_message_can_be_promoted_by_its_server_owned_id(
                 "sender_label": "owner",
                 "sender_message_id": "sender-one",
                 "sent_at_unix_milliseconds": 1234,
+                "sender": None,
+                "recipient": None,
             }
 
             promoted = await client.post(

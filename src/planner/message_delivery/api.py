@@ -8,7 +8,11 @@ from planner.conversation.api import delivery_fate_json
 from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.message_delivery import service
-from planner.message_delivery.contracts import MessageDeliveryMode, MessageDeliveryResult
+from planner.message_delivery.contracts import (
+    MessageDeliveryMode,
+    MessageDeliveryResult,
+    MessageRecordedToOwner,
+)
 from planner.tickets.api import Clk, Conversations, Ctx, DbConn
 
 router = APIRouter()
@@ -69,7 +73,11 @@ def _message_delivery_mode(raw: object = _MISSING) -> MessageDeliveryMode:
 
 
 def _result_json(result: MessageDeliveryResult) -> JsonDict:
-    fate = delivery_fate_json(result.fate)
+    fate = (
+        {"fate": "recorded"}
+        if isinstance(result.fate, MessageRecordedToOwner)
+        else delivery_fate_json(result.fate)
+    )
     return {
         "target": {
             "kind": result.recipient.kind.value,

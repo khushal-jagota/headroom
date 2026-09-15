@@ -36,7 +36,7 @@ directory cannot replace the deployed package.
 
 The command tree matches the system model:
 
-- `send-message ...` — send text to one Panels conversation owner.
+- `send-message ...` — send text to the owner or one Panels employee.
 - `day ...` — plan and inspect a day.
 - `project ...` — list and create project catalog rows.
 - `feedback ...` — list open feedback and mark notes as used in a Ticket.
@@ -74,11 +74,14 @@ record shapes. Direct `show` commands also keep their full record shapes.
 ## The verbs
 
 - **`send-message`** — send one text message through the existing conversation path.
-  Select exactly one destination with `--chief`, `--ticket <id>`, or `--sprint-item <id>`.
+  Select exactly one destination with `--owner`, `--chief`, `--ticket <id>`, or
+  `--sprint-item <id>`.
   Supply the text with `--message` or `--body-file`; `--body-file -` reads stdin. Use
   `--mode queue` to run the message when the agent is free, or use
   `--mode steer` to inject text into its current running turn. The default is `queue`.
-  A queue send to a Ticket, the Chief, or a Sprint Item supervisor starts its normal
+  An employee's `--owner` send records the addressed message in that employee's current
+  conversation and reports `recorded`; it does not invoke a backend and fails if the
+  sender has no current conversation. A queue send to a Ticket, the Chief, or a Sprint Item supervisor starts its normal
   conversation on the first message. A steer never starts a conversation or a turn.
   The recipient uses the shared principal shape: a kind and its stable ID. Agent keys and
   conversation resolution stay inside the server. The result names the recipient,
@@ -190,8 +193,9 @@ record shapes. Direct `show` commands also keep their full record shapes.
   user, so a supervisor uses these only for a Ticket the user asked it to.
 - **`sprint item supervisor ticket-context / history / message-worker`** — read one
   current child Ticket, page through its current Worker conversation, or send attributed
-  guidance to that exact existing conversation. `message-worker` requires the current
-  conversation id and refuses stale ids.
+  guidance to that Ticket's current conversation. `message-worker` resolves the current
+  conversation at send time and refuses when the Ticket is no longer a current child or
+  has no current Worker conversation.
 - **`sprint item supervisor restart-worker`** — start a current child Ticket's worker
   step again, when its Worker is dead. A dead Worker leaves the Ticket looking claimed,
   because the claim is the Ticket's status, so clearing the conversation on its own would

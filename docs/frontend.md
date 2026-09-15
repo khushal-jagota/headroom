@@ -103,18 +103,17 @@ One screen per part of the system:
   All three come from the conversation the row is linked to — the ticket's worker for a
   ticket row, the Item's supervisor for an Item. The first two are asked
   of the conversation system directly. The third is a comparison: the row carries a
-  position in its conversation, and this browser keeps how far the reader has got in that
+  position in its conversation, and the server keeps how far the owner has got in that
   conversation. Something is waiting when the position is past the reading. Every row
   carries where its own conversation's last turn ended, so opening the ticket or the
   Item is what puts its mark out.
 
-  How far somebody has read is about that person at that screen, not about the ticket,
-  so it is kept in their own browser and the server is never told. Nothing is written
-  when a reply is read, which is why opening a ticket clears its dot straight away
-  rather than after something refetches. The position is kept per conversation, so
-  pressing New starts unread rather than inheriting the old conversation's reading. A
-  browser that has never seen a conversation has read none of it, so a reply shows —
-  every failure path over-shows attention rather than hiding a reply.
+  The owner read position is durable and server-side, so opening a conversation clears
+  the same dot on every browser. The client advances it only to a sequence the server has
+  already recorded; the server keeps the position monotonic and clamps oversized values.
+  The position is per conversation, so pressing New starts unread rather than inheriting
+  the old conversation's reading. A failed advance over-shows attention rather than
+  hiding a reply.
 
   On screens wider than 960px, the right side starts with a quiet invitation. An Item
   title opens the existing Sprint Item workspace at `#/workspace/item/<item-id>`.

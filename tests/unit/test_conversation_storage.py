@@ -27,6 +27,7 @@ from planner.conversation.events import (
     ConversationEventKind,
     ConversationEventPayload,
     ConversationTurnEnding,
+    MessageToOwnerEventPayload,
     ModelChangedEventPayload,
     PermissionAnsweredEventPayload,
     PermissionAskedEventPayload,
@@ -64,6 +65,7 @@ from planner.conversation.storage import (
     ConversationStore,
 )
 from planner.core import change_signal
+from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 
 A_PROMPT = PromptEventPayload(
@@ -92,6 +94,12 @@ EVERY_PAYLOAD: tuple[ConversationEventPayload, ...] = (
     A_REFUSED_DELIVERY,
     A_UNCERTAIN_DELIVERY,
     PromptDiscardedEventPayload(content=text_message_content("never ran"), sender_label="owner"),
+    MessageToOwnerEventPayload(
+        content=text_message_content("status"),
+        sender=Principal(PrincipalKind.ticket, "t_one"),
+        recipient=OWNER_PRINCIPAL,
+        sender_label="Ticket t_one",
+    ),
     AN_AGENT_MESSAGE,
     ToolCallStartedEventPayload(
         tool_call_id="call-1", title="Read file", tool_kind="read", detail="/tmp/x"
@@ -191,7 +199,6 @@ def test_what_a_sender_minted_is_stored_and_read_back_exactly() -> None:
         sender_message_id="m-1",
         sent_at_unix_milliseconds=1_700_000_000_123,
     )
-
     stored = conversation_event_payload_to_canonical_json(minted)
 
     assert stored == (
@@ -202,6 +209,30 @@ def test_what_a_sender_minted_is_stored_and_read_back_exactly() -> None:
         conversation_event_payload_from_canonical_json(ConversationEventKind.prompt, stored)
         == minted
     )
+
+
+def test_addressed_prompts_are_new_and_legacy_prompts_still_decode() -> None:
+    sender = Principal(PrincipalKind.ticket, "t_one")
+    addressed = PromptEventPayload(
+        content=text_message_content("go"),
+        sender_label="Ticket t_one",
+        mode=PromptDeliveryMode.run_when_free,
+        sender=sender,
+        recipient=OWNER_PRINCIPAL,
+    )
+    stored = conversation_event_payload_to_canonical_json(addressed)
+    assert '"sender":{"id":"t_one","kind":"ticket"}' in stored
+    assert '"recipient":{"id":"owner","kind":"owner"}' in stored
+    assert (
+        conversation_event_payload_from_canonical_json(ConversationEventKind.prompt, stored)
+        == addressed
+    )
+
+    legacy = '{"mode":"run_when_free","sender_label":"owner","text":"old"}'
+    decoded = conversation_event_payload_from_canonical_json(ConversationEventKind.prompt, legacy)
+    assert isinstance(decoded, PromptEventPayload)
+    assert decoded.sender is None
+    assert decoded.recipient is None
 
 
 def test_a_sent_message_carries_its_id_into_whichever_row_it_becomes() -> None:
@@ -272,6 +303,52 @@ def test_a_conversation_is_read_back_as_it_was_written(store: ConversationStore)
         # The row can answer for the start request that made it, which is what a child
         # spawned long afterwards is started from.
         assert read.resolved_start() == resolved
+
+    asyncio.run(exercise())
+
+
+def test_owner_read_position_is_server_side_monotonic_and_bounded(
+    store: ConversationStore,
+) -> None:
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        await store.append_event("c", AN_AGENT_MESSAGE)
+        advanced = await store.advance_owner_read_through_sequence("c", 1)
+        assert advanced is not None
+        assert advanced.owner_read_through_sequence == 1
+
+        stale = await store.advance_owner_read_through_sequence("c", 0)
+        assert stale is not None
+        assert stale.owner_read_through_sequence == 1
+
+        oversized = await store.advance_owner_read_through_sequence("c", 999)
+        assert oversized is not None
+        assert oversized.owner_read_through_sequence == 1
+        assert await store.advance_owner_read_through_sequence("missing", 1) is None
+
+    asyncio.run(exercise())
+
+
+def test_an_owner_reply_advances_read_in_the_prompt_transaction(
+    store: ConversationStore,
+) -> None:
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        await store.append_event("c", AN_AGENT_MESSAGE)
+        await store.append_delivered_prompt(
+            "c",
+            prompt=PromptEventPayload(
+                content=text_message_content("reply"),
+                sender_label="You",
+                mode=PromptDeliveryMode.run_when_free,
+                sender=OWNER_PRINCIPAL,
+                recipient=Principal(PrincipalKind.ticket, "t_one"),
+            ),
+            model_change=None,
+        )
+        record = await store.read_conversation("c")
+        assert record is not None
+        assert record.owner_read_through_sequence == record.latest_sequence == 2
 
     asyncio.run(exercise())
 
@@ -415,9 +492,7 @@ def test_a_delivery_carrying_a_change_writes_both_rows_and_moves_the_conversatio
         written = await store.append_delivered_prompt(
             "c",
             prompt=A_PROMPT,
-            model_change=ModelChangedEventPayload(
-                model="second-model", reasoning_effort="high"
-            ),
+            model_change=ModelChangedEventPayload(model="second-model", reasoning_effort="high"),
         )
 
         # The change is written before the prompt, because it is what the prompt ran under.
@@ -458,9 +533,7 @@ def test_a_delivery_that_cannot_be_written_leaves_no_part_of_itself_behind(
             await store.append_delivered_prompt(
                 "c",
                 prompt=A_PROMPT,
-                model_change=ModelChangedEventPayload(
-                    model="never-model", reasoning_effort=None
-                ),
+                model_change=ModelChangedEventPayload(model="never-model", reasoning_effort=None),
             )
 
         read = await store.read_conversation("c")
@@ -471,8 +544,7 @@ def test_a_delivery_that_cannot_be_written_leaves_no_part_of_itself_behind(
         # Sequence 2 is empty: the change row went in and came back out again with the
         # prompt row that could not follow it. Only the squatter at 3 is left.
         assert [
-            (event.sequence, str(event.kind))
-            for event in await store.read_events_after("c", 0)
+            (event.sequence, str(event.kind)) for event in await store.read_events_after("c", 0)
         ] == [(1, "prompt"), (3, "agent_message")]
 
     asyncio.run(exercise())
@@ -543,9 +615,7 @@ def test_appends_racing_each_other_each_get_a_number_of_their_own(
 A_MESSAGE_WITH_MORE_THAN_WORDS = PromptEventPayload(
     content=(
         MessageText(text="look at this"),
-        MessageImage(
-            stored_file_id="f_abc", media_type="image/png", file_name="screenshot.png"
-        ),
+        MessageImage(stored_file_id="f_abc", media_type="image/png", file_name="screenshot.png"),
         MessageFile(
             stored_file_id="f_data",
             media_type="text/csv",

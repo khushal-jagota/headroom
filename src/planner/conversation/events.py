@@ -36,6 +36,7 @@ from planner.conversation.message_content import (
     message_content_from_stored,
     message_content_json_entries,
 )
+from planner.core.contracts import Principal, PrincipalKind
 
 
 class ConversationEventKind(StrEnum):
@@ -52,6 +53,7 @@ class ConversationEventKind(StrEnum):
     prompt_delivery_uncertain = "prompt_delivery_uncertain"
     prompt_discarded = "prompt_discarded"
     agent_message = "agent_message"
+    message_to_owner = "message_to_owner"
     tool_call_started = "tool_call_started"
     tool_call_finished = "tool_call_finished"
     permission_asked = "permission_asked"
@@ -99,8 +101,7 @@ def conversation_event_kinds_need_the_change_signal(
     as one transaction, and the signal carries nothing that could name part of it.
     """
     return any(
-        kind not in CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION
-        for kind in kinds
+        kind not in CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION for kind in kinds
     )
 
 
@@ -205,6 +206,8 @@ class PromptEventPayload:
     mode: PromptDeliveryMode
     sender_message_id: str | None = None
     sent_at_unix_milliseconds: int | None = None
+    sender: Principal | None = None
+    recipient: Principal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +231,9 @@ class PromptDeliveryRefusedEventPayload:
     mode: PromptDeliveryMode
     refusal_reason: PromptDeliveryRefusalReason
     sender_message_id: str | None = None
+    sent_at_unix_milliseconds: int | None = None
+    sender: Principal | None = None
+    recipient: Principal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,6 +250,9 @@ class PromptDeliveryUncertainEventPayload:
     sender_label: str
     mode: PromptDeliveryMode
     sender_message_id: str | None = None
+    sent_at_unix_milliseconds: int | None = None
+    sender: Principal | None = None
+    recipient: Principal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,6 +275,23 @@ class PromptDiscardedEventPayload:
     content: MessageContent
     sender_label: str
     sender_message_id: str | None = None
+    sent_at_unix_milliseconds: int | None = None
+    sender: Principal | None = None
+    recipient: Principal | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MessageToOwnerEventPayload:
+    """One addressed employee message for the owner, with no backend delivery."""
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.message_to_owner
+
+    content: MessageContent
+    sender: Principal
+    recipient: Principal
+    sender_label: str
+    sender_message_id: str | None = None
+    sent_at_unix_milliseconds: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -446,6 +472,7 @@ type ConversationEventPayload = (
     | PromptDeliveryRefusedEventPayload
     | PromptDeliveryUncertainEventPayload
     | PromptDiscardedEventPayload
+    | MessageToOwnerEventPayload
     | AgentMessageEventPayload
     | ToolCallStartedEventPayload
     | ToolCallFinishedEventPayload
@@ -499,10 +526,7 @@ class HeldPromptsChangedFrame:
 
 
 type ConversationLiveTailFrame = (
-    AgentMessageDeltaFrame
-    | ToolCallProgressFrame
-    | ModelThinkingFrame
-    | HeldPromptsChangedFrame
+    AgentMessageDeltaFrame | ToolCallProgressFrame | ModelThinkingFrame | HeldPromptsChangedFrame
 )
 
 
@@ -543,9 +567,8 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
-                **_entry_if_minted(
-                    "sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds
-                ),
+                **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
+                **_principal_entries(payload.sender, payload.recipient),
             }
         case PromptDeliveryRefusedEventPayload():
             return {
@@ -554,6 +577,8 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "mode": str(payload.mode),
                 "refusal_reason": str(payload.refusal_reason),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
+                **_principal_entries(payload.sender, payload.recipient),
             }
         case PromptDeliveryUncertainEventPayload():
             return {
@@ -561,12 +586,24 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
+                **_principal_entries(payload.sender, payload.recipient),
             }
         case PromptDiscardedEventPayload():
             return {
                 **message_content_json_entries(payload.content),
                 "sender_label": payload.sender_label,
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
+                **_principal_entries(payload.sender, payload.recipient),
+            }
+        case MessageToOwnerEventPayload():
+            return {
+                **message_content_json_entries(payload.content),
+                "sender_label": payload.sender_label,
+                **_principal_entries(payload.sender, payload.recipient),
+                **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
             }
         case AgentMessageEventPayload():
             return message_content_json_entries(payload.content)
@@ -633,8 +670,7 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
         case PlanUpdatedEventPayload():
             return {
                 "entries": [
-                    {"text": entry.text, "status": str(entry.status)}
-                    for entry in payload.entries
+                    {"text": entry.text, "status": str(entry.status)} for entry in payload.entries
                 ]
             }
         case ModelChangedEventPayload():
@@ -667,6 +703,8 @@ def _payload_from_json_object(
                 sent_at_unix_milliseconds=_optional_whole_number(
                     stored, "sent_at_unix_milliseconds"
                 ),
+                sender=_optional_principal(stored, "sender"),
+                recipient=_optional_principal(stored, "recipient"),
             )
         case ConversationEventKind.prompt_delivery_refused:
             return PromptDeliveryRefusedEventPayload(
@@ -675,6 +713,11 @@ def _payload_from_json_object(
                 mode=PromptDeliveryMode(_text(stored, "mode")),
                 refusal_reason=PromptDeliveryRefusalReason(_text(stored, "refusal_reason")),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
+                sent_at_unix_milliseconds=_optional_whole_number(
+                    stored, "sent_at_unix_milliseconds"
+                ),
+                sender=_optional_principal(stored, "sender"),
+                recipient=_optional_principal(stored, "recipient"),
             )
         case ConversationEventKind.prompt_delivery_uncertain:
             return PromptDeliveryUncertainEventPayload(
@@ -682,12 +725,37 @@ def _payload_from_json_object(
                 sender_label=_text(stored, "sender_label"),
                 mode=PromptDeliveryMode(_text(stored, "mode")),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
+                sent_at_unix_milliseconds=_optional_whole_number(
+                    stored, "sent_at_unix_milliseconds"
+                ),
+                sender=_optional_principal(stored, "sender"),
+                recipient=_optional_principal(stored, "recipient"),
             )
         case ConversationEventKind.prompt_discarded:
             return PromptDiscardedEventPayload(
                 content=message_content_from_stored(stored),
                 sender_label=_text(stored, "sender_label"),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
+                sent_at_unix_milliseconds=_optional_whole_number(
+                    stored, "sent_at_unix_milliseconds"
+                ),
+                sender=_optional_principal(stored, "sender"),
+                recipient=_optional_principal(stored, "recipient"),
+            )
+        case ConversationEventKind.message_to_owner:
+            sender = _optional_principal(stored, "sender")
+            recipient = _optional_principal(stored, "recipient")
+            if sender is None or recipient is None:
+                raise ValueError("message_to_owner requires sender and recipient")
+            return MessageToOwnerEventPayload(
+                content=message_content_from_stored(stored),
+                sender=sender,
+                recipient=recipient,
+                sender_label=_text(stored, "sender_label"),
+                sender_message_id=_optional_text(stored, "sender_message_id"),
+                sent_at_unix_milliseconds=_optional_whole_number(
+                    stored, "sent_at_unix_milliseconds"
+                ),
             )
         case ConversationEventKind.agent_message:
             return AgentMessageEventPayload(content=message_content_from_stored(stored))
@@ -803,6 +871,28 @@ def _entry_if_minted(field_name: str, value: object) -> dict[str, Any]:
     by a sender that mints nothing is the same text it has always been.
     """
     return {} if value is None else {field_name: value}
+
+
+def _principal_entries(sender: Principal | None, recipient: Principal | None) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    if sender is not None:
+        result["sender"] = {"kind": sender.kind.value, "id": sender.id}
+    if recipient is not None:
+        result["recipient"] = {"kind": recipient.kind.value, "id": recipient.id}
+    return result
+
+
+def _optional_principal(stored: dict[str, Any], field_name: str) -> Principal | None:
+    value = stored.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be a principal object or absent")
+    kind = value.get("kind")
+    principal_id = value.get("id")
+    if not isinstance(kind, str) or not isinstance(principal_id, str):
+        raise ValueError(f"{field_name} must contain text kind and id")
+    return Principal(PrincipalKind(kind), principal_id)
 
 
 def _text(stored: dict[str, Any], field_name: str) -> str:

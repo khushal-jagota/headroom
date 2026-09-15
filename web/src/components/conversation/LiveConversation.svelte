@@ -49,10 +49,10 @@
     liveUserInputFrom,
     transcriptRows
   } from "../../lib/conversation/transcript";
-  import { writeReplyWatermark } from "../../lib/replyWatermark";
   import {
     answerPermissionAsk,
     answerUserInput,
+    advanceOwnerRead,
     discardHeldPrompt,
     interruptConversation,
     openConversationTail,
@@ -174,12 +174,31 @@
   );
   let ask = $derived(liveAskFrom(rows));
   let userInput = $derived(liveUserInputFrom(rows));
-  // Looking at a conversation is what reading it means. While this pane is showing one,
-  // the reader has seen it as far as the record goes — including mid-turn, because a
-  // turn that has not ended yet is not a reply waiting for anybody. The board's reply
-  // mark is drawn from this and from nothing else.
+  let advancingRead: { conversationId: string; sequence: number } | null = null;
   $effect(() => {
-    if (view !== null) writeReplyWatermark(view.conversation_id, view.latest_sequence);
+    if (
+      view !== null
+      && view.latest_sequence > view.owner_read_through_sequence
+      && (advancingRead?.conversationId !== view.conversation_id
+        || view.latest_sequence > advancingRead.sequence)
+    ) {
+      const reading = view;
+      advancingRead = {
+        conversationId: reading.conversation_id,
+        sequence: reading.latest_sequence
+      };
+      void advanceOwnerRead(reading.conversation_id, reading.latest_sequence)
+        .then((advanced) => {
+          if (view?.conversation_id === reading.conversation_id) {
+            view = { ...view, owner_read_through_sequence: advanced };
+          }
+        })
+        .catch(() => {
+          if (advancingRead?.conversationId === reading.conversation_id) {
+            advancingRead = null;
+          }
+        });
+    }
   });
   let running = $derived(liveness.isRunning);
   // The conversation's own backend, and before there is one what starting it would use.

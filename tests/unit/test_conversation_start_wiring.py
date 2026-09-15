@@ -33,7 +33,7 @@ from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
 from planner.conversation.message_content import MessageContent, text_message_content
-from planner.core.contracts import Priority
+from planner.core.contracts import Principal, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.projects.data import create_project, update_project
 from planner.runtime.conversation_start import (
@@ -116,6 +116,8 @@ class _LinkWatchingConversationSystem:
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
     ) -> PromptDeliveryFate:
         return await self._system.send(
             conversation_id,
@@ -124,6 +126,29 @@ class _LinkWatchingConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
+        )
+
+    async def record_message_to_owner(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        sender: Principal,
+        recipient: Principal,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+    ) -> None:
+        await self._system.record_message_to_owner(
+            conversation_id,
+            content,
+            sender_label=sender_label,
+            sender=sender,
+            recipient=recipient,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         )
@@ -246,6 +271,44 @@ def test_a_start_that_loses_the_active_pointer_race_records_no_history(
         assert linked.conversation_id == winner
         assert linked.made_here is False
         assert _history(tmp_db, ticket.id) == [winner]
+
+    asyncio.run(exercise())
+
+
+def test_first_message_materializes_attachments_only_for_the_race_winner(
+    tmp_db: Connection, ticket: Ticket
+) -> None:
+    async def exercise() -> None:
+        winner = "conv_winner"
+        materialized_for: list[str] = []
+
+        class _WinnerLinksDuringStart(InMemoryConversationSystem):
+            async def start_conversation(self, request: ConversationStartRequest) -> None:
+                await super().start_conversation(request)
+                tmp_db.execute(
+                    "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+                    (winner, ticket.id),
+                )
+                tmp_db.commit()
+
+        async def content_for(conversation_id: str) -> MessageContent:
+            materialized_for.append(conversation_id)
+            return text_message_content("message with attachment")
+
+        delivered = await send_to_ticket_conversation(
+            _WinnerLinksDuringStart(),
+            tmp_db,
+            ticket.id,
+            content_for,
+            conversation_id=None,
+            created_conversation_id="conv_loser",
+            sender_label="owner",
+            now=20,
+        )
+
+        assert delivered.conversation_id == winner
+        assert isinstance(delivered.fate, PromptDeliveryRefused)
+        assert materialized_for == [winner]
 
     asyncio.run(exercise())
 
@@ -429,6 +492,8 @@ class _RelinkingConversationSystem:
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
     ) -> PromptDeliveryFate:
         fate = await self._system.send(
             conversation_id,
@@ -439,9 +504,32 @@ class _RelinkingConversationSystem:
             reasoning_effort_change=reasoning_effort_change,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
         )
         self._relink()
         return fate
+
+    async def record_message_to_owner(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        sender: Principal,
+        recipient: Principal,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+    ) -> None:
+        await self._system.record_message_to_owner(
+            conversation_id,
+            content,
+            sender_label=sender_label,
+            sender=sender,
+            recipient=recipient,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+        )
 
     async def interrupt(self, conversation_id: str) -> None:
         await self._system.interrupt(conversation_id)

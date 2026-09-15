@@ -1,9 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
   import { conversationSignalPresentation } from "../lib/conversationSignalPresentation";
-  import { onReplyWatermarkMoved, readReplyWatermark } from "../lib/replyWatermark";
   import {
     buildWorkspaceRail,
     type WorkspaceRailItem,
@@ -82,28 +80,6 @@
     window.location.hash = workspaceAddress(address.selection, next);
   }
 
-  let howFarThisBrowserHasRead = $state<Record<string, number>>({});
-
-  function rereadWhereThisBrowserHasGot(): void {
-    const positions: Record<string, number> = {};
-    for (const card of allCards) {
-      if (card.conversation_id) {
-        positions[card.conversation_id] = readReplyWatermark(card.conversation_id);
-      }
-    }
-    for (const item of rail.items) {
-      const conversationId = item.signals.conversation_id;
-      if (conversationId) {
-        positions[conversationId] = readReplyWatermark(conversationId);
-      }
-    }
-    const chiefConversationId = workers.data?.chief_of_staff.conversation_id;
-    if (chiefConversationId) {
-      positions[chiefConversationId] = readReplyWatermark(chiefConversationId);
-    }
-    howFarThisBrowserHasRead = positions;
-  }
-
   let chiefPresentation = $derived(
     workers.data
       ? conversationSignalPresentation(
@@ -111,19 +87,13 @@
             conversation_id: workers.data.chief_of_staff.conversation_id,
             needs_me: workers.data.chief_of_staff.needs_me,
             agent_working: workers.data.chief_of_staff.agent_working,
-            unread_position: workers.data.chief_of_staff.latest_turn_ended_sequence
-          },
-          howFarThisBrowserHasRead
+            unread_position: workers.data.chief_of_staff.latest_turn_ended_sequence,
+            owner_read_through_sequence:
+              workers.data.chief_of_staff.owner_read_through_sequence
+          }
         )
       : null
   );
-
-  onMount(() => onReplyWatermarkMoved(rereadWhereThisBrowserHasGot));
-  $effect(() => {
-    board.data;
-    workers.data;
-    rereadWhereThisBrowserHasGot();
-  });
 
   function cardPresentation(card: BoardCard) {
     return conversationSignalPresentation(
@@ -131,16 +101,16 @@
         conversation_id: card.conversation_id,
         needs_me: card.needs_me,
         agent_working: card.agent_working,
-        unread_position: card.latest_turn_ended_sequence
-      },
-      howFarThisBrowserHasRead
+        unread_position: card.latest_turn_ended_sequence,
+        owner_read_through_sequence: card.owner_read_through_sequence
+      }
     );
   }
 
   // Awake beats rested: a done Item that needs the user, is mid-turn, or holds a
   // reply this browser has not seen yet stays with the live Items.
   function itemIsAwake(item: WorkspaceRailItem): boolean {
-    const state = conversationSignalPresentation(item.signals, howFarThisBrowserHasRead).state;
+    const state = conversationSignalPresentation(item.signals).state;
     return state === "needs-me" || state === "current-running" || state === "current-awaiting-approval";
   }
 
@@ -213,10 +183,7 @@
 {#snippet sprintItem(item: WorkspaceRailItem)}
   {@const open = opening.openItemId === item.id}
   {@const selected = opening.markedItemId === item.id}
-  {@const presentation = conversationSignalPresentation(
-    item.signals,
-    howFarThisBrowserHasRead
-  )}
+  {@const presentation = conversationSignalPresentation(item.signals)}
   <section
     class="board-workspace-item"
     class:board-workspace-item--selected={selected}

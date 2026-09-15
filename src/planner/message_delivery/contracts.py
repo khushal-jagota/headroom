@@ -17,7 +17,12 @@ class MessageDeliveryMode(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class MessageRecordedToOwner:
+    """The addressed row landed and no backend received it."""
+
+
+@dataclass(frozen=True, slots=True)
 class MessageDeliveryResult:
     recipient: Principal
     conversation_id: str | None
-    fate: PromptDeliveryFate
+    fate: PromptDeliveryFate | MessageRecordedToOwner

@@ -198,6 +198,17 @@ def require_direct_write(ctx: RequestContext) -> None:
     )
 
 
+def require_owner(ctx: RequestContext) -> None:
+    """Permit only Khushal's direct principal."""
+    if ctx.principal.kind is PrincipalKind.owner:
+        return
+    raise PlannerError(
+        ErrorCode.agent_forbidden,
+        "this operation is available only to the owner",
+        {"actor": principal_legacy_actor(ctx.principal)},
+    )
+
+
 def require_feedback_use(conn: sqlite3.Connection, ctx: RequestContext, ticket_id: str) -> None:
     """Permit direct callers, an exact Ticket worker, or its Item supervisor."""
     if ctx.principal.kind in {PrincipalKind.owner, PrincipalKind.chief}:

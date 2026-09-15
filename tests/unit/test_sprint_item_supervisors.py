@@ -402,7 +402,6 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
         sent = client.post(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/message",
             json={
-                "conversation_id": conversation_id,
                 "message": "Check the acceptance evidence.",
             },
             headers=_supervisor_headers(str(item["id"])),
@@ -416,7 +415,7 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
     write = cast(InMemoryConversationSystem, app.state.conversation_system).backend_prompt_writes(
         conversation_id
     )[0]
-    assert write.sender_label == item["supervisor"]["agent_key"]
+    assert write.sender_label == f"Sprint Item {item['id']}"
     assert write.text == "Check the acceptance evidence."
 
 

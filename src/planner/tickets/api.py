@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import partial
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -51,11 +52,20 @@ from planner.core.authctx import (
 )
 from planner.core.clock import Clock
 from planner.core.config import Config
-from planner.core.contracts import JsonDict, LinkKind, Priority
+from planner.core.contracts import (
+    CHIEF_PRINCIPAL,
+    JsonDict,
+    LinkKind,
+    Principal,
+    PrincipalKind,
+    Priority,
+)
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
+from planner.message_delivery import service as message_delivery_service
+from planner.message_delivery.contracts import MessageDeliveryResult
 from planner.projects import data as projects_data
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import (
@@ -1173,25 +1183,9 @@ def _what_this_message_runs_under(body: OwnerSendBody) -> ConversationStartOverr
     )
 
 
-def _conversation_the_files_belong_to(
-    body: OwnerSendBody, owner_is_in: str | None, created_conversation_id: str
-) -> str:
-    """Which conversation's folder this message's files are kept in.
-
-    A file lives in the folder of the conversation whose message names it, and it is kept
-    before the send that settles which conversation that is. So the answer here has to be
-    the one the send will reach: the conversation the sender named, else the one its owner
-    is already in — a sender that has none joins the owner's rather than making a second —
-    else the conversation this message is about to bring into being.
-
-    Guessing wrong is not a broken row, it is bytes nobody can reach: a message can only
-    ever name a file kept for the conversation it belongs to, so a picture filed under the
-    wrong one is gone to the browser and to the backends that read it as they send.
-    """
-    return body.conversation_id or owner_is_in or created_conversation_id
-
-
-def _delivered_message_json(delivered: conversation_start.DeliveredMessage) -> JsonDict:
+def _delivered_message_json(
+    delivered: conversation_start.DeliveredMessage | MessageDeliveryResult,
+) -> JsonDict:
     """The fate, and which conversation it happened in.
 
     The id is null when a message that was to make a conversation did not land, because
@@ -1242,6 +1236,7 @@ async def send_to_chief_conversation(
     body: OwnerSendBody,
     conn: DbConn,
     ctx: Ctx,
+    clk: Clk,
     conversations: Conversations,
     message_files: MessageFiles,
 ) -> JsonDict:
@@ -1258,24 +1253,16 @@ async def send_to_chief_conversation(
     require_direct_write(ctx)
     created_conversation_id = conversation_start.new_conversation_id()
     runs_under = _what_this_message_runs_under(body)
-    delivered = await conversation_start.send_to_agent_conversation(
+    delivered = await message_delivery_service.send_message(
         conversations,
         conn,
-        CHIEF_SETTINGS_KEY,
-        await conversation_message_content(
-            message_files,
-            _conversation_the_files_belong_to(
-                body,
-                conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY),
-                created_conversation_id,
-            ),
-            body.content,
-        ),
-        conversation_start.agent_resolve(conn, runs_under),
+        clk,
+        ctx,
+        CHIEF_PRINCIPAL,
+        partial(conversation_message_content, message_files, sent=body.content),
         conversation_id=body.conversation_id,
         created_conversation_id=created_conversation_id,
         runs_under=runs_under,
-        sender_label=body.sender_label,
         mode=body.mode,
         sender_message_id=body.sender_message_id,
         sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
@@ -1329,27 +1316,19 @@ async def send_to_ticket_conversation(
     """
     require_direct_write(ctx)
     created_conversation_id = conversation_start.new_conversation_id()
-    delivered = await conversation_start.send_to_ticket_conversation(
+    delivered = await message_delivery_service.send_message(
         conversations,
         conn,
-        ticket_id,
-        await conversation_message_content(
-            message_files,
-            _conversation_the_files_belong_to(
-                body,
-                tickets_data.read_ticket(conn, ticket_id).conversation_id,
-                created_conversation_id,
-            ),
-            body.content,
-        ),
+        clk,
+        ctx,
+        Principal(PrincipalKind.ticket, ticket_id),
+        partial(conversation_message_content, message_files, sent=body.content),
         conversation_id=body.conversation_id,
         created_conversation_id=created_conversation_id,
         runs_under=_what_this_message_runs_under(body),
-        sender_label=body.sender_label,
         mode=body.mode,
         sender_message_id=body.sender_message_id,
         sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
-        now=clk.now_unix(),
     )
     return _delivered_message_json(delivered)
 
@@ -1679,6 +1658,9 @@ async def add_conversation_row_signals(
     latest_turn_ended = await conversation_record.latest_turn_ended_sequences(
         [row["conversation_id"] for row in rows if row["conversation_id"] is not None]
     )
+    owner_read_through = await conversation_record.owner_read_through_sequences(
+        [row["conversation_id"] for row in rows if row["conversation_id"] is not None]
+    )
     for row in rows:
         conversation_id = row["conversation_id"]
         row["agent_working"] = (
@@ -1696,6 +1678,9 @@ async def add_conversation_row_signals(
         )
         row["latest_turn_ended_sequence"] = (
             latest_turn_ended.get(conversation_id, 0) if conversation_id is not None else 0
+        )
+        row["owner_read_through_sequence"] = (
+            owner_read_through.get(conversation_id, 0) if conversation_id is not None else 0
         )
     return board
 

@@ -16,13 +16,16 @@ build. They are deliberately absent from this module rather than sketched.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Final, Protocol
 
 from planner.conversation.message_content import MessageContent
-from planner.core.contracts import ErrorCode, PlannerError
+from planner.core.contracts import ErrorCode, PlannerError, Principal
+
+type ConversationMessageContent = MessageContent | Callable[[str], Awaitable[MessageContent]]
 
 
 class ConversationBackendKey(StrEnum):
@@ -360,6 +363,8 @@ class HeldPrompt:
     sender_label: str
     sender_message_id: str | None
     sent_at_unix_milliseconds: int
+    sender: Principal | None = None
+    recipient: Principal | None = None
 
 
 class ConversationAlreadyStarted(Exception):
@@ -425,6 +430,8 @@ class ConversationSystem(Protocol):
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
     ) -> PromptDeliveryFate:
         """Send a message into a conversation. This is the only way anything gets to an agent.
 
@@ -464,6 +471,20 @@ class ConversationSystem(Protocol):
         example. It is recorded on the prompt event and it is display-only: nothing else
         consumes it and nothing branches on it.
         """
+        ...
+
+    async def record_message_to_owner(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        sender: Principal,
+        recipient: Principal,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+    ) -> None:
+        """Record one addressed message that no backend receives."""
         ...
 
     async def interrupt(self, conversation_id: str) -> None:

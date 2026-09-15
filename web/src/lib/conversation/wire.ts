@@ -70,6 +70,16 @@ export type MessageContent = MessagePiece[];
  */
 export type StoredMessageContent = { text: string } | { content: MessagePiece[] };
 
+export type Principal = {
+  kind: "owner" | "chief" | "sprint_item" | "ticket";
+  id: string;
+};
+
+type AddressedMessageFields = {
+  sender?: Principal;
+  recipient?: Principal;
+};
+
 /** Either stored shape, read as the pieces the message is made of.
  *
  * The one place in this browser that knows there are two shapes. Everything above it
@@ -157,6 +167,8 @@ export type HeldPrompt = StoredMessageContent & {
   sender_message_id?: string | null;
   sender_label: string;
   sent_at_unix_milliseconds: number;
+  sender?: Principal | null;
+  recipient?: Principal | null;
 };
 
 /** What a conversation is, what it is doing, and what it is waiting on. */
@@ -171,6 +183,7 @@ export type ConversationView = {
   role_text: string | null;
   identity_environment_variable_names: string[];
   latest_sequence: number;
+  owner_read_through_sequence: number;
   is_running: boolean;
   held_prompts: HeldPrompt[];
   pending_permission_ask: PendingPermissionAsk | null;
@@ -207,6 +220,7 @@ export type ConversationEvent =
         sender_label: string;
         mode: PromptDeliveryMode;
       } & SenderMintedPromptFields
+        & AddressedMessageFields
     >
   | Row<
       "prompt_delivery_refused",
@@ -215,7 +229,7 @@ export type ConversationEvent =
         mode: PromptDeliveryMode;
         refusal_reason: PromptDeliveryRefusalReason;
         sender_message_id?: string;
-      }
+      } & AddressedMessageFields
     >
   | Row<
       "prompt_delivery_uncertain",
@@ -223,11 +237,20 @@ export type ConversationEvent =
         sender_label: string;
         mode: PromptDeliveryMode;
         sender_message_id?: string;
-      }
+      } & AddressedMessageFields
     >
   | Row<
       "prompt_discarded",
       StoredMessageContent & { sender_label: string; sender_message_id?: string }
+        & AddressedMessageFields
+    >
+  | Row<
+      "message_to_owner",
+      StoredMessageContent & {
+        sender_label: string;
+        sender: Principal;
+        recipient: Principal;
+      } & SenderMintedPromptFields
     >
   | Row<"agent_message", StoredMessageContent>
   | Row<
@@ -527,6 +550,17 @@ export function startConversation(body: StartConversationBody): Promise<Conversa
 
 export function readConversation(conversationId: string): Promise<ConversationView> {
   return request<ConversationView>(`/conversations/${encodeURIComponent(conversationId)}`);
+}
+
+export async function advanceOwnerRead(
+  conversationId: string,
+  throughSequence: number
+): Promise<number> {
+  const answer = await request<{ owner_read_through_sequence: number }>(
+    `/conversations/${encodeURIComponent(conversationId)}/owner-read`,
+    postJson({ through_sequence: throughSequence })
+  );
+  return answer.owner_read_through_sequence;
 }
 
 export async function readEventsAfter(

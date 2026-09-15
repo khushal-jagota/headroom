@@ -17,6 +17,7 @@ from planner.cli.main import main
 @pytest.mark.parametrize(
     ("selector", "recipient"),
     [
+        (("--owner",), {"kind": "owner", "id": "owner"}),
         (("--chief",), {"kind": "chief", "id": "chief"}),
         (("--ticket", "t_one"), {"kind": "ticket", "id": "t_one"}),
         (("--sprint-item", "si_one"), {"kind": "sprint_item", "id": "si_one"}),
@@ -66,6 +67,30 @@ def test_explicit_mode_is_sent_to_the_api(monkeypatch: pytest.MonkeyPatch, mode:
 
     assert result.exit_code == 0, result.output
     assert captured["mode"] == mode
+
+
+def test_employee_to_owner_reports_the_recorded_fate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def send(_method: str, _path: str, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "target": {"kind": "owner", "id": "owner"},
+            "conversation_id": "c_sender",
+            "fate": "recorded",
+        }
+
+    monkeypatch.setattr(http, "send", send)
+    result = CliRunner().invoke(
+        main,
+        ["send-message", "--owner", "--message", "Done.", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {
+        "target": {"kind": "owner", "id": "owner"},
+        "conversation_id": "c_sender",
+        "fate": "recorded",
+    }
 
 
 @pytest.mark.parametrize("body_file", ["message.txt", "-"])

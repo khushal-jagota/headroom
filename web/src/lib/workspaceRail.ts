@@ -136,7 +136,8 @@ export function buildWorkspaceRail(
         conversation_id: summary?.conversation_id ?? null,
         needs_me: summary?.needs_me ?? false,
         agent_working: summary?.agent_working ?? false,
-        unread_position: summary?.latest_turn_ended_sequence ?? 0
+        unread_position: summary?.latest_turn_ended_sequence ?? 0,
+        owner_read_through_sequence: summary?.owner_read_through_sequence ?? 0
       },
       groups: workspaceGroups(groupedCards),
       rested: groupedCards.every((groupedCard) => groupedCard.is_done)

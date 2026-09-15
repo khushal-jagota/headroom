@@ -179,11 +179,18 @@ success, refusal, failure, or a completed turn with no compaction confirmation.
 ## Sending
 
 The top-level `panels send-message` command is the plain-text command-line door into this
-same send operation. It accepts a Chief, Ticket, or Sprint Item principal, then uses that
-principal's current conversation path. It creates the normal conversation when a queue
-send needs one. A steer never creates a conversation or starts a turn. Agent keys remain
-a private resolution detail. The command adds no second transport, queue, or conversation
-record.
+same send operation. It accepts the owner, Chief, Ticket, or Sprint Item principal. An
+employee-to-owner send appends an addressed `message_to_owner` row to the employee's
+current conversation without invoking a backend. An employee without a current
+conversation cannot send to the owner. Employee recipients use their normal current
+conversation path, creating it when a queue send needs one. A steer never creates a
+conversation or starts a turn. Agent keys remain a private resolution detail. The command
+adds no second transport, queue, or conversation record.
+
+Every employee-authored send carries canonical sender and recipient principals derived
+from the authenticated request. Panels records that address on every durable outcome,
+including held, refused, uncertain, and discarded prompts. Browser-supplied display
+labels are not authority.
 
 The composer accepts pictures and supported files from its pickers, the clipboard, or
 a drop. Attachments wait beside the draft and can be removed one at a time. They can
@@ -197,6 +204,12 @@ accepts the same `queue` or `steer` value and defaults an omitted value to `queu
 
 The browser composer always uses the queue rule. Enter and the send arrow use that same
 rule, including while a turn runs.
+
+The unlinked development conversation page keeps a lower-level raw send route for testing
+conversation mechanics in isolation. It rejects every conversation associated with a
+Ticket, the Chief, or a Sprint Item supervisor. It therefore is not an employee
+conversation door and does not participate in principal addressing. Ticket, Chief, and
+Sprint Item composers never use it; they all use the addressed Send Message operation.
 
 When the agent frees, everything waiting goes to it as one prompt rather than one
 turn each. The messages keep their order and each keeps its sender's name in front

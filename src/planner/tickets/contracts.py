@@ -91,6 +91,7 @@ class BoardCard(TypedDict):
     agent_working: NotRequired[bool]
     needs_me: NotRequired[bool]
     latest_turn_ended_sequence: NotRequired[int]
+    owner_read_through_sequence: NotRequired[int]
 
 
 class BoardSprintItem(TypedDict):
@@ -107,6 +108,7 @@ class BoardSprintItem(TypedDict):
     created_at: int
     conversation_id: str | None
     latest_turn_ended_sequence: NotRequired[int]
+    owner_read_through_sequence: NotRequired[int]
     agent_working: NotRequired[bool]
     needs_me: NotRequired[bool]
 

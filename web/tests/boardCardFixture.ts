@@ -34,6 +34,7 @@ export function boardCard(id: string, values: Partial<BoardCard> = {}): BoardCar
     agent_working: false,
     needs_me: false,
     latest_turn_ended_sequence: 0,
+    owner_read_through_sequence: 0,
     ...values
   };
 }

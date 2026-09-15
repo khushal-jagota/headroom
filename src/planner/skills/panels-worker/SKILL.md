@@ -54,6 +54,10 @@ Everything runs through the `panels` command — `panels --help` for full usage.
   grade yourself or record what went well.
 - **`panels worker request-user-help [ticket-id]`** — use this only when you cannot responsibly continue without important user input. Put the free-form request in your ordinary Ticket Chat response, then call this no-payload command. The Ticket enters `needs_user`: automatic work stays paused and Chat remains available until the user explicitly releases it. Do not use this for ordinary discussion, proposals or approvals, permission prompts, Stop, or confirmed Worker errors.
 - **`panels worker note <id>`**, piping the guidance text on stdin — replace the Ticket’s durable guidance document. Add `--append` to preserve the existing guidance and add new text.
+- **`panels send-message --owner --message "…"`** — send one addressed chat message to
+  the owner through this Ticket's current conversation. Use the same command with exactly
+  one of `--chief`, `--ticket <id>`, or `--sprint-item <id>` to message another employee.
+  This is conversation, not a substitute for a canonical Ticket, Day, or Sprint action.
 
 All four write commands take their text on stdin only; there is no file-path option, since it once let two Workers sharing one `/tmp` overwrite each other's text before it reached the ticket. Pipe or redirect text in, for example `echo "…" | panels worker propose <id> --recap "…"` or a heredoc into stdin.
 - **`panels ticket create --worker-type <id> --title "…"`** — create a Ticket when the

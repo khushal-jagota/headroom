@@ -27,6 +27,7 @@ from planner.conversation.in_memory_conversation_system import (
     TurnCannotEndWhileUserInputIsPending,
 )
 from planner.conversation.message_content import message_content_text, text_message_content
+from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 
 
 async def _system_with_a_pending_ask() -> tuple[InMemoryConversationSystem, str]:
@@ -122,16 +123,23 @@ def test_in_memory_held_snapshot_and_send_now_promotion_match_the_contract() -> 
             text_message_content("held"),
             sender_label="owner",
             sender_message_id=None,
+            sender=OWNER_PRINCIPAL,
+            recipient=Principal(PrincipalKind.ticket, "t_one"),
         )
         held = (await system.held_prompts("c"))[0]
         assert held.held_prompt_id == "held-1"
         assert held.sender_message_id is None
         assert held.sent_at_unix_milliseconds == 1
+        assert held.sender == OWNER_PRINCIPAL
+        assert held.recipient == Principal(PrincipalKind.ticket, "t_one")
 
         assert await system.promote_held_prompt(
             "c", held.held_prompt_id, HeldPromptPromotionMode.send_now
         ) == PromptDeliveryStarted()
         assert await system.held_prompts("c") == ()
+        delivered = system.observations("c")[-1]
+        assert delivered.sender == OWNER_PRINCIPAL
+        assert delivered.recipient == Principal(PrincipalKind.ticket, "t_one")
 
     asyncio.run(exercise())
 

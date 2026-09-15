@@ -105,9 +105,12 @@ from planner.conversation.voice_transcription import (
     VoiceTranscriptionUnconfigured,
     transcribe_conversation_audio,
 )
+from planner.core.authctx import RequestContext, request_context, require_owner
 from planner.core.db import connect
 from planner.core.response_compression import answers_with_an_event_stream
 from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
+
+Ctx = Annotated[RequestContext, Depends(request_context)]
 
 # The two things a tail carries, told apart by name so a browser never has to guess which
 # it is holding: one is a row that is in the record, the other is gone once it is drawn.
@@ -185,9 +188,7 @@ def _runtime(request: Request) -> ConversationRuntime:
 Runtime = Annotated[ConversationRuntime, Depends(_runtime)]
 
 
-def _require_mutable_conversation(
-    runtime: ConversationRuntime, conversation_id: str
-) -> None:
+def _require_mutable_conversation(runtime: ConversationRuntime, conversation_id: str) -> None:
     """Reject writes to a Ticket's past conversation.
 
     A conversation with no Ticket association belongs to another surface, such as the
@@ -209,6 +210,39 @@ def _require_mutable_conversation(
         raise HTTPException(
             status_code=409,
             detail="the conversation is not the Ticket's active conversation",
+        )
+
+
+def _require_unassociated_send_conversation(
+    runtime: ConversationRuntime, conversation_id: str
+) -> None:
+    """Keep the raw send primitive outside every employee-owned conversation."""
+    conn = connect(runtime.database_path)
+    try:
+        owned = conn.execute(
+            "SELECT 1 FROM ticket_conversations WHERE conversation_id = ? "
+            "UNION ALL SELECT 1 FROM agents WHERE conversation_id = ? LIMIT 1",
+            (conversation_id, conversation_id),
+        ).fetchone()
+        identity_row = conn.execute(
+            "SELECT identity_environment_variables FROM conversations WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    identity = (
+        {}
+        if identity_row is None
+        else dict(json.loads(str(identity_row["identity_environment_variables"])))
+    )
+    if owned is not None or identity.get("PLAN_ACTOR") in {
+        "worker",
+        "chief",
+        "sprint_item_supervisor",
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail="employee conversations accept messages only through Send Message",
         )
 
 
@@ -314,9 +348,7 @@ class OwnerSendBody(BaseModel):
 
 # The audio a voice note may arrive as. WebM/Opus is what a recording browser produces;
 # the rest are what other recorders on the allowed platforms hand over.
-VOICE_AUDIO_MEDIA_TYPES = frozenset(
-    {"audio/webm", "audio/mp4", "audio/ogg", "audio/wav"}
-)
+VOICE_AUDIO_MEDIA_TYPES = frozenset({"audio/webm", "audio/mp4", "audio/ogg", "audio/wav"})
 
 # The provider's own ceiling on one clip (Groq refuses larger files), applied to the
 # decoded bytes before anything is kept or sent.
@@ -377,6 +409,10 @@ class PromoteHeldPromptBody(BaseModel):
     mode: HeldPromptPromotionMode
 
 
+class AdvanceOwnerReadBody(BaseModel):
+    through_sequence: int
+
+
 class ModelEnablementBody(BaseModel):
     enabled: bool
 
@@ -409,6 +445,24 @@ async def read_conversation(conversation_id: str, runtime: Runtime) -> dict[str,
     return await _conversation_view(runtime, conversation_id)
 
 
+@router.post("/conversations/{conversation_id}/owner-read")
+async def advance_owner_read(
+    conversation_id: str,
+    body: AdvanceOwnerReadBody,
+    runtime: Runtime,
+    ctx: Ctx,
+) -> dict[str, int]:
+    require_owner(ctx)
+    if body.through_sequence < 0:
+        raise HTTPException(status_code=422, detail="through_sequence must be non-negative")
+    record = await runtime.store.advance_owner_read_through_sequence(
+        conversation_id, body.through_sequence
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"no conversation {conversation_id}")
+    return {"owner_read_through_sequence": record.owner_read_through_sequence}
+
+
 @router.get("/conversations/{conversation_id}/events")
 async def read_conversation_events(
     conversation_id: str, runtime: Runtime, after: int = 0
@@ -416,10 +470,7 @@ async def read_conversation_events(
     record = await _require_conversation(runtime, conversation_id)
     events = await runtime.store.read_events_after(conversation_id, after)
     return {
-        "events": [
-            _public_event_json(event, backend_key=record.backend_key)
-            for event in events
-        ]
+        "events": [_public_event_json(event, backend_key=record.backend_key) for event in events]
     }
 
 
@@ -437,15 +488,10 @@ async def read_conversation_event_detail(
     if event is None or not isinstance(event.payload, ToolCallFinishedEventPayload):
         raise HTTPException(
             status_code=404,
-            detail=(
-                f"conversation {conversation_id} has no finished tool call "
-                f"at {sequence}"
-            ),
+            detail=(f"conversation {conversation_id} has no finished tool call at {sequence}"),
         )
     return {
-        "detail": _readable_tool_call_detail(
-            event.payload.detail, backend_key=record.backend_key
-        )
+        "detail": _readable_tool_call_detail(event.payload.detail, backend_key=record.backend_key)
     }
 
 
@@ -483,6 +529,7 @@ async def send_into_conversation(
     loses nothing.
     """
     _require_mutable_conversation(runtime, conversation_id)
+    _require_unassociated_send_conversation(runtime, conversation_id)
     try:
         content = await _kept_message_content(runtime, conversation_id, body.content)
         fate = await runtime.system.send(
@@ -527,9 +574,7 @@ async def read_conversation_message_file(
 
 
 @router.post("/voice-transcriptions")
-async def transcribe_voice_note(
-    body: VoiceTranscriptionBody, request: Request
-) -> dict[str, str]:
+async def transcribe_voice_note(body: VoiceTranscriptionBody, request: Request) -> dict[str, str]:
     """Turn browser-held audio into words without touching a conversation.
 
     This route does not resolve, create, link, or store a conversation. A failed request
@@ -591,9 +636,7 @@ async def discard_held_prompt(
     return {"discarded": discarded}
 
 
-@router.post(
-    "/conversations/{conversation_id}/held-prompts/{held_prompt_id}/promote"
-)
+@router.post("/conversations/{conversation_id}/held-prompts/{held_prompt_id}/promote")
 async def promote_held_prompt(
     conversation_id: str,
     held_prompt_id: str,
@@ -602,9 +645,7 @@ async def promote_held_prompt(
 ) -> dict[str, Any]:
     """Claim one waiting message and deliver it now in the selected mode."""
     _require_mutable_conversation(runtime, conversation_id)
-    fate = await runtime.system.promote_held_prompt(
-        conversation_id, held_prompt_id, body.mode
-    )
+    fate = await runtime.system.promote_held_prompt(conversation_id, held_prompt_id, body.mode)
     if fate is None:
         return {"promoted": False}
     return {"promoted": True, **delivery_fate_json(fate)}
@@ -672,20 +713,14 @@ async def refresh_backends(runtime: Runtime) -> dict[str, Any]:
             await usage_refresh
     by_backend = {snapshot.backend_key: snapshot for snapshot in snapshots}
     resolved = tuple(
-        resolve_usage_model_scopes(result, by_backend[result.backend_key])
-        for result in refreshed
+        resolve_usage_model_scopes(result, by_backend[result.backend_key]) for result in refreshed
     )
     if runtime.backend_state is not None:
         for result in resolved:
-            if (
-                result.outcome is BackendUsageOutcome.succeeded
-                and result.observed_at is not None
-            ):
+            if result.outcome is BackendUsageOutcome.succeeded and result.observed_at is not None:
                 runtime.backend_state.keep_successful_usage(result)
     return {
-        "backends": [
-            _snapshot_json(snapshot, runtime.backend_state) for snapshot in snapshots
-        ],
+        "backends": [_snapshot_json(snapshot, runtime.backend_state) for snapshot in snapshots],
         "usage_outcomes": [_usage_outcome_json(result) for result in resolved],
     }
 
@@ -710,9 +745,7 @@ async def put_model_enablement(
 
 
 @router.post("/backends/{backend_key}/update")
-async def update_backend(
-    backend_key: ConversationBackendKey, runtime: Runtime
-) -> dict[str, Any]:
+async def update_backend(backend_key: ConversationBackendKey, runtime: Runtime) -> dict[str, Any]:
     """Run this backend's update, then look again and say which of three things happened."""
     return _update_result_json(await runtime.backend_snapshots.update_backend(backend_key))
 
@@ -766,15 +799,11 @@ async def _require_conversation(
 ) -> ConversationRecord:
     record = await runtime.store.read_conversation(conversation_id)
     if record is None:
-        raise HTTPException(
-            status_code=404, detail=f"no conversation {conversation_id}"
-        )
+        raise HTTPException(status_code=404, detail=f"no conversation {conversation_id}")
     return record
 
 
-async def _conversation_view(
-    runtime: ConversationRuntime, conversation_id: str
-) -> dict[str, Any]:
+async def _conversation_view(runtime: ConversationRuntime, conversation_id: str) -> dict[str, Any]:
     record = await runtime.store.read_conversation(conversation_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"no conversation {conversation_id}")
@@ -806,6 +835,7 @@ async def _conversation_view(
             for entry in record.composer_catalog
         ],
         "latest_sequence": record.latest_sequence,
+        "owner_read_through_sequence": record.owner_read_through_sequence,
         "is_running": await runtime.system.is_running(conversation_id),
         "held_prompts": [
             {
@@ -814,6 +844,16 @@ async def _conversation_view(
                 "sender_label": held.sender_label,
                 "sender_message_id": held.sender_message_id,
                 "sent_at_unix_milliseconds": held.sent_at_unix_milliseconds,
+                "sender": (
+                    None
+                    if held.sender is None
+                    else {"kind": held.sender.kind.value, "id": held.sender.id}
+                ),
+                "recipient": (
+                    None
+                    if held.recipient is None
+                    else {"kind": held.recipient.kind.value, "id": held.recipient.id}
+                ),
             }
             for held in await runtime.system.held_prompts(conversation_id)
         ],
@@ -864,10 +904,7 @@ async def _pending_user_input(
     events = await runtime.store.read_events_after(conversation_id, 0)
     for event in reversed(events):
         payload = event.payload
-        if (
-            isinstance(payload, UserInputRequestedEventPayload)
-            and payload.request_id in waiting
-        ):
+        if isinstance(payload, UserInputRequestedEventPayload) and payload.request_id in waiting:
             return {
                 "request_id": payload.request_id,
                 "questions": [
@@ -894,9 +931,7 @@ async def _pending_user_input(
 async def _kept_message_content(
     runtime: ConversationRuntime, conversation_id: str, sent: list[SentPiece]
 ) -> MessageContent:
-    return await conversation_message_content(
-        runtime.message_files, conversation_id, sent
-    )
+    return await conversation_message_content(runtime.message_files, conversation_id, sent)
 
 
 async def conversation_message_content(
@@ -956,9 +991,7 @@ async def conversation_message_content(
             case SentImagePiece():
                 contents, media_type = validated_images[image_index]
                 image_index += 1
-                kept = await message_files.keep(
-                    conversation_id, contents, media_type=media_type
-                )
+                kept = await message_files.keep(conversation_id, contents, media_type=media_type)
                 pieces.append(
                     MessageImage(
                         stored_file_id=kept.stored_file_id,
@@ -969,9 +1002,7 @@ async def conversation_message_content(
             case SentFilePiece():
                 contents, media_type = validated_files[file_index]
                 file_index += 1
-                kept = await message_files.keep(
-                    conversation_id, contents, media_type=media_type
-                )
+                kept = await message_files.keep(conversation_id, contents, media_type=media_type)
                 pieces.append(
                     MessageFile(
                         stored_file_id=kept.stored_file_id,
@@ -992,9 +1023,7 @@ def _decoded(data: str) -> bytes:
     try:
         return b64decode(data, validate=True)
     except BinasciiError as not_bytes:
-        raise HTTPException(
-            status_code=422, detail="a piece's data is not base64"
-        ) from not_bytes
+        raise HTTPException(status_code=422, detail="a piece's data is not base64") from not_bytes
 
 
 def _decoded_image(data: str) -> bytes:
@@ -1009,14 +1038,10 @@ def _decoded_file(data: str) -> bytes:
     """Decode one bounded document or data file without a large intermediate value."""
     maximum_encoded_length = 4 * ((MAX_CONVERSATION_MESSAGE_FILE_BYTES + 2) // 3)
     if len(data) > maximum_encoded_length:
-        raise HTTPException(
-            status_code=422, detail="a conversation message's files are too large"
-        )
+        raise HTTPException(status_code=422, detail="a conversation message's files are too large")
     contents = _decoded(data)
     if len(contents) > MAX_CONVERSATION_MESSAGE_FILE_BYTES:
-        raise HTTPException(
-            status_code=422, detail="a conversation message's files are too large"
-        )
+        raise HTTPException(status_code=422, detail="a conversation message's files are too large")
     return contents
 
 
@@ -1036,13 +1061,9 @@ def _public_event_json(
 ) -> dict[str, Any]:
     payload = json.loads(conversation_event_payload_to_canonical_json(event.payload))
     if isinstance(event.payload, ToolCallFinishedEventPayload):
-        readable = _readable_tool_call_detail(
-            event.payload.detail, backend_key=backend_key
-        )
+        readable = _readable_tool_call_detail(event.payload.detail, backend_key=backend_key)
         carried = (
-            None
-            if readable is None
-            else readable[:PUBLIC_TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS]
+            None if readable is None else readable[:PUBLIC_TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS]
         )
         payload["detail"] = carried
         if carried is not None and readable is not None and len(carried) < len(readable):
@@ -1134,9 +1155,7 @@ def _snapshot_json(
 ) -> dict[str, Any]:
     identity = snapshot.identity
     advisory = snapshot.update_advisory
-    cached_usage = (
-        None if backend_state is None else backend_state.read_usage(snapshot.backend_key)
-    )
+    cached_usage = None if backend_state is None else backend_state.read_usage(snapshot.backend_key)
     enabled_by_model = {
         model.model_id: (
             True
@@ -1182,9 +1201,7 @@ def _snapshot_json(
             else {
                 "install_method": str(advisory.install_method),
                 "update_command": (
-                    None
-                    if advisory.update_command is None
-                    else " ".join(advisory.update_command)
+                    None if advisory.update_command is None else " ".join(advisory.update_command)
                 ),
                 "latest_version": advisory.latest_version,
                 "update_available": advisory.update_available,
@@ -1302,9 +1319,7 @@ async def _tail_stream(
         )
         while True:
             try:
-                item = await asyncio.wait_for(
-                    subscription.next_item(), timeout=heartbeat_seconds
-                )
+                item = await asyncio.wait_for(subscription.next_item(), timeout=heartbeat_seconds)
             except TimeoutError:
                 # Nothing has happened. The comment keeps anything in between from calling
                 # the connection dead, and a client that has gone makes this write fail,

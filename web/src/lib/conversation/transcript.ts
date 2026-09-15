@@ -315,6 +315,7 @@ export function transcriptRows(
         });
         break;
       case "agent_message":
+      case "message_to_owner":
         rows.push({
           key: `e${sequence}`,
           kind: "agent_message",

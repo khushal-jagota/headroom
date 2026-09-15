@@ -81,6 +81,7 @@ from planner.conversation.events import (
     ConversationLiveTailFrame,
     ConversationTurnEnding,
     HeldPromptsChangedFrame,
+    MessageToOwnerEventPayload,
     ModelChangedEventPayload,
     ModelThinkingFrame,
     PermissionAnsweredEventPayload,
@@ -124,6 +125,7 @@ from planner.conversation.storage import (
     ConversationStore,
     StoredConversationEvent,
 )
+from planner.core.contracts import Principal
 
 LOGGER = logging.getLogger("planner.conversation")
 
@@ -152,6 +154,11 @@ MODEL_THINKING_PULSE_INTERVAL_SECONDS = 0.25
 
 # What separates a conversation's role text from the first message it is composed onto.
 ROLE_TEXT_PROMPT_SEPARATOR = "\n\n"
+
+
+def completed_backend_text_event(content: MessageContent) -> ConversationEventPayload:
+    """Classify completed backend text at its single durable write point."""
+    return AgentMessageEventPayload(content=content)
 
 
 class _ConversationPhase(StrEnum):
@@ -213,6 +220,8 @@ class _AdmittedSenderMessage:
 
     content: MessageContent
     sender_label: str
+    sender: Principal | None = None
+    recipient: Principal | None = None
     settled: asyncio.Event = field(default_factory=asyncio.Event)
 
 
@@ -233,6 +242,8 @@ class _HeldPrompt:
     sender_message_id: str | None
     sent_at_unix_milliseconds: int | None
     snapshot_sent_at_unix_milliseconds: int
+    sender: Principal | None
+    recipient: Principal | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,9 +275,7 @@ class _ConversationState:
     phase_settled: asyncio.Event = field(default_factory=asyncio.Event)
     held_prompts: deque[_HeldPrompt] = field(default_factory=deque)
     admitted_sender_messages: dict[str, _AdmittedSenderMessage] = field(default_factory=dict)
-    sender_messages_being_delivered: dict[str, _AdmittedSenderMessage] = field(
-        default_factory=dict
-    )
+    sender_messages_being_delivered: dict[str, _AdmittedSenderMessage] = field(default_factory=dict)
     backend_event_queue: asyncio.Queue[_BackendEventHandler] = field(default_factory=asyncio.Queue)
     backend_event_pump: asyncio.Task[None] | None = None
     reserved_turn: _ReservedTurn | None = None
@@ -352,6 +361,8 @@ class SqliteProcessConversationSystem:
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
     ) -> PromptDeliveryFate:
         """Send a message in. See the contract; the two sender-minted fields are extra.
 
@@ -384,14 +395,24 @@ class SqliteProcessConversationSystem:
                     if admitted is None:
                         admitted = state.admitted_sender_messages.get(sender_message_id)
                     if admitted is not None:
-                        if (admitted.content, admitted.sender_label) != (content, sender_label):
+                        if (
+                            admitted.content,
+                            admitted.sender_label,
+                            admitted.sender,
+                            admitted.recipient,
+                        ) != (content, sender_label, sender, recipient):
                             raise ValueError("sender_message_id already names a different message")
                         settled = admitted.settled
                     else:
                         for position, held in enumerate(state.held_prompts, start=1):
                             if held.sender_message_id != sender_message_id:
                                 continue
-                            if held.content != content or held.sender_label != sender_label:
+                            if (
+                                held.content != content
+                                or held.sender_label != sender_label
+                                or held.sender != sender
+                                or held.recipient != recipient
+                            ):
                                 raise ValueError(
                                     "sender_message_id already names a different message"
                                 )
@@ -411,6 +432,8 @@ class SqliteProcessConversationSystem:
                     if (
                         getattr(payload, "content", None) != content
                         or getattr(payload, "sender_label", None) != sender_label
+                        or getattr(payload, "sender", None) != sender
+                        or getattr(payload, "recipient", None) != recipient
                     ):
                         raise ValueError("sender_message_id already names a different message")
                     if isinstance(payload, PromptEventPayload):
@@ -429,14 +452,23 @@ class SqliteProcessConversationSystem:
                     if sender_message_id in state.admitted_sender_messages:
                         continue
                     state.admitted_sender_messages[sender_message_id] = _AdmittedSenderMessage(
-                        content=content, sender_label=sender_label
+                        content=content,
+                        sender_label=sender_label,
+                        sender=sender,
+                        recipient=recipient,
                     )
                 break
 
         try:
             if mode is PromptDeliveryMode.steer:
                 return await self._steer(
-                    state, content, sender_label, sender_message_id, sent_at_unix_milliseconds
+                    state,
+                    content,
+                    sender_label,
+                    sender_message_id,
+                    sent_at_unix_milliseconds,
+                    sender,
+                    recipient,
                 )
             if mode is PromptDeliveryMode.send_now:
                 return await self._send_now(
@@ -447,6 +479,8 @@ class SqliteProcessConversationSystem:
                     reasoning_effort_change,
                     sender_message_id,
                     sent_at_unix_milliseconds,
+                    sender,
+                    recipient,
                 )
             return await self._run_when_free(
                 state,
@@ -456,6 +490,8 @@ class SqliteProcessConversationSystem:
                 reasoning_effort_change,
                 sender_message_id,
                 sent_at_unix_milliseconds,
+                sender,
+                recipient,
             )
         finally:
             if sender_message_id is not None:
@@ -483,6 +519,49 @@ class SqliteProcessConversationSystem:
         finally:
             state.lock.release()
         await self._drain_held_prompts(state)
+
+    async def record_message_to_owner(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        sender: Principal,
+        recipient: Principal,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+    ) -> None:
+        """Append an owner-bound message under the conversation's ordering lock."""
+        require_message_content(content)
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            raise ValueError("no such conversation")
+        async with state.lock:
+            if sender_message_id is not None:
+                outcome = await self._store.sender_message_outcome(
+                    conversation_id, sender_message_id
+                )
+                if outcome is not None:
+                    payload = outcome.payload
+                    if not isinstance(payload, MessageToOwnerEventPayload) or (
+                        payload.content,
+                        payload.sender_label,
+                        payload.sender,
+                        payload.recipient,
+                    ) != (content, sender_label, sender, recipient):
+                        raise ValueError("sender_message_id already names a different message")
+                    return
+            await self._append_event(
+                state,
+                MessageToOwnerEventPayload(
+                    content=content,
+                    sender=sender,
+                    recipient=recipient,
+                    sender_label=sender_label,
+                    sender_message_id=sender_message_id,
+                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                ),
+            )
 
     async def kill(self, conversation_id: str) -> None:
         """Stop the running turn and throw away everything that was waiting behind it.
@@ -577,6 +656,8 @@ class SqliteProcessConversationSystem:
                     sender_label=held.sender_label,
                     sender_message_id=held.sender_message_id,
                     sent_at_unix_milliseconds=held.snapshot_sent_at_unix_milliseconds,
+                    sender=held.sender,
+                    recipient=held.recipient,
                 )
                 for held in state.held_prompts
             )
@@ -649,6 +730,8 @@ class SqliteProcessConversationSystem:
                         sender_label=held.sender_label,
                         sender_message_id=held.sender_message_id,
                         sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                        sender=held.sender,
+                        recipient=held.recipient,
                     )
                     self._settle_held_deliveries(state, (held,))
         finally:
@@ -685,6 +768,8 @@ class SqliteProcessConversationSystem:
                     reasoning_effort_change=held.reasoning_effort_change,
                     sender_message_id=held.sender_message_id,
                     sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                    sender=held.sender,
+                    recipient=held.recipient,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.idle,
                 )
@@ -724,6 +809,8 @@ class SqliteProcessConversationSystem:
                 sender_label=held.sender_label,
                 sender_message_id=held.sender_message_id,
                 sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                sender=held.sender,
+                recipient=held.recipient,
             )
             self._settle_held_deliveries(state, (held,))
         if isinstance(fate, PromptDeliveryRefused):
@@ -763,6 +850,9 @@ class SqliteProcessConversationSystem:
                         content=held.content,
                         sender_label=held.sender_label,
                         sender_message_id=held.sender_message_id,
+                        sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                        sender=held.sender,
+                        recipient=held.recipient,
                     ),
                 )
                 return True
@@ -938,6 +1028,8 @@ class SqliteProcessConversationSystem:
         reasoning_effort_change: str | None,
         sender_message_id: str | None,
         sent_at_unix_milliseconds: int | None,
+        sender: Principal | None,
+        recipient: Principal | None,
     ) -> PromptDeliveryFate:
         automatic_reservation: _ReservedTurn | None = None
         async with state.lock:
@@ -968,6 +1060,8 @@ class SqliteProcessConversationSystem:
                     reasoning_effort_change=reasoning_effort_change,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    sender=sender,
+                    recipient=recipient,
                 )
             if self._automatic_compaction_is_due(state):
                 held_fate = self._hold_prompt(
@@ -978,6 +1072,8 @@ class SqliteProcessConversationSystem:
                     reasoning_effort_change=reasoning_effort_change,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    sender=sender,
+                    recipient=recipient,
                 )
                 automatic_reservation = self._reserve_turn(state, automatic_compaction=True)
             else:
@@ -997,6 +1093,8 @@ class SqliteProcessConversationSystem:
             reasoning_effort_change=reasoning_effort_change,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
         )
 
     def _hold_prompt(
@@ -1009,6 +1107,8 @@ class SqliteProcessConversationSystem:
         reasoning_effort_change: str | None,
         sender_message_id: str | None,
         sent_at_unix_milliseconds: int | None,
+        sender: Principal | None,
+        recipient: Principal | None,
     ) -> PromptDeliveryQueued:
         """Put one admitted message at the tail. The conversation lock must be held."""
         state.held_prompts.append(
@@ -1025,6 +1125,8 @@ class SqliteProcessConversationSystem:
                     if sent_at_unix_milliseconds is not None
                     else int(self._unix_time_now() * 1000)
                 ),
+                sender=sender,
+                recipient=recipient,
             )
         )
         self._publish_held_prompts_changed(state)
@@ -1045,6 +1147,8 @@ class SqliteProcessConversationSystem:
             state.sender_messages_being_delivered[sender_message_id] = _AdmittedSenderMessage(
                 content=held.content,
                 sender_label=held.sender_label,
+                sender=held.sender,
+                recipient=held.recipient,
             )
 
     @staticmethod
@@ -1062,13 +1166,12 @@ class SqliteProcessConversationSystem:
 
     def _automatic_compaction_is_due(self, state: _ConversationState) -> bool:
         activity_at = state.record.latest_agent_activity_at
-        activity_age = (
-            None if activity_at is None else int(self._unix_time_now()) - activity_at
-        )
+        activity_age = None if activity_at is None else int(self._unix_time_now()) - activity_at
         return (
             not state.child_is_quarantined
             and activity_age is not None
-            and AUTOMATIC_COMPACTION_AFTER_SECONDS <= activity_age
+            and AUTOMATIC_COMPACTION_AFTER_SECONDS
+            <= activity_age
             < AUTOMATIC_COMPACTION_BEFORE_SECONDS
             and state.record.latest_agent_activity_sequence
             > state.record.automatically_compacted_through_sequence
@@ -1083,6 +1186,8 @@ class SqliteProcessConversationSystem:
         reasoning_effort_change: str | None,
         sender_message_id: str | None,
         sent_at_unix_milliseconds: int | None,
+        sender: Principal | None,
+        recipient: Principal | None,
     ) -> PromptDeliveryFate:
         automatic_reservation: _ReservedTurn | None = None
         held_fate: PromptDeliveryQueued | None = None
@@ -1099,6 +1204,8 @@ class SqliteProcessConversationSystem:
                         reasoning_effort_change=reasoning_effort_change,
                         sender_message_id=sender_message_id,
                         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                        sender=sender,
+                        recipient=recipient,
                     )
                 if running is not None and running.automatic_compaction:
                     return self._hold_prompt(
@@ -1109,6 +1216,8 @@ class SqliteProcessConversationSystem:
                         reasoning_effort_change=reasoning_effort_change,
                         sender_message_id=sender_message_id,
                         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                        sender=sender,
+                        recipient=recipient,
                     )
                 if running is not None:
                     try:
@@ -1128,6 +1237,8 @@ class SqliteProcessConversationSystem:
                         reasoning_effort_change=reasoning_effort_change,
                         sender_message_id=sender_message_id,
                         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                        sender=sender,
+                        recipient=recipient,
                     )
                     automatic_reservation = self._reserve_turn(state, automatic_compaction=True)
                 else:
@@ -1158,6 +1269,8 @@ class SqliteProcessConversationSystem:
             reasoning_effort_change=reasoning_effort_change,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
         )
 
     async def _steer(
@@ -1167,6 +1280,8 @@ class SqliteProcessConversationSystem:
         sender_label: str,
         sender_message_id: str | None,
         sent_at_unix_milliseconds: int | None,
+        sender: Principal | None,
+        recipient: Principal | None,
     ) -> PromptDeliveryFate:
         # Whether a backend can steer is a fact about the backend, settled before any
         # child is touched: an unsupported steer spawns nothing.
@@ -1180,6 +1295,8 @@ class SqliteProcessConversationSystem:
                     sender_label=sender_label,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    sender=sender,
+                    recipient=recipient,
                 )
             return fate
 
@@ -1196,6 +1313,8 @@ class SqliteProcessConversationSystem:
                     sender_label=sender_label,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    sender=sender,
+                    recipient=recipient,
                 )
             if running is None or child is None:
                 refusal = PromptDeliveryRefusalReason.no_running_turn_to_steer_into
@@ -1206,14 +1325,14 @@ class SqliteProcessConversationSystem:
                     sender_label=sender_label,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    sender=sender,
+                    recipient=recipient,
                 )
         finally:
             state.lock.release()
 
         try:
-            steer_outcome = await child.steer(
-                running.token, content, sender_label=sender_label
-            )
+            steer_outcome = await child.steer(running.token, content, sender_label=sender_label)
         except PromptWriteFailed:
             steer_outcome = BackendSteerUncertain()
 
@@ -1225,6 +1344,8 @@ class SqliteProcessConversationSystem:
                 sender_label=sender_label,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                sender=sender,
+                recipient=recipient,
             )
 
     # --- delivering ---------------------------------------------------------------------
@@ -1293,6 +1414,8 @@ class SqliteProcessConversationSystem:
         reasoning_effort_change: str | None,
         sender_message_id: str | None,
         sent_at_unix_milliseconds: int | None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
         drain_after_delivery_exception: bool = True,
     ) -> PromptDeliveryFate:
         try:
@@ -1330,6 +1453,8 @@ class SqliteProcessConversationSystem:
                 reasoning_effort_change=reasoning_effort_change,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                sender=sender,
+                recipient=recipient,
                 record_refusal=delivery.record_refusal,
                 phase_when_not_started=_ConversationPhase.idle,
             )
@@ -1476,6 +1601,8 @@ class SqliteProcessConversationSystem:
         reasoning_effort_change: str | None,
         sender_message_id: str | None,
         sent_at_unix_milliseconds: int | None,
+        sender: Principal | None,
+        recipient: Principal | None,
         record_refusal: bool,
         phase_when_not_started: _ConversationPhase,
         also_delivered: tuple[_HeldPrompt, ...] = (),
@@ -1497,6 +1624,9 @@ class SqliteProcessConversationSystem:
                                 mode=mode,
                                 refusal_reason=refusal,
                                 sender_message_id=sender_message_id,
+                                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                                sender=sender,
+                                recipient=recipient,
                             ),
                         )
                         for message in also_delivered:
@@ -1510,6 +1640,9 @@ class SqliteProcessConversationSystem:
                                     mode=mode,
                                     refusal_reason=refusal,
                                     sender_message_id=message.sender_message_id,
+                                    sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+                                    sender=message.sender,
+                                    recipient=message.recipient,
                                 ),
                             )
                     self._set_phase(state, phase_when_not_started)
@@ -1543,6 +1676,8 @@ class SqliteProcessConversationSystem:
                         mode=mode,
                         sender_message_id=sender_message_id,
                         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                        sender=sender,
+                        recipient=recipient,
                     ),
                     model_change=carried_change,
                     extra_prompts=tuple(
@@ -1552,6 +1687,8 @@ class SqliteProcessConversationSystem:
                             mode=mode,
                             sender_message_id=message.sender_message_id,
                             sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+                            sender=message.sender,
+                            recipient=message.recipient,
                         )
                         for message in also_delivered
                     ),
@@ -1644,6 +1781,9 @@ class SqliteProcessConversationSystem:
                                 content=message.content,
                                 sender_label=message.sender_label,
                                 sender_message_id=message.sender_message_id,
+                                sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+                                sender=message.sender,
+                                recipient=message.recipient,
                             ),
                         )
                     self._settle_held_deliveries(state, batch)
@@ -1661,6 +1801,8 @@ class SqliteProcessConversationSystem:
                     reasoning_effort_change=held.reasoning_effort_change,
                     sender_message_id=held.sender_message_id,
                     sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                    sender=held.sender,
+                    recipient=held.recipient,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.draining,
                     also_delivered=rest,
@@ -1691,6 +1833,9 @@ class SqliteProcessConversationSystem:
                     content=discarded.content,
                     sender_label=discarded.sender_label,
                     sender_message_id=discarded.sender_message_id,
+                    sent_at_unix_milliseconds=discarded.sent_at_unix_milliseconds,
+                    sender=discarded.sender,
+                    recipient=discarded.recipient,
                 ),
             )
 
@@ -1703,6 +1848,8 @@ class SqliteProcessConversationSystem:
         sender_label: str,
         sender_message_id: str | None,
         sent_at_unix_milliseconds: int | None,
+        sender: Principal | None,
+        recipient: Principal | None,
     ) -> PromptDeliveryInjected | PromptDeliveryRefused | PromptDeliveryUncertain:
         """Record and map one steering outcome while the conversation lock is held."""
         if isinstance(outcome, BackendSteerAccepted):
@@ -1714,6 +1861,8 @@ class SqliteProcessConversationSystem:
                     mode=PromptDeliveryMode.steer,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    sender=sender,
+                    recipient=recipient,
                 ),
             )
             return PromptDeliveryInjected()
@@ -1726,6 +1875,9 @@ class SqliteProcessConversationSystem:
                     mode=PromptDeliveryMode.steer,
                     refusal_reason=outcome.refusal_reason,
                     sender_message_id=sender_message_id,
+                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    sender=sender,
+                    recipient=recipient,
                 ),
             )
             return PromptDeliveryRefused(refusal_reason=outcome.refusal_reason)
@@ -1737,6 +1889,9 @@ class SqliteProcessConversationSystem:
                 sender_label=sender_label,
                 mode=PromptDeliveryMode.steer,
                 sender_message_id=sender_message_id,
+                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                sender=sender,
+                recipient=recipient,
             ),
         )
         return PromptDeliveryUncertain()
@@ -1877,9 +2032,7 @@ class SqliteProcessConversationSystem:
         # The pump is running before the child is, so news the child makes while it starts
         # up — the session cursor it mints — has somewhere to go.
         self._ensure_backend_event_pump(state)
-        await child.start(
-            resolved_start, vendor_session_cursor=state.record.vendor_session_cursor
-        )
+        await child.start(resolved_start, vendor_session_cursor=state.record.vendor_session_cursor)
         state.child = child
         return child
 
@@ -2069,7 +2222,7 @@ class SqliteProcessConversationSystem:
             return
         try:
             await self._append_backend_event(
-                state, turn_token, AgentMessageEventPayload(content=content)
+                state, turn_token, completed_backend_text_event(content)
             )
         finally:
             state.lock.release()
@@ -2310,12 +2463,8 @@ class SqliteProcessConversationSystem:
         agents in it.
         """
         due_ids = await self._store.conversations_due_for_automatic_compaction(
-            due_at_or_before=(
-                int(self._unix_time_now()) - AUTOMATIC_COMPACTION_AFTER_SECONDS
-            ),
-            activity_after=(
-                int(self._unix_time_now()) - AUTOMATIC_COMPACTION_BEFORE_SECONDS
-            ),
+            due_at_or_before=(int(self._unix_time_now()) - AUTOMATIC_COMPACTION_AFTER_SECONDS),
+            activity_after=(int(self._unix_time_now()) - AUTOMATIC_COMPACTION_BEFORE_SECONDS),
         )
         for conversation_id in due_ids:
             state = await self._conversation_state(conversation_id)

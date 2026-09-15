@@ -42,6 +42,11 @@ function rowOfKind<Kind extends TranscriptRow["kind"]>(
 }
 
 describe("Conversation transcript", () => {
+  it("recognises the server-trusted owner label as the local sender", () => {
+    expect(promptLabelFor("owner", "owner")).toBeNull();
+    expect(promptLabelFor("Ticket t_one", "owner")).toBe("Ticket t_one");
+  });
+
   it("reconciles a tool start and finish into one completed row", () => {
     const rows = rowsFrom([
       promptEvent(1, "do it"),

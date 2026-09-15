@@ -26,8 +26,7 @@ function groupKeyFor(ticket: DayTicket): string {
 }
 
 export function dayVisualTicket(
-  ticket: DayTicket,
-  replyWatermarks: Readonly<Record<string, number>>
+  ticket: DayTicket
 ): DayVisualTicket {
   const group = groupKeyFor(ticket);
   const presentation = conversationSignalPresentation(
@@ -36,9 +35,9 @@ export function dayVisualTicket(
         typeof ticket.conversation_id === "string" ? ticket.conversation_id : null,
       needs_me: Boolean(ticket.needs_me),
       agent_working: Boolean(ticket.agent_working),
-      unread_position: Number(ticket.latest_turn_ended_sequence ?? 0)
-    },
-    replyWatermarks
+      unread_position: Number(ticket.latest_turn_ended_sequence ?? 0),
+      owner_read_through_sequence: Number(ticket.owner_read_through_sequence ?? 0)
+    }
   );
 
   if (ticket.is_done || ticket.stage === "done") {

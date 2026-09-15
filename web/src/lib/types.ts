@@ -224,6 +224,7 @@ export type ChiefManagementSettings = {
   needs_me: boolean;
   agent_working: boolean;
   latest_turn_ended_sequence: number;
+  owner_read_through_sequence: number;
 };
 
 export type WorkerManagementSettings = {
@@ -455,6 +456,7 @@ export type BoardSprintItem = {
   needs_me: boolean;
   // Where that conversation last ended a turn. An unseen reply is what lights an Item row.
   latest_turn_ended_sequence: number;
+  owner_read_through_sequence: number;
 };
 
 export type BoardCard = {
@@ -487,6 +489,7 @@ export type BoardCard = {
   agent_working: boolean;
   needs_me: boolean;
   latest_turn_ended_sequence: number;
+  owner_read_through_sequence: number;
 };
 
 export type DayTicket = AnyRecord & {
@@ -501,6 +504,7 @@ export type DayTicket = AnyRecord & {
   agent_working?: boolean;
   needs_me?: boolean;
   latest_turn_ended_sequence?: number;
+  owner_read_through_sequence?: number;
 };
 
 export type DayResponse = {

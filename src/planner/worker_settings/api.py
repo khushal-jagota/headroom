@@ -152,6 +152,9 @@ async def add_agent_conversation_signals(
     latest_turn_ended = await conversation_record.latest_turn_ended_sequences(
         conversation_ids.values()
     )
+    owner_read_through = await conversation_record.owner_read_through_sequences(
+        conversation_ids.values()
+    )
     for agent in agents:
         conversation_id = conversation_ids.get(str(agent["employee_id"]))
         agent["conversation_id"] = conversation_id
@@ -170,6 +173,9 @@ async def add_agent_conversation_signals(
         )
         agent["latest_turn_ended_sequence"] = (
             latest_turn_ended.get(conversation_id, 0) if conversation_id is not None else 0
+        )
+        agent["owner_read_through_sequence"] = (
+            owner_read_through.get(conversation_id, 0) if conversation_id is not None else 0
         )
     return agents
 
@@ -261,9 +267,7 @@ async def put_chief_launch_defaults(
 
 
 @router.put("/workers/chief-of-staff/skill")
-async def put_chief_skill(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
-) -> JsonDict:
+async def put_chief_skill(raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg) -> JsonDict:
     require_direct_write(ctx)
     settings = service.save_chief_skill(
         _database_parent(config),
@@ -275,9 +279,7 @@ async def put_chief_skill(
 
 
 @router.patch("/workers/chief-of-staff/skill")
-async def patch_chief_skill(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
-) -> JsonDict:
+async def patch_chief_skill(raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg) -> JsonDict:
     require_direct_write(ctx)
     if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
         raise PlannerError(ErrorCode.validation, "Chief skill patch requires exactly one field", {})

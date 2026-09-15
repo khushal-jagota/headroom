@@ -508,6 +508,7 @@ def feedback_use(ticket_id: str, feedback_ids: tuple[str, ...], as_json: bool) -
 
 
 @main.command("send-message")
+@click.option("--owner", is_flag=True, help="Send to Khushal.")
 @click.option("--chief", is_flag=True, help="Send to the Chief of Staff.")
 @click.option("--ticket", "ticket_id", default=None, help="Send to a Ticket worker.")
 @click.option(
@@ -531,6 +532,7 @@ def feedback_use(ticket_id: str, feedback_ids: tuple[str, ...], as_json: bool) -
 @click.option("--body-file", default=None, help="Read message text from this file, or -.")
 @json_option
 def send_message(
+    owner: bool,
     chief: bool,
     ticket_id: str | None,
     sprint_item_id: str | None,
@@ -546,6 +548,7 @@ def send_message(
     targets = sum(
         1
         for selected in (
+            owner,
             chief,
             ticket_id is not None,
             sprint_item_id is not None,
@@ -554,7 +557,7 @@ def send_message(
     )
     if targets != 1:
         http.fail_validation(
-            "send-message requires exactly one of --chief, --ticket, or --sprint-item",
+            "send-message requires exactly one of --owner, --chief, --ticket, or --sprint-item",
             as_json,
         )
     if (message is None) == (body_file is None):
@@ -564,8 +567,11 @@ def send_message(
     text = message if message is not None else _read_source(body_file or "", as_json)
     if not text.strip():
         http.fail_validation("empty message", as_json)
-    if chief:
-        recipient: dict[str, str] = {"kind": "chief", "id": "chief"}
+    recipient: dict[str, str]
+    if owner:
+        recipient = {"kind": "owner", "id": "owner"}
+    elif chief:
+        recipient = {"kind": "chief", "id": "chief"}
     elif ticket_id is not None:
         recipient = {"kind": "ticket", "id": ticket_id}
     else:
@@ -1982,14 +1988,12 @@ def sprint_item_supervisor_history(
 @sprint_item_supervisor.command("message-worker")
 @click.argument("item_id")
 @click.argument("ticket_id")
-@click.option("--conversation-id", required=True, help="Current Worker conversation id.")
 @click.option("--message", default=None, help="Message text.")
 @click.option("--body-file", default=None, help="Read message text from this file, or -.")
 @json_option
 def sprint_item_supervisor_message_worker(
     item_id: str,
     ticket_id: str,
-    conversation_id: str,
     message: str | None,
     body_file: str | None,
     as_json: bool,
@@ -2003,7 +2007,7 @@ def sprint_item_supervisor_message_worker(
         "POST",
         f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/message",
         as_json=as_json,
-        json_body={"conversation_id": conversation_id, "message": text},
+        json_body={"message": text},
     )
     http.emit(data, as_json, f"Worker message {data['fate']}")
 
