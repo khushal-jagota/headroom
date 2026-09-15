@@ -96,6 +96,7 @@ class _World:
                 now=0,
                 next_ceiling="none",
                 at_cap=AtCap.propose,
+                next_holder=OWNER_PRINCIPAL,
             )
             if ownership_mode is not None:
                 tickets_data.set_stage_ownership(

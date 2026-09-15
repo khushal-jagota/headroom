@@ -64,6 +64,7 @@ def test_item_tickets_probe_child_decodes(
         now=2,
         next_ceiling=NEEDS_ALPHA,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     file_current_proposal_with_recap(
         tmp_db,
@@ -113,6 +114,7 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
         now=2,
         next_ceiling="needs_success",
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     file_current_proposal_with_recap(
         tmp_db, child.id, body="s", principal=TEST_TICKET_PRINCIPAL, now=3, recap="Current work"

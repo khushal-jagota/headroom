@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final, Literal, NotRequired, Required, TypedDict
 
-from planner.core.contracts import Priority
+from planner.core.contracts import Principal, Priority
 
 # §3.3 ticket title length cap. The DDL carries the matching literal
 # `CHECK (length(title) <= 200)` as the DB-level backstop; this constant is the
@@ -216,6 +216,7 @@ class AcceptBody(TypedDict, total=False):  # POST /tickets/{id}/accept/{field}
     edited_body: str | None  # direct edit applied before resolution
     next_ceiling: str | None  # Stage id or NO_FURTHER; scope pair (§4.4.7)
     at_cap: str | None  # AtCap value; scope pair (§4.4.7)
+    next_holder: object  # required full Principal for the next ceiling
 
 
 class GuidanceBody(TypedDict):  # PUT /tickets/{id}/guidance; POST .../guidance/append
@@ -284,6 +285,7 @@ class Ticket:  # §3.3 — column names match exactly
     recap: str  # writable only past the type's first worker Stage
     guidance: str = field(default="", kw_only=True)  # durable instructions for the Ticket
     ceiling: str  # ceiling id; a member of the type's ceiling_range
+    ceiling_holder: Principal = field(kw_only=True)
     at_cap: AtCap  # default propose
     ticket_status: TicketStatus  # durable state-of-control; transition functions write it
     # When ticket_status last actually changed, for display and elapsed-time facts.

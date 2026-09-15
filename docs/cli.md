@@ -147,20 +147,28 @@ record shapes. Direct `show` commands also keep their full record shapes.
   `ticket create` uses Today and the current Sprint when placement is omitted.
   `--sprint <id|current>` selects a Sprint, `--backlog` selects no Sprint, and
   `--sprint-item <id>` adds coherent Item classification.
+  The creating principal becomes the ceiling holder. A proposal that parks at that
+  ceiling is addressed to that exact principal.
   `ticket set` names one field (`title`, `kickoff-note`, `priority`, or `deadline`).
   `ticket place <ticket-id>` updates Project, Sprint, and optional Sprint Item as one
   coherent change. Select a Project with `--project` or `--project-id`. Select a Sprint
   with `--sprint <id|current>` or `--backlog`. Select classification with
   `--sprint-item <id>` or `--clear-sprint-item`. Omitted dimensions keep their current
   values, and the server rejects an incoherent final combination.
+  `ticket approve` works for the addressed holder and for the owner override. It requires
+  `--ceiling` and `--at-cap`, and it sends the full next holder with every approval.
+  `--holder-kind owner|chief|sprint_item|ticket` and `--holder-id <id>` name that holder.
+  The direct command defaults to the owner holder. Use an explicit ID for a Sprint Item
+  or Ticket holder.
   `ticket delete` is permanent and requires `--yes`. The user deletes any Ticket, and a
   Sprint Item supervisor deletes a current child Ticket of its own Item. For the user it
   normally refuses a Ticket that is running, either because its
   status says a worker step is out or because its conversation is mid-turn. `--force`
   deletes such a Ticket anyway, for a Ticket whose status is stuck with no worker
   running. A supervisor meets no such guard on its own child Tickets, and `--force` adds
-  nothing for it. Force changes nothing else: the same cascade. Whenever a delete goes
-  ahead over a running worker, that worker's turn is killed first.
+  nothing for it. No actor can delete a Ticket that holds another Ticket's ceiling.
+  Force changes nothing else: the same cascade. Whenever a delete goes ahead over a
+  running worker, that worker's turn is killed first.
 - **`ticket employee-configuration <id> --backend <key> --model <id> [--reasoning-effort <e>]`**
   — set what this Ticket's worker launches on. All three go together, because a model id
   belongs to the backend that named it; leave `--reasoning-effort` out for a model that
@@ -178,7 +186,8 @@ record shapes. Direct `show` commands also keep their full record shapes.
   Ticket's Project and preserves its Sprint; removal preserves Project and Sprint.
   A stale removal cannot detach a different current Outcome. Ordinary Ticket placement
   owns scheduling. `list --search` searches the bounded Project catalog. Deleting an
-  Outcome still requires `--yes` and refuses children.
+  Outcome still requires `--yes` and refuses children. It also refuses deletion while
+  the Sprint Item holds any Ticket ceiling.
 - **`sprint outcome add / remove / list / carry`** — choose Outcomes for a Sprint,
   including before Tickets exist. Add/remove changes the commitment only. Carry takes
   source Sprint and Outcome, `--to` target Sprint, and repeatable `--ticket` IDs. It
@@ -188,9 +197,13 @@ record shapes. Direct `show` commands also keep their full record shapes.
   and launch configuration, read its scoped brief and current Tickets, send a direct
   user message, or reset its current conversation.
 - **`sprint item supervisor approve / reject`** — resolve a parked proposal on a current
-  child Ticket of the exact owning Sprint Item. Approval requires the next ceiling and
-  cap. Rejection requires focused revision guidance. A parked proposal waits for the
-  user, so a supervisor uses these only for a Ticket the user asked it to.
+  child Ticket when that exact Sprint Item is its ceiling holder. Approval requires the
+  next ceiling and cap. It also sends the full next holder. The holder defaults to the
+  same Sprint Item; `--holder-kind` and `--holder-id` can address the next proposal to a
+  different principal. Rejection requires focused revision guidance. Panels sends that
+  comment from the supervisor principal to the exact Ticket worker conversation before
+  it clears the proposal. A refused send leaves the proposal unchanged. The holder stays
+  the same for the revised proposal.
 - **`sprint item supervisor ticket-context / history / message-worker`** — read one
   current child Ticket, page through its current Worker conversation, or send attributed
   guidance to that Ticket's current conversation. `message-worker` resolves the current
@@ -213,13 +226,15 @@ record shapes. Direct `show` commands also keep their full record shapes.
   — use item-scoped canonical actions for the owning Item and its current child Tickets.
   `scope` takes the ceiling as either the stage name or the plain name of the field that
   stage needs. `--ceiling closeout` and `--ceiling needs_closeout` mean the same thing.
+  A scope change makes that Sprint Item the ceiling holder and cannot retarget a pending
+  proposal.
 - A supervisor creates a child Ticket with ordinary `ticket create --sprint-item`,
   the same command every other actor uses, and that Ticket is scoped like any other.
 - **`ticket create --ceiling / --at-cap`** — state the new Ticket's scope at creation.
   The creator that was given the scope states it, so authorized work does not sit waiting
-  for a second approval. A stated ceiling past the kickoff settles the kickoff and starts
-  the Ticket at the next Stage. Omit both options to keep the default: the kickoff parks
-  for the user's approval.
+  for a second approval. That creator is also the ceiling holder. A stated ceiling past
+  the kickoff settles the kickoff and starts the Ticket at the next Stage. Omit both
+  options to keep the default: the kickoff parks for its creator's approval.
 - **`sprint item supervisor artifact-list / artifact-write / artifact-delete`** — manage
   files under the owning Item's `artifacts/` directory.
 - **`worker propose / recap / note / trouble / request-user-help / my-ticket`** — worker actions.

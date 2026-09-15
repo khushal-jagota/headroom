@@ -66,6 +66,7 @@ def _ticket(
         now=2,
         next_ceiling=ceiling or definition.first_worker_stage(),
         at_cap=at_cap,
+        next_holder=OWNER_PRINCIPAL,
     )
     if planning_day_id is not None:
         days_data.add_day_ticket(conn, planning_day_id, ticket.id, 3)
@@ -230,6 +231,7 @@ def test_scope_permission_uses_the_ticket_worker_type_definition(
                 now=4,
                 next_ceiling=ceiling,
                 at_cap=at_cap,
+                next_holder=OWNER_PRINCIPAL,
             )
             assert ticket.stage == "needs_stages"
         assert _ready(conn, ticket) is expected

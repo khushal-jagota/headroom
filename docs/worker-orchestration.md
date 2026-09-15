@@ -145,8 +145,8 @@ already had five minutes.
 
 ## Sending a proposal back
 
-When the owner returns a proposal for revision, the guidance goes to the worker as a
-real message in the same conversation, and the Ticket goes back out to it.
+When the holder returns a proposal for revision, Send Message delivers the decider's
+comment to the worker. The Ticket then goes back out to the worker.
 
 The order is: check everything, send, and only then write. It has to be that way round,
 because the write is the one part that cannot be undone honestly — it deletes the

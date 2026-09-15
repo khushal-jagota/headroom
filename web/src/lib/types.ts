@@ -181,6 +181,11 @@ export type PendingTicketProposal = {
 
 export type AtCap = "stop" | "propose";
 
+export type Principal = {
+  kind: "owner" | "chief" | "sprint_item" | "ticket";
+  id: string;
+};
+
 export type BlockedByTicket = {
   ticket_id: string;
   title: string;
@@ -269,6 +274,7 @@ export type TicketDetail = {
   employee_configuration_editable: boolean;
   stage: string;
   ceiling: string;
+  ceiling_holder: Principal;
   at_cap: AtCap;
   suggested_next_ceiling: string;
   priority: string;

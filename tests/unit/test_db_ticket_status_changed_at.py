@@ -210,6 +210,7 @@ def test_a_new_ticket_and_a_status_change_keep_the_column_current(
         now=11_000,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert settled.ticket_status is not created.ticket_status
     assert _status_changed_at(upgraded, created.id) == 11_000

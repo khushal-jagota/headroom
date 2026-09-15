@@ -37,6 +37,7 @@ def _ticket(*, stage: str = "needs_success") -> Ticket:
         recap="",
         guidance="keep this guidance",
         ceiling="done",
+        ceiling_holder=OWNER_PRINCIPAL,
         at_cap=AtCap.propose,
         ticket_status=TicketStatus.awaiting_approval,
         ticket_status_changed_at=0,

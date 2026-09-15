@@ -39,7 +39,7 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "automatic_compaction_attempts"
+HEAD_REVISION = "proposal_holder"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
 CURRENT_SCHEMA_OBJECT_COUNT = 56
@@ -99,6 +99,9 @@ def _table_structure_before_status_changed_at(
 ) -> dict[str, object]:
     """The tickets structure before its status-tracking columns were added."""
     columns = list(structure["columns"])  # type: ignore[call-overload]
+    holder_column = columns.pop()
+    assert holder_column[:3] == ("ceiling_holder", "TEXT", 1)
+    assert json.loads(str(holder_column[3]).strip("'")) == {"kind": "owner", "id": "owner"}
     assert columns.pop() == ("archived_field_content", "TEXT", 1, "''", 0)
     assert columns.pop() == ("pending_proposal", "TEXT", 0, None, 0)
     columns = [

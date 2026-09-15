@@ -29,7 +29,12 @@ def _cases(
         conn, "t_1", body="b", principal=TEST_TICKET_PRINCIPAL, now=0, recap="Current work"
     )
     _t2: Ticket = tickets_data.accept_proposal(
-        conn, "t_1", field=foreign_field, principal=OWNER_PRINCIPAL, now=0
+        conn,
+        "t_1",
+        field=foreign_field,
+        principal=OWNER_PRINCIPAL,
+        now=0,
+        next_holder=OWNER_PRINCIPAL,
     )
     _t3: Ticket = tickets_data.edit_field_value(
         conn, "t_1", field=foreign_field, new_body="b", principal=OWNER_PRINCIPAL, now=0
@@ -59,6 +64,7 @@ def _cases(
             None,
             "none",
             at_cap,
+            OWNER_PRINCIPAL,
             worker_type_definition=definition,
         ),
         Decision,
@@ -78,6 +84,7 @@ def _cases(
             ticket,
             "needs_beta",
             field_values,
+            OWNER_PRINCIPAL,
             worker_type_definition=definition,
         ),
         Decision,

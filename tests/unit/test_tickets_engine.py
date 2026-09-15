@@ -74,6 +74,7 @@ def _create(conn: Connection, cfg: Config, clock: TestClock, **kw: Any) -> Ticke
         now=clock.now_unix(),
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     return ticket
 
@@ -334,6 +335,7 @@ def test_accept_kickoff_field_advances_to_success_and_leaves_title_independent(
         edited_body="approved note",
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
 
     assert settled.stage == "needs_success"
@@ -434,6 +436,7 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert t.ticket_status is TicketStatus.empty
 
@@ -530,7 +533,7 @@ def test_a_paired_owned_stage_departs_at_paired_and_returns_to_empty(
     assert data.read_ticket(tmp_db, t.id).ticket_status is TicketStatus.empty
 
 
-def _park_paired(
+def _park_pending(
     tmp_db: Connection,
     cfg: Config,
     fake_clock: TestClock,
@@ -548,41 +551,14 @@ def _park_paired(
         tmp_db, t.id, body="parked", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
     )
     assert t.ticket_status is TicketStatus.awaiting_approval
-    t = data.enter_paired_on_human_reply(tmp_db, t.id, now=now)
-    assert t.ticket_status is TicketStatus.paired
     return t
 
 
-def test_enter_paired_on_human_reply_flips_only_from_awaiting_approval(
+def test_pending_proposal_accept_rests_the_ticket(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
-    t = _create(tmp_db, cfg, fake_clock)
-    assert t.ticket_status is TicketStatus.empty
-    # No-op from empty.
-    t = data.enter_paired_on_human_reply(tmp_db, t.id, now=now)
-    assert t.ticket_status is TicketStatus.empty
-    # No-op from agent.
-    claimed = _claim_ready_worker_step(tmp_db, t.id, now=now)
-    assert claimed is not None
-    t = claimed
-    assert t.ticket_status is TicketStatus.agent
-    t = data.enter_paired_on_human_reply(tmp_db, t.id, now=now)
-    assert t.ticket_status is TicketStatus.agent
-    # Flips from awaiting_approval.
-    t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="parked", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
-    )
-    assert t.ticket_status is TicketStatus.awaiting_approval
-    t = data.enter_paired_on_human_reply(tmp_db, t.id, now=now)
-    assert t.ticket_status is TicketStatus.paired
-
-
-def test_paired_exit_accept_rests_the_ticket(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock
-) -> None:
-    now = fake_clock.now_unix()
-    t = _park_paired(tmp_db, cfg, fake_clock, now)
+    t = _park_pending(tmp_db, cfg, fake_clock, now)
     data.replace_guidance(
         tmp_db, t.id, body="Keep this boundary", principal=OWNER_PRINCIPAL, now=now
     )
@@ -594,17 +570,18 @@ def test_paired_exit_accept_rests_the_ticket(
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert t.ticket_status is TicketStatus.empty
 
     assert t.guidance == "Keep this boundary"
 
 
-def test_paired_exit_send_back_reopens_and_clears_proposal(
+def test_pending_proposal_send_back_reopens_and_clears_proposal(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
-    t = _park_paired(tmp_db, cfg, fake_clock, now)
+    t = _park_pending(tmp_db, cfg, fake_clock, now)
     data.replace_guidance(
         tmp_db, t.id, body="Keep this boundary", principal=OWNER_PRINCIPAL, now=now
     )
@@ -759,6 +736,7 @@ def test_a06_edit_accept_stores_edited_text(
         edited_body="edited body exactly",
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert t.field_values.get("success") == "edited body exactly"
     assert t.pending_proposal is None
@@ -801,6 +779,7 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert t1.stage == "done"
     assert t1.field_values.get("closeout") == "c"
@@ -848,15 +827,15 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
     assert t3.stage == "needs_implementation"
     assert t3.pending_proposal is not None
 
-    _scope(tmp_db, t3, "done", AtCap.propose, fake_clock)
     t3 = data.accept_proposal(
         tmp_db,
         t3.id,
         field="implementation",
         principal=OWNER_PRINCIPAL,
         now=now,
-        next_ceiling=NO_FURTHER,
-        at_cap=AtCap.stop,
+        next_ceiling="done",
+        at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert t3.stage == "needs_closeout"
 
@@ -911,6 +890,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
             now=now,
             next_ceiling=None,
             at_cap=AtCap.stop,
+            next_holder=OWNER_PRINCIPAL,
         )
     assert e_missing_ceiling.value.code is ErrorCode.scope_missing
     with pytest.raises(PlannerError) as e_missing_at_cap:
@@ -922,6 +902,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
             now=now,
             next_ceiling=NO_FURTHER,
             at_cap=None,
+            next_holder=OWNER_PRINCIPAL,
         )
     assert e_missing_at_cap.value.code is ErrorCode.scope_missing
 
@@ -943,6 +924,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
             now=now,
             next_ceiling="needs_success",
             at_cap=AtCap.propose,
+            next_holder=OWNER_PRINCIPAL,
         )
     assert e_before.value.code is ErrorCode.scope_invalid
     with pytest.raises(PlannerError) as e_dropped:
@@ -954,6 +936,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
             now=now,
             next_ceiling="dropped",
             at_cap=AtCap.propose,
+            next_holder=OWNER_PRINCIPAL,
         )
     assert e_dropped.value.code is ErrorCode.scope_invalid
     assert data.read_ticket(tmp_db, t.id).stage == "needs_success"
@@ -968,6 +951,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
             now=now,
             next_ceiling=NO_FURTHER,
             at_cap=AtCap.propose,
+            next_holder=OWNER_PRINCIPAL,
         )
     assert e_agent.value.code is ErrorCode.agent_forbidden
     assert _ticket_row(tmp_db, t.id) == row_before
@@ -980,6 +964,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.stop,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert t.stage == "needs_approach"
     assert t.ceiling == "needs_approach"
@@ -1002,6 +987,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert t2.stage == "needs_approach"
     t2 = data.file_current_proposal_with_recap(
@@ -1022,6 +1008,7 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
         now=now,
         next_ceiling="needs_plan",
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert t3.ceiling == "needs_plan"
     t3 = data.file_current_proposal_with_recap(
@@ -1300,6 +1287,7 @@ def test_direct_plan_accept_derives_implementation_ownership_status(
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
 
     assert ticket.stage == "needs_implementation"

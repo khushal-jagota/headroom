@@ -86,6 +86,7 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
             now=1,
             next_ceiling=NO_FURTHER,
             at_cap=AtCap.propose,
+            next_holder=OWNER_PRINCIPAL,
         )
         return ticket.id
     finally:

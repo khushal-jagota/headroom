@@ -2,30 +2,23 @@
 
 from __future__ import annotations
 
-import logging
 import sqlite3
 from collections.abc import Callable, Mapping
 from datetime import datetime
-from typing import Final
 
 from planner.conversation.contracts import ConversationSystem, PromptDeliveryRefused
-from planner.conversation.message_content import text_message_content
 from planner.core import links as core_links
-from planner.core.contracts import LinkKind, Principal, Priority
+from planner.core.authctx import RequestContext
+from planner.core.clock import Clock
+from planner.core.contracts import LinkKind, Principal, PrincipalKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
-from planner.runtime.conversation_start import send_to_ticket_conversation
-from planner.runtime.logic.worker_step_prompt import revision_guidance_prompt
+from planner.message_delivery import service as message_delivery_service
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, Ticket
 from planner.tickets.logic import admission, resolution
-from planner.worker_context.contracts import WorkerContextService
 from planner.worker_types.configuration import configured_worker_type_registry
-
-_log = logging.getLogger(__name__)
-
-OWNER_SENDER_LABEL: Final = "owner"
 
 
 def resolve_creation_placement(
@@ -234,16 +227,15 @@ def remove_link(
 
 async def return_ticket_for_revision(
     conversation_system: ConversationSystem,
-    worker_context_service: WorkerContextService,
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
     message: str,
-    principal: Principal,
-    now: int,
+    ctx: RequestContext,
+    clock: Clock,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
-    """Send the owner's guidance to the worker, then hand the Ticket back to it.
+    """Send the decider's guidance to the worker, then hand the Ticket back to it.
 
     The order is validate, send, and only then write, because the write is the one thing
     that cannot be undone honestly: the decision deletes the pending proposal, so a revert
@@ -256,6 +248,8 @@ async def return_ticket_for_revision(
     harmless, and far better than losing the proposal.
     """
     admission.validate_body(message, "revision guidance")
+    principal = ctx.principal
+    now = clock.now_unix()
     ticket = tickets_data.read_ticket(conn, ticket_id)
     # The decision is the whole check, run here on a read of the Ticket: wrong actor,
     # wrong status, terminal stage, and no conversation to send into all fail here,
@@ -267,21 +261,16 @@ async def return_ticket_for_revision(
         worker_type_definition=worker_type_definition,
     )
     expected_proposal = ticket.pending_proposal
-    prepared = worker_context_service.prepare(
-        ticket_id,
-        revision_guidance_prompt(message.strip()),
-    )
     # Into the conversation the decision above proved is there: returning for revision is
     # something said to a worker already at work, never the thing that first speaks to one.
     fate = (
-        await send_to_ticket_conversation(
+        await message_delivery_service.send_message(
             conversation_system,
             conn,
-            ticket_id,
-            text_message_content(prepared.model_text),
-            conversation_id=ticket.conversation_id,
-            sender_label=OWNER_SENDER_LABEL,
-            now=now,
+            clock,
+            ctx,
+            Principal(PrincipalKind.ticket, ticket_id),
+            message.strip(),
         )
     ).fate
     if isinstance(fate, PromptDeliveryRefused):
@@ -289,15 +278,6 @@ async def return_ticket_for_revision(
             ErrorCode.gateway_offline,
             "revision guidance could not be delivered",
             {"ticket_id": ticket_id, "refusal_reason": fate.refusal_reason.value},
-        )
-    try:
-        worker_context_service.acknowledge(ticket_id, prepared.receipts)
-    except Exception:
-        # The guidance is delivered; failing to tick the context off is reported and
-        # otherwise left alone, because nothing here can un-send it.
-        _log.exception(
-            "delivered worker context could not be acknowledged (ticket=%s)",
-            ticket_id,
         )
     return tickets_data.return_for_revision(
         conn,

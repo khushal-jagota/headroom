@@ -62,6 +62,7 @@ def _passed_ticket(db_path: Path) -> str:
             now=0,
             next_ceiling=NO_FURTHER,
             at_cap=AtCap.propose,
+            next_holder=OWNER_PRINCIPAL,
         )
         change_scope(
             conn,

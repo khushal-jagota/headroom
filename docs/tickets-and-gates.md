@@ -216,7 +216,7 @@ Stage. Filing another proposal replaces that pending draft. Saved field values r
 separate, including a saved value beside a pending revision of the same field.
 
 The pending proposal has its own editor. Any authorized actor can replace its text.
-The proposal stays pending, and the edit keeps its
+The proposal stays pending and addressed to the same ceiling holder. The edit keeps its
 author, creation time, settled value, Ticket status, Stage, and scope. Direct edits
 of saved values use a separate editor and remain limited to passed fields and direct callers.
 
@@ -247,12 +247,16 @@ _Code paths:_ `src/planner/tickets/logic/resolution.py` (the proposal resolver),
 
 ## How far a worker may go: the scope
 
-Every ticket carries a permission with two parts. Together, these parts form its **scope**:
+Every ticket carries a **scope** with two controls, plus a holder for its ceiling:
 
 - **The ceiling** — how far along the stages a worker may push this ticket on its own.
 - **At the cap** — what the worker may do when it gets there. **Stop** prevents a
   proposal at all. **Propose** lets the worker file one, and that proposal parks for the
-  user's approval.
+  holder's approval.
+- **The holder** — the principal who can decide the proposal at that ceiling.
+
+The holder is a full principal kind and ID, not a display label or current conversation.
+Existing Tickets receive the owner principal when the holder column is introduced.
 
 Below the ceiling, a worker-owned Stage's proposal is accepted automatically and the
 ticket advances. At the ceiling, the cap decides whether a worker-owned Stage can propose
@@ -278,12 +282,13 @@ straight to **done**. (The threshold used by sprint-in-progress behavior is the
 
 ## The approval gate and Ticket leash
 
-Whenever the human approves a step, they must say in the same breath how far the
-worker can go next. The system refuses an approval that does not answer that
-question. The Ticket details disclosure shows the same scope as a readable leash:
+The addressed holder or the owner can decide a parked proposal. Whenever either approves
+a step, they must name the next ceiling, cap, and holder. The system refuses an approval
+that omits any part. The Ticket details disclosure shows
+the same scope as a readable leash:
 "approved until [a stage], then [stop or propose]." The disclosure includes only the
 ceiling and cap selects. A fresh approval starts on **Propose**, so
-the worker runs to the new ceiling and parks there for the user unless **Stop** is
+the worker runs to the new ceiling and parks there for the named holder unless **Stop** is
 chosen instead. At Kickoff, an unchosen
 ceiling starts from that Worker type's managed suggestion. Other approvals start from
 their normal next Stage. `No further` remains a one-off choice. The stages it offers
@@ -292,42 +297,40 @@ ones after it, never an earlier one, so you can't hand back ground the ticket ha
 already covered. One shared source of the allowed stages feeds both the Ticket leash
 and the approval screen, so the two cannot disagree.
 
-Review's single, oldest-first walk shows today's tickets whose status is
-`awaiting_approval` or `needs_user`.
+Review's single, oldest-first walk shows today's owner-addressed proposals and
+`needs_user` Tickets.
 A parked proposal keeps its approval and revision controls. A Worker help request uses the same
 Ticket title, Skip, and Open Ticket structure without proposal controls; the answer
 belongs in the Ticket conversation. Either kind leaves Review the moment its status
 changes, whichever way that happens.
 
-Replying to the worker is one of those ways. A ticket parked on a proposal is waiting
-for you, and typing an answer into its conversation is an answer of a kind — the
-proposal is being discussed rather than approved — so the ticket moves to `paired` and
-leaves Review. It moves when the message has actually reached the conversation: a reply
-that got nowhere is not a reply. Only a person can do this. The automatic loop sends into
-the same conversation, and its prompts are not replies.
+Replying to the worker does not decide its proposal. The proposal stays pending and
+addressed to its holder until a decision or a replacement proposal arrives.
 
-The Review screen can also send a parked ticket back instead of accepting it, whatever field
-is currently gated. The human writes short guidance in the review card. Panels
-sends that guidance as the real next message into the Ticket's conversation, and only
-then hands the Ticket back to the worker — that order matters, because the hand-back
-deletes the pending proposal and could not be honestly undone if the send had failed.
+The Review screen can also send an owner-addressed ticket back instead of accepting it,
+whatever field is currently gated. The owner writes short guidance in the review card.
+Panels sends that comment from the deciding principal to the exact Ticket worker
+conversation, and only then hands the Ticket back to the worker — that order matters,
+because the hand-back deletes the pending proposal and could not be honestly undone if
+the send had failed.
 A refused send changes nothing and can simply be retried. The ticket's stage never changes: a pending
 gated proposal is cleared, settled values remain, and the ticket leaves Review while
 its control status is `agent`. The gated field can therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
-submits the revision.
+submits the revision. A holder rejection keeps that holder. If the owner uses the
+override, the owner becomes the ceiling holder for the revised proposal.
 
-There is one approval gate. Every parked proposal waits on `awaiting_approval` for the
-user, who approves it or rejects it with focused revision guidance — in Review or through
-the direct Ticket controls — and either way the canonical proposal resolver does the work.
-With one reviewer there is nobody to hand a proposal to, so editing a Ticket's scope while
-a proposal waits cannot change who answers it.
+There is one approval gate. Every parked proposal waits on `awaiting_approval` for its
+holder. The holder or owner approves it or rejects it with focused revision guidance,
+and either way the canonical proposal resolver does the work. Review contains only
+owner-addressed proposals. Other holders use their scoped controls.
+Scope cannot change while a proposal waits, so its address stays stable.
 
-A parked proposal reaches nobody but the user. A Sprint Item conversation is not told
+A parked proposal reaches only its holder. A Sprint Item conversation is not told
 that one is waiting, and nothing starts it to go and look: the user asks it, or it stays
 quiet. When they do ask, it reads the waiting proposal from current state itself, and the
-approval remains theirs. Worker messages use the separate targeted message path and
-require an existing Worker conversation.
+Sprint Item can decide only when that exact Item is the holder. Worker messages use the
+separate targeted message path and require an existing Worker conversation.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
@@ -344,9 +347,10 @@ requires `--yes`.
 
 The user's ordinary delete is refused while the Ticket's status says a worker step is
 out, and also while its conversation has a turn running. `--force` deletes it anyway. A
-supervisor's delete is not guarded at all: it is the whole capability the user gave it,
-over its own child tickets. Any delete that goes ahead over a running worker kills that
-worker's turn first, so nothing keeps talking into a conversation whose ticket is gone.
+supervisor can delete its own child Ticket without that activity guard. No actor can
+delete a Ticket or Sprint Item that is the ceiling holder for another Ticket. Any delete
+that goes ahead over a running worker kills that worker's turn first, so nothing keeps
+talking into a conversation whose ticket is gone.
 
 One transaction removes the ticket
 from days, sprint views, links, Review, Workspace, and pending worker context. Other

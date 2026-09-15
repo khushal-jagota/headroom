@@ -501,7 +501,52 @@ def _marshal_accept(raw: JsonDict) -> AcceptBody:
         edited_body=body_opt_str(raw, "edited_body"),
         next_ceiling=body_opt_str(raw, "next_ceiling"),
         at_cap=body_opt_str(raw, "at_cap"),
+        next_holder=raw.get("next_holder"),
     )
+
+
+def _parse_principal(raw: object, field: str) -> Principal | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) != {"kind", "id"}:
+        raise PlannerError(
+            ErrorCode.validation,
+            f"{field} must be a principal object with kind and id",
+            {field: raw},
+        )
+    kind_raw = raw.get("kind")
+    principal_id = raw.get("id")
+    if not isinstance(kind_raw, str):
+        raise PlannerError(
+            ErrorCode.validation,
+            f"{field} kind must be owner, chief, sprint_item, or ticket",
+            {field: raw},
+        )
+    try:
+        kind = PrincipalKind(kind_raw)
+    except (TypeError, ValueError):
+        raise PlannerError(
+            ErrorCode.validation,
+            f"{field} kind must be owner, chief, sprint_item, or ticket",
+            {field: raw},
+        ) from None
+    if not isinstance(principal_id, str):
+        raise PlannerError(ErrorCode.validation, f"{field} id must be text", {field: raw})
+    try:
+        return Principal(kind, principal_id)
+    except ValueError as exc:
+        raise PlannerError(ErrorCode.validation, str(exc), {field: raw}) from exc
+
+
+def _parse_required_principal(raw: object, field: str) -> Principal:
+    principal = _parse_principal(raw, field)
+    if principal is None:
+        raise PlannerError(
+            ErrorCode.scope_missing,
+            f"approval requires {field}",
+            {"missing": [field]},
+        )
+    return principal
 
 
 # --- scope marshallers ---------------------------------------------------------
@@ -933,39 +978,6 @@ async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk, config: Cfg) -> Jso
     return _ticket_detail_with_worker_settings(conn, ticket_id, clk.now_unix(), config)
 
 
-@router.post("/tickets/{ticket_id}/human-reply")
-async def record_human_reply(
-    ticket_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    """Record that a person has replied to this Ticket's worker.
-
-    A Ticket parked on a proposal is waiting for its owner. Replying to the worker is an
-    answer of a kind — the proposal is being discussed rather than approved — so the
-    Ticket moves to paired. Every other status is left exactly as it is. Which ones move
-    is the writer's rule and it stays there: this route reports the reply for every
-    status and lets the writer decide, because a caller that decides for a canonical
-    writer is one wrong caller away from a bad status.
-
-    The reply is reported by the screen a person typed on, after the conversation
-    accepted the message, because a reply that reached nothing is not a reply. That
-    screen is the one place that knows both halves — it holds a Ticket and the
-    conversation the Ticket names. The conversation system is told nothing about Tickets
-    and does not need to be.
-
-    Only a person can say this happened. The automatic loop sends into the same
-    conversation and its prompts are not replies, so this is a direct-write door and an
-    agent-claim request is refused at it rather than by convention.
-    """
-    require_direct_write(ctx)
-    now = clk.now_unix()
-    return tickets_views.ticket_json(
-        tickets_data.enter_paired_on_human_reply(conn, ticket_id, now=now), now
-    )
-
-
 @router.put("/tickets/{ticket_id}/employee-configuration")
 async def put_ticket_employee_configuration(
     ticket_id: str,
@@ -1128,7 +1140,6 @@ async def accept_field(
     clk: Clk,
 ) -> JsonDict:
     body = _marshal_accept(raw)
-    require_direct_write(ctx)
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
@@ -1143,6 +1154,7 @@ async def accept_field(
         edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
         at_cap=at_cap,
+        next_holder=_parse_required_principal(body["next_holder"], "next_holder"),
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1155,19 +1167,16 @@ async def return_ticket_for_revision(
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
-    worker_context: WorkerContext,
 ) -> JsonDict:
     body = RevisionMessageBody(message=body_str(raw, "message"))
-    require_direct_write(ctx)
     now = clk.now_unix()
     ticket = await tickets_actions.return_ticket_for_revision(
         conversations,
-        worker_context,
         conn,
         ticket_id,
         message=body["message"],
-        principal=ctx.principal,
-        now=now,
+        ctx=ctx,
+        clock=clk,
     )
     return tickets_views.ticket_json(ticket, now)
 

@@ -74,6 +74,38 @@ class _WorkerStepReadinessCheck(Protocol):
     ) -> bool: ...
 
 
+def _principal_to_json(principal: Principal) -> str:
+    return json.dumps(
+        {"kind": principal.kind.value, "id": principal.id},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _principal_from_json(raw: str) -> Principal:
+    stored = json.loads(raw)
+    if not isinstance(stored, dict):
+        raise ValueError("stored principal must be an object")
+    return Principal(PrincipalKind(str(stored["kind"])), str(stored["id"]))
+
+
+def _validate_ceiling_holder(conn: sqlite3.Connection, holder: Principal) -> None:
+    table = {
+        PrincipalKind.ticket: "tickets",
+        PrincipalKind.sprint_item: "sprint_items",
+    }.get(holder.kind)
+    if table is None:
+        return
+    row = conn.execute(f"SELECT 1 FROM {table} WHERE id = ?", (holder.id,)).fetchone()
+    if row is None:
+        raise PlannerError(
+            ErrorCode.validation,
+            "ceiling holder does not exist",
+            {"holder": {"kind": holder.kind.value, "id": holder.id}},
+        )
+
+
 @contextmanager
 def _txn(conn: sqlite3.Connection) -> Iterator[None]:
     if conn.in_transaction:
@@ -345,6 +377,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         recap=row["recap"],
         guidance=row["guidance"],
         ceiling=str(row["ceiling"]),
+        ceiling_holder=_principal_from_json(str(row["ceiling_holder"])),
         at_cap=AtCap(row["at_cap"]),
         ticket_status=TicketStatus(row["ticket_status"]),
         ticket_status_changed_at=int(row["ticket_status_changed_at"]),
@@ -402,6 +435,7 @@ def _load_ticket_and_worker_type_definition_for_write(
     worker_type_definition = configured_worker_type_registry().require(str(row["worker_type"]))
     worker_type_definition.validate_ticket_position(str(row["stage"]), str(row["ceiling"]))
     ticket = _row_to_ticket(row)
+    _validate_ceiling_holder(conn, ticket.ceiling_holder)
     fields_codec.validate_state(
         ticket.field_values,
         ticket.pending_proposal,
@@ -592,6 +626,7 @@ def _apply_decision(
     new_stage = decision.stage
     new_ceiling = decision.ceiling
     new_at_cap = decision.at_cap
+    _validate_ceiling_holder(conn, decision.ceiling_holder)
     # Pre-persist door: the prospective (stage, ceiling) must be registry-valid for
     # this ticket's type before any SQL — the enforcement the dropped DB CHECKs gave.
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
@@ -623,7 +658,7 @@ def _apply_decision(
     conn.execute(
         "UPDATE tickets SET field_values = ?, pending_proposal = ?, archived_field_content = ?, "
         "stage = ?, default_stage_ownership_mode = ?, "
-        "ceiling = ?, at_cap = ?, updated_at = ? WHERE id = ?",
+        "ceiling = ?, ceiling_holder = ?, at_cap = ?, updated_at = ? WHERE id = ?",
         (
             fields_codec.values_to_json(decision.field_values),
             fields_codec.proposal_to_json(decision.pending_proposal),
@@ -635,6 +670,7 @@ def _apply_decision(
                 else None
             ),
             str(new_ceiling),
+            _principal_to_json(decision.ceiling_holder),
             new_at_cap.value,
             now,
             ticket.id,
@@ -1025,6 +1061,7 @@ def create_ticket(
     )
     ticket_id = new_id(ID_PREFIXES["ticket"])
     with _txn(conn):
+        _validate_ceiling_holder(conn, principal)
         if sprint_item_id is not None and project_id is None:
             item = conn.execute(
                 "SELECT project_id FROM sprint_items WHERE id = ?",
@@ -1064,11 +1101,11 @@ def create_ticket(
             "id, title, worker_type, employee_backend, employee_launch_model, "
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_id, sprint_item_id, "
-            "recap, ceiling, at_cap, "
+            "recap, ceiling, ceiling_holder, at_cap, "
             "ticket_status, stage_ownership_overrides, default_stage_ownership_mode, "
             "conversation_id, alias, field_values, pending_proposal, created_at, updated_at, "
             "ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, NULL, NULL, "
             "?, ?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1084,6 +1121,7 @@ def create_ticket(
                 sprint_id,
                 sprint_item_id,
                 ceiling,
+                _principal_to_json(principal),
                 at_cap.value,
                 initial_ticket_status.value,
                 "{}",
@@ -1163,6 +1201,7 @@ def create_ticket_from_external_work(
         {"kickoff": kickoff_note} if worker_type_definition.has_field("kickoff") else {}
     )
     with _txn(conn):
+        _validate_ceiling_holder(conn, principal)
         if sprint_item_id is not None and project_id is None:
             item = conn.execute(
                 "SELECT project_id FROM sprint_items WHERE id = ?",
@@ -1187,10 +1226,10 @@ def create_ticket_from_external_work(
             "id, title, worker_type, employee_backend, employee_launch_model, "
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_id, sprint_item_id, "
-            "recap, ceiling, at_cap, ticket_status, stage_ownership_overrides, "
+            "recap, ceiling, ceiling_holder, at_cap, ticket_status, stage_ownership_overrides, "
             "default_stage_ownership_mode, conversation_id, alias, field_values, "
             "created_at, updated_at, ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, NULL, NULL, "
             "?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1211,6 +1250,7 @@ def create_ticket_from_external_work(
                 sprint_id,
                 sprint_item_id,
                 first_worker,
+                _principal_to_json(principal),
                 AtCap.propose.value,
                 TicketStatus.empty.value,
                 "{}",
@@ -1236,6 +1276,7 @@ def create_ticket_from_external_work(
             ticket,
             target_stage,
             provided_values,
+            principal,
             worker_type_definition=worker_type_definition,
         )
         ticket = _apply_decision(conn, ticket, decision, now)
@@ -1291,6 +1332,7 @@ def reconcile_ticket_from_external_work(
             ticket,
             target_stage,
             provided_values,
+            principal,
             worker_type_definition=worker_type_definition,
         )
         stage_before_position = ticket.stage
@@ -1331,7 +1373,7 @@ def audit_ticket_registry_integrity(conn: sqlite3.Connection) -> None:
                 and ticket.pending_proposal is None
             ):
                 raise PlannerError(ErrorCode.validation, "awaiting approval without a proposal")
-        except (PlannerError, json.JSONDecodeError) as exc:
+        except (PlannerError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             raise RuntimeError(
                 f"ticket integrity audit failed: id={row['id']} reason={exc}"
             ) from exc
@@ -1531,6 +1573,7 @@ def accept_proposal(
     edited_body: str | None = None,
     next_ceiling: NextCeiling | None = None,
     at_cap: AtCap | None = None,
+    next_holder: Principal,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
     with _txn(conn):
@@ -1545,6 +1588,7 @@ def accept_proposal(
             edited_body,
             next_ceiling,
             at_cap,
+            next_holder,
             worker_type_definition=worker_type_definition,
         )
         updated = _apply_decision(conn, ticket, decision, now)
@@ -1768,19 +1812,6 @@ def request_user_help(
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def enter_paired_on_human_reply(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
-    """Flip a filed proposal to paired when a human replies with a typed message.
-
-    Automatic consequence of message admission, not an actor-authored write, so no actor is
-    required. A no-op unless the Ticket is parked for approval.
-    """
-    with _txn(conn):
-        ticket = _load_ticket_for_write(conn, ticket_id)
-        if ticket.ticket_status is TicketStatus.awaiting_approval:
-            _write_ticket_status(conn, ticket_id, TicketStatus.paired, now)
-        return _load_ticket_for_write(conn, ticket_id)
-
-
 def edit_pending_proposal(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -1908,6 +1939,18 @@ def delete_ticket(
         _require_current_supervisor_parent(
             conn, ticket, supervisor_sprint_item_id, principal, "Ticket deletion"
         )
+        held_elsewhere = conn.execute(
+            "SELECT id FROM tickets WHERE id != ? "
+            "AND json_extract(ceiling_holder, '$.kind') = 'ticket' "
+            "AND json_extract(ceiling_holder, '$.id') = ? ORDER BY id LIMIT 1",
+            (ticket_id, ticket_id),
+        ).fetchone()
+        if held_elsewhere is not None:
+            raise PlannerError(
+                ErrorCode.validation,
+                "ticket cannot be deleted while it holds another Ticket ceiling",
+                {"ticket_id": ticket_id, "held_ticket_id": str(held_elsewhere["id"])},
+            )
         if not even_while_running and ticket.ticket_status is TicketStatus.agent:
             raise PlannerError(
                 ErrorCode.already_running,

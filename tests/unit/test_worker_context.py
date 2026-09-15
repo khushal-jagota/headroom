@@ -102,6 +102,7 @@ def _ticket(tmp_db: Connection) -> Ticket:
         now=1,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
 
 
@@ -216,6 +217,7 @@ def test_only_edited_approval_produces_context_at_each_approval_gate(
             edited_body="edited" if edited else None,
             next_ceiling=NO_FURTHER,
             at_cap=AtCap.propose,
+            next_holder=OWNER_PRINCIPAL,
         )
         return ticket.id
 
@@ -279,6 +281,7 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
         now=24,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
     assert _pending(tmp_db, ticket.id) == ()
 
@@ -302,6 +305,7 @@ def test_human_recap_marks_context_but_agent_recap_does_not(tmp_db: Connection) 
         edited_body=None,
         next_ceiling="needs_plan",
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
 
     tickets_data.write_recap(
