@@ -446,7 +446,7 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
     assert t.ticket_status is TicketStatus.empty
 
     t = data.take_over_ticket(tmp_db, t.id, now=now)
-    assert t.ticket_status is TicketStatus.user
+    assert t.ticket_status is TicketStatus.empty
     skipped = data.claim_ticket_for_worker_step(
         tmp_db,
         t.id,
@@ -510,7 +510,7 @@ def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(
     assert data.read_ticket(tmp_db, t.id).ticket_status is TicketStatus.agent
 
 
-def test_a_paired_owned_stage_departs_at_paired_and_returns_to_empty(
+def test_a_paired_owned_stage_records_its_opener_and_returns_to_empty(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
@@ -526,7 +526,7 @@ def test_a_paired_owned_stage_departs_at_paired_and_returns_to_empty(
 
     claimed = _claim_ready_worker_step(tmp_db, t.id, now=now)
     assert claimed is not None
-    assert claimed.ticket_status is TicketStatus.paired
+    assert claimed.ticket_status is TicketStatus.agent
 
     assert data.release_worker_step_claim(
         tmp_db,
@@ -536,6 +536,9 @@ def test_a_paired_owned_stage_departs_at_paired_and_returns_to_empty(
         now=now + 1,
     )
     assert data.read_ticket(tmp_db, t.id).ticket_status is TicketStatus.empty
+    assert tmp_db.execute(
+        "SELECT stage FROM ticket_paired_stage_openers WHERE ticket_id = ?", (t.id,)
+    ).fetchone()[0] == t.stage
 
 
 def _park_pending(
@@ -1386,8 +1389,7 @@ def test_direct_plan_accept_derives_implementation_ownership_status(
     )
 
     assert ticket.stage == "needs_implementation"
-    expected = TicketStatus.user if implementation_owner else TicketStatus.empty
-    assert ticket.ticket_status is expected
+    assert ticket.ticket_status is TicketStatus.empty
 
 
 @pytest.mark.parametrize("implementation_owner", [StageOwnershipMode.user, None])
@@ -1428,7 +1430,4 @@ def test_auto_accepted_plan_derives_implementation_ownership_status(
         recap="Current work",
     )
     assert ticket.stage == "needs_implementation"
-    before_settlement = (
-        TicketStatus.user if implementation_owner is StageOwnershipMode.user else TicketStatus.empty
-    )
-    assert ticket.ticket_status is before_settlement
+    assert ticket.ticket_status is TicketStatus.empty

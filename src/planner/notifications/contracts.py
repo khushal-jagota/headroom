@@ -29,32 +29,26 @@ class NotificationSubject:
 
 NOTIFICATION_TYPES: Final[tuple[NotificationType, ...]] = (
     NotificationType(
-        "ticket_needs_approval",
+        "awaiting_reply",
+        "Message",
+        "An unread message needs your reply.",
+        True,
+    ),
+    NotificationType(
+        "awaiting_approval",
         "Needs approval",
         "A Ticket has a proposal waiting for your decision.",
         True,
     ),
     NotificationType(
-        "needs_input",
-        "Needs input",
-        "A Ticket or worker is waiting for information from you.",
+        "assigned",
+        "Assigned",
+        "A Ticket stage is assigned to you.",
         True,
     ),
     NotificationType(
-        "permission_requested",
-        "Permission request",
-        "A running worker is waiting for permission.",
-        True,
-    ),
-    NotificationType(
-        "worker_completed",
-        "Worker completed",
-        "A worker turn completed and its reply is ready.",
-        True,
-    ),
-    NotificationType(
-        "worker_failed",
-        "Worker failed",
+        "errored",
+        "Error",
         "A worker turn or Ticket failed and needs attention.",
         True,
     ),
@@ -72,24 +66,23 @@ NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
         "Tickets",
         PrincipalKind.ticket,
         (
-            "ticket_needs_approval",
-            "needs_input",
-            "permission_requested",
-            "worker_completed",
-            "worker_failed",
+            "awaiting_reply",
+            "awaiting_approval",
+            "assigned",
+            "errored",
         ),
     ),
     NotificationSubject(
         "chief_of_staff",
         "Chief of Staff",
         PrincipalKind.chief,
-        ("needs_input", "permission_requested", "worker_completed", "worker_failed"),
+        ("awaiting_reply", "errored"),
     ),
     NotificationSubject(
         SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY,
         "Sprint Item supervisors",
         PrincipalKind.sprint_item,
-        ("worker_failed",),
+        ("awaiting_reply", "errored"),
     ),
 )
 NOTIFICATION_SUBJECT_BY_KEY: Final[dict[str, NotificationSubject]] = {

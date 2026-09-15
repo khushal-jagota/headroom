@@ -51,6 +51,7 @@ from planner.tickets import views as tickets_views
 from planner.tickets.api import (
     Cfg,
     Clk,
+    ConversationRecord,
     Conversations,
     Ctx,
     DbConn,
@@ -68,6 +69,7 @@ from planner.tickets.api import (
     write_resolved_employee_configuration,
 )
 from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap, TicketEdit
+from planner.work_attention import add_work_attention
 from planner.worker_types.configuration import configured_worker_type_registry
 
 router = APIRouter()
@@ -159,23 +161,27 @@ async def create_item(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
 @router.get("/items")
 async def list_items(
     conn: DbConn,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
     project: str | None = None,
     project_id: str | None = None,
 ) -> JsonDict:
     resolved_project = projects_data.resolve_project(
         conn, project_id=project_id, project_name=project
     )
-    return {
-        "items": sprints_views.list_items(
-            conn,
-            project_id=resolved_project.id if resolved_project is not None else None,
-        )
-    }
+    rows = sprints_views.list_items(
+        conn,
+        project_id=resolved_project.id if resolved_project is not None else None,
+    )
+    await add_work_attention(conn, conversations, conversation_record, sprint_items=rows)
+    return {"items": rows}
 
 
 @router.get("/sprint-item-summaries")
 async def list_item_summaries(
     conn: DbConn,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
     search: str | None = None,
     project: str | None = None,
     project_id: str | None = None,
@@ -191,20 +197,43 @@ async def list_item_summaries(
         project_id=resolved_project.id if resolved_project is not None else None,
         search=search,
     )
+    await add_work_attention(conn, conversations, conversation_record, sprint_items=page.rows)
     return page.response("items")
 
 
 @router.get("/items/{item_id}")
-async def get_item(item_id: str, conn: DbConn) -> JsonDict:
-    return sprints_views.item_detail(conn, item_id)
+async def get_item(
+    item_id: str,
+    conn: DbConn,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
+) -> JsonDict:
+    item = sprints_views.item_detail(conn, item_id)
+    await add_work_attention(conn, conversations, conversation_record, sprint_items=(item,))
+    return item
 
 
 @router.get("/items/{item_id}/workspace")
-async def get_item_workspace(item_id: str, conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk) -> JsonDict:
+async def get_item_workspace(
+    item_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
+) -> JsonDict:
     """Return the page facts without creating a second action surface."""
     require_sprint_item_supervisor_read(conn, ctx, item_id)
     planning_day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
     result = sprints_views.item_workspace(conn, item_id, planning_day_id)
+    await add_work_attention(
+        conn,
+        conversations,
+        conversation_record,
+        tickets=result["tickets"],
+        sprint_items=(result,),
+    )
     result["artifacts"] = supervisor_service.list_artifact_details(conn, ctx, item_id, cfg.db_path)
     return result
 
@@ -233,12 +262,19 @@ async def get_item_supervisor(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
 
 
 @router.get("/items/{item_id}/supervisor/context")
-async def get_item_supervisor_context(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
+async def get_item_supervisor_context(
+    item_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
+) -> JsonDict:
     """The Item overview: the Item, its supervisor, and one line per child Ticket. The
     supervisor drills into a Ticket through its own ticket-context route."""
     require_sprint_item_supervisor_read(conn, ctx, item_id)
     item = sprints_data.read_item(conn, item_id).item
-    return {
+    tickets = sprints_views.item_ticket_overview(conn, item_id)
+    response = {
         "sprint_item": {
             "id": item.id,
             "title": item.title,
@@ -247,8 +283,15 @@ async def get_item_supervisor_context(item_id: str, conn: DbConn, ctx: Ctx) -> J
             "project_id": item.project_id,
         },
         "supervisor": _supervisor_json(conn, item_id),
-        "tickets": sprints_views.item_ticket_overview(conn, item_id),
+        "tickets": tickets,
     }
+    await add_work_attention(
+        conn,
+        conversations,
+        conversation_record,
+        tickets=tickets,
+    )
+    return response
 
 
 @router.get("/items/{item_id}/supervisor/tickets/{ticket_id}/context")
@@ -925,9 +968,17 @@ async def patch_sprint(
 
 
 @router.get("/sprint/current")
-async def current_sprint(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
+async def current_sprint(
+    conn: DbConn,
+    cfg: Cfg,
+    clk: Clk,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
+) -> JsonDict:
     planning_date_iso = planning_date(clk.now(), cfg.boundary_hour).isoformat()
-    return dict(sprints_views.sprint_current_view(conn, planning_date_iso))
+    result = dict(sprints_views.sprint_current_view(conn, planning_date_iso))
+    await _add_tracking_attention(conn, conversations, conversation_record, result)
+    return result
 
 
 # --- idea routes ---------------------------------------------------------------
@@ -1015,9 +1066,37 @@ async def carry_outcome(
 
 
 @router.get("/sprints/{sprint_id}/tracking")
-async def sprint_tracking(sprint_id: str, conn: DbConn, clk: Clk, cfg: Cfg) -> JsonDict:
-    return dict(
+async def sprint_tracking(
+    sprint_id: str,
+    conn: DbConn,
+    clk: Clk,
+    cfg: Cfg,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
+) -> JsonDict:
+    result = dict(
         sprints_views.sprint_tracking_view(
             conn, sprint_id, planning_date(clk.now(), cfg.boundary_hour).isoformat()
         )
+    )
+    await _add_tracking_attention(conn, conversations, conversation_record, result)
+    return result
+
+
+async def _add_tracking_attention(
+    conn: DbConn,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
+    result: JsonDict,
+) -> None:
+    groups = result.get("outcome_groups", [])
+    items = [group["outcome"] for group in groups]
+    tickets = [ticket for group in groups for ticket in group["tickets"]]
+    tickets.extend(result.get("unclassified_tickets", []))
+    await add_work_attention(
+        conn,
+        conversations,
+        conversation_record,
+        tickets=tickets,
+        sprint_items=items,
     )

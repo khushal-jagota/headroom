@@ -62,13 +62,9 @@ async def _day_view(
         day = days_data.read_day(conn, did, now)
     dts = days_data.list_day_tickets(conn, did)
     board = await add_conversation_row_signals(
-        board_view(conn, day_id=did), conversations, conversation_record
+        conn, board_view(conn, day_id=did), conversations, conversation_record
     )
-    cards_by_id = {
-        str(card["id"]): card
-        for column in board["columns"]
-        for card in column["cards"]
-    }
+    cards_by_id = {str(card["id"]): card for column in board["columns"] for card in column["cards"]}
     tickets = []
     for dt in dts:
         card = cards_by_id.get(dt.ticket_id)

@@ -84,12 +84,8 @@
     workers.data
       ? conversationSignalPresentation(
           {
-            conversation_id: workers.data.chief_of_staff.conversation_id,
-            needs_me: workers.data.chief_of_staff.needs_me,
-            agent_working: workers.data.chief_of_staff.agent_working,
-            unread_position: workers.data.chief_of_staff.latest_turn_ended_sequence,
-            owner_read_through_sequence:
-              workers.data.chief_of_staff.owner_read_through_sequence
+            awaiting_reply: workers.data.chief_of_staff.needs_me,
+            agent_state: workers.data.chief_of_staff.agent_working ? "working" : "idle"
           }
         )
       : null
@@ -98,11 +94,8 @@
   function cardPresentation(card: BoardCard) {
     return conversationSignalPresentation(
       {
-        conversation_id: card.conversation_id,
-        needs_me: card.needs_me,
-        agent_working: card.agent_working,
-        unread_position: card.latest_turn_ended_sequence,
-        owner_read_through_sequence: card.owner_read_through_sequence
+        awaiting_reply: card.awaiting_reply,
+        agent_state: card.agent_state
       }
     );
   }
@@ -137,9 +130,10 @@
     stageMarkClass="board-workspace-stage-mark"
     stageMarkAttributes={{
       "data-stage-state": presentation.state,
-      "data-needs-me": card.needs_me ? "true" : "false",
-      "data-agent-working": card.agent_working ? "true" : "false",
-      "data-latest-turn-ended": card.latest_turn_ended_sequence
+      "data-awaiting-reply": card.awaiting_reply ? "true" : "false",
+      "data-awaiting-approval": card.awaiting_approval ? "true" : "false",
+      "data-assigned": card.assigned ? "true" : "false",
+      "data-agent-state": card.agent_state
     }}
     data-card=""
     data-ticket-id={card.id}
@@ -209,9 +203,8 @@
         state={presentation.state}
         class="board-workspace-stage-mark"
         data-stage-state={presentation.state}
-        data-needs-me={item.signals.needs_me ? "true" : "false"}
-        data-agent-working={item.signals.agent_working ? "true" : "false"}
-        data-latest-turn-ended={item.signals.unread_position}
+        data-awaiting-reply={item.signals.awaiting_reply ? "true" : "false"}
+        data-agent-state={item.signals.agent_state}
         aria-label={presentation.ariaLabel}
       />
     </button>

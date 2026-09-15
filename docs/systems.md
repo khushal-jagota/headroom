@@ -86,10 +86,11 @@ values and advances the Stage. Scope controls how far worker-owned Stages can ad
 Ownership says whether the worker, user, or both drive the current Stage. A paired Stage
 gets one automatic opening turn and then continues in the same Ticket conversation.
 
-Ticket status is separate control state: `empty`, `blocked`, `agent`, `paired`,
-`awaiting_approval`, `needs_user`, `user`, or `errored`.
-The Review screen contains today's parked proposals and help requests. Workspace
-groups today's Tickets by this operating state.
+Ticket status is separate control state: `empty`, `blocked`, `agent`,
+`awaiting_approval`, or `errored`. One shared list projection derives whether work
+awaits Khushal's reply, awaits approval, is assigned to Khushal, and whether the agent
+is working, idle, or errored. Review contains today's owner-addressed proposals.
+Addressed help messages stay in conversation and appear through the same attention facts.
 
 Read **Tickets & the gates** (`tickets-and-gates.md`) and **Worker types**
 (`worker-types.md`).
@@ -121,9 +122,11 @@ conversation system supplies the one fact the record cannot: whether that Ticket
 worker is already busy.
 
 One guarded status flip out of `empty` is the claim. There is no claim stamp or run row.
-Panels then starts or reuses the Ticket conversation and sends the Stage instruction
-with pending Worker context. Started and queued both count as delivered. Only refusal
-releases the claim.
+Paired claims also record one opener fact for the current Stage entry. An accepted
+paired opener returns the status to `empty`, while readiness uses the fact to prevent a
+repeat. Panels then starts or reuses the Ticket conversation and sends the Stage
+instruction with pending Worker context. Started and queued both count as delivered.
+Refusal releases every claim and removes any tentative opener fact.
 
 Nothing watches a turn end. A Ticket moves only when someone acts on it. A process crash
 can therefore leave a Ticket marked `agent` with no live turn. Panels leaves that
@@ -231,8 +234,6 @@ _Code paths:_ `src/planner/environments/`, `src/planner/notifications/`,
 
 ## Deferred
 
-- **Errored Ticket recovery.** An errored Ticket has no retry or clear path. Trigger: a
-  product decision defines safe retry semantics.
 - **Held-message durability.** A server restart loses messages still held in memory.
   Trigger: restart loss becomes important enough to persist the queue.
 - **Missed schedule occurrences.** Exact-minute schedules do not backfill downtime.

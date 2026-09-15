@@ -26,6 +26,7 @@ from planner.notifications.contracts import (
     notification_preference_is_valid,
 )
 from planner.notifications.logic.policy import decide_notification
+from planner.work_attention import ticket_assignment_from_values
 from planner.worker_settings.service import CHIEF_LABEL, CHIEF_SETTINGS_KEY
 
 
@@ -252,9 +253,8 @@ def _preference_subject_key(fact: NotificationFact) -> str:
 
 def _ticket_fact_type(status: str) -> str | None:
     return {
-        "awaiting_approval": "ticket_needs_approval",
-        "needs_user": "needs_input",
-        "errored": "worker_failed",
+        "awaiting_approval": "awaiting_approval",
+        "errored": "errored",
     }.get(status)
 
 
@@ -290,7 +290,7 @@ def project_facts(conn: sqlite3.Connection) -> int:
         for row in ticket_rows:
             revision = int(row["ticket_status_revision"])
             notification_type = _ticket_fact_type(str(row["ticket_status"]))
-            if notification_type == "ticket_needs_approval" and not _owner_holds_ticket_ceiling(
+            if notification_type == "awaiting_approval" and not _owner_holds_ticket_ceiling(
                 str(row["ceiling_holder"])
             ):
                 notification_type = None
@@ -360,18 +360,10 @@ def project_facts(conn: sqlite3.Connection) -> int:
                 kind = str(event["kind"])
                 payload = json.loads(str(event["payload"]))
                 event_notification_type: str | None = None
-                if kind == "permission_asked":
-                    event_notification_type = "permission_requested"
-                elif kind == "user_input_requested":
-                    event_notification_type = "needs_input"
-                elif (
-                    kind == "turn_ended"
-                    and payload.get("ending") == "completed"
-                    and payload.get("automatic_compaction_result") != "not_compacted"
-                ):
-                    event_notification_type = "worker_completed"
+                if kind in {"permission_asked", "user_input_requested", "message_to_owner"}:
+                    event_notification_type = "awaiting_reply"
                 elif kind == "turn_ended" and payload.get("ending") == "failed":
-                    event_notification_type = "worker_failed"
+                    event_notification_type = "errored"
                 if event_notification_type is not None:
                     sequence = int(event["sequence"])
                     _insert_fact(
@@ -392,7 +384,51 @@ def project_facts(conn: sqlite3.Connection) -> int:
                 (conversation_id, int(conversation["latest_sequence"])),
             )
 
+        _project_assignment_facts(conn)
+
     return conn.total_changes - inserted_before
+
+
+def _project_assignment_facts(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        "SELECT t.id, t.title, t.stage, t.worker_type, t.stage_ownership_overrides, "
+        "t.default_stage_ownership_mode, t.ceiling_holder, t.updated_at, "
+        "s.assigned AS prior_assigned, s.generation AS prior_generation "
+        "FROM tickets t LEFT JOIN notification_assignment_state s ON s.ticket_id = t.id"
+    ).fetchall()
+    for row in rows:
+        assigned = ticket_assignment_from_values(
+            stage=str(row["stage"]),
+            worker_type=str(row["worker_type"]),
+            stage_ownership_overrides=str(row["stage_ownership_overrides"]),
+            default_stage_ownership_mode=(
+                str(row["default_stage_ownership_mode"])
+                if row["default_stage_ownership_mode"] is not None
+                else None
+            ),
+            owner_holds_ceiling=_owner_holds_ticket_ceiling(str(row["ceiling_holder"])),
+        )
+        prior = bool(row["prior_assigned"]) if row["prior_assigned"] is not None else False
+        generation = int(row["prior_generation"] or 0)
+        if assigned and not prior:
+            generation += 1
+            _insert_fact(
+                conn,
+                fact_id=f"assignment:{row['id']}:{generation}",
+                notification_type="assigned",
+                subject=Principal(PrincipalKind.ticket, str(row["id"])),
+                subject_label=str(row["title"]),
+                source_kind="ticket",
+                source_id=str(row["id"]),
+                source_sequence=generation,
+                occurred_at=int(row["updated_at"]),
+            )
+        conn.execute(
+            "INSERT INTO notification_assignment_state(ticket_id, assigned, generation) "
+            "VALUES (?, ?, ?) ON CONFLICT(ticket_id) DO UPDATE SET "
+            "assigned=excluded.assigned, generation=excluded.generation",
+            (str(row["id"]), int(assigned), generation),
+        )
 
 
 def apply_policy(conn: sqlite3.Connection, now: int) -> int:

@@ -208,6 +208,8 @@ def require_restartable_child(
                 },
             )
         return ticket
+    if ticket.ticket_status is TicketStatus.errored:
+        return ticket
     if ticket.conversation_id is None:
         # A restart whose start was refused lands here. Restarting again is how a
         # supervisor corrects the launch configuration it named the first time.
@@ -267,6 +269,8 @@ async def restart_worker(
                     "the Ticket moved while it was being restarted",
                     {"ticket_id": ticket_id},
                 )
+        elif ticket.ticket_status is TicketStatus.errored:
+            tickets_data.clear_ticket_error_for_restart(conn, ticket_id, now=now)
         if write_employee_configuration is not None:
             write_employee_configuration(conn)
         conn.execute("COMMIT")

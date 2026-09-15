@@ -85,6 +85,9 @@ Ticket and Board reads, and shows it plainly on the Ticket page. The status and 
 are one fact: every transition to a non-error status clears the reason in the same
 database write.
 
+A read or owner reply does not clear the error. Derived agent state also retains the
+latest failed turn until a later start succeeds or an explicit restart resets it.
+
 A delivery that never got through is not that. When Panels cannot get a step to the
 worker at all, it simply gives back the claim it took and the Ticket goes back to rest —
 nothing is recorded as an error. Workspace uses only the Ticket's canonical
@@ -184,14 +187,14 @@ the stored default applies. Terminal Tickets have no current owner.
 - **Worker-owned** Stages rest at `empty`, ready for Panels to start the next step —
   or at `blocked` while a live blocker remains. The other readiness, proposal, and
   scope conditions must still allow it.
-- **User-owned** Stages rest at `user` and are never dispatched automatically. The user
+- **User-owned** Stages rest at `empty` and are never dispatched automatically. The user
   does the work, then the Chief records it through external-work reconciliation; there
   is no direct self-settle path.
 - **Paired** Stages get one automatic opening turn when the Stage becomes ready, then
-  rest at `paired`. Because only `empty` Tickets are started automatically, a Ticket
-  resting at `paired` is never started again — the human conversation carries it from
-  there, in the same Ticket conversation. A turn without a proposal leaves it at
-  `paired`; a real proposal always parks for approval, regardless of scope.
+  rest at `empty`. A durable opener fact belongs to that Stage entry, and readiness
+  checks it before dispatch. The human conversation carries the Stage forward in the
+  same Ticket conversation. A real proposal always parks for approval, regardless of
+  scope. Leaving the Stage clears the opener fact.
 
 **Take over** sets a `user` override for the current Stage, even while a worker step is
 out. Nothing that step does afterwards can undo the takeover. **Release** clears the current
@@ -265,7 +268,8 @@ reviewer. Holder Tickets and Sprint Items must exist when the scope is written.
 Below the ceiling, a worker-owned Stage's proposal is accepted automatically and the
 ticket advances. At the ceiling, the cap decides whether a worker-owned Stage can propose
 at all. The cap says nothing about who owns a Stage: user-owned Stages still do not
-dispatch automatically, and paired Stages still get one opening turn and stay paired.
+dispatch automatically. Paired Stages still get one opening turn before they rest at
+`empty` with their opener fact.
 New tickets start leashed right at
 **Kickoff**: the ceiling is `needs_kickoff` for every Worker type, so nothing advances past
 the human-approved intake until the human grants scope onward — review before agents
@@ -303,12 +307,10 @@ and the approval screen, so the two cannot disagree.
 While a proposal is pending, the Ticket page hides the leash because scope cannot change
 without silently changing the proposal's stable address.
 
-Review's single, oldest-first walk shows today's owner-addressed proposals and
-`needs_user` Tickets.
-A parked proposal keeps its approval and revision controls. A Worker help request uses the same
-Ticket title, Skip, and Open Ticket structure without proposal controls; the answer
-belongs in the Ticket conversation. Either kind leaves Review the moment its status
-changes, whichever way that happens.
+Review's single, oldest-first walk shows today's owner-addressed proposals.
+A parked proposal keeps its approval and revision controls. A Worker help request is an
+addressed conversation message. Its unread state feeds the shared attention projection,
+and the answer belongs in that conversation.
 
 Replying to the worker does not decide its proposal. The proposal stays pending and
 addressed to its holder until a decision or a replacement proposal arrives. A non-owner

@@ -2681,13 +2681,53 @@ def worker_propose(
     http.emit(data, as_json, f"proposed on {data['id']}")
 
 
-@worker.command("request-user-help")
+@worker.command("request-help")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
+@click.option("--owner", is_flag=True, help="Ask Khushal for help.")
+@click.option("--chief", is_flag=True, help="Ask the Chief of Staff for help.")
+@click.option("--ticket", "recipient_ticket_id", default=None, help="Ask another Ticket worker.")
+@click.option(
+    "--sprint-item",
+    "recipient_sprint_item_id",
+    default=None,
+    help="Ask a Sprint Item supervisor.",
+)
 @json_option
-def worker_request_user_help(ticket_id: str | None, as_json: bool) -> None:
+def worker_request_help(
+    ticket_id: str | None,
+    owner: bool,
+    chief: bool,
+    recipient_ticket_id: str | None,
+    recipient_sprint_item_id: str | None,
+    as_json: bool,
+) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
-    data = http.send("POST", f"/api/tickets/{tid}/request-user-help", as_json=as_json)
-    http.emit(data, as_json, f"user help requested on {data['id']}")
+    selected = sum(
+        int(value)
+        for value in (
+            owner,
+            chief,
+            recipient_ticket_id is not None,
+            recipient_sprint_item_id is not None,
+        )
+    )
+    if selected > 1:
+        http.fail_validation("request-help accepts at most one recipient", as_json)
+    recipient = None
+    if owner:
+        recipient = {"kind": "owner", "id": "owner"}
+    elif chief:
+        recipient = {"kind": "chief", "id": "chief"}
+    elif recipient_ticket_id is not None:
+        recipient = {"kind": "ticket", "id": recipient_ticket_id}
+    elif recipient_sprint_item_id is not None:
+        recipient = {"kind": "sprint_item", "id": recipient_sprint_item_id}
+    message = read_worker_stdin_body(as_json, "help message")
+    body: dict[str, Any] = {"message": message}
+    if recipient is not None:
+        body["recipient"] = recipient
+    data = http.send("POST", f"/api/tickets/{tid}/request-help", as_json=as_json, json_body=body)
+    http.emit(data, as_json, f"help message {data['fate']}")
 
 
 @worker.command("trouble")

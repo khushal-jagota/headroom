@@ -60,7 +60,7 @@ def _service_worker_push_results(payloads: list[object]) -> list[dict[str, objec
 def test_policy_is_the_one_privacy_safe_fact_to_intent_door() -> None:
     fact = NotificationFact(
         fact_id="ticket:t_example:1",
-        notification_type="ticket_needs_approval",
+        notification_type="awaiting_approval",
         subject=Principal(PrincipalKind.ticket, "t_example"),
         subject_label="Private ticket title",
         occurred_at=1,
@@ -89,6 +89,7 @@ def test_status_projection_policy_and_delivery_are_exact_once(tmp_path: Path) ->
     identity = notifications_data.get_or_create_web_push_identity(conn, 1)
     ticket = _ticket(conn, 1)
     notifications_data.project_facts(conn)
+    assert notifications_data.apply_policy(conn, 1) == 1
     notifications_data.register_subscription(
         conn,
         endpoint="https://push.example/subscription",
@@ -103,12 +104,15 @@ def test_status_projection_policy_and_delivery_are_exact_once(tmp_path: Path) ->
     assert notifications_data.apply_policy(conn, 2) == 0
     assert len(notifications_data.pending_deliveries(conn, 2)) == 1
 
-    fact = conn.execute("SELECT notification_type, payload FROM notification_facts").fetchone()
+    fact = conn.execute(
+        "SELECT notification_type, payload FROM notification_facts "
+        "WHERE notification_type = 'errored'"
+    ).fetchone()
     assert fact is not None
-    assert fact["notification_type"] == "worker_failed"
+    assert fact["notification_type"] == "errored"
     assert json.loads(fact["payload"]) == {"subject_label": "Phone-worthy work"}
-    assert conn.execute("SELECT COUNT(*) FROM notification_decisions").fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM notification_intents").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM notification_decisions").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM notification_intents").fetchone()[0] == 2
     conn.close()
 
     restarted = connect(str(db_path))
@@ -150,10 +154,11 @@ def test_needs_approval_fact_exists_only_for_owner_held_proposals(tmp_path: Path
     notifications_data.project_facts(conn)
 
     rows = conn.execute(
-        "SELECT source_id, notification_type FROM notification_facts ORDER BY source_id"
+        "SELECT source_id, notification_type FROM notification_facts "
+        "WHERE notification_type = 'awaiting_approval' ORDER BY source_id"
     ).fetchall()
     assert [(row["source_id"], row["notification_type"]) for row in rows] == [
-        (tickets[0].id, "ticket_needs_approval")
+        (tickets[0].id, "awaiting_approval")
     ]
     cursors = conn.execute(
         "SELECT source_id, sequence FROM notification_projection_cursors "
@@ -196,13 +201,13 @@ def test_conversation_events_project_to_the_catalogue_once(tmp_path: Path) -> No
     assert [
         (str(row["fact_id"]), str(row["notification_type"]))
         for row in conn.execute(
-            "SELECT fact_id, notification_type FROM notification_facts ORDER BY source_sequence"
+            "SELECT fact_id, notification_type FROM notification_facts "
+            "WHERE source_kind = 'conversation' ORDER BY source_sequence"
         )
     ] == [
-        ("conversation:c_notify:1", "permission_requested"),
-        ("conversation:c_notify:2", "needs_input"),
-        ("conversation:c_notify:3", "worker_completed"),
-        ("conversation:c_notify:4", "worker_failed"),
+        ("conversation:c_notify:1", "awaiting_reply"),
+        ("conversation:c_notify:2", "awaiting_reply"),
+        ("conversation:c_notify:4", "errored"),
     ]
 
     notifications_data.project_facts(conn)
@@ -237,7 +242,9 @@ def test_not_compacted_maintenance_does_not_project_a_worker_completion(
 
     notifications_data.project_facts(conn)
 
-    assert conn.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT COUNT(*) FROM notification_facts WHERE source_kind = 'conversation'"
+    ).fetchone()[0] == 0
     cursor = conn.execute(
         "SELECT sequence FROM notification_projection_cursors "
         "WHERE source_kind = 'conversation' AND source_id = 'c_maintenance'"
@@ -272,29 +279,26 @@ def test_chief_conversation_events_use_agent_destination_and_one_coalescing_tag(
     )
 
     notifications_data.project_facts(conn)
-    assert notifications_data.apply_policy(conn, 3) == 4
+    assert notifications_data.apply_policy(conn, 3) == 3
     facts = conn.execute(
         "SELECT subject_kind, COALESCE(ticket_id, agent_key) AS subject_id, payload "
         "FROM notification_facts ORDER BY source_sequence"
     ).fetchall()
     assert [(row["subject_kind"], row["subject_id"]) for row in facts] == [
-        ("agent", "chief_of_staff"),
-        ("agent", "chief_of_staff"),
-        ("agent", "chief_of_staff"),
-        ("agent", "chief_of_staff"),
-    ]
+        ("agent", "chief_of_staff")
+    ] * 3
     assert all(json.loads(row["payload"]) == {"subject_label": "Chief of Staff"} for row in facts)
     intents = conn.execute(
         "SELECT body, route, tag FROM notification_intents ORDER BY fact_id"
     ).fetchall()
-    assert len(intents) == 4
+    assert len(intents) == 3
     assert {row["route"] for row in intents} == {"/#/agents/chief-of-staff"}
     assert {row["tag"] for row in intents} == {"panels-agent-chief_of_staff"}
     assert all(str(row["body"]).startswith("Chief of Staff ") for row in intents)
 
     notifications_data.project_facts(conn)
     assert notifications_data.apply_policy(conn, 4) == 0
-    assert conn.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 4
+    assert conn.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 3
     conn.close()
 
 
@@ -318,15 +322,16 @@ def test_policy_resolves_the_same_type_independently_by_subject(tmp_path: Path) 
         "VALUES ('c_chief_policy', 1, 'turn_ended', "
         '\'{"ending":"failed","error_summary":"stopped"}\', 2)'
     )
-    notifications_data.set_preference(conn, "tickets", "worker_failed", False, 2)
+    notifications_data.set_preference(conn, "tickets", "errored", False, 2)
 
     notifications_data.project_facts(conn)
-    assert notifications_data.apply_policy(conn, 3) == 2
+    assert notifications_data.apply_policy(conn, 3) == 3
     assert [
         (row["subject_kind"], row["outcome"])
         for row in conn.execute(
             "SELECT f.subject_kind, d.outcome FROM notification_facts f "
             "JOIN notification_decisions d ON d.fact_id = f.fact_id "
+            "WHERE f.notification_type = 'errored' "
             "ORDER BY f.subject_kind"
         )
     ] == [("agent", "notify"), ("ticket", "suppress")]
@@ -347,21 +352,22 @@ def test_policy_suppresses_a_legacy_arbitrary_agent_fact_and_continues(
         "INSERT INTO notification_facts"
         "(fact_id, notification_type, subject_kind, agent_key, source_kind, "
         "source_id, source_sequence, occurred_at, payload) "
-        "VALUES ('legacy:reviewer:1', 'worker_failed', 'agent', 'reviewer', "
+        "VALUES ('legacy:reviewer:1', 'errored', 'agent', 'reviewer', "
         "'conversation', 'c_legacy', 1, 1, '{\"subject_label\":\"Reviewer\"}')"
     )
 
-    assert notifications_data.apply_policy(conn, 3) == 2
+    assert notifications_data.apply_policy(conn, 3) == 3
     assert [
         (str(row["fact_id"]), str(row["outcome"]))
         for row in conn.execute(
             "SELECT fact_id, outcome FROM notification_decisions ORDER BY fact_id"
         )
     ] == [
+        (f"assignment:{ticket.id}:1", "notify"),
         ("legacy:reviewer:1", "suppress"),
         (f"ticket:{ticket.id}:1", "notify"),
     ]
-    assert conn.execute("SELECT COUNT(*) FROM notification_intents").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM notification_intents").fetchone()[0] == 2
     conn.close()
 
 
@@ -393,21 +399,21 @@ def test_typed_subject_foreign_keys_reject_invalid_rows_and_cascade_full_graph(
         "INSERT INTO conversation_events"
         "(conversation_id, sequence, kind, payload, created_at) "
         "VALUES ('c_agent_integrity', 1, 'turn_ended', "
-        '\'{"ending":"completed","error_summary":null}\', 2)'
+        '\'{"ending":"failed","error_summary":"stopped"}\', 2)'
     )
 
     notifications_data.project_facts(conn)
-    assert notifications_data.apply_policy(conn, 3) == 2
-    assert conn.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 2
-    assert conn.execute("SELECT COUNT(*) FROM notification_decisions").fetchone()[0] == 2
-    assert conn.execute("SELECT COUNT(*) FROM notification_intents").fetchone()[0] == 2
-    assert conn.execute("SELECT COUNT(*) FROM notification_deliveries").fetchone()[0] == 2
+    assert notifications_data.apply_policy(conn, 3) == 3
+    assert conn.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 3
+    assert conn.execute("SELECT COUNT(*) FROM notification_decisions").fetchone()[0] == 3
+    assert conn.execute("SELECT COUNT(*) FROM notification_intents").fetchone()[0] == 3
+    assert conn.execute("SELECT COUNT(*) FROM notification_deliveries").fetchone()[0] == 3
 
     invalid_fact_sql = (
         "INSERT INTO notification_facts"
         "(fact_id, notification_type, subject_kind, ticket_id, agent_key, source_kind, "
         "source_id, source_sequence, occurred_at, payload) "
-        "VALUES (?, 'worker_failed', ?, ?, ?, 'ticket', ?, 99, 3, '{}')"
+        "VALUES (?, 'errored', ?, ?, ?, 'ticket', ?, 99, 3, '{}')"
     )
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
@@ -481,35 +487,32 @@ def test_notification_settings_api_serves_catalogue_and_persists_choice(
             subject["key"]: {item["id"] for item in subject["types"]}
             for subject in payload["subjects"]
         }
-        assert sum(len(subject["types"]) for subject in payload["subjects"]) == 10
+        assert sum(len(subject["types"]) for subject in payload["subjects"]) == 8
         assert types_by_subject["tickets"] == {
-            "ticket_needs_approval",
-            "needs_input",
-            "permission_requested",
-            "worker_completed",
-            "worker_failed",
+            "awaiting_reply",
+            "awaiting_approval",
+            "assigned",
+            "errored",
         }
         assert types_by_subject["chief_of_staff"] == {
-            "needs_input",
-            "permission_requested",
-            "worker_completed",
-            "worker_failed",
+            "awaiting_reply",
+            "errored",
         }
-        # An Item conversation reaches the user through nothing of its own, so the
-        # subject holds one switch. Its failures arrive off, because an upgrade must not
-        # start pushing something nobody asked for.
-        assert types_by_subject["sprint_item_supervisors"] == {"worker_failed"}
+        assert types_by_subject["sprint_item_supervisors"] == {"awaiting_reply", "errored"}
         enabled_by_subject = {
             subject["key"]: {item["id"]: item["enabled"] for item in subject["types"]}
             for subject in payload["subjects"]
         }
-        assert enabled_by_subject["sprint_item_supervisors"] == {"worker_failed": False}
+        assert enabled_by_subject["sprint_item_supervisors"] == {
+            "awaiting_reply": True,
+            "errored": False,
+        }
         assert all(enabled_by_subject["tickets"].values())
         assert all(enabled_by_subject["chief_of_staff"].values())
         assert payload["vapid_public_key"]
 
         changed = client.put(
-            "/api/notifications/preferences/chief_of_staff/worker_completed",
+            "/api/notifications/preferences/chief_of_staff/errored",
             json={"enabled": False},
         )
         assert changed.status_code == 200
@@ -517,11 +520,11 @@ def test_notification_settings_api_serves_catalogue_and_persists_choice(
             subject["key"]: {item["id"]: item["enabled"] for item in subject["types"]}
             for subject in changed.json()["subjects"]
         }
-        assert resolved["chief_of_staff"]["worker_completed"] is False
-        assert resolved["tickets"]["worker_completed"] is True
+        assert resolved["chief_of_staff"]["errored"] is False
+        assert resolved["tickets"]["errored"] is True
 
         invalid = client.put(
-            "/api/notifications/preferences/chief_of_staff/ticket_needs_approval",
+            "/api/notifications/preferences/chief_of_staff/awaiting_approval",
             json={"enabled": False},
         )
         assert invalid.status_code == 404

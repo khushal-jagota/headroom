@@ -411,18 +411,8 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
     Ticket detail remains a separate resource, so narrowing this projection does not
     constrain direct Ticket routes or an already-open inspector.
 
-    Each card carries ``conversation_id``: the Ticket's conversation link, which under
-    the new conversation system is the caller-owned conversation id stored in the
-    ``conversation_id`` column. It is what the board route asks the conversation
-    system about. The async route uses that link to add the owner's server-side read
-    position alongside the conversation signals.
-
-    None of the three row signals is a database fact of the tickets domain, so none is
-    answered here: whether the worker is running (``agent_working``), whether it is
-    waiting on a permission ask (``needs_me``), and where its conversation last had a
-    turn end (``latest_turn_ended_sequence``), and the owner's durable read position
-    (``owner_read_through_sequence``) all belong to the conversation system and are added
-    by the async board route, which can await it.
+    Each card carries its conversation link. The async route uses it to add the shared
+    owner-attention and agent-state projection.
 
     Beside the columns, ``sprint_items`` carries each represented Sprint Item's own
     supervisor conversation. A card answers for its Ticket's worker, and no card answers
@@ -609,16 +599,6 @@ def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
     items: list[JsonDict] = []
     for row in rows:
         ticket_status = str(row["ticket_status"])
-        if ticket_status == TicketStatus.needs_user.value:
-            items.append(
-                {
-                    "review_item_type": TicketStatus.needs_user.value,
-                    "ticket_id": str(row["id"]),
-                    "title": str(row["title"]),
-                    "waiting_since": int(row["ticket_status_changed_at"]),
-                }
-            )
-            continue
         if ticket_status != TicketStatus.awaiting_approval.value:
             continue
         holder = json.loads(str(row["ceiling_holder"]))

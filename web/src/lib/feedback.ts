@@ -1,5 +1,6 @@
 import { shortMonthDayLabel } from "./dates";
 import type { FieldStageVisualState } from "./ui";
+import type { WorkAttention } from "./types";
 
 export type FeedbackNote = {
   id: string;
@@ -13,7 +14,7 @@ export type FeedbackNote = {
   handled_at: number | null;
 };
 
-export type FeedbackTicket = {
+export type FeedbackTicket = WorkAttention & {
   id: string;
   title: string;
   stage: string;
@@ -109,25 +110,24 @@ export function feedbackRelativeTime(value: number, now = new Date()): string {
 export function feedbackTicketStageState(ticket: FeedbackTicket): FieldStageVisualState {
   if (ticket.stage === "done") return "completed";
   if (ticket.ticket_status === "errored" || ticket.ticket_status === "blocked") return "errored";
-  if (ticket.ticket_status === "needs_user" || ticket.ticket_status === "user") return "needs-me";
-  if (ticket.ticket_status === "agent") return "current-running";
-  if (ticket.ticket_status === "paired") return "current-paired";
-  if (ticket.ticket_status === "awaiting_approval") return "current-awaiting-approval";
+  if (ticket.awaiting_reply) return "needs-me";
+  if (ticket.awaiting_approval) return "current-awaiting-approval";
+  if (ticket.assigned) return "current-paired";
+  if (ticket.agent_state === "working") return "current-running";
+  if (ticket.agent_state === "errored") return "errored";
   if (ticket.stage === "needs_closeout") return "current-waiting";
   return "upcoming";
 }
 
 export function feedbackTicketStateLabel(ticket: FeedbackTicket): string {
   if (ticket.stage === "done") return "Done";
-  const labels: Record<string, string> = {
-    agent: "Running",
-    paired: "Paired",
-    awaiting_approval: "Awaiting approval",
-    errored: "Errored",
-    blocked: "Blocked",
-    needs_user: "Needs you",
-    user: "Yours"
-  };
+  if (ticket.ticket_status === "blocked") return "Blocked";
+  if (ticket.awaiting_reply) return "Needs you";
+  if (ticket.awaiting_approval) return "Awaiting approval";
+  if (ticket.assigned) return "Assigned";
+  if (ticket.agent_state === "working") return "Running";
+  if (ticket.agent_state === "errored") return "Errored";
+  const labels: Record<string, string> = { errored: "Errored", blocked: "Blocked" };
   if (ticket.ticket_status === "empty" && ticket.stage === "needs_closeout") {
     return "Waiting for closeout";
   }

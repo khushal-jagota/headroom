@@ -65,7 +65,7 @@ from planner.days.logic.dates import resolve_day_id
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
 from planner.message_delivery import service as message_delivery_service
-from planner.message_delivery.contracts import MessageDeliveryResult
+from planner.message_delivery.contracts import MessageDeliveryResult, MessageRecordedToOwner
 from planner.projects import data as projects_data
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import (
@@ -99,6 +99,7 @@ from planner.tickets.contracts import (
     TicketStatus,
     ValueEditBody,
 )
+from planner.work_attention import add_work_attention
 from planner.worker_context.contracts import WorkerContextService
 from planner.worker_settings import service as worker_settings_service
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
@@ -704,6 +705,8 @@ async def list_tickets(
     conn: DbConn,
     cfg: Cfg,
     clk: Clk,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
     stage: str | None = None,
     project: str | None = None,
     project_id: str | None = None,
@@ -718,17 +721,17 @@ async def list_tickets(
     )
     # `day` ('today' | ISO) scopes the list to one day's board via the day_tickets join.
     day_id = resolve_day_id(day, clk.now(), cfg.boundary_hour) if day is not None else None
-    return {
-        "tickets": tickets_views.list_tickets(
-            conn,
-            clk.now_unix(),
-            stage=stage,
-            project_id=resolved_project.id if resolved_project is not None else None,
-            sprint_id=sprint_id,
-            sprint_item_id=sprint_item_id,
-            day_id=day_id,
-        )
-    }
+    rows = tickets_views.list_tickets(
+        conn,
+        clk.now_unix(),
+        stage=stage,
+        project_id=resolved_project.id if resolved_project is not None else None,
+        sprint_id=sprint_id,
+        sprint_item_id=sprint_item_id,
+        day_id=day_id,
+    )
+    await add_work_attention(conn, conversations, conversation_record, tickets=rows)
+    return {"tickets": rows}
 
 
 @router.get("/ticket-summaries")
@@ -736,6 +739,8 @@ async def list_ticket_summaries(
     conn: DbConn,
     cfg: Cfg,
     clk: Clk,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
     stage: Annotated[list[str] | None, Query()] = None,
     exclude_stage: Annotated[list[str] | None, Query()] = None,
     ticket_status: Annotated[list[str] | None, Query()] = None,
@@ -794,6 +799,7 @@ async def list_ticket_summaries(
         sprint_item_id=sprint_item_id,
         day_id=day_id,
     )
+    await add_work_attention(conn, conversations, conversation_record, tickets=page.rows)
     return page.response("tickets")
 
 
@@ -974,8 +980,17 @@ async def get_worker_self_ticket(
 
 
 @router.get("/tickets/{ticket_id}")
-async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk, config: Cfg) -> JsonDict:
-    return _ticket_detail_with_worker_settings(conn, ticket_id, clk.now_unix(), config)
+async def get_ticket(
+    ticket_id: str,
+    conn: DbConn,
+    clk: Clk,
+    config: Cfg,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
+) -> JsonDict:
+    detail = _ticket_detail_with_worker_settings(conn, ticket_id, clk.now_unix(), config)
+    await add_work_attention(conn, conversations, conversation_record, tickets=(detail,))
+    return detail
 
 
 @router.put("/tickets/{ticket_id}/employee-configuration")
@@ -1536,21 +1551,42 @@ async def release_ticket(
     return tickets_views.ticket_json(ticket, now)
 
 
-@router.post("/tickets/{ticket_id}/request-user-help")
-async def request_user_help(
+@router.post("/tickets/{ticket_id}/request-help")
+async def request_help(
     ticket_id: str,
+    body: JsonDict,
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
+    conversations: Conversations,
 ) -> JsonDict:
-    now = clk.now_unix()
-    ticket = tickets_data.request_user_help(
-        conn,
-        ticket_id,
-        principal=ctx.principal,
-        now=now,
+    require_ticket_worker_write(conn, ctx)
+    if ctx.principal != Principal(PrincipalKind.ticket, ticket_id):
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            "only the Ticket's own Worker can request help",
+            {"ticket_id": ticket_id},
+        )
+    if set(body) - {"message", "recipient"}:
+        raise PlannerError(ErrorCode.validation, "unknown help request field", {})
+    message = body_str(body, "message")
+    if not message.strip():
+        raise PlannerError(ErrorCode.validation, "help message must not be empty", {})
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    recipient = _parse_principal(body.get("recipient"), "recipient") or ticket.ceiling_holder
+    delivered = await message_delivery_service.send_message(
+        conversations, conn, clk, ctx, recipient, message
     )
-    return tickets_views.ticket_json(ticket, now)
+    fate = (
+        {"fate": "recorded"}
+        if isinstance(delivered.fate, MessageRecordedToOwner)
+        else delivery_fate_json(delivered.fate)
+    )
+    return {
+        "target": {"kind": recipient.kind.value, "id": recipient.id},
+        "conversation_id": delivered.conversation_id,
+        **fate,
+    }
 
 
 @router.put("/tickets/{ticket_id}/stage-ownership/{stage}")
@@ -1639,63 +1675,22 @@ async def remove_link(
 
 
 async def add_conversation_row_signals(
+    conn: sqlite3.Connection,
     board: JsonDict,
     conversation_system: ConversationSystem,
     conversation_record: ConversationStore,
 ) -> JsonDict:
-    """Add the live conversation-owned row signals to every row on the board.
-
-    A row is a card or a Sprint Item, and both carry a ``conversation_id``. A card's
-    conversation belongs to its Ticket's worker, and an Item's belongs to its own
-    supervisor.
-
-    ``agent_working`` is whether that conversation has a turn running right now, and
-    ``needs_me`` is whether that turn is waiting on a permission decision or answers only
-    the owner can give. Both are asked for every row.
-
-    ``latest_turn_ended_sequence`` is where the conversation last had a turn end, and it
-    is a row's half of the unread-reply mark. Every row is asked, because an Item
-    conversation replies only to something the user said.
-
-    None of these signals is a tickets-domain fact and all are awaited, so ``board_view``
-    cannot answer them. A row with no conversation has no conversation to ask about, so
-    the first two read false and the third reads 0, which is before every real position.
-
-    The record is asked once for the whole board rather than once per row: it is one
-    question about a list, and a list is what the board is.
-
-    This reads and writes nothing but the payload it was handed — no transaction, no
-    connection of its own.
-    """
+    """Attach the shared owner-attention and agent-state projection to board rows."""
     cards = [card for column in board["columns"] for card in column["cards"]]
-    rows = [*cards, *board["sprint_items"]]
-    latest_turn_ended = await conversation_record.latest_turn_ended_sequences(
-        [row["conversation_id"] for row in rows if row["conversation_id"] is not None]
+    await add_work_attention(
+        # This helper predates the shared projection. Keep its public name until the Day
+        # route moves with the other callers, but give it the one canonical behavior.
+        conn,
+        conversation_system,
+        conversation_record,
+        tickets=cards,
+        sprint_items=board["sprint_items"],
     )
-    owner_read_through = await conversation_record.owner_read_through_sequences(
-        [row["conversation_id"] for row in rows if row["conversation_id"] is not None]
-    )
-    for row in rows:
-        conversation_id = row["conversation_id"]
-        row["agent_working"] = (
-            await conversation_system.is_running(conversation_id)
-            if conversation_id is not None
-            else False
-        )
-        row["needs_me"] = (
-            (
-                await conversation_system.has_pending_permission_ask(conversation_id)
-                or await conversation_system.has_pending_user_input(conversation_id)
-            )
-            if conversation_id is not None
-            else False
-        )
-        row["latest_turn_ended_sequence"] = (
-            latest_turn_ended.get(conversation_id, 0) if conversation_id is not None else 0
-        )
-        row["owner_read_through_sequence"] = (
-            owner_read_through.get(conversation_id, 0) if conversation_id is not None else 0
-        )
     return board
 
 
@@ -1709,6 +1704,7 @@ async def board(
 ) -> JsonDict:
     day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
     return await add_conversation_row_signals(
+        conn,
         tickets_views.board_view(conn, day_id=day_id),
         conversations,
         conversation_record,

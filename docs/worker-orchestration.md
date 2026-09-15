@@ -28,9 +28,8 @@ all of these hold right now:
 1. It is on today's planning day.
 2. Its Stage is not terminal and has a next blank to fill.
 3. The Stage's owner is not the user.
-4. Its status is `empty`. This one fact carries most of the rule: a Ticket that is
-   blocked, paired, waiting for approval, asking for help, held by the user, already
-   out with a worker, or errored is by definition not `empty`.
+4. Its status is `empty`. This fact keeps blocked work, parked approvals, active claims,
+   and errors out of the runnable set. User-owned Stages are already excluded by rule 3.
 5. Nothing is already parked on that blank waiting for approval.
 6. Scope permits work at the current ceiling.
 7. If the blank is Closeout, no other Ticket in the same project-and-Worker-type lane
@@ -41,11 +40,13 @@ Then one more question that the record cannot answer: **is this Ticket's worker 
 right now?** The conversation system is asked directly, and a busy worker is left alone
 for this pass.
 
-If everything says yes, Panels takes the Ticket out of `empty` in a single guarded
-write — to `agent` for a worker-owned Stage, to `paired` for a paired one. That flip
-**is** the claim. There is no claim stamp and no separate run record. The readiness
-questions are all asked again inside that write, so two racers both re-check under the
-same lock and only one of them writes.
+If everything says yes, Panels takes the Ticket from `empty` to `agent` in one guarded
+write. That flip **is** the claim. There is no claim stamp or general run record. For a
+paired Stage, the same transaction records a tentative opener fact for that Stage entry.
+Readiness checks that fact, not the Ticket status, to prevent a second opener. A refused
+send removes the fact. An accepted send keeps it and returns the Ticket to `empty`.
+Leaving the Stage clears the fact, so a later Stage entry can receive its own opener.
+All readiness questions run again inside the write, so only one racer wins the claim.
 
 Checking too often costs nothing: the check reads and decides, and writes nothing. So
 the loop does not wait out its timer. Every write committed through the database door
@@ -254,10 +255,9 @@ _Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`,
 - **The front end** (`frontend.md`) owns the row marks these signals feed.
 - **The command-line tool** (`cli.md`) is the surface the worker acts through.
 
-## Deferred
-
-- **Retry after an errored Ticket.** An errored Ticket still needs a deliberate way
-  back. Trigger: a product decision about what retry should mean.
+An errored worker-owned Ticket remains errored through reads and owner replies. A
+successful start supersedes the failed turn in derived agent state. A Sprint Item
+supervisor can also use explicit restart, which clears the error before a new start.
 
 ---
 
