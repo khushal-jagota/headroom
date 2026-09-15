@@ -1,5 +1,5 @@
 import { labelize, type FieldStageVisualState } from "./ui";
-import type { BoardCard, BoardSprintItem, Priority, WorkAttention } from "./types";
+import type { BoardCard, BoardSprintItem, Priority } from "./types";
 import { primaryWorkAttention } from "./workAttentionPresentation";
 
 const ATTENTION_GROUP_ORDER = [
@@ -87,11 +87,10 @@ export function workspaceTicketRowMark(card: BoardCard): WorkspaceRowMark {
 }
 
 export function workspaceRowMarkPresentation(
-  mark: WorkspaceRowMark,
-  attentionLabel: "Message" | "Needs you"
+  mark: WorkspaceRowMark
 ): WorkspaceRowMarkPresentation {
   if (mark === "attention") {
-    return { state: "current-awaiting-approval", ariaLabel: attentionLabel };
+    return { state: "current-awaiting-approval", ariaLabel: "Message" };
   }
   if (mark === "working") {
     return { state: "current-running", ariaLabel: "Agent working" };
@@ -99,12 +98,8 @@ export function workspaceRowMarkPresentation(
   return { state: "upcoming", ariaLabel: "Nothing waiting" };
 }
 
-function hasAttention(facts: WorkAttention | BoardSprintItem): boolean {
-  return primaryWorkAttention(facts) !== null;
-}
-
 export function workspaceSprintItemRowMark(item: BoardSprintItem): WorkspaceRowMark {
-  if (hasAttention(item) || hasAttention(item.ticket_rollup)) return "attention";
+  if (item.awaiting_reply || item.ticket_rollup.awaiting_reply) return "attention";
   if (item.agent_state === "working" || item.ticket_rollup.agent_state === "working") {
     return "working";
   }

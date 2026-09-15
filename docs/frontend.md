@@ -85,9 +85,10 @@ One screen per part of the system:
 
   Every Ticket row keeps its mark slot. A reply waiting for Khushal gives it the filled
   blue dot. Otherwise active agent work gives it the spinner. Idle and error states
-  leave the slot empty. An Item title rolls up its own facts and every child ticket: any
-  owner attention gives it the filled blue dot, otherwise any active work gives it the
-  spinner. Attention takes precedence over active work. The empty Item slot stays in
+  leave the slot empty. An Item title rolls up its own facts and every child ticket. A
+  reply waiting for Khushal gives it the filled blue dot. Otherwise any active work gives
+  it the spinner. A waiting reply takes precedence over active work. Approval and
+  assignment alone leave the Item slot empty. The empty Item slot stays in
   place, so the title layout does not move when its state changes.
   A ticket without a Sprint Item appears in the Tickets view like any other. Every
   Ticket row is the shared Ticket row and uses the same blue dot and spinner. It carries
