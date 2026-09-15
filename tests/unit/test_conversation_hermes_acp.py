@@ -1453,7 +1453,7 @@ def test_an_attachment_first_message_puts_the_sender_before_the_resource(
                 content,
                 sender_content=content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -1804,7 +1804,7 @@ def test_an_ordinary_catalog_command_keeps_exact_native_dispatch_text(
                 text_message_content("You are the worker.\n\n/plan focus on tests"),
                 sender_content=sender_content,
                 sender_label="owner",
-                mode=PromptDeliveryMode.run_when_free,
+                    mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
