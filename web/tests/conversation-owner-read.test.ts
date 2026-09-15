@@ -29,6 +29,17 @@ describe("Conversation owner read eligibility", () => {
     expect(eligibleOwnerReadSequence({ ...openAndReadable, windowIsFocused: false })).toBeNull();
   });
 
+  it("does not trust cached focus after focus moves into an iframe", () => {
+    const documentTarget = new FakeAttentionDocument();
+    const cachedAttention = { windowIsFocused: true };
+    documentTarget.focused = false;
+
+    expect(eligibleOwnerReadSequence({
+      ...openAndReadable,
+      windowIsFocused: cachedAttention.windowIsFocused && documentTarget.hasFocus()
+    })).toBeNull();
+  });
+
   it("does not use a snapshot position before its transcript rows arrive", () => {
     expect(eligibleOwnerReadSequence({
       ...openAndReadable,

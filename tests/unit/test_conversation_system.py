@@ -1176,6 +1176,36 @@ def test_active_steer_with_attachment_or_run_change_queues_with_reason(
     _run(exercise)
 
 
+def test_a_queued_owner_prompt_does_not_mark_later_replies_as_read(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send(
+            "c", text_message_content("incumbent"), sender_label="system"
+        )
+        assert await harness.system.send(
+            "c",
+            text_message_content("queued before the reply"),
+            sender_label="owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=Principal(PrincipalKind.ticket, "t_one"),
+        ) == PromptDeliveryQueued(queue_position=1)
+
+        await harness.agent_message("c", text_message_content("reply he did not see"))
+        await harness.complete_turn("c")
+
+        record = await harness.store.read_conversation("c")
+        assert record is not None
+        assert record.latest_sequence == 3
+        assert record.owner_read_through_sequence == 1
+        last = (await harness.events("c"))[-1]
+        assert isinstance(last.payload, PromptEventPayload)
+        assert message_content_text(last.payload.content) == "queued before the reply"
+
+    _run(exercise)
+
+
 def test_an_uncertain_steer_survives_reload_without_retransmission(
     harness: _Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -3159,6 +3189,47 @@ def test_uncertain_promoted_steer_settles_only_the_selected_held_row(
         ]
         assert len(uncertain_rows) == 1
         assert uncertain_rows[0].sender_message_id == "selected-id"
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    ("steer_outcome", "expected_fate"),
+    [
+        (BackendSteerAccepted(), PromptDeliveryInjected()),
+        (BackendSteerUncertain(), PromptDeliveryUncertain()),
+    ],
+)
+def test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_position(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    steer_outcome: BackendSteerOutcome,
+    expected_fate: PromptDeliveryInjected | PromptDeliveryUncertain,
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        recipient = Principal(PrincipalKind.ticket, "t_worker")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="system")
+        await harness.system.send(
+            "c",
+            text_message_content("owner prompt"),
+            sender_label="owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=recipient,
+        )
+        selected = (await harness.system.held_prompts("c"))[0]
+        await harness.agent_message("c", text_message_content("later unseen reply"))
+        harness.backend("c").steer_outcome = steer_outcome
+
+        assert await harness.system.promote_held_prompt(
+            "c", selected.held_prompt_id, HeldPromptPromotionMode.steer
+        ) == expected_fate
+
+        record = await harness.store.read_conversation("c")
+        assert record is not None
+        assert record.latest_sequence > 1
+        assert record.owner_read_through_sequence == 1
 
     _run(exercise)
 

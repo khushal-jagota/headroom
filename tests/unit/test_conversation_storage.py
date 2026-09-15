@@ -369,6 +369,34 @@ def test_an_owner_reply_advances_read_in_the_prompt_transaction(
     asyncio.run(exercise())
 
 
+def test_an_owner_reply_can_credit_only_its_earlier_admission_position(
+    store: ConversationStore,
+) -> None:
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        await store.append_event("c", AN_AGENT_MESSAGE)
+        await store.append_event("c", AN_AGENT_MESSAGE)
+        await store.append_delivered_prompt(
+            "c",
+            prompt=PromptEventPayload(
+                content=text_message_content("queued earlier"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+                sender=OWNER_PRINCIPAL,
+                recipient=Principal(PrincipalKind.ticket, "t_one"),
+            ),
+            model_change=None,
+            owner_read_through_sequence=1,
+        )
+
+        record = await store.read_conversation("c")
+        assert record is not None
+        assert record.latest_sequence == 3
+        assert record.owner_read_through_sequence == 1
+
+    asyncio.run(exercise())
+
+
 def test_a_stored_conversation_that_names_no_model_reads_but_cannot_be_started(
     tmp_path: Path,
 ) -> None:

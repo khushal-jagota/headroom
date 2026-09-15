@@ -186,7 +186,9 @@
       const eligibleSequence = eligibleOwnerReadSequence({
         conversationState,
         documentIsVisible,
-        windowIsFocused,
+        // Focus can leave the top document through a preview iframe without a window
+        // blur event. Ask the document again when a new row is about to be credited.
+        windowIsFocused: windowIsFocused && document.hasFocus(),
         transcriptLatestSequence: feed.latestSequence,
         snapshot: {
           latestSequence: view.latest_sequence,

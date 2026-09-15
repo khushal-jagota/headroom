@@ -130,7 +130,7 @@ from planner.conversation.storage import (
     ConversationStore,
     StoredConversationEvent,
 )
-from planner.core.contracts import Principal
+from planner.core.contracts import Principal, PrincipalKind
 
 LOGGER = logging.getLogger("planner.conversation")
 
@@ -240,6 +240,9 @@ class _HeldPrompt:
     The sender's own id and send instant wait here with it: a held message is delivered,
     refused or discarded long after the caller has gone, and whichever row it becomes has
     to carry the same id the sender minted.
+
+    The owner read position is also captured here. Delivery can happen after unseen agent
+    rows arrive, and the queued prompt cannot truthfully credit those later rows.
     """
 
     held_prompt_id: str
@@ -253,6 +256,7 @@ class _HeldPrompt:
     sender: Principal | None
     recipient: Principal | None
     queue_reason: PromptQueueReason
+    owner_read_through_sequence: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -814,6 +818,7 @@ class SqliteProcessConversationSystem:
                         sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
                         sender=held.sender,
                         recipient=held.recipient,
+                        owner_read_through_sequence=held.owner_read_through_sequence,
                     )
                     self._settle_held_deliveries(state, (held,))
         finally:
@@ -854,6 +859,12 @@ class SqliteProcessConversationSystem:
                     recipient=held.recipient,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.idle,
+                    owner_read_through_sequence=(
+                        held.owner_read_through_sequence
+                        if held.sender is not None
+                        and held.sender.kind is PrincipalKind.owner
+                        else None
+                    ),
                 )
                 async with state.lock:
                     self._settle_held_deliveries(state, (held,))
@@ -894,6 +905,7 @@ class SqliteProcessConversationSystem:
                 sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
                 sender=held.sender,
                 recipient=held.recipient,
+                owner_read_through_sequence=held.owner_read_through_sequence,
             )
             self._settle_held_deliveries(state, (held,))
         if isinstance(fate, PromptDeliveryRefused):
@@ -1218,6 +1230,7 @@ class SqliteProcessConversationSystem:
                 sender=sender,
                 recipient=recipient,
                 queue_reason=queue_reason,
+                owner_read_through_sequence=state.record.latest_sequence,
             )
         )
         self._publish_held_prompts_changed(state)
@@ -1491,6 +1504,7 @@ class SqliteProcessConversationSystem:
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
+                owner_read_through_sequence=None,
             )
 
     # --- delivering ---------------------------------------------------------------------
@@ -1751,6 +1765,7 @@ class SqliteProcessConversationSystem:
         record_refusal: bool,
         phase_when_not_started: _ConversationPhase,
         also_delivered: tuple[_HeldPrompt, ...] = (),
+        owner_read_through_sequence: int | None = None,
     ) -> bool:
         """Turn a delivery that has happened, or failed to, into the record and the state.
 
@@ -1837,6 +1852,7 @@ class SqliteProcessConversationSystem:
                         )
                         for message in also_delivered
                     ),
+                    owner_read_through_sequence=owner_read_through_sequence,
                 )
                 self._take_in_written_rows(state, written)
                 if carried_change is not None:
@@ -1959,6 +1975,15 @@ class SqliteProcessConversationSystem:
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.draining,
                     also_delivered=rest,
+                    owner_read_through_sequence=max(
+                        (
+                            message.owner_read_through_sequence
+                            for message in batch
+                            if message.sender is not None
+                            and message.sender.kind is PrincipalKind.owner
+                        ),
+                        default=None,
+                    ),
                 )
                 async with state.lock:
                     self._settle_held_deliveries(state, batch)
@@ -2004,6 +2029,7 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None,
         sender: Principal | None,
         recipient: Principal | None,
+        owner_read_through_sequence: int | None,
     ) -> PromptDeliveryInjected | PromptDeliveryRefused | PromptDeliveryUncertain:
         """Record and map one steering outcome while the conversation lock is held."""
         if isinstance(outcome, BackendSteerAccepted):
@@ -2017,6 +2043,11 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
+                ),
+                owner_read_through_sequence=(
+                    owner_read_through_sequence
+                    if sender is not None and sender.kind is PrincipalKind.owner
+                    else None
                 ),
             )
             if (
@@ -2052,6 +2083,11 @@ class SqliteProcessConversationSystem:
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
+            ),
+            owner_read_through_sequence=(
+                owner_read_through_sequence
+                if sender is not None and sender.kind is PrincipalKind.owner
+                else None
             ),
         )
         if (
@@ -2709,12 +2745,14 @@ class SqliteProcessConversationSystem:
         *,
         agent_activity: bool = False,
         automatic_compaction_confirmed: bool = False,
+        owner_read_through_sequence: int | None = None,
     ) -> StoredConversationEvent:
         stored = await self._store.append_event(
             state.record.conversation_id,
             payload,
             agent_activity=agent_activity,
             automatic_compaction_confirmed=automatic_compaction_confirmed,
+            owner_read_through_sequence=owner_read_through_sequence,
         )
         self._take_in_written_rows(state, (stored,))
         if agent_activity:
@@ -2731,6 +2769,14 @@ class SqliteProcessConversationSystem:
                 ),
                 automatic_compaction_attempted_through_sequence=(
                     state.record.latest_agent_activity_sequence
+                ),
+            )
+        if owner_read_through_sequence is not None:
+            state.record = replace(
+                state.record,
+                owner_read_through_sequence=max(
+                    state.record.owner_read_through_sequence,
+                    owner_read_through_sequence,
                 ),
             )
         return stored

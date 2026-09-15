@@ -114,7 +114,9 @@ One screen per part of the system:
   the same dot on every browser. The client advances it only while the conversation pane
   is open, the document is visible, and the window has focus. It advances only through
   the newest transcript row that this browser received, even when a newer conversation
-  snapshot arrived first. The server keeps the position monotonic and clamps oversized
+  snapshot arrived first. The client checks document focus again for each advance, so a
+  click into a preview frame cannot leave stale focus permission. The server keeps the
+  position monotonic and clamps oversized
   values. The position is per conversation, so pressing New starts unread rather than
   inheriting the old conversation's reading. A failed advance over-shows attention rather
   than hiding a reply.
