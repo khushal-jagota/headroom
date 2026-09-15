@@ -89,7 +89,7 @@ def test_status_projection_policy_and_delivery_are_exact_once(tmp_path: Path) ->
     identity = notifications_data.get_or_create_web_push_identity(conn, 1)
     ticket = _ticket(conn, 1)
     notifications_data.project_facts(conn)
-    assert notifications_data.apply_policy(conn, 1) == 1
+    assert notifications_data.apply_policy(conn, 1) == 2
     notifications_data.register_subscription(
         conn,
         endpoint="https://push.example/subscription",
@@ -111,8 +111,8 @@ def test_status_projection_policy_and_delivery_are_exact_once(tmp_path: Path) ->
     assert fact is not None
     assert fact["notification_type"] == "errored"
     assert json.loads(fact["payload"]) == {"subject_label": "Phone-worthy work"}
-    assert conn.execute("SELECT COUNT(*) FROM notification_decisions").fetchone()[0] == 2
-    assert conn.execute("SELECT COUNT(*) FROM notification_intents").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM notification_decisions").fetchone()[0] == 3
+    assert conn.execute("SELECT COUNT(*) FROM notification_intents").fetchone()[0] == 3
     conn.close()
 
     restarted = connect(str(db_path))
@@ -157,16 +157,17 @@ def test_needs_approval_fact_exists_only_for_owner_held_proposals(tmp_path: Path
         "SELECT source_id, notification_type FROM notification_facts "
         "WHERE notification_type = 'awaiting_approval' ORDER BY source_id"
     ).fetchall()
-    assert [(row["source_id"], row["notification_type"]) for row in rows] == [
-        (tickets[0].id, "awaiting_approval")
-    ]
-    cursors = conn.execute(
-        "SELECT source_id, sequence FROM notification_projection_cursors "
-        "WHERE source_kind = 'ticket' AND source_id IN (?, ?, ?, ?)",
+    assert {(row["source_id"], row["notification_type"]) for row in rows} == {
+        (f"ticket:{holder_ticket.id}:awaiting_approval", "awaiting_approval"),
+        (f"ticket:{tickets[0].id}:awaiting_approval", "awaiting_approval"),
+    }
+    states = conn.execute(
+        "SELECT subject_id, active FROM notification_attention_state "
+        "WHERE notification_type = 'awaiting_approval' AND subject_id IN (?, ?, ?, ?)",
         tuple(ticket.id for ticket in tickets),
     ).fetchall()
-    assert {(row["source_id"], row["sequence"]) for row in cursors} == {
-        (ticket.id, 1) for ticket in tickets
+    assert {str(row["subject_id"]): bool(row["active"]) for row in states} == {
+        ticket.id: ticket == tickets[0] for ticket in tickets
     }
     conn.close()
 
@@ -202,16 +203,142 @@ def test_conversation_events_project_to_the_catalogue_once(tmp_path: Path) -> No
         (str(row["fact_id"]), str(row["notification_type"]))
         for row in conn.execute(
             "SELECT fact_id, notification_type FROM notification_facts "
-            "WHERE source_kind = 'conversation' ORDER BY source_sequence"
+            "WHERE notification_type IN ('awaiting_reply','errored') "
+            "ORDER BY notification_type"
         )
     ] == [
-        ("conversation:c_notify:1", "awaiting_reply"),
-        ("conversation:c_notify:2", "awaiting_reply"),
-        ("conversation:c_notify:4", "errored"),
+        (f"attention:ticket:{ticket.id}:awaiting_reply:1", "awaiting_reply"),
+        (f"attention:ticket:{ticket.id}:errored:1", "errored"),
     ]
 
     notifications_data.project_facts(conn)
     assert conn.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 4
+    conn.close()
+
+
+def test_attention_facts_emit_once_per_rising_edge(tmp_path: Path) -> None:
+    conn = connect(str(tmp_path / "attention-edges.db"))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    notifications_data.project_facts(conn)
+    conn.execute(
+        "INSERT INTO conversations"
+        "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
+        "VALUES ('c_edges', 'codex', '/tmp/workspace', 'full', 3, 1)"
+    )
+    conn.execute(
+        "UPDATE tickets SET conversation_id = 'c_edges' WHERE id = ?",
+        (ticket.id,),
+    )
+    conn.executemany(
+        "INSERT INTO conversation_events"
+        "(conversation_id, sequence, kind, payload, created_at) "
+        "VALUES ('c_edges', ?, 'message_to_owner', '{}', ?)",
+        ((1, 2), (2, 3), (3, 4)),
+    )
+
+    notifications_data.project_facts(conn)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM notification_facts WHERE notification_type = 'awaiting_reply'"
+    ).fetchone()[0] == 1
+    assert notifications_data.project_facts(conn) == 0
+
+    conn.execute(
+        "UPDATE conversations SET owner_read_through_sequence = 3 "
+        "WHERE conversation_id = 'c_edges'"
+    )
+    notifications_data.project_facts(conn)
+    conn.execute(
+        "INSERT INTO conversation_events"
+        "(conversation_id, sequence, kind, payload, created_at) "
+        "VALUES ('c_edges', 4, 'message_to_owner', '{}', 5)"
+    )
+    conn.execute(
+        "UPDATE conversations SET latest_sequence = 4 WHERE conversation_id = 'c_edges'"
+    )
+    notifications_data.project_facts(conn)
+
+    assert [
+        str(row["fact_id"])
+        for row in conn.execute(
+            "SELECT fact_id FROM notification_facts "
+            "WHERE notification_type = 'awaiting_reply' ORDER BY source_sequence"
+        )
+    ] == [
+        f"attention:ticket:{ticket.id}:awaiting_reply:1",
+        f"attention:ticket:{ticket.id}:awaiting_reply:2",
+    ]
+    conn.close()
+
+
+def test_error_fact_repeats_only_after_explicit_restart_clears_it(tmp_path: Path) -> None:
+    conn = connect(str(tmp_path / "error-edges.db"))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    notifications_data.project_facts(conn)
+
+    tickets_data.mark_ticket_errored(conn, ticket.id, error="first", now=2)
+    notifications_data.project_facts(conn)
+    assert notifications_data.project_facts(conn) == 0
+    tickets_data.clear_ticket_error_for_restart(conn, ticket.id, now=3)
+    notifications_data.project_facts(conn)
+    tickets_data.mark_ticket_errored(conn, ticket.id, error="second", now=4)
+    notifications_data.project_facts(conn)
+
+    assert [
+        str(row["fact_id"])
+        for row in conn.execute(
+            "SELECT fact_id FROM notification_facts "
+            "WHERE notification_type = 'errored' ORDER BY source_sequence"
+        )
+    ] == [
+        f"attention:ticket:{ticket.id}:errored:1",
+        f"attention:ticket:{ticket.id}:errored:2",
+    ]
+    conn.close()
+
+
+def test_permission_and_question_events_share_the_reply_edge(tmp_path: Path) -> None:
+    conn = connect(str(tmp_path / "ask-edges.db"))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    notifications_data.project_facts(conn)
+    conn.execute(
+        "INSERT INTO conversations"
+        "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
+        "VALUES ('c_asks', 'codex', '/tmp/workspace', 'full', 2, 1)"
+    )
+    conn.execute("UPDATE tickets SET conversation_id = 'c_asks' WHERE id = ?", (ticket.id,))
+    conn.executemany(
+        "INSERT INTO conversation_events"
+        "(conversation_id, sequence, kind, payload, created_at) "
+        "VALUES ('c_asks', ?, 'permission_asked', ?, 2)",
+        ((1, '{"ask_id":"a1"}'), (2, '{"ask_id":"a2"}')),
+    )
+    notifications_data.project_facts(conn)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM notification_facts WHERE notification_type = 'awaiting_reply'"
+    ).fetchone()[0] == 1
+
+    conn.executemany(
+        "INSERT INTO conversation_events"
+        "(conversation_id, sequence, kind, payload, created_at) "
+        "VALUES ('c_asks', ?, 'permission_answered', ?, 3)",
+        ((3, '{"ask_id":"a1"}'), (4, '{"ask_id":"a2"}')),
+    )
+    conn.execute("UPDATE conversations SET latest_sequence = 4 WHERE conversation_id = 'c_asks'")
+    notifications_data.project_facts(conn)
+    conn.execute(
+        "INSERT INTO conversation_events"
+        "(conversation_id, sequence, kind, payload, created_at) "
+        "VALUES ('c_asks', 5, 'user_input_requested', '{\"request_id\":\"q1\"}', 4)"
+    )
+    conn.execute("UPDATE conversations SET latest_sequence = 5 WHERE conversation_id = 'c_asks'")
+    notifications_data.project_facts(conn)
+
+    assert conn.execute(
+        "SELECT COUNT(*) FROM notification_facts WHERE notification_type = 'awaiting_reply'"
+    ).fetchone()[0] == 2
     conn.close()
 
 
@@ -245,11 +372,13 @@ def test_not_compacted_maintenance_does_not_project_a_worker_completion(
     assert conn.execute(
         "SELECT COUNT(*) FROM notification_facts WHERE source_kind = 'conversation'"
     ).fetchone()[0] == 0
-    cursor = conn.execute(
-        "SELECT sequence FROM notification_projection_cursors "
-        "WHERE source_kind = 'conversation' AND source_id = 'c_maintenance'"
+    state = conn.execute(
+        "SELECT active FROM notification_attention_state "
+        "WHERE subject_kind = 'ticket' AND subject_id = ? "
+        "AND notification_type = 'errored'",
+        (ticket.id,),
     ).fetchone()
-    assert cursor is not None and cursor["sequence"] == 1
+    assert state is not None and not bool(state["active"])
     conn.close()
 
 
@@ -279,26 +408,26 @@ def test_chief_conversation_events_use_agent_destination_and_one_coalescing_tag(
     )
 
     notifications_data.project_facts(conn)
-    assert notifications_data.apply_policy(conn, 3) == 3
+    assert notifications_data.apply_policy(conn, 3) == 2
     facts = conn.execute(
         "SELECT subject_kind, COALESCE(ticket_id, agent_key) AS subject_id, payload "
         "FROM notification_facts ORDER BY source_sequence"
     ).fetchall()
     assert [(row["subject_kind"], row["subject_id"]) for row in facts] == [
         ("agent", "chief_of_staff")
-    ] * 3
+    ] * 2
     assert all(json.loads(row["payload"]) == {"subject_label": "Chief of Staff"} for row in facts)
     intents = conn.execute(
         "SELECT body, route, tag FROM notification_intents ORDER BY fact_id"
     ).fetchall()
-    assert len(intents) == 3
+    assert len(intents) == 2
     assert {row["route"] for row in intents} == {"/#/agents/chief-of-staff"}
     assert {row["tag"] for row in intents} == {"panels-agent-chief_of_staff"}
     assert all(str(row["body"]).startswith("Chief of Staff ") for row in intents)
 
     notifications_data.project_facts(conn)
     assert notifications_data.apply_policy(conn, 4) == 0
-    assert conn.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 3
+    assert conn.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 2
     conn.close()
 
 
@@ -325,7 +454,7 @@ def test_policy_resolves_the_same_type_independently_by_subject(tmp_path: Path) 
     notifications_data.set_preference(conn, "tickets", "errored", False, 2)
 
     notifications_data.project_facts(conn)
-    assert notifications_data.apply_policy(conn, 3) == 3
+    assert notifications_data.apply_policy(conn, 3) == 4
     assert [
         (row["subject_kind"], row["outcome"])
         for row in conn.execute(
@@ -356,18 +485,19 @@ def test_policy_suppresses_a_legacy_arbitrary_agent_fact_and_continues(
         "'conversation', 'c_legacy', 1, 1, '{\"subject_label\":\"Reviewer\"}')"
     )
 
-    assert notifications_data.apply_policy(conn, 3) == 3
+    assert notifications_data.apply_policy(conn, 3) == 4
     assert [
         (str(row["fact_id"]), str(row["outcome"]))
         for row in conn.execute(
             "SELECT fact_id, outcome FROM notification_decisions ORDER BY fact_id"
         )
     ] == [
-        (f"assignment:{ticket.id}:1", "notify"),
+        (f"attention:ticket:{ticket.id}:assigned:1", "notify"),
+        (f"attention:ticket:{ticket.id}:awaiting_approval:1", "notify"),
+        (f"attention:ticket:{ticket.id}:errored:1", "notify"),
         ("legacy:reviewer:1", "suppress"),
-        (f"ticket:{ticket.id}:1", "notify"),
     ]
-    assert conn.execute("SELECT COUNT(*) FROM notification_intents").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM notification_intents").fetchone()[0] == 3
     conn.close()
 
 
@@ -403,11 +533,11 @@ def test_typed_subject_foreign_keys_reject_invalid_rows_and_cascade_full_graph(
     )
 
     notifications_data.project_facts(conn)
-    assert notifications_data.apply_policy(conn, 3) == 3
-    assert conn.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 3
-    assert conn.execute("SELECT COUNT(*) FROM notification_decisions").fetchone()[0] == 3
-    assert conn.execute("SELECT COUNT(*) FROM notification_intents").fetchone()[0] == 3
-    assert conn.execute("SELECT COUNT(*) FROM notification_deliveries").fetchone()[0] == 3
+    assert notifications_data.apply_policy(conn, 3) == 4
+    assert conn.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 4
+    assert conn.execute("SELECT COUNT(*) FROM notification_decisions").fetchone()[0] == 4
+    assert conn.execute("SELECT COUNT(*) FROM notification_intents").fetchone()[0] == 4
+    assert conn.execute("SELECT COUNT(*) FROM notification_deliveries").fetchone()[0] == 4
 
     invalid_fact_sql = (
         "INSERT INTO notification_facts"

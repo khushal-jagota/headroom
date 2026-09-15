@@ -345,7 +345,7 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
         "t_discussion": "empty",
         "t_awaiting": "awaiting_approval",
         "t_needs_user": "agent",
-        "t_errored": "errored",
+        "t_errored": "empty",
         "t_live_blocker": "empty",
         "t_finished_blocker": "empty",
         "t_blocked": "blocked",

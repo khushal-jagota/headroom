@@ -87,6 +87,8 @@ database write.
 
 A read or owner reply does not clear the error. Derived agent state also retains the
 latest failed turn until a later start succeeds or an explicit restart resets it.
+During the attention-state upgrade, Panels acknowledges failures older than 24 hours.
+Newer failures and all later failures keep the normal persistent error behavior.
 
 A delivery that never got through is not that. When Panels cannot get a step to the
 worker at all, it simply gives back the claim it took and the Ticket goes back to rest —

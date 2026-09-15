@@ -116,7 +116,7 @@ def test_ticket_attention_combines_ownership_proposal_and_conversation_facts(
             tickets=[replied_row],
         )
     )
-    assert replied_row["agent_state"] == "errored"
+    assert replied_row["agent_state"] == "idle"
 
     running_row: JsonDict = {"id": ticket.id}
     asyncio.run(

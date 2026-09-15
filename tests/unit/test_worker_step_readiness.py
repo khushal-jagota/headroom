@@ -169,11 +169,17 @@ def test_paired_owned_ticket_is_ready_once_per_stage_entry(tmp_path: Path) -> No
         )
         assert not _ready(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
 
-        conn.execute(
-            "UPDATE tickets SET stage = 'needs_stages' WHERE id = ?",
-            (ticket.id,),
+        moved = advance_ticket(
+            conn,
+            ticket.id,
+            new_stage="needs_stages",
+            principal=OWNER_PRINCIPAL,
+            now=5,
         )
-        moved = tickets_data.read_ticket(conn, ticket.id)
+        assert conn.execute(
+            "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ?",
+            (ticket.id,),
+        ).fetchone() is None
         assert _ready(conn, moved, definition=NEW_WORKER_TYPE_DEFINITION)
     finally:
         conn.close()

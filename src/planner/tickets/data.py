@@ -688,6 +688,11 @@ def _apply_decision(
             ticket.id,
         ),
     )
+    if str(new_stage) != ticket.stage:
+        conn.execute(
+            "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ?",
+            (ticket.id,),
+        )
     if active_before != active_after:
         if active_after:
             # Reopened out of done: the links this Ticket still holds block again, so

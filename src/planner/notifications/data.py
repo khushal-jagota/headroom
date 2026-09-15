@@ -251,13 +251,6 @@ def _preference_subject_key(fact: NotificationFact) -> str:
     raise ValueError(f"unsupported notification subject: {fact.subject.kind.value}")
 
 
-def _ticket_fact_type(status: str) -> str | None:
-    return {
-        "awaiting_approval": "awaiting_approval",
-        "errored": "errored",
-    }.get(status)
-
-
 def _owner_holds_ticket_ceiling(raw_holder: str) -> bool:
     stored = json.loads(raw_holder)
     if not isinstance(stored, dict):
@@ -275,160 +268,175 @@ def _agent_label(agent_key: str) -> str:
     return agent_key.replace("_", " ").title()
 
 
-def project_facts(conn: sqlite3.Connection) -> int:
-    """Advance source cursors and materialize new normalized facts once."""
-    inserted_before = conn.total_changes
-    with _txn(conn):
-        ticket_rows = conn.execute(
-            "SELECT t.id, t.title, t.ticket_status, t.ticket_status_revision, "
-            "t.ticket_status_changed_at, t.ceiling_holder, "
-            "c.sequence AS projected_sequence "
-            "FROM tickets t LEFT JOIN notification_projection_cursors c "
-            "ON c.source_kind = 'ticket' AND c.source_id = t.id "
-            "WHERE c.source_id IS NULL OR t.ticket_status_revision > c.sequence"
-        ).fetchall()
-        for row in ticket_rows:
-            revision = int(row["ticket_status_revision"])
-            notification_type = _ticket_fact_type(str(row["ticket_status"]))
-            if notification_type == "awaiting_approval" and not _owner_holds_ticket_ceiling(
-                str(row["ceiling_holder"])
-            ):
-                notification_type = None
-            if notification_type is not None and revision > 0:
-                _insert_fact(
-                    conn,
-                    fact_id=f"ticket:{row['id']}:{revision}",
-                    notification_type=notification_type,
-                    subject=Principal(PrincipalKind.ticket, str(row["id"])),
-                    subject_label=str(row["title"]),
-                    source_kind="ticket",
-                    source_id=str(row["id"]),
-                    source_sequence=revision,
-                    occurred_at=int(row["ticket_status_changed_at"]),
-                )
-            conn.execute(
-                "INSERT INTO notification_projection_cursors(source_kind, source_id, sequence) "
-                "VALUES ('ticket', ?, ?) ON CONFLICT(source_kind, source_id) DO UPDATE SET "
-                "sequence = excluded.sequence",
-                (str(row["id"]), revision),
-            )
-
-        # A Sprint Item supervisor is an agent, but the reader knows it as its Item: the
-        # push says the Item's title and opens the Item. So its conversation's facts take
-        # the Item as their subject, not the agent.
-        conversations = conn.execute(
-            "SELECT c.conversation_id, c.latest_sequence, "
-            "CASE WHEN t.id IS NOT NULL THEN 'ticket' "
-            "WHEN i.id IS NOT NULL THEN 'sprint_item' ELSE 'agent' END AS subject_kind, "
-            "COALESCE(t.id, i.id, a.agent_key) AS subject_id, "
-            "COALESCE(t.title, i.title) AS subject_title, "
-            "pc.sequence AS projected_sequence "
-            "FROM conversations c "
-            "LEFT JOIN tickets t ON t.conversation_id = c.conversation_id "
-            "LEFT JOIN agents a ON a.conversation_id = c.conversation_id "
-            "LEFT JOIN sprint_items i ON i.supervisor_agent_key = a.agent_key "
-            "LEFT JOIN notification_projection_cursors pc "
-            "ON pc.source_kind = 'conversation' AND pc.source_id = c.conversation_id "
-            "WHERE (t.id IS NOT NULL OR i.id IS NOT NULL OR a.agent_key = ?) "
-            "AND (pc.source_id IS NULL OR c.latest_sequence > pc.sequence)",
-            (CHIEF_SETTINGS_KEY,),
-        ).fetchall()
-        for conversation in conversations:
-            conversation_id = str(conversation["conversation_id"])
-            stored_subject_kind = str(conversation["subject_kind"])
-            subject_id = str(conversation["subject_id"])
-            try:
-                subject = _principal_from_stored_subject(stored_subject_kind, subject_id)
-            except ValueError:
-                continue
-            subject_label = (
-                str(conversation["subject_title"])
-                if subject.kind in {PrincipalKind.ticket, PrincipalKind.sprint_item}
-                else _agent_label(subject_id)
-            )
-            after = (
-                int(conversation["projected_sequence"])
-                if conversation["projected_sequence"] is not None
-                else 0
-            )
-            events = conn.execute(
-                "SELECT sequence, kind, payload, created_at FROM conversation_events "
-                "WHERE conversation_id = ? AND sequence > ? ORDER BY sequence",
-                (conversation_id, after),
-            ).fetchall()
-            for event in events:
-                kind = str(event["kind"])
-                payload = json.loads(str(event["payload"]))
-                event_notification_type: str | None = None
-                if kind in {"permission_asked", "user_input_requested", "message_to_owner"}:
-                    event_notification_type = "awaiting_reply"
-                elif kind == "turn_ended" and payload.get("ending") == "failed":
-                    event_notification_type = "errored"
-                if event_notification_type is not None:
-                    sequence = int(event["sequence"])
-                    _insert_fact(
-                        conn,
-                        fact_id=f"conversation:{conversation_id}:{sequence}",
-                        notification_type=event_notification_type,
-                        subject=subject,
-                        subject_label=subject_label,
-                        source_kind="conversation",
-                        source_id=conversation_id,
-                        source_sequence=sequence,
-                        occurred_at=int(event["created_at"]),
-                    )
-            conn.execute(
-                "INSERT INTO notification_projection_cursors(source_kind, source_id, sequence) "
-                "VALUES ('conversation', ?, ?) "
-                "ON CONFLICT(source_kind, source_id) DO UPDATE SET sequence = excluded.sequence",
-                (conversation_id, int(conversation["latest_sequence"])),
-            )
-
-        _project_assignment_facts(conn)
-
-    return conn.total_changes - inserted_before
-
-
-def _project_assignment_facts(conn: sqlite3.Connection) -> None:
+def _conversation_attention(conn: sqlite3.Connection) -> dict[str, tuple[bool, bool, int, int]]:
     rows = conn.execute(
-        "SELECT t.id, t.title, t.stage, t.worker_type, t.stage_ownership_overrides, "
-        "t.default_stage_ownership_mode, t.ceiling_holder, t.updated_at, "
-        "s.assigned AS prior_assigned, s.generation AS prior_generation "
-        "FROM tickets t LEFT JOIN notification_assignment_state s ON s.ticket_id = t.id"
+        "SELECT c.conversation_id, c.latest_sequence, "
+        "COALESCE(MAX(CASE WHEN e.kind = 'message_to_owner' THEN e.sequence END), 0) "
+        "> c.owner_read_through_sequence AS unread_message, "
+        "EXISTS (SELECT 1 FROM conversation_events asked WHERE "
+        "asked.conversation_id = c.conversation_id AND asked.kind = 'permission_asked' "
+        "AND NOT EXISTS (SELECT 1 FROM conversation_events answered WHERE "
+        "answered.conversation_id = c.conversation_id AND answered.kind = 'permission_answered' "
+        "AND json_extract(answered.payload, '$.ask_id') = "
+        "json_extract(asked.payload, '$.ask_id') AND answered.sequence > asked.sequence)) "
+        "OR EXISTS (SELECT 1 FROM conversation_events asked WHERE "
+        "asked.conversation_id = c.conversation_id AND asked.kind = 'user_input_requested' "
+        "AND NOT EXISTS (SELECT 1 FROM conversation_events answered WHERE "
+        "answered.conversation_id = c.conversation_id "
+        "AND answered.kind IN ('user_input_answered','user_input_failed') "
+        "AND json_extract(answered.payload, '$.request_id') = "
+        "json_extract(asked.payload, '$.request_id') AND answered.sequence > asked.sequence)) "
+        "AS pending_ask, "
+        "COALESCE((SELECT CASE WHEN recent.kind = 'turn_ended' "
+        "AND json_extract(recent.payload, '$.ending') = 'failed' THEN 1 ELSE 0 END "
+        "FROM conversation_events recent WHERE recent.conversation_id = c.conversation_id "
+        "AND recent.kind IN ('prompt','turn_ended') "
+        "AND recent.sequence > COALESCE((SELECT ack.through_sequence "
+        "FROM conversation_error_acknowledgements ack "
+        "WHERE ack.conversation_id = c.conversation_id), 0) "
+        "ORDER BY recent.sequence DESC LIMIT 1), 0) AS errored, "
+        "COALESCE(MAX(e.created_at), c.created_at) AS occurred_at "
+        "FROM conversations c LEFT JOIN conversation_events e "
+        "ON e.conversation_id = c.conversation_id GROUP BY c.conversation_id"
     ).fetchall()
-    for row in rows:
-        assigned = ticket_assignment_from_values(
-            stage=str(row["stage"]),
-            worker_type=str(row["worker_type"]),
-            stage_ownership_overrides=str(row["stage_ownership_overrides"]),
-            default_stage_ownership_mode=(
-                str(row["default_stage_ownership_mode"])
-                if row["default_stage_ownership_mode"] is not None
-                else None
-            ),
-            owner_holds_ceiling=_owner_holds_ticket_ceiling(str(row["ceiling_holder"])),
+    return {
+        str(row["conversation_id"]): (
+            bool(row["unread_message"]) or bool(row["pending_ask"]),
+            bool(row["errored"]),
+            int(row["latest_sequence"]),
+            int(row["occurred_at"]),
         )
-        prior = bool(row["prior_assigned"]) if row["prior_assigned"] is not None else False
-        generation = int(row["prior_generation"] or 0)
-        if assigned and not prior:
+        for row in rows
+    }
+
+
+def _project_attention_facts(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "DELETE FROM notification_attention_state WHERE "
+        "(subject_kind = 'ticket' AND NOT EXISTS ("
+        "SELECT 1 FROM tickets WHERE tickets.id = notification_attention_state.subject_id)) "
+        "OR (subject_kind = 'sprint_item' AND NOT EXISTS ("
+        "SELECT 1 FROM sprint_items "
+        "WHERE sprint_items.id = notification_attention_state.subject_id)) "
+        "OR (subject_kind = 'agent' AND NOT EXISTS ("
+        "SELECT 1 FROM agents WHERE agents.agent_key = notification_attention_state.subject_id))"
+    )
+    conversations = _conversation_attention(conn)
+    desired: dict[tuple[str, str, str], tuple[bool, Principal, str, int]] = {}
+    ticket_rows = conn.execute(
+        "SELECT id, title, stage, worker_type, ticket_status, pending_proposal, "
+        "ceiling_holder, stage_ownership_overrides, default_stage_ownership_mode, "
+        "conversation_id, updated_at, ticket_status_changed_at FROM tickets"
+    ).fetchall()
+    for row in ticket_rows:
+        ticket_id = str(row["id"])
+        subject = Principal(PrincipalKind.ticket, ticket_id)
+        label = str(row["title"])
+        conversation = conversations.get(str(row["conversation_id"]), (False, False, 0, 0))
+        owner_holds = _owner_holds_ticket_ceiling(str(row["ceiling_holder"]))
+        flags = {
+            "awaiting_reply": conversation[0],
+            "awaiting_approval": (
+                str(row["ticket_status"]) == "awaiting_approval"
+                and row["pending_proposal"] is not None
+                and owner_holds
+            ),
+            "assigned": ticket_assignment_from_values(
+                stage=str(row["stage"]),
+                worker_type=str(row["worker_type"]),
+                stage_ownership_overrides=str(row["stage_ownership_overrides"]),
+                default_stage_ownership_mode=(
+                    str(row["default_stage_ownership_mode"])
+                    if row["default_stage_ownership_mode"] is not None
+                    else None
+                ),
+                owner_holds_ceiling=owner_holds,
+            ),
+            "errored": str(row["ticket_status"]) == "errored" or conversation[1],
+        }
+        for notification_type, active in flags.items():
+            occurred_at = (
+                conversation[3]
+                if notification_type in {"awaiting_reply", "errored"} and conversation[3]
+                else int(row["ticket_status_changed_at"])
+                if notification_type == "awaiting_approval"
+                else int(row["updated_at"])
+            )
+            desired[("ticket", ticket_id, notification_type)] = (
+                active,
+                subject,
+                label,
+                occurred_at,
+            )
+
+    agent_rows = conn.execute(
+        "SELECT a.agent_key, a.conversation_id, i.id AS item_id, i.title AS item_title "
+        "FROM agents a LEFT JOIN sprint_items i ON i.supervisor_agent_key = a.agent_key "
+        "WHERE a.agent_key = ? OR i.id IS NOT NULL",
+        (CHIEF_SETTINGS_KEY,),
+    ).fetchall()
+    for row in agent_rows:
+        is_item = row["item_id"] is not None
+        subject_kind = "sprint_item" if is_item else "agent"
+        subject_id = str(row["item_id"] if is_item else row["agent_key"])
+        subject = _principal_from_stored_subject(subject_kind, subject_id)
+        label = str(row["item_title"]) if is_item else _agent_label(subject_id)
+        conversation = conversations.get(str(row["conversation_id"]), (False, False, 0, 0))
+        for notification_type, active in (
+            ("awaiting_reply", conversation[0]),
+            ("errored", conversation[1]),
+        ):
+            desired[(subject_kind, subject_id, notification_type)] = (
+                active,
+                subject,
+                label,
+                conversation[3],
+            )
+
+    prior = {
+        (str(row["subject_kind"]), str(row["subject_id"]), str(row["notification_type"])): (
+            bool(row["active"]),
+            int(row["generation"]),
+        )
+        for row in conn.execute(
+            "SELECT subject_kind, subject_id, notification_type, active, generation "
+            "FROM notification_attention_state"
+        )
+    }
+    for key, (active, subject, label, occurred_at) in desired.items():
+        prior_active, generation = prior.get(key, (False, 0))
+        if active and not prior_active:
             generation += 1
+            stored_kind, stored_id, notification_type = key
             _insert_fact(
                 conn,
-                fact_id=f"assignment:{row['id']}:{generation}",
-                notification_type="assigned",
-                subject=Principal(PrincipalKind.ticket, str(row["id"])),
-                subject_label=str(row["title"]),
-                source_kind="ticket",
-                source_id=str(row["id"]),
+                fact_id=f"attention:{stored_kind}:{stored_id}:{notification_type}:{generation}",
+                notification_type=notification_type,
+                subject=subject,
+                subject_label=label,
+                source_kind=(
+                    "ticket" if subject.kind is PrincipalKind.ticket else "conversation"
+                ),
+                source_id=f"{stored_kind}:{stored_id}:{notification_type}",
                 source_sequence=generation,
-                occurred_at=int(row["updated_at"]),
+                occurred_at=occurred_at,
             )
-        conn.execute(
-            "INSERT INTO notification_assignment_state(ticket_id, assigned, generation) "
-            "VALUES (?, ?, ?) ON CONFLICT(ticket_id) DO UPDATE SET "
-            "assigned=excluded.assigned, generation=excluded.generation",
-            (str(row["id"]), int(assigned), generation),
-        )
+        if key not in prior or active != prior_active:
+            conn.execute(
+                "INSERT INTO notification_attention_state"
+                "(subject_kind, subject_id, notification_type, active, generation) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(subject_kind, subject_id, notification_type) "
+                "DO UPDATE SET active=excluded.active, generation=excluded.generation",
+                (*key, int(active), generation),
+            )
+
+
+def project_facts(conn: sqlite3.Connection) -> int:
+    """Materialize one fact for each false-to-true attention transition."""
+    inserted_before = conn.total_changes
+    with _txn(conn):
+        _project_attention_facts(conn)
+    return conn.total_changes - inserted_before
 
 
 def apply_policy(conn: sqlite3.Connection, now: int) -> int:

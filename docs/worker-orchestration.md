@@ -45,7 +45,8 @@ write. That flip **is** the claim. There is no claim stamp or general run record
 paired Stage, the same transaction records a tentative opener fact for that Stage entry.
 Readiness checks that fact, not the Ticket status, to prevent a second opener. A refused
 send removes the fact. An accepted send keeps it and returns the Ticket to `empty`.
-Leaving the Stage clears the fact, so a later Stage entry can receive its own opener.
+The canonical Stage writer clears the fact when the Ticket leaves that Stage. A later
+Stage entry can therefore receive its own opener without a database trigger.
 All readiness questions run again inside the write, so only one racer wins the claim.
 
 Checking too often costs nothing: the check reads and decides, and writes nothing. So

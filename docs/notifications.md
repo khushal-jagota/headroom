@@ -45,11 +45,11 @@ coalesce at the operating system.
 
 ## Durable delivery
 
-Panels projects Ticket status revisions, assignment edges, and events from Ticket, Chief,
-and supervisor conversations into facts. Addressed messages, permission asks, requests
-for user input, and failed turns all use the same projection and policy path. A cursor per
-source plus stored assignment state makes that projection restart-safe. The migration
-seeds existing assignment state, so an upgrade does not replay current work as new.
+Panels derives four current attention flags for each subject. It stores each flag state
+and emits one fact only when that flag changes from false to true. Several messages before
+one read therefore cause one reply notification. A later message causes another notification
+only after the first reply state clears. The migration seeds all current flag states and
+advances legacy-help cursors, so an upgrade does not replay old work as new.
 Every fact gets one durable policy decision. An allowed fact creates one
 delivery row per device that was registered at that time.
 
