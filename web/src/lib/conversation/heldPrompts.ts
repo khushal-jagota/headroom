@@ -9,6 +9,7 @@ import {
   messageContentText,
   type HeldPrompt,
   type MessagePiece,
+  type PromptQueueReason,
   type SentMessagePiece
 } from "./wire";
 import type { OutgoingMessage } from "./outgoing";
@@ -23,6 +24,7 @@ export type HeldPromptRow = Readonly<{
   senderLabel: string;
   sentAtUnixMilliseconds: number;
   state: HeldPromptRowState;
+  queueReason: PromptQueueReason | null;
 }>;
 
 export function heldPromptRowLabel(row: HeldPromptRow): string {
@@ -61,7 +63,8 @@ export function heldPromptRows(
       content: local?.content ?? messageContentOf(held),
       senderLabel: held.sender_label,
       sentAtUnixMilliseconds: held.sent_at_unix_milliseconds,
-      state: "held"
+      state: "held",
+      queueReason: held.queue_reason
     };
   });
   const localOnly = [...localMessages]
@@ -74,7 +77,8 @@ export function heldPromptRows(
       content: message.content,
       senderLabel: message.senderLabel,
       sentAtUnixMilliseconds: message.sentAtUnixMilliseconds,
-      state: stateForLocal(message)
+      state: stateForLocal(message),
+      queueReason: null
     }));
   return [...rows, ...localOnly];
 }

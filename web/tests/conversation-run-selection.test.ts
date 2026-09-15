@@ -251,9 +251,9 @@ describe("composer run selection", () => {
     );
 
     expect(running.showStop).toBe(true);
-    expect(running.submit.title).toBe("Queue this message");
+    expect(running.submit.title).toBe("Steer this message");
     expect(idle.showStop).toBe(false);
-    expect(idle.submit.title).toBe("Send");
+    expect(idle.submit.title).toBe("Steer this message");
   });
 
   it("changes only the selected model or effort field", () => {

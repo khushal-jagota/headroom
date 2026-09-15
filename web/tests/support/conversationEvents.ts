@@ -58,7 +58,7 @@ function eventMetadata(sequence: number, metadata: ConversationEventMetadata) {
 export function promptEvent(
   sequence: number,
   text = "hello",
-  mode: PromptDeliveryMode = "run_when_free",
+  mode: PromptDeliveryMode = "queue",
   overrides: PromptOverrides = {}
 ): EventOf<"prompt"> {
   return {
@@ -82,6 +82,18 @@ export function agentMessageEvent(
     ...eventMetadata(sequence, overrides),
     kind: "agent_message",
     payload: { text, ...overrides.payload }
+  };
+}
+
+export function explicitReplyMissingEvent(
+  sequence: number,
+  promptSender: EventOf<"explicit_reply_missing">["payload"]["prompt_sender"],
+  metadata: ConversationEventMetadata = {}
+): EventOf<"explicit_reply_missing"> {
+  return {
+    ...eventMetadata(sequence, metadata),
+    kind: "explicit_reply_missing",
+    payload: { prompt_sender: promptSender }
   };
 }
 

@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
 from planner.conversation.backend_state import write_model_enablement
@@ -31,9 +32,7 @@ from planner.tickets.contracts import (
 from planner.worker_context import data as worker_context_data
 
 
-def _make_app(
-    tmp_path: Path, *, trace: list[str] | None = None
-) -> tuple[FastAPI, Path]:
+def _make_app(tmp_path: Path, *, trace: list[str] | None = None) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "planning-test.db"
     boot = connect(str(db_path))
     create_schema(boot)
@@ -74,7 +73,7 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
             worker_type=values.pop("worker_type", "coding"),
             title=values.pop("title", "Before edit"),
             kickoff_note=values.pop("kickoff_note", "Before note"),
-            actor="unattributed",
+            principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,
             **values,
@@ -83,10 +82,11 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
             conn,
             ticket.id,
             field="kickoff",
-            actor="unattributed",
+            principal=OWNER_PRINCIPAL,
             now=1,
             next_ceiling=NO_FURTHER,
             at_cap=AtCap.propose,
+            next_holder=OWNER_PRINCIPAL,
         )
         return ticket.id
     finally:
@@ -100,7 +100,7 @@ def _create_pristine_ticket(db_path: Path, *, worker_type: str = "probe") -> str
             conn,
             worker_type=worker_type,
             title="Pristine backend selection",
-            actor="unattributed",
+            principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,
         ).id
@@ -163,9 +163,7 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
     conn = connect(str(db_path))
     try:
         _seed_sprint(conn)
-        conn.execute(
-            "UPDATE projects SET priority = 'P1' WHERE id = 'project_vylo'"
-        )
+        conn.execute("UPDATE projects SET priority = 'P1' WHERE id = 'project_vylo'")
         conn.commit()
     finally:
         conn.close()
@@ -245,18 +243,19 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
 
     conn = connect(str(db_path))
     try:
-        assert conn.execute(
-            "SELECT count(*) FROM sprint_items WHERE kind = 'other'"
-        ).fetchone()[0] == 0
+        assert (
+            conn.execute("SELECT count(*) FROM sprint_items WHERE kind = 'other'").fetchone()[0]
+            == 0
+        )
     finally:
         conn.close()
     with TestClient(app) as client:
-        assert client.get(f"/api/tickets/{defaulted.json()['id']}").json()[
-            "day_ids"
-        ] == ["day_2026-07-10"]
-        assert client.get(f"/api/tickets/{explicit_backlog.json()['id']}").json()[
-            "day_ids"
-        ] == ["day_2026-07-10"]
+        assert client.get(f"/api/tickets/{defaulted.json()['id']}").json()["day_ids"] == [
+            "day_2026-07-10"
+        ]
+        assert client.get(f"/api/tickets/{explicit_backlog.json()['id']}").json()["day_ids"] == [
+            "day_2026-07-10"
+        ]
 
 
 def test_failed_creation_does_not_create_an_other_item(tmp_path: Path) -> None:
@@ -281,9 +280,10 @@ def test_failed_creation_does_not_create_an_other_item(tmp_path: Path) -> None:
     assert response.status_code == 400
     conn = connect(str(db_path))
     try:
-        assert conn.execute(
-            "SELECT COUNT(*) FROM sprint_items WHERE kind = 'other'"
-        ).fetchone()[0] == 0
+        assert (
+            conn.execute("SELECT COUNT(*) FROM sprint_items WHERE kind = 'other'").fetchone()[0]
+            == 0
+        )
     finally:
         conn.close()
 
@@ -377,9 +377,7 @@ def test_employee_configuration_rejects_a_disabled_model_without_a_partial_write
     app, db_path = _make_app(tmp_path)
     ticket_id = _create_pristine_ticket(db_path)
     conn = connect(str(db_path))
-    before = tickets_data.employee_launch_configuration(
-        tickets_data.read_ticket(conn, ticket_id)
-    )
+    before = tickets_data.employee_launch_configuration(tickets_data.read_ticket(conn, ticket_id))
     write_model_enablement(conn, ConversationBackendKey.claude, "disabled-model", False)
     conn.close()
 
@@ -393,9 +391,10 @@ def test_employee_configuration_rejects_a_disabled_model_without_a_partial_write
     assert response.json()["error"]["message"] == "Employee model is disabled"
     check = connect(str(db_path))
     try:
-        assert tickets_data.employee_launch_configuration(
-            tickets_data.read_ticket(check, ticket_id)
-        ) == before
+        assert (
+            tickets_data.employee_launch_configuration(tickets_data.read_ticket(check, ticket_id))
+            == before
+        )
     finally:
         check.close()
 
@@ -423,9 +422,7 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
     probe_runtime: None,
 ) -> None:
     class BackendSnapshots:
-        async def snapshot(
-            self, backend_key: str, *, refresh: bool = False
-        ) -> BackendSnapshot:
+        async def snapshot(self, backend_key: str, *, refresh: bool = False) -> BackendSnapshot:
             del refresh
             return _backend_snapshot(
                 backend_key,
@@ -451,15 +448,11 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
         app.state.conversation = SimpleNamespace(backend_snapshots=BackendSnapshots())
         selected = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body(
-                "hermes", "openai-codex:gpt-5.6-sol", "high"
-            ),
+            json=_employee_configuration_body("hermes", "openai-codex:gpt-5.6-sol", "high"),
         )
         model_changed = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body(
-                "hermes", "openai-codex:gpt-5.5", "high"
-            ),
+            json=_employee_configuration_body("hermes", "openai-codex:gpt-5.5", "high"),
         )
         backend_changed = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
@@ -467,9 +460,7 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
         )
         switched_back = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body(
-                "hermes", "openai-codex:gpt-5.6-sol", "high"
-            ),
+            json=_employee_configuration_body("hermes", "openai-codex:gpt-5.6-sol", "high"),
         )
 
     assert selected.status_code == 200
@@ -543,9 +534,7 @@ def test_compound_patch_changes_all_fields_in_canonical_order_with_one_context_s
         ),
     )
     transaction_statements = [statement.strip() for statement in trace]
-    assert (
-        sum(statement == "BEGIN IMMEDIATE" for statement in transaction_statements) == 1
-    )
+    assert sum(statement == "BEGIN IMMEDIATE" for statement in transaction_statements) == 1
     ticket_updates = [
         statement
         for statement in transaction_statements
@@ -628,9 +617,7 @@ def test_project_selectors_keep_their_existing_success_contract(tmp_path: Path) 
         assert name.json()["project_id"] == "project_vylo"
 
         id_id = _create_ticket(db_path)
-        by_id = client.patch(
-            f"/api/tickets/{id_id}", json={"project_id": "project_vylo"}
-        )
+        by_id = client.patch(f"/api/tickets/{id_id}", json={"project_id": "project_vylo"})
         assert by_id.status_code == 200, by_id.json()
         assert by_id.json()["project"] == "Vylo"
 

@@ -6,6 +6,7 @@ import asyncio
 import sqlite3
 
 from planner.conversation.contracts import ConversationSystem
+from planner.core.contracts import Principal
 from planner.files.lifecycle import (
     purge_quarantined_sprint_item_files,
     quarantine_sprint_item_files,
@@ -32,10 +33,10 @@ async def delete_item(
     conn: sqlite3.Connection,
     item_id: str,
     *,
-    actor: str,
+    principal: Principal,
 ) -> SprintItemDeletion:
     """Stop the supervisor and delete its childless item as one guarded action."""
-    admission.require_direct_actor(actor, "delete_item")
+    admission.require_direct_principal(principal, "delete_item")
     async with supervisor_lifecycle_lock(item_id):
         sprints_data._require_item_can_delete(conn, item_id)
         quarantined = None

@@ -15,7 +15,7 @@ function outgoing(text: string): OutgoingMessage {
   return mintOutgoingMessage({
     content: [{ piece: "text", text }],
     senderLabel: "owner",
-    mode: "run_when_free",
+    mode: "queue",
     sentAtUnixMilliseconds: sentAt
   });
 }
@@ -41,7 +41,7 @@ function senderMessageRecordEvent(
       payload: {
         text: "one",
         sender_label: "owner",
-        mode: "run_when_free",
+        mode: "queue",
         sender_message_id: message.messageId,
         sent_at_unix_milliseconds: message.sentAtUnixMilliseconds
       }
@@ -54,7 +54,7 @@ function senderMessageRecordEvent(
       payload: {
         text: "one",
         sender_label: "owner",
-        mode: "run_when_free",
+        mode: "queue",
         refusal_reason: "backend_did_not_start",
         sender_message_id: message.messageId
       }
@@ -95,12 +95,12 @@ describe("outgoing Conversation messages", () => {
     const first = mintOutgoingMessage({
       content: [{ piece: "text", text: "one" }],
       senderLabel: "owner",
-      mode: "run_when_free"
+      mode: "queue"
     });
     const second = mintOutgoingMessage({
       content: [{ piece: "text", text: "two" }],
       senderLabel: "owner",
-      mode: "run_when_free"
+      mode: "queue"
     });
 
     expect(first.messageId).not.toBe(second.messageId);
@@ -142,7 +142,7 @@ describe("outgoing Conversation messages", () => {
       conversation_id: "conversation-1",
       sequence: 1,
       kind: "prompt",
-      payload: { text: "somebody else's", sender_label: "other", mode: "run_when_free" },
+      payload: { text: "somebody else's", sender_label: "other", mode: "queue" },
       created_at: 1_700_000_000
     } satisfies ConversationEvent;
 

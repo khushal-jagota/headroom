@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,8 +31,10 @@ from planner.cli.record_projection import (
     project_record,
     render_text,
 )
+from planner.core.contracts import PrincipalKind
 from planner.environments.cli import environment as environment_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
+from planner.message_delivery.contracts import MessageDeliveryMode
 from planner.tickets.contracts import AtCap
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
@@ -199,6 +202,12 @@ def _drop_none(d: dict[str, Any]) -> dict[str, Any]:
 
 def _lines(rows: list[Any], fmt: Callable[[Any], str]) -> str:
     return "\n".join(fmt(r) for r in rows) if rows else "(none)"
+
+
+def _feedback_list_line(note: dict[str, Any]) -> str:
+    captured_at = datetime.fromtimestamp(int(note["created_at"])).astimezone()
+    page = note["page_label"] or "No page"
+    return f"{note['id']} · {captured_at.strftime('%Y-%m-%d %H:%M')} · {page} · {note['text']}"
 
 
 def _current_sprint_id(as_json: bool) -> str:
@@ -458,7 +467,49 @@ def main() -> None:
 main.add_command(environment_group)
 
 
+# --- feedback -----------------------------------------------------------------
+
+
+@main.group("feedback")
+def feedback_group() -> None:
+    """Read and use captured feedback notes."""
+
+
+@feedback_group.command("list")
+@json_option
+def feedback_list(as_json: bool) -> None:
+    result = http.send("GET", "/api/feedback", as_json=as_json, request_actor="ordinary")
+    http.emit(
+        result,
+        as_json,
+        _lines(
+            result["open"],
+            _feedback_list_line,
+        ),
+    )
+
+
+@feedback_group.command("use")
+@click.option("--ticket", "ticket_id", required=True, help="Ticket receiving the notes.")
+@click.argument("feedback_ids", nargs=-1, required=True)
+@json_option
+def feedback_use(ticket_id: str, feedback_ids: tuple[str, ...], as_json: bool) -> None:
+    result = http.send(
+        "POST",
+        "/api/feedback/use",
+        as_json=as_json,
+        json_body={"feedback_ids": list(feedback_ids), "ticket_id": ticket_id},
+        request_actor="ordinary",
+    )
+    http.emit(
+        result,
+        as_json,
+        f"{len(result['notes'])} feedback note(s) used on {ticket_id}",
+    )
+
+
 @main.command("send-message")
+@click.option("--owner", is_flag=True, help="Send to Khushal.")
 @click.option("--chief", is_flag=True, help="Send to the Chief of Staff.")
 @click.option("--ticket", "ticket_id", default=None, help="Send to a Ticket worker.")
 @click.option(
@@ -467,7 +518,13 @@ main.add_command(environment_group)
     default=None,
     help="Send to a Sprint Item supervisor.",
 )
-@click.option("--agent", "agent_key", default=None, help="Send to a registered agent.")
+@click.option(
+    "--mode",
+    type=click.Choice([mode.value for mode in MessageDeliveryMode]),
+    default=MessageDeliveryMode.queue.value,
+    show_default=True,
+    help="Queue, steer into the running turn, or interrupt it and send now.",
+)
 @click.option(
     "--message",
     default=None,
@@ -476,10 +533,11 @@ main.add_command(environment_group)
 @click.option("--body-file", default=None, help="Read message text from this file, or -.")
 @json_option
 def send_message(
+    owner: bool,
     chief: bool,
     ticket_id: str | None,
     sprint_item_id: str | None,
-    agent_key: str | None,
+    mode: str,
     message: str | None,
     body_file: str | None,
     as_json: bool,
@@ -491,16 +549,16 @@ def send_message(
     targets = sum(
         1
         for selected in (
+            owner,
             chief,
             ticket_id is not None,
             sprint_item_id is not None,
-            agent_key is not None,
         )
         if selected
     )
     if targets != 1:
         http.fail_validation(
-            "send-message requires exactly one of --chief, --ticket, --sprint-item, or --agent",
+            "send-message requires exactly one of --owner, --chief, --ticket, or --sprint-item",
             as_json,
         )
     if (message is None) == (body_file is None):
@@ -510,20 +568,21 @@ def send_message(
     text = message if message is not None else _read_source(body_file or "", as_json)
     if not text.strip():
         http.fail_validation("empty message", as_json)
-    if chief:
-        target: dict[str, str] = {"type": "chief"}
+    recipient: dict[str, str]
+    if owner:
+        recipient = {"kind": "owner", "id": "owner"}
+    elif chief:
+        recipient = {"kind": "chief", "id": "chief"}
     elif ticket_id is not None:
-        target = {"type": "ticket", "id": ticket_id}
-    elif sprint_item_id is not None:
-        target = {"type": "sprint_item", "id": sprint_item_id}
+        recipient = {"kind": "ticket", "id": ticket_id}
     else:
-        assert agent_key is not None
-        target = {"type": "agent", "id": agent_key}
+        assert sprint_item_id is not None
+        recipient = {"kind": "sprint_item", "id": sprint_item_id}
     data = http.send(
         "POST",
         "/api/messages/send",
         as_json=as_json,
-        json_body={"target": target, "message": text},
+        json_body={"target": recipient, "message": text, "mode": mode},
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"message {data['fate']}")
@@ -1426,6 +1485,13 @@ def ticket_ownership(ticket_id: str, stage: str, mode: str, as_json: bool) -> No
     help="stop or propose.",
 )
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
+@click.option(
+    "--holder-kind",
+    default="owner",
+    type=click.Choice([kind.value for kind in PrincipalKind]),
+    help="Principal kind for the next ceiling holder.",
+)
+@click.option("--holder-id", default=None, help="Principal id for the next ceiling holder.")
 @click.option("--kickoff-title", default=None, help="Edited Kickoff title.")
 @click.option("--kickoff-note-file", default=None, help="Edited Kickoff note, or - for stdin.")
 @json_option
@@ -1434,6 +1500,8 @@ def ticket_approve(
     ceiling: str | None,
     at_cap: str | None,
     edit_file: str | None,
+    holder_kind: str,
+    holder_id: str | None,
     kickoff_title: str | None,
     kickoff_note_file: str | None,
     as_json: bool,
@@ -1460,7 +1528,12 @@ def ticket_approve(
             json_body={"title": kickoff_title},
             request_actor="ordinary",
         )
-    field_payload: dict[str, Any] = {"next_ceiling": ceiling, "at_cap": at_cap}
+    resolved_holder_id = holder_id or holder_kind
+    field_payload: dict[str, Any] = {
+        "next_ceiling": ceiling,
+        "at_cap": at_cap,
+        "next_holder": {"kind": holder_kind, "id": resolved_holder_id},
+    }
     if edit_file is not None:
         field_payload["edited_body"] = _read_source(edit_file, as_json)
     if kickoff_note_file is not None:
@@ -1930,14 +2003,12 @@ def sprint_item_supervisor_history(
 @sprint_item_supervisor.command("message-worker")
 @click.argument("item_id")
 @click.argument("ticket_id")
-@click.option("--conversation-id", required=True, help="Current Worker conversation id.")
 @click.option("--message", default=None, help="Message text.")
 @click.option("--body-file", default=None, help="Read message text from this file, or -.")
 @json_option
 def sprint_item_supervisor_message_worker(
     item_id: str,
     ticket_id: str,
-    conversation_id: str,
     message: str | None,
     body_file: str | None,
     as_json: bool,
@@ -1951,7 +2022,7 @@ def sprint_item_supervisor_message_worker(
         "POST",
         f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/message",
         as_json=as_json,
-        json_body={"conversation_id": conversation_id, "message": text},
+        json_body={"message": text},
     )
     http.emit(data, as_json, f"Worker message {data['fate']}")
 
@@ -2235,6 +2306,13 @@ def sprint_item_supervisor_reset(item_id: str, as_json: bool) -> None:
     help="Behaviour at the next ceiling: stop or propose.",
 )
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
+@click.option(
+    "--holder-kind",
+    default="sprint_item",
+    type=click.Choice([kind.value for kind in PrincipalKind]),
+    help="Principal kind for the next ceiling holder.",
+)
+@click.option("--holder-id", default=None, help="Principal id for the next ceiling holder.")
 @json_option
 def sprint_item_supervisor_approve(
     item_id: str,
@@ -2242,10 +2320,19 @@ def sprint_item_supervisor_approve(
     ceiling: str,
     at_cap: str,
     edit_file: str | None,
+    holder_kind: str,
+    holder_id: str | None,
     as_json: bool,
 ) -> None:
     """Approve one parked proposal for this Sprint Item."""
-    body: dict[str, Any] = {"next_ceiling": ceiling, "at_cap": at_cap}
+    body: dict[str, Any] = {
+        "next_ceiling": ceiling,
+        "at_cap": at_cap,
+        "next_holder": {
+            "kind": holder_kind,
+            "id": holder_id or (item_id if holder_kind == "sprint_item" else holder_kind),
+        },
+    }
     if edit_file is not None:
         body["edited_body"] = _read_source(edit_file, as_json)
     data = http.send(
@@ -2594,13 +2681,53 @@ def worker_propose(
     http.emit(data, as_json, f"proposed on {data['id']}")
 
 
-@worker.command("request-user-help")
+@worker.command("request-help")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
+@click.option("--owner", is_flag=True, help="Ask Khushal for help.")
+@click.option("--chief", is_flag=True, help="Ask the Chief of Staff for help.")
+@click.option("--ticket", "recipient_ticket_id", default=None, help="Ask another Ticket worker.")
+@click.option(
+    "--sprint-item",
+    "recipient_sprint_item_id",
+    default=None,
+    help="Ask a Sprint Item supervisor.",
+)
 @json_option
-def worker_request_user_help(ticket_id: str | None, as_json: bool) -> None:
+def worker_request_help(
+    ticket_id: str | None,
+    owner: bool,
+    chief: bool,
+    recipient_ticket_id: str | None,
+    recipient_sprint_item_id: str | None,
+    as_json: bool,
+) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
-    data = http.send("POST", f"/api/tickets/{tid}/request-user-help", as_json=as_json)
-    http.emit(data, as_json, f"user help requested on {data['id']}")
+    selected = sum(
+        int(value)
+        for value in (
+            owner,
+            chief,
+            recipient_ticket_id is not None,
+            recipient_sprint_item_id is not None,
+        )
+    )
+    if selected > 1:
+        http.fail_validation("request-help accepts at most one recipient", as_json)
+    recipient = None
+    if owner:
+        recipient = {"kind": "owner", "id": "owner"}
+    elif chief:
+        recipient = {"kind": "chief", "id": "chief"}
+    elif recipient_ticket_id is not None:
+        recipient = {"kind": "ticket", "id": recipient_ticket_id}
+    elif recipient_sprint_item_id is not None:
+        recipient = {"kind": "sprint_item", "id": recipient_sprint_item_id}
+    message = read_worker_stdin_body(as_json, "help message")
+    body: dict[str, Any] = {"message": message}
+    if recipient is not None:
+        body["recipient"] = recipient
+    data = http.send("POST", f"/api/tickets/{tid}/request-help", as_json=as_json, json_body=body)
+    http.emit(data, as_json, f"help message {data['fate']}")
 
 
 @worker.command("trouble")

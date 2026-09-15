@@ -129,6 +129,8 @@ def test_agent_loopback_link_opens_the_ticket_server_through_panels(
             f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
         )
         page.click("[data-conversation-input]", timeout=WAIT_MS)
+        assert page.get_by_text("Open the Ticket branch preview", exact=False).count() == 0
+        page.locator("[data-conversation-lens-toggle]").click()
         link = page.locator(
             '[data-conversation-row="agent_message"] a',
             has_text="Open the Ticket branch preview",

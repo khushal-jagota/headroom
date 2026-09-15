@@ -105,7 +105,10 @@ const NO_TURN: OpenTurn = {
  * where it already sits, so opening the fold puts every piece of commentary back between
  * the runs of tool calls it sat between rather than gathered up at the end.
  */
-export function threadItems(rows: readonly TranscriptRow[]): ThreadItem[] {
+export function threadItems(
+  rows: readonly TranscriptRow[],
+  rowIsVisible: (row: TranscriptRow) => boolean = () => true
+): ThreadItem[] {
   const items: ThreadItem[] = [];
   let turn: OpenTurn = { ...NO_TURN };
 
@@ -165,7 +168,9 @@ export function threadItems(rows: readonly TranscriptRow[]): ThreadItem[] {
   }
 
   for (const row of rows) {
+    const visible = rowIsVisible(row);
     if (row.kind === "tool_call") {
+      if (!visible) continue;
       const openAt = turn.openGroupIndex;
       const open = openAt === null ? null : items[openAt];
       if (openAt !== null && open?.kind === "work_group") {
@@ -198,37 +203,40 @@ export function threadItems(rows: readonly TranscriptRow[]): ThreadItem[] {
 
     // Nothing folds as it arrives: a running turn shows everything it has done, and the
     // collapse happens once, when the turn settles.
-    items.push({ kind: "row", key: row.key, row, behindTheFoldOf: null });
+    const rowIndex = visible ? items.length : null;
+    if (visible) items.push({ kind: "row", key: row.key, row, behindTheFoldOf: null });
 
-    if (row.kind === "agent_message" && turn.anchorIndex !== null) {
-      turn.messageIndexes = [...turn.messageIndexes, items.length - 1];
+    if (row.kind === "agent_message" && turn.anchorIndex !== null && rowIndex !== null) {
+      turn.messageIndexes = [...turn.messageIndexes, rowIndex];
     }
 
-    if (row.kind === "prompt" && turn.startedAt === null) {
-      // The prompt that started this turn. A steer's prompt joins one already running,
-      // so it is not allowed to reset when the turn began, nor to open a second head.
+    if (row.kind === "prompt" && row.mode !== "steer" && turn.startedAt === null) {
+      // An ordinary prompt starts a turn. A steer receipt joins an existing turn, so it
+      // cannot reset that turn or open a new head when its provider answer arrives late.
       turn = {
         turnKey: `turn:${row.key}`,
         startedAt: row.createdAt,
         startedAtUnixMilliseconds: row.sentAtUnixMilliseconds,
-        anchorIndex: items.length,
+        anchorIndex: visible ? items.length : null,
         groupIndexes: [],
         openGroupIndex: null,
         messageIndexes: []
       };
-      items.push({
-        kind: "turn",
-        key: `turn:${row.key}`,
-        turnKey: `turn:${row.key}`,
-        settled: false,
-        stopped: false,
-        startedAtUnixMilliseconds: row.sentAtUnixMilliseconds,
-        ending: null,
-        isLatest: false,
-        durationSeconds: null,
-        toolCallCount: 0,
-        foldedMessageCount: 0
-      });
+      if (visible) {
+        items.push({
+          kind: "turn",
+          key: `turn:${row.key}`,
+          turnKey: `turn:${row.key}`,
+          settled: false,
+          stopped: false,
+          startedAtUnixMilliseconds: row.sentAtUnixMilliseconds,
+          ending: null,
+          isLatest: false,
+          durationSeconds: null,
+          toolCallCount: 0,
+          foldedMessageCount: 0
+        });
+      }
       continue;
     }
 

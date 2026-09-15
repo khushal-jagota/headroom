@@ -8,11 +8,12 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import cast
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.notifications import attention as attention_data
 from planner.notifications.contracts import (
     NOTIFICATION_SUBJECTS,
     NOTIFICATION_TYPE_BY_ID,
@@ -20,13 +21,13 @@ from planner.notifications.contracts import (
     TICKET_NOTIFICATION_SUBJECT_KEY,
     NotificationFact,
     NotificationIntent,
-    NotificationSubjectKind,
     PendingDelivery,
     PushSubscription,
     WebPushIdentity,
     notification_preference_is_valid,
 )
 from planner.notifications.logic.policy import decide_notification
+from planner.work_attention import ticket_assignment_from_values
 from planner.worker_settings.service import CHIEF_LABEL, CHIEF_SETTINGS_KEY
 
 
@@ -177,14 +178,14 @@ def _insert_fact(
     *,
     fact_id: str,
     notification_type: str,
-    subject_kind: NotificationSubjectKind,
-    subject_id: str,
+    subject: Principal,
     subject_label: str,
     source_kind: str,
     source_id: str,
     source_sequence: int,
     occurred_at: int,
 ) -> None:
+    stored_kind, stored_id = _stored_notification_subject(subject)
     payload = json.dumps(
         {"subject_label": subject_label},
         sort_keys=True,
@@ -199,10 +200,10 @@ def _insert_fact(
         (
             fact_id,
             notification_type,
-            subject_kind,
-            subject_id if subject_kind == "ticket" else None,
-            subject_id if subject_kind == "agent" else None,
-            subject_id if subject_kind == "sprint_item" else None,
+            stored_kind,
+            stored_id if stored_kind == "ticket" else None,
+            stored_id if stored_kind == "agent" else None,
+            stored_id if stored_kind == "sprint_item" else None,
             source_kind,
             source_id,
             source_sequence,
@@ -210,6 +211,28 @@ def _insert_fact(
             payload,
         ),
     )
+
+
+def _stored_notification_subject(subject: Principal) -> tuple[str, str]:
+    """Translate a Principal to the unchanged notification table columns."""
+    if subject.kind is PrincipalKind.ticket:
+        return "ticket", subject.id
+    if subject.kind is PrincipalKind.sprint_item:
+        return "sprint_item", subject.id
+    if subject.kind is PrincipalKind.chief:
+        return "agent", CHIEF_SETTINGS_KEY
+    raise ValueError(f"unsupported notification subject: {subject.kind.value}")
+
+
+def _principal_from_stored_subject(subject_kind: str, subject_id: str) -> Principal:
+    """Translate unchanged notification rows to the shared identity contract."""
+    if subject_kind == "ticket":
+        return Principal(PrincipalKind.ticket, subject_id)
+    if subject_kind == "sprint_item":
+        return Principal(PrincipalKind.sprint_item, subject_id)
+    if subject_kind == "agent" and subject_id == CHIEF_SETTINGS_KEY:
+        return CHIEF_PRINCIPAL
+    raise ValueError(f"unknown notification subject: {subject_kind}/{subject_id}")
 
 
 def _preference_subject_key(fact: NotificationFact) -> str:
@@ -220,19 +243,24 @@ def _preference_subject_key(fact: NotificationFact) -> str:
     be a screen of rows that die. An agent is its own subject, because there is one of
     each.
     """
-    if fact.subject_kind == "ticket":
+    if fact.subject.kind is PrincipalKind.ticket:
         return TICKET_NOTIFICATION_SUBJECT_KEY
-    if fact.subject_kind == "sprint_item":
+    if fact.subject.kind is PrincipalKind.sprint_item:
         return SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY
-    return fact.subject_id
+    if fact.subject.kind is PrincipalKind.chief:
+        return CHIEF_SETTINGS_KEY
+    raise ValueError(f"unsupported notification subject: {fact.subject.kind.value}")
 
 
-def _ticket_fact_type(status: str) -> str | None:
-    return {
-        "awaiting_approval": "ticket_needs_approval",
-        "needs_user": "needs_input",
-        "errored": "worker_failed",
-    }.get(status)
+def _owner_holds_ticket_ceiling(raw_holder: str) -> bool:
+    stored = json.loads(raw_holder)
+    if not isinstance(stored, dict):
+        return False
+    try:
+        holder = Principal(PrincipalKind(str(stored["kind"])), str(stored["id"]))
+    except (KeyError, TypeError, ValueError):
+        return False
+    return holder == OWNER_PRINCIPAL
 
 
 def _agent_label(agent_key: str) -> str:
@@ -241,111 +269,145 @@ def _agent_label(agent_key: str) -> str:
     return agent_key.replace("_", " ").title()
 
 
+def _project_attention_facts(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "DELETE FROM notification_attention_edges WHERE "
+        "(subject_kind = 'ticket' AND NOT EXISTS ("
+        "SELECT 1 FROM tickets WHERE tickets.id = notification_attention_edges.subject_id)) "
+        "OR (subject_kind = 'sprint_item' AND NOT EXISTS ("
+        "SELECT 1 FROM sprint_items "
+        "WHERE sprint_items.id = notification_attention_edges.subject_id)) "
+        "OR (subject_kind = 'agent' AND NOT EXISTS ("
+        "SELECT 1 FROM agents WHERE agents.agent_key = notification_attention_edges.subject_id))"
+    )
+    conn.execute(
+        "DELETE FROM notification_attention_state WHERE "
+        "(subject_kind = 'ticket' AND NOT EXISTS ("
+        "SELECT 1 FROM tickets WHERE tickets.id = notification_attention_state.subject_id)) "
+        "OR (subject_kind = 'sprint_item' AND NOT EXISTS ("
+        "SELECT 1 FROM sprint_items "
+        "WHERE sprint_items.id = notification_attention_state.subject_id)) "
+        "OR (subject_kind = 'agent' AND NOT EXISTS ("
+        "SELECT 1 FROM agents WHERE agents.agent_key = notification_attention_state.subject_id))"
+    )
+    conversations = attention_data.conversation_attention(conn)
+    desired: dict[tuple[str, str, str], tuple[bool, Principal, str, int]] = {}
+    ticket_rows = conn.execute(
+        "SELECT id, title, stage, worker_type, ticket_status, pending_proposal, "
+        "ceiling_holder, stage_ownership_overrides, default_stage_ownership_mode, "
+        "conversation_id, updated_at, ticket_status_changed_at, "
+        "EXISTS (SELECT 1 FROM proposal_delivery_failures failure "
+        "WHERE failure.ticket_id=tickets.id AND failure.resolved_at IS NULL) "
+        "AS proposal_surfaced_to_owner FROM tickets"
+    ).fetchall()
+    for row in ticket_rows:
+        ticket_id = str(row["id"])
+        subject = Principal(PrincipalKind.ticket, ticket_id)
+        label = str(row["title"])
+        conversation = conversations.get(str(row["conversation_id"]), (False, False, 0, 0))
+        owner_holds = _owner_holds_ticket_ceiling(str(row["ceiling_holder"]))
+        flags = {
+            "awaiting_reply": conversation[0],
+            "awaiting_approval": (
+                str(row["ticket_status"]) == "awaiting_approval"
+                and row["pending_proposal"] is not None
+                and (owner_holds or bool(row["proposal_surfaced_to_owner"]))
+            ),
+            "assigned": ticket_assignment_from_values(
+                stage=str(row["stage"]),
+                worker_type=str(row["worker_type"]),
+                stage_ownership_overrides=str(row["stage_ownership_overrides"]),
+                default_stage_ownership_mode=(
+                    str(row["default_stage_ownership_mode"])
+                    if row["default_stage_ownership_mode"] is not None
+                    else None
+                ),
+                owner_holds_ceiling=owner_holds,
+            ),
+            "errored": str(row["ticket_status"]) == "errored" or conversation[1],
+        }
+        for notification_type, active in flags.items():
+            occurred_at = (
+                conversation[3]
+                if notification_type in {"awaiting_reply", "errored"} and conversation[3]
+                else int(row["ticket_status_changed_at"])
+                if notification_type == "awaiting_approval"
+                else int(row["updated_at"])
+            )
+            desired[("ticket", ticket_id, notification_type)] = (
+                active,
+                subject,
+                label,
+                occurred_at,
+            )
+
+    agent_rows = conn.execute(
+        "SELECT a.agent_key, a.conversation_id, i.id AS item_id, i.title AS item_title "
+        "FROM agents a LEFT JOIN sprint_items i ON i.supervisor_agent_key = a.agent_key "
+        "WHERE a.agent_key = ? OR i.id IS NOT NULL",
+        (CHIEF_SETTINGS_KEY,),
+    ).fetchall()
+    for row in agent_rows:
+        is_item = row["item_id"] is not None
+        subject_kind = "sprint_item" if is_item else "agent"
+        subject_id = str(row["item_id"] if is_item else row["agent_key"])
+        subject = _principal_from_stored_subject(subject_kind, subject_id)
+        label = str(row["item_title"]) if is_item else _agent_label(subject_id)
+        conversation = conversations.get(str(row["conversation_id"]), (False, False, 0, 0))
+        for notification_type, active in (
+            ("awaiting_reply", conversation[0]),
+            ("errored", conversation[1]),
+        ):
+            desired[(subject_kind, subject_id, notification_type)] = (
+                active,
+                subject,
+                label,
+                conversation[3],
+            )
+
+    attention_data.reconcile_attention(
+        conn,
+        {key: (active, occurred_at) for key, (active, _, _, occurred_at) in desired.items()},
+    )
+    for row in conn.execute(
+        "SELECT subject_kind, subject_id, notification_type, generation, occurred_at "
+        "FROM notification_attention_edges WHERE projected=0 "
+        "ORDER BY occurred_at, subject_kind, subject_id, "
+        "notification_type, generation"
+    ):
+        key = (
+            str(row["subject_kind"]),
+            str(row["subject_id"]),
+            str(row["notification_type"]),
+        )
+        current = desired.get(key)
+        if current is None:
+            continue
+        _, subject, label, _ = current
+        generation = int(row["generation"])
+        _insert_fact(
+            conn,
+            fact_id=f"attention:{key[0]}:{key[1]}:{key[2]}:{generation}",
+            notification_type=key[2],
+            subject=subject,
+            subject_label=label,
+            source_kind="ticket" if subject.kind is PrincipalKind.ticket else "conversation",
+            source_id=f"{key[0]}:{key[1]}:{key[2]}",
+            source_sequence=generation,
+            occurred_at=int(row["occurred_at"]),
+        )
+        conn.execute(
+            "UPDATE notification_attention_edges SET projected=1 WHERE subject_kind=? "
+            "AND subject_id=? AND notification_type=? AND generation=?",
+            (*key, generation),
+        )
+
+
 def project_facts(conn: sqlite3.Connection) -> int:
-    """Advance source cursors and materialize new normalized facts once."""
+    """Materialize one fact for each false-to-true attention transition."""
     inserted_before = conn.total_changes
     with _txn(conn):
-        ticket_rows = conn.execute(
-            "SELECT t.id, t.title, t.ticket_status, t.ticket_status_revision, "
-            "t.ticket_status_changed_at, c.sequence AS projected_sequence "
-            "FROM tickets t LEFT JOIN notification_projection_cursors c "
-            "ON c.source_kind = 'ticket' AND c.source_id = t.id "
-            "WHERE c.source_id IS NULL OR t.ticket_status_revision > c.sequence"
-        ).fetchall()
-        for row in ticket_rows:
-            revision = int(row["ticket_status_revision"])
-            notification_type = _ticket_fact_type(str(row["ticket_status"]))
-            if notification_type is not None and revision > 0:
-                _insert_fact(
-                    conn,
-                    fact_id=f"ticket:{row['id']}:{revision}",
-                    notification_type=notification_type,
-                    subject_kind="ticket",
-                    subject_id=str(row["id"]),
-                    subject_label=str(row["title"]),
-                    source_kind="ticket",
-                    source_id=str(row["id"]),
-                    source_sequence=revision,
-                    occurred_at=int(row["ticket_status_changed_at"]),
-                )
-            conn.execute(
-                "INSERT INTO notification_projection_cursors(source_kind, source_id, sequence) "
-                "VALUES ('ticket', ?, ?) ON CONFLICT(source_kind, source_id) DO UPDATE SET "
-                "sequence = excluded.sequence",
-                (str(row["id"]), revision),
-            )
-
-        # A Sprint Item supervisor is an agent, but the reader knows it as its Item: the
-        # push says the Item's title and opens the Item. So its conversation's facts take
-        # the Item as their subject, not the agent.
-        conversations = conn.execute(
-            "SELECT c.conversation_id, c.latest_sequence, "
-            "CASE WHEN t.id IS NOT NULL THEN 'ticket' "
-            "WHEN i.id IS NOT NULL THEN 'sprint_item' ELSE 'agent' END AS subject_kind, "
-            "COALESCE(t.id, i.id, a.agent_key) AS subject_id, "
-            "COALESCE(t.title, i.title) AS subject_title, "
-            "pc.sequence AS projected_sequence "
-            "FROM conversations c "
-            "LEFT JOIN tickets t ON t.conversation_id = c.conversation_id "
-            "LEFT JOIN agents a ON a.conversation_id = c.conversation_id "
-            "LEFT JOIN sprint_items i ON i.supervisor_agent_key = a.agent_key "
-            "LEFT JOIN notification_projection_cursors pc "
-            "ON pc.source_kind = 'conversation' AND pc.source_id = c.conversation_id "
-            "WHERE (t.id IS NOT NULL OR a.agent_key IS NOT NULL) "
-            "AND (pc.source_id IS NULL OR c.latest_sequence > pc.sequence)"
-        ).fetchall()
-        for conversation in conversations:
-            conversation_id = str(conversation["conversation_id"])
-            subject_kind = cast(NotificationSubjectKind, str(conversation["subject_kind"]))
-            subject_id = str(conversation["subject_id"])
-            subject_label = (
-                str(conversation["subject_title"])
-                if subject_kind in {"ticket", "sprint_item"}
-                else _agent_label(subject_id)
-            )
-            after = (
-                int(conversation["projected_sequence"])
-                if conversation["projected_sequence"] is not None
-                else 0
-            )
-            events = conn.execute(
-                "SELECT sequence, kind, payload, created_at FROM conversation_events "
-                "WHERE conversation_id = ? AND sequence > ? ORDER BY sequence",
-                (conversation_id, after),
-            ).fetchall()
-            for event in events:
-                kind = str(event["kind"])
-                payload = json.loads(str(event["payload"]))
-                event_notification_type: str | None = None
-                if kind == "permission_asked":
-                    event_notification_type = "permission_requested"
-                elif kind == "user_input_requested":
-                    event_notification_type = "needs_input"
-                elif kind == "turn_ended" and payload.get("ending") == "completed":
-                    event_notification_type = "worker_completed"
-                elif kind == "turn_ended" and payload.get("ending") == "failed":
-                    event_notification_type = "worker_failed"
-                if event_notification_type is not None:
-                    sequence = int(event["sequence"])
-                    _insert_fact(
-                        conn,
-                        fact_id=f"conversation:{conversation_id}:{sequence}",
-                        notification_type=event_notification_type,
-                        subject_kind=subject_kind,
-                        subject_id=subject_id,
-                        subject_label=subject_label,
-                        source_kind="conversation",
-                        source_id=conversation_id,
-                        source_sequence=sequence,
-                        occurred_at=int(event["created_at"]),
-                    )
-            conn.execute(
-                "INSERT INTO notification_projection_cursors(source_kind, source_id, sequence) "
-                "VALUES ('conversation', ?, ?) "
-                "ON CONFLICT(source_kind, source_id) DO UPDATE SET sequence = excluded.sequence",
-                (conversation_id, int(conversation["latest_sequence"])),
-            )
-
+        _project_attention_facts(conn)
     return conn.total_changes - inserted_before
 
 
@@ -365,11 +427,25 @@ def apply_policy(conn: sqlite3.Connection, now: int) -> int:
         subscriptions = active_subscription_ids(conn)
         for row in rows:
             payload = json.loads(str(row["payload"]))
+            fact_id = str(row["fact_id"])
+            try:
+                subject = _principal_from_stored_subject(
+                    str(row["subject_kind"]), str(row["subject_id"])
+                )
+            except ValueError:
+                # Old arbitrary-agent facts have no Principal in the closed vocabulary.
+                # They never matched a saved preference, so preserve that suppression.
+                conn.execute(
+                    "INSERT INTO notification_decisions(fact_id, outcome, decided_at) "
+                    "VALUES (?, 'suppress', ?)",
+                    (fact_id, now),
+                )
+                decisions += 1
+                continue
             fact = NotificationFact(
-                fact_id=str(row["fact_id"]),
+                fact_id=fact_id,
                 notification_type=str(row["notification_type"]),
-                subject_kind=cast(NotificationSubjectKind, str(row["subject_kind"])),
-                subject_id=str(row["subject_id"]),
+                subject=subject,
                 # Facts copied by notification_subjects retain their original payload
                 # so an undecided pre-upgrade fact remains usable without rewriting history.
                 subject_label=str(

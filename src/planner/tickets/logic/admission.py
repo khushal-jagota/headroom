@@ -3,47 +3,48 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Final
 
-from planner.core.contracts import ErrorCode, PlannerError
+from planner.core.contracts import (
+    ErrorCode,
+    PlannerError,
+    Principal,
+    PrincipalKind,
+    principal_legacy_actor,
+)
 from planner.tickets.contracts import AtCap
 from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkerTypeDefinition
 
-_LEGACY_DIRECT_ACTOR: Final[str] = "human"
-DIRECT_ACTORS: Final[frozenset[str]] = frozenset({"unattributed", "chief", _LEGACY_DIRECT_ACTOR})
-SPRINT_ITEM_SUPERVISOR_ACTOR: Final[str] = "sprint_item_supervisor"
 
-
-def is_direct_actor(actor: str) -> bool:
-    return actor in DIRECT_ACTORS
-
-
-def require_direct_actor(actor: str, action: str) -> None:
-    if not is_direct_actor(actor):
+def require_direct_principal(principal: Principal, action: str) -> None:
+    if principal.kind not in {PrincipalKind.owner, PrincipalKind.chief}:
         raise PlannerError(
             ErrorCode.agent_forbidden,
             f"{action} is a direct-only action",
-            {"action": action, "actor": actor},
+            {"action": action, "actor": principal_legacy_actor(principal)},
         )
 
 
-def require_worker_actor(actor: str, action: str) -> None:
-    """Require an attributed non-Chief Worker identity for Worker-only writes."""
-    if is_direct_actor(actor):
+def require_ticket_principal(principal: Principal, action: str) -> None:
+    """Require a Ticket identity for Worker-only writes."""
+    if principal.kind is not PrincipalKind.ticket:
         raise PlannerError(
             ErrorCode.agent_forbidden,
             f"{action} is only available to a Worker",
-            {"action": action, "actor": actor},
+            {"action": action, "actor": principal_legacy_actor(principal)},
         )
 
 
-def require_direct_or_supervisor_actor(actor: str, action: str) -> None:
-    if not is_direct_actor(actor) and actor != SPRINT_ITEM_SUPERVISOR_ACTOR:
+def require_direct_or_supervisor_principal(principal: Principal, action: str) -> None:
+    if principal.kind not in {
+        PrincipalKind.owner,
+        PrincipalKind.chief,
+        PrincipalKind.sprint_item,
+    }:
         raise PlannerError(
             ErrorCode.agent_forbidden,
             f"{action} requires a direct user or Sprint Item supervisor",
-            {"action": action, "actor": actor},
+            {"action": action, "actor": principal_legacy_actor(principal)},
         )
 
 

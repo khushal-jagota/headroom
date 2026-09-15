@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import partial
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -51,11 +52,20 @@ from planner.core.authctx import (
 )
 from planner.core.clock import Clock
 from planner.core.config import Config
-from planner.core.contracts import JsonDict, LinkKind, Priority
+from planner.core.contracts import (
+    CHIEF_PRINCIPAL,
+    JsonDict,
+    LinkKind,
+    Principal,
+    PrincipalKind,
+    Priority,
+)
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
+from planner.message_delivery import service as message_delivery_service
+from planner.message_delivery.contracts import MessageDeliveryResult, MessageRecordedToOwner
 from planner.projects import data as projects_data
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import (
@@ -89,6 +99,7 @@ from planner.tickets.contracts import (
     TicketStatus,
     ValueEditBody,
 )
+from planner.work_attention import add_work_attention
 from planner.worker_context.contracts import WorkerContextService
 from planner.worker_settings import service as worker_settings_service
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
@@ -491,7 +502,52 @@ def _marshal_accept(raw: JsonDict) -> AcceptBody:
         edited_body=body_opt_str(raw, "edited_body"),
         next_ceiling=body_opt_str(raw, "next_ceiling"),
         at_cap=body_opt_str(raw, "at_cap"),
+        next_holder=raw.get("next_holder"),
     )
+
+
+def _parse_principal(raw: object, field: str) -> Principal | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) != {"kind", "id"}:
+        raise PlannerError(
+            ErrorCode.validation,
+            f"{field} must be a principal object with kind and id",
+            {field: raw},
+        )
+    kind_raw = raw.get("kind")
+    principal_id = raw.get("id")
+    if not isinstance(kind_raw, str):
+        raise PlannerError(
+            ErrorCode.validation,
+            f"{field} kind must be owner, chief, sprint_item, or ticket",
+            {field: raw},
+        )
+    try:
+        kind = PrincipalKind(kind_raw)
+    except (TypeError, ValueError):
+        raise PlannerError(
+            ErrorCode.validation,
+            f"{field} kind must be owner, chief, sprint_item, or ticket",
+            {field: raw},
+        ) from None
+    if not isinstance(principal_id, str):
+        raise PlannerError(ErrorCode.validation, f"{field} id must be text", {field: raw})
+    try:
+        return Principal(kind, principal_id)
+    except ValueError as exc:
+        raise PlannerError(ErrorCode.validation, str(exc), {field: raw}) from exc
+
+
+def _parse_required_principal(raw: object, field: str) -> Principal:
+    principal = _parse_principal(raw, field)
+    if principal is None:
+        raise PlannerError(
+            ErrorCode.scope_missing,
+            f"approval requires {field}",
+            {"missing": [field]},
+        )
+    return principal
 
 
 # --- scope marshallers ---------------------------------------------------------
@@ -545,7 +601,7 @@ async def create_ticket(
     ticket = tickets_actions.create_ticket(
         conn,
         title=body["title"],
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         kickoff_note=body["kickoff_note"],
@@ -596,7 +652,7 @@ async def create_ticket_from_external_work(
         target_stage=target_stage,
         provided_values=_external_values(raw, body["kickoff_note"], worker_type_definition),
         recap=body.get("recap"),
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         project_id=project.id if project is not None else None,
@@ -638,7 +694,7 @@ async def reconcile_ticket_from_external_work(
         target_stage=target_stage,
         provided_values=_external_values(raw, body["kickoff_note"], worker_type_definition),
         recap=body.get("recap"),
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -649,6 +705,8 @@ async def list_tickets(
     conn: DbConn,
     cfg: Cfg,
     clk: Clk,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
     stage: str | None = None,
     project: str | None = None,
     project_id: str | None = None,
@@ -663,17 +721,17 @@ async def list_tickets(
     )
     # `day` ('today' | ISO) scopes the list to one day's board via the day_tickets join.
     day_id = resolve_day_id(day, clk.now(), cfg.boundary_hour) if day is not None else None
-    return {
-        "tickets": tickets_views.list_tickets(
-            conn,
-            clk.now_unix(),
-            stage=stage,
-            project_id=resolved_project.id if resolved_project is not None else None,
-            sprint_id=sprint_id,
-            sprint_item_id=sprint_item_id,
-            day_id=day_id,
-        )
-    }
+    rows = tickets_views.list_tickets(
+        conn,
+        clk.now_unix(),
+        stage=stage,
+        project_id=resolved_project.id if resolved_project is not None else None,
+        sprint_id=sprint_id,
+        sprint_item_id=sprint_item_id,
+        day_id=day_id,
+    )
+    await add_work_attention(conn, conversations, conversation_record, tickets=rows)
+    return {"tickets": rows}
 
 
 @router.get("/ticket-summaries")
@@ -681,6 +739,8 @@ async def list_ticket_summaries(
     conn: DbConn,
     cfg: Cfg,
     clk: Clk,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
     stage: Annotated[list[str] | None, Query()] = None,
     exclude_stage: Annotated[list[str] | None, Query()] = None,
     ticket_status: Annotated[list[str] | None, Query()] = None,
@@ -739,6 +799,7 @@ async def list_ticket_summaries(
         sprint_item_id=sprint_item_id,
         day_id=day_id,
     )
+    await add_work_attention(conn, conversations, conversation_record, tickets=page.rows)
     return page.response("tickets")
 
 
@@ -919,41 +980,17 @@ async def get_worker_self_ticket(
 
 
 @router.get("/tickets/{ticket_id}")
-async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk, config: Cfg) -> JsonDict:
-    return _ticket_detail_with_worker_settings(conn, ticket_id, clk.now_unix(), config)
-
-
-@router.post("/tickets/{ticket_id}/human-reply")
-async def record_human_reply(
+async def get_ticket(
     ticket_id: str,
     conn: DbConn,
-    ctx: Ctx,
     clk: Clk,
+    config: Cfg,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
 ) -> JsonDict:
-    """Record that a person has replied to this Ticket's worker.
-
-    A Ticket parked on a proposal is waiting for its owner. Replying to the worker is an
-    answer of a kind — the proposal is being discussed rather than approved — so the
-    Ticket moves to paired. Every other status is left exactly as it is. Which ones move
-    is the writer's rule and it stays there: this route reports the reply for every
-    status and lets the writer decide, because a caller that decides for a canonical
-    writer is one wrong caller away from a bad status.
-
-    The reply is reported by the screen a person typed on, after the conversation
-    accepted the message, because a reply that reached nothing is not a reply. That
-    screen is the one place that knows both halves — it holds a Ticket and the
-    conversation the Ticket names. The conversation system is told nothing about Tickets
-    and does not need to be.
-
-    Only a person can say this happened. The automatic loop sends into the same
-    conversation and its prompts are not replies, so this is a direct-write door and an
-    agent-claim request is refused at it rather than by convention.
-    """
-    require_direct_write(ctx)
-    now = clk.now_unix()
-    return tickets_views.ticket_json(
-        tickets_data.enter_paired_on_human_reply(conn, ticket_id, now=now), now
-    )
+    detail = _ticket_detail_with_worker_settings(conn, ticket_id, clk.now_unix(), config)
+    await add_work_attention(conn, conversations, conversation_record, tickets=(detail,))
+    return detail
 
 
 @router.put("/tickets/{ticket_id}/employee-configuration")
@@ -1017,7 +1054,7 @@ async def delete_ticket(
     deleted = tickets_data.delete_ticket(
         conn,
         ticket_id,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=clk.now_unix(),
         even_while_running=even_while_running,
         supervisor_sprint_item_id=supervisor_sprint_item_id,
@@ -1078,7 +1115,7 @@ async def patch_ticket(
         ticket_id,
         edit=edit,
         title_max_chars=TITLE_MAX_CHARS,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -1092,20 +1129,25 @@ async def propose_current_field(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
+    if ctx.principal != Principal(PrincipalKind.ticket, ticket_id):
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            "only the Ticket's own Worker can file its proposal",
+            {"ticket_id": ticket_id},
+        )
     body = ProposeWithRecapBody(
         body=body_str(raw, "body"),
         recap=body_str(raw, "recap"),
     )
-    now = clk.now_unix()
-    ticket = tickets_data.file_current_proposal_with_recap(
+    ticket = tickets_actions.file_current_proposal(
         conn,
         ticket_id,
         body=body["body"],
         recap=body["recap"],
-        actor=ctx.actor,
-        now=now,
+        ctx=ctx,
+        clock=clk,
     )
-    return tickets_views.ticket_json(ticket, now)
+    return tickets_views.ticket_json(ticket, clk.now_unix())
 
 
 @router.post("/tickets/{ticket_id}/accept/{field}")
@@ -1118,7 +1160,6 @@ async def accept_field(
     clk: Clk,
 ) -> JsonDict:
     body = _marshal_accept(raw)
-    require_direct_write(ctx)
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
@@ -1128,11 +1169,12 @@ async def accept_field(
         conn,
         ticket_id,
         field=field,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
         edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
         at_cap=at_cap,
+        next_holder=_parse_required_principal(body["next_holder"], "next_holder"),
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1145,19 +1187,16 @@ async def return_ticket_for_revision(
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
-    worker_context: WorkerContext,
 ) -> JsonDict:
     body = RevisionMessageBody(message=body_str(raw, "message"))
-    require_direct_write(ctx)
     now = clk.now_unix()
     ticket = await tickets_actions.return_ticket_for_revision(
         conversations,
-        worker_context,
         conn,
         ticket_id,
         message=body["message"],
-        actor=ctx.actor,
-        now=now,
+        ctx=ctx,
+        clock=clk,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1173,25 +1212,9 @@ def _what_this_message_runs_under(body: OwnerSendBody) -> ConversationStartOverr
     )
 
 
-def _conversation_the_files_belong_to(
-    body: OwnerSendBody, owner_is_in: str | None, created_conversation_id: str
-) -> str:
-    """Which conversation's folder this message's files are kept in.
-
-    A file lives in the folder of the conversation whose message names it, and it is kept
-    before the send that settles which conversation that is. So the answer here has to be
-    the one the send will reach: the conversation the sender named, else the one its owner
-    is already in — a sender that has none joins the owner's rather than making a second —
-    else the conversation this message is about to bring into being.
-
-    Guessing wrong is not a broken row, it is bytes nobody can reach: a message can only
-    ever name a file kept for the conversation it belongs to, so a picture filed under the
-    wrong one is gone to the browser and to the backends that read it as they send.
-    """
-    return body.conversation_id or owner_is_in or created_conversation_id
-
-
-def _delivered_message_json(delivered: conversation_start.DeliveredMessage) -> JsonDict:
+def _delivered_message_json(
+    delivered: conversation_start.DeliveredMessage | MessageDeliveryResult,
+) -> JsonDict:
     """The fate, and which conversation it happened in.
 
     The id is null when a message that was to make a conversation did not land, because
@@ -1242,6 +1265,7 @@ async def send_to_chief_conversation(
     body: OwnerSendBody,
     conn: DbConn,
     ctx: Ctx,
+    clk: Clk,
     conversations: Conversations,
     message_files: MessageFiles,
 ) -> JsonDict:
@@ -1258,24 +1282,16 @@ async def send_to_chief_conversation(
     require_direct_write(ctx)
     created_conversation_id = conversation_start.new_conversation_id()
     runs_under = _what_this_message_runs_under(body)
-    delivered = await conversation_start.send_to_agent_conversation(
+    delivered = await message_delivery_service.send_message(
         conversations,
         conn,
-        CHIEF_SETTINGS_KEY,
-        await conversation_message_content(
-            message_files,
-            _conversation_the_files_belong_to(
-                body,
-                conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY),
-                created_conversation_id,
-            ),
-            body.content,
-        ),
-        conversation_start.agent_resolve(conn, runs_under),
+        clk,
+        ctx,
+        CHIEF_PRINCIPAL,
+        partial(conversation_message_content, message_files, sent=body.content),
         conversation_id=body.conversation_id,
         created_conversation_id=created_conversation_id,
         runs_under=runs_under,
-        sender_label=body.sender_label,
         mode=body.mode,
         sender_message_id=body.sender_message_id,
         sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
@@ -1329,27 +1345,19 @@ async def send_to_ticket_conversation(
     """
     require_direct_write(ctx)
     created_conversation_id = conversation_start.new_conversation_id()
-    delivered = await conversation_start.send_to_ticket_conversation(
+    delivered = await message_delivery_service.send_message(
         conversations,
         conn,
-        ticket_id,
-        await conversation_message_content(
-            message_files,
-            _conversation_the_files_belong_to(
-                body,
-                tickets_data.read_ticket(conn, ticket_id).conversation_id,
-                created_conversation_id,
-            ),
-            body.content,
-        ),
+        clk,
+        ctx,
+        Principal(PrincipalKind.ticket, ticket_id),
+        partial(conversation_message_content, message_files, sent=body.content),
         conversation_id=body.conversation_id,
         created_conversation_id=created_conversation_id,
         runs_under=_what_this_message_runs_under(body),
-        sender_label=body.sender_label,
         mode=body.mode,
         sender_message_id=body.sender_message_id,
         sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
-        now=clk.now_unix(),
     )
     return _delivered_message_json(delivered)
 
@@ -1381,7 +1389,7 @@ async def put_guidance(
 ) -> JsonDict:
     body = _marshal_guidance(raw)
     ticket = tickets_data.replace_guidance(
-        conn, ticket_id, body=body["body"], actor=ctx.actor, now=clk.now_unix()
+        conn, ticket_id, body=body["body"], principal=ctx.principal, now=clk.now_unix()
     )
     return tickets_views.ticket_json(ticket, clk.now_unix())
 
@@ -1392,7 +1400,7 @@ async def append_guidance(
 ) -> JsonDict:
     body = _marshal_guidance(raw)
     ticket = tickets_data.append_guidance(
-        conn, ticket_id, body=body["body"], actor=ctx.actor, now=clk.now_unix()
+        conn, ticket_id, body=body["body"], principal=ctx.principal, now=clk.now_unix()
     )
     return tickets_views.ticket_json(ticket, clk.now_unix())
 
@@ -1403,7 +1411,9 @@ async def put_recap(
 ) -> JsonDict:
     body = RecapBody(body=body_str(raw, "body"))
     now = clk.now_unix()
-    ticket = tickets_data.write_recap(conn, ticket_id, body=body["body"], actor=ctx.actor, now=now)
+    ticket = tickets_data.write_recap(
+        conn, ticket_id, body=body["body"], principal=ctx.principal, now=now
+    )
     return tickets_views.ticket_json(ticket, now)
 
 
@@ -1414,7 +1424,12 @@ async def edit_pending_proposal(
     body = PendingProposalEditBody(field=body_str(raw, "field"), body=body_str(raw, "body"))
     now = clk.now_unix()
     ticket = tickets_data.edit_pending_proposal(
-        conn, ticket_id, field=body["field"], new_body=body["body"], actor=ctx.actor, now=now
+        conn,
+        ticket_id,
+        field=body["field"],
+        new_body=body["body"],
+        principal=ctx.principal,
+        now=now,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1437,7 +1452,7 @@ async def put_value(
         ticket_id,
         field=field,
         new_body=body["body"],
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -1478,7 +1493,7 @@ async def scope_ticket(
         ticket_id,
         ceiling=ceiling_raw,
         at_cap=at_cap,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -1496,7 +1511,7 @@ async def drop_ticket(
     ticket = tickets_data.drop_ticket(
         conn,
         ticket_id,
-        actor=ctx.actor,
+        principal=ctx.principal,
         now=now,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -1536,21 +1551,42 @@ async def release_ticket(
     return tickets_views.ticket_json(ticket, now)
 
 
-@router.post("/tickets/{ticket_id}/request-user-help")
-async def request_user_help(
+@router.post("/tickets/{ticket_id}/request-help")
+async def request_help(
     ticket_id: str,
+    body: JsonDict,
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
+    conversations: Conversations,
 ) -> JsonDict:
-    now = clk.now_unix()
-    ticket = tickets_data.request_user_help(
-        conn,
-        ticket_id,
-        actor=ctx.actor,
-        now=now,
+    require_ticket_worker_write(conn, ctx)
+    if ctx.principal != Principal(PrincipalKind.ticket, ticket_id):
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            "only the Ticket's own Worker can request help",
+            {"ticket_id": ticket_id},
+        )
+    if set(body) - {"message", "recipient"}:
+        raise PlannerError(ErrorCode.validation, "unknown help request field", {})
+    message = body_str(body, "message")
+    if not message.strip():
+        raise PlannerError(ErrorCode.validation, "help message must not be empty", {})
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    recipient = _parse_principal(body.get("recipient"), "recipient") or ticket.ceiling_holder
+    delivered = await message_delivery_service.send_message(
+        conversations, conn, clk, ctx, recipient, message
     )
-    return tickets_views.ticket_json(ticket, now)
+    fate = (
+        {"fate": "recorded"}
+        if isinstance(delivered.fate, MessageRecordedToOwner)
+        else delivery_fate_json(delivered.fate)
+    )
+    return {
+        "target": {"kind": recipient.kind.value, "id": recipient.id},
+        "conversation_id": delivered.conversation_id,
+        **fate,
+    }
 
 
 @router.put("/tickets/{ticket_id}/stage-ownership/{stage}")
@@ -1639,57 +1675,22 @@ async def remove_link(
 
 
 async def add_conversation_row_signals(
+    conn: sqlite3.Connection,
     board: JsonDict,
     conversation_system: ConversationSystem,
     conversation_record: ConversationStore,
 ) -> JsonDict:
-    """Add the live conversation-owned row signals to every row on the board.
-
-    A row is a card or a Sprint Item, and both carry a ``conversation_id``. A card's
-    conversation belongs to its Ticket's worker, and an Item's belongs to its own
-    supervisor.
-
-    ``agent_working`` is whether that conversation has a turn running right now, and
-    ``needs_me`` is whether that turn is waiting on a permission decision or answers only
-    the owner can give. Both are asked for every row.
-
-    ``latest_turn_ended_sequence`` is where the conversation last had a turn end, and it
-    is a row's half of the unread-reply mark. Every row is asked, because an Item
-    conversation replies only to something the user said.
-
-    None of these signals is a tickets-domain fact and all are awaited, so ``board_view``
-    cannot answer them. A row with no conversation has no conversation to ask about, so
-    the first two read false and the third reads 0, which is before every real position.
-
-    The record is asked once for the whole board rather than once per row: it is one
-    question about a list, and a list is what the board is.
-
-    This reads and writes nothing but the payload it was handed — no transaction, no
-    connection of its own.
-    """
+    """Attach the shared owner-attention and agent-state projection to board rows."""
     cards = [card for column in board["columns"] for card in column["cards"]]
-    rows = [*cards, *board["sprint_items"]]
-    latest_turn_ended = await conversation_record.latest_turn_ended_sequences(
-        [row["conversation_id"] for row in rows if row["conversation_id"] is not None]
+    await add_work_attention(
+        # This helper predates the shared projection. Keep its public name until the Day
+        # route moves with the other callers, but give it the one canonical behavior.
+        conn,
+        conversation_system,
+        conversation_record,
+        tickets=cards,
+        sprint_items=board["sprint_items"],
     )
-    for row in rows:
-        conversation_id = row["conversation_id"]
-        row["agent_working"] = (
-            await conversation_system.is_running(conversation_id)
-            if conversation_id is not None
-            else False
-        )
-        row["needs_me"] = (
-            (
-                await conversation_system.has_pending_permission_ask(conversation_id)
-                or await conversation_system.has_pending_user_input(conversation_id)
-            )
-            if conversation_id is not None
-            else False
-        )
-        row["latest_turn_ended_sequence"] = (
-            latest_turn_ended.get(conversation_id, 0) if conversation_id is not None else 0
-        )
     return board
 
 
@@ -1703,6 +1704,7 @@ async def board(
 ) -> JsonDict:
     day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
     return await add_conversation_row_signals(
+        conn,
         tickets_views.board_view(conn, day_id=day_id),
         conversations,
         conversation_record,

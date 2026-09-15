@@ -33,11 +33,15 @@ const ticket = (overrides: Partial<SprintTicketSummary> = {}): SprintTicketSumma
   project_id: "project_panels",
   sprint_item_id: "si_default",
   waiting_to_closeout: false,
+  awaiting_reply: false,
+  awaiting_approval: false,
+  assigned: false,
+  agent_state: "idle",
   ...overrides
 });
 
 const item = (overrides: Partial<SprintOutcomeGroup> = {}): SprintOutcomeGroup => ({
-  outcome: { id: "si_default", title: "Default outcome", priority: "P2", deadline: null, project_id: "project_panels", project: "Panels", created_at: 1, updated_at: 1 },
+  outcome: { id: "si_default", title: "Default outcome", priority: "P2", deadline: null, project_id: "project_panels", project: "Panels", created_at: 1, updated_at: 1, awaiting_reply: false, awaiting_approval: false, assigned: false, agent_state: "idle" },
   committed: true,
   tickets: [],
   ...overrides
@@ -47,15 +51,11 @@ describe("Sprint ticket conditions", () => {
   it.each([
     [ticket({ stage: "done", ticket_status: "errored" }), "completed", "done"],
     [ticket({ ticket_status: "blocked" }), "errored", "blocked"],
-    [ticket({ ticket_status: "errored" }), "errored", "errored"],
-    // Messaging a Ticket that was awaiting approval pairs it and leaves the proposal
-    // filed. The status is the fact, so it reads paired.
-    [ticket({ ticket_status: "paired" }), "current-paired", "paired"],
-    [ticket({ ticket_status: "awaiting_approval" }), "current-awaiting-approval", "to review"],
-    [ticket({ ticket_status: "needs_user" }), "needs-me", "need you"],
-    [ticket({ ticket_status: "user" }), "needs-me", "yours"],
-    [ticket({ ticket_status: "agent" }), "current-running", "working"],
-    [ticket({ ticket_status: "paired" }), "current-paired", "paired"],
+    [ticket({ ticket_status: "errored", agent_state: "errored" }), "errored", "errored"],
+    [ticket({ assigned: true }), "current-paired", "assigned"],
+    [ticket({ ticket_status: "awaiting_approval", awaiting_approval: true }), "current-awaiting-approval", "to review"],
+    [ticket({ awaiting_reply: true }), "needs-me", "need you"],
+    [ticket({ ticket_status: "agent", agent_state: "working" }), "current-running", "working"],
     [ticket({ waiting_to_closeout: true }), "current-waiting", "waiting for closeout"],
     [ticket(), "upcoming", "to do"]
   ])("maps %o to %s and %s", (input, mark, word) => {
@@ -94,8 +94,8 @@ describe("Outcome presentation", () => {
   it("separates live, off-today, and done work with blocked live work last", () => {
     // Errored and blocked read as different words. Both still sink to the end.
     const blocked = ticket({ id: "t_blocked", priority: "P0", ticket_status: "blocked" });
-    const errored = ticket({ id: "t_errored", priority: "P0", ticket_status: "errored" });
-    const moving = ticket({ id: "t_moving", priority: "P2", ticket_status: "agent" });
+    const errored = ticket({ id: "t_errored", priority: "P0", ticket_status: "errored", agent_state: "errored" });
+    const moving = ticket({ id: "t_moving", priority: "P2", ticket_status: "agent", agent_state: "working" });
     const later = ticket({ id: "t_later", priority: "P1" });
     const done = ticket({ id: "t_done", stage: "done", priority: "P3" });
     expect(

@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson } from "./api";
+import type { FeedbackCountResponse, FeedbackResponse } from "./feedback";
 import type { ConversationStartValues } from "./conversation/wire";
 import type { WorkerTypesResponse } from "./lifecycle";
 import type {
@@ -59,6 +60,9 @@ export const queries = {
       `/api/sprint-item-summaries?limit=${limit}&offset=${offset}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""}${search ? `&search=${encodeURIComponent(search)}` : ""}`
     ),
   ideas: () => jsonQuery<IdeasResponse>(["ideas"], "/api/ideas"),
+  feedback: () => jsonQuery<FeedbackResponse>(["feedback"], "/api/feedback"),
+  feedbackCount: () =>
+    jsonQuery<FeedbackCountResponse>(["feedback-count"], "/api/feedback/count"),
   projects: () => jsonQuery<ProjectsResponse>(["projects"], "/api/projects"),
   schedules: () => jsonQuery<SchedulesResponse>(["schedules"], "/api/schedules"),
   sprintSummaries: () => jsonQuery<SprintsResponse>(["sprints"], "/api/sprints"),

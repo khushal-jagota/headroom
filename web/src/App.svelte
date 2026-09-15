@@ -16,6 +16,7 @@
   import DayRoute from "./routes/DayRoute.svelte";
   import FilePreviewRoute from "./routes/FilePreviewRoute.svelte";
   import IdeasRoute from "./routes/IdeasRoute.svelte";
+  import FeedbackRoute from "./routes/FeedbackRoute.svelte";
   import NotificationsRoute from "./routes/NotificationsRoute.svelte";
   import ReviewRoute from "./routes/ReviewRoute.svelte";
   import ScheduledTasksRoute from "./routes/ScheduledTasksRoute.svelte";
@@ -25,6 +26,10 @@
   import DevFilePreviewGalleryRoute from "./routes/DevFilePreviewGalleryRoute.svelte";
   import ReleaseUpdate from "./components/ReleaseUpdate.svelte";
   import ShellStatus from "./components/ShellStatus.svelte";
+  import FeedbackCapture from "./components/FeedbackCapture.svelte";
+  import FeedbackToast from "./components/FeedbackToast.svelte";
+  import { feedbackPageContext } from "./lib/feedback";
+  import { mutateJson } from "./lib/mutate";
 
   type Route = {
     name: string;
@@ -36,10 +41,20 @@
   };
 
   const review = createQuery(() => queries.review());
+  const feedbackCount = createQuery(() => queries.feedbackCount());
   let route = $state<Route>(parseRoute());
   let moreOpen = $state(false);
   let moreMenuElement = $state<HTMLDivElement | null>(null);
   let moreButtonElement = $state<HTMLButtonElement | null>(null);
+  let toast = $state<{
+    key: number;
+    message: string;
+    actionLabel: string | null;
+    actionHref: string | null;
+    onAction?: () => void;
+    duration: number;
+  } | null>(null);
+  let toastKey = 0;
 
   function workspaceRoute(address: WorkspaceAddress): Route {
     return { name: "workspace", params: {}, key: "workspace", workspace: address };
@@ -197,6 +212,7 @@
       "workspace",
       "backlog",
       "ideas",
+      "feedback",
       "scheduled-tasks",
       "backends",
       "notifications",
@@ -205,7 +221,7 @@
   }
 
   function secondaryRouteActive(): boolean {
-    return ["sprint", "backlog", "ideas", "scheduled-tasks", "config", "backends", "notifications"].includes(
+    return ["sprint", "backlog", "ideas", "feedback", "scheduled-tasks", "config", "backends", "notifications"].includes(
       route.name
     );
   }
@@ -214,6 +230,46 @@
     if (route.name === "workspace") return "Workspace";
     if (route.name === "day") return "Home";
     return `${route.name.charAt(0).toUpperCase()}${route.name.slice(1)}`;
+  }
+
+  function currentFeedbackContext() {
+    const detailTitle = document.querySelector<HTMLElement>("[data-feedback-page-title]")?.innerText || "";
+    return feedbackPageContext(window.location.hash, detailTitle);
+  }
+
+  function showSavedToast(): void {
+    toast = {
+      key: ++toastKey,
+      message: "Saved to Feedback",
+      actionLabel: "View",
+      actionHref: "#/feedback",
+      duration: 4000
+    };
+  }
+
+  function showDismissedToast(noteId: string): void {
+    const undo = async () => {
+      toast = null;
+      try {
+        await mutateJson(`/api/feedback/${encodeURIComponent(noteId)}/reopen`, { method: "POST" });
+      } catch {
+        toast = {
+          key: ++toastKey,
+          message: "Could not undo dismissal",
+          actionLabel: null,
+          actionHref: null,
+          duration: 4000
+        };
+      }
+    };
+    toast = {
+      key: ++toastKey,
+      message: "Dismissed",
+      actionLabel: "Undo",
+      actionHref: null,
+      onAction: () => void undo(),
+      duration: 6000
+    };
   }
 
   function closeMore(): void {
@@ -300,6 +356,10 @@
             <a class:active={currentNav("sprint")} href="#/sprint" onclick={closeMore}>Sprint</a>
             <a class:active={currentNav("backlog")} href="#/backlog" onclick={closeMore}>Backlog</a>
             <a class:active={currentNav("ideas")} href="#/ideas" onclick={closeMore}>Ideas</a>
+            <a class:active={currentNav("feedback")} href="#/feedback" onclick={closeMore}>
+              <span>Feedback</span>
+              {#if (feedbackCount.data?.open_count || 0) > 0}<span class="fb-count">{feedbackCount.data?.open_count}</span>{/if}
+            </a>
             <div class="shell-more-divider"></div>
             <div class="shell-more-group">System</div>
             <a class:active={currentNav("config")} href="#/config" onclick={closeMore}>
@@ -329,6 +389,7 @@
       connectionState={$connectionStatus}
       runningWorkerCount={review.data?.running_worker_count || 0}
     />
+    <FeedbackCapture context={currentFeedbackContext} openCount={feedbackCount.data?.open_count || 0} onSaved={showSavedToast} />
   </div>
   {#if moreOpen}
     <button
@@ -355,6 +416,8 @@
             <BacklogRoute />
           {:else if route.name === "ideas"}
             <IdeasRoute />
+          {:else if route.name === "feedback"}
+            <FeedbackRoute onDismissed={showDismissedToast} />
           {:else if route.name === "scheduled-tasks"}
             <ScheduledTasksRoute />
           {:else if route.name === "config"}
@@ -381,4 +444,16 @@
       </div>
     {/if}
   </main>
+  {#if toast}
+    {#key toast.key}
+      <FeedbackToast
+        message={toast.message}
+        actionLabel={toast.actionLabel}
+        actionHref={toast.actionHref}
+        onAction={toast.onAction}
+        duration={toast.duration}
+        onDone={() => (toast = null)}
+      />
+    {/key}
+  {/if}
 </div>

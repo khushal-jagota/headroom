@@ -13,6 +13,7 @@ ID_PREFIXES: Final[dict[str, str]] = {
     "ticket": "t",
     "schedule": "schedule",
     "idea": "idea",
+    "feedback": "feedback",
     "run": "run",
 }
 SLUG_ALPHABET: Final = "0123456789abcdefghjkmnpqrstuvwxyz"  # lowercase, no i/l/o

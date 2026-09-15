@@ -2,9 +2,9 @@
  *
  * Two kinds of thing arrive and only one of them is a row. Committed rows are the record:
  * they are numbered, they never change, and a reader keeps them. Live frames are the
- * half-finished output a backend streams while it works: they are shown and then dropped,
- * and the row they were leading up to is what replaces them. So the moment an agent
- * message lands as a row, the streamed text that preceded it is gone — never both.
+ * runtime output a backend streams while it works: it is shown and then dropped when the
+ * turn ends. New backend prose does not become a durable row. Historical agent-message
+ * rows remain readable and also clear any stale live text when replayed.
  *
  * Reconnecting is not a special path. Opening a conversation, coming back to a tab, and
  * recovering from a dropped stream are all "say which row you have and take everything
@@ -18,7 +18,7 @@ export type ConversationFeed = {
   readonly events: readonly ConversationEvent[];
   /** The highest sequence held, which is the position a reconnect asks from. */
   readonly latestSequence: number;
-  /** Agent text that has not finished arriving. Empty once its row lands. */
+  /** Runtime-only backend prose for the active turn. Empty once that turn ends. */
   readonly streamingAgentText: string;
   /** Output from tool calls that are still running, by tool call id. */
   readonly toolCallProgress: Readonly<Record<string, string>>;
@@ -33,10 +33,11 @@ export function emptyConversationFeed(): ConversationFeed {
   };
 }
 
-/** Take one committed row, and drop whatever half-finished output it supersedes.
+/** Take one committed row, and drop runtime output when its turn ends.
  *
  * A row that arrives twice is the same row: it is replaced in place rather than appended,
  * so a replay that overlaps a live tail leaves the reader with exactly one of each.
+ * A historical agent-message row also supersedes a stale tail for compatibility.
  */
 export function feedWithCommittedEvent(
   feed: ConversationFeed,
@@ -149,18 +150,19 @@ function withoutKey(
 
 /** Whether the rows leave a turn open.
  *
- * A turn begins at the prompt that reached the backend and ends at its turn-ended row,
- * so the newest of those two rows settles it. A steer's prompt joins the turn already
- * running, which this reads the same way.
+ * A turn begins at an ordinary prompt that reached the backend and ends at its
+ * turn-ended row, so the newest of those two rows settles it. A steer receipt records
+ * admission to a turn that already existed. It never opens one, even when its provider
+ * answer arrives after that turn ended.
  *
  * This is what the rows say, which is not always the whole story — see
  * ``conversationLiveness``, which is what a surface should ask.
  */
 export function conversationIsRunning(feed: ConversationFeed): boolean {
   for (let at = feed.events.length - 1; at >= 0; at -= 1) {
-    const kind = feed.events[at]?.kind;
-    if (kind === "turn_ended") return false;
-    if (kind === "prompt") return true;
+    const event = feed.events[at];
+    if (event?.kind === "turn_ended") return false;
+    if (event?.kind === "prompt" && event.payload.mode !== "steer") return true;
   }
   return false;
 }

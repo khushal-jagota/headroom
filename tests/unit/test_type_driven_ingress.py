@@ -13,6 +13,7 @@ directly without resolving a Worker type.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
 from sqlite3 import Connection
@@ -28,6 +29,7 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 
 AppDb = tuple[FastAPI, Path]
+OWNER = {"kind": "owner", "id": "owner"}
 
 
 @pytest.fixture
@@ -74,13 +76,66 @@ def test_coding_ticket_accepts_coding_field_and_ceiling(
     app, _db = app_db
     with TestClient(app) as client:
         tid = _create(client, "coding")
-        # coding's kickoff proposal is parked at create; scope to a coding ceiling works.
+        # A parked proposal fixes its address, so direct scope cannot retarget it.
         scoped = client.post(
             f"/api/tickets/{tid}/scope",
             json={"ceiling": "needs_approach", "at_cap": "stop"},
         )
-        assert scoped.status_code == 200, scoped.json()
-        assert scoped.json()["ceiling"] == "needs_approach"
+        assert scoped.status_code == 400, scoped.json()
+        missing_holder = client.post(
+            f"/api/tickets/{tid}/accept/kickoff",
+            json={"next_ceiling": "needs_approach", "at_cap": "stop"},
+        )
+        assert missing_holder.status_code == 400, missing_holder.json()
+        assert missing_holder.json()["error"]["code"] == "scope_missing"
+        self_held = client.post(
+            f"/api/tickets/{tid}/accept/kickoff",
+            json={
+                "next_ceiling": "needs_approach",
+                "at_cap": "stop",
+                "next_holder": {"kind": "ticket", "id": tid},
+            },
+        )
+        assert self_held.status_code == 400, self_held.json()
+        assert self_held.json()["error"]["code"] == "validation"
+        approved = client.post(
+            f"/api/tickets/{tid}/accept/kickoff",
+            json={
+                "next_ceiling": "needs_approach",
+                "at_cap": "stop",
+                "next_holder": OWNER,
+            },
+        )
+        assert approved.status_code == 200, approved.json()
+        assert approved.json()["ceiling"] == "needs_approach"
+
+
+def test_worker_api_cannot_decide_a_corrupted_self_held_proposal(app_db: AppDb) -> None:
+    app, db_path = app_db
+    with TestClient(app) as client:
+        ticket_id = _create(client, "coding")
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET ceiling_holder = ? WHERE id = ?",
+                (
+                    json.dumps({"kind": "ticket", "id": ticket_id}),
+                    ticket_id,
+                ),
+            )
+            conn.commit()
+        decided = client.post(
+            f"/api/tickets/{ticket_id}/accept/kickoff",
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
+            json={
+                "next_ceiling": "needs_success",
+                "at_cap": "propose",
+                "next_holder": OWNER,
+            },
+        )
+
+    assert decided.status_code == 400, decided.json()
+    assert decided.json()["error"]["code"] == "validation"
+    assert "own ceiling" in decided.json()["error"]["message"]
 
 
 def test_accept_rejects_foreign_field_and_foreign_next_ceiling(
@@ -120,15 +175,69 @@ def test_probe_proposal_parks_on_registry_selected_field(
         # with at_cap=propose so the next propose parks.
         client.post(
             f"/api/tickets/{tid}/accept/kickoff",
-            json={"next_ceiling": "needs_alpha", "at_cap": "propose"},
+            json={"next_ceiling": "needs_alpha", "at_cap": "propose", "next_holder": OWNER},
         )
         # A position-relative propose parks on ALPHA — the field probe's needs_alpha gates.
         parked = client.post(
-            f"/api/tickets/{tid}/propose", json={"body": "alpha body", "recap": "r"}
+            f"/api/tickets/{tid}/propose",
+            json={"body": "alpha body", "recap": "r"},
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": tid},
         )
         assert parked.status_code == 200, parked.json()
         assert parked.json()["pending_proposal"]["body"] == "alpha body"
         assert parked.json()["pending_proposal"]["field"] == "alpha"
+
+
+def test_proposal_route_accepts_only_the_ticket_own_worker(app_db: AppDb) -> None:
+    app, db_path = app_db
+    with TestClient(app) as client:
+        target = _create(client, "coding")
+        parent = _create(client, "coding")
+        unrelated = _create(client, "coding")
+        scoped = client.post(
+            f"/api/tickets/{target}/accept/kickoff",
+            json={
+                "next_ceiling": "needs_success",
+                "at_cap": "propose",
+                "next_holder": {"kind": "ticket", "id": parent},
+            },
+        )
+        assert scoped.status_code == 200, scoped.text
+        item = client.post(
+            "/api/items", json={"title": "Supervisor", "project_id": "project_vylo"}
+        ).json()
+        attempts = (
+            {
+                "X-Plan-Actor": "sprint_item_supervisor",
+                "X-Plan-Sprint-Item-ID": str(item["id"]),
+            },
+            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": parent},
+            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": unrelated},
+        )
+        for headers in attempts:
+            refused = client.post(
+                f"/api/tickets/{target}/propose",
+                json={"body": "Foreign", "recap": "Foreign"},
+                headers=headers,
+            )
+            assert refused.status_code == 400
+            assert refused.json()["error"]["code"] == "agent_forbidden"
+
+        own = client.post(
+            f"/api/tickets/{target}/propose",
+            json={"body": "Own Worker", "recap": "Own"},
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": target},
+        )
+        assert own.status_code == 200, own.text
+        assert own.json()["pending_proposal"]["body"] == "Own Worker"
+        inspection = connect(str(db_path))
+        try:
+            wake = inspection.execute(
+                "SELECT state FROM proposal_holder_wakes WHERE ticket_id=?", (target,)
+            ).fetchone()
+            assert wake is not None and wake["state"] == "pending"
+        finally:
+            inspection.close()
 
 
 def test_ticket_note_routes_make_replace_and_append_explicit(app_db: AppDb) -> None:
@@ -164,7 +273,7 @@ def test_arbitrary_stage_jump_route_is_removed(app_db: AppDb, probe_installed: N
         tid = _create(client, "probe")
         client.post(
             f"/api/tickets/{tid}/accept/kickoff",
-            json={"next_ceiling": "done", "at_cap": "propose"},
+            json={"next_ceiling": "done", "at_cap": "propose", "next_holder": OWNER},
         )
         jumped = client.post(f"/api/tickets/{tid}/stage", json={"to_stage": "needs_beta"})
         assert jumped.status_code == 404, jumped.json()
@@ -188,7 +297,7 @@ def test_stage_filter_non_reserved_needs_no_worker_type(
         tid = made[0]["id"]
         client.post(
             f"/api/tickets/{tid}/accept/kickoff",
-            json={"next_ceiling": "needs_success", "at_cap": "stop"},
+            json={"next_ceiling": "needs_success", "at_cap": "stop", "next_holder": OWNER},
         )
         ok = client.get("/api/tickets?stage=needs_success")
         assert ok.status_code == 200, ok.json()

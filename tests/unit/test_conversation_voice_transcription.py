@@ -26,7 +26,6 @@ from fastapi import FastAPI
 from planner.conversation import api as conversation_api
 from planner.conversation import voice_transcription
 from planner.conversation.api import ConversationRuntime, router
-from planner.conversation.backend_lifecycle import BackendLifecycleCoordinator
 from planner.conversation.backend_usage import BackendUsageService
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.live_tail import ConversationLiveTail
@@ -180,9 +179,7 @@ class _Harness:
                 live_tail=live_tail,
             ),
             live_tail=live_tail,
-            backend_snapshots=BackendSnapshotService(
-                backend_lifecycle=BackendLifecycleCoordinator()
-            ),
+            backend_snapshots=BackendSnapshotService(),
             backend_usage=BackendUsageService({}),
             message_files=self.message_files,
             database_path=str(db_path),

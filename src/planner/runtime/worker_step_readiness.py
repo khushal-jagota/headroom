@@ -97,10 +97,16 @@ def worker_step_blocker(
     )
     if ownership_mode is StageOwnershipMode.user:
         return "the Stage belongs to the user"
-    # `empty` is the only startable status. It covers blocked, needs_user, paired,
-    # awaiting_approval, agent, user, and errored in one gate.
+    # `empty` is the only startable control state. Ownership refuses user-owned work.
     if ticket.ticket_status is not TicketStatus.empty:
         return f"the Ticket is at {ticket.ticket_status.value}, so no worker step is due"
+    if ownership_mode is StageOwnershipMode.paired:
+        opened = conn.execute(
+            "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
+            (ticket.id, ticket.stage),
+        ).fetchone()
+        if opened is not None:
+            return "the paired Stage opener already ran for this Stage entry"
     if worker_type_definition.gating_field(ticket.stage) is None:
         return f"the Stage {ticket.stage} has no field for a worker to fill"
     if ticket.pending_proposal is not None:

@@ -175,9 +175,20 @@ export function fieldStageVisualStateFor(
   detail: TicketDetail,
   fieldName: string
 ): FieldStageVisualState {
+  const projectedStatus = detail.awaiting_approval
+    ? "awaiting_approval"
+    : detail.assigned
+      ? "paired"
+      : detail.agent_state === "working"
+        ? "agent"
+        : detail.agent_state === "errored"
+          ? "errored"
+          : detail.ticket_status === "agent"
+            ? "empty"
+            : detail.ticket_status;
   return ticketStageVisualStateFor(lc, {
     ticketStage: detail.stage,
-    ticketStatus: detail.ticket_status,
+    ticketStatus: projectedStatus,
     fieldName,
     fieldHasProposal: detail.pending_proposal?.field === fieldName
   });

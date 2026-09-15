@@ -22,6 +22,7 @@ can see and nobody can send from, which is what a separate start door left behin
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from collections.abc import Collection
@@ -29,14 +30,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 from uuid import uuid4
+from weakref import WeakValueDictionary
 
 from planner.conversation.contracts import (
+    AddressedPromptDeliveryReceipt,
     ConversationBackendKey,
+    ConversationMessageContent,
     ConversationStartRequest,
     ConversationSystem,
     PromptDeliveryFate,
     PromptDeliveryMode,
-    PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
 )
@@ -45,6 +48,7 @@ from planner.conversation.logic.conversation_start_resolution import (
 )
 from planner.conversation.message_content import MessageContent
 from planner.conversation.storage import ensure_started_conversation_record
+from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
 from planner.projects import data as projects_data
 from planner.runtime.logic.conversation_start_resolution import (
@@ -70,6 +74,24 @@ if TYPE_CHECKING:
     from planner.sprints.contracts import SprintItem
 
 CONVERSATION_ID_PREFIX: Final = "conv_"
+
+
+_conversation_link_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+
+
+def conversation_link_lock(link_key: str) -> asyncio.Lock:
+    """Serialize operations that require one current conversation association."""
+    lock = _conversation_link_locks.get(link_key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _conversation_link_locks[link_key] = lock
+    return lock
+
+
+async def _message_content_for(
+    content: ConversationMessageContent, conversation_id: str
+) -> MessageContent:
+    return await content(conversation_id) if callable(content) else content
 
 
 def _default_workspace_folder() -> Path:
@@ -197,16 +219,6 @@ def sprint_item_supervisor_resolve(
     )
 
 
-def _no_turn_to_steer_into() -> DeliveredMessage:
-    """A steer aimed at nothing, said as the fate the contract already has for it."""
-    return DeliveredMessage(
-        conversation_id=None,
-        fate=PromptDeliveryRefused(
-            refusal_reason=PromptDeliveryRefusalReason.no_running_turn_to_steer_into
-        ),
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class LinkedConversation:
     """The conversation an owner is now in, and whether this call is what made it.
@@ -292,21 +304,68 @@ class DeliveredMessage:
 
     conversation_id: str | None
     fate: PromptDeliveryFate
+    newly_accepted: bool = True
+
+
+async def _send_with_addressed_receipt(
+    system: ConversationSystem,
+    conversation_id: str,
+    content: MessageContent,
+    *,
+    sender_label: str,
+    mode: PromptDeliveryMode,
+    model_change: str | None = None,
+    reasoning_effort_change: str | None = None,
+    sender_message_id: str | None,
+    sent_at_unix_milliseconds: int | None,
+    sender: Principal | None,
+    recipient: Principal | None,
+) -> AddressedPromptDeliveryReceipt:
+    """Use the internal freshness receipt only for an addressed employee send."""
+    if sender is not None and recipient is not None:
+        return await system.send_with_receipt(
+            conversation_id,
+            content,
+            sender_label=sender_label,
+            mode=mode,
+            model_change=model_change,
+            reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
+        )
+    fate = await system.send(
+        conversation_id,
+        content,
+        sender_label=sender_label,
+        mode=mode,
+        model_change=model_change,
+        reasoning_effort_change=reasoning_effort_change,
+        sender_message_id=sender_message_id,
+        sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+    )
+    return AddressedPromptDeliveryReceipt(
+        fate=fate,
+        newly_accepted=not isinstance(fate, PromptDeliveryRefused),
+    )
 
 
 async def send_to_ticket_conversation(
     system: ConversationSystem,
     conn: sqlite3.Connection,
     ticket_id: str,
-    content: MessageContent,
+    content: ConversationMessageContent,
     *,
     conversation_id: str | None,
     created_conversation_id: str | None = None,
     runs_under: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     sender_label: str,
-    mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+    mode: PromptDeliveryMode = PromptDeliveryMode.queue,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
+    sender: Principal | None = None,
+    recipient: Principal | None = None,
     worker_type_registry: WorkerTypeRegistry | None = None,
     now: int,
     required_sprint_item_id: str | None = None,
@@ -363,11 +422,6 @@ async def send_to_ticket_conversation(
                 {"ticket_id": ticket_id},
             )
     if conversation_id is None and ticket.conversation_id is None:
-        if mode is PromptDeliveryMode.steer:
-            # A steer is text for a turn that is already running, and there is no
-            # conversation here, let alone a turn. Making one in order to refuse a steer
-            # into it would leave a conversation nobody asked for.
-            return _no_turn_to_steer_into()
         return await _make_a_conversation_and_send_into_it(
             system,
             conn,
@@ -379,6 +433,8 @@ async def send_to_ticket_conversation(
             mode=mode,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
             worker_type_registry=worker_type_registry,
             now=now,
         )
@@ -397,12 +453,14 @@ async def send_to_ticket_conversation(
         conn,
         ticket_id,
         sending_into,
-        content,
+        await _message_content_for(content, sending_into),
         runs_under=runs_under,
         sender_label=sender_label,
         mode=mode,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+        sender=sender,
+        recipient=recipient,
         now=now,
     )
 
@@ -419,6 +477,8 @@ async def _send_into_the_conversation_the_ticket_is_in(
     mode: PromptDeliveryMode,
     sender_message_id: str | None,
     sent_at_unix_milliseconds: int | None,
+    sender: Principal | None,
+    recipient: Principal | None,
     now: int,
 ) -> DeliveredMessage:
     """Deliver into a conversation that is already there, carrying what it changes.
@@ -434,7 +494,8 @@ async def _send_into_the_conversation_the_ticket_is_in(
     own values — and the value it keeps for a field this message did not change is read
     back now rather than taken from before the send, for the same reason.
     """
-    fate = await system.send(
+    receipt = await _send_with_addressed_receipt(
+        system,
         sending_into,
         content,
         sender_label=sender_label,
@@ -443,7 +504,10 @@ async def _send_into_the_conversation_the_ticket_is_in(
         reasoning_effort_change=runs_under.reasoning_effort,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+        sender=sender,
+        recipient=recipient,
     )
+    fate = receipt.fate
     carries_a_change = runs_under.model is not None or runs_under.reasoning_effort is not None
     if carries_a_change and isinstance(fate, PromptDeliveryStarted):
         ticket = tickets_data.read_ticket(conn, ticket_id)
@@ -459,14 +523,18 @@ async def _send_into_the_conversation_the_ticket_is_in(
             ),
             now=now,
         )
-    return DeliveredMessage(conversation_id=sending_into, fate=fate)
+    return DeliveredMessage(
+        conversation_id=sending_into,
+        fate=fate,
+        newly_accepted=receipt.newly_accepted,
+    )
 
 
 async def _make_a_conversation_and_send_into_it(
     system: ConversationSystem,
     conn: sqlite3.Connection,
     ticket: Ticket,
-    content: MessageContent,
+    content: ConversationMessageContent,
     *,
     created_conversation_id: str | None = None,
     runs_under: ConversationStartOverrides,
@@ -474,6 +542,8 @@ async def _make_a_conversation_and_send_into_it(
     mode: PromptDeliveryMode,
     sender_message_id: str | None,
     sent_at_unix_milliseconds: int | None,
+    sender: Principal | None,
+    recipient: Principal | None,
     worker_type_registry: WorkerTypeRegistry | None,
     now: int,
 ) -> DeliveredMessage:
@@ -513,25 +583,31 @@ async def _make_a_conversation_and_send_into_it(
             conn,
             ticket.id,
             linked.conversation_id,
-            content,
+            await _message_content_for(content, linked.conversation_id),
             runs_under=runs_under,
             sender_label=sender_label,
             mode=mode,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
             now=now,
         )
     # From here the conversation is this call's own: it was made here, on the values this
     # message says it runs under, so the message has nothing to change and carries none.
     try:
-        fate = await system.send(
+        receipt = await _send_with_addressed_receipt(
+            system,
             making,
-            content,
+            await _message_content_for(content, making),
             sender_label=sender_label,
             mode=mode,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
         )
+        fate = receipt.fate
     except BaseException:
         await _let_go_of_a_conversation_that_was_never_spoken_in(
             system, conn, ticket.id, making, now=now
@@ -541,8 +617,16 @@ async def _make_a_conversation_and_send_into_it(
         await _let_go_of_a_conversation_that_was_never_spoken_in(
             system, conn, ticket.id, making, now=now
         )
-        return DeliveredMessage(conversation_id=None, fate=fate)
-    return DeliveredMessage(conversation_id=making, fate=fate)
+        return DeliveredMessage(
+            conversation_id=None,
+            fate=fate,
+            newly_accepted=receipt.newly_accepted,
+        )
+    return DeliveredMessage(
+        conversation_id=making,
+        fate=fate,
+        newly_accepted=receipt.newly_accepted,
+    )
 
 
 async def _let_go_of_a_conversation_that_was_never_spoken_in(
@@ -691,16 +775,18 @@ async def send_to_agent_conversation(
     system: ConversationSystem,
     conn: sqlite3.Connection,
     agent_key: str,
-    content: MessageContent,
+    content: ConversationMessageContent,
     values: ConversationStartValues | None,
     *,
     conversation_id: str | None,
     created_conversation_id: str | None = None,
     runs_under: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     sender_label: str,
-    mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+    mode: PromptDeliveryMode = PromptDeliveryMode.queue,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
+    sender: Principal | None = None,
+    recipient: Principal | None = None,
     required_sprint_item_id: str | None = None,
 ) -> DeliveredMessage:
     """Send a message into this agent's conversation, making one if there is none yet.
@@ -716,8 +802,6 @@ async def send_to_agent_conversation(
     """
     in_now = read_agent_conversation(conn, agent_key)
     if conversation_id is None and in_now is None:
-        if mode is PromptDeliveryMode.steer:
-            return _no_turn_to_steer_into()
         if values is None:
             raise PlannerError(
                 ErrorCode.validation,
@@ -737,21 +821,33 @@ async def send_to_agent_conversation(
             # Made here, on the values this message says it runs under, so the message has
             # nothing to change and carries none.
             try:
-                fate = await system.send(
+                receipt = await _send_with_addressed_receipt(
+                    system,
                     making,
-                    content,
+                    await _message_content_for(content, making),
                     sender_label=sender_label,
                     mode=mode,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    sender=sender,
+                    recipient=recipient,
                 )
+                fate = receipt.fate
             except BaseException:
                 await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
                 raise
             if isinstance(fate, PromptDeliveryRefused):
                 await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
-                return DeliveredMessage(conversation_id=None, fate=fate)
-            return DeliveredMessage(conversation_id=making, fate=fate)
+                return DeliveredMessage(
+                    conversation_id=None,
+                    fate=fate,
+                    newly_accepted=receipt.newly_accepted,
+                )
+            return DeliveredMessage(
+                conversation_id=making,
+                fate=fate,
+                newly_accepted=receipt.newly_accepted,
+            )
         # The race went the other way. The conversation made here will never be spoken
         # into, so it is let go of, and the message joins the agent's on the ordinary
         # terms — what it says it runs under is a change to a conversation it did not make.
@@ -764,17 +860,24 @@ async def send_to_agent_conversation(
             "the agent is not in that conversation",
             {"agent_key": agent_key, "conversation_id": conversation_id},
         )
-    fate = await system.send(
+    receipt = await _send_with_addressed_receipt(
+        system,
         sending_into,
-        content,
+        await _message_content_for(content, sending_into),
         sender_label=sender_label,
         mode=mode,
         model_change=runs_under.model,
         reasoning_effort_change=runs_under.reasoning_effort,
         sender_message_id=sender_message_id,
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+        sender=sender,
+        recipient=recipient,
     )
-    return DeliveredMessage(conversation_id=sending_into, fate=fate)
+    return DeliveredMessage(
+        conversation_id=sending_into,
+        fate=receipt.fate,
+        newly_accepted=receipt.newly_accepted,
+    )
 
 
 async def _let_go_of_an_agent_conversation(
@@ -815,15 +918,17 @@ async def reset_agent_conversation(
     carry. Both outlive the reset on purpose: the record still holds those messages, so a
     file removed now would turn a picture somebody sent into a picture nobody can see.
     """
-    conversation_id = read_agent_conversation(conn, agent_key)
-    if conversation_id is None:
-        return
-    await system.kill(conversation_id)
-    with conn:
-        conn.execute(
-            "UPDATE agents SET conversation_id = NULL WHERE agent_key = ? AND conversation_id = ?",
-            (agent_key, conversation_id),
-        )
+    async with conversation_link_lock(f"agent:{agent_key}"):
+        conversation_id = read_agent_conversation(conn, agent_key)
+        if conversation_id is None:
+            return
+        await system.kill(conversation_id)
+        with conn:
+            conn.execute(
+                "UPDATE agents SET conversation_id = NULL "
+                "WHERE agent_key = ? AND conversation_id = ?",
+                (agent_key, conversation_id),
+            )
 
 
 async def reset_ticket_conversation(
@@ -852,13 +957,14 @@ async def reset_ticket_conversation(
     carry. Both outlive the reset on purpose, for the reason
     ``planner.conversation.message_files`` gives: the record still holds those messages.
     """
-    conversation_id = tickets_data.read_ticket(conn, ticket_id).conversation_id
-    if conversation_id is None:
-        return
-    await system.kill(conversation_id)
-    tickets_data.clear_ticket_conversation_link(
-        conn,
-        ticket_id,
-        expected_conversation_id=conversation_id,
-        now=now,
-    )
+    async with conversation_link_lock(f"ticket:{ticket_id}"):
+        conversation_id = tickets_data.read_ticket(conn, ticket_id).conversation_id
+        if conversation_id is None:
+            return
+        await system.kill(conversation_id)
+        tickets_data.clear_ticket_conversation_link(
+            conn,
+            ticket_id,
+            expected_conversation_id=conversation_id,
+            now=now,
+        )

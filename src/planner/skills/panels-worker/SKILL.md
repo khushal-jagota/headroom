@@ -46,14 +46,20 @@ Everything runs through the `panels` command — `panels --help` for full usage.
   manifest, or expand named saved fields, `proposal`, `recap`, `guidance`, and `archive`.
 - **`panels ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** —
   set or clear a Stage ownership override when the user directly instructs that change.
-- **`panels worker propose <id> --recap "…"`**, piping the proposal text on stdin — propose the ticket's current gated field; the body arrives on stdin only, and every proposal must also set a recap with `--recap TEXT`.
+- **`panels worker propose <id> --recap "…"`**, piping the proposal text on stdin — propose your own Ticket's current gated field. No supervisor, holder Ticket, or other Worker can file it for you. The body arrives on stdin only, and every proposal must also set a recap with `--recap TEXT`.
 - **`panels worker recap <id>`**, piping the recap text on stdin — update the running recap outside a proposal.
 - **`panels worker trouble`**, piping the note on stdin — record one short trouble note on your
   current Ticket during the active claimed worker step. Use it for a harness, tool, or
   Ticket problem that did not go well. Record only trouble that you encountered. Do not
   grade yourself or record what went well.
-- **`panels worker request-user-help [ticket-id]`** — use this only when you cannot responsibly continue without important user input. Put the free-form request in your ordinary Ticket Chat response, then call this no-payload command. The Ticket enters `needs_user`: automatic work stays paused and Chat remains available until the user explicitly releases it. Do not use this for ordinary discussion, proposals or approvals, permission prompts, Stop, or confirmed Worker errors.
+- **`panels worker request-help [ticket-id]`**, piping the help message on stdin — send one canonical addressed message when you cannot responsibly continue without important input. The current ceiling holder is the default recipient. Use exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--sprint-item <id>` only when another principal must answer. The message drives the shared unread-reply attention fact. Do not use this for ordinary discussion, proposals, approvals, permission prompts, Stop, or confirmed Worker errors.
 - **`panels worker note <id>`**, piping the guidance text on stdin — replace the Ticket’s durable guidance document. Add `--append` to preserve the existing guidance and add new text.
+- **`panels send-message --owner --message "…"`** — send one addressed chat message to
+  the owner through this Ticket's current conversation. Use the same command with exactly
+  one of `--chief`, `--ticket <id>`, or `--sprint-item <id>` to message another employee.
+  This is conversation, not a substitute for a canonical Ticket, Day, or Sprint action.
+  Your ordinary turn-end prose is runtime-only; use this command when another principal
+  must receive a message.
 
 All four write commands take their text on stdin only; there is no file-path option, since it once let two Workers sharing one `/tmp` overwrite each other's text before it reached the ticket. Pipe or redirect text in, for example `echo "…" | panels worker propose <id> --recap "…"` or a heredoc into stdin.
 - **`panels ticket create --worker-type <id> --title "…"`** — create a Ticket when the

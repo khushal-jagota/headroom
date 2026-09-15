@@ -80,15 +80,17 @@ in a message that was actually sent — never because a row was written somewher
 ### Confirmed Worker failures
 
 A Ticket becomes `errored` only when the active backend Worker reports a concrete
-failure. The Ticket stores that exact text in `backend_error`, returns it through both
-Ticket and Board reads, and shows it plainly on the Ticket page. The status and reason
-are one fact: every transition to a non-error status clears the reason in the same
-database write.
+failure. The Ticket stores exact failure text in `backend_error`, returns it through
+Ticket and Board reads, and shows it on the Ticket page.
 
-A delivery that never got through is not that. When Panels cannot get a step to the
-worker at all, it simply gives back the claim it took and the Ticket goes back to rest —
-nothing is recorded as an error. Workspace uses only the Ticket's canonical
-`backend_error` to choose its exceptional treatment.
+A read or owner reply does not clear the error. Derived agent state also retains the
+latest failed turn until a later start succeeds or an explicit restart resets it.
+During the attention-state upgrade, Panels acknowledges failures older than 24 hours.
+Newer failures and all later failures keep the normal persistent error behavior.
+
+A refused Worker step gives its claim back. A failed proposal alert does not change the
+Ticket status because the Worker did not fail. Workspace uses only the Ticket's
+canonical `backend_error` for exceptional treatment.
 
 ### Work completed outside Panels
 
@@ -184,14 +186,14 @@ the stored default applies. Terminal Tickets have no current owner.
 - **Worker-owned** Stages rest at `empty`, ready for Panels to start the next step —
   or at `blocked` while a live blocker remains. The other readiness, proposal, and
   scope conditions must still allow it.
-- **User-owned** Stages rest at `user` and are never dispatched automatically. The user
+- **User-owned** Stages rest at `empty` and are never dispatched automatically. The user
   does the work, then the Chief records it through external-work reconciliation; there
   is no direct self-settle path.
 - **Paired** Stages get one automatic opening turn when the Stage becomes ready, then
-  rest at `paired`. Because only `empty` Tickets are started automatically, a Ticket
-  resting at `paired` is never started again — the human conversation carries it from
-  there, in the same Ticket conversation. A turn without a proposal leaves it at
-  `paired`; a real proposal always parks for approval, regardless of scope.
+  rest at `empty`. A durable opener fact belongs to that Stage entry, and readiness
+  checks it before dispatch. The human conversation carries the Stage forward in the
+  same Ticket conversation. A real proposal always parks for approval, regardless of
+  scope. Leaving the Stage clears the opener fact.
 
 **Take over** sets a `user` override for the current Stage, even while a worker step is
 out. Nothing that step does afterwards can undo the takeover. **Release** clears the current
@@ -208,7 +210,9 @@ _Code paths:_ `src/planner/tickets/logic/machine.py`, `src/planner/tickets/data.
 
 ## The one rule: proposals and the single door
 
-Workers never change settled values or advance Stages directly. A worker that wants to
+Workers never change settled values or advance Stages directly. Only a Ticket's own
+Worker principal can file that Ticket's proposal; a supervisor, holder Ticket, or other
+Worker cannot file on its behalf. A worker that wants to
 move work forward files a **proposal** on the blank the current Stage gates. The
 proposal resolver is the only thing that can turn a proposal into a real value or
 advance the Stage. A Ticket has at most one pending proposal, always for its current
@@ -216,7 +220,7 @@ Stage. Filing another proposal replaces that pending draft. Saved field values r
 separate, including a saved value beside a pending revision of the same field.
 
 The pending proposal has its own editor. Any authorized actor can replace its text.
-The proposal stays pending, and the edit keeps its
+The proposal stays pending and addressed to the same ceiling holder. The edit keeps its
 author, creation time, settled value, Ticket status, Stage, and scope. Direct edits
 of saved values use a separate editor and remain limited to passed fields and direct callers.
 
@@ -247,17 +251,24 @@ _Code paths:_ `src/planner/tickets/logic/resolution.py` (the proposal resolver),
 
 ## How far a worker may go: the scope
 
-Every ticket carries a permission with two parts. Together, these parts form its **scope**:
+Every ticket carries a **scope** with two controls, plus a holder for its ceiling:
 
 - **The ceiling** — how far along the stages a worker may push this ticket on its own.
 - **At the cap** — what the worker may do when it gets there. **Stop** prevents a
   proposal at all. **Propose** lets the worker file one, and that proposal parks for the
-  user's approval.
+  holder's approval.
+- **The holder** — the principal who can decide the proposal at that ceiling.
+
+The holder is a full principal kind and ID, not a display label or current conversation.
+Existing Tickets receive the owner principal when the holder column is introduced.
+A Ticket cannot hold its own ceiling: its Worker is the proposal author, never its own
+reviewer. Holder Tickets and Sprint Items must exist when the scope is written.
 
 Below the ceiling, a worker-owned Stage's proposal is accepted automatically and the
 ticket advances. At the ceiling, the cap decides whether a worker-owned Stage can propose
 at all. The cap says nothing about who owns a Stage: user-owned Stages still do not
-dispatch automatically, and paired Stages still get one opening turn and stay paired.
+dispatch automatically. Paired Stages still get one opening turn before they rest at
+`empty` with their opener fact.
 New tickets start leashed right at
 **Kickoff**: the ceiling is `needs_kickoff` for every Worker type, so nothing advances past
 the human-approved intake until the human grants scope onward — review before agents
@@ -278,12 +289,13 @@ straight to **done**. (The threshold used by sprint-in-progress behavior is the
 
 ## The approval gate and Ticket leash
 
-Whenever the human approves a step, they must say in the same breath how far the
-worker can go next. The system refuses an approval that does not answer that
-question. The Ticket details disclosure shows the same scope as a readable leash:
+The addressed holder or the owner can decide a parked proposal. Whenever either approves
+a step, they must name the next ceiling, cap, and holder. The system refuses an approval
+that omits any part. The Ticket details disclosure shows
+the same scope as a readable leash:
 "approved until [a stage], then [stop or propose]." The disclosure includes only the
 ceiling and cap selects. A fresh approval starts on **Propose**, so
-the worker runs to the new ceiling and parks there for the user unless **Stop** is
+the worker runs to the new ceiling and parks there for the named holder unless **Stop** is
 chosen instead. At Kickoff, an unchosen
 ceiling starts from that Worker type's managed suggestion. Other approvals start from
 their normal next Stage. `No further` remains a one-off choice. The stages it offers
@@ -291,43 +303,61 @@ are always the current one and the
 ones after it, never an earlier one, so you can't hand back ground the ticket has
 already covered. One shared source of the allowed stages feeds both the Ticket leash
 and the approval screen, so the two cannot disagree.
+While a proposal is pending, the Ticket page hides the leash because scope cannot change
+without silently changing the proposal's stable address.
 
-Review's single, oldest-first walk shows today's tickets whose status is
-`awaiting_approval` or `needs_user`.
-A parked proposal keeps its approval and revision controls. A Worker help request uses the same
-Ticket title, Skip, and Open Ticket structure without proposal controls; the answer
-belongs in the Ticket conversation. Either kind leaves Review the moment its status
-changes, whichever way that happens.
+Review's single, oldest-first walk shows today's owner-addressed proposals. It also shows
+a non-owner proposal when its alert reaches the terminal refusal limit.
+A parked proposal keeps its approval and revision controls. A Worker help request is an
+addressed conversation message. Its unread state feeds the shared attention projection,
+and the answer belongs in that conversation.
 
-Replying to the worker is one of those ways. A ticket parked on a proposal is waiting
-for you, and typing an answer into its conversation is an answer of a kind — the
-proposal is being discussed rather than approved — so the ticket moves to `paired` and
-leaves Review. It moves when the message has actually reached the conversation: a reply
-that got nowhere is not a reply. Only a person can do this. The automatic loop sends into
-the same conversation, and its prompts are not replies.
+Replying to the worker does not decide its proposal. The proposal stays pending and
+addressed to its holder until a decision or a replacement proposal arrives. A non-owner
+holder receives a concise Panels-authored proposal-ready fact through its exact Chief,
+Sprint Item, or Ticket conversation. The proposal write also writes a durable delivery
+intent. Startup reconciliation recovers both interrupted delivery and proposals that
+predate that intent, while a generation-and-attempt message identity prevents duplicate
+transcript rows. Owner-held proposals remain on Review and use the owner-only push path.
 
-The Review screen can also send a parked ticket back instead of accepting it, whatever field
-is currently gated. The human writes short guidance in the review card. Panels
-sends that guidance as the real next message into the Ticket's conversation, and only
-then hands the Ticket back to the worker — that order matters, because the hand-back
-deletes the pending proposal and could not be honestly undone if the send had failed.
-A refused send changes nothing and can simply be retried. The ticket's stage never changes: a pending
+The Review screen can also send an owner-addressed ticket back instead of accepting it,
+whatever field is currently gated. The owner writes short guidance in the review card.
+The Ticket transaction validates authority and route, then commits the decision plus two
+ordered delivery records. The first is a concise Panels lifecycle fact. The second is
+the comment from the deciding principal. The transaction performs no backend I/O. The
+same machine-lock-owned recovery loop sends both records after the commit and preserves
+their separate attribution. Durable sender identities make retries idempotent. A
+post-wire record failure stays terminal and visible as `uncertain`, but it is settled
+for ordering. The messages after it continue without a retry of the uncertain message.
+If its conversation row also fails, the recovery loop writes that row later without
+another backend send.
+The ticket's stage never changes: a pending
 gated proposal is cleared, settled values remain, and the ticket leaves Review while
 its control status is `agent`. The gated field can therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
-submits the revision.
+submits the revision. A holder rejection keeps that holder. If the owner uses the
+override, the owner becomes the ceiling holder for the revised proposal.
 
-There is one approval gate. Every parked proposal waits on `awaiting_approval` for the
-user, who approves it or rejects it with focused revision guidance — in Review or through
-the direct Ticket controls — and either way the canonical proposal resolver does the work.
-With one reviewer there is nobody to hand a proposal to, so editing a Ticket's scope while
-a proposal waits cannot change who answers it.
+There is one approval gate. Every parked proposal waits on `awaiting_approval` for its
+holder. The holder or owner approves it or rejects it with focused revision guidance,
+and either way the canonical proposal resolver does the work. Review contains
+owner-addressed proposals and persistently undeliverable non-owner proposals. Other
+holders use their scoped controls until that fallback applies.
+Scope cannot change while a proposal waits, so its address stays stable.
 
-A parked proposal reaches nobody but the user. A Sprint Item conversation is not told
-that one is waiting, and nothing starts it to go and look: the user asks it, or it stays
-quiet. When they do ask, it reads the waiting proposal from current state itself, and the
-approval remains theirs. Worker messages use the separate targeted message path and
-require an existing Worker conversation.
+A parked proposal normally reaches only its holder. Owner-held proposals appear in Review and
+produce the owner's needs-approval notification. For a Chief, Sprint Item, or other
+Ticket holder, Panels sends a concise system-authored wake-up to that holder's exact
+conversation; the holder then reads the proposal from canonical Ticket state. Ten
+definite refusals surface the same proposal to the owner without changing its holder.
+An owner decision or replacement proposal removes that extra surface. Filing
+commits the parked proposal and its durable intent without contacting the holder. Only
+the machine-lock-owned recovery loop claims and delivers that intent. It wakes on the
+database change signal and retries definite refusals. Approval, rejection, replacement,
+and deletion cancel or supersede undelivered wakes without waiting for delivery. A wake
+already on the wire is only a notice to inspect current Ticket state. A
+post-wire record failure becomes terminal `uncertain` state and is never retried
+automatically.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
@@ -344,9 +374,10 @@ requires `--yes`.
 
 The user's ordinary delete is refused while the Ticket's status says a worker step is
 out, and also while its conversation has a turn running. `--force` deletes it anyway. A
-supervisor's delete is not guarded at all: it is the whole capability the user gave it,
-over its own child tickets. Any delete that goes ahead over a running worker kills that
-worker's turn first, so nothing keeps talking into a conversation whose ticket is gone.
+supervisor can delete its own child Ticket without that activity guard. No actor can
+delete a Ticket or Sprint Item that is the ceiling holder for another Ticket. Any delete
+that goes ahead over a running worker kills that worker's turn first, so nothing keeps
+talking into a conversation whose ticket is gone.
 
 One transaction removes the ticket
 from days, sprint views, links, Review, Workspace, and pending worker context. Other

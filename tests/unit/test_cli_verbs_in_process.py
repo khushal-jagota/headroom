@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
 from planner.cli.main import main as cli_main
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -59,7 +60,12 @@ def cli_app(
             "PLAN_FAKE_NOW": "2026-07-04T12:00:00",
         },
     )
-    app = create_app(config, build_clock(config), lambda: connect(str(db_path)))
+    app = create_app(
+        config,
+        build_clock(config),
+        lambda: connect(str(db_path)),
+        conversation_system_for_test=InMemoryConversationSystem(),
+    )
 
     with TestClient(app) as client:
 
@@ -171,6 +177,78 @@ def test_day_cli_round_trips_midday_reconciliation(
 
     assert updated["midday_reconciliation"] == "The morning bet still holds."
     assert shown["parts"]["midday_reconciliation"]["value"] == "The morning bet still holds."
+
+
+def test_send_message_cli_mode_reaches_the_current_conversation_system(
+    server: ServerHandle, cli: Callable[..., JsonObject]
+) -> None:
+    ticket = cli(
+        server,
+        "ticket",
+        "create",
+        "--title",
+        "Receive messages",
+        "--worker-type",
+        "coding",
+        "--kickoff-note",
+        "Keep the delivery path exact.",
+    )
+
+    started = cli(
+        server,
+        "send-message",
+        "--ticket",
+        ticket["id"],
+        "--message",
+        "Start with the default.",
+    )
+    queued = cli(
+        server,
+        "send-message",
+        "--ticket",
+        ticket["id"],
+        "--message",
+        "Wait next.",
+        "--mode",
+        "queue",
+    )
+    injected = cli(
+        server,
+        "send-message",
+        "--ticket",
+        ticket["id"],
+        "--message",
+        "Use this now.",
+        "--mode",
+        "steer",
+    )
+    sent_now = cli(
+        server,
+        "send-message",
+        "--ticket",
+        ticket["id"],
+        "--message",
+        "Interrupt and run this.",
+        "--mode",
+        "send_now",
+    )
+    idle_steer = cli(
+        server,
+        "send-message",
+        "--chief",
+        "--message",
+        "There is no turn yet.",
+        "--mode",
+        "steer",
+    )
+
+    assert started["fate"] == "started"
+    assert queued["fate"] == "queued"
+    assert queued["queue_position"] == 1
+    assert injected["fate"] == "injected"
+    assert sent_now["fate"] == "started"
+    assert idle_steer["fate"] == "started"
+    assert idle_steer["conversation_id"] is not None
 
 
 def test_record_reads_share_manifests_selection_and_identity(
@@ -603,6 +681,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "worker",
         "note",
         tid,
+        ticket_id=tid,
         stdin="approach note",
     )
     cli(
@@ -611,6 +690,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "note",
         tid,
         "--append",
+        ticket_id=tid,
         stdin="additional approach note",
     )
     appended_detail = api.get(server, f"/api/tickets/{tid}")
@@ -620,6 +700,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "worker",
         "note",
         tid,
+        ticket_id=tid,
         stdin="replaced approach note",
     )
     detail = api.get(server, f"/api/tickets/{tid}")
@@ -639,6 +720,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "worker",
         "note",
         new_worker_id,
+        ticket_id=new_worker_id,
         stdin="stages note",
     )
     new_worker_detail = api.get(server, f"/api/tickets/{new_worker_id}")

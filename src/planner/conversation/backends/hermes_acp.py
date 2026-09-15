@@ -130,6 +130,8 @@ from planner.conversation.message_content import (
     MessagePiece,
     MessageText,
     joined_runs_of_text,
+    message_content_starts_with_command,
+    sender_labeled_message_content,
     text_message_content,
 )
 from planner.conversation.message_files import (
@@ -423,7 +425,7 @@ class HermesAcpBackendChild:
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
     ) -> None:
-        """Put the session on any carried values and start a turn with this text.
+        """Put the session on carried values and start a prompt or native command.
 
         The two are one act. If the prompt does not reach the wire the change is put back;
         when it cannot be put back — because the wire it would go over is the wire that
@@ -431,8 +433,13 @@ class HermesAcpBackendChild:
         way to name that again — the child as it stands is no longer what the conversation
         is running on, and the honest answer is to start it again.
         """
+        native_command = self._is_catalog_command(sender_content)
         if automatic_compaction:
             content = await self._automatic_compaction_content(sender_content)
+        elif native_command:
+            content = sender_content
+        else:
+            content = sender_labeled_message_content(content, sender_label)
         previously = (self._session_model, self._session_reasoning_effort)
         try:
             await self._apply_values(model_change, reasoning_effort_change)
@@ -496,7 +503,14 @@ class HermesAcpBackendChild:
                 {
                     "sessionId": session_id,
                     "turnToken": wire_token,
-                    "text": "\n\n".join(cast(MessageText, piece).text for piece in content),
+                    "text": "\n\n".join(
+                        cast(MessageText, piece).text
+                        for piece in (
+                            content
+                            if self._is_catalog_command(content)
+                            else sender_labeled_message_content(content, sender_label)
+                        )
+                    ),
                     "senderLabel": sender_label,
                 },
             )
@@ -508,6 +522,12 @@ class HermesAcpBackendChild:
         if response.get("accepted") is False:
             return BackendSteerRefused(PromptDeliveryRefusalReason.backend_rejected_steer)
         return BackendSteerUncertain()
+
+    def _is_catalog_command(self, content: MessageContent) -> bool:
+        commands = self._available_commands
+        return commands is not None and message_content_starts_with_command(
+            content, frozenset(command.name for command in commands)
+        )
 
     async def cancel_running_turn(self) -> None:
         """Stop the turn, and do not come back until hermes says it has stopped.
@@ -925,9 +945,9 @@ class HermesAcpBackendChild:
     ) -> asyncio.Task[Any]:
         """Start a ``session/prompt`` and return once its bytes are out, not once it answers.
 
-        The label and the mode ride along as ACP metadata, which an agent is free to
-        ignore and hermes does. Returning at the write is the whole point: the response is
-        the turn's ending and waiting for it here would be waiting for the agent to finish.
+        The label and mode also ride along as ACP metadata. Returning at the write is the
+        whole point: the response is the turn's ending, so waiting for it waits for the
+        agent to finish.
         """
         connection, session_id = self._bound_session()
         self._require_a_live_wire()

@@ -18,9 +18,7 @@ from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
 
-def _table_columns(
-    conn: sqlite3.Connection, table: str
-) -> list[tuple[str, str, int, int]]:
+def _table_columns(conn: sqlite3.Connection, table: str) -> list[tuple[str, str, int, int]]:
     """Each column's name, type, NOT NULL and place in the primary key."""
     return [
         (str(row[1]), str(row[2]), int(row[3]), int(row[5]))
@@ -54,7 +52,23 @@ def test_a_conversation_holds_what_it_was_started_with_and_where_it_has_got_to(
         ("latest_agent_activity_at", "INTEGER", 0, 0),
         ("latest_agent_activity_sequence", "INTEGER", 1, 0),
         ("automatically_compacted_through_sequence", "INTEGER", 1, 0),
+        ("owner_read_through_sequence", "INTEGER", 1, 0),
+        ("automatic_compaction_attempted_through_sequence", "INTEGER", 1, 0),
     ]
+
+
+def test_addressed_message_lookup_index_covers_kind_and_recipient(
+    upgraded: sqlite3.Connection,
+) -> None:
+    indexes = {str(row[1]) for row in upgraded.execute("PRAGMA index_list(conversation_events)")}
+    assert "idx_conversation_events_kind_recipient" in indexes
+    sql = upgraded.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+        ("idx_conversation_events_kind_recipient",),
+    ).fetchone()[0]
+    assert "conversation_events(kind" in sql
+    assert "json_extract(payload,'$.recipient.kind')" in sql
+    assert "json_extract(payload,'$.recipient.id')" in sql
 
 
 def test_automatic_compaction_migration_restores_latest_agent_activity(tmp_path: Path) -> None:
@@ -105,6 +119,29 @@ def test_automatic_compaction_migration_restores_latest_agent_activity(tmp_path:
         "WHERE conversation_id = 'later'"
     ).fetchone()
     assert tuple(later) == (70, 7, 0)
+    conn.close()
+
+
+def test_automatic_compaction_attempt_migration_starts_at_the_confirmed_boundary(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "before-automatic-compaction-attempts.db"
+    conn = _build_a_database_at(db_path, "addressed_messages")
+    conn.execute(
+        "INSERT INTO conversations (conversation_id, backend_key, model, workspace_folder, "
+        "access, latest_agent_activity_sequence, "
+        "automatically_compacted_through_sequence, created_at) "
+        "VALUES ('c', 'claude', 'opus[1m]', '/tmp', 'full', 12, 7, 1)"
+    )
+
+    create_schema(conn)
+
+    row = conn.execute(
+        "SELECT automatically_compacted_through_sequence, "
+        "automatic_compaction_attempted_through_sequence "
+        "FROM conversations WHERE conversation_id = 'c'"
+    ).fetchone()
+    assert tuple(row) == (7, 7)
     conn.close()
 
 
@@ -194,9 +231,7 @@ def _build_a_database_at(path: Path, revision: str) -> sqlite3.Connection:
     engine = db_module._migration_engine(str(path), 5000)  # noqa: SLF001
     try:
         with engine.begin() as connection:
-            command.upgrade(
-                db_module._alembic_config(connection), revision
-            )  # noqa: SLF001
+            command.upgrade(db_module._alembic_config(connection), revision)  # noqa: SLF001
     finally:
         engine.dispose()
     return connect(str(path))
@@ -234,8 +269,7 @@ def test_the_retired_tables_go_and_the_ticket_keeps_its_link_under_its_real_name
     create_schema(conn)
 
     tables = {
-        str(row[0])
-        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
     assert {
         "conversation_session_bindings",
@@ -255,9 +289,7 @@ def test_the_retired_tables_go_and_the_ticket_keeps_its_link_under_its_real_name
     # The link itself is untouched. Only what it is called changed, because what it holds
     # had already changed.
     assert (
-        conn.execute(
-            "SELECT conversation_id FROM tickets WHERE id = 't_linked'"
-        ).fetchone()[0]
+        conn.execute("SELECT conversation_id FROM tickets WHERE id = 't_linked'").fetchone()[0]
         == "conversation-abc"
     )
     assert "employee_session_id" not in {
@@ -349,9 +381,7 @@ def test_legacy_commands_become_typed_catalog_entries(tmp_path: Path) -> None:
 # --- conversations nothing was ever said in ----------------------------------------------
 
 
-def _conversation(
-    conn: sqlite3.Connection, conversation_id: str, *, spoken_in: bool
-) -> None:
+def _conversation(conn: sqlite3.Connection, conversation_id: str, *, spoken_in: bool) -> None:
     conn.execute(
         "INSERT INTO conversations (conversation_id, backend_key, workspace_folder, access, "
         "created_at, vendor_session_cursor) VALUES (?, 'claude', '/tmp/workspace', 'full', 1, ?)",
@@ -401,7 +431,5 @@ def test_owners_let_go_of_conversations_nothing_was_ever_said_in(
         "t_stuck": None,
         "t_working": "spoke",
     }
-    assert dict(conn.execute("SELECT agent_key, conversation_id FROM agents")) == {
-        "chief": None
-    }
+    assert dict(conn.execute("SELECT agent_key, conversation_id FROM agents")) == {"chief": None}
     conn.close()

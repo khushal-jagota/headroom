@@ -25,6 +25,7 @@ import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from tests.support.principals import OWNER_PRINCIPAL
 
 import planner.conversation.api as conversation_api
 import planner.conversation.contracts as conversation_contracts
@@ -107,6 +108,7 @@ from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core import sse
 from planner.core.clock import build_clock
 from planner.core.config import load_config
+from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.core.response_compression import (
     CompressExceptEventStreams,
@@ -135,6 +137,7 @@ class _FakeBackend:
     def written_texts(self) -> list[str]:
         """The words of each message written. The messages themselves are above."""
         return [message_content_text(content) for content in self.written_contents]
+
     steered_contents: list[MessageContent] = field(default_factory=list)
     steer_outcome: BackendSteerOutcome = field(default_factory=BackendSteerAccepted)
     permission_answers: dict[str, str] = field(default_factory=dict)
@@ -186,9 +189,7 @@ class _FakeBackendChild:
         )
         if self._backend.needs_failed_child_recovery_once:
             self._backend.needs_failed_child_recovery_once = False
-            raise NeedsRebind(
-                self._backend.conversation_id, failed_child_recovery=True
-            )
+            raise NeedsRebind(self._backend.conversation_id, failed_child_recovery=True)
         if self._backend.write_fails:
             raise PromptWriteFailed(self._backend.conversation_id)
         self._backend.written_contents.append(content)
@@ -452,9 +453,7 @@ class _Harness:
         backend = self.backend(conversation_id)
         token = backend.live_turn_token
         assert token is not None and backend.sink is not None
-        await backend.sink.tool_call_progress(
-            token, tool_call_id=tool_call_id, detail=detail
-        )
+        await backend.sink.tool_call_progress(token, tool_call_id=tool_call_id, detail=detail)
         await self.settle()
 
     async def model_is_thinking(self, conversation_id: str) -> None:
@@ -505,16 +504,14 @@ def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
     asyncio.run(asyncio.wait_for(exercise(), 20.0))
 
 
-def _associate_ticket_conversations(
-    harness: _Harness, *, active: str, past: str
-) -> None:
+def _associate_ticket_conversations(harness: _Harness, *, active: str, past: str) -> None:
     conn = connect(str(harness.db_path))
     try:
         ticket = tickets_data.create_ticket(
             conn,
             title="Conversation boundary",
             worker_type="coding",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,
         )
@@ -647,9 +644,7 @@ class _EventStreamDrive:
             if frame.startswith(":"):
                 continue
             name_line, data_line = frame.strip().split("\n", 1)
-            return name_line.removeprefix("event: "), json.loads(
-                data_line.removeprefix("data: ")
-            )
+            return name_line.removeprefix("event: "), json.loads(data_line.removeprefix("data: "))
 
 
 # --- starting a conversation ----------------------------------------------------------------
@@ -713,7 +708,53 @@ def test_every_conversation_mutation_rejects_a_tickets_past_conversation(
                     "sender_label": "owner",
                 },
             )
-            assert active_send.status_code == 200
+            assert active_send.status_code == 409
+            assert active_send.json()["detail"] == (
+                "employee conversations accept messages only through Send Message"
+            )
+
+            assert (await _start(client, "agent-owned")).status_code == 201
+            conn = connect(str(harness.db_path))
+            conn.execute(
+                "INSERT INTO agents (agent_key, conversation_id) VALUES (?, ?)",
+                ("chief_of_staff", "agent-owned"),
+            )
+            conn.commit()
+            conn.close()
+            agent_send = await client.post(
+                "/api/conversation/conversations/agent-owned/send",
+                json={
+                    "content": [{"piece": "text", "text": "bypass"}],
+                    "sender_label": "owner",
+                },
+            )
+            assert agent_send.status_code == 409
+            assert agent_send.json()["detail"] == (
+                "employee conversations accept messages only through Send Message"
+            )
+            conn = connect(str(harness.db_path))
+            conn.execute(
+                "UPDATE conversations SET identity_environment_variables = ? "
+                "WHERE conversation_id = ?",
+                ('[["PLAN_ACTOR","chief"]]', "agent-owned"),
+            )
+            conn.execute(
+                "UPDATE agents SET conversation_id = NULL WHERE agent_key = ?",
+                ("chief_of_staff",),
+            )
+            conn.commit()
+            conn.close()
+            historical_agent_send = await client.post(
+                "/api/conversation/conversations/agent-owned/send",
+                json={
+                    "content": [{"piece": "text", "text": "historical bypass"}],
+                    "sender_label": "owner",
+                },
+            )
+            assert historical_agent_send.status_code == 409
+            assert historical_agent_send.json()["detail"] == (
+                "employee conversations accept messages only through Send Message"
+            )
 
             assert (await _start(client, "unassociated")).status_code == 201
             unassociated_send = await client.post(
@@ -798,7 +839,7 @@ def test_the_view_carries_the_typed_composer_catalog(
                 json={
                     "content": [{"piece": "text", "text": "first"}],
                     "sender_label": "owner",
-                    "mode": "run_when_free",
+                    "mode": "queue",
                 },
             )
             backend = harness.backend("c")
@@ -854,16 +895,16 @@ def test_every_fate_a_send_can_have_comes_back_tagged(
         monkeypatch.setattr(conversation_api, "backend_supports_steer", lambda _key: True)
         async with harness.client() as client:
             await _start(client, "c")
-            assert (
-                await client.get("/api/conversation/conversations/c")
-            ).json()["supports_steer"] is True
+            assert (await client.get("/api/conversation/conversations/c")).json()[
+                "supports_steer"
+            ] is True
 
             started = await client.post(
                 "/api/conversation/conversations/c/send",
                 json={
                     "content": [{"piece": "text", "text": "first"}],
                     "sender_label": "owner",
-                    "mode": "run_when_free",
+                    "mode": "queue",
                 },
             )
             assert started.status_code == 200
@@ -874,7 +915,7 @@ def test_every_fate_a_send_can_have_comes_back_tagged(
                 json={
                     "content": [{"piece": "text", "text": "held"}],
                     "sender_label": "owner",
-                    "mode": "run_when_free",
+                    "mode": "queue",
                 },
             )
             assert queued.json() == {"fate": "queued", "queue_position": 1}
@@ -906,7 +947,7 @@ def test_every_fate_a_send_can_have_comes_back_tagged(
                 json={
                     "content": [{"piece": "text", "text": "nowhere"}],
                     "sender_label": "owner",
-                    "mode": "run_when_free",
+                    "mode": "queue",
                 },
             )
             assert refused.status_code == 200
@@ -963,7 +1004,7 @@ def test_a_failed_claude_recovery_refusal_remains_after_an_api_reread(
         assert events[-1]["payload"] == {
             "text": "follow-up",
             "sender_label": "owner",
-            "mode": "run_when_free",
+            "mode": "queue",
             "refusal_reason": "session_did_not_load",
             "sender_message_id": "follow-up-id",
         }
@@ -1011,23 +1052,24 @@ def test_what_a_sender_minted_reaches_the_row_its_message_becomes(harness: _Harn
 
             payloads = {
                 row["kind"]: row["payload"]
-                for row in (
-                    await client.get("/api/conversation/conversations/c/events")
-                ).json()["events"]
+                for row in (await client.get("/api/conversation/conversations/c/events")).json()[
+                    "events"
+                ]
             }
             assert payloads["prompt"] == {
                 "text": "first",
                 "sender_label": "owner",
-                "mode": "run_when_free",
+                "mode": "queue",
                 "sender_message_id": "m-1",
                 "sent_at_unix_milliseconds": 1_700_000_000_123,
             }
             assert payloads["prompt_delivery_refused"] == {
                 "text": "held",
                 "sender_label": "owner",
-                "mode": "run_when_free",
+                "mode": "queue",
                 "refusal_reason": "write_to_backend_failed",
                 "sender_message_id": "m-2",
+                "sent_at_unix_milliseconds": 1_700_000_000_456,
             }
 
             await _start(client, "k")
@@ -1051,11 +1093,52 @@ def test_what_a_sender_minted_reaches_the_row_its_message_becomes(harness: _Harn
 
             assert [
                 row["payload"]
-                for row in (
-                    await client.get("/api/conversation/conversations/k/events")
-                ).json()["events"]
+                for row in (await client.get("/api/conversation/conversations/k/events")).json()[
+                    "events"
+                ]
                 if row["kind"] == "prompt_discarded"
             ] == [{"text": "never ran", "sender_label": "owner", "sender_message_id": "m-3"}]
+
+    _run(exercise)
+
+
+def test_owner_read_position_persists_and_refuses_employee_updates(harness: _Harness) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [{"piece": "text", "text": "first"}],
+                    "sender_label": "owner",
+                },
+            )
+            advanced = await client.post(
+                "/api/conversation/conversations/c/owner-read",
+                json={"through_sequence": 999},
+            )
+            assert advanced.status_code == 200
+            assert advanced.json() == {"owner_read_through_sequence": 1}
+            assert (await client.get("/api/conversation/conversations/c")).json()[
+                "owner_read_through_sequence"
+            ] == 1
+            async with harness.client() as second_device:
+                assert (await second_device.get("/api/conversation/conversations/c")).json()[
+                    "owner_read_through_sequence"
+                ] == 1
+
+            missing = await client.post(
+                "/api/conversation/conversations/missing/owner-read",
+                json={"through_sequence": 1},
+            )
+            assert missing.status_code == 404
+
+            with pytest.raises(PlannerError, match="only to the owner"):
+                await client.post(
+                    "/api/conversation/conversations/c/owner-read",
+                    json={"through_sequence": 1},
+                    headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_one"},
+                )
 
     _run(exercise)
 
@@ -1079,8 +1162,7 @@ def test_user_input_replays_after_refresh_and_posts_a_complete_answer_map(
             assert view["pending_permission_ask"] is None
             assert view["pending_user_input"]["request_id"] == request.request_id
             question_ids = [
-                question["question_id"]
-                for question in view["pending_user_input"]["questions"]
+                question["question_id"] for question in view["pending_user_input"]["questions"]
             ]
             assert question_ids == [
                 "scope",
@@ -1130,9 +1212,7 @@ def test_a_waiting_message_can_be_taken_back_by_the_name_its_sender_gave_it(
                 },
             )
             assert queued.json()["fate"] == "queued"
-            held = (await client.get("/api/conversation/conversations/c")).json()[
-                "held_prompts"
-            ]
+            held = (await client.get("/api/conversation/conversations/c")).json()["held_prompts"]
             assert len(held) == 1
             assert held[0]["sender_message_id"] == "message-one"
 
@@ -1179,15 +1259,16 @@ def test_a_waiting_message_can_be_promoted_by_its_server_owned_id(
                     "sent_at_unix_milliseconds": 1234,
                 },
             )
-            held = (await client.get("/api/conversation/conversations/c")).json()[
-                "held_prompts"
-            ][0]
+            held = (await client.get("/api/conversation/conversations/c")).json()["held_prompts"][0]
             assert held == {
                 "held_prompt_id": held["held_prompt_id"],
                 "text": "held",
                 "sender_label": "owner",
                 "sender_message_id": "sender-one",
                 "sent_at_unix_milliseconds": 1234,
+                "sender": None,
+                "recipient": None,
+                "queue_reason": "requested",
             }
 
             promoted = await client.post(
@@ -1238,9 +1319,9 @@ def test_the_tail_signals_that_held_prompts_changed(harness: _Harness) -> None:
                     LIVE_FRAME_STREAM_NAME,
                     {"frame": "held_prompts_changed"},
                 )
-                held = (await client.get(
-                    "/api/conversation/conversations/c"
-                )).json()["held_prompts"][0]
+                held = (await client.get("/api/conversation/conversations/c")).json()[
+                    "held_prompts"
+                ][0]
                 await client.delete(
                     f"/api/conversation/conversations/c/held-prompts/{held['held_prompt_id']}"
                 )
@@ -1251,9 +1332,9 @@ def test_the_tail_signals_that_held_prompts_changed(harness: _Harness) -> None:
 
             # An empty queue still wakes a new binder. This closes the inverse race:
             # its earlier view may have contained the row that was just discarded.
-            latest = (await client.get(
-                "/api/conversation/conversations/c"
-            )).json()["latest_sequence"]
+            latest = (await client.get("/api/conversation/conversations/c")).json()[
+                "latest_sequence"
+            ]
             async with _EventStreamDrive(
                 harness.app,
                 "/api/conversation/conversations/c/tail",
@@ -1379,14 +1460,14 @@ def test_the_rows_after_a_position_come_back_in_order_and_decoded(harness: _Harn
                 json={
                     "content": [{"piece": "text", "text": "work"}],
                     "sender_label": "owner",
-                    "mode": "run_when_free",
+                    "mode": "queue",
                 },
             )
             await harness.complete_turn("c")
 
-            everything = (
-                await client.get("/api/conversation/conversations/c/events")
-            ).json()["events"]
+            everything = (await client.get("/api/conversation/conversations/c/events")).json()[
+                "events"
+            ]
             assert [event["sequence"] for event in everything] == [1, 2]
             assert [event["kind"] for event in everything] == ["prompt", "turn_ended"]
             assert everything[0]["payload"] == {
@@ -1394,7 +1475,7 @@ def test_the_rows_after_a_position_come_back_in_order_and_decoded(harness: _Harn
                 # back, exactly as it always was. Nothing ordinary grew.
                 "text": "work",
                 "sender_label": "owner",
-                "mode": "run_when_free",
+                "mode": "queue",
             }
             assert everything[1]["payload"] == {"ending": "completed", "error_summary": None}
 
@@ -1402,6 +1483,34 @@ def test_the_rows_after_a_position_come_back_in_order_and_decoded(harness: _Harn
                 await client.get("/api/conversation/conversations/c/events", params={"after": 1})
             ).json()["events"]
             assert [event["sequence"] for event in after_the_first] == [2]
+
+    _run(exercise)
+
+
+def test_proposal_delivery_failure_is_public_without_a_backend_write(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "proposal-failure")
+            for _ in range(2):
+                await harness.system.record_proposal_delivery_failed(
+                    "proposal-failure",
+                    attempt_count=10,
+                    last_error="write_to_backend_failed",
+                    sender_message_id="proposal-delivery-failed:t_one:1",
+                )
+            events = (await client.get(
+                "/api/conversation/conversations/proposal-failure/events"
+            )).json()["events"]
+            assert len(events) == 1
+            assert events[0]["kind"] == "proposal_delivery_failed"
+            assert events[0]["payload"] == {
+                "attempt_count": 10,
+                "last_error": "write_to_backend_failed",
+                "sender_message_id": "proposal-delivery-failed:t_one:1",
+            }
+            assert harness.backend("proposal-failure").written_texts == []
 
     _run(exercise)
 
@@ -1437,9 +1546,7 @@ def test_claude_legacy_image_detail_stays_in_rows_but_not_public_replays(
                     tool_call_status=ToolCallStatus.completed,
                     detail=legacy_detail,
                 ),
-                AgentMessageEventPayload(
-                    content=text_message_content("The image is clear.")
-                ),
+                AgentMessageEventPayload(content=text_message_content("The image is clear.")),
             ):
                 await harness.store.append_event("claude-images", payload)
 
@@ -1598,9 +1705,7 @@ def test_public_replays_keep_non_claude_and_unrecognized_json_detail(
                     ),
                 )
                 events = (
-                    await client.get(
-                        f"/api/conversation/conversations/{conversation_id}/events"
-                    )
+                    await client.get(f"/api/conversation/conversations/{conversation_id}/events")
                 ).json()["events"]
                 assert events[0]["payload"]["detail"] == detail
 
@@ -1636,9 +1741,7 @@ def test_a_public_read_carries_the_start_of_a_long_tool_output_and_says_so(
             ):
                 await harness.store.append_event("long-output", payload)
 
-            response = await client.get(
-                "/api/conversation/conversations/long-output/events"
-            )
+            response = await client.get("/api/conversation/conversations/long-output/events")
             fetched = response.json()["events"]
             assert fetched[0]["payload"] == {
                 "tool_call_id": "call-1",
@@ -1760,9 +1863,7 @@ def test_the_tail_replays_then_carries_on_with_no_gap_and_no_repeat(
                     for text in ("row three", "row four"):
                         stored = await harness.store.append_event(
                             conversation_id,
-                            AgentMessageEventPayload(
-                                content=text_message_content(text)
-                            ),
+                            AgentMessageEventPayload(content=text_message_content(text)),
                         )
                         harness.live_tail.publish_event(stored)
                 return await read_events_after(conversation_id, after_sequence)
@@ -2070,8 +2171,134 @@ class _SnapshotAnswers(BackendSnapshotService):
         self.snapshots_answer = snapshots
 
     async def snapshots(self, *, refresh: bool = False) -> tuple[BackendSnapshot, ...]:
-        assert refresh is True
+        assert refresh is False
         return self.snapshots_answer
+
+
+class _OrderedUsageAnswers(BackendUsageService):
+    def __init__(self) -> None:
+        super().__init__({})
+        self.started: set[ConversationBackendKey] = set()
+        self.completed: set[ConversationBackendKey] = set()
+
+    async def refresh(self, backend_key: ConversationBackendKey) -> BackendUsageResult:
+        self.started.add(backend_key)
+        self.completed.add(backend_key)
+        return BackendUsageResult(
+            backend_key=backend_key,
+            outcome=BackendUsageOutcome.unavailable,
+            detail="No usage source.",
+        )
+
+
+class _SnapshotsAfterUsageStart(_SnapshotAnswers):
+    def __init__(
+        self,
+        snapshots: tuple[BackendSnapshot, ...],
+        release_snapshots: asyncio.Event,
+    ) -> None:
+        super().__init__(snapshots)
+        self.release_snapshots = release_snapshots
+        self.started = asyncio.Event()
+        self.refresh_arguments: list[bool] = []
+
+    async def snapshots(self, *, refresh: bool = False) -> tuple[BackendSnapshot, ...]:
+        self.refresh_arguments.append(refresh)
+        self.started.set()
+        await self.release_snapshots.wait()
+        return self.snapshots_answer
+
+
+class _UsageAnswersThatWait(BackendUsageService):
+    def __init__(self) -> None:
+        super().__init__({})
+        self.started: set[ConversationBackendKey] = set()
+        self.cancelled: set[ConversationBackendKey] = set()
+
+    async def refresh(self, backend_key: ConversationBackendKey) -> BackendUsageResult:
+        self.started.add(backend_key)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            self.cancelled.add(backend_key)
+        raise AssertionError("usage wait was released")
+
+
+class _SnapshotFailure(BackendSnapshotService):
+    async def snapshots(self, *, refresh: bool = False) -> tuple[BackendSnapshot, ...]:
+        del refresh
+        raise RuntimeError("snapshot acquisition stopped")
+
+
+def test_backend_refresh_starts_usage_before_ordinary_snapshot_acquisition(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        snapshots = tuple(
+            BackendSnapshot(
+                backend_key=backend_key,
+                installed=False,
+                executable_path=None,
+                version=None,
+                identity=None,
+                available_models=(),
+                reasoning_effort_options=(),
+                default_model_id=None,
+                default_reasoning_effort=None,
+                update_advisory=None,
+                diagnoses=(),
+            )
+            for backend_key in ConversationBackendKey
+        )
+        usage = _OrderedUsageAnswers()
+        release_snapshots = asyncio.Event()
+        snapshot_answers = _SnapshotsAfterUsageStart(snapshots, release_snapshots)
+        runtime = replace(
+            harness.runtime,
+            backend_snapshots=snapshot_answers,
+            backend_usage=usage,
+        )
+
+        refreshing = asyncio.create_task(conversation_api.refresh_backends(runtime))
+        for _ in range(20):
+            if snapshot_answers.started.is_set():
+                break
+            await asyncio.sleep(0)
+        completed_before_snapshot = set(usage.completed)
+        release_snapshots.set()
+        response = await refreshing
+
+        assert snapshot_answers.started.is_set()
+        assert completed_before_snapshot == set(ConversationBackendKey)
+        assert snapshot_answers.refresh_arguments == [False]
+        assert [item["backend_key"] for item in response["usage_outcomes"]] == [
+            backend_key.value for backend_key in ConversationBackendKey
+        ]
+        assert [item["backend_key"] for item in response["backends"]] == [
+            backend_key.value for backend_key in ConversationBackendKey
+        ]
+
+    _run(exercise)
+
+
+def test_backend_refresh_cancels_provider_reads_when_snapshot_acquisition_fails(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        usage = _UsageAnswersThatWait()
+        runtime = replace(
+            harness.runtime,
+            backend_snapshots=_SnapshotFailure(),
+            backend_usage=usage,
+        )
+
+        with pytest.raises(RuntimeError, match="snapshot acquisition stopped"):
+            await conversation_api.refresh_backends(runtime)
+
+        assert usage.started == set(ConversationBackendKey)
+        assert usage.cancelled == set(ConversationBackendKey)
+
+    _run(exercise)
 
 
 def test_backend_refresh_resolves_scopes_and_keeps_cached_usage_after_failure(
@@ -2103,9 +2330,7 @@ def test_backend_refresh_resolves_scopes_and_keeps_cached_usage_after_failure(
                 executable_path=f"/bin/{backend_key.value}",
                 version="1.0.0",
                 identity=None,
-                available_models=(
-                    BackendModel(model_id="spark[1m]", display_name="Spark 5 (1M)"),
-                ),
+                available_models=(BackendModel(model_id="spark[1m]", display_name="Spark 5 (1M)"),),
                 reasoning_effort_options=(),
                 default_model_id="spark[1m]",
                 default_reasoning_effort=None,
@@ -2166,9 +2391,7 @@ def test_backend_refresh_resolves_scopes_and_keeps_cached_usage_after_failure(
                 "model_id": "spark[1m]",
             }
         ]
-        assert by_backend["claude"]["cached_usage"]["observed_at"] == (
-            "2026-09-09T12:00:00Z"
-        )
+        assert by_backend["claude"]["cached_usage"]["observed_at"] == ("2026-09-09T12:00:00Z")
 
     _run(exercise)
 
@@ -2184,9 +2407,7 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
     boot = connect(str(db_path))
     create_schema(boot)
     boot.close()
-    config = load_config(
-        path=None, env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)}
-    )
+    config = load_config(path=None, env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)})
 
     def conn_factory() -> sqlite3.Connection:
         return connect(str(db_path))
@@ -2214,12 +2435,6 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
         # The worker path and the browser's conversation are the same system. A worker's
         # prompt goes into a real conversation, not a stand-in beside it.
         assert app.state.conversation_system is app.state.conversation.system
-        # Backend cards and child startup share the same lifecycle arbiter. This is what
-        # makes the update route's check atomic with a real conversation spawn.
-        assert (
-            app.state.conversation.system._backend_lifecycle
-            is app.state.conversation.backend_snapshots._backend_lifecycle
-        )
 
     assert app.state.conversation is None
 
@@ -2290,9 +2505,7 @@ def test_a_picture_sent_with_a_message_is_kept_and_the_row_names_what_was_kept(
             )
             assert sent.json() == {"fate": "started"}
 
-            rows = (
-                await client.get("/api/conversation/conversations/c/events")
-            ).json()["events"]
+            rows = (await client.get("/api/conversation/conversations/c/events")).json()["events"]
             payload = rows[0]["payload"]
             assert payload["content"][0] == {"piece": "text", "text": "look at this"}
             picture = payload["content"][1]
@@ -2341,9 +2554,7 @@ def test_a_data_file_is_validated_kept_and_served_with_server_metadata(
             )
             assert sent.json() == {"fate": "started"}
 
-            rows = (await client.get("/api/conversation/conversations/c/events")).json()[
-                "events"
-            ]
+            rows = (await client.get("/api/conversation/conversations/c/events")).json()["events"]
             piece = rows[0]["payload"]["content"][0]
             assert piece == {
                 "piece": "file",
@@ -2478,16 +2689,11 @@ def test_the_raw_message_envelope_has_an_exact_boundary_and_counts_all_images(
                 },
             )
             assert rejected.status_code == 422
-            assert (
-                rejected.json()["detail"]
-                == "a conversation message's images are too large"
-            )
+            assert rejected.json()["detail"] == "a conversation message's images are too large"
             assert (
                 await client.get("/api/conversation/conversations/aggregate/events")
             ).json() == {"events": []}
-            aggregate_files = (
-                harness.db_path.parent / "files" / "conversations" / "aggregate"
-            )
+            aggregate_files = harness.db_path.parent / "files" / "conversations" / "aggregate"
             assert not aggregate_files.exists()
 
     _run(exercise)
@@ -2541,9 +2747,7 @@ def test_a_message_with_nothing_in_it_is_refused_rather_than_recorded(
             )
             assert empty.status_code == 422
 
-            rows = (
-                await client.get("/api/conversation/conversations/c/events")
-            ).json()["events"]
+            rows = (await client.get("/api/conversation/conversations/c/events")).json()["events"]
             assert rows == []
 
     _run(exercise)

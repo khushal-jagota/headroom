@@ -6,26 +6,22 @@ import logging
 import sqlite3
 from collections.abc import Callable, Mapping
 from datetime import datetime
-from typing import Final
 
-from planner.conversation.contracts import ConversationSystem, PromptDeliveryRefused
-from planner.conversation.message_content import text_message_content
+from planner.conversation.contracts import ConversationSystem
 from planner.core import links as core_links
-from planner.core.contracts import LinkKind, Priority
+from planner.core.authctx import RequestContext
+from planner.core.clock import Clock
+from planner.core.contracts import LinkKind, Principal, PrincipalKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
-from planner.runtime.conversation_start import send_to_ticket_conversation
-from planner.runtime.logic.worker_step_prompt import revision_guidance_prompt
+from planner.message_delivery import service as message_delivery_service
+from planner.runtime.logic.worker_step_prompt import proposal_returned_for_revision_prompt
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, Ticket
-from planner.tickets.logic import admission, resolution
-from planner.worker_context.contracts import WorkerContextService
-from planner.worker_types.configuration import configured_worker_type_registry
+from planner.tickets.logic import admission
 
-_log = logging.getLogger(__name__)
-
-OWNER_SENDER_LABEL: Final = "owner"
+LOGGER = logging.getLogger(__name__)
 
 
 def resolve_creation_placement(
@@ -68,7 +64,7 @@ def create_ticket(
     conn: sqlite3.Connection,
     *,
     title: str,
-    actor: str,
+    principal: Principal,
     now: int,
     title_max_chars: int,
     worker_type: str,
@@ -104,7 +100,7 @@ def create_ticket(
     return tickets_data.create_ticket(
         conn,
         title=title,
-        actor=actor,
+        principal=principal,
         now=now,
         title_max_chars=title_max_chars,
         kickoff_note=kickoff_note,
@@ -129,7 +125,7 @@ def create_ticket_from_external_work(
     title: str,
     target_stage: str,
     provided_values: Mapping[str, str],
-    actor: str,
+    principal: Principal,
     now: int,
     title_max_chars: int,
     worker_type: str,
@@ -167,7 +163,7 @@ def create_ticket_from_external_work(
         kickoff_note=kickoff_note,
         target_stage=target_stage,
         provided_values=provided_values,
-        actor=actor,
+        principal=principal,
         now=now,
         title_max_chars=title_max_chars,
         recap=recap,
@@ -232,79 +228,68 @@ def remove_link(
         conn.execute("COMMIT")
 
 
+def file_current_proposal(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    body: str,
+    recap: str,
+    ctx: RequestContext,
+    clock: Clock,
+) -> Ticket:
+    """Park a proposal and its wake intent; the machine-lock loop delivers it."""
+    return tickets_data.file_current_proposal_with_recap(
+        conn,
+        ticket_id,
+        body=body,
+        recap=recap,
+        principal=ctx.principal,
+        now=clock.now_unix(),
+    )
+
+
 async def return_ticket_for_revision(
     conversation_system: ConversationSystem,
-    worker_context_service: WorkerContextService,
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
     message: str,
-    actor: str,
-    now: int,
+    ctx: RequestContext,
+    clock: Clock,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
-    """Send the owner's guidance to the worker, then hand the Ticket back to it.
-
-    The order is validate, send, and only then write, because the write is the one thing
-    that cannot be undone honestly: the decision deletes the pending proposal, so a revert
-    after a failed send would leave nothing to approve. Everything that can be checked
-    without changing anything is checked first, against a read of the Ticket.
-
-    A refused delivery changes nothing at all and is reported as the error it is. The one
-    residue is a send that succeeded and a write that then failed: the guidance is out and
-    the proposal is intact, so a retry may deliver the same guidance twice — visible,
-    harmless, and far better than losing the proposal.
-    """
+    """Commit the rejection and two durable messages, then return without backend I/O."""
     admission.validate_body(message, "revision guidance")
-    ticket = tickets_data.read_ticket(conn, ticket_id)
-    # The decision is the whole check, run here on a read of the Ticket: wrong actor,
-    # wrong status, terminal stage, and no conversation to send into all fail here,
-    # before a word has been sent and before anything has been written.
-    worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
-    resolution.decide_return_for_revision(
-        ticket,
-        actor,
-        worker_type_definition=worker_type_definition,
+    principal = ctx.principal
+    now = clock.now_unix()
+    source_turn = await message_delivery_service.revision_source_turn(
+        conversation_system, conn, ctx=ctx
     )
-    expected_proposal = ticket.pending_proposal
-    prepared = worker_context_service.prepare(
+    ticket = tickets_data.require_return_for_revision(
+        conn,
         ticket_id,
-        revision_guidance_prompt(message.strip()),
+        principal=principal,
+        supervisor_sprint_item_id=supervisor_sprint_item_id,
     )
-    # Into the conversation the decision above proved is there: returning for revision is
-    # something said to a worker already at work, never the thing that first speaks to one.
-    fate = (
-        await send_to_ticket_conversation(
-            conversation_system,
-            conn,
-            ticket_id,
-            text_message_content(prepared.model_text),
-            conversation_id=ticket.conversation_id,
-            sender_label=OWNER_SENDER_LABEL,
-            now=now,
-        )
-    ).fate
-    if isinstance(fate, PromptDeliveryRefused):
-        raise PlannerError(
-            ErrorCode.gateway_offline,
-            "revision guidance could not be delivered",
-            {"ticket_id": ticket_id, "refusal_reason": fate.refusal_reason.value},
-        )
-    try:
-        worker_context_service.acknowledge(ticket_id, prepared.receipts)
-    except Exception:
-        # The guidance is delivered; failing to tick the context off is reported and
-        # otherwise left alone, because nothing here can un-send it.
-        _log.exception(
-            "delivered worker context could not be acknowledged (ticket=%s)",
-            ticket_id,
-        )
-    return tickets_data.return_for_revision(
+    revised = tickets_data.return_for_revision(
         conn,
         ticket_id,
         message=message,
-        actor=actor,
+        lifecycle_message=proposal_returned_for_revision_prompt(),
+        principal=principal,
         now=now,
-        expected_proposal=expected_proposal,
+        expected_proposal=ticket.pending_proposal,
         supervisor_sprint_item_id=supervisor_sprint_item_id,
     )
+    if source_turn is not None:
+        try:
+            await conversation_system.record_explicit_reply(
+                source_turn, Principal(PrincipalKind.ticket, ticket_id)
+            )
+        except Exception:
+            LOGGER.warning(
+                "could not record explicit reply for Ticket revision %s",
+                ticket_id,
+                exc_info=True,
+            )
+    return revised

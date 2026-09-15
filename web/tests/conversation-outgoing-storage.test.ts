@@ -50,7 +50,7 @@ function mint(
   return outgoing.mintOutgoingMessage({
     content,
     senderLabel: "owner",
-    mode: "run_when_free",
+    mode: "queue",
     sentAtUnixMilliseconds
   });
 }
@@ -145,6 +145,20 @@ describe("outgoing Conversation message storage", () => {
     ]);
     expect(await outgoing.recallOutgoingMessages("conversation-2")).toEqual([]);
     expect(storage.entries.has("panels.conversation.outgoing.conversation-1")).toBe(true);
+  });
+
+  it("decodes the legacy run_when_free mode as queue", async () => {
+    const legacy = { ...mint([{ piece: "text", text: "legacy" }]), mode: "run_when_free" };
+    storage.setItem(
+      "panels.conversation.outgoing.legacy",
+      JSON.stringify([legacy])
+    );
+
+    expect(await outgoing.recallOutgoingMessages("legacy")).toEqual([{
+      ...legacy,
+      mode: "queue",
+      knownFate: "sent_before_this_page"
+    }]);
   });
 
   it("rejects untrusted or malformed tab storage", async () => {

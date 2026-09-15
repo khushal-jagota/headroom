@@ -1,6 +1,7 @@
 import { conversationSignalPresentation } from "./conversationSignalPresentation";
 import type { DayTicket } from "./types";
 import type { FieldStageVisualState } from "./ui";
+import { primaryWorkAttention } from "./workAttentionPresentation";
 
 export type DayVisualTicket = {
   ticket: DayTicket;
@@ -19,42 +20,40 @@ export type DayActionTile = {
 function groupKeyFor(ticket: DayTicket): string {
   if (ticket.is_done || ticket.stage === "done") return "done";
   if (ticket.waiting_to_closeout) return "waiting_to_closeout";
-  if (ticket.ticket_status === "awaiting_approval" && ticket.gating_field === "kickoff") {
+  const attention = primaryWorkAttention({
+    awaiting_reply: Boolean(ticket.awaiting_reply),
+    awaiting_approval: Boolean(ticket.awaiting_approval),
+    assigned: Boolean(ticket.assigned)
+  });
+  if (attention === "awaiting_approval" && ticket.gating_field === "kickoff") {
     return "waiting_for_kickoff";
   }
+  if (attention !== null) return attention;
   return String(ticket.ticket_status);
 }
 
 export function dayVisualTicket(
-  ticket: DayTicket,
-  replyWatermarks: Readonly<Record<string, number>>
+  ticket: DayTicket
 ): DayVisualTicket {
   const group = groupKeyFor(ticket);
   const presentation = conversationSignalPresentation(
     {
-      conversation_id:
-        typeof ticket.conversation_id === "string" ? ticket.conversation_id : null,
-      needs_me: Boolean(ticket.needs_me),
-      agent_working: Boolean(ticket.agent_working),
-      unread_position: Number(ticket.latest_turn_ended_sequence ?? 0)
-    },
-    replyWatermarks
+      awaiting_reply: Boolean(ticket.awaiting_reply),
+      agent_state: ticket.agent_state ?? "idle"
+    }
   );
 
   if (ticket.is_done || ticket.stage === "done") {
     return { ticket, state: "completed", ariaLabel: "Done", group };
   }
-  if (presentation.state === "reply-seen") {
-    return { ticket, state: "upcoming", ariaLabel: "Nothing waiting", group };
-  }
-  if (presentation.state === "upcoming" && group === "paired") {
-    return { ticket, state: "current-paired", ariaLabel: "Paired", group };
+  if (presentation.state === "upcoming" && group === "assigned") {
+    return { ticket, state: "current-paired", ariaLabel: "Assigned", group };
   }
   if (
     presentation.state === "upcoming" &&
     (group === "awaiting_approval" ||
       group === "waiting_for_kickoff" ||
-      group === "needs_user")
+      group === "awaiting_reply")
   ) {
     return { ticket, state: "current-awaiting-approval", ariaLabel: "To review", group };
   }

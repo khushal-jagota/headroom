@@ -11,7 +11,12 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import Protocol
 
-from planner.conversation.message_content import MessageContent, MessagePiece, MessageText
+from planner.conversation.message_content import (
+    MessageContent,
+    MessagePiece,
+    message_content_starts_with_slash_token,
+    sender_labeled_message_content,
+)
 
 
 class WaitingMessage(Protocol):
@@ -41,35 +46,29 @@ def leading_run_that_can_share_a_turn[MessageT: WaitingMessage](
     """
     run: list[MessageT] = []
     for message in waiting:
+        command_shaped = message_content_starts_with_slash_token(message.content)
         carries_a_change = (
             message.model_change is not None or message.reasoning_effort_change is not None
         )
-        if carries_a_change and run:
+        if run and (carries_a_change or command_shaped):
             break
         run.append(message)
+        if command_shaped:
+            break
     return tuple(run)
 
 
 def one_prompt_from(run: Sequence[WaitingMessage]) -> MessageContent:
     """Several waiting messages as the single prompt the agent is given.
 
-    Each message keeps its own words and its sender's name, because an agent handed one
-    run of text still has to be able to tell who said what. Nothing is summarised or
-    reworded, and one message on its own is given exactly as it was sent — the shape only
-    appears once there is more than one message to tell apart.
+    The adapter adds the first message's sender name to the complete prompt. This combiner
+    adds each later sender name before that message, so every message carries one name.
+    Nothing is summarised or reworded, and one message on its own stays unchanged here.
     """
     if len(run) == 1:
         return run[0].content
     pieces: list[MessagePiece] = []
-    for message in run:
-        first = message.content[0]
-        if isinstance(first, MessageText):
-            # The name is folded into the message's own first words rather than put beside
-            # them as a piece of its own. Every reader of a message already separates one
-            # piece from the next, so a piece of its own would be spaced twice.
-            pieces.append(MessageText(text=f"{message.sender_label}:\n{first.text}"))
-            pieces.extend(message.content[1:])
-            continue
-        pieces.append(MessageText(text=f"{message.sender_label}:"))
-        pieces.extend(message.content)
+    pieces.extend(run[0].content)
+    for message in run[1:]:
+        pieces.extend(sender_labeled_message_content(message.content, message.sender_label))
     return tuple(pieces)

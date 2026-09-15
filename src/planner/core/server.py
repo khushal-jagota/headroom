@@ -46,6 +46,7 @@ from planner.environments.vps_status import (
     collect_vps_status,
     collect_vps_status_summary,
 )
+from planner.feedback.api import router as feedback_router
 from planner.files.api import router as files_router
 from planner.judgments.api import router as judgments_router
 from planner.message_delivery.api import router as message_delivery_router
@@ -258,6 +259,7 @@ def create_app(
         days_router,
         scheduled_tickets_router,
         notifications_router,
+        feedback_router,
         worker_settings_router,
         message_delivery_router,
     ):

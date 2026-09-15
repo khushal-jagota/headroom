@@ -22,42 +22,47 @@ One screen per part of the system:
 
 - **Home** — the daily hub. It combines focus, what makes the day land, brief take,
   and watchout with one progress mark per Ticket. Action tiles lead to work that needs
-  the user, needs review, is working, is paired, or is done. Day fields are written by
+  Khushal, needs review, is working, is assigned, or is done. Day fields are written by
   the planning Workers, not edited on this page.
-- **Review** — the human chamber for parked Ticket proposals and Worker help requests:
-  one oldest-first walk with a centred item, its Ticket title, and Skip and Open Ticket
-  top-right. Proposal items add their labelled recap, ask, approval, and send-back
-  controls; needs-user items direct the human to the Ticket conversation without those
-  proposal controls. Keyboard shortcuts drive the actions that apply to the current
-  item when the cursor is not in a text field, and each item fades in as it arrives. A
-  proposal's approve button physically refuses to work until "how far may the worker
-  go next" has been answered, both halves.
+- **Review** — the human chamber for owner-addressed Ticket proposals and proposals whose
+  non-owner alert failed persistently: one oldest-first
+  walk with a centred item, its Ticket title, and Skip and Open Ticket top-right.
+  Proposal items add their labelled recap, ask, approval, and send-back controls.
+  Proposals addressed to another holder appear only after their alert fails persistently.
+  Keyboard shortcuts drive the actions that apply to the current item when the
+  cursor is not in a text field, and each item fades in as it arrives. A proposal's
+  approve button sends the next ceiling, cap, and owner holder together. Send-back
+  delivers the owner's comment to the exact Ticket worker conversation before it clears
+  the proposal. A refused delivery leaves the proposal in place. A reply in the Ticket
+  conversation leaves the proposal in Review until a decision.
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
   follows the same 5am planning-day boundary as the Day screen; dropped tickets never
   appear. The Chief of Staff row leads, and under it a selector chooses one of two views
   over the same tickets: **Tickets** or **Sprint Items**.
 
-  The rail holds every status group, in one order: Errored, Needs you, User, Paired,
-  Agent, Waiting to Closeout, Awaiting approval, Waiting for Kickoff, Empty, Blocked,
-  Done. Every parked proposal sits under Awaiting approval, because there is one
-  approval gate; a proposal still gated on its kickoff splits out into its own group. A
-  ticket whose own run errored reaches the rail as Errored; the Sprint Item page files
-  it under Blocked with the tickets that are waiting on something. A group with no
-  tickets is not drawn.
+  The Tickets view starts with three owner-attention groups in this order: Awaiting
+  approval, Paired, and Messages. A ticket appears in only its first applicable group.
+  Approval takes precedence over assignment, and assignment takes precedence over a
+  reply. Empty groups are not drawn. Every ticket outside these groups follows in the
+  existing status order, so no ticket becomes unreachable.
 
-  Three groups arrive shut: Waiting for Kickoff, Blocked and Done. Every other group
-  arrives open. A shut group is still its own group, with its own name and count, and
+  Blocked and Done arrive shut. Every other group arrives open. A shut group is still
+  its own group, with its own name and count, and
   the reader opens it — nothing hides behind a "+n more", and no status is missing from
   the rail. Rows inside a group are ordered by activity, newest first.
 
-  The Tickets view is every ticket on today, in a box per group.
+  The Tickets view is every ticket on today. Each owner-attention group and each
+  remaining status group has its own box. Rows inside each group retain activity order,
+  newest first.
 
-  The Sprint Items view is one box per Sprint Item with a ticket on today. A shut Item
-  shows a line of counts — how many tickets it has in each group, quiet groups included;
-  an Item with no tickets on today shows no line. Clicking anywhere in the box selects
-  the Item and opens its workspace beside the rail. That is all a click on an Item ever does: no click shuts
-  an Item, so a reader inside one of its tickets clicks the Item to come back to it. An
-  open Item shows the same status groups nested inside it, without their own boxes.
+  The Sprint Items view is one box per Sprint Item with a ticket on today. Each Item
+  shows only its non-empty Awaiting approval, Paired, and Messages child groups. Quiet
+  child tickets remain available in the Tickets view and the Item workspace. A shut
+  Item shows a line of counts for its owner-attention groups. Clicking anywhere in the
+  box selects the Item and opens its workspace beside the rail. That is all a click on
+  an Item ever does: no click shuts an Item. A reader inside one of its tickets clicks
+  the Item to come back to it. An
+  open Item shows the same owner-attention groups nested inside it, without their own boxes.
   Folding one of those groups, or opening a ticket, leaves the Item open. Items are
   ordered by priority and then by age, so an Item holds its place while its tickets move
   under it.
@@ -78,44 +83,47 @@ One screen per part of the system:
   Selection in the rail is exclusive: what the workspace beside it is showing is the one
   thing that looks selected, and nothing else does. A ticket opened from inside an Item
   leaves that Item open around it — the address names the Item as well as the ticket —
-  and the mark moves to the ticket, because being open carries no mark of its own.
+  and selection moves to the ticket. An open Item carries no selection of its own.
 
-  The Item title carries a mark for the Item's own supervisor, read exactly the way a
-  ticket row's mark is read and fed by the same fact: an unseen reply. That conversation
-  replies only to something the user said, because nothing else starts it.
-  A ticket without a Sprint Item appears in the Tickets
-  view like any other. Every Ticket row is the shared Ticket row and keeps the existing
-  conversation mark; it carries its priority tile in the Tickets view and drops it inside
-  a Sprint Item, where the Item is the thing being read.
+  Every Ticket row keeps its mark slot. A reply waiting for Khushal gives it the filled
+  blue dot. Otherwise active agent work gives it the spinner. Idle and error states
+  leave the slot empty. An Item title rolls up its own facts and every child ticket. A
+  reply waiting for Khushal gives it the filled blue dot. Otherwise any active work gives
+  it the spinner. A waiting reply takes precedence over active work. Approval and
+  assignment alone leave the Item slot empty. The empty Item slot stays in
+  place, so the title layout does not move when its state changes.
+  A ticket without a Sprint Item appears in the Tickets view like any other. Every
+  Ticket row is the shared Ticket row and uses the same blue dot and spinner. It carries
+  its priority tile in the Tickets view and drops it inside a Sprint Item, where the Item
+  is the thing being read.
 
   The Chief of Staff row starts with its bundled portrait. The portrait is an agent
   identity on this row only; ticket rows and Worker types do not use it.
 
-  The mark carries three signals in one order of precedence, and each is one
-  system's own fact rather than a blend of several. A **pure white dot** means the
-  worker is waiting on a permission decision or answers only the user can give — it wins
-  outright, because that turn is still running and only the user can clear the wait. On
-  an Item the same dot also means an unseen ping, which says the same thing: only the
-  user can answer this. Below it, a **spinner** means the worker is running right now. With
-  neither, the mark shows the **reply state**: a filled accent dot for a reply the
-  user has not seen, the same dot greyed once the user has opened the ticket since
-  that reply, and a faint ring when nothing is waiting.
+  The Chief of Staff keeps its separate conversation mark. Every conversation opens in
+  Focus. Focus shows the owner's prompts, explicit messages to the owner, permission
+  requests, agent questions, and their settled answers. Failed turns, stopped turns,
+  missing explicit replies, and terminal proposal-alert delivery failures remain visible
+  as compact system rows. Full shows all runtime
+  rows. One header toggle switches the lens, and the unmodified `f` key does the same
+  when no editable control owns it. The choice belongs to the mounted conversation and
+  resets to Focus when its identity changes.
+  Notification links therefore open Focus through the ordinary conversation route.
 
-  All three come from the conversation the row is linked to — the ticket's worker for a
-  ticket row, the Item's supervisor for an Item. The first two are asked
-  of the conversation system directly. The third is a comparison: the row carries a
-  position in its conversation, and this browser keeps how far the reader has got in that
-  conversation. Something is waiting when the position is past the reading. Every row
-  carries where its own conversation's last turn ended, so opening the ticket or the
-  Item is what puts its mark out.
+  Complete turn boundaries settle both the Focus transcript and its rest line. A turn
+  with a hidden automatic prompt has no Focus turn head. Its visible owner result rows
+  still appear.
 
-  How far somebody has read is about that person at that screen, not about the ticket,
-  so it is kept in their own browser and the server is never told. Nothing is written
-  when a reply is read, which is why opening a ticket clears its dot straight away
-  rather than after something refetches. The position is kept per conversation, so
-  pressing New starts unread rather than inheriting the old conversation's reading. A
-  browser that has never seen a conversation has read none of it, so a reply shows —
-  every failure path over-shows attention rather than hiding a reply.
+  The client advances the read position only while Focus is selected, the conversation
+  pane is open, the document is visible, and the window has focus. It advances through
+  the newest delivered row that this browser received, even when a newer conversation
+  snapshot arrived first. The client checks document focus again for each advance, so a
+  click into a preview frame cannot leave stale focus permission. Each focus, blur, or
+  visibility event retries the check, so focus return credits rows that arrived while
+  the owner was away. The server keeps the position monotonic and clamps oversized
+  values. The position is per conversation, so pressing New starts unread rather than
+  inheriting the old conversation's reading. A failed advance over-shows attention rather
+  than hiding a reply.
 
   On screens wider than 960px, the right side starts with a quiet invitation. An Item
   title opens the existing Sprint Item workspace at `#/workspace/item/<item-id>`.
@@ -166,17 +174,25 @@ One screen per part of the system:
   it writes the stored Ticket choice but does not create a session. The first prompt attaches
   through that choice; accepting Kickoff may eagerly attach. Once Kickoff advances or the
   Ticket has a conversation, the pill becomes read-only.
+
+  A compact artifact strip is the first element under the header when lifecycle fields
+  link to managed Ticket or Sprint Item files. It reads the pending proposal first, then
+  the lifecycle fields from latest to earliest. It removes duplicate links.
 - **Sprint** — one tracking overview that presents Projects and their Sprint Items,
   plus a dedicated view for each Item and a separate documents page. The overview shows
   Item progress as `done/total`. One collapsed **No Outcome** row follows all Projects
   when unclassified Tickets exist. It opens their canonical Ticket links. An Item view joins today's Day membership
-  to split its Tickets into on-today, off-today, and folded done work. Project priority
+  to split its Tickets into Today and Other Tickets. Each section uses the same status
+  groups and includes its own Done group. Project priority
   orders the Project folds. The documents page presents Kickoff, Checkpoint, and Sprint
   Review. See `sprints.md`.
 - **Backlog** — active unscheduled Tickets as bounded summaries. Each row shows only its
   title and Project chip, and opens its canonical Workspace screen. The page does not
-  request Outcomes. Its compact form creates an ordinary explicitly unscheduled Ticket. **Ideas** keeps
-  the separate loose-capture surface (see `backlog-and-ideas.md`).
+  request Outcomes. Its compact form creates an ordinary explicitly unscheduled Ticket.
+- **Ideas** — remembered possibilities with an optional note and Project. See
+  `backlog-and-ideas.md`.
+- **Feedback** — open notes and handled history. Open notes link to their source page.
+  Handled notes are grouped by their Ticket, with dismissed notes last. See `feedback.md`.
 - **Chief of Staff** — the Chief is the first row in Workspace. On wide screens,
   selecting it opens the canonical Chief conversation beside the Workspace rail at
   `#/workspace/chief-of-staff`. On narrow screens, the same address opens the focused
@@ -197,7 +213,8 @@ One screen per part of the system:
   Config.
 - **Notifications** — the personal notification settings at `#/notifications`.
   “What counts” renders the Ticket and Chief of Staff groups from the server's
-  notification catalogue. Tickets have five switches, and the Chief has four. Each
+  notification catalogue. Tickets have four switches. The Chief and Sprint Item
+  supervisors each have two. Each
   subject-and-type switch saves and reports errors independently. “This device” asks
   for browser permission only after the user
   presses Enable, registers the browser's Web Push subscription, and can remove it
@@ -208,7 +225,7 @@ One screen per part of the system:
   does not start Workers or delete schedules. See `scheduled-tickets.md`.
 
 The shell has three primary destinations in order: Home, Review, and Workspace. More
-groups Sprint, Backlog, and Ideas under Planning. It groups Config, Backends,
+groups Sprint, Backlog, Ideas, and Feedback under Planning. It groups Config, Backends,
 Notifications, and Scheduled tasks under System. On desktop, the three destinations
 and More live in the top bar. On mobile, the same four controls form a fixed,
 full-width bottom bar and More opens a bottom sheet. A slim mobile top bar
@@ -224,6 +241,11 @@ Worker presence is the adjacent spinner and "N working" readout from the global
 running-worker count. Review's count is the only navigation accent; active destinations
 use strong text. The shell uses the dynamic viewport and never scrolls the navigation
 horizontally.
+
+The Feedback control is the last item in the status strip on every page. It opens a
+desktop popover or a phone sheet and saves a text note with optional page context. A
+device-local draft survives a close. The Feedback page and agent CLI read the durable
+record from the server.
 
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens
@@ -243,9 +265,13 @@ applies the requested update. The push-only service worker and its subscription 
 in place across this page reload.
 
 **Backends** at `#/backends` shows the conversation backends installed on this machine,
-their account and model facts, and any update Panels can run. Its one **Refresh** action
-re-reads every backend catalogue and the Codex and Claude usage sources. A successful
-refresh shows each provider window as its remaining percentage, reset time, and
+their account and model facts, and any update Panels can run. Hermes shows its version
+and model catalogue without update discovery or an update action. The first catalogue
+paints before the page refreshes catalogue and Codex and Claude update advice in the
+background. An ordinary
+cached read remains immediate during that work. The page's **Refresh** action reads Codex
+and Claude usage only, then uses the current backend catalogues. A successful refresh
+shows each provider window as its remaining percentage, reset time, and
 observation time. The backend source still reports the used percentage. The shared
 ring derives the remaining value and empties counter-clockwise from the top as the
 allowance falls. One provider failure does not discard the other's new answer. Hermes
@@ -374,8 +400,8 @@ provider or transport failure in its existing feedback line.
   Conversation images and files use conversation-owned managed bytes. Images render
   inline. Supported documents and data files render as named cards with preview and
   download actions. PDF uses a document frame. Text and data use a bounded text preview.
-- **On a Ticket screen, that link opens the file in place.** A file clicked inside a
-  Ticket does not go to the preview address at all. The Ticket screen catches the click
+- **On a Ticket or Sprint Item screen, that link opens the file in place.** A managed
+  file clicked inside either reading area does not go to the preview address. The screen catches the click
   and draws the file over its own reading area, with a strip carrying the file's name and
   a way out. The Ticket keeps its layout and its scroll place underneath, so closing gives
   back the page the reader left, and the conversation keeps its own section at the bottom
@@ -387,6 +413,12 @@ provider or transport failure in its existing feedback line.
   the Ticket, so a reload, Back, and a shared link all show it. The
   `#/preview` address remains the way in from anywhere else — a shared link, a
   notification, or another screen — and it draws the same document.
+- **Artifact strips use one component.** Sprint Items list their files newest first.
+  Tickets list only managed files linked from their lifecycle fields and pending proposal.
+  A chip shows the file name without its extension and then the file type. Matching names
+  add their parent folder. More than six files collapse to five chips and a count on a
+  wide pane. At 720 pixels or less, every chip stays on one horizontally scrolling line.
+  The strip is absent when it has no files.
 - **Editable Markdown stays one surface.** Ticket recaps, passed fields,
   approval drafts, and future Markdown surfaces remain directly editable with their
   existing focus, blur/save, keyboard, paste, and Escape behavior. What is being typed
@@ -429,8 +461,9 @@ hand-rolling the same shapes per screen. Each does one job:
   both Sprint priority positions, and once in each Backlog priority group heading.
   Priority never borrows the slate-blue attention accent or the status-mark colours.
 - **StageMark** — the single stage dot showing a field's progress.
-- **ApprovalBlock** — the one approval surface: an editable proposal draft, the scope
-  picker, and the approve/accept action, plus a read-only mode for dropped tickets.
+- **ApprovalBlock** — the owner approval surface: an editable proposal draft, the scope
+  picker, and the approve/accept action, plus a read-only mode for dropped tickets. Its
+  approval addresses the next ceiling proposal to the owner.
 - **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
   the kickoff priority, the approval control, and the send-back box. It is named by a
   ticket id and a field and reads that ticket itself, so any screen can raise the same
@@ -457,6 +490,8 @@ hand-rolling the same shapes per screen. Each does one job:
   Messages that contain only attachments use that same path. A file-bearing message that
   still waits for its durable row keeps its bytes in browser database storage, so a reload
   restores it across the full supported file-size range.
+  Its delivery control defaults to Steer and also offers Queue and Send now. A held row
+  names why Panels queued a steer fallback.
 
   On the Ticket screen the conversation is a layer along the bottom of the page rather
   than a column beside it, and it has **three states**. At **rest** it is the composer and
@@ -486,6 +521,10 @@ hand-rolling the same shapes per screen. Each does one job:
 - **SegmentedControl** — a small set of toggle options (Backlog Project/priority).
 - **ScopePairPicker** — the "approve until … then …" scope control.
 - **ErrorLine** — a single error message line.
+
+The Ticket page shows its leash only while scope is editable. A pending proposal hides
+the leash entirely, matching the server rule that the proposal's holder and scope remain
+stable until the proposal is decided.
 
 A ticket's stage labels and order are not baked into the frontend: they come from the
 server's per-Worker-type manifest through `web/src/lib/lifecycle.ts`, keyed by each
@@ -532,4 +571,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-08-15._
+_Last verified: 2026-09-15._

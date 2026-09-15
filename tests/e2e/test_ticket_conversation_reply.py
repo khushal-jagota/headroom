@@ -23,6 +23,7 @@ import uvicorn
 from playwright.sync_api import BrowserContext, Page, Request
 from tests.e2e.harness import REPO_ROOT, WAIT_MS, ApiHelper, JsonObject, ServerHandle
 from tests.e2e.test_dev_conversation_pane import HOLD_THE_SEND
+from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.backends.contracts import BackendSteerAccepted, BackendSteerOutcome
 from planner.conversation.contracts import ConversationBackendKey
@@ -76,7 +77,7 @@ def _browser_server_with_accepting_backend(tmp_path: Path) -> Iterator[tuple[str
             connection,
             worker_type="coding",
             title="Send the worker pictures",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=0,
             title_max_chars=200,
         )
@@ -106,9 +107,7 @@ def _browser_server_with_accepting_backend(tmp_path: Path) -> Iterator[tuple[str
     setattr(
         server_module,
         backend_factories_attribute,
-        lambda **_machine: {
-            key: _accepting_backend_factory for key in ConversationBackendKey
-        },
+        lambda **_machine: {key: _accepting_backend_factory for key in ConversationBackendKey},
     )
     app = server_module.create_app(
         config,
@@ -173,7 +172,7 @@ def _parked_on_a_proposal(server: ServerHandle, cli: Callable[..., JsonObject]) 
     return ticket_id
 
 
-def test_a_reply_in_the_pane_pairs_the_ticket_and_a_refusal_leaves_it_parked(
+def test_conversation_replies_do_not_change_a_parked_proposal(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
@@ -224,23 +223,15 @@ def test_a_reply_in_the_pane_pairs_the_ticket_and_a_refusal_leaves_it_parked(
     assert "not delivered" in page.inner_text(FATE)
     assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_approval"
 
-    # Now one the conversation holds for a busy agent. Held is reached, so this one is a
-    # reply, and the screen says so as soon as the send comes back.
+    # A message that reaches the conversation is still only a conversation message. It
+    # does not decide the proposal or change the Ticket's control status.
     page.fill(COMPOSER, "here is what I think of that", timeout=WAIT_MS)
-    with page.expect_response(
-        lambda response: response.request.method == "POST"
-        and response.url.endswith(f"/api/tickets/{ticket_id}/human-reply")
-        and response.status < 300,
-        timeout=WAIT_MS,
-    ):
-        page.click(SEND, timeout=WAIT_MS)
-        page.wait_for_function("() => window.__heldSends.length === 2", timeout=WAIT_MS)
-        page.evaluate(
-            "() => window.__heldSends[1].answer("
-            "{ conversation_id: 'conv_made_by_the_message', fate: 'queued', queue_position: 1 })"
-        )
+    page.click(SEND, timeout=WAIT_MS)
+    page.wait_for_function("() => window.__heldSends.length === 2", timeout=WAIT_MS)
+    page.evaluate(
+        "() => window.__heldSends[1].answer("
+        "{ conversation_id: 'conv_made_by_the_message', fate: 'queued', queue_position: 1 })"
+    )
 
-    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "paired"
-    # One reply, from the send that got somewhere. The refused send is in front of it in
-    # this page's own order, so a reply it had made would be counted here too.
-    assert replies == [f"{server.base}/api/tickets/{ticket_id}/human-reply"]
+    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_approval"
+    assert replies == []

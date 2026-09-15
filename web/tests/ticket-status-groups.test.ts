@@ -14,6 +14,10 @@ function ticket(values: Partial<TicketStatusGroupFacts> = {}): TicketStatusGroup
     ticket_status: "empty",
     waiting_to_closeout: false,
     gating_field: "implementation",
+    awaiting_reply: false,
+    awaiting_approval: false,
+    assigned: false,
+    agent_state: "idle",
     ...values
   };
 }
@@ -30,10 +34,9 @@ describe("Ticket status groups", () => {
     expect(TICKET_STATUS_GROUPS.map((group) => group.label)).toEqual([
       "Errored",
       "Needs you",
-      "User",
       "Waiting for kickoff",
       "Awaiting approval",
-      "Paired",
+      "Assigned",
       "Agent",
       "Waiting for closeout",
       "Empty",
@@ -47,28 +50,23 @@ describe("Ticket status groups", () => {
     ).toEqual([
       "Errored",
       "Needs you",
-      "User",
       "Waiting for kickoff",
       "Awaiting approval",
-      "Paired",
+      "Assigned",
       "Agent"
     ]);
   });
 
   it("names each Ticket's group from the shared condition", () => {
-    expect(ticketStatusGroupKey(ticket({ ticket_status: "needs_user" }))).toBe("needs-me");
-    // Waiting on the user and being the user's own to do are two groups, as in the rail.
-    expect(ticketStatusGroupKey(ticket({ ticket_status: "user" }))).toBe("user");
-    expect(ticketStatusGroupKey(ticket({ ticket_status: "awaiting_approval" }))).toBe(
+    expect(ticketStatusGroupKey(ticket({ awaiting_reply: true }))).toBe("needs-me");
+    expect(ticketStatusGroupKey(ticket({ awaiting_approval: true }))).toBe(
       "current-awaiting-approval"
     );
-    expect(ticketStatusGroupKey(ticket({ ticket_status: "paired" }))).toBe("current-paired");
-    // Messaging a Ticket that was awaiting approval pairs it and leaves the proposal
-    // filed. The Ticket is paired, and the filed proposal does not say otherwise.
-    expect(ticketStatusGroupKey(ticketWithFiledProposal({ ticket_status: "paired" }))).toBe(
+    expect(ticketStatusGroupKey(ticket({ assigned: true }))).toBe("current-paired");
+    expect(ticketStatusGroupKey(ticketWithFiledProposal({ assigned: true }))).toBe(
       "current-paired"
     );
-    expect(ticketStatusGroupKey(ticket({ ticket_status: "agent" }))).toBe("current-running");
+    expect(ticketStatusGroupKey(ticket({ agent_state: "working" }))).toBe("current-running");
     // Errored and blocked are two states, and each names its own group.
     expect(ticketStatusGroupKey(ticket({ ticket_status: "errored" }))).toBe("errored");
     expect(ticketStatusGroupKey(ticket({ ticket_status: "blocked" }))).toBe("blocked");
@@ -79,42 +77,38 @@ describe("Ticket status groups", () => {
 
   it("names a kickoff-gated Ticket by its gating field, and only while it awaits approval", () => {
     expect(
-      ticketStatusGroupKey(ticket({ ticket_status: "awaiting_approval", gating_field: "kickoff" }))
+      ticketStatusGroupKey(ticket({ awaiting_approval: true, gating_field: "kickoff" }))
     ).toBe("waiting-for-kickoff");
     // The gating field only splits Tickets that are awaiting approval.
     expect(
-      ticketStatusGroupKey(ticket({ ticket_status: "agent", gating_field: "kickoff" }))
+      ticketStatusGroupKey(ticket({ agent_state: "working", gating_field: "kickoff" }))
     ).toBe("current-running");
-    // A kickoff proposal stays filed once the user messages the Ticket. It is paired.
     expect(
       ticketStatusGroupKey(
-        ticketWithFiledProposal({ ticket_status: "paired", gating_field: "kickoff" })
+        ticketWithFiledProposal({ assigned: true, gating_field: "kickoff" })
       )
     ).toBe("current-paired");
   });
 
   it("reads a group from facts a screen may not carry", () => {
     // A row that knows nothing about gating still lands somewhere sane.
-    expect(ticketStatusGroupKey({ stage: "needs_plan", ticket_status: "agent" })).toBe(
+    expect(ticketStatusGroupKey(ticket({ stage: "needs_plan", agent_state: "working" }))).toBe(
       "current-running"
     );
-    expect(ticketStatusGroupKey({ stage: "needs_plan", ticket_status: "awaiting_approval" })).toBe(
+    expect(ticketStatusGroupKey(ticket({ stage: "needs_plan", awaiting_approval: true }))).toBe(
       "current-awaiting-approval"
     );
   });
 
-  it("names a paired Ticket with a filed proposal the same on the rail and the Sprint Item page", () => {
-    // The reproduction: the user messages a Ticket that was awaiting approval, and the
-    // proposal stays filed. The two screens hold their own keys, so the label is where
-    // they have to agree.
+  it("uses the Workspace's owner-facing Paired label for an assigned Ticket", () => {
     const railGroups = workspaceGroups([
-      boardCard("t_paired", { ticket_status: "paired", has_pending_proposal: true })
+      boardCard("t_assigned", { assigned: true, has_pending_proposal: true })
     ]);
     const pageKey = ticketStatusGroupKey(
-      ticketWithFiledProposal({ ticket_status: "paired" })
+      ticketWithFiledProposal({ assigned: true })
     );
     const pageLabel = TICKET_STATUS_GROUPS.find((group) => group.key === pageKey)?.label;
-    expect(railGroups.map((group) => group.label)).toEqual([pageLabel]);
-    expect(pageLabel).toBe("Paired");
+    expect(railGroups.map((group) => group.label)).toEqual(["Paired"]);
+    expect(pageLabel).toBe("Assigned");
   });
 });

@@ -7,6 +7,7 @@ from sqlite3 import Connection
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -19,8 +20,6 @@ from planner.tickets.data import (
     create_ticket,
     file_current_proposal_with_recap,
 )
-
-_AGENT = {"X-Plan-Actor": "agent"}  # a plain (non-dispatched) agent context
 
 
 def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
@@ -51,7 +50,7 @@ def _passed_ticket(db_path: Path) -> str:
             conn,
             worker_type="coding",
             title="Edit me.",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=0,
             title_max_chars=200,
         )
@@ -59,24 +58,35 @@ def _passed_ticket(db_path: Path) -> str:
             conn,
             ticket.id,
             field="kickoff",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=0,
             next_ceiling=NO_FURTHER,
             at_cap=AtCap.propose,
+            next_holder=OWNER_PRINCIPAL,
         )
         change_scope(
             conn,
             ticket.id,
             ceiling="needs_plan",
             at_cap=AtCap.propose,
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=0,
         )
         file_current_proposal_with_recap(
-            conn, ticket.id, body="success v1", recap="r", actor="agent", now=0
+            conn,
+            ticket.id,
+            body="success v1",
+            recap="r",
+            principal=ticket_principal(ticket.id),
+            now=0,
         )
         file_current_proposal_with_recap(
-            conn, ticket.id, body="approach v1", recap="r", actor="agent", now=0
+            conn,
+            ticket.id,
+            body="approach v1",
+            recap="r",
+            principal=ticket_principal(ticket.id),
+            now=0,
         )
     finally:
         conn.close()
@@ -101,7 +111,7 @@ def test_put_proposal_agent_edits_pending_proposal_in_place(tmp_path: Path) -> N
     conn = connect(str(db_path))
     try:
         ticket = file_current_proposal_with_recap(
-            conn, tid, body="plan draft", recap="r", actor="original-worker", now=23
+            conn, tid, body="plan draft", recap="r", principal=ticket_principal(tid), now=23
         )
         original = ticket.pending_proposal
         assert original is not None
@@ -112,7 +122,7 @@ def test_put_proposal_agent_edits_pending_proposal_in_place(tmp_path: Path) -> N
         response = client.put(
             f"/api/tickets/{tid}/proposal",
             json={"field": "plan", "body": "edited plan draft"},
-            headers=_AGENT,
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": tid},
         )
 
     assert response.status_code == 200, response.json()

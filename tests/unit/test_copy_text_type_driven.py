@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from sqlite3 import Connection
 
 import pytest
+from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 from tests.support.probe import (
     FIELD_ALPHA,
     FIELD_BETA,
@@ -76,12 +77,17 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
         tmp_db,
         worker_type="coding",
         title="Coding ticket",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
     )
     file_current_proposal_with_recap(
-        tmp_db, ticket.id, body="kickoff body", actor="agent", now=2, recap="Current work"
+        tmp_db,
+        ticket.id,
+        body="kickoff body",
+        principal=ticket_principal(ticket.id),
+        now=2,
+        recap="Current work",
     )
     # Accept kickoff so its value settles and the ticket advances to needs_success (the
     # default ceiling is now needs_kickoff, so kickoff parks until accepted — the golden
@@ -90,12 +96,13 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
         tmp_db,
         ticket.id,
         field="kickoff",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=3,
         next_ceiling="needs_success",
         at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
     )
-    replace_guidance(tmp_db, ticket.id, body="success note", actor="human", now=4)
+    replace_guidance(tmp_db, ticket.id, body="success note", principal=OWNER_PRINCIPAL, now=4)
     assert copy_text(tmp_db, ticket.id) == _CODING_COPY_TEXT_GOLDEN
 
 
@@ -105,12 +112,12 @@ def test_copy_text_probe_renders_own_fields(
     ticket = create_ticket(
         tmp_db,
         title="Probe ticket",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
         worker_type="probe",
     )
-    dropped = drop_ticket(tmp_db, ticket.id, actor="human", now=2)
+    dropped = drop_ticket(tmp_db, ticket.id, principal=OWNER_PRINCIPAL, now=2)
     text = copy_text(tmp_db, ticket.id)
     assert dropped.archived_field_content in text
     assert "Unapproved proposal" in text

@@ -12,15 +12,21 @@
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import { readableConversationDetail } from "../../lib/conversation/conversationDetail";
   import {
-    threadItems,
     type ThreadItem
   } from "../../lib/conversation/threadLayout";
   import {
+    conversationThreadItemsForLens,
+    type ConversationLens
+  } from "../../lib/conversation/lens";
+  import {
+    AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE,
     askDeadSentence,
     CONTEXT_COMPACTED_SENTENCE,
+    explicitReplyMissingSentence,
     promptLabelFor,
     turnEndingSentence,
     PROMPT_DISCARDED_SENTENCE,
+    PROPOSAL_DELIVERY_FAILED_SENTENCE,
     TURN_STOPPED_SENTENCE
   } from "../../lib/conversation/transcript";
   import { modelDisplayName } from "../../lib/conversation/composer";
@@ -28,6 +34,8 @@
 
   let {
     rows,
+    visibleRows,
+    lens,
     conversationId,
     models = [],
     ownSenderLabel = null,
@@ -35,6 +43,8 @@
     ticketId = null
   }: {
     rows: readonly TranscriptRow[];
+    visibleRows: readonly TranscriptRow[];
+    lens: ConversationLens;
     /** Which conversation these rows belong to, so a piece naming a file it kept has
      *  somewhere to fetch it from. */
     conversationId: string;
@@ -47,7 +57,7 @@
     ownSenderLabel?: string | null;
   } = $props();
 
-  let items = $derived<ThreadItem[]>(threadItems(rows));
+  let items = $derived<ThreadItem[]>(conversationThreadItemsForLens(rows, visibleRows, lens));
   // Opening a turn opens every run inside it, so there is one place to open a turn
   // rather than one per batch of tool calls in it.
   let expandedTurns = $state<Record<string, boolean>>({});
@@ -147,6 +157,12 @@
         </div>
         <MessagePieces content={item.row.content} {conversationId} {ticketId} />
       </article>
+    {:else if item.row.kind === "proposal_delivery_failed"}
+      <article class="chat-system c2-refused" data-conversation-row="proposal_delivery_failed">
+        <div class="c2-label">
+          {PROPOSAL_DELIVERY_FAILED_SENTENCE} after {item.row.attemptCount} attempts
+        </div>
+      </article>
     {:else if item.row.kind === "prompt_discarded"}
       <article class="chat-system" data-conversation-row="prompt_discarded">
         <div class="c2-label">
@@ -158,6 +174,10 @@
       <article class="chat-a" data-conversation-row="agent_message">
         <MessagePieces content={item.row.content} {conversationId} {ticketId} />
       </article>
+    {:else if item.row.kind === "explicit_reply_missing"}
+      <div class="acp-turn-end" data-conversation-row="explicit_reply_missing">
+        {explicitReplyMissingSentence(item.row.promptSender)}
+      </div>
     {:else if item.row.kind === "streaming_agent_message"}
       <article class="chat-a c2-streaming" data-conversation-row="streaming">
         <MarkdownBlock text={item.row.text} {ticketId} />
@@ -208,6 +228,10 @@
            mentioning it would read as an agent that forgot. -->
       <div class="acp-compaction" role="separator" data-conversation-row="context_compacted">
         <span>{CONTEXT_COMPACTED_SENTENCE}</span>
+      </div>
+    {:else if item.row.kind === "turn_ended" && item.row.automaticCompactionResult === "not_compacted"}
+      <div class="acp-compaction" role="status" data-conversation-row="turn_ended">
+        {AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE}
       </div>
     {:else if item.row.kind === "turn_ended" && item.row.ending === "failed"}
       <div class="acp-turn-end acp-turn-end--error" role="alert" data-conversation-row="turn_ended">

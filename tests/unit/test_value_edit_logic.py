@@ -3,6 +3,7 @@
 from dataclasses import replace
 
 import pytest
+from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
 
 from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
@@ -36,6 +37,7 @@ def _ticket(*, stage: str = "needs_success") -> Ticket:
         recap="",
         guidance="keep this guidance",
         ceiling="done",
+        ceiling_holder=OWNER_PRINCIPAL,
         at_cap=AtCap.propose,
         ticket_status=TicketStatus.awaiting_approval,
         ticket_status_changed_at=0,
@@ -58,7 +60,11 @@ def test_edit_pending_proposal_changes_only_its_body() -> None:
     proposal = PendingTicketProposal("success", "old", "worker", 7)
     ticket = replace(_ticket(), pending_proposal=proposal, field_values={"kickoff": "request"})
     decision = resolution.decide_edit_pending_proposal(
-        ticket, "success", "new", "human", worker_type_definition=CODING_WORKER_TYPE_DEFINITION
+        ticket,
+        "success",
+        "new",
+        OWNER_PRINCIPAL,
+        worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
     )
     assert decision.pending_proposal == replace(proposal, body="new")
     assert decision.field_values == {"kickoff": "request"}
@@ -77,7 +83,11 @@ def test_edit_pending_proposal_rejects_any_field_other_than_current_gate(field: 
     )
     with pytest.raises(PlannerError) as exc:
         resolution.decide_edit_pending_proposal(
-            ticket, field, "new", "human", worker_type_definition=CODING_WORKER_TYPE_DEFINITION
+            ticket,
+            field,
+            "new",
+            OWNER_PRINCIPAL,
+            worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
         )
     assert exc.value.code == ErrorCode.validation
 
@@ -88,7 +98,7 @@ def test_edit_pending_proposal_requires_a_pending_proposal() -> None:
             _ticket(),
             "success",
             "new",
-            "human",
+            OWNER_PRINCIPAL,
             worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
         )
     assert exc.value.code == ErrorCode.not_found
@@ -101,7 +111,11 @@ def test_edit_passed_value_changes_only_saved_values() -> None:
         pending_proposal=PendingTicketProposal("plan", "draft", "worker", 9),
     )
     decision = resolution.decide_edit_value(
-        ticket, "success", "new", "human", worker_type_definition=CODING_WORKER_TYPE_DEFINITION
+        ticket,
+        "success",
+        "new",
+        OWNER_PRINCIPAL,
+        worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
     )
     assert decision.field_values == {"kickoff": "request", "success": "new"}
     assert decision.pending_proposal == ticket.pending_proposal
@@ -113,7 +127,11 @@ def test_edit_value_rejects_unsettled_or_unpassed_field(field: str) -> None:
     ticket = replace(_ticket(stage="needs_plan"), field_values={"success": "settled"})
     with pytest.raises(PlannerError) as exc:
         resolution.decide_edit_value(
-            ticket, field, "new", "human", worker_type_definition=CODING_WORKER_TYPE_DEFINITION
+            ticket,
+            field,
+            "new",
+            OWNER_PRINCIPAL,
+            worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
         )
     assert exc.value.code == ErrorCode.validation
 
@@ -122,6 +140,10 @@ def test_worker_cannot_edit_settled_value() -> None:
     ticket = replace(_ticket(stage="needs_plan"), field_values={"success": "settled"})
     with pytest.raises(PlannerError) as exc:
         resolution.decide_edit_value(
-            ticket, "success", "new", "agent", worker_type_definition=CODING_WORKER_TYPE_DEFINITION
+            ticket,
+            "success",
+            "new",
+            TEST_TICKET_PRINCIPAL,
+            worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
         )
     assert exc.value.code == ErrorCode.agent_forbidden

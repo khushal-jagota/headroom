@@ -64,9 +64,11 @@ a side effect of carrying an Outcome.
 Removing a commitment does not remove a Ticket's Outcome classification. Those Tickets
 remain under that Outcome on Sprint tracking. Only Tickets without an Outcome appear
 under **No Outcome**. The Outcome workspace always holds its full brief, artifacts, and
-Tickets across Sprints, with Today and Remaining groups as before. The Ticket page does
-not show Sprint or Backlog placement. Commitment links and a Ticket's stored schedule
-can differ: they state different facts.
+Tickets across Sprints. Its header shows open work and work that needs the user. Its
+artifact strip lists files newest first. Today and Other Tickets use the same status
+groups. Other Tickets starts collapsed. Ticket rows omit Sprint names and mark only open,
+unsprinted work as Backlog. The Ticket page does not show Sprint or Backlog placement.
+Commitment links and a Ticket's stored schedule can differ: they state different facts.
 
 Outcome and Ticket Projects remain coherent. Classifying a Ticket aligns its Project
 and preserves its Sprint. Removing its Outcome preserves both Project and Sprint.
@@ -140,11 +142,11 @@ the Outcome supervisor agent key as the sender. A missing, reset, stale, or unre
 conversation is refused. This message path cannot create a conversation and does not
 change the Ticket Stage, scope, status, or Day membership.
 
-Nothing a supervisor does reaches the user on its own. It sends no notification and it
-lights nothing by acting. The Item row in the Workspace carries the same mark a Ticket
-row carries: an unseen reply from the conversation, put out when the user opens the Item.
-Because only a user message starts a turn, that reply is always an answer to something
-they said.
+Nothing a supervisor does reaches the user on its own. Backend prose is runtime output;
+only an explicit Send Message reaches another principal. The Item row in the Workspace
+carries the same mark a Ticket row carries: an unseen completed turn from the
+conversation, put out when the user opens the Item. A system marker in the transcript
+says when that turn ended without an explicit reply to its prompt sender.
 
 The workspace reads one coherent Item snapshot with child Ticket Day membership,
 artifacts, supervisor state, and the current conversation link. It adds

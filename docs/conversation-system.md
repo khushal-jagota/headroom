@@ -23,32 +23,51 @@ uses the same system. There is no second path.
 ## The notebook
 
 Every conversation owns an append-only run of numbered rows in the database —
-its notebook. A row is a finished thing: a prompt that was actually delivered
+its notebook. A row is a finished durable fact: a prompt that was actually delivered
 (the message itself, who sent it, how, and — when the sender minted them — the
-name the sender gave the message and the moment it was sent), a completed agent
-message, a tool call
+name the sender gave the message and the moment it was sent), an explicit addressed
+message, a silence marker, a tool call
 starting, a tool call finishing, a permission ask or agent question request, its answer, a model change, a
 discarded held message, a turn ending (completed, failed, or interrupted). Rows
-are written once and never edited. Streaming output (the text growing word by word) is live
-decoration only — it is never stored, and the agent's private reasoning is
+are written once and never edited. Backend prose, including its streaming text, is live
+runtime output only — it is never stored, and the agent's private reasoning is
 dropped entirely, not stored and not shown.
 
-A finished agent message remains recordable when it arrives just after its backend turn
-ending. This matters for persistent runs such as Claude's: delegated work can wake the
-parent after an earlier result. The whole parent message is durable conversation content,
-so Panels keeps it under the most recently ended turn. Late deltas, tool activity, asks,
-usage and extra endings remain live-turn facts and are still discarded.
+Late backend prose, deltas, tool activity, asks, usage, and extra endings remain
+live-turn facts and are discarded after the turn ends.
 
 Reading is one rule everywhere: fetch the rows after the last one you hold, then
 listen for new ones. Opening a conversation, reconnecting after a dropped
 connection, and a second device are all that same fetch. Nothing re-downloads
 mid-read.
 
+Every conversation opens through the Focus lens. Focus shows the owner's prompts,
+explicit messages addressed to the owner, permission requests, agent questions, and
+the answers that settle those requests. Historical owner prompts without principals use
+their established owner label, so they remain readable without a record migration.
+Failed turns, stopped turns, missing explicit replies, and terminal proposal-alert
+delivery failures remain visible as compact system rows. Complete turn boundaries still
+settle the Focus thread and rest line when runtime rows are hidden. A turn with a hidden
+opening prompt has no Focus turn head.
+Full shows the complete runtime notebook. The header toggle and the unmodified `f` key
+switch the lens without replacing the conversation. Editable controls keep the key.
+
+The lens changes only what the person reads. Liveness, streaming, reconnects, and
+snapshots continue to use the complete feed. A switch to another conversation invalidates
+the old read and tail. A late snapshot, row, frame, or refresh from the old conversation
+cannot change the newly opened conversation.
+
+While active Focus is open, the owner read position advances through the newest delivered
+row. Runtime-only rows can clear an unread mark because Focus displays every result that
+needs the owner's attention.
+
 An open conversation is handed each new row directly, so it never has to be told to
-come and look. That is why most rows are written quietly: an agent message, a tool
+come and look. That is why most rows are written quietly: a historical agent-message row, a tool
 call starting or finishing, a plan, a token count, and a compaction are shown only
-inside the conversation, and writing them does not send every other open screen back
-for a fresh copy of itself. A working agent writes dozens of those a minute, and
+inside the conversation. The compact runtime row for a terminal proposal-alert failure
+is also conversation-only. Its separate durable failure record surfaces the pending
+proposal in owner attention and Review. Writing the runtime row does not send every other open screen back
+for a fresh copy of itself. A working agent writes dozens of those rows a minute, and
 announcing each one sends every open tab back for everything it is showing.
 
 The rows anything else reads still announce themselves the ordinary way: a delivered,
@@ -170,39 +189,80 @@ lower. Missing or malformed output, failure text, extra messages, and equal or
 higher counts do not confirm compaction. Hermes session provenance still records
 compaction during ordinary turns, but it cannot confirm this maintenance turn.
 
-A successful boundary suppresses another automatic run until a later ordinary
-turn produces agent activity. The maintenance turn does not reset its own clock.
-If a message arrives after the deadline, the conversation lock reserves compaction
-first and holds the message behind it. The message proceeds once after confirmed
-success, refusal, failure, or a completed turn with no compaction confirmation.
+Panels keeps two sequence positions. The confirmed-compaction position records the
+ordinary activity protected by a proven boundary. The maintenance-attempt position
+records the ordinary activity for which a maintenance turn reached a terminal result.
+
+A confirmed boundary advances both positions. A completed maintenance turn without a
+boundary records `not_compacted` and advances only the attempt position. The next sweep
+does not retry the same activity. Later ordinary agent activity advances past that
+position and can become eligible after 50 minutes. A failed or interrupted maintenance
+turn advances neither position, so a later sweep can retry it.
+
+The maintenance turn does not count as ordinary activity. If a message arrives after
+the deadline, the conversation lock reserves compaction first and holds the message
+behind it. The message proceeds once after confirmed success, refusal, failure, or a
+completed turn with no compaction confirmation.
 
 ## Sending
 
 The top-level `panels send-message` command is the plain-text command-line door into this
-same send operation. It resolves a Chief, Ticket, Sprint Item, or registered agent, then
-uses that owner's current conversation path. It creates the normal conversation for the
-first three owner types when needed. A general agent row has no launch configuration, so
-it can receive a message only while it points to a current conversation. The command adds
-no second transport, queue, or conversation record.
+same send operation. It accepts the owner, Chief, Ticket, or Sprint Item principal. An
+employee-to-owner send appends an addressed `message_to_owner` row to the employee's
+current conversation without invoking a backend. An employee without a current
+conversation cannot send to the owner. Employee recipients use their normal current
+conversation path, creating it when any send needs one. Every mode starts a turn when the
+recipient is idle. Agent keys remain a private resolution detail. The command adds no
+second transport, queue, or conversation record.
+
+Every employee-authored send carries canonical sender and recipient principals derived
+from the authenticated request. Panels records that address on every durable outcome,
+including held, refused, uncertain, and discarded prompts. Browser-supplied display
+labels are not authority.
+
+Backend prose is runtime output only. Finishing a turn does not turn that prose into a
+message for the person who prompted it. Only Send Message creates an explicit addressed
+reply. A turn remembers each distinct principal whose addressed prompt it admitted,
+including steers and a batch drained from the held queue. Immediately before the turn's
+ending row, Panels records one `explicit_reply_missing` system marker for each of those
+principals who did not receive an accepted Send Message. Repeated prompts from one
+principal produce one marker; legacy and automatic runtime prompts have no principal and
+produce none. The markers and ending are one ordered transaction.
 
 The composer accepts pictures and supported files from its pickers, the clipboard, or
 a drop. Attachments wait beside the draft and can be removed one at a time. They can
 travel with words or form the whole message. There is no separate upload conversation
 or attachment record.
 
-Send has no delivery knob. Every new message runs when the agent is free, and a
-busy agent holds it in a FIFO line. Enter and the send arrow use that same rule,
-including while a turn runs.
+The command accepts `--mode queue|steer|send_now`. Queue is the default for command sends.
+Queue holds behind active work. Steer asks the current turn to admit the message. Send now
+interrupts current work and starts the message first. The Send Message API accepts the
+same three values and defaults an omitted value to `queue`.
+
+The browser composer defaults to steer. Its mode control also exposes queue and send now.
+Enter and the send arrow use the selected mode. Every selected mode starts an idle turn.
+Attachments and run changes cannot steer, so they enter the queue with a visible reason.
+A confirmed steer refusal does the same. An uncertain steer remains terminal and never
+enters the queue, because a retry can deliver the same message twice.
+
+The unlinked development conversation page keeps a lower-level raw send route for testing
+conversation mechanics in isolation. It rejects every conversation associated with a
+Ticket, the Chief, or a Sprint Item supervisor. It therefore is not an employee
+conversation door and does not participate in principal addressing. Ticket, Chief, and
+Sprint Item composers never use it; they all use the addressed Send Message operation.
 
 When the agent frees, everything waiting goes to it as one prompt rather than one
 turn each. The messages keep their order and each keeps its sender's name in front
 of its own words, so an agent handed one run of text can still tell who said what.
-Nothing is summarised or reworded, and a single waiting message is sent exactly as
-it was. The record is not collapsed with the prompt: each message still gets its own
-row, because a row names one sender's message id and that id is how a sender
+Nothing else is summarised or reworded. The adapter adds the first sender's name,
+and the held-line combiner adds each later sender's name exactly once. The record is
+not collapsed with the prompt: each message still gets its own row with its original
+content, because a row names one sender's message id and that id is how a sender
 recognises its own message when the record hands it back. A message that asks to run
 on a different model starts the next turn instead of joining this one, because a turn
-runs on one model and the messages in front of it never named that one.
+runs on one model and the messages in front of it never named that one. A message that
+starts with a slash token also gets its own turn. This keeps a possible native command at
+the absolute start and prevents a later command from becoming part of an earlier prompt.
 
 A waiting message that cannot be delivered at all is written down as discarded, and
 the line carries on to the next one. One message nobody can deliver does not take the
@@ -214,8 +274,8 @@ The composer shows the held line in one inset tray above its recessed input on d
 and phone. Messages stack inside that tray. Each row stays on one line and can discard
 the message or make it run next. When the server reports steering support, a row can also
 steer its text into the running turn. The server snapshot is the shared answer, so a
-second tab or device shows the same held line. A tab merges its immediate copy with that
-snapshot by the sender's message id rather than drawing it twice.
+second tab or device shows the same held line and its queue reason. A tab merges its
+immediate copy with that snapshot by the sender's message id rather than drawing it twice.
 
 The queue actions and the input action row use the same order, labels, and button treatment
 on desktop and phone. Width changes the available text space, not the control design.
@@ -225,11 +285,16 @@ started (the text reached a live agent), queued at a position, injected into the
 captured turn's owned work, refused with a named reason, or uncertain after a steering
 attempt may have crossed the backend boundary. Uncertain is terminal: Panels records it
 and does not retry it. The only refusals are genuine impossibilities — no
-such conversation, the agent would not start, its session would not load, the
-write failed, a steer with no running turn to join, or a steer at a backend that
-cannot steer. A busy agent is never a refusal. A message with nothing in it is not a refusal
+such conversation, the agent would not start, its session would not load, or the
+write failed. Confirmed steer refusals enter the queue.
+A busy agent is never a refusal. A message with nothing in it is not a refusal
 either — it is not a message, and it is turned away where it is sent. How a turn later ends is never
 part of the answer — endings are notebook rows.
+
+An addressed owner prompt advances the durable owner read position only through the
+rows that existed when the send entered the conversation. That admission position stays
+with immediate writes, held messages, steer outcomes, fallback delivery, and promotions.
+Rows that arrive while a write or steer is in flight remain unread.
 
 Codex steering targets the captured native turn through its steering request. A changed
 turn is refused. A lost response after a possible write stays uncertain, and Stop remains
@@ -416,13 +481,6 @@ that did not actually restore the agent's memory is refused out loud — never
 silently accepted as a fresh brain behind an old transcript. A failed turn
 writes one error-log line with the ids and the tail of the process's stderr.
 
-Hermes installation maintenance is exclusive with those child processes. Panels
-refuses an update while any Hermes child is starting or alive, including an idle
-child. Once an update has been accepted, a new Hermes child waits until the
-update command and the card refresh have both finished. The reservation is made
-before spawn, so a send and an update cannot both see an empty gap and race into
-it.
-
 Held messages live in memory only: a server restart loses whatever was still
 waiting in line (the notebook keeps what was delivered or discarded). Kill is
 the loud version of stopping: it ends the running turn and throws away the
@@ -434,12 +492,12 @@ Ticket's ordered conversation history. Only the active conversation accepts new 
 ## Backend cards
 
 The system can describe each agent CLI as a card: is the binary installed and
-what version, who is logged in (where the CLI will say without a network call),
-which models it offers, and whether a newer version exists — with a one-click
-update whose command is inferred from how the CLI was installed, re-checked
-afterwards, and reported as succeeded, unchanged, or failed. All of it is
-advisory; nothing blocks on it. Logging in stays in the terminal, and the card
-names the command.
+what version, who is logged in, and which models it offers. An ordinary cold read
+returns these facts without waiting for remote update discovery. An explicit refresh
+adds Codex and Claude update advice and a one-click update when Panels can run one.
+The update command comes from how the CLI was installed. Panels checks the card again
+afterwards and reports the update as succeeded, unchanged, or failed. Logging in stays
+in the terminal, and the card names the command.
 
 Hermes is found from its configured Python environment, the same installation a
 conversation launches, even when its executable is not on `PATH`. A packaged
@@ -451,21 +509,21 @@ refresh and may probe every configured custom endpoint. The answer is kept in th
 Panels process until that explicit refresh. It is not polled or copied onto
 Tickets. Hermes still offers no Panels reasoning control.
 
-Hermes supplies its own update advice through `hermes update --check`. Panels
-withholds the updater when that command identifies an installation it cannot
-drive; a network or authentication failure remains advisory because it does not
-change how the installation is managed. An authorized update runs as
-`hermes update --yes` without force options. A failed check does not make an
-otherwise usable backend unavailable. Every attempted update refreshes the card,
-even when the command fails.
+Panels does not ask Hermes for update advice and does not offer a Hermes update action.
+Hermes version and model catalogue discovery remain available.
 
 Panels keeps the last successful usage reading for each backend in its database.
 Opening the Backends page, reading `GET /backends`, receiving a change signal, or
 refreshing another query only reads that stored answer. None of those actions contacts
-a provider. The one Refresh on the Backends page re-reads every catalogue and usage
-source through `POST /backends/refresh`. Codex and Claude refresh independently, so one
-failure does not discard the other provider's new answer. A failed refresh also leaves
-that backend's prior reading in place.
+a provider. The one Refresh on the Backends page starts every usage source through
+`POST /backends/refresh`, then resolves those answers against ordinary backend snapshots.
+It does not force model catalogues, versions, identities, or update advice to refresh.
+Codex and Claude usage reads start independently, so catalogue work cannot delay them and
+one provider failure does not discard the other provider's new answer. A failed refresh
+also leaves that backend's prior reading in place. When the Backends page opens, it paints
+an ordinary snapshot first. It then refreshes catalogue and Codex and Claude update
+advice in the background. Cached ordinary reads stay available during that work. The
+page's Refresh action and the shared model picker stop after the usage answer.
 
 Codex starts one short-lived app-server child and asks its native
 `account/rateLimits/read` method. The request does not start a thread, run a model turn,
@@ -501,13 +559,16 @@ line, or a trigger on a later line does not open the menu. The composer narrows 
 eligible list as text is typed.
 
 A choice replaces the active token with the entry's exact insertion text. That result is
-still an ordinary draft. Message delivery and transcript rendering do not interpret or
-rewrite it.
+still an ordinary draft. The backend adapter resolves a live catalog command from the
+sender's original draft and keeps the exact slash command for native dispatch. Other
+delivered content gets the sender's name at its start. Transcript rendering keeps the
+original draft.
 
 Hermes maps the command lists that it volunteers into slash command entries. Claude maps
 the command list from its process handshake in the same way, so project commands still
 follow the conversation folder. Their visible text is `/name`, and their insertion text
-is `/name `.
+is `/name `. Their adapters retain the live command names so ordinary and steered command
+dispatch keeps the slash token at the absolute start.
 
 Codex reads its catalog from the app-server after each thread starts or resumes. It joins
 enabled skills, callable installed apps, and enabled installed plugins with the native
@@ -580,4 +641,4 @@ child process runs. A conversation with no report yet offers nothing.
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-09-04._
+_Last verified: 2026-09-15._

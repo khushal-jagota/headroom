@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { shortMonthDayLabel, weekdayLabel } from "../lib/dates";
   import {
@@ -8,14 +7,11 @@
     dayPageState,
     dayVisualTicket
   } from "../lib/dayPresentation";
-  import { onReplyWatermarkMoved, readReplyWatermark } from "../lib/replyWatermark";
   import { queries } from "../lib/queryCatalogue";
   import ResourceState from "../components/ResourceState.svelte";
   import StageMark from "../components/StageMark.svelte";
 
   const day = createQuery(() => queries.todayDay());
-
-  let replyWatermarks = $state<Record<string, number>>({});
 
   function dateSegment(): string {
     return (day.data?.id || "day_today").slice(4);
@@ -32,25 +28,8 @@
     };
   }
 
-  function rereadWhereThisBrowserHasGot(): void {
-    const positions: Record<string, number> = {};
-    for (const ticket of day.data?.tickets || []) {
-      if (typeof ticket.conversation_id === "string") {
-        positions[ticket.conversation_id] = readReplyWatermark(ticket.conversation_id);
-      }
-    }
-    replyWatermarks = positions;
-  }
-
-  onMount(() => onReplyWatermarkMoved(rereadWhereThisBrowserHasGot));
-
-  $effect(() => {
-    day.data;
-    rereadWhereThisBrowserHasGot();
-  });
-
   let tickets = $derived(day.data?.tickets || []);
-  let visualTickets = $derived(tickets.map((ticket) => dayVisualTicket(ticket, replyWatermarks)));
+  let visualTickets = $derived(tickets.map((ticket) => dayVisualTicket(ticket)));
   let dotTickets = $derived(dayDotOrder(visualTickets));
   let actionTiles = $derived(dayActionTiles(visualTickets));
   let pageState = $derived(dayPageState(visualTickets));

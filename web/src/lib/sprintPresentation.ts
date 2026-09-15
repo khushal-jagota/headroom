@@ -1,5 +1,6 @@
 import type { FieldStageVisualState } from "./ui";
 import type { Priority, ProjectSummary, SprintOutcomeGroup } from "./types";
+import { primaryWorkAttention } from "./workAttentionPresentation";
 
 export type SprintTicket = {
   id: string;
@@ -9,6 +10,10 @@ export type SprintTicket = {
   ticket_status: string;
   waiting_to_closeout?: boolean;
   has_pending_proposal?: boolean;
+  awaiting_reply: boolean;
+  awaiting_approval: boolean;
+  assigned: boolean;
+  agent_state: "working" | "idle" | "errored";
 };
 
 export type SprintProjectGroup = {
@@ -26,12 +31,15 @@ export type SprintTicketCondition = {
 // The three facts a Ticket's condition is read from. Sprint tickets, Sprint Item
 // workspace tickets and Workspace board cards all carry them, so all three screens
 // name a Ticket's condition the same way. A filed proposal is not one of them: a
-// Ticket the user has messaged is paired while its proposal stays filed, so the
-// Ticket's own status is the fact.
+// The shared projection is authoritative even while a proposal stays filed.
 export type TicketConditionFacts = {
   stage: string;
   ticket_status: string;
   waiting_to_closeout?: boolean;
+  awaiting_reply: boolean;
+  awaiting_approval: boolean;
+  assigned: boolean;
+  agent_state: "working" | "idle" | "errored";
 };
 
 export type SprintTicketSections = {
@@ -89,15 +97,15 @@ export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicke
   if (ticket.stage === "done") return { mark: "completed", word: "done" };
   // Two states, one mark, two words. Errored is a worker that broke; blocked is a
   // Ticket another Ticket holds. They read the same red, and never the same word.
-  if (ticket.ticket_status === "errored") return { mark: "errored", word: "errored" };
+  if (ticket.agent_state === "errored") return { mark: "errored", word: "errored" };
   if (ticket.ticket_status === "blocked") return { mark: "errored", word: "blocked" };
-  if (ticket.ticket_status === "awaiting_approval") {
+  const attention = primaryWorkAttention(ticket);
+  if (attention === "awaiting_approval") {
     return { mark: "current-awaiting-approval", word: "to review" };
   }
-  if (ticket.ticket_status === "needs_user") return { mark: "needs-me", word: "need you" };
-  if (ticket.ticket_status === "user") return { mark: "needs-me", word: "yours" };
-  if (ticket.ticket_status === "agent") return { mark: "current-running", word: "working" };
-  if (ticket.ticket_status === "paired") return { mark: "current-paired", word: "paired" };
+  if (attention === "assigned") return { mark: "current-paired", word: "assigned" };
+  if (attention === "awaiting_reply") return { mark: "needs-me", word: "need you" };
+  if (ticket.agent_state === "working") return { mark: "current-running", word: "working" };
   if (ticket.waiting_to_closeout) return { mark: "current-waiting", word: "waiting for closeout" };
   return { mark: "upcoming", word: "to do" };
 }

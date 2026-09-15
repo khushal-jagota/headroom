@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import Final
 
-NotificationSubjectKind = Literal["ticket", "agent", "sprint_item"]
+from planner.core.contracts import Principal, PrincipalKind
+
 TICKET_NOTIFICATION_SUBJECT_KEY: Final = "tickets"
 SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY: Final = "sprint_item_supervisors"
 
@@ -22,37 +23,32 @@ class NotificationType:
 class NotificationSubject:
     key: str
     label: str
+    principal_kind: PrincipalKind
     notification_type_ids: tuple[str, ...]
 
 
 NOTIFICATION_TYPES: Final[tuple[NotificationType, ...]] = (
     NotificationType(
-        "ticket_needs_approval",
+        "awaiting_reply",
+        "Message",
+        "An unread message needs your reply.",
+        True,
+    ),
+    NotificationType(
+        "awaiting_approval",
         "Needs approval",
         "A Ticket has a proposal waiting for your decision.",
         True,
     ),
     NotificationType(
-        "needs_input",
-        "Needs input",
-        "A Ticket or worker is waiting for information from you.",
+        "assigned",
+        "Assigned",
+        "A Ticket stage is assigned to you.",
         True,
     ),
     NotificationType(
-        "permission_requested",
-        "Permission request",
-        "A running worker is waiting for permission.",
-        True,
-    ),
-    NotificationType(
-        "worker_completed",
-        "Worker completed",
-        "A worker turn completed and its reply is ready.",
-        True,
-    ),
-    NotificationType(
-        "worker_failed",
-        "Worker failed",
+        "errored",
+        "Error",
         "A worker turn or Ticket failed and needs attention.",
         True,
     ),
@@ -68,23 +64,25 @@ NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
     NotificationSubject(
         TICKET_NOTIFICATION_SUBJECT_KEY,
         "Tickets",
+        PrincipalKind.ticket,
         (
-            "ticket_needs_approval",
-            "needs_input",
-            "permission_requested",
-            "worker_completed",
-            "worker_failed",
+            "awaiting_reply",
+            "awaiting_approval",
+            "assigned",
+            "errored",
         ),
     ),
     NotificationSubject(
         "chief_of_staff",
         "Chief of Staff",
-        ("needs_input", "permission_requested", "worker_completed", "worker_failed"),
+        PrincipalKind.chief,
+        ("awaiting_reply", "errored"),
     ),
     NotificationSubject(
         SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY,
         "Sprint Item supervisors",
-        ("worker_failed",),
+        PrincipalKind.sprint_item,
+        ("awaiting_reply", "errored"),
     ),
 )
 NOTIFICATION_SUBJECT_BY_KEY: Final[dict[str, NotificationSubject]] = {
@@ -101,8 +99,7 @@ def notification_preference_is_valid(subject_key: str, notification_type: str) -
 class NotificationFact:
     fact_id: str
     notification_type: str
-    subject_kind: NotificationSubjectKind
-    subject_id: str
+    subject: Principal
     subject_label: str
     occurred_at: int
 
