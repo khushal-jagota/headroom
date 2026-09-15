@@ -86,6 +86,38 @@ def test_ticket_attention_combines_ownership_proposal_and_conversation_facts(
         "UPDATE conversations SET owner_read_through_sequence = 2 "
         "WHERE conversation_id = 'c_attention'"
     )
+    read_row: JsonDict = {"id": ticket.id}
+    asyncio.run(
+        add_work_attention(
+            conn,
+            cast(ConversationSystem, _ConversationFacts()),
+            ConversationStore(str(db_path)),
+            tickets=[read_row],
+        )
+    )
+    assert read_row["awaiting_reply"] is False
+    assert read_row["agent_state"] == "errored"
+
+    conn.execute(
+        "INSERT INTO conversation_events"
+        "(conversation_id, sequence, kind, payload, created_at) "
+        "VALUES ('c_attention', 3, 'prompt', '{}', 3)"
+    )
+    conn.execute(
+        "UPDATE conversations SET latest_sequence = 3 "
+        "WHERE conversation_id = 'c_attention'"
+    )
+    replied_row: JsonDict = {"id": ticket.id}
+    asyncio.run(
+        add_work_attention(
+            conn,
+            cast(ConversationSystem, _ConversationFacts()),
+            ConversationStore(str(db_path)),
+            tickets=[replied_row],
+        )
+    )
+    assert replied_row["agent_state"] == "errored"
+
     running_row: JsonDict = {"id": ticket.id}
     asyncio.run(
         add_work_attention(

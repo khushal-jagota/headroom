@@ -41,10 +41,12 @@ right now?** The conversation system is asked directly, and a busy worker is lef
 for this pass.
 
 If everything says yes, Panels takes the Ticket from `empty` to `agent` in one guarded
-write. A paired Stage gets its paired opener only on this first claim. That flip **is**
-the claim. There is no claim stamp and no separate run record. The readiness
-questions are all asked again inside that write, so two racers both re-check under the
-same lock and only one of them writes.
+write. That flip **is** the claim. There is no claim stamp or general run record. For a
+paired Stage, the same transaction records a tentative opener fact for that Stage entry.
+Readiness checks that fact, not the Ticket status, to prevent a second opener. A refused
+send removes the fact. An accepted send keeps it and returns the Ticket to `empty`.
+Leaving the Stage clears the fact, so a later Stage entry can receive its own opener.
+All readiness questions run again inside the write, so only one racer wins the claim.
 
 Checking too often costs nothing: the check reads and decides, and writes nothing. So
 the loop does not wait out its timer. Every write committed through the database door
@@ -252,10 +254,9 @@ _Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`,
 - **The front end** (`frontend.md`) owns the row marks these signals feed.
 - **The command-line tool** (`cli.md`) is the surface the worker acts through.
 
-## Deferred
-
-- **Retry after an errored Ticket.** An errored Ticket still needs a deliberate way
-  back. Trigger: a product decision about what retry should mean.
+An errored worker-owned Ticket remains errored through reads and owner replies. A
+successful start supersedes the failed turn in derived agent state. A Sprint Item
+supervisor can also use explicit restart, which clears the error before a new start.
 
 ---
 

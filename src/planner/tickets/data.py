@@ -1464,12 +1464,47 @@ def claim_ticket_for_worker_step(
                 "a terminal stage has no worker step to claim",
                 {"ticket_id": ticket_id, "stage": ticket.stage},
             )
+        if ownership_mode is StageOwnershipMode.paired:
+            conn.execute(
+                "INSERT INTO ticket_paired_stage_openers(ticket_id, stage, opened_at) "
+                "VALUES (?, ?, ?)",
+                (ticket_id, ticket.stage, now),
+            )
         _write_ticket_status(
             conn,
             ticket_id,
             machine.worker_step_departure_status(ownership_mode),
             now,
         )
+        return _load_ticket_for_write(conn, ticket_id)
+
+
+def forget_paired_stage_opener(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    stage: str,
+) -> None:
+    """Re-arm a paired Stage when its tentative opener reached nobody."""
+    with _txn(conn):
+        conn.execute(
+            "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
+            (ticket_id, stage),
+        )
+
+
+def clear_ticket_error_for_restart(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    now: int,
+) -> Ticket:
+    """Clear an error only through the explicit restart path."""
+    with _txn(conn):
+        ticket = _load_ticket_for_write(conn, ticket_id)
+        if ticket.ticket_status is not TicketStatus.errored:
+            return ticket
+        _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 

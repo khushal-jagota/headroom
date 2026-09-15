@@ -152,12 +152,37 @@ def _rebuild_notification_preferences() -> None:
 def upgrade() -> None:
     _migrate_legacy_help_messages()
     op.execute(
+        "CREATE TEMP TABLE _paired_openers_to_migrate AS "
+        "SELECT id AS ticket_id, stage, ticket_status_changed_at AS opened_at "
+        "FROM tickets WHERE ticket_status = 'paired' OR (ticket_status = 'needs_user' AND "
+        "COALESCE(json_extract(stage_ownership_overrides, '$.' || stage), "
+        "default_stage_ownership_mode) = 'paired')"
+    )
+    op.execute(
         "UPDATE tickets SET ticket_status = CASE ticket_status "
-        "WHEN 'user' THEN 'empty' WHEN 'paired' THEN 'agent' "
-        "WHEN 'needs_user' THEN 'agent' ELSE ticket_status END"
+        "WHEN 'user' THEN 'empty' WHEN 'paired' THEN 'empty' "
+        "WHEN 'needs_user' THEN CASE WHEN COALESCE("
+        "json_extract(stage_ownership_overrides, '$.' || stage), "
+        "default_stage_ownership_mode) IN ('user','paired') "
+        "THEN 'empty' ELSE 'agent' END ELSE ticket_status END"
     )
     with op.batch_alter_table("tickets", copy_from=_tickets_table(), recreate="always"):
         pass
+    op.execute(
+        "CREATE TABLE ticket_paired_stage_openers ("
+        "ticket_id TEXT PRIMARY KEY REFERENCES tickets(id) ON DELETE CASCADE,"
+        "stage TEXT NOT NULL, opened_at INTEGER NOT NULL)"
+    )
+    op.execute(
+        "INSERT INTO ticket_paired_stage_openers(ticket_id, stage, opened_at) "
+        "SELECT ticket_id, stage, opened_at FROM _paired_openers_to_migrate"
+    )
+    op.execute("DROP TABLE _paired_openers_to_migrate")
+    op.execute(
+        "CREATE TRIGGER clear_ticket_paired_stage_opener_after_stage_change "
+        "AFTER UPDATE OF stage ON tickets WHEN OLD.stage != NEW.stage BEGIN "
+        "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = NEW.id; END"
+    )
     _rebuild_notification_preferences()
     op.execute(
         "DELETE FROM notification_facts WHERE fact_id NOT IN "

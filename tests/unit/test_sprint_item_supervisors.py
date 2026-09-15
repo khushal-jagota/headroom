@@ -841,6 +841,34 @@ def test_restart_gives_the_claim_back_and_starts_a_new_conversation(
     assert body["employee_configuration"]["employee_backend"] == "codex"
 
 
+def test_restart_clears_an_explicit_error_and_starts_again(tmp_path: Path) -> None:
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket_id = _stranded_child(client, db_path, str(item["id"]))
+        with connect(str(db_path)) as conn:
+            tickets_data.mark_ticket_errored(
+                conn,
+                ticket_id,
+                error="The previous start failed.",
+                now=1,
+            )
+        response = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            json={},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["started"] is True
+    assert body["ticket_status"] == "agent"
+    assert body["killed_conversation_id"] == "conv-dead-worker"
+    with connect(str(db_path)) as conn:
+        restarted = tickets_data.read_ticket(conn, ticket_id)
+    assert restarted.backend_error is None
+
+
 def test_restart_refuses_a_stage_the_worker_does_not_own(tmp_path: Path) -> None:
     """A Paired Stage rests where it departs, so a restart there kills a live discussion."""
     app, db_path = _app(tmp_path)

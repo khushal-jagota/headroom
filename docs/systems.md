@@ -122,9 +122,11 @@ conversation system supplies the one fact the record cannot: whether that Ticket
 worker is already busy.
 
 One guarded status flip out of `empty` is the claim. There is no claim stamp or run row.
-Panels then starts or reuses the Ticket conversation and sends the Stage instruction
-with pending Worker context. Started and queued both count as delivered. Only refusal
-releases the claim.
+Paired claims also record one opener fact for the current Stage entry. An accepted
+paired opener returns the status to `empty`, while readiness uses the fact to prevent a
+repeat. Panels then starts or reuses the Ticket conversation and sends the Stage
+instruction with pending Worker context. Started and queued both count as delivered.
+Refusal releases every claim and removes any tentative opener fact.
 
 Nothing watches a turn end. A Ticket moves only when someone acts on it. A process crash
 can therefore leave a Ticket marked `agent` with no live turn. Panels leaves that
@@ -232,8 +234,6 @@ _Code paths:_ `src/planner/environments/`, `src/planner/notifications/`,
 
 ## Deferred
 
-- **Errored Ticket recovery.** An errored Ticket has no retry or clear path. Trigger: a
-  product decision defines safe retry semantics.
 - **Held-message durability.** A server restart loses messages still held in memory.
   Trigger: restart loss becomes important enough to persist the queue.
 - **Missed schedule occurrences.** Exact-minute schedules do not backfill downtime.

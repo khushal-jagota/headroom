@@ -53,6 +53,9 @@ seeds existing assignment state, so an upgrade does not replay current work as n
 Every fact gets one durable policy decision. An allowed fact creates one
 delivery row per device that was registered at that time.
 
+Notification reads never change attention state. Reads and owner replies do not clear a
+failed agent state; only a successful start or explicit restart does.
+
 The single-machine runtime loop owns projection, policy, and delivery. A database
 change wakes it promptly, and a periodic pass covers missed wake-ups and retries.
 Successful deliveries are recorded. Temporary failures back off and retry. A push

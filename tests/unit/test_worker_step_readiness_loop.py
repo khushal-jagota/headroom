@@ -304,6 +304,29 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     assert world.skill_bindings() == []
 
 
+def test_a_refused_paired_opener_rearms_the_stage(world: _World) -> None:
+    ticket_id = world.ready_ticket(
+        ownership_mode=StageOwnershipMode.paired,
+        conversation_id="conv-paired-refuse",
+    )
+    world.start_conversation("conv-paired-refuse")
+    world.conversations.arm_backend_write_failure("conv-paired-refuse")
+
+    assert world.start_step(ticket_id) is False
+    assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
+    with world.connect() as conn:
+        assert conn.execute(
+            "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ?",
+            (ticket_id,),
+        ).fetchone() is None
+        assert worker_step_readiness.is_ready_for_worker_step(
+            conn,
+            tickets_data.read_ticket(conn, ticket_id),
+            planning_day_id=TODAY_DAY_ID,
+            worker_type_definition=configured_worker_type_registry().require("coding"),
+        )
+
+
 def test_a_queued_send_counts_as_a_success(world: _World) -> None:
     # The occupancy pre-check is the loop's own; a collision that slips past it queues,
     # and a held message is delivered work, not a failure.
@@ -515,7 +538,7 @@ def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _Worl
     assert {row["sender_message_id"] for row in bindings} == {sender_message_id}
 
 
-def test_a_paired_owned_stage_departs_at_agent_and_gets_the_paired_opener(
+def test_a_paired_owned_stage_rests_empty_after_its_single_paired_opener(
     world: _World,
 ) -> None:
     ticket_id = world.ready_ticket(
@@ -527,10 +550,12 @@ def test_a_paired_owned_stage_departs_at_agent_and_gets_the_paired_opener(
 
     assert world.start_step(ticket_id) is True
 
-    assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
+    assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
     text = world.conversations.backend_prompt_writes("conv-paired")[0].text
     assert "open the paired discussion for the 'success' field" in text
     assert "Stage owner: paired" in text
+    assert world.start_step(ticket_id) is False
+    assert len(world.conversations.backend_prompt_writes("conv-paired")) == 1
 
 
 def test_a_ticket_that_is_not_ready_is_never_sent_to(world: _World) -> None:

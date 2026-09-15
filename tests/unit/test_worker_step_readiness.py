@@ -150,8 +150,7 @@ def test_membership_must_match_the_explicit_planning_day(tmp_path: Path) -> None
         conn.close()
 
 
-def test_paired_owned_ticket_resting_at_agent_is_never_startable(tmp_path: Path) -> None:
-    # A paired-owned Ticket gets one opener from `empty`, then its claim is `agent`.
+def test_paired_owned_ticket_is_ready_once_per_stage_entry(tmp_path: Path) -> None:
     conn = _db(tmp_path)
     try:
         ticket = _ticket(conn, worker_type="new_worker")
@@ -162,17 +161,20 @@ def test_paired_owned_ticket_resting_at_agent_is_never_startable(tmp_path: Path)
             ownership_mode=StageOwnershipMode.paired,
             now=4,
         )
+        assert _ready(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
         conn.execute(
-            "UPDATE tickets SET ticket_status = ? WHERE id = ?",
-            (TicketStatus.agent.value, ticket.id),
+            "INSERT INTO ticket_paired_stage_openers(ticket_id, stage, opened_at) "
+            "VALUES (?, ?, 4)",
+            (ticket.id, ticket.stage),
         )
         assert not _ready(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
 
         conn.execute(
-            "UPDATE tickets SET ticket_status = ? WHERE id = ?",
-            (TicketStatus.empty.value, ticket.id),
+            "UPDATE tickets SET stage = 'needs_stages' WHERE id = ?",
+            (ticket.id,),
         )
-        assert _ready(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
+        moved = tickets_data.read_ticket(conn, ticket.id)
+        assert _ready(conn, moved, definition=NEW_WORKER_TYPE_DEFINITION)
     finally:
         conn.close()
 

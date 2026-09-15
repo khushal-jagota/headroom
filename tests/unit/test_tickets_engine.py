@@ -510,7 +510,7 @@ def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(
     assert data.read_ticket(tmp_db, t.id).ticket_status is TicketStatus.agent
 
 
-def test_a_paired_owned_stage_departs_at_agent_and_returns_to_empty(
+def test_a_paired_owned_stage_records_its_opener_and_returns_to_empty(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
@@ -536,6 +536,9 @@ def test_a_paired_owned_stage_departs_at_agent_and_returns_to_empty(
         now=now + 1,
     )
     assert data.read_ticket(tmp_db, t.id).ticket_status is TicketStatus.empty
+    assert tmp_db.execute(
+        "SELECT stage FROM ticket_paired_stage_openers WHERE ticket_id = ?", (t.id,)
+    ).fetchone()[0] == t.stage
 
 
 def _park_pending(

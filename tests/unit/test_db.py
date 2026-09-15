@@ -42,7 +42,7 @@ RESHAPE_REVISION = "ticket_status_reshape"
 HEAD_REVISION = "work_attention"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
-CURRENT_SCHEMA_OBJECT_COUNT = 59
+CURRENT_SCHEMA_OBJECT_COUNT = 61
 
 # The five statuses this build ends on, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
@@ -334,9 +334,9 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
     } == {
         "t_empty": "empty",
         "t_agent": "agent",
-        "t_paired": "agent",
+        "t_paired": "empty",
         "t_takeover": "empty",
-        "t_discussion": "agent",
+        "t_discussion": "empty",
         "t_awaiting": "awaiting_approval",
         "t_needs_user": "agent",
         "t_errored": "errored",
@@ -346,6 +346,15 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
         "t_freed": "empty",
         "t_blocked_and_done": "blocked",
     }
+    assert [
+        (str(row[0]), str(row[1]))
+        for row in conn.execute(
+            "SELECT ticket_id, stage FROM ticket_paired_stage_openers ORDER BY ticket_id"
+        )
+    ] == [
+        ("t_discussion", "needs_kickoff"),
+        ("t_paired", "needs_kickoff"),
+    ]
 
     # Two rebuilds dropped and recreated the table the children hang off. With foreign keys
     # enforced those drops would have emptied both of these and said nothing about it.
