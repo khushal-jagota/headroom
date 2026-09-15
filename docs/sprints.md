@@ -142,11 +142,11 @@ the Outcome supervisor agent key as the sender. A missing, reset, stale, or unre
 conversation is refused. This message path cannot create a conversation and does not
 change the Ticket Stage, scope, status, or Day membership.
 
-Nothing a supervisor does reaches the user on its own. It sends no notification and it
-lights nothing by acting. The Item row in the Workspace carries the same mark a Ticket
-row carries: an unseen reply from the conversation, put out when the user opens the Item.
-Because only a user message starts a turn, that reply is always an answer to something
-they said.
+Nothing a supervisor does reaches the user on its own. Backend prose is runtime output;
+only an explicit Send Message reaches another principal. The Item row in the Workspace
+carries the same mark a Ticket row carries: an unseen completed turn from the
+conversation, put out when the user opens the Item. A system marker in the transcript
+says when that turn ended without an explicit reply to its prompt sender.
 
 The workspace reads one coherent Item snapshot with child Ticket Day membership,
 artifacts, supervisor state, and the current conversation link. It adds

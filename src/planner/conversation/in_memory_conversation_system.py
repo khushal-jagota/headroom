@@ -20,6 +20,7 @@ from enum import StrEnum
 from planner.conversation.contracts import (
     ConversationAlreadyStarted,
     ConversationStartRequest,
+    ConversationTurnReference,
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
@@ -62,6 +63,7 @@ class InMemoryConversationObservationKind(StrEnum):
     user_input_answered = "user_input_answered"
     model_changed = "model_changed"
     message_to_owner = "message_to_owner"
+    explicit_reply_missing = "explicit_reply_missing"
 
 
 class InMemoryConversationTurnEnding(StrEnum):
@@ -160,6 +162,9 @@ class _InMemoryBackendSession:
 
 @dataclass
 class _RunningTurn:
+    turn_number: int
+    prompt_senders: dict[Principal, None] = field(default_factory=dict)
+    explicit_reply_recipients: set[Principal] = field(default_factory=set)
     pending_permission_ask_ids: set[str] = field(default_factory=set)
     pending_user_input_questions: dict[str, tuple[UserInputQuestion, ...]] = field(
         default_factory=dict
@@ -192,6 +197,7 @@ class _ConversationState:
     observations: list[InMemoryConversationObservation] = field(default_factory=list)
     permission_asks_raised: int = 0
     user_input_requests_raised: int = 0
+    next_turn_number: int = 1
     armed_backend_start_failure: bool = False
     armed_session_load_failure: bool = False
     armed_backend_write_failure: bool = False
@@ -243,6 +249,37 @@ class InMemoryConversationSystem:
             return PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.no_such_conversation
             )
+
+        if sender_message_id is not None:
+            for position, held in enumerate(state.held_prompts, start=1):
+                if held.sender_message_id != sender_message_id:
+                    continue
+                if (
+                    held.content,
+                    held.sender_label,
+                    held.sender,
+                    held.recipient,
+                ) != (content, sender_label, sender, recipient):
+                    raise ValueError("sender_message_id already names a different message")
+                return PromptDeliveryQueued(queue_position=position, newly_accepted=False)
+            for observed in reversed(state.observations):
+                if observed.sender_message_id != sender_message_id:
+                    continue
+                if (
+                    observed.content,
+                    observed.sender_label,
+                    observed.sender,
+                    observed.recipient,
+                ) != (content, sender_label, sender, recipient):
+                    raise ValueError("sender_message_id already names a different message")
+                if observed.kind is InMemoryConversationObservationKind.prompt_delivered:
+                    if observed.mode is PromptDeliveryMode.steer:
+                        return PromptDeliveryInjected(newly_accepted=False)
+                    return PromptDeliveryStarted(newly_accepted=False)
+                if observed.kind is InMemoryConversationObservationKind.prompt_delivery_refused:
+                    assert observed.refusal_reason is not None
+                    return PromptDeliveryRefused(refusal_reason=observed.refusal_reason)
+                raise ValueError("sender_message_id already names a different message")
 
         if mode is PromptDeliveryMode.steer:
             return self._steer(
@@ -350,6 +387,25 @@ class InMemoryConversationSystem:
                 recipient=recipient,
             )
         )
+        if state.running_turn is not None:
+            state.running_turn.explicit_reply_recipients.add(recipient)
+
+    async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
+        state = self._conversations.get(conversation_id)
+        if state is None or state.running_turn is None:
+            return None
+        return ConversationTurnReference(conversation_id, state.running_turn.turn_number)
+
+    async def record_explicit_reply(
+        self, turn: ConversationTurnReference, recipient: Principal
+    ) -> None:
+        state = self._conversations.get(turn.conversation_id)
+        if (
+            state is not None
+            and state.running_turn is not None
+            and state.running_turn.turn_number == turn.turn_number
+        ):
+            state.running_turn.explicit_reply_recipients.add(recipient)
 
     async def interrupt(self, conversation_id: str) -> None:
         state = self._conversations.get(conversation_id)
@@ -818,7 +874,24 @@ class InMemoryConversationSystem:
         )
         if isinstance(written, PromptDeliveryRefused):
             return written
-        state.running_turn = _RunningTurn()
+        prompt_senders: dict[Principal, None] = {}
+        messages = recorded_messages or (
+            _HeldPrompt(
+                held_prompt_id="",
+                content=content,
+                sender_label=sender_label,
+                sender=sender,
+                recipient=recipient,
+            ),
+        )
+        for message in messages:
+            if message.sender is not None:
+                prompt_senders.setdefault(message.sender, None)
+        state.running_turn = _RunningTurn(
+            turn_number=state.next_turn_number,
+            prompt_senders=prompt_senders,
+        )
+        state.next_turn_number += 1
         return PromptDeliveryStarted()
 
     def _steer(
@@ -852,17 +925,30 @@ class InMemoryConversationSystem:
         )
         if isinstance(written, PromptDeliveryRefused):
             return written
+        if sender is not None and state.running_turn is not None:
+            state.running_turn.prompt_senders.setdefault(sender, None)
         return PromptDeliveryInjected()
 
     def _end_running_turn(
         self, state: _ConversationState, ending: InMemoryConversationTurnEnding
     ) -> None:
+        running = state.running_turn
+        assert running is not None
         state.running_turn = None
         session = state.backend_session
         if ending is InMemoryConversationTurnEnding.interrupted and session is not None:
             # Only an interruption cancels the child. A turn that completed or failed
             # ended on the backend's own account, with nothing left to cancel.
             session.cancellations += 1
+        for prompt_sender in running.prompt_senders:
+            if prompt_sender in running.explicit_reply_recipients:
+                continue
+            state.observations.append(
+                InMemoryConversationObservation(
+                    kind=InMemoryConversationObservationKind.explicit_reply_missing,
+                    sender=prompt_sender,
+                )
+            )
         state.observations.append(
             InMemoryConversationObservation(
                 kind=InMemoryConversationObservationKind.turn_ended,

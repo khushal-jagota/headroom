@@ -80,8 +80,9 @@ One screen per part of the system:
   and the mark moves to the ticket, because being open carries no mark of its own.
 
   The Item title carries a mark for the Item's own supervisor, read exactly the way a
-  ticket row's mark is read and fed by the same fact: an unseen reply. That conversation
-  replies only to something the user said, because nothing else starts it.
+  ticket row's mark is read and fed by the same fact: an unseen completed turn. Its
+  transcript shows a system marker when no explicit Send Message answered the principal
+  who prompted that turn.
   A ticket without a Sprint Item appears in the Tickets
   view like any other. Every Ticket row is the shared Ticket row and keeps the existing
   conversation mark; it carries its priority tile in the Tickets view and drops it inside
@@ -96,9 +97,10 @@ One screen per part of the system:
   outright, because that turn is still running and only the user can clear the wait. On
   an Item the same dot also means an unseen ping, which says the same thing: only the
   user can answer this. Below it, a **spinner** means the worker is running right now. With
-  neither, the mark shows the **reply state**: a filled accent dot for a reply the
+  neither, the mark shows the **turn state**: a filled accent dot for a turn ending the
   user has not seen, the same dot greyed once the user has opened the ticket since
-  that reply, and a faint ring when nothing is waiting.
+  owner has not seen, the same dot greyed once the owner has opened the conversation
+  since that ending, and a faint ring when nothing is waiting.
 
   All three come from the conversation the row is linked to — the ticket's worker for a
   ticket row, the Item's supervisor for an Item. The first two are asked

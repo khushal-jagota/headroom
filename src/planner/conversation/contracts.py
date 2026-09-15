@@ -17,7 +17,7 @@ build. They are deliberately absent from this module rather than sketched.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Final, Protocol
@@ -26,6 +26,14 @@ from planner.conversation.message_content import MessageContent
 from planner.core.contracts import ErrorCode, PlannerError, Principal
 
 type ConversationMessageContent = MessageContent | Callable[[str], Awaitable[MessageContent]]
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationTurnReference:
+    """The public, opaque-enough name of one active turn in one conversation."""
+
+    conversation_id: str
+    turn_number: int
 
 
 class ConversationBackendKey(StrEnum):
@@ -269,6 +277,8 @@ class PromptDeliveryStarted:
     this class carries no field that could name one.
     """
 
+    newly_accepted: bool = field(default=True, compare=False, repr=False)
+
 
 @dataclass(frozen=True, slots=True)
 class PromptDeliveryQueued:
@@ -285,6 +295,7 @@ class PromptDeliveryQueued:
     """
 
     queue_position: int
+    newly_accepted: bool = field(default=True, compare=False, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,6 +305,8 @@ class PromptDeliveryInjected:
     The turn can finish before this result returns. Admission does not claim that the
     model read the message, complied with it, or left the turn running.
     """
+
+    newly_accepted: bool = field(default=True, compare=False, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -323,8 +336,13 @@ class PromptDeliveryUncertain:
     claim about provider receipt, model receipt, or later compliance.
     """
 
+    newly_accepted: bool = field(default=True, compare=False, repr=False)
+
 
 # The fate of one delivery. Fate means it happened, never that it was attempted. Each
+# accepted fate also carries an internal attribution bit. It is false only when a
+# sender-message replay found an earlier outcome; equality and repr omit it so the
+# established public fate remains unchanged.
 # member claims exactly the layer it names and no more: started means written to a live
 # backend's wire, queued means held by the conversation system, injected means admitted
 # to the captured running turn, refused means proven non-admission, and uncertain means a
@@ -485,6 +503,21 @@ class ConversationSystem(Protocol):
         sent_at_unix_milliseconds: int | None = None,
     ) -> None:
         """Record one addressed message that no backend receives."""
+        ...
+
+    async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
+        """Capture the exact active turn that a Send Message may answer."""
+        ...
+
+    async def record_explicit_reply(
+        self, turn: ConversationTurnReference, recipient: Principal
+    ) -> None:
+        """Credit an accepted Send Message to the active turn in its sender conversation.
+
+        The message itself belongs to its destination conversation. This records no
+        second row. If the named turn has ended or changed, its ending won the race and
+        the later send cannot rewrite what that turn said.
+        """
         ...
 
     async def interrupt(self, conversation_id: str) -> None:

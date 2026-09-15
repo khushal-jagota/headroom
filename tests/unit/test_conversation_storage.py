@@ -27,6 +27,7 @@ from planner.conversation.events import (
     ConversationEventKind,
     ConversationEventPayload,
     ConversationTurnEnding,
+    ExplicitReplyMissingEventPayload,
     MessageToOwnerEventPayload,
     ModelChangedEventPayload,
     PermissionAnsweredEventPayload,
@@ -101,6 +102,7 @@ EVERY_PAYLOAD: tuple[ConversationEventPayload, ...] = (
         sender_label="Ticket t_one",
     ),
     AN_AGENT_MESSAGE,
+    ExplicitReplyMissingEventPayload(prompt_sender=OWNER_PRINCIPAL),
     ToolCallStartedEventPayload(
         tool_call_id="call-1", title="Read file", tool_kind="read", detail="/tmp/x"
     ),

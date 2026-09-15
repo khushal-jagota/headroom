@@ -109,8 +109,7 @@ class TurnToken:
     the adapter puts it on everything it later reports about that turn. It is what lets
     the core tell this turn's news from the news of a turn that has already been ended and
     replaced. A cancelled turn's late-arriving live and operational events are dropped.
-    One finished agent message may still be kept from the most recently ended turn: it is
-    durable conversation content even when the backend reported its ending first.
+    Finished backend prose is runtime-only, including when it arrives after the ending.
     """
 
     conversation_id: str
@@ -188,9 +187,7 @@ class BackendEventSink(Protocol):
         of reasoning is one fact — the agent is working — however many pieces it came in.
         """
 
-    async def agent_message_completed(
-        self, turn_token: TurnToken, content: MessageContent
-    ) -> None:
+    async def agent_message_completed(self, turn_token: TurnToken, content: MessageContent) -> None:
         """The whole of a finished agent message.
 
         Nearly always one piece of written words, which is what an agent's message nearly
@@ -231,9 +228,7 @@ class BackendEventSink(Protocol):
         detail: str | None,
     ) -> None: ...
 
-    async def plan_updated(
-        self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]
-    ) -> None:
+    async def plan_updated(self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]) -> None:
         """The agent's plan, whole, as it now stands.
 
         Report the entire plan every time it changes rather than what moved in it: the
@@ -272,9 +267,7 @@ class BackendEventSink(Protocol):
         without it a transcript's earlier context goes silently.
         """
 
-    async def permission_ask_raised(
-        self, turn_token: TurnToken, ask: BackendPermissionAsk
-    ) -> None:
+    async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
         """The agent asked for permission.
 
         The core records the ask and shows it. Nothing is answered here and no answer is

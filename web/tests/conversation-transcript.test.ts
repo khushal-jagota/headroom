@@ -19,6 +19,7 @@ import {
 import type { ConversationEvent } from "../src/lib/conversation/wire";
 import {
   agentMessageEvent,
+  explicitReplyMissingEvent,
   permissionAskedEvent,
   promptEvent,
   toolCallFinishedEvent,
@@ -45,6 +46,24 @@ describe("Conversation transcript", () => {
   it("recognises the server-trusted owner label as the local sender", () => {
     expect(promptLabelFor("owner", "owner")).toBeNull();
     expect(promptLabelFor("Ticket t_one", "owner")).toBe("Ticket t_one");
+  });
+
+  it("renders a missing explicit reply as a system marker, not an agent message", () => {
+    const rows = rowsFrom([
+      promptEvent(1, "Please report back"),
+      explicitReplyMissingEvent(2, { kind: "owner", id: "owner" }),
+      turnEndedEvent(3)
+    ]);
+
+    expect(rows.map((row) => row.kind)).toEqual([
+      "prompt",
+      "explicit_reply_missing",
+      "turn_ended"
+    ]);
+    expect(rowOfKind(rows, "explicit_reply_missing").promptSender).toEqual({
+      kind: "owner",
+      id: "owner"
+    });
   });
 
   it("reconciles a tool start and finish into one completed row", () => {

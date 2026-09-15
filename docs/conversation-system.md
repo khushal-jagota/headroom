@@ -23,21 +23,18 @@ uses the same system. There is no second path.
 ## The notebook
 
 Every conversation owns an append-only run of numbered rows in the database —
-its notebook. A row is a finished thing: a prompt that was actually delivered
+its notebook. A row is a finished durable fact: a prompt that was actually delivered
 (the message itself, who sent it, how, and — when the sender minted them — the
-name the sender gave the message and the moment it was sent), a completed agent
-message, a tool call
+name the sender gave the message and the moment it was sent), an explicit addressed
+message, a silence marker, a tool call
 starting, a tool call finishing, a permission ask or agent question request, its answer, a model change, a
 discarded held message, a turn ending (completed, failed, or interrupted). Rows
-are written once and never edited. Streaming output (the text growing word by word) is live
-decoration only — it is never stored, and the agent's private reasoning is
+are written once and never edited. Backend prose, including its streaming text, is live
+runtime output only — it is never stored, and the agent's private reasoning is
 dropped entirely, not stored and not shown.
 
-A finished agent message remains recordable when it arrives just after its backend turn
-ending. This matters for persistent runs such as Claude's: delegated work can wake the
-parent after an earlier result. The whole parent message is durable conversation content,
-so Panels keeps it under the most recently ended turn. Late deltas, tool activity, asks,
-usage and extra endings remain live-turn facts and are still discarded.
+Late backend prose, deltas, tool activity, asks, usage, and extra endings remain
+live-turn facts and are discarded after the turn ends.
 
 Reading is one rule everywhere: fetch the rows after the last one you hold, then
 listen for new ones. Opening a conversation, reconnecting after a dropped
@@ -45,7 +42,7 @@ connection, and a second device are all that same fetch. Nothing re-downloads
 mid-read.
 
 An open conversation is handed each new row directly, so it never has to be told to
-come and look. That is why most rows are written quietly: an agent message, a tool
+come and look. That is why most rows are written quietly: a historical agent-message row, a tool
 call starting or finishing, a plan, a token count, and a compaction are shown only
 inside the conversation, and writing them does not send every other open screen back
 for a fresh copy of itself. A working agent writes dozens of those a minute, and
@@ -191,6 +188,15 @@ Every employee-authored send carries canonical sender and recipient principals d
 from the authenticated request. Panels records that address on every durable outcome,
 including held, refused, uncertain, and discarded prompts. Browser-supplied display
 labels are not authority.
+
+Backend prose is runtime output only. Finishing a turn does not turn that prose into a
+message for the person who prompted it. Only Send Message creates an explicit addressed
+reply. A turn remembers each distinct principal whose addressed prompt it admitted,
+including steers and a batch drained from the held queue. Immediately before the turn's
+ending row, Panels records one `explicit_reply_missing` system marker for each of those
+principals who did not receive an accepted Send Message. Repeated prompts from one
+principal produce one marker; legacy and automatic runtime prompts have no principal and
+produce none. The markers and ending are one ordered transaction.
 
 The composer accepts pictures and supported files from its pickers, the clipboard, or
 a drop. Attachments wait beside the draft and can be removed one at a time. They can

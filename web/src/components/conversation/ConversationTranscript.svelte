@@ -18,6 +18,7 @@
   import {
     askDeadSentence,
     CONTEXT_COMPACTED_SENTENCE,
+    explicitReplyMissingSentence,
     promptLabelFor,
     turnEndingSentence,
     PROMPT_DISCARDED_SENTENCE,
@@ -158,6 +159,10 @@
       <article class="chat-a" data-conversation-row="agent_message">
         <MessagePieces content={item.row.content} {conversationId} {ticketId} />
       </article>
+    {:else if item.row.kind === "explicit_reply_missing"}
+      <div class="acp-turn-end" data-conversation-row="explicit_reply_missing">
+        {explicitReplyMissingSentence(item.row.promptSender)}
+      </div>
     {:else if item.row.kind === "streaming_agent_message"}
       <article class="chat-a c2-streaming" data-conversation-row="streaming">
         <MarkdownBlock text={item.row.text} {ticketId} />

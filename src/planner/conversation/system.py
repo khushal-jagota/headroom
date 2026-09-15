@@ -60,6 +60,7 @@ from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ConversationBackendKey,
     ConversationStartRequest,
+    ConversationTurnReference,
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
@@ -75,11 +76,11 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.events import (
     AgentMessageDeltaFrame,
-    AgentMessageEventPayload,
     ContextCompactedEventPayload,
     ConversationEventPayload,
     ConversationLiveTailFrame,
     ConversationTurnEnding,
+    ExplicitReplyMissingEventPayload,
     HeldPromptsChangedFrame,
     MessageToOwnerEventPayload,
     ModelChangedEventPayload,
@@ -156,9 +157,10 @@ MODEL_THINKING_PULSE_INTERVAL_SECONDS = 0.25
 ROLE_TEXT_PROMPT_SEPARATOR = "\n\n"
 
 
-def completed_backend_text_event(content: MessageContent) -> ConversationEventPayload:
-    """Classify completed backend text at its single durable write point."""
-    return AgentMessageEventPayload(content=content)
+def completed_backend_text_event(content: MessageContent) -> None:
+    """Classify backend prose as runtime output, never an addressed durable message."""
+    del content
+    return None
 
 
 class _ConversationPhase(StrEnum):
@@ -200,6 +202,8 @@ class _RunningTurn:
     pending_user_input_questions: dict[str, tuple[UserInputQuestion, ...]] = field(
         default_factory=dict
     )
+    prompt_senders: dict[Principal, None] = field(default_factory=dict)
+    explicit_reply_recipients: set[Principal] = field(default_factory=set)
     ended: bool = False
     # Set when the core is part-way through ending this turn itself — an interrupt, or a
     # send-now killing the incumbent. The cancel goes out with the lock let go, and the
@@ -416,7 +420,9 @@ class SqliteProcessConversationSystem:
                                 raise ValueError(
                                     "sender_message_id already names a different message"
                                 )
-                            return PromptDeliveryQueued(queue_position=position)
+                            return PromptDeliveryQueued(
+                                queue_position=position, newly_accepted=False
+                            )
                 if settled is not None:
                     # The first send of this same message has not finished. Its fate is
                     # this call's answer too, so this waits for it and then reads what it
@@ -438,10 +444,10 @@ class SqliteProcessConversationSystem:
                         raise ValueError("sender_message_id already names a different message")
                     if isinstance(payload, PromptEventPayload):
                         if payload.mode is PromptDeliveryMode.steer:
-                            return PromptDeliveryInjected()
-                        return PromptDeliveryStarted()
+                            return PromptDeliveryInjected(newly_accepted=False)
+                        return PromptDeliveryStarted(newly_accepted=False)
                     if isinstance(payload, PromptDeliveryUncertainEventPayload):
-                        return PromptDeliveryUncertain()
+                        return PromptDeliveryUncertain(newly_accepted=False)
                     reason = getattr(
                         payload,
                         "refusal_reason",
@@ -562,6 +568,36 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 ),
             )
+            self._credit_explicit_reply(state, recipient)
+
+    async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
+        """Capture the active turn under the same lock that ends it."""
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            return None
+        async with state.lock:
+            running = state.running_turn
+            if running is None:
+                return None
+            return ConversationTurnReference(conversation_id, running.token.turn_number)
+
+    async def record_explicit_reply(
+        self, turn: ConversationTurnReference, recipient: Principal
+    ) -> None:
+        """Credit an accepted explicit send to the source turn, without another row."""
+        state = await self._conversation_state(turn.conversation_id)
+        if state is None:
+            return
+        async with state.lock:
+            running = state.running_turn
+            if running is not None and running.token.turn_number == turn.turn_number:
+                running.explicit_reply_recipients.add(recipient)
+
+    @staticmethod
+    def _credit_explicit_reply(state: _ConversationState, recipient: Principal) -> None:
+        running = state.running_turn
+        if running is not None:
+            running.explicit_reply_recipients.add(recipient)
 
     async def kill(self, conversation_id: str) -> None:
         """Stop the running turn and throw away everything that was waiting behind it.
@@ -1704,6 +1740,14 @@ class SqliteProcessConversationSystem:
                 state.running_turn = _RunningTurn(
                     token=reservation.token,
                     automatic_compaction=reservation.automatic_compaction,
+                    prompt_senders={
+                        principal: None
+                        for principal in (
+                            sender,
+                            *(message.sender for message in also_delivered),
+                        )
+                        if principal is not None
+                    },
                 )
                 self._set_phase(state, _ConversationPhase.running)
                 return True
@@ -1865,6 +1909,8 @@ class SqliteProcessConversationSystem:
                     recipient=recipient,
                 ),
             )
+            if sender is not None and state.running_turn is not None:
+                state.running_turn.prompt_senders.setdefault(sender, None)
             return PromptDeliveryInjected()
         if isinstance(outcome, BackendSteerRefused):
             await self._append_event(
@@ -1894,6 +1940,10 @@ class SqliteProcessConversationSystem:
                 recipient=recipient,
             ),
         )
+        if sender is not None and state.running_turn is not None:
+            # The backend may have accepted the text. Treating it as part of this turn
+            # avoids a false silence marker and matches the delivery's non-retry fate.
+            state.running_turn.prompt_senders.setdefault(sender, None)
         return PromptDeliveryUncertain()
 
     # --- turns --------------------------------------------------------------------------
@@ -1984,12 +2034,37 @@ class SqliteProcessConversationSystem:
         state.last_ended_turn_token = running.token
         state.last_ended_turn_was_automatic_compaction = running.automatic_compaction
         state.running_turn = None
-        return await self._append_event(
-            state,
-            TurnEndedEventPayload(ending=ending, error_summary=error_summary),
+        ending_payload = TurnEndedEventPayload(ending=ending, error_summary=error_summary)
+        payloads: tuple[ConversationEventPayload, ...] = (
+            *(
+                ExplicitReplyMissingEventPayload(prompt_sender=prompt_sender)
+                for prompt_sender in running.prompt_senders
+                if prompt_sender not in running.explicit_reply_recipients
+            ),
+            ending_payload,
+        )
+        written = await self._store.append_turn_ending(
+            state.record.conversation_id,
+            payloads,
             agent_activity=not running.automatic_compaction,
             automatic_compaction_confirmed=running.compaction_confirmed,
         )
+        self._take_in_written_rows(state, written)
+        ended = written[-1]
+        if not running.automatic_compaction:
+            state.record = replace(
+                state.record,
+                latest_agent_activity_at=ended.created_at,
+                latest_agent_activity_sequence=ended.sequence,
+            )
+        if running.compaction_confirmed:
+            state.record = replace(
+                state.record,
+                automatically_compacted_through_sequence=(
+                    state.record.latest_agent_activity_sequence
+                ),
+            )
+        return ended
 
     # --- the child ----------------------------------------------------------------------
 
@@ -2160,34 +2235,6 @@ class SqliteProcessConversationSystem:
         state.last_touched_monotonic = self._monotonic_now()
         return running
 
-    async def _hold_for_the_live_or_most_recent_ended_turn(
-        self, state: _ConversationState, turn_token: TurnToken
-    ) -> bool:
-        """Take the lock when a finished message still belongs to this conversation.
-
-        Most backend news is meaningful only while its turn is live. A completed agent
-        message is different: it is durable conversation content, and some persistent
-        backends report a turn ending before delivering the parent's follow-up message.
-        The most recently ended token remains valid for that one kind of news. Keeping the
-        allowance to one token prevents arbitrarily old child output from reappearing.
-        """
-        while True:
-            reserved = state.reserved_turn
-            if reserved is None or reserved.token != turn_token:
-                break
-            await reserved.resolved.wait()
-
-        await state.lock.acquire()
-        running = state.running_turn
-        if not (
-            (running is not None and running.token == turn_token)
-            or state.last_ended_turn_token == turn_token
-        ):
-            state.lock.release()
-            return False
-        state.last_touched_monotonic = self._monotonic_now()
-        return True
-
     async def _on_token_usage_reported(
         self,
         state: _ConversationState,
@@ -2218,12 +2265,10 @@ class SqliteProcessConversationSystem:
     async def _on_agent_message_completed(
         self, state: _ConversationState, turn_token: TurnToken, content: MessageContent
     ) -> None:
-        if not await self._hold_for_the_live_or_most_recent_ended_turn(state, turn_token):
+        if await self._hold_for_the_live_turn(state, turn_token) is None:
             return
         try:
-            await self._append_backend_event(
-                state, turn_token, completed_backend_text_event(content)
-            )
+            completed_backend_text_event(content)
         finally:
             state.lock.release()
 
@@ -2700,11 +2745,10 @@ class _CoreBackendEventSink:
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
         """Shown on the live tail and never stored: a delta is not a row.
 
-        Deltas exist to be shown while they arrive; the finished message is what is
-        recorded. This one goes straight out to whoever is watching, ahead of the queue
-        the rows go through, because it is not a row and has nothing to be ordered
-        against — the message it belongs to is written whole when it finishes. It still
-        names its turn, and a turn the conversation has moved on from is not shown.
+        Deltas exist to be shown while they arrive and disappear when the turn ends.
+        This one goes straight out to whoever is watching, ahead of the queue the rows go
+        through, because backend prose is runtime-only. It still names its turn, and a
+        turn the conversation has moved on from is not shown.
         """
         self._system._publish_live_tail_frame(
             self._state, turn_token, AgentMessageDeltaFrame(text_delta=text_delta)

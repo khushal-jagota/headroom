@@ -194,6 +194,23 @@ class ConversationStore:
         """Write one owner-bound message without a backend call."""
         return await self.append_event(conversation_id, payload)
 
+    async def append_turn_ending(
+        self,
+        conversation_id: str,
+        payloads: tuple[ConversationEventPayload, ...],
+        *,
+        agent_activity: bool,
+        automatic_compaction_confirmed: bool,
+    ) -> tuple[StoredConversationEvent, ...]:
+        """Atomically append silence markers followed by their turn ending."""
+        return await asyncio.to_thread(
+            self._append_turn_ending_sync,
+            conversation_id,
+            payloads,
+            agent_activity,
+            automatic_compaction_confirmed,
+        )
+
     async def advance_owner_read_through_sequence(
         self, conversation_id: str, through_sequence: int
     ) -> ConversationRecord | None:
@@ -500,6 +517,39 @@ class ConversationStore:
                     "UPDATE conversations SET owner_read_through_sequence = "
                     "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
                     (max(owner_reply_sequences), conversation_id),
+                )
+            _commit_appended_rows(conn, payloads)
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+        return written
+
+    def _append_turn_ending_sync(
+        self,
+        conversation_id: str,
+        payloads: tuple[ConversationEventPayload, ...],
+        agent_activity: bool,
+        automatic_compaction_confirmed: bool,
+    ) -> tuple[StoredConversationEvent, ...]:
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            written = self._insert_rows(conn, conversation_id, payloads)
+            ended = written[-1]
+            if agent_activity:
+                conn.execute(
+                    "UPDATE conversations SET latest_agent_activity_at = ?, "
+                    "latest_agent_activity_sequence = ? WHERE conversation_id = ?",
+                    (ended.created_at, ended.sequence, conversation_id),
+                )
+            if automatic_compaction_confirmed:
+                conn.execute(
+                    "UPDATE conversations SET automatically_compacted_through_sequence = "
+                    "latest_agent_activity_sequence WHERE conversation_id = ?",
+                    (conversation_id,),
                 )
             _commit_appended_rows(conn, payloads)
         except BaseException:

@@ -8,9 +8,9 @@ Two kinds of thing travel through the conversation system and only one of them i
 
 - **Event kinds** — the kinds below. Each has a payload type and a canonical JSON form, and
   each is written to ``conversation_events`` when the thing it names has finished
-  happening: the prompt reached the backend, the agent's message is complete, the tool
-  call started, the tool call finished, the turn ended, the message that was waiting was
-  thrown away.
+  happening: the prompt reached the backend, a tool call started or finished, the turn
+  ended, or the message that was waiting was thrown away. Historical agent-message rows
+  remain readable, but new backend prose is runtime-only.
 - **Live tail frames** — the half-finished text a backend streams while it works. They are
   shown and then forgotten. They are not rows, they have no kind, and nothing stores them.
 
@@ -54,6 +54,7 @@ class ConversationEventKind(StrEnum):
     prompt_discarded = "prompt_discarded"
     agent_message = "agent_message"
     message_to_owner = "message_to_owner"
+    explicit_reply_missing = "explicit_reply_missing"
     tool_call_started = "tool_call_started"
     tool_call_finished = "tool_call_finished"
     permission_asked = "permission_asked"
@@ -296,7 +297,7 @@ class MessageToOwnerEventPayload:
 
 @dataclass(frozen=True, slots=True)
 class AgentMessageEventPayload:
-    """A completed agent message, whole, as the backend finished it.
+    """A historical completed agent message from before backend prose became runtime-only.
 
     Usually one run of markdown, which is what an agent's message nearly always is. A
     backend that hands back a file it produced puts that in the same message, and it is a
@@ -306,6 +307,20 @@ class AgentMessageEventPayload:
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.agent_message
 
     content: MessageContent
+
+
+@dataclass(frozen=True, slots=True)
+class ExplicitReplyMissingEventPayload:
+    """A turn ended without an explicit message to one of its prompt senders.
+
+    This is a system marker, not an addressed message. ``prompt_sender`` identifies the
+    person whose delivered prompt went unanswered without making the marker itself a
+    message to that person.
+    """
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.explicit_reply_missing
+
+    prompt_sender: Principal
 
 
 @dataclass(frozen=True, slots=True)
@@ -474,6 +489,7 @@ type ConversationEventPayload = (
     | PromptDiscardedEventPayload
     | MessageToOwnerEventPayload
     | AgentMessageEventPayload
+    | ExplicitReplyMissingEventPayload
     | ToolCallStartedEventPayload
     | ToolCallFinishedEventPayload
     | PermissionAskedEventPayload
@@ -493,9 +509,9 @@ type ConversationEventPayload = (
 class AgentMessageDeltaFrame:
     """A piece of an agent message that has not finished arriving.
 
-    It is shown as the live tail and then forgotten. When the message finishes, the whole
-    of it is written as one ``agent_message`` row; the pieces are never stored, so a
-    reader who arrives late sees the finished message and misses nothing.
+    It is shown as the live tail and then forgotten. Completion does not turn it into a
+    durable or addressed message; a reader who arrives later sees the turn outcome and
+    any explicit Send Message instead.
     """
 
     text_delta: str
@@ -607,6 +623,13 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             }
         case AgentMessageEventPayload():
             return message_content_json_entries(payload.content)
+        case ExplicitReplyMissingEventPayload():
+            return {
+                "prompt_sender": {
+                    "kind": payload.prompt_sender.kind.value,
+                    "id": payload.prompt_sender.id,
+                }
+            }
         case ToolCallStartedEventPayload():
             return {
                 "tool_call_id": payload.tool_call_id,
@@ -759,6 +782,11 @@ def _payload_from_json_object(
             )
         case ConversationEventKind.agent_message:
             return AgentMessageEventPayload(content=message_content_from_stored(stored))
+        case ConversationEventKind.explicit_reply_missing:
+            prompt_sender = _optional_principal(stored, "prompt_sender")
+            if prompt_sender is None:
+                raise ValueError("explicit_reply_missing requires prompt_sender")
+            return ExplicitReplyMissingEventPayload(prompt_sender=prompt_sender)
         case ConversationEventKind.tool_call_started:
             return ToolCallStartedEventPayload(
                 tool_call_id=_text(stored, "tool_call_id"),

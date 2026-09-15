@@ -85,6 +85,18 @@ export function agentMessageEvent(
   };
 }
 
+export function explicitReplyMissingEvent(
+  sequence: number,
+  promptSender: EventOf<"explicit_reply_missing">["payload"]["prompt_sender"],
+  metadata: ConversationEventMetadata = {}
+): EventOf<"explicit_reply_missing"> {
+  return {
+    ...eventMetadata(sequence, metadata),
+    kind: "explicit_reply_missing",
+    payload: { prompt_sender: promptSender }
+  };
+}
+
 export function turnEndedEvent(
   sequence: number,
   {

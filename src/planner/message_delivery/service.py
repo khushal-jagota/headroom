@@ -8,6 +8,7 @@ from planner.conversation.contracts import (
     ConversationMessageContent,
     ConversationSystem,
     PromptDeliveryMode,
+    PromptDeliveryRefused,
     PromptDeliveryStarted,
 )
 from planner.conversation.message_content import text_message_content
@@ -96,6 +97,11 @@ async def send_message(
     )
     prompt_mode = _prompt_mode(mode)
     sender = ctx.principal
+    source_turn = None
+    if sender.kind is not PrincipalKind.owner:
+        source_conversation_id = _sender_conversation_id(conn, sender)
+        if source_conversation_id is not None:
+            source_turn = await conversations.active_turn_reference(source_conversation_id)
 
     if recipient.kind is PrincipalKind.owner:
         if sender.kind is PrincipalKind.owner:
@@ -245,8 +251,15 @@ async def send_message(
             {"kind": recipient.kind.value, "id": recipient.id},
         )
 
-    return MessageDeliveryResult(
+    result = MessageDeliveryResult(
         recipient=recipient,
         conversation_id=delivered.conversation_id,
         fate=delivered.fate,
     )
+    if (
+        source_turn is not None
+        and not isinstance(delivered.fate, PromptDeliveryRefused)
+        and delivered.fate.newly_accepted
+    ):
+        await conversations.record_explicit_reply(source_turn, recipient)
+    return result

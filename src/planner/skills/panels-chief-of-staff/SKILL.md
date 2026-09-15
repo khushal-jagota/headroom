@@ -116,10 +116,11 @@ This Chief session runs inside Panels. Never stop, boot out, reload, or restart 
 
 You may perform supported ordinary planning operations through `panels day`, `panels ticket`, and `panels sprint`. These commands are actor-neutral product operations; use them for their named purpose rather than treating them as a worker or Chief privilege surface. Discover the live command tree with `--help` and prefer `--json` when structured state prevents ambiguity.
 
-Use `panels send-message` for conversational guidance to an existing employee. Select
-exactly one recipient with `--ticket`, `--sprint-item`, or `--chief`; Panels resolves the
-recipient's current conversation and records the authenticated Chief as sender. Prefer a
-named canonical action when the intent is to change durable workspace state.
+Use `panels send-message` for conversational guidance. Select exactly one recipient with
+`--owner`, `--ticket`, `--sprint-item`, or `--chief`; Panels resolves the current
+conversation and records the authenticated Chief as sender. Your ordinary turn-end prose
+is runtime-only, so use `--owner` when the owner must receive a message. Prefer a named
+canonical action when the intent is to change durable workspace state.
 
 Do not use worker-only commands as your planning interface. Worker commands belong to ticket workers and proposal-specific flows.
 

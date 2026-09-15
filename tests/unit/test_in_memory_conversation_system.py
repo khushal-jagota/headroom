@@ -18,10 +18,12 @@ from planner.conversation.contracts import (
     ConversationStartRequest,
     HeldPromptPromotionMode,
     PromptDeliveryInjected,
+    PromptDeliveryQueued,
     PromptDeliveryStarted,
 )
 from planner.conversation.events import UserInputAnswer, UserInputOption, UserInputQuestion
 from planner.conversation.in_memory_conversation_system import (
+    InMemoryConversationObservationKind,
     InMemoryConversationSystem,
     TurnCannotEndWhilePermissionAskIsPending,
     TurnCannotEndWhileUserInputIsPending,
@@ -133,13 +135,78 @@ def test_in_memory_held_snapshot_and_send_now_promotion_match_the_contract() -> 
         assert held.sender == OWNER_PRINCIPAL
         assert held.recipient == Principal(PrincipalKind.ticket, "t_one")
 
-        assert await system.promote_held_prompt(
-            "c", held.held_prompt_id, HeldPromptPromotionMode.send_now
-        ) == PromptDeliveryStarted()
+        assert (
+            await system.promote_held_prompt(
+                "c", held.held_prompt_id, HeldPromptPromotionMode.send_now
+            )
+            == PromptDeliveryStarted()
+        )
         assert await system.held_prompts("c") == ()
         delivered = system.observations("c")[-1]
         assert delivered.sender == OWNER_PRINCIPAL
         assert delivered.recipient == Principal(PrincipalKind.ticket, "t_one")
+
+    asyncio.run(exercise())
+
+
+def test_in_memory_replays_report_freshness_and_silence_matches_production() -> None:
+    async def exercise() -> None:
+        system = InMemoryConversationSystem()
+        await system.start_conversation(
+            ConversationStartRequest(
+                conversation_id="c",
+                model="a-model",
+                backend_key=ConversationBackendKey.hermes,
+            )
+        )
+        recipient = Principal(PrincipalKind.ticket, "t_one")
+        content = text_message_content("Please report")
+        first = await system.send(
+            "c",
+            content,
+            sender_label="owner",
+            sender_message_id="m-1",
+            sender=OWNER_PRINCIPAL,
+            recipient=recipient,
+        )
+        replay = await system.send(
+            "c",
+            content,
+            sender_label="owner",
+            sender_message_id="m-1",
+            sender=OWNER_PRINCIPAL,
+            recipient=recipient,
+        )
+        assert isinstance(first, PromptDeliveryStarted) and first.newly_accepted
+        assert isinstance(replay, PromptDeliveryStarted) and not replay.newly_accepted
+
+        queued = await system.send(
+            "c",
+            text_message_content("next"),
+            sender_label="owner",
+            sender_message_id="m-2",
+            sender=OWNER_PRINCIPAL,
+            recipient=recipient,
+        )
+        queued_replay = await system.send(
+            "c",
+            text_message_content("next"),
+            sender_label="owner",
+            sender_message_id="m-2",
+            sender=OWNER_PRINCIPAL,
+            recipient=recipient,
+        )
+        assert isinstance(queued, PromptDeliveryQueued) and queued.newly_accepted
+        assert isinstance(queued_replay, PromptDeliveryQueued)
+        assert not queued_replay.newly_accepted
+
+        system.complete_running_turn("c")
+        markers = [
+            observation.sender
+            for observation in system.observations("c")
+            if observation.kind is InMemoryConversationObservationKind.explicit_reply_missing
+        ]
+        assert markers == [OWNER_PRINCIPAL]
 
     asyncio.run(exercise())
 
@@ -162,9 +229,12 @@ def test_in_memory_steer_promotion_drops_queued_model_selections() -> None:
             model_change="never-model",
         )
         held = (await system.held_prompts("c"))[0]
-        assert await system.promote_held_prompt(
-            "c", held.held_prompt_id, HeldPromptPromotionMode.steer
-        ) == PromptDeliveryInjected()
+        assert (
+            await system.promote_held_prompt(
+                "c", held.held_prompt_id, HeldPromptPromotionMode.steer
+            )
+            == PromptDeliveryInjected()
+        )
         assert system.backend_model("c") == "a-model"
         assert message_content_text(system.backend_prompt_writes("c")[-1].content) == "held"
 

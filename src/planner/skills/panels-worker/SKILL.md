@@ -58,6 +58,8 @@ Everything runs through the `panels` command — `panels --help` for full usage.
   the owner through this Ticket's current conversation. Use the same command with exactly
   one of `--chief`, `--ticket <id>`, or `--sprint-item <id>` to message another employee.
   This is conversation, not a substitute for a canonical Ticket, Day, or Sprint action.
+  Your ordinary turn-end prose is runtime-only; use this command when another principal
+  must receive a message.
 
 All four write commands take their text on stdin only; there is no file-path option, since it once let two Workers sharing one `/tmp` overwrite each other's text before it reached the ticket. Pipe or redirect text in, for example `echo "…" | panels worker propose <id> --recap "…"` or a heredoc into stdin.
 - **`panels ticket create --worker-type <id> --title "…"`** — create a Ticket when the

@@ -81,6 +81,10 @@ A Worker message never changes the Ticket Stage, scope, status, or Day membershi
 named action when one of those facts must change. Do not use a Worker message to claim or
 start work. The readiness system owns Worker starts.
 
+Your ordinary turn-end prose is runtime-only. When the owner must receive a message, use
+`panels send-message --owner --message "…"`; only that explicit Send Message creates the
+addressed owner message.
+
 ## Restarting a dead Worker
 
 A Worker can die without stopping cleanly. Its Ticket then sits at `agent` and looks

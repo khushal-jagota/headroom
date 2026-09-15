@@ -16,6 +16,7 @@
  */
 
 import {
+  explicitReplyMissingSentence,
   liveAskFrom,
   promptLabelFor,
   turnEndingSentence,
@@ -176,6 +177,8 @@ function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Happened |
       return { who: senderOf(row.senderLabel, ownSenderLabel), text: PROMPT_DISCARDED_SENTENCE };
     case "agent_message":
       return { who: null, text: oneLine(messageContentText(row.content)) };
+    case "explicit_reply_missing":
+      return { who: null, text: explicitReplyMissingSentence(row.promptSender) };
     case "streaming_agent_message":
       return { who: null, text: oneLine(row.text) };
     case "tool_call":

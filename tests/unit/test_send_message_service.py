@@ -14,7 +14,10 @@ import pytest
 
 from planner.conversation.contracts import (
     ConversationSystem,
+    ConversationTurnReference,
+    PromptDeliveryInjected,
     PromptDeliveryMode,
+    PromptDeliveryQueued,
     PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
@@ -323,3 +326,66 @@ def test_service_preserves_terminal_steer_fates_without_another_send(
     assert result.fate is fate
     assert ticket_send.await_count == 1
     assert agent_send.await_count == 0
+
+
+@pytest.mark.parametrize(
+    ("fate", "credited"),
+    [
+        (PromptDeliveryStarted(), True),
+        (PromptDeliveryStarted(newly_accepted=False), False),
+        (PromptDeliveryQueued(queue_position=2), True),
+        (PromptDeliveryInjected(), True),
+        (PromptDeliveryUncertain(), True),
+        (
+            PromptDeliveryRefused(PromptDeliveryRefusalReason.backend_cannot_steer),
+            False,
+        ),
+    ],
+)
+def test_employee_send_credits_only_an_accepted_reply_to_the_captured_source_turn(
+    tmp_db: Connection,
+    fake_clock: PlannerTestClock,
+    monkeypatch: pytest.MonkeyPatch,
+    fate: (
+        PromptDeliveryStarted
+        | PromptDeliveryQueued
+        | PromptDeliveryInjected
+        | PromptDeliveryUncertain
+        | PromptDeliveryRefused
+    ),
+    credited: bool,
+) -> None:
+    conversations = AsyncMock()
+    turn = ConversationTurnReference("c_sender", 7)
+    conversations.active_turn_reference.return_value = turn
+    monkeypatch.setattr(
+        tickets_data,
+        "read_ticket",
+        lambda _conn, ticket_id: SimpleNamespace(
+            conversation_id="c_sender" if ticket_id == "t_sender" else "c_recipient"
+        ),
+    )
+    monkeypatch.setattr(
+        conversation_start,
+        "send_to_ticket_conversation",
+        AsyncMock(return_value=DeliveredMessage("c_recipient", fate)),
+    )
+
+    asyncio.run(
+        service.send_message(
+            conversations,
+            tmp_db,
+            fake_clock,
+            RequestContext(Principal(PrincipalKind.ticket, "t_sender")),
+            Principal(PrincipalKind.ticket, "t_recipient"),
+            "Explicit reply",
+        )
+    )
+
+    conversations.active_turn_reference.assert_awaited_once_with("c_sender")
+    if credited:
+        conversations.record_explicit_reply.assert_awaited_once_with(
+            turn, Principal(PrincipalKind.ticket, "t_recipient")
+        )
+    else:
+        conversations.record_explicit_reply.assert_not_awaited()

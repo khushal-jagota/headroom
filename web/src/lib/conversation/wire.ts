@@ -253,6 +253,7 @@ export type ConversationEvent =
       } & SenderMintedPromptFields
     >
   | Row<"agent_message", StoredMessageContent>
+  | Row<"explicit_reply_missing", { prompt_sender: Principal }>
   | Row<
       "tool_call_started",
       { tool_call_id: string; title: string; tool_kind: string; detail: string | null }

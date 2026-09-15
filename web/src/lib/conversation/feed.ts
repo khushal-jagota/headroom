@@ -2,9 +2,9 @@
  *
  * Two kinds of thing arrive and only one of them is a row. Committed rows are the record:
  * they are numbered, they never change, and a reader keeps them. Live frames are the
- * half-finished output a backend streams while it works: they are shown and then dropped,
- * and the row they were leading up to is what replaces them. So the moment an agent
- * message lands as a row, the streamed text that preceded it is gone — never both.
+ * runtime output a backend streams while it works: it is shown and then dropped when the
+ * turn ends. New backend prose does not become a durable row. Historical agent-message
+ * rows remain readable and also clear any stale live text when replayed.
  *
  * Reconnecting is not a special path. Opening a conversation, coming back to a tab, and
  * recovering from a dropped stream are all "say which row you have and take everything
@@ -18,7 +18,7 @@ export type ConversationFeed = {
   readonly events: readonly ConversationEvent[];
   /** The highest sequence held, which is the position a reconnect asks from. */
   readonly latestSequence: number;
-  /** Agent text that has not finished arriving. Empty once its row lands. */
+  /** Runtime-only backend prose for the active turn. Empty once that turn ends. */
   readonly streamingAgentText: string;
   /** Output from tool calls that are still running, by tool call id. */
   readonly toolCallProgress: Readonly<Record<string, string>>;
@@ -33,10 +33,11 @@ export function emptyConversationFeed(): ConversationFeed {
   };
 }
 
-/** Take one committed row, and drop whatever half-finished output it supersedes.
+/** Take one committed row, and drop runtime output when its turn ends.
  *
  * A row that arrives twice is the same row: it is replaced in place rather than appended,
  * so a replay that overlaps a live tail leaves the reader with exactly one of each.
+ * A historical agent-message row also supersedes a stale tail for compatibility.
  */
 export function feedWithCommittedEvent(
   feed: ConversationFeed,
