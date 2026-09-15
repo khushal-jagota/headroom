@@ -28,6 +28,7 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 
 AppDb = tuple[FastAPI, Path]
+OWNER = {"kind": "owner", "id": "owner"}
 
 
 @pytest.fixture
@@ -74,13 +75,28 @@ def test_coding_ticket_accepts_coding_field_and_ceiling(
     app, _db = app_db
     with TestClient(app) as client:
         tid = _create(client, "coding")
-        # coding's kickoff proposal is parked at create; scope to a coding ceiling works.
+        # A parked proposal fixes its address, so direct scope cannot retarget it.
         scoped = client.post(
             f"/api/tickets/{tid}/scope",
             json={"ceiling": "needs_approach", "at_cap": "stop"},
         )
-        assert scoped.status_code == 200, scoped.json()
-        assert scoped.json()["ceiling"] == "needs_approach"
+        assert scoped.status_code == 400, scoped.json()
+        missing_holder = client.post(
+            f"/api/tickets/{tid}/accept/kickoff",
+            json={"next_ceiling": "needs_approach", "at_cap": "stop"},
+        )
+        assert missing_holder.status_code == 400, missing_holder.json()
+        assert missing_holder.json()["error"]["code"] == "scope_missing"
+        approved = client.post(
+            f"/api/tickets/{tid}/accept/kickoff",
+            json={
+                "next_ceiling": "needs_approach",
+                "at_cap": "stop",
+                "next_holder": OWNER,
+            },
+        )
+        assert approved.status_code == 200, approved.json()
+        assert approved.json()["ceiling"] == "needs_approach"
 
 
 def test_accept_rejects_foreign_field_and_foreign_next_ceiling(
@@ -120,7 +136,7 @@ def test_probe_proposal_parks_on_registry_selected_field(
         # with at_cap=propose so the next propose parks.
         client.post(
             f"/api/tickets/{tid}/accept/kickoff",
-            json={"next_ceiling": "needs_alpha", "at_cap": "propose"},
+            json={"next_ceiling": "needs_alpha", "at_cap": "propose", "next_holder": OWNER},
         )
         # A position-relative propose parks on ALPHA — the field probe's needs_alpha gates.
         parked = client.post(
@@ -164,7 +180,7 @@ def test_arbitrary_stage_jump_route_is_removed(app_db: AppDb, probe_installed: N
         tid = _create(client, "probe")
         client.post(
             f"/api/tickets/{tid}/accept/kickoff",
-            json={"next_ceiling": "done", "at_cap": "propose"},
+            json={"next_ceiling": "done", "at_cap": "propose", "next_holder": OWNER},
         )
         jumped = client.post(f"/api/tickets/{tid}/stage", json={"to_stage": "needs_beta"})
         assert jumped.status_code == 404, jumped.json()
@@ -188,7 +204,7 @@ def test_stage_filter_non_reserved_needs_no_worker_type(
         tid = made[0]["id"]
         client.post(
             f"/api/tickets/{tid}/accept/kickoff",
-            json={"next_ceiling": "needs_success", "at_cap": "stop"},
+            json={"next_ceiling": "needs_success", "at_cap": "stop", "next_holder": OWNER},
         )
         ok = client.get("/api/tickets?stage=needs_success")
         assert ok.status_code == 200, ok.json()

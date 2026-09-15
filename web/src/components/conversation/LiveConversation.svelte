@@ -84,7 +84,6 @@
     emptyState,
     sendMessage,
     onNewConversation,
-    onMessageAccepted,
     readOnly = false,
     ticketId = null
   }: {
@@ -125,7 +124,6 @@
     /** A message typed here reached the conversation — started, held, or steered into the
      *  running turn. Not called for a refusal, which reached nothing. What that means is
      *  the caller's business; this only says it happened. */
-    onMessageAccepted?: () => Promise<void>;
   } = $props();
 
   let view = $state<ConversationView | null>(null);
@@ -502,7 +500,6 @@
       await refreshView();
       // Told only after the conversation took it. Refusal and uncertainty are both
       // terminal here, so neither can trigger caller work or an automatic resend.
-      await onMessageAccepted?.();
       return true;
     } catch (error) {
       errorNote = sentenceFor(error);

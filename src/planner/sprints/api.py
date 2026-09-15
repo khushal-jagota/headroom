@@ -58,6 +58,7 @@ from planner.tickets.api import (
     WorkerContext,
     _marshal_accept,
     _parse_next_ceiling,
+    _parse_required_principal,
     _parse_scope_at_cap,
     body_opt_str,
     body_str,
@@ -645,6 +646,7 @@ async def supervisor_approve_ticket(
         edited_body=body["edited_body"],
         next_ceiling=_parse_next_ceiling(body["next_ceiling"], worker_type_definition),
         at_cap=_parse_scope_at_cap(body["at_cap"]),
+        next_holder=_parse_required_principal(body["next_holder"], "next_holder"),
         supervisor_sprint_item_id=item_id,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -659,19 +661,17 @@ async def supervisor_reject_ticket(
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
-    worker_context: WorkerContext,
 ) -> JsonDict:
     require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, ticket_id)
     message = body_str(raw, "message")
     now = clk.now_unix()
     ticket = await tickets_actions.return_ticket_for_revision(
         conversations,
-        worker_context,
         conn,
         ticket_id,
         message=message,
-        principal=ctx.principal,
-        now=now,
+        ctx=ctx,
+        clock=clk,
         supervisor_sprint_item_id=item_id,
     )
     return tickets_views.ticket_json(ticket, now)

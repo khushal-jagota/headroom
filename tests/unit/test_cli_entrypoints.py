@@ -75,6 +75,94 @@ def test_worker_request_user_help_is_a_no_payload_worker_command(
     assert "user help requested on t_help" in result.output
 
 
+def test_ticket_approve_sends_the_explicit_next_holder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs))
+        if path == "/api/tickets/t_child":
+            return {
+                "id": "t_child",
+                "worker_type": "coding",
+                "stage": "needs_success",
+                "pending_proposal": {"field": "success", "body": "Ready"},
+            }
+        if path == "/api/worker-types":
+            return {"worker_types": [PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")]}
+        return {"id": "t_child"}
+
+    monkeypatch.setattr(http, "send", fake_send)
+    result = CliRunner().invoke(
+        cli_main.main,
+        [
+            "ticket",
+            "approve",
+            "t_child",
+            "--ceiling",
+            "needs_approach",
+            "--at-cap",
+            "propose",
+            "--holder-kind",
+            "sprint_item",
+            "--holder-id",
+            "si_parent",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls[-1][0:2] == ("POST", "/api/tickets/t_child/accept/success")
+    assert calls[-1][2]["json_body"] == {
+        "next_ceiling": "needs_approach",
+        "at_cap": "propose",
+        "next_holder": {"kind": "sprint_item", "id": "si_parent"},
+    }
+
+
+def test_supervisor_approve_defaults_the_next_holder_to_its_item(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs))
+        return {"id": "t_child"}
+
+    monkeypatch.setattr(http, "send", fake_send)
+    result = CliRunner().invoke(
+        cli_main.main,
+        [
+            "sprint",
+            "item",
+            "supervisor",
+            "approve",
+            "si_parent",
+            "t_child",
+            "--ceiling",
+            "needs_approach",
+            "--at-cap",
+            "propose",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        (
+            "POST",
+            "/api/items/si_parent/supervisor/tickets/t_child/approve",
+            {
+                "as_json": False,
+                "json_body": {
+                    "next_ceiling": "needs_approach",
+                    "at_cap": "propose",
+                    "next_holder": {"kind": "sprint_item", "id": "si_parent"},
+                },
+            },
+        )
+    ]
+
+
 def test_ticket_list_passes_repeatable_filters_and_page_controls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

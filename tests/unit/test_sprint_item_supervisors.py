@@ -23,14 +23,16 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.core.server import create_app
+from planner.message_delivery import service as message_delivery_service
 from planner.runtime import conversation_start
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
 from planner.sprints import supervisor_service
-from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
 from planner.worker_context import data as context_data
+
+_OWNER_HOLDER = {"kind": "owner", "id": "owner"}
 
 
 def _app(tmp_path: Path, *, fake_now: str | None = None) -> tuple[FastAPI, Path]:
@@ -68,15 +70,13 @@ def _park_a_proposal(client: TestClient, item_id: str) -> dict[str, Any]:
             "title": "Supervisor review",
             "kickoff_note": "Start here.",
             "sprint_item_id": item_id,
+            "ceiling": "needs_success",
+            "at_cap": "propose",
         },
+        headers=_supervisor_headers(item_id),
     )
     assert created.status_code == 200, created.text
     ticket_id = str(created.json()["id"])
-    kickoff = client.post(
-        f"/api/tickets/{ticket_id}/accept/kickoff",
-        json={"next_ceiling": "needs_success", "at_cap": "propose"},
-    )
-    assert kickoff.status_code == 200, kickoff.text
     proposed = client.post(
         f"/api/tickets/{ticket_id}/propose",
         json={"body": "The result is verified.", "recap": "Ready for review"},
@@ -428,12 +428,20 @@ def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> Non
         path = f"/api/items/{first['id']}/supervisor/tickets/{ticket['id']}/approve"
         cross = client.post(
             path,
-            json={"next_ceiling": "needs_approach", "at_cap": "propose"},
+            json={
+                "next_ceiling": "needs_approach",
+                "at_cap": "propose",
+                "next_holder": _OWNER_HOLDER,
+            },
             headers=_supervisor_headers(str(second["id"])),
         )
         approved = client.post(
             path,
-            json={"next_ceiling": "needs_approach", "at_cap": "propose"},
+            json={
+                "next_ceiling": "needs_approach",
+                "at_cap": "propose",
+                "next_holder": _OWNER_HOLDER,
+            },
             headers=_supervisor_headers(str(first["id"])),
         )
 
@@ -480,11 +488,9 @@ def test_supervisor_rejection_delivers_before_it_mutates(
         assert system.backend_prompt_writes(conversation_id) == ()
         if outcome == "refused":
             system.arm_backend_write_failure(conversation_id)
-        original_send = conversation_start.send_to_ticket_conversation
+        original_send = message_delivery_service.send_message
 
-        async def send_then_replace(
-            *args: Any, **kwargs: Any
-        ) -> conversation_start.DeliveredMessage:
+        async def send_then_replace(*args: Any, **kwargs: Any) -> object:
             result = await original_send(*args, **kwargs)
             if outcome == "superseded":
                 with connect(str(db_path)) as conn:
@@ -498,7 +504,7 @@ def test_supervisor_rejection_delivers_before_it_mutates(
                     )
             return result
 
-        monkeypatch.setattr(tickets_actions, "send_to_ticket_conversation", send_then_replace)
+        monkeypatch.setattr(message_delivery_service, "send_message", send_then_replace)
         rejected = client.post(
             path,
             json={"message": "State the verification evidence."},
@@ -517,8 +523,7 @@ def test_supervisor_rejection_delivers_before_it_mutates(
     else:
         write = system.backend_prompt_writes(conversation_id)[0]
         assert "State the verification evidence." in write.text
-        assert "Read exact guidance." in write.text
-        assert all(item.text != "Read exact guidance." for item in pending_context)
+        assert "Read exact guidance." not in write.text
         if outcome == "superseded":
             assert rejected.status_code == 400
             assert "proposal changed" in rejected.json()["error"]["message"]
@@ -677,7 +682,11 @@ def test_supervisor_creates_and_approves_a_ticket_under_its_own_item(tmp_path: P
         ticket_id = str(created.json()["id"])
         approved = client.post(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/approve",
-            json={"next_ceiling": "needs_approach", "at_cap": "propose"},
+            json={
+                "next_ceiling": "needs_approach",
+                "at_cap": "propose",
+                "next_holder": _OWNER_HOLDER,
+            },
             headers=headers,
         )
 
@@ -729,7 +738,11 @@ def _stranded_child(
     ).json()
     accepted = client.post(
         f"/api/tickets/{ticket['id']}/accept/kickoff",
-        json={"next_ceiling": "needs_success", "at_cap": "propose"},
+        json={
+            "next_ceiling": "needs_success",
+            "at_cap": "propose",
+            "next_holder": _OWNER_HOLDER,
+        },
     )
     assert accepted.status_code == 200, accepted.text
     with connect(str(db_path)) as conn:

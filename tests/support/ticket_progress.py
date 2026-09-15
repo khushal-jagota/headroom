@@ -15,9 +15,10 @@ def advance_ticket(
     definition = configured_worker_type_registry().require(ticket.worker_type)
     if definition.stage_index(new_stage) < definition.stage_index(ticket.stage):
         raise ValueError("fixture progression cannot rewind a Ticket")
-    data.change_scope(
-        conn, ticket_id, ceiling=new_stage, at_cap=AtCap.propose, principal=principal, now=now
-    )
+    if ticket.pending_proposal is None:
+        ticket = data.change_scope(
+            conn, ticket_id, ceiling=new_stage, at_cap=AtCap.propose, principal=principal, now=now
+        )
     while ticket.stage != new_stage:
         if ticket.pending_proposal is not None:
             ticket = data.accept_proposal(
@@ -28,6 +29,7 @@ def advance_ticket(
                 now=now,
                 next_ceiling=new_stage,
                 at_cap=AtCap.propose,
+                next_holder=principal,
             )
         else:
             ticket = data.file_current_proposal_with_recap(

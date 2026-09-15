@@ -333,8 +333,7 @@ def _park_on_a_proposal(db_path: Path, ticket_id: str) -> None:
         conn.close()
 
 
-def test_replying_to_a_parked_proposal_moves_the_ticket_to_paired(tmp_path: Path) -> None:
-    """A Ticket waiting for its owner, answered rather than approved."""
+def test_the_retired_human_reply_route_cannot_move_a_parked_proposal(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _ticket(db_path)
     _park_on_a_proposal(db_path, ticket_id)
@@ -343,6 +342,5 @@ def test_replying_to_a_parked_proposal_moves_the_ticket_to_paired(tmp_path: Path
     with TestClient(app) as client:
         replied = client.post(f"/api/tickets/{ticket_id}/human-reply")
 
-    assert replied.status_code == 200, replied.text
-    assert replied.json()["ticket_status"] == "paired"
-    assert _ticket_status(db_path, ticket_id) == "paired"
+    assert replied.status_code == 404
+    assert _ticket_status(db_path, ticket_id) == "awaiting_approval"

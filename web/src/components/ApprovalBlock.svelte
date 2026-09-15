@@ -92,6 +92,7 @@
       if (!scopeForApproval) return;
       payload.next_ceiling = scopeForApproval.next_ceiling;
       payload.at_cap = scopeForApproval.at_cap;
+      payload.next_holder = { kind: "owner", id: "owner" };
       await onApprove?.(payload);
       resolved = true;
     } catch (err) {

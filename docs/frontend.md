@@ -24,14 +24,17 @@ One screen per part of the system:
   and watchout with one progress mark per Ticket. Action tiles lead to work that needs
   the user, needs review, is working, is paired, or is done. Day fields are written by
   the planning Workers, not edited on this page.
-- **Review** — the human chamber for parked Ticket proposals and Worker help requests:
-  one oldest-first walk with a centred item, its Ticket title, and Skip and Open Ticket
-  top-right. Proposal items add their labelled recap, ask, approval, and send-back
-  controls; needs-user items direct the human to the Ticket conversation without those
-  proposal controls. Keyboard shortcuts drive the actions that apply to the current
-  item when the cursor is not in a text field, and each item fades in as it arrives. A
-  proposal's approve button physically refuses to work until "how far may the worker
-  go next" has been answered, both halves.
+- **Review** — the human chamber for owner-addressed Ticket proposals and today's Worker
+  help requests: one oldest-first walk with a centred item, its Ticket title, and Skip
+  and Open Ticket top-right. Proposal items add their labelled recap, ask, approval, and
+  send-back controls; needs-user items direct the human to the Ticket conversation
+  without those proposal controls. Proposals addressed to another holder do not appear
+  here. Keyboard shortcuts drive the actions that apply to the current item when the
+  cursor is not in a text field, and each item fades in as it arrives. A proposal's
+  approve button sends the next ceiling, cap, and owner holder together. Send-back
+  delivers the owner's comment to the exact Ticket worker conversation before it clears
+  the proposal. A refused delivery leaves the proposal in place. A reply in the Ticket
+  conversation leaves the proposal in Review until a decision.
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
   follows the same 5am planning-day boundary as the Day screen; dropped tickets never
   appear. The Chief of Staff row leads, and under it a selector chooses one of two views
@@ -452,8 +455,9 @@ hand-rolling the same shapes per screen. Each does one job:
   both Sprint priority positions, and once in each Backlog priority group heading.
   Priority never borrows the slate-blue attention accent or the status-mark colours.
 - **StageMark** — the single stage dot showing a field's progress.
-- **ApprovalBlock** — the one approval surface: an editable proposal draft, the scope
-  picker, and the approve/accept action, plus a read-only mode for dropped tickets.
+- **ApprovalBlock** — the owner approval surface: an editable proposal draft, the scope
+  picker, and the approve/accept action, plus a read-only mode for dropped tickets. Its
+  approval addresses the next ceiling proposal to the owner.
 - **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
   the kickoff priority, the approval control, and the send-back box. It is named by a
   ticket id and a field and reads that ticket itself, so any screen can raise the same

@@ -594,6 +594,18 @@ def _require_item_can_delete(conn: sqlite3.Connection, item_id: str) -> SprintIt
 def _delete_item_rows(conn: sqlite3.Connection, item_id: str) -> SprintItemDeletion:
     """Delete one verified item inside the caller's transaction."""
     item = _require_item_can_delete(conn, item_id)
+    held_ticket = conn.execute(
+        "SELECT id FROM tickets "
+        "WHERE json_extract(ceiling_holder, '$.kind') = 'sprint_item' "
+        "AND json_extract(ceiling_holder, '$.id') = ? ORDER BY id LIMIT 1",
+        (item_id,),
+    ).fetchone()
+    if held_ticket is not None:
+        raise PlannerError(
+            ErrorCode.validation,
+            "Sprint Item cannot be deleted while it holds a Ticket ceiling",
+            {"sprint_item_id": item_id, "held_ticket_id": str(held_ticket["id"])},
+        )
     link_rows = conn.execute(
         "SELECT from_id, to_id, kind FROM links "
         "WHERE from_id = ? OR to_id = ? ORDER BY from_id, to_id, kind",

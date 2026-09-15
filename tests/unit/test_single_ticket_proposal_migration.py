@@ -100,6 +100,7 @@ def test_cutover_keeps_current_saved_value_and_draft_and_archives_raw_metadata(
         assert {"field": "retired", "content": {"other": {"nested": 9}}} in sections
         assert "retired_empty" not in archive
         assert "Unapproved proposal" in archive
+        assert after.pop("ceiling_holder") == '{"id":"owner","kind":"owner"}'
         before.pop("fields")
         assert before == after
         blank = conn.execute("SELECT pending_proposal FROM tickets WHERE id='b'").fetchone()[0]

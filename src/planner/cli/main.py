@@ -31,6 +31,7 @@ from planner.cli.record_projection import (
     project_record,
     render_text,
 )
+from planner.core.contracts import PrincipalKind
 from planner.environments.cli import environment as environment_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.message_delivery.contracts import MessageDeliveryMode
@@ -1484,6 +1485,13 @@ def ticket_ownership(ticket_id: str, stage: str, mode: str, as_json: bool) -> No
     help="stop or propose.",
 )
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
+@click.option(
+    "--holder-kind",
+    default="owner",
+    type=click.Choice([kind.value for kind in PrincipalKind]),
+    help="Principal kind for the next ceiling holder.",
+)
+@click.option("--holder-id", default=None, help="Principal id for the next ceiling holder.")
 @click.option("--kickoff-title", default=None, help="Edited Kickoff title.")
 @click.option("--kickoff-note-file", default=None, help="Edited Kickoff note, or - for stdin.")
 @json_option
@@ -1492,6 +1500,8 @@ def ticket_approve(
     ceiling: str | None,
     at_cap: str | None,
     edit_file: str | None,
+    holder_kind: str,
+    holder_id: str | None,
     kickoff_title: str | None,
     kickoff_note_file: str | None,
     as_json: bool,
@@ -1518,7 +1528,12 @@ def ticket_approve(
             json_body={"title": kickoff_title},
             request_actor="ordinary",
         )
-    field_payload: dict[str, Any] = {"next_ceiling": ceiling, "at_cap": at_cap}
+    resolved_holder_id = holder_id or holder_kind
+    field_payload: dict[str, Any] = {
+        "next_ceiling": ceiling,
+        "at_cap": at_cap,
+        "next_holder": {"kind": holder_kind, "id": resolved_holder_id},
+    }
     if edit_file is not None:
         field_payload["edited_body"] = _read_source(edit_file, as_json)
     if kickoff_note_file is not None:
@@ -2291,6 +2306,13 @@ def sprint_item_supervisor_reset(item_id: str, as_json: bool) -> None:
     help="Behaviour at the next ceiling: stop or propose.",
 )
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
+@click.option(
+    "--holder-kind",
+    default="sprint_item",
+    type=click.Choice([kind.value for kind in PrincipalKind]),
+    help="Principal kind for the next ceiling holder.",
+)
+@click.option("--holder-id", default=None, help="Principal id for the next ceiling holder.")
 @json_option
 def sprint_item_supervisor_approve(
     item_id: str,
@@ -2298,10 +2320,19 @@ def sprint_item_supervisor_approve(
     ceiling: str,
     at_cap: str,
     edit_file: str | None,
+    holder_kind: str,
+    holder_id: str | None,
     as_json: bool,
 ) -> None:
     """Approve one parked proposal for this Sprint Item."""
-    body: dict[str, Any] = {"next_ceiling": ceiling, "at_cap": at_cap}
+    body: dict[str, Any] = {
+        "next_ceiling": ceiling,
+        "at_cap": at_cap,
+        "next_holder": {
+            "kind": holder_kind,
+            "id": holder_id or (item_id if holder_kind == "sprint_item" else holder_kind),
+        },
+    }
     if edit_file is not None:
         body["edited_body"] = _read_source(edit_file, as_json)
     data = http.send(
