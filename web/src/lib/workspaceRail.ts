@@ -1,4 +1,4 @@
-import { labelize } from "./ui";
+import { labelize, type FieldStageVisualState } from "./ui";
 import type { BoardCard, BoardSprintItem, Priority, WorkAttention } from "./types";
 import { primaryWorkAttention } from "./workAttentionPresentation";
 
@@ -14,6 +14,7 @@ const REMAINDER_GROUP_ORDER: readonly string[] = [
   "errored",
   "agent",
   "waiting_to_closeout",
+  "status_awaiting_approval",
   "waiting_for_kickoff",
   "empty",
   "blocked",
@@ -30,6 +31,7 @@ const GROUP_LABELS: Readonly<Record<string, string>> = {
   awaiting_approval: "Awaiting approval",
   assigned: "Paired",
   awaiting_reply: "Messages",
+  status_awaiting_approval: "Awaiting approval",
   waiting_to_closeout: "Waiting to Closeout",
   waiting_for_kickoff: "Waiting for Kickoff"
 };
@@ -42,6 +44,11 @@ export type WorkspaceTicketGroup = {
 };
 
 export type WorkspaceRowMark = "attention" | "working" | null;
+
+export type WorkspaceRowMarkPresentation = {
+  state: FieldStageVisualState;
+  ariaLabel: string;
+};
 
 export type WorkspaceRailItem = {
   id: string;
@@ -63,6 +70,7 @@ const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
 function workspaceRemainderGroupKey(card: BoardCard): string {
   if (card.is_done) return "done";
   if (card.waiting_to_closeout) return "waiting_to_closeout";
+  if (card.ticket_status === "awaiting_approval") return "status_awaiting_approval";
   return String(card.ticket_status);
 }
 
@@ -76,6 +84,19 @@ export function workspaceTicketRowMark(card: BoardCard): WorkspaceRowMark {
   if (card.awaiting_reply) return "attention";
   if (card.agent_state === "working") return "working";
   return null;
+}
+
+export function workspaceRowMarkPresentation(
+  mark: WorkspaceRowMark,
+  attentionLabel: "Message" | "Needs you"
+): WorkspaceRowMarkPresentation {
+  if (mark === "attention") {
+    return { state: "current-awaiting-approval", ariaLabel: attentionLabel };
+  }
+  if (mark === "working") {
+    return { state: "current-running", ariaLabel: "Agent working" };
+  }
+  return { state: "upcoming", ariaLabel: "Nothing waiting" };
 }
 
 function hasAttention(facts: WorkAttention | BoardSprintItem): boolean {

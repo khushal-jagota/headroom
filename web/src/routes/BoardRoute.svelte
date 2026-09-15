@@ -4,9 +4,9 @@
   import { conversationSignalPresentation } from "../lib/conversationSignalPresentation";
   import {
     buildWorkspaceRail,
+    workspaceRowMarkPresentation,
     workspaceTicketRowMark,
     type WorkspaceRailItem,
-    type WorkspaceRowMark,
     type WorkspaceTicketGroup
   } from "../lib/workspaceRail";
   import {
@@ -93,14 +93,6 @@
       : null
   );
 
-  function rowMarkPresentation(mark: WorkspaceRowMark) {
-    if (mark === "attention") return { state: "needs-me" as const, ariaLabel: "Message" };
-    if (mark === "working") {
-      return { state: "current-running" as const, ariaLabel: "Agent working" };
-    }
-    return { state: "upcoming" as const, ariaLabel: "Nothing waiting" };
-  }
-
   // Awake beats rested: a done Item that needs the user, is mid-turn, or holds a
   // reply this browser has not seen yet stays with the live Items.
   function itemIsAwake(item: WorkspaceRailItem): boolean {
@@ -120,7 +112,7 @@
 
 {#snippet ticketRow(card: BoardCard, withPriority: boolean, insideItemId: string | null)}
   {@const mark = workspaceTicketRowMark(card)}
-  {@const presentation = rowMarkPresentation(mark)}
+  {@const presentation = workspaceRowMarkPresentation(mark, "Message")}
   <SprintTicketRow
     priority={withPriority ? card.priority : null}
     title={card.title}
@@ -180,7 +172,7 @@
 {#snippet sprintItem(item: WorkspaceRailItem)}
   {@const open = opening.openItemId === item.id}
   {@const selected = opening.markedItemId === item.id}
-  {@const presentation = rowMarkPresentation(item.mark)}
+  {@const presentation = workspaceRowMarkPresentation(item.mark, "Needs you")}
   <section
     class="board-workspace-item"
     class:board-workspace-item--selected={selected}
@@ -202,15 +194,14 @@
         class="board-workspace-item-title"
         class:board-workspace-item-title--rested={item.rested && !itemIsAwake(item)}
       >{item.title}</span>
-      {#if item.mark !== null}
-        <StageMark
-          state={presentation.state}
-          class="board-workspace-stage-mark"
-          data-stage-state={presentation.state}
-          data-workspace-mark={item.mark}
-          aria-label={presentation.ariaLabel}
-        />
-      {/if}
+      <StageMark
+        state={presentation.state}
+        class="board-workspace-stage-mark"
+        data-stage-state={presentation.state}
+        data-workspace-mark={item.mark ?? "none"}
+        aria-hidden={item.mark === null ? "true" : undefined}
+        aria-label={presentation.ariaLabel}
+      />
     </button>
     {#if open}
       <!-- A fold or a Ticket inside the Item is not a click on the Item. -->

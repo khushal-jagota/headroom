@@ -4,6 +4,7 @@ import {
   buildWorkspaceRail,
   workspaceCardGroupKey,
   workspaceGroups,
+  workspaceRowMarkPresentation,
   workspaceSprintItemRowMark,
   workspaceTicketRowMark
 } from "../src/lib/workspaceRail";
@@ -67,6 +68,7 @@ describe("Workspace rail", () => {
       card("resting"),
       card("blocked", { ticket_status: "blocked" }),
       card("closeout", { waiting_to_closeout: true }),
+      card("non-owner-approval", { ticket_status: "awaiting_approval" }),
       card("kickoff", { awaiting_approval: true, gating_field: "kickoff" }),
       card("review", { awaiting_approval: true }),
       card("working", { ticket_status: "agent" }),
@@ -82,6 +84,7 @@ describe("Workspace rail", () => {
       "Errored",
       "Agent",
       "Waiting to Closeout",
+      "Awaiting approval",
       "Empty",
       "Blocked",
       "Done"
@@ -90,6 +93,33 @@ describe("Workspace rail", () => {
     expect(
       groups.filter((group) => group.defaultCollapsed).map((group) => group.key)
     ).toEqual(["blocked", "done"]);
+  });
+
+  it("keeps a non-owner awaiting-approval status in the old remainder position", () => {
+    const nonOwner = card("non-owner", {
+      ticket_status: "awaiting_approval",
+      awaiting_approval: false
+    });
+    expect(workspaceCardGroupKey(nonOwner)).toBe("status_awaiting_approval");
+
+    const groups = workspaceGroups([
+      nonOwner,
+      card("owner", { awaiting_approval: true }),
+      card("closeout", { waiting_to_closeout: true }),
+      card("empty")
+    ]);
+    expect(groups.map((group) => group.key)).toEqual([
+      "awaiting_approval",
+      "waiting_to_closeout",
+      "status_awaiting_approval",
+      "empty"
+    ]);
+    expect(groups.map((group) => group.cards.map((entry) => entry.id))).toEqual([
+      ["owner"],
+      ["closeout"],
+      ["non-owner"],
+      ["empty"]
+    ]);
   });
 
   it("draws a board of only quiet Tickets rather than nothing", () => {
@@ -327,6 +357,21 @@ describe("Workspace rail", () => {
     expect(workspaceTicketRowMark(card("working", { agent_state: "working" }))).toBe("working");
     expect(workspaceTicketRowMark(card("error", { agent_state: "errored" }))).toBeNull();
     expect(workspaceTicketRowMark(card("idle"))).toBeNull();
+  });
+
+  it("uses the filled blue state with labels for each attention row", () => {
+    expect(workspaceRowMarkPresentation("attention", "Message")).toEqual({
+      state: "current-awaiting-approval",
+      ariaLabel: "Message"
+    });
+    expect(workspaceRowMarkPresentation("attention", "Needs you")).toEqual({
+      state: "current-awaiting-approval",
+      ariaLabel: "Needs you"
+    });
+    expect(workspaceRowMarkPresentation("working", "Needs you")).toEqual({
+      state: "current-running",
+      ariaLabel: "Agent working"
+    });
   });
 
   it("lets any Item attention win over any active work", () => {

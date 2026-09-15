@@ -81,13 +81,14 @@ One screen per part of the system:
   Selection in the rail is exclusive: what the workspace beside it is showing is the one
   thing that looks selected, and nothing else does. A ticket opened from inside an Item
   leaves that Item open around it — the address names the Item as well as the ticket —
-  and the mark moves to the ticket, because being open carries no mark of its own.
+  and selection moves to the ticket. An open Item carries no selection of its own.
 
-  Every Ticket row uses its existing mark slot. A reply waiting for Khushal gives it the
-  blue dot. Otherwise active agent work gives it the spinner. Idle and error states show
-  no mark. An Item title rolls up its own facts and every child ticket: any owner
-  attention gives it the blue dot, otherwise any active work gives it the spinner.
-  Attention takes precedence over active work.
+  Every Ticket row keeps its mark slot. A reply waiting for Khushal gives it the filled
+  blue dot. Otherwise active agent work gives it the spinner. Idle and error states
+  leave the slot empty. An Item title rolls up its own facts and every child ticket: any
+  owner attention gives it the filled blue dot, otherwise any active work gives it the
+  spinner. Attention takes precedence over active work. The empty Item slot stays in
+  place, so the title layout does not move when its state changes.
   A ticket without a Sprint Item appears in the Tickets view like any other. Every
   Ticket row is the shared Ticket row and uses the same blue dot and spinner. It carries
   its priority tile in the Tickets view and drops it inside a Sprint Item, where the Item
@@ -96,32 +97,13 @@ One screen per part of the system:
   The Chief of Staff row starts with its bundled portrait. The portrait is an agent
   identity on this row only; ticket rows and Worker types do not use it.
 
-  The mark carries three signals in one order of precedence, and each is one
-  system's own fact rather than a blend of several. A **pure white dot** means the
-  worker is waiting on a permission decision or answers only the user can give — it wins
-  outright, because that turn is still running and only the user can clear the wait. On
-  an Item the same dot also means an unseen ping, which says the same thing: only the
-  user can answer this. Below it, a **spinner** means the worker is running right now. With
-  neither, the mark shows the **turn state**: a filled accent dot for a turn ending the
-  user has not seen, the same dot greyed once the user has opened the ticket since
-  owner has not seen, the same dot greyed once the owner has opened the conversation
-  since that ending, and a faint ring when nothing is waiting.
-
-  All three come from the conversation the row is linked to — the ticket's worker for a
-  ticket row, the Item's supervisor for an Item. The first two are asked
-  of the conversation system directly. The third is a comparison: the row carries a
-  position in its conversation, and the server keeps how far the owner has got in that
-  conversation. Something is waiting when the position is past the reading. Every row
-  carries where its own conversation's last turn ended, so opening the ticket or the
-  Item is what puts its mark out.
-
-  The owner read position is durable and server-side, so reading a conversation clears
-  the same dot on every browser. Every conversation opens in Focus. Focus shows the
-  owner's prompts, explicit messages to the owner, permission requests, agent questions,
-  and their settled answers. Failed turns, stopped turns, and missing explicit replies
-  remain visible as compact system rows. Full shows all runtime rows. One header toggle
-  switches the lens, and the unmodified `f` key does the same when no editable control owns it. The
-  choice belongs to the mounted conversation and resets to Focus when its identity changes.
+  The Chief of Staff keeps its separate conversation mark. Every conversation opens in
+  Focus. Focus shows the owner's prompts, explicit messages to the owner, permission
+  requests, agent questions, and their settled answers. Failed turns, stopped turns, and
+  missing explicit replies remain visible as compact system rows. Full shows all runtime
+  rows. One header toggle switches the lens, and the unmodified `f` key does the same
+  when no editable control owns it. The choice belongs to the mounted conversation and
+  resets to Focus when its identity changes.
   Notification links therefore open Focus through the ordinary conversation route.
 
   Complete turn boundaries settle both the Focus transcript and its rest line. A turn
