@@ -345,11 +345,12 @@ A parked proposal reaches only its holder. Owner-held proposals appear in Review
 produce the owner's needs-approval notification. For a Chief, Sprint Item, or other
 Ticket holder, Panels sends a concise system-authored wake-up to that holder's exact
 conversation; the holder then reads the proposal from canonical Ticket state. Filing
-commits a durable intent and returns the
-parked proposal even when the first delivery is refused; the recurring recovery loop
-retries definite refusals. While a send is claimed, approval and replacement are refused
-for retry rather than allowing a stale wake through. A post-wire record failure becomes terminal
-`uncertain` state and is never retried automatically.
+commits the parked proposal and its durable intent without contacting the holder. Only
+the machine-lock-owned recovery loop claims and delivers that intent. It wakes on the
+database change signal and retries definite refusals. While a send is claimed, approval
+and replacement are refused for retry rather than allowing a stale wake through. A
+post-wire record failure becomes terminal `uncertain` state and is never retried
+automatically.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`

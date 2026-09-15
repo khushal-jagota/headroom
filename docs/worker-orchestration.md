@@ -162,12 +162,13 @@ _Code path:_ `src/planner/tickets/actions.py`.
 
 ## Waking a non-owner proposal holder
 
-Filing a parked proposal commits a durable wake row before delivery begins. A sender
-claims that row as `delivering`; while claimed, approval, rejection, replacement, and
-other proposal cancellation refuse rather than letting an obsolete wake land after the
-proposal changes. Definite refusal advances the attempt identity and returns the row to
-`pending`. A queued prompt stays `delivering` because that queue is process-local; the
-loop probes the same sender identity until the conversation reports durable delivery.
+Filing a parked proposal commits a durable wake row and returns without backend I/O.
+Only the machine-lock-owned loop claims that row as `delivering`. While claimed,
+approval, rejection, replacement, and other proposal cancellation refuse rather than
+letting an obsolete wake land after the proposal changes. Definite refusal advances the
+attempt identity and returns the row to `pending`. A queued prompt stays `delivering`
+because that queue is process-local; the loop probes the same sender identity until the
+conversation reports durable delivery.
 
 The proposal-holder wake loop shares the process machine lock and server event loop with
 the other reconcilers. Database change signals wake it promptly, while its periodic tick

@@ -29,8 +29,7 @@ from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
 from planner.message_delivery.contracts import MessageDeliveryResult
-from planner.proposal_holder_wakes.contracts import proposal_ready_message
-from planner.proposal_holder_wakes.runtime import deliver_pending_wakes
+from planner.proposal_holder_wakes.runtime import _deliver_pending_wakes as deliver_pending_wakes
 from planner.sprints import data as sprints_data
 from planner.tickets import actions, data, views
 from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap, Ticket
@@ -152,7 +151,7 @@ def test_canonical_proposal_writer_accepts_only_the_ticket_own_worker(
 
 
 @pytest.mark.parametrize("holder_kind", ["owner", "chief", "sprint_item", "ticket"])
-def test_parked_proposal_wakes_its_exact_non_owner_holder(
+def test_parked_proposal_returns_before_the_lock_owned_loop_delivers(
     tmp_db: Connection,
     fake_clock: Clock,
     monkeypatch: pytest.MonkeyPatch,
@@ -198,24 +197,25 @@ def test_parked_proposal_wakes_its_exact_non_owner_holder(
         "planner.proposal_holder_wakes.runtime.message_delivery_service.send_system_message",
         send,
     )
-    conversations = object()
-
-    parked = asyncio.run(
-        actions.file_current_proposal(
-            conversations,  # type: ignore[arg-type]
-            tmp_db,
-            ticket.id,
-            body="Success proposal",
-            recap="Ready",
-            ctx=RequestContext(sender),
-            clock=fake_clock,
-        )
+    parked = actions.file_current_proposal(
+        tmp_db,
+        ticket.id,
+        body="Success proposal",
+        recap="Ready",
+        ctx=RequestContext(sender),
+        clock=fake_clock,
     )
 
     assert parked.pending_proposal is not None
     assert parked.ceiling_holder == holder
+    send.assert_not_awaited()
     if holder == OWNER_PRINCIPAL:
-        send.assert_not_awaited()
+        assert (
+            tmp_db.execute(
+                "SELECT 1 FROM proposal_holder_wakes WHERE ticket_id=?", (ticket.id,)
+            ).fetchone()
+            is None
+        )
     else:
         wake_row = tmp_db.execute(
             "SELECT state,proposal_generation,delivery_attempt FROM proposal_holder_wakes "
@@ -223,15 +223,7 @@ def test_parked_proposal_wakes_its_exact_non_owner_holder(
             (ticket.id,),
         ).fetchone()
         assert wake_row is not None
-        assert tuple(wake_row) == ("delivered", 1, 1)
-        send.assert_awaited_once_with(
-            conversations,
-            tmp_db,
-            fake_clock,
-            holder,
-            proposal_ready_message(ticket.id),
-            sender_message_id=f"proposal-holder-wake:{ticket.id}:1:1",
-        )
+        assert tuple(wake_row) == ("pending", 1, 1)
 
 
 def test_holder_wake_refusal_advances_attempt_and_recovery_succeeds(
@@ -262,20 +254,26 @@ def test_holder_wake_refusal_advances_attempt_and_recovery_succeeds(
         send,
     )
 
-    parked = asyncio.run(
-        actions.file_current_proposal(
-            object(),  # type: ignore[arg-type]
-            tmp_db,
-            ticket.id,
-            body="Success proposal",
-            recap="Ready",
-            ctx=RequestContext(Principal(PrincipalKind.ticket, ticket.id)),
-            clock=fake_clock,
-        )
+    parked = actions.file_current_proposal(
+        tmp_db,
+        ticket.id,
+        body="Success proposal",
+        recap="Ready",
+        ctx=RequestContext(Principal(PrincipalKind.ticket, ticket.id)),
+        clock=fake_clock,
     )
 
     assert parked.pending_proposal is not None
     assert parked.ceiling_holder == CHIEF_PRINCIPAL
+    assert asyncio.run(
+        deliver_pending_wakes(
+            object(),  # type: ignore[arg-type]
+            tmp_db,
+            fake_clock,
+            ticket_id=ticket.id,
+            retry_delay_seconds=0,
+        )
+    ) == 0
     wake = tmp_db.execute(
         "SELECT state,proposal_generation,delivery_attempt,last_error "
         "FROM proposal_holder_wakes WHERE ticket_id=?",

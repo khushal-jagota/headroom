@@ -112,13 +112,12 @@ def claim_due(
     *,
     now: int,
     ticket_id: str | None = None,
-    resume_delivering: bool = False,
 ) -> tuple[ProposalHolderWake, ...]:
     """Claim due rows before I/O so proposal writers serialize behind the send."""
     with _transaction(conn):
         candidates = list(due(conn, now=now, ticket_id=ticket_id))
         resumed: ProposalHolderWake | None = None
-        if resume_delivering and ticket_id is not None:
+        if ticket_id is not None:
             row = conn.execute(
                 "SELECT ticket_id,proposal_generation,delivery_attempt,holder_kind,holder_id,"
                 "message,retry_at FROM proposal_holder_wakes WHERE ticket_id=? "

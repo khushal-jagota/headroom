@@ -1113,7 +1113,6 @@ async def propose_current_field(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    conversations: Conversations,
 ) -> JsonDict:
     if ctx.principal != Principal(PrincipalKind.ticket, ticket_id):
         raise PlannerError(
@@ -1125,8 +1124,7 @@ async def propose_current_field(
         body=body_str(raw, "body"),
         recap=body_str(raw, "recap"),
     )
-    ticket = await tickets_actions.file_current_proposal(
-        conversations,
+    ticket = tickets_actions.file_current_proposal(
         conn,
         ticket_id,
         body=body["body"],

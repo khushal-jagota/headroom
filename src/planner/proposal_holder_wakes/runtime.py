@@ -22,38 +22,6 @@ from planner.proposal_holder_wakes import data
 from planner.tickets import data as tickets_data
 
 _LOG = logging.getLogger(__name__)
-_IN_FLIGHT_TICKET_IDS: set[str] = set()
-
-
-async def deliver_pending_wakes(
-    conversations: ConversationSystem,
-    conn: sqlite3.Connection,
-    clock: Clock,
-    *,
-    ticket_id: str | None = None,
-    retry_delay_seconds: int = 1,
-    resume_delivering: bool = False,
-) -> int:
-    """Attempt due wakes; deterministic message ids make every replay idempotent."""
-    if ticket_id is not None:
-        # Immediate API delivery and the recurring loop share this event loop. The
-        # durable claim coordinates database writers; this guard prevents those two
-        # local executors from probing the same claimed sender id concurrently.
-        if ticket_id in _IN_FLIGHT_TICKET_IDS:
-            return 0
-        _IN_FLIGHT_TICKET_IDS.add(ticket_id)
-    try:
-        return await _deliver_pending_wakes(
-            conversations,
-            conn,
-            clock,
-            ticket_id=ticket_id,
-            retry_delay_seconds=retry_delay_seconds,
-            resume_delivering=resume_delivering,
-        )
-    finally:
-        if ticket_id is not None:
-            _IN_FLIGHT_TICKET_IDS.discard(ticket_id)
 
 
 async def _deliver_pending_wakes(
@@ -61,10 +29,10 @@ async def _deliver_pending_wakes(
     conn: sqlite3.Connection,
     clock: Clock,
     *,
-    ticket_id: str | None,
-    retry_delay_seconds: int,
-    resume_delivering: bool,
+    ticket_id: str | None = None,
+    retry_delay_seconds: int = 1,
 ) -> int:
+    """Attempt due wakes; deterministic message ids make every replay idempotent."""
     now = clock.now_unix()
     data.reconcile_missing(conn, now=now)
     delivered_count = 0
@@ -72,7 +40,6 @@ async def _deliver_pending_wakes(
         conn,
         now=now,
         ticket_id=ticket_id,
-        resume_delivering=resume_delivering,
     ):
         ticket = tickets_data.read_ticket(conn, wake.ticket_id)
         if ticket.pending_proposal is None or ticket.ceiling_holder != wake.holder:
@@ -158,12 +125,11 @@ class ProposalHolderWakeLoop:
     async def _deliver_one(self, ticket_id: str) -> int:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
-            return await deliver_pending_wakes(
+            return await _deliver_pending_wakes(
                 self._conversation_system,
                 conn,
                 self._clock,
                 ticket_id=ticket_id,
-                resume_delivering=True,
             )
         finally:
             conn.close()

@@ -34,7 +34,12 @@ from planner.message_delivery.contracts import MessageDeliveryResult
 from planner.message_delivery.service import send_system_message
 from planner.proposal_holder_wakes import data as wake_data
 from planner.proposal_holder_wakes.contracts import proposal_ready_message
-from planner.proposal_holder_wakes.runtime import ProposalHolderWakeLoop, deliver_pending_wakes
+from planner.proposal_holder_wakes.runtime import (
+    ProposalHolderWakeLoop,
+)
+from planner.proposal_holder_wakes.runtime import (
+    _deliver_pending_wakes as deliver_pending_wakes,
+)
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
@@ -302,7 +307,6 @@ def test_queued_wake_stays_claimed_until_durable_replay_settles_it(
                 tmp_db,
                 fake_clock,
                 ticket_id=ticket_id,
-                resume_delivering=True,
             )
         )
         == 1
@@ -375,16 +379,6 @@ def test_claimed_wake_serializes_against_proposal_writers(
         await asyncio.wait_for(started.wait(), timeout=2)
         racer = connect(db_path)
         try:
-            assert (
-                await deliver_pending_wakes(
-                    object(),  # type: ignore[arg-type]
-                    racer,
-                    fake_clock,
-                    ticket_id=ticket_id,
-                    resume_delivering=True,
-                )
-                == 0
-            )
             with pytest.raises(PlannerError) as refused:
                 if operation == "approve":
                     tickets_data.accept_proposal(
@@ -460,6 +454,41 @@ def test_recurring_loop_retries_temporary_startup_refusal_without_restart(
 
     asyncio.run(exercise())
     assert attempts == 2
+
+
+def test_lock_owned_recurring_loop_delivers_new_pending_wake_once(
+    tmp_db: Connection, fake_clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
+    _file(tmp_db, ticket_id, body="Loop owns delivery", now=2)
+    db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()["file"])
+    send = AsyncMock(
+        return_value=MessageDeliveryResult(CHIEF_PRINCIPAL, "c", PromptDeliveryStarted())
+    )
+    monkeypatch.setattr(
+        "planner.proposal_holder_wakes.runtime.message_delivery_service.send_system_message",
+        send,
+    )
+
+    async def exercise() -> None:
+        loop = ProposalHolderWakeLoop(
+            db_path,
+            fake_clock,
+            conversation_system=object(),  # type: ignore[arg-type]
+            asyncio_loop=asyncio.get_running_loop(),
+        )
+        loop.start(0.05)  # type: ignore[arg-type]
+        try:
+            for _ in range(100):
+                if _wake_state(tmp_db, ticket_id) == "delivered":
+                    break
+                await asyncio.sleep(0.01)
+            assert _wake_state(tmp_db, ticket_id) == "delivered"
+        finally:
+            assert await asyncio.to_thread(loop.stop) is True
+
+    asyncio.run(exercise())
+    send.assert_awaited_once()
 
 
 def test_only_machine_lock_owner_recovers_interrupted_delivery(

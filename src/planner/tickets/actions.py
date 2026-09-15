@@ -19,7 +19,6 @@ from planner.core.contracts import LinkKind, Principal, PrincipalKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.message_delivery import service as message_delivery_service
-from planner.proposal_holder_wakes.runtime import deliver_pending_wakes
 from planner.runtime.logic.worker_step_prompt import proposal_returned_for_revision_prompt
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
@@ -233,8 +232,7 @@ def remove_link(
         conn.execute("COMMIT")
 
 
-async def file_current_proposal(
-    conversation_system: ConversationSystem,
+def file_current_proposal(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
@@ -243,8 +241,8 @@ async def file_current_proposal(
     ctx: RequestContext,
     clock: Clock,
 ) -> Ticket:
-    """Park a proposal with its durable wake intent, then ask the outbox to deliver."""
-    ticket = tickets_data.file_current_proposal_with_recap(
+    """Park a proposal and its wake intent; the machine-lock loop delivers it."""
+    return tickets_data.file_current_proposal_with_recap(
         conn,
         ticket_id,
         body=body,
@@ -252,10 +250,6 @@ async def file_current_proposal(
         principal=ctx.principal,
         now=clock.now_unix(),
     )
-    await deliver_pending_wakes(
-        conversation_system, conn, clock, ticket_id=ticket.id
-    )
-    return ticket
 
 
 async def return_ticket_for_revision(

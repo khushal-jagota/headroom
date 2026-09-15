@@ -98,7 +98,7 @@ from planner.conversation.system import (
 from planner.core.clock import TestClock as MutableClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
-from planner.proposal_holder_wakes.runtime import deliver_pending_wakes
+from planner.proposal_holder_wakes.runtime import _deliver_pending_wakes as deliver_pending_wakes
 from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap

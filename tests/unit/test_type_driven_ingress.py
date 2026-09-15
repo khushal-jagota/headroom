@@ -189,7 +189,7 @@ def test_probe_proposal_parks_on_registry_selected_field(
 
 
 def test_proposal_route_accepts_only_the_ticket_own_worker(app_db: AppDb) -> None:
-    app, _db = app_db
+    app, db_path = app_db
     with TestClient(app) as client:
         target = _create(client, "coding")
         parent = _create(client, "coding")
@@ -230,6 +230,14 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(app_db: AppDb) -> Non
         )
         assert own.status_code == 200, own.text
         assert own.json()["pending_proposal"]["body"] == "Own Worker"
+        inspection = connect(str(db_path))
+        try:
+            wake = inspection.execute(
+                "SELECT state FROM proposal_holder_wakes WHERE ticket_id=?", (target,)
+            ).fetchone()
+            assert wake is not None and wake["state"] == "pending"
+        finally:
+            inspection.close()
 
 
 def test_ticket_note_routes_make_replace_and_append_explicit(app_db: AppDb) -> None:
