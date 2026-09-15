@@ -84,7 +84,7 @@ describe("Workspace rail", () => {
       "Errored",
       "Agent",
       "Waiting to Closeout",
-      "Awaiting approval",
+      "Awaiting an agent's approval",
       "Empty",
       "Blocked",
       "Done"
@@ -120,6 +120,23 @@ describe("Workspace rail", () => {
       ["non-owner"],
       ["empty"]
     ]);
+  });
+
+  it("gives every visible Tickets group a distinct label", () => {
+    const groups = workspaceGroups([
+      card("owner", { awaiting_approval: true }),
+      card("agent-owner", {
+        ticket_status: "awaiting_approval",
+        awaiting_approval: false
+      })
+    ]);
+    const labels = groups.map((group) => group.label);
+
+    expect(labels).toEqual([
+      "Awaiting approval",
+      "Awaiting an agent's approval"
+    ]);
+    expect(new Set(labels).size).toBe(labels.length);
   });
 
   it("draws a board of only quiet Tickets rather than nothing", () => {
