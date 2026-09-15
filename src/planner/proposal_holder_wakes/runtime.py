@@ -208,9 +208,6 @@ async def _deliver_rejection_messages(
                 )
             continue
         if data.settle_rejection_message(conn, message, state="delivered", now=now):
-            tickets_data.settle_proposal_delivery_error_after_worker_start(
-                conn, ticket_id, now=now
-            )
             delivered_count += 1
 
 

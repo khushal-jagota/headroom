@@ -265,15 +265,18 @@ def test_holder_wake_refusal_advances_attempt_and_recovery_succeeds(
 
     assert parked.pending_proposal is not None
     assert parked.ceiling_holder == CHIEF_PRINCIPAL
-    assert asyncio.run(
-        deliver_pending_wakes(
-            object(),  # type: ignore[arg-type]
-            tmp_db,
-            fake_clock,
-            ticket_id=ticket.id,
-            retry_delay_seconds=0,
+    assert (
+        asyncio.run(
+            deliver_pending_wakes(
+                object(),  # type: ignore[arg-type]
+                tmp_db,
+                fake_clock,
+                ticket_id=ticket.id,
+                retry_delay_seconds=0,
+            )
         )
-    ) == 0
+        == 0
+    )
     wake = tmp_db.execute(
         "SELECT state,proposal_generation,delivery_attempt,last_error "
         "FROM proposal_holder_wakes WHERE ticket_id=?",
@@ -282,9 +285,7 @@ def test_holder_wake_refusal_advances_attempt_and_recovery_succeeds(
     assert wake is not None
     assert tuple(wake) == ("pending", 1, 2, "write_to_backend_failed")
 
-    send.return_value = MessageDeliveryResult(
-        CHIEF_PRINCIPAL, "c_chief", PromptDeliveryStarted()
-    )
+    send.return_value = MessageDeliveryResult(CHIEF_PRINCIPAL, "c_chief", PromptDeliveryStarted())
     tmp_db.execute(
         "UPDATE proposal_holder_wakes SET retry_at=? WHERE ticket_id=?",
         (fake_clock.now_unix(), ticket.id),
@@ -303,9 +304,7 @@ def test_holder_wake_refusal_advances_attempt_and_recovery_succeeds(
     assert send.await_count == 2
     retry_call = send.await_args
     assert retry_call is not None
-    assert retry_call.kwargs["sender_message_id"] == (
-        f"proposal-holder-wake:{ticket.id}:1:2"
-    )
+    assert retry_call.kwargs["sender_message_id"] == (f"proposal-holder-wake:{ticket.id}:1:2")
     delivered = tmp_db.execute(
         "SELECT state,delivery_attempt FROM proposal_holder_wakes WHERE ticket_id=?",
         (ticket.id,),
@@ -394,7 +393,7 @@ def test_scope_cannot_retarget_a_pending_proposal(tmp_db: Connection) -> None:
     assert unchanged.pending_proposal == ticket.pending_proposal
 
 
-def test_review_lists_only_owner_addressed_proposals(tmp_db: Connection) -> None:
+def test_review_lists_owner_addressed_and_surfaced_proposals(tmp_db: Connection) -> None:
     owner_ticket = _park(tmp_db, OWNER_PRINCIPAL, 10)
     chief_ticket = _park(tmp_db, CHIEF_PRINCIPAL, 20)
     day_id = "day_2026-09-15"
@@ -403,6 +402,19 @@ def test_review_lists_only_owner_addressed_proposals(tmp_db: Connection) -> None
 
     review = views.review_view(tmp_db, day_id=day_id)
     assert [item["ticket_id"] for item in review["items"]] == [owner_ticket.id]
+
+    tmp_db.execute(
+        "INSERT INTO proposal_delivery_failures "
+        "(ticket_id,proposal_generation,conversation_id,attempt_count,last_error,"
+        "visibility_message_id,created_at,resolved_at) "
+        "VALUES (?,1,NULL,10,'write_to_backend_failed',?,30,NULL)",
+        (chief_ticket.id, f"proposal-delivery-failed:{chief_ticket.id}:1"),
+    )
+    review = views.review_view(tmp_db, day_id=day_id)
+    assert [item["ticket_id"] for item in review["items"]] == [
+        owner_ticket.id,
+        chief_ticket.id,
+    ]
 
 
 def test_a_ticket_holder_cannot_be_deleted_while_another_ticket_uses_it(
@@ -554,8 +566,7 @@ def test_supervisor_revision_records_ordered_messages_with_the_ticket_mutation(
     assert [tuple(row) for row in rows] == [
         (
             1,
-            "Your proposal was rejected and returned for revision. "
-            "The decider's comment follows.",
+            "Your proposal was rejected and returned for revision. The decider's comment follows.",
             None,
             None,
             "pending",
@@ -646,9 +657,7 @@ def test_revision_credits_the_exact_source_turn_captured_before_delivery(
     tmp_db: Connection, fake_clock: Clock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ticket = _park(tmp_db, CHIEF_PRINCIPAL)
-    tmp_db.execute(
-        "UPDATE tickets SET conversation_id='c_worker' WHERE id=?", (ticket.id,)
-    )
+    tmp_db.execute("UPDATE tickets SET conversation_id='c_worker' WHERE id=?", (ticket.id,))
     captured = ConversationTurnReference("c_chief", 7)
     conversation = AsyncMock()
     monkeypatch.setattr(

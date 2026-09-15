@@ -79,20 +79,18 @@ in a message that was actually sent — never because a row was written somewher
 
 ### Confirmed Worker failures
 
-A Ticket becomes `errored` when the active backend Worker reports a concrete failure.
-It also becomes `errored` when ten definite refusals prevent its proposal alert from
-reaching the non-owner holder. The Ticket stores exact failure text in `backend_error`,
-returns it through Ticket and Board reads, and shows it on the Ticket page.
+A Ticket becomes `errored` only when the active backend Worker reports a concrete
+failure. The Ticket stores exact failure text in `backend_error`, returns it through
+Ticket and Board reads, and shows it on the Ticket page.
 
 A read or owner reply does not clear the error. Derived agent state also retains the
 latest failed turn until a later start succeeds or an explicit restart resets it.
 During the attention-state upgrade, Panels acknowledges failures older than 24 hours.
 Newer failures and all later failures keep the normal persistent error behavior.
 
-A refused Worker step gives its claim back. A refused start after a proposal alert
-failure restores that persistent error. A successful start or explicit restart clears
-the error. Workspace uses only the Ticket's canonical `backend_error` for exceptional
-treatment.
+A refused Worker step gives its claim back. A failed proposal alert does not change the
+Ticket status because the Worker did not fail. Workspace uses only the Ticket's
+canonical `backend_error` for exceptional treatment.
 
 ### Work completed outside Panels
 
@@ -308,7 +306,8 @@ and the approval screen, so the two cannot disagree.
 While a proposal is pending, the Ticket page hides the leash because scope cannot change
 without silently changing the proposal's stable address.
 
-Review's single, oldest-first walk shows today's owner-addressed proposals.
+Review's single, oldest-first walk shows today's owner-addressed proposals. It also shows
+a non-owner proposal when its alert reaches the terminal refusal limit.
 A parked proposal keeps its approval and revision controls. A Worker help request is an
 addressed conversation message. Its unread state feeds the shared attention projection,
 and the answer belongs in that conversation.
@@ -341,14 +340,17 @@ override, the owner becomes the ceiling holder for the revised proposal.
 
 There is one approval gate. Every parked proposal waits on `awaiting_approval` for its
 holder. The holder or owner approves it or rejects it with focused revision guidance,
-and either way the canonical proposal resolver does the work. Review contains only
-owner-addressed proposals. Other holders use their scoped controls.
+and either way the canonical proposal resolver does the work. Review contains
+owner-addressed proposals and persistently undeliverable non-owner proposals. Other
+holders use their scoped controls until that fallback applies.
 Scope cannot change while a proposal waits, so its address stays stable.
 
-A parked proposal reaches only its holder. Owner-held proposals appear in Review and
+A parked proposal normally reaches only its holder. Owner-held proposals appear in Review and
 produce the owner's needs-approval notification. For a Chief, Sprint Item, or other
 Ticket holder, Panels sends a concise system-authored wake-up to that holder's exact
-conversation; the holder then reads the proposal from canonical Ticket state. Filing
+conversation; the holder then reads the proposal from canonical Ticket state. Ten
+definite refusals surface the same proposal to the owner without changing its holder.
+An owner decision or replacement proposal removes that extra surface. Filing
 commits the parked proposal and its durable intent without contacting the holder. Only
 the machine-lock-owned recovery loop claims and delivers that intent. It wakes on the
 database change signal and retries definite refusals. Approval, rejection, replacement,

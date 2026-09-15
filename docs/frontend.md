@@ -24,10 +24,12 @@ One screen per part of the system:
   and watchout with one progress mark per Ticket. Action tiles lead to work that needs
   Khushal, needs review, is working, is assigned, or is done. Day fields are written by
   the planning Workers, not edited on this page.
-- **Review** — the human chamber for owner-addressed Ticket proposals: one oldest-first
+- **Review** — the human chamber for owner-addressed Ticket proposals and proposals whose
+  non-owner alert failed persistently: one oldest-first
   walk with a centred item, its Ticket title, and Skip and Open Ticket top-right.
   Proposal items add their labelled recap, ask, approval, and send-back controls.
-  Proposals addressed to another holder do not appear here. Keyboard shortcuts drive the actions that apply to the current item when the
+  Proposals addressed to another holder appear only after their alert fails persistently.
+  Keyboard shortcuts drive the actions that apply to the current item when the
   cursor is not in a text field, and each item fades in as it arrives. A proposal's
   approve button sends the next ceiling, cap, and owner holder together. Send-back
   delivers the owner's comment to the exact Ticket worker conversation before it clears

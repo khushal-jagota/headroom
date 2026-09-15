@@ -132,7 +132,9 @@ def test_status_projection_policy_and_delivery_are_exact_once(tmp_path: Path) ->
     restarted.close()
 
 
-def test_needs_approval_fact_exists_only_for_owner_held_proposals(tmp_path: Path) -> None:
+def test_needs_approval_fact_includes_failed_holder_alerts_until_resolved(
+    tmp_path: Path,
+) -> None:
     conn = connect(str(tmp_path / "holder-notifications.db"))
     create_schema(conn)
     holder_ticket = _ticket(conn, 1)
@@ -160,6 +162,15 @@ def test_needs_approval_fact_exists_only_for_owner_held_proposals(tmp_path: Path
             ),
         )
 
+    surfaced = tickets[1]
+    conn.execute(
+        "INSERT INTO proposal_delivery_failures "
+        "(ticket_id,proposal_generation,conversation_id,attempt_count,last_error,"
+        "visibility_message_id,created_at,resolved_at) "
+        "VALUES (?,1,NULL,10,'write_to_backend_failed',?,20,NULL)",
+        (surfaced.id, f"proposal-delivery-failed:{surfaced.id}:1"),
+    )
+
     notifications_data.project_facts(conn)
 
     rows = conn.execute(
@@ -169,6 +180,7 @@ def test_needs_approval_fact_exists_only_for_owner_held_proposals(tmp_path: Path
     assert {(row["source_id"], row["notification_type"]) for row in rows} == {
         (f"ticket:{holder_ticket.id}:awaiting_approval", "awaiting_approval"),
         (f"ticket:{tickets[0].id}:awaiting_approval", "awaiting_approval"),
+        (f"ticket:{surfaced.id}:awaiting_approval", "awaiting_approval"),
     }
     states = conn.execute(
         "SELECT subject_id, active FROM notification_attention_state "
@@ -176,8 +188,20 @@ def test_needs_approval_fact_exists_only_for_owner_held_proposals(tmp_path: Path
         tuple(ticket.id for ticket in tickets),
     ).fetchall()
     assert {str(row["subject_id"]): bool(row["active"]) for row in states} == {
-        ticket.id: ticket == tickets[0] for ticket in tickets
+        ticket.id: ticket.id in {tickets[0].id, surfaced.id} for ticket in tickets
     }
+
+    conn.execute(
+        "UPDATE proposal_delivery_failures SET resolved_at=21 WHERE ticket_id=?",
+        (surfaced.id,),
+    )
+    notifications_data.project_facts(conn)
+    state = conn.execute(
+        "SELECT active FROM notification_attention_state "
+        "WHERE subject_id=? AND notification_type='awaiting_approval'",
+        (surfaced.id,),
+    ).fetchone()
+    assert state is not None and not bool(state["active"])
     conn.close()
 
 
@@ -247,14 +271,16 @@ def test_attention_facts_emit_once_per_rising_edge(tmp_path: Path) -> None:
     )
 
     notifications_data.project_facts(conn)
-    assert conn.execute(
-        "SELECT COUNT(*) FROM notification_facts WHERE notification_type = 'awaiting_reply'"
-    ).fetchone()[0] == 1
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM notification_facts WHERE notification_type = 'awaiting_reply'"
+        ).fetchone()[0]
+        == 1
+    )
     assert notifications_data.project_facts(conn) == 0
 
     conn.execute(
-        "UPDATE conversations SET owner_read_through_sequence = 3 "
-        "WHERE conversation_id = 'c_edges'"
+        "UPDATE conversations SET owner_read_through_sequence = 3 WHERE conversation_id = 'c_edges'"
     )
     notifications_data.project_facts(conn)
     conn.execute(
@@ -262,9 +288,7 @@ def test_attention_facts_emit_once_per_rising_edge(tmp_path: Path) -> None:
         "(conversation_id, sequence, kind, payload, created_at) "
         "VALUES ('c_edges', 4, 'message_to_owner', '{}', 5)"
     )
-    conn.execute(
-        "UPDATE conversations SET latest_sequence = 4 WHERE conversation_id = 'c_edges'"
-    )
+    conn.execute("UPDATE conversations SET latest_sequence = 4 WHERE conversation_id = 'c_edges'")
     notifications_data.project_facts(conn)
 
     assert [
@@ -424,9 +448,12 @@ def test_permission_and_question_events_share_the_reply_edge(tmp_path: Path) -> 
         ((1, '{"ask_id":"a1"}'), (2, '{"ask_id":"a2"}')),
     )
     notifications_data.project_facts(conn)
-    assert conn.execute(
-        "SELECT COUNT(*) FROM notification_facts WHERE notification_type = 'awaiting_reply'"
-    ).fetchone()[0] == 1
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM notification_facts WHERE notification_type = 'awaiting_reply'"
+        ).fetchone()[0]
+        == 1
+    )
 
     conn.executemany(
         "INSERT INTO conversation_events"
@@ -444,9 +471,12 @@ def test_permission_and_question_events_share_the_reply_edge(tmp_path: Path) -> 
     conn.execute("UPDATE conversations SET latest_sequence = 5 WHERE conversation_id = 'c_asks'")
     notifications_data.project_facts(conn)
 
-    assert conn.execute(
-        "SELECT COUNT(*) FROM notification_facts WHERE notification_type = 'awaiting_reply'"
-    ).fetchone()[0] == 2
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM notification_facts WHERE notification_type = 'awaiting_reply'"
+        ).fetchone()[0]
+        == 2
+    )
     conn.close()
 
 
@@ -477,9 +507,12 @@ def test_not_compacted_maintenance_does_not_project_a_worker_completion(
 
     notifications_data.project_facts(conn)
 
-    assert conn.execute(
-        "SELECT COUNT(*) FROM notification_facts WHERE source_kind = 'conversation'"
-    ).fetchone()[0] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM notification_facts WHERE source_kind = 'conversation'"
+        ).fetchone()[0]
+        == 0
+    )
     state = conn.execute(
         "SELECT active FROM notification_attention_state "
         "WHERE subject_kind = 'ticket' AND subject_id = ? "

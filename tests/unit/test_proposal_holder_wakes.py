@@ -30,6 +30,7 @@ from planner.core.config import Config
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect
 from planner.core.loops import BackgroundLoops, start_background_loops
+from planner.days import data as days_data
 from planner.message_delivery.contracts import MessageDeliveryResult
 from planner.message_delivery.service import send_system_message
 from planner.proposal_holder_wakes import data as wake_data
@@ -42,11 +43,19 @@ from planner.proposal_holder_wakes.runtime import (
 from planner.proposal_holder_wakes.runtime import (
     _deliver_pending_wakes as deliver_pending_wakes,
 )
+from planner.runtime import worker_step_readiness
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
 from planner.runtime.logic.worker_step_prompt import proposal_returned_for_revision_prompt
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap, TicketStatus
+from planner.tickets.contracts import (
+    NO_FURTHER,
+    TITLE_MAX_CHARS,
+    AtCap,
+    StageOwnershipMode,
+    TicketStatus,
+)
+from planner.worker_types.configuration import configured_worker_type_registry
 
 
 def _target(conn: Connection, holder: Principal, *, now: int = 1) -> str:
@@ -83,10 +92,17 @@ def _wake_state(conn: Connection, ticket_id: str) -> str:
     return str(row["state"])
 
 
-def _reject(conn: Connection, ticket_id: str, *, now: int = 3) -> None:
+def _fail_current_wake(conn: Connection, ticket_id: str, *, now: int = 3) -> None:
     conn.execute(
-        "UPDATE tickets SET conversation_id='c_worker' WHERE id=?", (ticket_id,)
+        "UPDATE proposal_holder_wakes SET delivery_attempt=? WHERE ticket_id=?",
+        (PROPOSAL_WAKE_MAXIMUM_ATTEMPTS, ticket_id),
     )
+    wake = wake_data.claim_due(conn, now=now, ticket_id=ticket_id)[0]
+    assert wake_data.record_terminal_failure(conn, wake, error="write_to_backend_failed", now=now)
+
+
+def _reject(conn: Connection, ticket_id: str, *, now: int = 3) -> None:
+    conn.execute("UPDATE tickets SET conversation_id='c_worker' WHERE id=?", (ticket_id,))
     tickets_data.return_for_revision(
         conn,
         ticket_id,
@@ -105,8 +121,13 @@ def _link_worker_conversation(conn: Connection, ticket_id: str, *, now: int = 1)
         (now,),
     )
     tickets_data.write_ticket_conversation_start(
-        conn, ticket_id, conversation_id="c_worker", backend="codex",
-        model="test-model", reasoning_effort=None, now=now,
+        conn,
+        ticket_id,
+        conversation_id="c_worker",
+        backend="codex",
+        model="test-model",
+        reasoning_effort=None,
+        now=now,
     )
 
 
@@ -312,11 +333,20 @@ def test_definite_refusal_advances_attempt_then_recovery_delivers_once(
 
 def test_definite_refusal_backoff_is_exponential_and_capped() -> None:
     assert [proposal_wake_refusal_retry_delay(attempt) for attempt in range(1, 11)] == [
-        1, 2, 4, 8, 16, 32, 60, 60, 60, 60,
+        1,
+        2,
+        4,
+        8,
+        16,
+        32,
+        60,
+        60,
+        60,
+        60,
     ]
 
 
-@pytest.mark.parametrize("later_action", ["rejection", "replacement", "restart"])
+@pytest.mark.parametrize("later_action", ["rejection", "replacement", "approval"])
 def test_tenth_refusal_visibility_is_retried_after_later_ticket_changes(
     tmp_db: Connection,
     fake_clock: Clock,
@@ -332,15 +362,16 @@ def test_tenth_refusal_visibility_is_retried_after_later_ticket_changes(
     )
     monkeypatch.setattr(
         "planner.proposal_holder_wakes.runtime.message_delivery_service.send_system_message",
-        AsyncMock(return_value=MessageDeliveryResult(
-            CHIEF_PRINCIPAL, "c_chief", PromptDeliveryRefused(
-                PromptDeliveryRefusalReason.write_to_backend_failed
+        AsyncMock(
+            return_value=MessageDeliveryResult(
+                CHIEF_PRINCIPAL,
+                "c_chief",
+                PromptDeliveryRefused(PromptDeliveryRefusalReason.write_to_backend_failed),
             )
-        )),
+        ),
     )
     monkeypatch.setattr(
-        "planner.proposal_holder_wakes.runtime.message_delivery_service."
-        "send_ticket_outbox_message",
+        "planner.proposal_holder_wakes.runtime.message_delivery_service.send_ticket_outbox_message",
         AsyncMock(
             return_value=MessageDeliveryResult(
                 Principal(PrincipalKind.ticket, ticket_id),
@@ -357,27 +388,35 @@ def test_tenth_refusal_visibility_is_retried_after_later_ticket_changes(
     assert asyncio.run(deliver_pending_wakes(conversations, tmp_db, fake_clock)) == 0
     ticket = tickets_data.read_ticket(tmp_db, ticket_id)
     assert _wake_state(tmp_db, ticket_id) == "failed"
-    assert ticket.ticket_status is TicketStatus.errored
-    assert ticket.backend_error == (
-        "Proposal alert failed after 10 delivery attempts: write_to_backend_failed"
-    )
-    assert len(wake_data.unrecorded_proposal_delivery_failures(
-        tmp_db, ticket_id=ticket_id
-    )) == 1
+    assert ticket.ticket_status is TicketStatus.awaiting_approval
+    assert ticket.backend_error is None
+    assert ticket.ceiling_holder == CHIEF_PRINCIPAL
+    assert len(wake_data.unrecorded_proposal_delivery_failures(tmp_db, ticket_id=ticket_id)) == 1
 
     if later_action == "rejection":
         _reject(tmp_db, ticket_id, now=3)
-        assert tickets_data.read_ticket(tmp_db, ticket_id).ticket_status is TicketStatus.errored
-        assert wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
+        assert tickets_data.read_ticket(tmp_db, ticket_id).ticket_status is TicketStatus.agent
     elif later_action == "replacement":
         _file(tmp_db, ticket_id, body="Replacement", now=3)
-        assert tickets_data.read_ticket(tmp_db, ticket_id).ticket_status is TicketStatus.errored
-        assert wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
+        assert (
+            tickets_data.read_ticket(tmp_db, ticket_id).ticket_status
+            is TicketStatus.awaiting_approval
+        )
     else:
-        tickets_data.clear_ticket_error_for_restart(tmp_db, ticket_id, now=3)
+        tickets_data.accept_proposal(
+            tmp_db,
+            ticket_id,
+            field="success",
+            principal=OWNER_PRINCIPAL,
+            now=3,
+            next_ceiling="needs_approach",
+            at_cap=AtCap.propose,
+            next_holder=OWNER_PRINCIPAL,
+        )
 
-    if later_action != "rejection":
-        conversations.record_proposal_delivery_failed.side_effect = None
+    assert not wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
+
+    conversations.record_proposal_delivery_failed.side_effect = None
     asyncio.run(
         deliver_pending_wakes(
             conversations,
@@ -386,13 +425,8 @@ def test_tenth_refusal_visibility_is_retried_after_later_ticket_changes(
             ticket_id=ticket_id,
         )
     )
-    assert len(wake_data.unrecorded_proposal_delivery_failures(
-        tmp_db, ticket_id=ticket_id
-    )) == 1
+    assert len(wake_data.unrecorded_proposal_delivery_failures(tmp_db, ticket_id=ticket_id)) == 1
     assert conversations.record_proposal_delivery_failed.await_count == 2
-    if later_action == "rejection":
-        assert tickets_data.read_ticket(tmp_db, ticket_id).ticket_status is TicketStatus.agent
-        assert not wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
 
 
 @pytest.mark.parametrize("later_action", ["approval", "replacement"])
@@ -427,17 +461,18 @@ def test_a_stale_tenth_refusal_cannot_fail_newer_ticket_state(
     expected_wake_state = "cancelled" if later_action == "approval" else "pending"
     assert _wake_state(tmp_db, ticket_id) == expected_wake_state
     expected_status = (
-        TicketStatus.empty
-        if later_action == "approval"
-        else TicketStatus.awaiting_approval
+        TicketStatus.empty if later_action == "approval" else TicketStatus.awaiting_approval
     )
     assert tickets_data.read_ticket(tmp_db, ticket_id).ticket_status is expected_status
-    assert tmp_db.execute(
-        "SELECT 1 FROM proposal_delivery_failures WHERE ticket_id=?", (ticket_id,)
-    ).fetchone() is None
+    assert (
+        tmp_db.execute(
+            "SELECT 1 FROM proposal_delivery_failures WHERE ticket_id=?", (ticket_id,)
+        ).fetchone()
+        is None
+    )
 
 
-def test_acceptance_preserves_the_failure_until_the_next_worker_start(
+def test_owner_acceptance_clears_surfacing_without_leaving_an_error(
     tmp_db: Connection, fake_clock: Clock
 ) -> None:
     ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
@@ -447,18 +482,14 @@ def test_acceptance_preserves_the_failure_until_the_next_worker_start(
         "UPDATE proposal_holder_wakes SET delivery_attempt=? WHERE ticket_id=?",
         (PROPOSAL_WAKE_MAXIMUM_ATTEMPTS, ticket_id),
     )
-    wake = wake_data.claim_due(
-        tmp_db, now=fake_clock.now_unix(), ticket_id=ticket_id
-    )[0]
-    assert wake_data.record_terminal_failure(
-        tmp_db, wake, error="write_to_backend_failed", now=3
-    )
+    wake = wake_data.claim_due(tmp_db, now=fake_clock.now_unix(), ticket_id=ticket_id)[0]
+    assert wake_data.record_terminal_failure(tmp_db, wake, error="write_to_backend_failed", now=3)
 
     accepted = tickets_data.accept_proposal(
         tmp_db,
         ticket_id,
         field="success",
-        principal=CHIEF_PRINCIPAL,
+        principal=OWNER_PRINCIPAL,
         now=4,
         next_ceiling="needs_approach",
         at_cap=AtCap.propose,
@@ -467,8 +498,111 @@ def test_acceptance_preserves_the_failure_until_the_next_worker_start(
 
     assert accepted.stage == "needs_approach"
     assert accepted.pending_proposal is None
-    assert accepted.ticket_status is TicketStatus.errored
+    assert accepted.ticket_status is TicketStatus.empty
+    assert accepted.backend_error is None
+    assert not wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
+    attention = tmp_db.execute(
+        "SELECT active FROM notification_attention_state "
+        "WHERE subject_kind='ticket' AND subject_id=? "
+        "AND notification_type='awaiting_approval'",
+        (ticket_id,),
+    ).fetchone()
+    assert attention is not None and not bool(attention["active"])
+
+
+def test_delivered_replacement_is_not_surfaced_to_the_owner(
+    tmp_db: Connection, fake_clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
+    _file(tmp_db, ticket_id, body="First", now=2)
+    _fail_current_wake(tmp_db, ticket_id)
     assert wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
+
+    _file(tmp_db, ticket_id, body="Replacement", now=4)
+    assert not wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
+    attention = tmp_db.execute(
+        "SELECT active FROM notification_attention_state "
+        "WHERE subject_kind='ticket' AND subject_id=? "
+        "AND notification_type='awaiting_approval'",
+        (ticket_id,),
+    ).fetchone()
+    assert attention is not None and not bool(attention["active"])
+    send = AsyncMock(
+        return_value=MessageDeliveryResult(CHIEF_PRINCIPAL, "c_chief", PromptDeliveryStarted())
+    )
+    monkeypatch.setattr(
+        "planner.proposal_holder_wakes.runtime.message_delivery_service.send_system_message",
+        send,
+    )
+
+    assert asyncio.run(deliver_pending_wakes(object(), tmp_db, fake_clock)) == 1  # type: ignore[arg-type]
+    assert _wake_state(tmp_db, ticket_id) == "delivered"
+    assert not wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
+
+
+def test_owner_acceptance_after_failed_alert_can_enter_user_owned_stage(
+    tmp_db: Connection,
+) -> None:
+    ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
+    tickets_data.set_stage_ownership(
+        tmp_db,
+        ticket_id,
+        stage="needs_approach",
+        ownership_mode=StageOwnershipMode.user,
+        now=1,
+    )
+    _file(tmp_db, ticket_id, body="Ready", now=2)
+    _fail_current_wake(tmp_db, ticket_id)
+
+    accepted = tickets_data.accept_proposal(
+        tmp_db,
+        ticket_id,
+        field="success",
+        principal=OWNER_PRINCIPAL,
+        now=4,
+        next_ceiling="needs_approach",
+        at_cap=AtCap.propose,
+        next_holder=CHIEF_PRINCIPAL,
+    )
+
+    assert accepted.stage == "needs_approach"
+    assert accepted.ticket_status is TicketStatus.empty
+    assert accepted.backend_error is None
+
+
+def test_owner_acceptance_after_failed_alert_can_finish_the_ticket(
+    tmp_db: Connection,
+) -> None:
+    ticket = tickets_data.create_ticket(
+        tmp_db,
+        title="Finish after surfaced alert",
+        principal=CHIEF_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note="Work",
+        stated_ceiling="needs_closeout",
+        stated_at_cap=AtCap.propose,
+    )
+    for field in ("success", "approach", "plan", "implementation", "closeout"):
+        _file(tmp_db, ticket.id, body=field, now=2)
+    assert tickets_data.read_ticket(tmp_db, ticket.id).stage == "needs_closeout"
+    _fail_current_wake(tmp_db, ticket.id)
+
+    accepted = tickets_data.accept_proposal(
+        tmp_db,
+        ticket.id,
+        field="closeout",
+        principal=OWNER_PRINCIPAL,
+        now=4,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
+        next_holder=CHIEF_PRINCIPAL,
+    )
+
+    assert accepted.stage == "done"
+    assert accepted.ticket_status is TicketStatus.empty
+    assert accepted.backend_error is None
 
 
 def test_queued_wake_stays_claimed_until_durable_replay_settles_it(
@@ -599,16 +733,10 @@ def test_claimed_wake_does_not_block_proposal_writers(
         assert _wake_state(tmp_db, ticket_id) == "pending"
 
 
-def test_claimed_wake_does_not_block_ticket_deletion(
-    tmp_db: Connection, fake_clock: Clock
-) -> None:
+def test_claimed_wake_does_not_block_ticket_deletion(tmp_db: Connection, fake_clock: Clock) -> None:
     ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
     _file(tmp_db, ticket_id, body="Delete", now=2)
-    assert len(
-        wake_data.claim_due(
-            tmp_db, now=fake_clock.now_unix(), ticket_id=ticket_id
-        )
-    ) == 1
+    assert len(wake_data.claim_due(tmp_db, now=fake_clock.now_unix(), ticket_id=ticket_id)) == 1
 
     deleted = tickets_data.delete_ticket(
         tmp_db,
@@ -618,9 +746,12 @@ def test_claimed_wake_does_not_block_ticket_deletion(
     )
 
     assert deleted.ticket_id == ticket_id
-    assert tmp_db.execute(
-        "SELECT 1 FROM proposal_holder_wakes WHERE ticket_id=?", (ticket_id,)
-    ).fetchone() is None
+    assert (
+        tmp_db.execute(
+            "SELECT 1 FROM proposal_holder_wakes WHERE ticket_id=?", (ticket_id,)
+        ).fetchone()
+        is None
+    )
 
 
 def test_rejection_messages_retry_in_order_with_stable_attempt_identity(
@@ -634,9 +765,7 @@ def test_rejection_messages_retry_in_order_with_stable_attempt_identity(
             MessageDeliveryResult(
                 Principal(PrincipalKind.ticket, ticket_id),
                 "c-worker",
-                PromptDeliveryRefused(
-                    PromptDeliveryRefusalReason.write_to_backend_failed
-                ),
+                PromptDeliveryRefused(PromptDeliveryRefusalReason.write_to_backend_failed),
             ),
             MessageDeliveryResult(
                 Principal(PrincipalKind.ticket, ticket_id),
@@ -651,31 +780,36 @@ def test_rejection_messages_retry_in_order_with_stable_attempt_identity(
         )
     )
     monkeypatch.setattr(
-        "planner.proposal_holder_wakes.runtime.message_delivery_service."
-        "send_ticket_outbox_message",
+        "planner.proposal_holder_wakes.runtime.message_delivery_service.send_ticket_outbox_message",
         send,
     )
 
-    assert asyncio.run(
-        deliver_pending_wakes(
-            object(),  # type: ignore[arg-type]
-            tmp_db,
-            fake_clock,
-            ticket_id=ticket_id,
+    assert (
+        asyncio.run(
+            deliver_pending_wakes(
+                object(),  # type: ignore[arg-type]
+                tmp_db,
+                fake_clock,
+                ticket_id=ticket_id,
+            )
         )
-    ) == 0
+        == 0
+    )
     tmp_db.execute(
         "UPDATE ticket_rejection_messages SET retry_at=? WHERE ticket_id=?",
         (fake_clock.now_unix(), ticket_id),
     )
-    assert asyncio.run(
-        deliver_pending_wakes(
-            object(),  # type: ignore[arg-type]
-            tmp_db,
-            fake_clock,
-            ticket_id=ticket_id,
+    assert (
+        asyncio.run(
+            deliver_pending_wakes(
+                object(),  # type: ignore[arg-type]
+                tmp_db,
+                fake_clock,
+                ticket_id=ticket_id,
+            )
         )
-    ) == 2
+        == 2
+    )
     ids = [call.kwargs["sender_message_id"] for call in send.await_args_list]
     assert ids == [
         f"ticket-rejection:{ticket_id}:1:1:1",
@@ -686,6 +820,69 @@ def test_rejection_messages_retry_in_order_with_stable_attempt_identity(
         proposal_returned_for_revision_prompt(),
         "Add evidence.",
     ]
+
+
+def test_owner_rejection_of_surfaced_proposal_sends_only_canonical_messages(
+    tmp_db: Connection, fake_clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
+    _link_worker_conversation(tmp_db, ticket_id)
+    _file(tmp_db, ticket_id, body="Reject", now=2)
+    _fail_current_wake(tmp_db, ticket_id)
+
+    _reject(tmp_db, ticket_id, now=4)
+
+    ticket = tickets_data.read_ticket(tmp_db, ticket_id)
+    assert ticket.ticket_status is TicketStatus.agent
+    assert ticket.backend_error is None
+    assert not wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
+    assert (
+        tmp_db.execute(
+            "SELECT COUNT(*) AS count FROM ticket_rejection_messages WHERE ticket_id=?",
+            (ticket_id,),
+        ).fetchone()["count"]
+        == 2
+    )
+    day_id = "day_2026-09-15"
+    days_data.add_day_ticket(tmp_db, day_id, ticket_id, 4)
+    assert (
+        worker_step_readiness.worker_step_blocker(
+            tmp_db,
+            ticket,
+            planning_day_id=day_id,
+            worker_type_definition=configured_worker_type_registry().require("coding"),
+        )
+        == "the Ticket is at agent, so no worker step is due"
+    )
+
+    send = AsyncMock(
+        return_value=MessageDeliveryResult(
+            Principal(PrincipalKind.ticket, ticket_id),
+            "c_worker",
+            PromptDeliveryStarted(),
+        )
+    )
+    monkeypatch.setattr(
+        "planner.proposal_holder_wakes.runtime.message_delivery_service.send_ticket_outbox_message",
+        send,
+    )
+    assert (
+        asyncio.run(
+            deliver_pending_wakes(object(), tmp_db, fake_clock, ticket_id=ticket_id)  # type: ignore[arg-type]
+        )
+        == 2
+    )
+    assert [call.args[4] for call in send.await_args_list] == [
+        proposal_returned_for_revision_prompt(),
+        "Add evidence.",
+    ]
+    assert wake_data.due(tmp_db, now=fake_clock.now_unix()) == ()
+    assert (
+        wake_data.claim_due_rejection_message(
+            tmp_db, ticket_id=ticket_id, now=fake_clock.now_unix()
+        )
+        is None
+    )
 
 
 def test_uncertain_rejection_message_is_settled_and_its_successor_proceeds(
@@ -709,32 +906,36 @@ def test_uncertain_rejection_message_is_settled_and_its_successor_proceeds(
         )
     )
     monkeypatch.setattr(
-        "planner.proposal_holder_wakes.runtime.message_delivery_service."
-        "send_ticket_outbox_message",
+        "planner.proposal_holder_wakes.runtime.message_delivery_service.send_ticket_outbox_message",
         send,
     )
     conversations = AsyncMock()
 
-    assert asyncio.run(
-        deliver_pending_wakes(
-            conversations,
-            tmp_db,
-            fake_clock,
-            ticket_id=ticket_id,
+    assert (
+        asyncio.run(
+            deliver_pending_wakes(
+                conversations,
+                tmp_db,
+                fake_clock,
+                ticket_id=ticket_id,
+            )
         )
-    ) == 1
-    assert asyncio.run(
-        deliver_pending_wakes(
-            conversations,
-            tmp_db,
-            fake_clock,
-            ticket_id=ticket_id,
+        == 1
+    )
+    assert (
+        asyncio.run(
+            deliver_pending_wakes(
+                conversations,
+                tmp_db,
+                fake_clock,
+                ticket_id=ticket_id,
+            )
         )
-    ) == 0
+        == 0
+    )
     assert send.await_count == 2
     states = tmp_db.execute(
-        "SELECT sequence,state FROM ticket_rejection_messages "
-        "WHERE ticket_id=? ORDER BY sequence",
+        "SELECT sequence,state FROM ticket_rejection_messages WHERE ticket_id=? ORDER BY sequence",
         (ticket_id,),
     ).fetchall()
     assert [tuple(row) for row in states] == [(1, "uncertain"), (2, "delivered")]
@@ -1069,9 +1270,9 @@ def test_queued_delivery_retains_lock_and_refuses_restart_after_future_completes
                     break
                 await asyncio.sleep(0.01)
             assert send.await_count >= 1
-            assert {
-                call.kwargs["sender_message_id"] for call in send.await_args_list
-            } == {send.await_args_list[0].kwargs["sender_message_id"]}
+            assert {call.kwargs["sender_message_id"] for call in send.await_args_list} == {
+                send.await_args_list[0].kwargs["sender_message_id"]
+            }
             assert _wake_state(tmp_db, ticket_id) == "delivering"
             with wake_loop._in_flight_lock:
                 assert not wake_loop._in_flight
@@ -1095,7 +1296,7 @@ def test_queued_delivery_retains_lock_and_refuses_restart_after_future_completes
         core_loops._active = None
 
 
-@pytest.mark.parametrize("terminal_state", ["delivered", "cancelled", "uncertain"])
+@pytest.mark.parametrize("terminal_state", ["delivered", "cancelled", "uncertain", "failed"])
 def test_terminal_wake_state_does_not_retain_machine_lock(
     tmp_db: Connection,
     fake_clock: Clock,

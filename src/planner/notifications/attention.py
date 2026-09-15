@@ -93,15 +93,16 @@ def conversation_attention(
     }
 
 
-def capture_ticket_attention(
-    conn: sqlite3.Connection, ticket_id: str, occurred_at: int
-) -> None:
+def capture_ticket_attention(conn: sqlite3.Connection, ticket_id: str, occurred_at: int) -> None:
     # Local import keeps the conversation storage and work-attention projection acyclic.
     from planner.work_attention import ticket_assignment_from_values
 
     row = conn.execute(
         "SELECT id, stage, worker_type, ticket_status, pending_proposal, ceiling_holder, "
-        "stage_ownership_overrides, default_stage_ownership_mode, conversation_id "
+        "stage_ownership_overrides, default_stage_ownership_mode, conversation_id, "
+        "EXISTS (SELECT 1 FROM proposal_delivery_failures failure "
+        "WHERE failure.ticket_id=tickets.id AND failure.resolved_at IS NULL) "
+        "AS proposal_surfaced_to_owner "
         "FROM tickets WHERE id=?",
         (ticket_id,),
     ).fetchone()
@@ -117,7 +118,7 @@ def capture_ticket_attention(
         "awaiting_approval": (
             str(row["ticket_status"]) == "awaiting_approval"
             and row["pending_proposal"] is not None
-            and owner_holds
+            and (owner_holds or bool(row["proposal_surfaced_to_owner"]))
         ),
         "assigned": ticket_assignment_from_values(
             stage=str(row["stage"]),
@@ -142,9 +143,7 @@ def capture_conversation_attention(
     attention = conversation_attention(conn, conversation_id).get(conversation_id)
     if attention is None:
         return
-    for row in conn.execute(
-        "SELECT id FROM tickets WHERE conversation_id=?", (conversation_id,)
-    ):
+    for row in conn.execute("SELECT id FROM tickets WHERE conversation_id=?", (conversation_id,)):
         capture_ticket_attention(conn, str(row["id"]), occurred_at)
     for row in conn.execute(
         "SELECT CASE WHEN i.id IS NULL THEN 'agent' ELSE 'sprint_item' END subject_kind, "

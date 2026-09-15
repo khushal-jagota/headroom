@@ -171,8 +171,9 @@ replacement, or deletion cancels or supersedes any undelivered wake in its own d
 transaction. A wake that already reached the wire is harmless because the holder reads
 canonical Ticket state. Definite refusal advances the attempt identity and uses delays
 of 1, 2, 4, 8, 16, 32, then 60 seconds. Ten total attempts end in `failed`. The same
-transaction records immutable failure visibility and marks the source Ticket `errored`.
-The failure settles the wake, so later messages can proceed. A queued prompt stays `delivering`
+transaction records immutable failure visibility and surfaces the proposal to the owner.
+It does not change the proposal holder or Ticket status. The failure settles the wake,
+so later messages can proceed. A queued prompt stays `delivering`
 because that queue is process-local; the loop probes the same sender identity until the
 conversation reports durable delivery.
 
@@ -190,9 +191,8 @@ Process exit then releases the lock. A post-wire transcript failure becomes term
 The source Ticket's Worker conversation shows one compact failure row. This row never
 goes to the backend. Its stable identity and immutable failure history let the loop
 recover the row after a storage fault, cancellation, replacement, or restart. A later
-successful Worker start resolves this specific error. A refused start restores it.
-Returning the proposal for revision likewise retains the error until its Worker message
-starts successfully. Explicit restart also resolves it.
+proposal decision or replacement removes the owner surface. Runtime-row recovery remains
+independent, so the compact row still appears after a decision, replacement, or restart.
 
 _Code paths:_ `src/planner/proposal_holder_wakes/`, `src/planner/core/loops.py`.
 
@@ -266,10 +266,8 @@ _Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`,
 - **The command-line tool** (`cli.md`) is the surface the worker acts through.
 
 An errored worker-owned Ticket remains errored through reads and owner replies. A
-successful start supersedes the failed turn in derived agent state. A bounded proposal
-alert failure also survives proposal acceptance until the next Worker start succeeds.
-A refused start restores that error. A Sprint Item supervisor can use explicit restart,
-which clears the error before a new start.
+successful start supersedes the failed turn in derived agent state. A Sprint Item
+supervisor can use explicit restart, which clears the error before a new start.
 
 ---
 

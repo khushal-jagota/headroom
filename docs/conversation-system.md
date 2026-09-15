@@ -63,10 +63,11 @@ needs the owner's attention.
 
 An open conversation is handed each new row directly, so it never has to be told to
 come and look. That is why most rows are written quietly: a historical agent-message row, a tool
-call starting or finishing, a plan, a token count, a compaction, and a terminal
-proposal-alert delivery failure are shown only inside the conversation. Writing them
-does not send every other open screen back
-for a fresh copy of itself. A working agent writes dozens of those a minute, and
+call starting or finishing, a plan, a token count, and a compaction are shown only
+inside the conversation. The compact runtime row for a terminal proposal-alert failure
+is also conversation-only. Its separate durable failure record surfaces the pending
+proposal in owner attention and Review. Writing the runtime row does not send every other open screen back
+for a fresh copy of itself. A working agent writes dozens of those rows a minute, and
 announcing each one sends every open tab back for everything it is showing.
 
 The rows anything else reads still announce themselves the ordinary way: a delivered,

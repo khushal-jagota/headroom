@@ -591,7 +591,10 @@ def _board_sprint_items(
 def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
     rows = conn.execute(
         "SELECT id, title, stage, worker_type, ticket_status, ticket_status_changed_at, "
-        "pending_proposal, ceiling_holder FROM tickets "
+        "pending_proposal, ceiling_holder, "
+        "EXISTS (SELECT 1 FROM proposal_delivery_failures failure "
+        "WHERE failure.ticket_id=tickets.id AND failure.resolved_at IS NULL) "
+        "AS proposal_surfaced_to_owner FROM tickets "
         "WHERE id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) ORDER BY id",
         (day_id,),
     ).fetchall()
@@ -602,7 +605,9 @@ def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
         if ticket_status != TicketStatus.awaiting_approval.value:
             continue
         holder = json.loads(str(row["ceiling_holder"]))
-        if holder != {"kind": "owner", "id": "owner"}:
+        if holder != {"kind": "owner", "id": "owner"} and not bool(
+            row["proposal_surfaced_to_owner"]
+        ):
             continue
         worker_type_definition = registry.require(str(row["worker_type"]))
         stage = str(row["stage"])

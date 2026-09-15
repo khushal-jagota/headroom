@@ -74,7 +74,10 @@ def _ticket_rows(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sq
     placeholders = ",".join("?" for _ in ticket_ids)
     rows = conn.execute(
         "SELECT id, stage, worker_type, ticket_status, pending_proposal, ceiling_holder, "
-        "stage_ownership_overrides, default_stage_ownership_mode, conversation_id "
+        "stage_ownership_overrides, default_stage_ownership_mode, conversation_id, "
+        "EXISTS (SELECT 1 FROM proposal_delivery_failures failure "
+        "WHERE failure.ticket_id=tickets.id AND failure.resolved_at IS NULL) "
+        "AS proposal_surfaced_to_owner "
         f"FROM tickets WHERE id IN ({placeholders})",
         tuple(sorted(ticket_ids)),
     ).fetchall()
@@ -93,7 +96,7 @@ def _ticket_attention(
     awaiting_approval = (
         str(row["ticket_status"]) == TicketStatus.awaiting_approval.value
         and row["pending_proposal"] is not None
-        and owner_holds_ceiling
+        and (owner_holds_ceiling or bool(row["proposal_surfaced_to_owner"]))
     )
     awaiting_reply, running, last_turn_failed = conversation or (False, False, False)
     assigned = ticket_assignment_from_values(

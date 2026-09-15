@@ -47,6 +47,8 @@ def record_replacement(
     now: int,
 ) -> None:
     """Replace the current delivery intent and earn a fresh proposal generation."""
+    if _proposal_delivery_failures_table_exists(conn):
+        resolve_proposal_delivery_failures(conn, ticket_id, now=now)
     if holder.kind is PrincipalKind.owner:
         cancel(conn, ticket_id, now=now)
         return
@@ -70,6 +72,8 @@ def record_replacement(
 
 
 def cancel(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> None:
+    if _proposal_delivery_failures_table_exists(conn):
+        resolve_proposal_delivery_failures(conn, ticket_id, now=now)
     conn.execute(
         "UPDATE proposal_holder_wakes SET state='cancelled',updated_at=? "
         "WHERE ticket_id=? AND state != 'cancelled'",
@@ -269,9 +273,9 @@ def due_ticket_ids(conn: sqlite3.Connection, *, now: int) -> tuple[str, ...]:
             + ")"
         ).fetchall()
     }
-    return tuple(sorted(
-        proposal_ids | rejection_ids | uncertain_visibility_ids | failure_visibility_ids
-    ))
+    return tuple(
+        sorted(proposal_ids | rejection_ids | uncertain_visibility_ids | failure_visibility_ids)
+    )
 
 
 def has_delivering(conn: sqlite3.Connection) -> bool:
@@ -333,9 +337,7 @@ def unrecorded_uncertain_rejection_messages(
         + ") ORDER BY message.rejection_generation,message.sequence",
         (ticket_id,),
     ).fetchall()
-    return tuple(
-        (str(row["conversation_id"]), _rejection_message_from_row(row)) for row in rows
-    )
+    return tuple((str(row["conversation_id"]), _rejection_message_from_row(row)) for row in rows)
 
 
 def unrecorded_proposal_delivery_failures(
@@ -366,14 +368,25 @@ def unrecorded_proposal_delivery_failures(
     )
 
 
-def has_unresolved_proposal_delivery_failure(
-    conn: sqlite3.Connection, ticket_id: str
-) -> bool:
-    return conn.execute(
-        "SELECT 1 FROM proposal_delivery_failures "
-        "WHERE ticket_id=? AND resolved_at IS NULL LIMIT 1",
-        (ticket_id,),
-    ).fetchone() is not None
+def has_unresolved_proposal_delivery_failure(conn: sqlite3.Connection, ticket_id: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM proposal_delivery_failures "
+            "WHERE ticket_id=? AND resolved_at IS NULL LIMIT 1",
+            (ticket_id,),
+        ).fetchone()
+        is not None
+    )
+
+
+def _proposal_delivery_failures_table_exists(conn: sqlite3.Connection) -> bool:
+    """Keep pre-revision migration fixtures compatible with the outbox writers."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='proposal_delivery_failures'"
+        ).fetchone()
+        is not None
+    )
 
 
 def resolve_proposal_delivery_failures(
@@ -456,9 +469,7 @@ def reconcile_missing(conn: sqlite3.Connection, *, now: int) -> int:
     ).fetchall()
     for row in rows:
         holder_raw = json.loads(str(row["ceiling_holder"]))
-        holder = Principal(
-            PrincipalKind(str(holder_raw["kind"])), str(holder_raw["id"])
-        )
+        holder = Principal(PrincipalKind(str(holder_raw["kind"])), str(holder_raw["id"]))
         ticket_id = str(row["id"])
         record_replacement(
             conn,
@@ -470,9 +481,7 @@ def reconcile_missing(conn: sqlite3.Connection, *, now: int) -> int:
     return len(rows)
 
 
-def mark_delivered(
-    conn: sqlite3.Connection, wake: ProposalHolderWake, *, now: int
-) -> bool:
+def mark_delivered(conn: sqlite3.Connection, wake: ProposalHolderWake, *, now: int) -> bool:
     cursor = conn.execute(
         "UPDATE proposal_holder_wakes SET state='delivered',updated_at=?,delivered_at=? "
         "WHERE ticket_id=? AND proposal_generation=? AND delivery_attempt=? AND state='delivering'",
@@ -529,8 +538,8 @@ def record_terminal_failure(
     error: str,
     now: int,
 ) -> bool:
-    """Settle one exact refusal, retain visibility, and mark its Ticket errored."""
-    from planner.tickets import data as tickets_data
+    """Settle one exact refusal and retain its owner and runtime visibility."""
+    from planner.notifications.attention import capture_ticket_attention
 
     with _transaction(conn):
         cursor = conn.execute(
@@ -541,7 +550,11 @@ def record_terminal_failure(
         )
         if cursor.rowcount != 1:
             return False
-        ticket = tickets_data.read_ticket(conn, wake.ticket_id)
+        ticket = conn.execute(
+            "SELECT conversation_id FROM tickets WHERE id=?", (wake.ticket_id,)
+        ).fetchone()
+        if ticket is None:
+            raise RuntimeError("claimed proposal wake has no source Ticket")
         conn.execute(
             "INSERT INTO proposal_delivery_failures "
             "(ticket_id,proposal_generation,conversation_id,attempt_count,last_error,"
@@ -549,22 +562,14 @@ def record_terminal_failure(
             (
                 wake.ticket_id,
                 wake.proposal_generation,
-                ticket.conversation_id,
+                ticket["conversation_id"],
                 wake.delivery_attempt,
                 error,
                 f"proposal-delivery-failed:{wake.ticket_id}:{wake.proposal_generation}",
                 now,
             ),
         )
-        tickets_data.mark_ticket_errored(
-            conn,
-            wake.ticket_id,
-            error=(
-                f"Proposal alert failed after {wake.delivery_attempt} delivery attempts: "
-                f"{error}"
-            ),
-            now=now,
-        )
+        capture_ticket_attention(conn, wake.ticket_id, now)
         return True
 
 
