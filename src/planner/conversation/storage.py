@@ -447,7 +447,8 @@ class ConversationStore:
             raise ValueError("through_sequence must be non-negative")
         conn = self._connect()
         try:
-            with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
                 conn.execute(
                     "UPDATE conversations SET owner_read_through_sequence = "
                     "MAX(owner_read_through_sequence, MIN(?, latest_sequence)) "
@@ -455,6 +456,11 @@ class ConversationStore:
                     (through_sequence, conversation_id),
                 )
                 capture_conversation_attention(conn, conversation_id, self._integer_now())
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+            else:
+                conn.execute("COMMIT")
             row = conn.execute(
                 "SELECT * FROM conversations WHERE conversation_id = ?",
                 (conversation_id,),

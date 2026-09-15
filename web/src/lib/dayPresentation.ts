@@ -46,12 +46,14 @@ export function dayVisualTicket(
   if (ticket.is_done || ticket.stage === "done") {
     return { ticket, state: "completed", ariaLabel: "Done", group };
   }
-  if (group === "assigned") {
+  if (presentation.state === "upcoming" && group === "assigned") {
     return { ticket, state: "current-paired", ariaLabel: "Assigned", group };
   }
   if (
+    presentation.state === "upcoming" &&
     (group === "awaiting_approval" ||
-      group === "waiting_for_kickoff")
+      group === "waiting_for_kickoff" ||
+      group === "awaiting_reply")
   ) {
     return { ticket, state: "current-awaiting-approval", ariaLabel: "To review", group };
   }
