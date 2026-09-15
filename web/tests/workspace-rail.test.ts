@@ -84,7 +84,7 @@ describe("Workspace rail", () => {
       "Errored",
       "Agent",
       "Waiting to Closeout",
-      "Awaiting approval",
+      "Awaiting an agent's approval",
       "Empty",
       "Blocked",
       "Done"
@@ -120,6 +120,23 @@ describe("Workspace rail", () => {
       ["non-owner"],
       ["empty"]
     ]);
+  });
+
+  it("gives every visible Tickets group a distinct label", () => {
+    const groups = workspaceGroups([
+      card("owner", { awaiting_approval: true }),
+      card("agent-owner", {
+        ticket_status: "awaiting_approval",
+        awaiting_approval: false
+      })
+    ]);
+    const labels = groups.map((group) => group.label);
+
+    expect(labels).toEqual([
+      "Awaiting approval",
+      "Awaiting an agent's approval"
+    ]);
+    expect(new Set(labels).size).toBe(labels.length);
   });
 
   it("draws a board of only quiet Tickets rather than nothing", () => {
@@ -360,34 +377,50 @@ describe("Workspace rail", () => {
   });
 
   it("uses the filled blue state with labels for each attention row", () => {
-    expect(workspaceRowMarkPresentation("attention", "Message")).toEqual({
+    expect(workspaceRowMarkPresentation("attention")).toEqual({
       state: "current-awaiting-approval",
       ariaLabel: "Message"
     });
-    expect(workspaceRowMarkPresentation("attention", "Needs you")).toEqual({
-      state: "current-awaiting-approval",
-      ariaLabel: "Needs you"
-    });
-    expect(workspaceRowMarkPresentation("working", "Needs you")).toEqual({
+    expect(workspaceRowMarkPresentation("working")).toEqual({
       state: "current-running",
       ariaLabel: "Agent working"
     });
   });
 
-  it("lets any Item attention win over any active work", () => {
+  it("leaves an Item with only child proposals unmarked", () => {
     expect(
       workspaceSprintItemRowMark(
-        item("attention", {
-          assigned: true,
+        item("proposals", {
           ticket_rollup: {
             awaiting_reply: false,
-            awaiting_approval: false,
-            assigned: false,
+            awaiting_approval: true,
+            assigned: true,
+            agent_state: "idle"
+          }
+        })
+      )
+    ).toBeNull();
+  });
+
+  it("marks an Item when one child message awaits a reply", () => {
+    expect(
+      workspaceSprintItemRowMark(
+        item("message", {
+          awaiting_approval: true,
+          assigned: true,
+          agent_state: "working",
+          ticket_rollup: {
+            awaiting_reply: true,
+            awaiting_approval: true,
+            assigned: true,
             agent_state: "working"
           }
         })
       )
     ).toBe("attention");
+  });
+
+  it("uses active work only when no message awaits a reply", () => {
     expect(
       workspaceSprintItemRowMark(
         item("working", {

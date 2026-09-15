@@ -112,7 +112,7 @@
 
 {#snippet ticketRow(card: BoardCard, withPriority: boolean, insideItemId: string | null)}
   {@const mark = workspaceTicketRowMark(card)}
-  {@const presentation = workspaceRowMarkPresentation(mark, "Message")}
+  {@const presentation = workspaceRowMarkPresentation(mark)}
   <SprintTicketRow
     priority={withPriority ? card.priority : null}
     title={card.title}
@@ -172,7 +172,7 @@
 {#snippet sprintItem(item: WorkspaceRailItem)}
   {@const open = opening.openItemId === item.id}
   {@const selected = opening.markedItemId === item.id}
-  {@const presentation = workspaceRowMarkPresentation(item.mark, "Needs you")}
+  {@const presentation = workspaceRowMarkPresentation(item.mark)}
   <section
     class="board-workspace-item"
     class:board-workspace-item--selected={selected}
