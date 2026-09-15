@@ -1987,6 +1987,7 @@ def delete_ticket(
     admission.require_direct_or_supervisor_principal(principal, "delete_ticket")
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
+        proposal_holder_wakes_data.require_not_delivering(conn, ticket_id)
         _require_current_supervisor_parent(
             conn, ticket, supervisor_sprint_item_id, principal, "Ticket deletion"
         )

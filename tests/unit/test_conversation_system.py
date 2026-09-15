@@ -15,6 +15,7 @@ import logging
 import sqlite3
 from collections.abc import Callable, Coroutine, Iterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -94,8 +95,14 @@ from planner.conversation.system import (
     MODEL_THINKING_PULSE_INTERVAL_SECONDS,
     SqliteProcessConversationSystem,
 )
-from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.core.clock import TestClock as MutableClock
+from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
+from planner.proposal_holder_wakes.runtime import deliver_pending_wakes
+from planner.runtime import conversation_start
+from planner.tickets import data as tickets_data
+from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap
+from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 
 VENDOR_SESSION_CURSOR = "vendor-session-1"
 
@@ -588,6 +595,59 @@ def test_atomic_prompt_batch_quarantines_post_wire_transaction_failure(
         assert harness.backend("c").live_children == 0
         assert not await harness.system.is_running("c")
         assert await harness.events("c") == ()
+
+    _run(exercise)
+
+
+def test_system_wake_record_failure_is_terminal_uncertain_without_resend(
+    harness: _Harness, tmp_path: Path
+) -> None:
+    async def exercise() -> None:
+        conn = connect(str(tmp_path / "conversations.db"))
+        ticket = tickets_data.create_ticket(
+            conn,
+            title="Uncertain wake",
+            principal=CHIEF_PRINCIPAL,
+            now=1,
+            title_max_chars=TITLE_MAX_CHARS,
+            worker_type="coding",
+            kickoff_note="Work",
+            stated_ceiling="needs_success",
+            stated_at_cap=AtCap.propose,
+        )
+        tickets_data.file_current_proposal_with_recap(
+            conn,
+            ticket.id,
+            body="Ready",
+            recap="Ready",
+            principal=Principal(PrincipalKind.ticket, ticket.id),
+            now=2,
+        )
+        clock = MutableClock(datetime.now().astimezone())
+
+        async def fail_prompt_record(*_args: Any, **_kwargs: Any) -> Any:
+            raise sqlite3.OperationalError("injected prompt record failure")
+
+        harness.store.append_delivered_prompt = fail_prompt_record  # type: ignore[method-assign]
+        assert await deliver_pending_wakes(harness.system, conn, clock) == 0
+        conversation_id = conversation_start.read_agent_conversation(
+            conn, CHIEF_SETTINGS_KEY
+        )
+        assert conversation_id is not None
+        backend = harness.backend(conversation_id)
+        assert len(backend.writes) == 1
+        assert backend.stops == 1
+        row = conn.execute(
+            "SELECT state,last_error FROM proposal_holder_wakes WHERE ticket_id=?",
+            (ticket.id,),
+        ).fetchone()
+        assert row is not None
+        assert row["state"] == "uncertain"
+        assert "automatic retry disabled" in row["last_error"]
+
+        assert await deliver_pending_wakes(harness.system, conn, clock) == 0
+        assert len(backend.writes) == 1
+        conn.close()
 
     _run(exercise)
 

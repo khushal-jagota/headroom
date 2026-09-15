@@ -3,24 +3,30 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from sqlite3 import Connection
+from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
 
 from planner.conversation.contracts import (
+    PromptDeliveryQueued,
     PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
 )
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import Clock
+from planner.core.clock import TestClock as MutableClock
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.core.db import connect
+from planner.core.errors import ErrorCode, PlannerError
 from planner.message_delivery.contracts import MessageDeliveryResult
 from planner.message_delivery.service import send_system_message
 from planner.proposal_holder_wakes import data as wake_data
 from planner.proposal_holder_wakes.contracts import proposal_ready_message
-from planner.proposal_holder_wakes.runtime import deliver_pending_wakes
+from planner.proposal_holder_wakes.runtime import ProposalHolderWakeLoop, deliver_pending_wakes
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap
@@ -216,6 +222,191 @@ def test_definite_refusal_advances_attempt_then_recovery_delivers_once(
         f"proposal-holder-wake:{ticket_id}:1:2",
     ]
     assert transcript == [proposal_ready_message(ticket_id)]
+
+
+def test_queued_wake_stays_claimed_until_durable_replay_settles_it(
+    tmp_db: Connection, fake_clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
+    _file(tmp_db, ticket_id, body="Queued", now=2)
+    send = AsyncMock(
+        side_effect=(
+            MessageDeliveryResult(CHIEF_PRINCIPAL, "c", PromptDeliveryQueued(1)),
+            MessageDeliveryResult(CHIEF_PRINCIPAL, "c", PromptDeliveryStarted()),
+        )
+    )
+    monkeypatch.setattr(
+        "planner.proposal_holder_wakes.runtime.message_delivery_service.send_system_message",
+        send,
+    )
+    assert asyncio.run(deliver_pending_wakes(object(), tmp_db, fake_clock)) == 0  # type: ignore[arg-type]
+    row = tmp_db.execute(
+        "SELECT state FROM proposal_holder_wakes WHERE ticket_id=?", (ticket_id,)
+    ).fetchone()
+    assert row is not None and row["state"] == "delivering"
+    assert asyncio.run(
+        deliver_pending_wakes(
+            object(),  # type: ignore[arg-type]
+            tmp_db,
+            fake_clock,
+            ticket_id=ticket_id,
+            resume_delivering=True,
+        )
+    ) == 1
+    assert send.await_args_list[0].kwargs["sender_message_id"] == (
+        send.await_args_list[1].kwargs["sender_message_id"]
+    )
+
+
+def test_queued_wake_crash_recovery_reuses_the_same_attempt(
+    tmp_db: Connection, fake_clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
+    _file(tmp_db, ticket_id, body="Queued crash", now=2)
+    send = AsyncMock(
+        side_effect=(
+            MessageDeliveryResult(CHIEF_PRINCIPAL, "c", PromptDeliveryQueued(1)),
+            MessageDeliveryResult(CHIEF_PRINCIPAL, "c", PromptDeliveryStarted()),
+        )
+    )
+    monkeypatch.setattr(
+        "planner.proposal_holder_wakes.runtime.message_delivery_service.send_system_message",
+        send,
+    )
+    asyncio.run(deliver_pending_wakes(object(), tmp_db, fake_clock))  # type: ignore[arg-type]
+    assert wake_data.recover_interrupted_deliveries(
+        tmp_db, now=fake_clock.now_unix()
+    ) == 1
+    assert asyncio.run(deliver_pending_wakes(object(), tmp_db, fake_clock)) == 1  # type: ignore[arg-type]
+    assert send.await_args_list[0].kwargs["sender_message_id"] == (
+        send.await_args_list[1].kwargs["sender_message_id"]
+    )
+
+
+@pytest.mark.parametrize("operation", ["approve", "replace"])
+def test_claimed_wake_serializes_against_proposal_writers(
+    tmp_db: Connection,
+    fake_clock: Clock,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
+    _file(tmp_db, ticket_id, body="Original", now=2)
+    db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()["file"])
+    started = asyncio.Event()
+    release = asyncio.Event()
+    send_count = 0
+
+    async def blocked_send(*_args: object, **_kwargs: object) -> MessageDeliveryResult:
+        nonlocal send_count
+        send_count += 1
+        started.set()
+        await release.wait()
+        return MessageDeliveryResult(CHIEF_PRINCIPAL, "c", PromptDeliveryStarted())
+
+    monkeypatch.setattr(
+        "planner.proposal_holder_wakes.runtime.message_delivery_service.send_system_message",
+        blocked_send,
+    )
+
+    async def exercise() -> None:
+        delivery = asyncio.create_task(
+            deliver_pending_wakes(
+                object(),  # type: ignore[arg-type]
+                tmp_db,
+                fake_clock,
+                ticket_id=ticket_id,
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=2)
+        racer = connect(db_path)
+        try:
+            assert await deliver_pending_wakes(
+                object(),  # type: ignore[arg-type]
+                racer,
+                fake_clock,
+                ticket_id=ticket_id,
+                resume_delivering=True,
+            ) == 0
+            with pytest.raises(PlannerError) as refused:
+                if operation == "approve":
+                    tickets_data.accept_proposal(
+                        racer,
+                        ticket_id,
+                        field="success",
+                        principal=CHIEF_PRINCIPAL,
+                        now=3,
+                        next_ceiling="needs_approach",
+                        at_cap=AtCap.propose,
+                        next_holder=OWNER_PRINCIPAL,
+                    )
+                else:
+                    _file(racer, ticket_id, body="Replacement", now=3)
+            assert refused.value.code is ErrorCode.already_running
+        finally:
+            racer.close()
+        release.set()
+        assert await delivery == 1
+
+    asyncio.run(exercise())
+    assert send_count == 1
+    pending = tickets_data.read_ticket(tmp_db, ticket_id).pending_proposal
+    assert pending is not None and pending.body == "Original"
+
+
+def test_recurring_loop_retries_temporary_startup_refusal_without_restart(
+    tmp_db: Connection, fake_clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
+    _file(tmp_db, ticket_id, body="Loop retry", now=2)
+    db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()["file"])
+    attempts = 0
+
+    async def temporary_refusal(
+        *_args: object, **_kwargs: object
+    ) -> MessageDeliveryResult:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            test_clock = cast(MutableClock, fake_clock)
+            test_clock.set(test_clock.now() + timedelta(seconds=2))
+            return MessageDeliveryResult(
+                CHIEF_PRINCIPAL,
+                "c",
+                PromptDeliveryRefused(
+                    PromptDeliveryRefusalReason.write_to_backend_failed
+                ),
+            )
+        return MessageDeliveryResult(CHIEF_PRINCIPAL, "c", PromptDeliveryStarted())
+
+    monkeypatch.setattr(
+        "planner.proposal_holder_wakes.runtime.message_delivery_service.send_system_message",
+        temporary_refusal,
+    )
+
+    async def exercise() -> None:
+        loop = ProposalHolderWakeLoop(
+            db_path,
+            fake_clock,
+            conversation_system=object(),  # type: ignore[arg-type]
+            asyncio_loop=asyncio.get_running_loop(),
+        )
+        loop.start(0.05)  # type: ignore[arg-type]
+        try:
+            row = None
+            for _ in range(100):
+                row = tmp_db.execute(
+                    "SELECT state FROM proposal_holder_wakes WHERE ticket_id=?", (ticket_id,)
+                ).fetchone()
+                if row is not None and row["state"] == "delivered":
+                    break
+                await asyncio.sleep(0.02)
+            assert row is not None and row["state"] == "delivered"
+        finally:
+            await asyncio.to_thread(loop.stop)
+
+    asyncio.run(exercise())
+    assert attempts == 2
 
 
 def test_replacement_supersedes_generation_and_owner_never_gets_an_outbox_row(

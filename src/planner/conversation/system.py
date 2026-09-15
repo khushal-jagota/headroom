@@ -1747,10 +1747,14 @@ class SqliteProcessConversationSystem:
                 owner_read_through_sequence=owner_read_through_sequence,
             )
         except BaseException:
-            # The text may already be on a live agent's wire, so the line is not emptied
-            # into a turn that could now be running.
+            # The backend accepted the prompt but its durable record did not commit.
+            # Quarantine that session before reopening the line: retrying the same
+            # sender id cannot deduplicate an event the record never acquired.
+            child = state.child
+            if child is not None:
+                await self._discard_child(state, child)
             self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
-            raise
+            return PromptDeliveryUncertain()
         if started:
             return PromptDeliveryStarted()
         refusal = delivery.refusal_reason

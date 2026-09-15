@@ -242,6 +242,10 @@ def test_fresh_database_is_built_and_marked_at_the_current_revision(
     }
     assert day_columns["midday_reconciliation"] == "''"
     assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
+    wake_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='proposal_holder_wakes'"
+    ).fetchone()[0]
+    assert "'pending','delivering','delivered','uncertain','cancelled'" in wake_sql
     # Carried so a fresh database is not distinguishable from one the old ladder built.
     # An older checkout reads this marker to decide what it still has to do.
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 37

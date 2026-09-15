@@ -4,9 +4,40 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from planner.core.contracts import Principal, PrincipalKind
+from planner.core.errors import ErrorCode, PlannerError
 from planner.proposal_holder_wakes.contracts import ProposalHolderWake, proposal_ready_message
+
+
+@contextmanager
+def _transaction(conn: sqlite3.Connection) -> Iterator[None]:
+    if conn.in_transaction:
+        yield
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    else:
+        conn.execute("COMMIT")
+
+
+def require_not_delivering(conn: sqlite3.Connection, ticket_id: str) -> None:
+    row = conn.execute(
+        "SELECT 1 FROM proposal_holder_wakes WHERE ticket_id=? AND state='delivering'",
+        (ticket_id,),
+    ).fetchone()
+    if row is not None:
+        raise PlannerError(
+            ErrorCode.already_running,
+            "the proposal holder wake is currently being delivered",
+            {"ticket_id": ticket_id},
+        )
 
 
 def record_replacement(
@@ -18,6 +49,7 @@ def record_replacement(
     now: int,
 ) -> None:
     """Replace the current delivery intent and earn a fresh proposal generation."""
+    require_not_delivering(conn, ticket_id)
     if holder.kind is PrincipalKind.owner:
         cancel(conn, ticket_id, now=now)
         return
@@ -41,9 +73,10 @@ def record_replacement(
 
 
 def cancel(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> None:
+    require_not_delivering(conn, ticket_id)
     conn.execute(
         "UPDATE proposal_holder_wakes SET state='cancelled',updated_at=? "
-        "WHERE ticket_id=? AND state='pending'",
+        "WHERE ticket_id=? AND state IN ('pending','delivered','uncertain')",
         (now, ticket_id),
     )
 
@@ -71,6 +104,75 @@ def due(
             retry_at=int(row["retry_at"]),
         )
         for row in rows
+    )
+
+
+def claim_due(
+    conn: sqlite3.Connection,
+    *,
+    now: int,
+    ticket_id: str | None = None,
+    resume_delivering: bool = False,
+) -> tuple[ProposalHolderWake, ...]:
+    """Claim due rows before I/O so proposal writers serialize behind the send."""
+    with _transaction(conn):
+        candidates = list(due(conn, now=now, ticket_id=ticket_id))
+        resumed: ProposalHolderWake | None = None
+        if resume_delivering and ticket_id is not None:
+            row = conn.execute(
+                "SELECT ticket_id,proposal_generation,delivery_attempt,holder_kind,holder_id,"
+                "message,retry_at FROM proposal_holder_wakes WHERE ticket_id=? "
+                "AND state='delivering'",
+                (ticket_id,),
+            ).fetchone()
+            if row is not None:
+                resumed = _wake_from_row(row)
+        claimed: list[ProposalHolderWake] = []
+        for wake in candidates:
+            cursor = conn.execute(
+                "UPDATE proposal_holder_wakes SET state='delivering',updated_at=? "
+                "WHERE ticket_id=? AND proposal_generation=? AND delivery_attempt=? "
+                "AND state='pending'",
+                (now, wake.ticket_id, wake.proposal_generation, wake.delivery_attempt),
+            )
+            if cursor.rowcount == 1:
+                claimed.append(wake)
+        if resumed is not None:
+            claimed.append(resumed)
+        return tuple(claimed)
+
+
+def recover_interrupted_deliveries(conn: sqlite3.Connection, *, now: int) -> int:
+    """Return crash-abandoned claims to pending without changing their stable ID."""
+    cursor = conn.execute(
+        "UPDATE proposal_holder_wakes SET state='pending',retry_at=?,"
+        "last_error='delivery interrupted by process restart',updated_at=? "
+        "WHERE state='delivering'",
+        (now, now),
+    )
+    return cursor.rowcount
+
+
+def due_ticket_ids(conn: sqlite3.Connection, *, now: int) -> tuple[str, ...]:
+    return tuple(
+        str(row["ticket_id"])
+        for row in conn.execute(
+            "SELECT ticket_id FROM proposal_holder_wakes "
+            "WHERE state IN ('pending','delivering') AND retry_at<=? "
+            "ORDER BY retry_at,ticket_id",
+            (now,),
+        ).fetchall()
+    )
+
+
+def _wake_from_row(row: sqlite3.Row) -> ProposalHolderWake:
+    return ProposalHolderWake(
+        ticket_id=str(row["ticket_id"]),
+        proposal_generation=int(row["proposal_generation"]),
+        delivery_attempt=int(row["delivery_attempt"]),
+        holder=Principal(PrincipalKind(str(row["holder_kind"])), str(row["holder_id"])),
+        message=str(row["message"]),
+        retry_at=int(row["retry_at"]),
     )
 
 
@@ -103,7 +205,7 @@ def mark_delivered(
 ) -> bool:
     cursor = conn.execute(
         "UPDATE proposal_holder_wakes SET state='delivered',updated_at=?,delivered_at=? "
-        "WHERE ticket_id=? AND proposal_generation=? AND delivery_attempt=? AND state='pending'",
+        "WHERE ticket_id=? AND proposal_generation=? AND delivery_attempt=? AND state='delivering'",
         (
             now,
             now,
@@ -111,6 +213,17 @@ def mark_delivered(
             wake.proposal_generation,
             wake.delivery_attempt,
         ),
+    )
+    return cursor.rowcount == 1
+
+
+def cancel_claimed(conn: sqlite3.Connection, wake: ProposalHolderWake, *, now: int) -> bool:
+    """Cancel only the exact stale claim the delivery worker already owns."""
+    cursor = conn.execute(
+        "UPDATE proposal_holder_wakes SET state='cancelled',updated_at=? "
+        "WHERE ticket_id=? AND proposal_generation=? AND delivery_attempt=? "
+        "AND state='delivering'",
+        (now, wake.ticket_id, wake.proposal_generation, wake.delivery_attempt),
     )
     return cursor.rowcount == 1
 
@@ -124,9 +237,9 @@ def record_refusal(
     now: int,
 ) -> bool:
     cursor = conn.execute(
-        "UPDATE proposal_holder_wakes SET delivery_attempt=delivery_attempt+1,"
+        "UPDATE proposal_holder_wakes SET state='pending',delivery_attempt=delivery_attempt+1,"
         "retry_at=?,last_error=?,updated_at=? WHERE ticket_id=? AND proposal_generation=? "
-        "AND delivery_attempt=? AND state='pending'",
+        "AND delivery_attempt=? AND state='delivering'",
         (
             retry_at,
             error,
@@ -148,9 +261,9 @@ def record_exception(
     now: int,
 ) -> bool:
     cursor = conn.execute(
-        "UPDATE proposal_holder_wakes SET retry_at=?,last_error=?,updated_at=? "
+        "UPDATE proposal_holder_wakes SET state='pending',retry_at=?,last_error=?,updated_at=? "
         "WHERE ticket_id=? AND proposal_generation=? AND delivery_attempt=? "
-        "AND state='pending'",
+        "AND state='delivering'",
         (
             retry_at,
             error,
@@ -159,5 +272,17 @@ def record_exception(
             wake.proposal_generation,
             wake.delivery_attempt,
         ),
+    )
+    return cursor.rowcount == 1
+
+
+def mark_uncertain(
+    conn: sqlite3.Connection, wake: ProposalHolderWake, *, error: str, now: int
+) -> bool:
+    cursor = conn.execute(
+        "UPDATE proposal_holder_wakes SET state='uncertain',last_error=?,updated_at=? "
+        "WHERE ticket_id=? AND proposal_generation=? AND delivery_attempt=? "
+        "AND state='delivering'",
+        (error, now, wake.ticket_id, wake.proposal_generation, wake.delivery_attempt),
     )
     return cursor.rowcount == 1

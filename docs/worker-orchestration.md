@@ -160,6 +160,25 @@ send and is best-effort after the commit, so it cannot undo the rejection.
 
 _Code path:_ `src/planner/tickets/actions.py`.
 
+## Waking a non-owner proposal holder
+
+Filing a parked proposal commits a durable wake row before delivery begins. A sender
+claims that row as `delivering`; while claimed, approval, rejection, replacement, and
+other proposal cancellation refuse rather than letting an obsolete wake land after the
+proposal changes. Definite refusal advances the attempt identity and returns the row to
+`pending`. A queued prompt stays `delivering` because that queue is process-local; the
+loop probes the same sender identity until the conversation reports durable delivery.
+
+The proposal-holder wake loop shares the process machine lock and server event loop with
+the other reconcilers. Database change signals wake it promptly, while its periodic tick
+is the retry backstop. It schedules at most one delivery per Ticket at a time. Startup
+returns crash-abandoned `delivering` rows to `pending` without changing their attempt
+identity, so conversation idempotency either discovers the earlier success or safely
+recreates a lost queue. A post-wire transcript failure becomes terminal `uncertain`; it
+is visible for repair and never retried automatically.
+
+_Code paths:_ `src/planner/proposal_holder_wakes/`, `src/planner/core/loops.py`.
+
 ## The seam: one conversation contract
 
 Everything above talks to the conversation system through one small contract: start a

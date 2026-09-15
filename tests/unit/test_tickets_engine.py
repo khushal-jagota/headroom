@@ -424,7 +424,12 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
     assert claimed_again is not None
     t = claimed_again
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="parked", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+        tmp_db,
+        t.id,
+        body="parked",
+        principal=Principal(PrincipalKind.ticket, t.id),
+        now=now,
+        recap="Current work",
     )
     assert t.ticket_status is TicketStatus.awaiting_approval
 
@@ -548,7 +553,12 @@ def _park_pending(
         (f"conv-{t.id}", t.id),
     )
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="parked", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+        tmp_db,
+        t.id,
+        body="parked",
+        principal=Principal(PrincipalKind.ticket, t.id),
+        now=now,
+        recap="Current work",
     )
     assert t.ticket_status is TicketStatus.awaiting_approval
     return t
@@ -605,7 +615,7 @@ def test_a02_gating_chain_one_state_per_accept(
         tmp_db,
         t.id,
         body="success body",
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=Principal(PrincipalKind.ticket, t.id),
         now=now,
         recap="Current work",
     )
@@ -617,7 +627,7 @@ def test_a02_gating_chain_one_state_per_accept(
         tmp_db,
         t.id,
         body="approach body",
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=Principal(PrincipalKind.ticket, t.id),
         now=now,
         recap="Current work",
     )
@@ -628,7 +638,7 @@ def test_a02_gating_chain_one_state_per_accept(
         tmp_db,
         t.id,
         body="plan body",
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=Principal(PrincipalKind.ticket, t.id),
         now=now,
         recap="Current work",
     )
@@ -639,7 +649,7 @@ def test_a02_gating_chain_one_state_per_accept(
         tmp_db,
         t.id,
         body="implementation body",
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=Principal(PrincipalKind.ticket, t.id),
         now=now,
         recap="Current work",
     )
@@ -656,11 +666,21 @@ def test_a03_ceiling_auto_accept_until_cap_then_pending(
     _scope(tmp_db, t, "needs_plan", AtCap.propose, fake_clock)
 
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="s", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+        tmp_db,
+        t.id,
+        body="s",
+        principal=Principal(PrincipalKind.ticket, t.id),
+        now=now,
+        recap="Current work",
     )
     assert t.stage == "needs_approach"
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="a", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+        tmp_db,
+        t.id,
+        body="a",
+        principal=Principal(PrincipalKind.ticket, t.id),
+        now=now,
+        recap="Current work",
     )
     assert t.stage == "needs_plan"
 
@@ -668,7 +688,7 @@ def test_a03_ceiling_auto_accept_until_cap_then_pending(
         tmp_db,
         t.id,
         body="plan body",
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=Principal(PrincipalKind.ticket, t.id),
         now=now,
         recap="Current work",
     )
@@ -692,7 +712,7 @@ def test_a05_one_pending_proposal_per_ticket_supersede(
         tmp_db,
         t.id,
         body="first body",
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=Principal(PrincipalKind.ticket, t.id),
         now=now,
         recap="Current work",
     )
@@ -703,7 +723,7 @@ def test_a05_one_pending_proposal_per_ticket_supersede(
         tmp_db,
         t.id,
         body="second body",
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=Principal(PrincipalKind.ticket, t.id),
         now=now,
         recap="Current work",
     )
@@ -722,7 +742,7 @@ def test_a06_edit_accept_stores_edited_text(
         tmp_db,
         t.id,
         body="draft body",
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=Principal(PrincipalKind.ticket, t.id),
         now=now,
         recap="Current work",
     )
@@ -761,11 +781,21 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
         ("implementation", "i"),
     ]:
         t1 = data.file_current_proposal_with_recap(
-            tmp_db, t1.id, body=body, principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+            tmp_db,
+            t1.id,
+            body=body,
+            principal=Principal(PrincipalKind.ticket, t1.id),
+            now=now,
+            recap="Current work",
         )
     assert t1.stage == "needs_closeout"
     t1 = data.file_current_proposal_with_recap(
-        tmp_db, t1.id, body="c", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+        tmp_db,
+        t1.id,
+        body="c",
+        principal=Principal(PrincipalKind.ticket, t1.id),
+        now=now,
+        recap="Current work",
     )
     assert t1.stage == "needs_closeout"
     assert t1.pending_proposal is not None
@@ -798,7 +828,12 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
         ("closeout", "c"),
     ]:
         t2 = data.file_current_proposal_with_recap(
-            tmp_db, t2.id, body=body, principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+            tmp_db,
+            t2.id,
+            body=body,
+            principal=Principal(PrincipalKind.ticket, t2.id),
+            now=now,
+            recap="Current work",
         )
     assert t2.stage == "done"
     assert all(
@@ -818,11 +853,21 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
     _scope(tmp_db, t3, "needs_implementation", AtCap.propose, fake_clock)
     for _field, body in [("success", "s"), ("approach", "a"), ("plan", "p")]:
         t3 = data.file_current_proposal_with_recap(
-            tmp_db, t3.id, body=body, principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+            tmp_db,
+            t3.id,
+            body=body,
+            principal=Principal(PrincipalKind.ticket, t3.id),
+            now=now,
+            recap="Current work",
         )
     assert t3.stage == "needs_implementation"
     t3 = data.file_current_proposal_with_recap(
-        tmp_db, t3.id, body="i", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+        tmp_db,
+        t3.id,
+        body="i",
+        principal=Principal(PrincipalKind.ticket, t3.id),
+        now=now,
+        recap="Current work",
     )
     assert t3.stage == "needs_implementation"
     assert t3.pending_proposal is not None
@@ -852,7 +897,12 @@ def test_a08_recap_rules(tmp_db: Connection, cfg: Config, fake_clock: TestClock)
 
     _scope(tmp_db, t, "needs_approach", AtCap.propose, fake_clock)
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="s", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+        tmp_db,
+        t.id,
+        body="s",
+        principal=Principal(PrincipalKind.ticket, t.id),
+        now=now,
+        recap="Current work",
     )
     assert t.stage == "needs_approach"
 
@@ -876,7 +926,12 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
 
     t = _create(tmp_db, cfg, fake_clock)
     t = data.file_current_proposal_with_recap(
-        tmp_db, t.id, body="body", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+        tmp_db,
+        t.id,
+        body="body",
+        principal=Principal(PrincipalKind.ticket, t.id),
+        now=now,
+        recap="Current work",
     )
     assert t.pending_proposal is not None
     row_before = _ticket_row(tmp_db, t.id)
@@ -971,13 +1026,23 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
     assert t.at_cap is AtCap.stop
     with pytest.raises(PlannerError) as e_rest:
         data.file_current_proposal_with_recap(
-            tmp_db, t.id, body="x", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+            tmp_db,
+            t.id,
+            body="x",
+            principal=Principal(PrincipalKind.ticket, t.id),
+            now=now,
+            recap="Current work",
         )
     assert e_rest.value.code is ErrorCode.at_cap_stop
 
     t2 = _create(tmp_db, cfg, fake_clock)
     t2 = data.file_current_proposal_with_recap(
-        tmp_db, t2.id, body="body", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+        tmp_db,
+        t2.id,
+        body="body",
+        principal=Principal(PrincipalKind.ticket, t2.id),
+        now=now,
+        recap="Current work",
     )
     t2 = data.accept_proposal(
         tmp_db,
@@ -991,14 +1056,24 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
     )
     assert t2.stage == "needs_approach"
     t2 = data.file_current_proposal_with_recap(
-        tmp_db, t2.id, body="draft", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+        tmp_db,
+        t2.id,
+        body="draft",
+        principal=Principal(PrincipalKind.ticket, t2.id),
+        now=now,
+        recap="Current work",
     )
     assert t2.pending_proposal is not None
     assert t2.stage == "needs_approach"
 
     t3 = _create(tmp_db, cfg, fake_clock)
     t3 = data.file_current_proposal_with_recap(
-        tmp_db, t3.id, body="body", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+        tmp_db,
+        t3.id,
+        body="body",
+        principal=Principal(PrincipalKind.ticket, t3.id),
+        now=now,
+        recap="Current work",
     )
     t3 = data.accept_proposal(
         tmp_db,
@@ -1012,7 +1087,12 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
     )
     assert t3.ceiling == "needs_plan"
     t3 = data.file_current_proposal_with_recap(
-        tmp_db, t3.id, body="a", principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+        tmp_db,
+        t3.id,
+        body="a",
+        principal=Principal(PrincipalKind.ticket, t3.id),
+        now=now,
+        recap="Current work",
     )
     assert t3.stage == "needs_plan"
     assert t3.ceiling == "needs_plan"
@@ -1030,7 +1110,12 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
         ("closeout", "c"),
     ]:
         t4 = data.file_current_proposal_with_recap(
-            tmp_db, t4.id, body=body, principal=TEST_TICKET_PRINCIPAL, now=now, recap="Current work"
+            tmp_db,
+            t4.id,
+            body=body,
+            principal=Principal(PrincipalKind.ticket, t4.id),
+            now=now,
+            recap="Current work",
         )
     assert t4.stage == "done"
     assert t4.ceiling == ceiling_before
@@ -1148,7 +1233,12 @@ def test_completing_a_blocker_releases_its_links_and_frees_the_target(
     else:
         draft = "  Earlier draft\n\n```text\nΔ unapproved\n```\n"
         data.file_current_proposal_with_recap(
-            tmp_db, blocker.id, body=draft, recap="work", principal=TEST_TICKET_PRINCIPAL, now=now
+            tmp_db,
+            blocker.id,
+            body=draft,
+            recap="work",
+            principal=Principal(PrincipalKind.ticket, blocker.id),
+            now=now,
         )
         dropped = data.drop_ticket(tmp_db, blocker.id, principal=OWNER_PRINCIPAL, now=now)
         assert dropped.pending_proposal is None
@@ -1177,7 +1267,7 @@ def test_a_failed_completion_rolls_back_its_link_release_and_settlements(
         blocker.id,
         body="retain draft",
         recap="work",
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=Principal(PrincipalKind.ticket, blocker.id),
         now=now,
     )
     blocker_row_before = _ticket_row(tmp_db, blocker.id)
@@ -1272,7 +1362,7 @@ def test_direct_plan_accept_derives_implementation_ownership_status(
             tmp_db,
             ticket.id,
             body=f"{field} body",
-            principal=TEST_TICKET_PRINCIPAL,
+            principal=Principal(PrincipalKind.ticket, ticket.id),
             now=now,
             recap="Current work",
         )
@@ -1317,7 +1407,7 @@ def test_auto_accepted_plan_derives_implementation_ownership_status(
             tmp_db,
             ticket.id,
             body=f"{field} body",
-            principal=TEST_TICKET_PRINCIPAL,
+            principal=Principal(PrincipalKind.ticket, ticket.id),
             now=now,
             recap="Current work",
         )
@@ -1328,7 +1418,7 @@ def test_auto_accepted_plan_derives_implementation_ownership_status(
         tmp_db,
         ticket.id,
         body="plan body",
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=Principal(PrincipalKind.ticket, ticket.id),
         now=now,
         recap="Current work",
     )
