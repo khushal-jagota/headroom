@@ -12,6 +12,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.contracts import (
     ConversationAccess,
@@ -58,7 +59,7 @@ def ticket(tmp_db: Connection) -> Ticket:
     return create_ticket(
         tmp_db,
         title="A conversation ticket",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
         worker_type="coding",
@@ -139,16 +140,10 @@ class _LinkWatchingConversationSystem:
         held_prompt_id: str,
         mode: HeldPromptPromotionMode,
     ) -> HeldPromptPromotionFate | None:
-        return await self._system.promote_held_prompt(
-            conversation_id, held_prompt_id, mode
-        )
+        return await self._system.promote_held_prompt(conversation_id, held_prompt_id, mode)
 
-    async def discard_held_prompt(
-        self, conversation_id: str, held_prompt_id: str
-    ) -> bool:
-        return await self._system.discard_held_prompt(
-            conversation_id, held_prompt_id
-        )
+    async def discard_held_prompt(self, conversation_id: str, held_prompt_id: str) -> bool:
+        return await self._system.discard_held_prompt(conversation_id, held_prompt_id)
 
     async def kill(self, conversation_id: str) -> None:
         await self._system.kill(conversation_id)
@@ -268,7 +263,7 @@ def test_an_immutable_record_mismatch_refuses_association_and_kills_the_start(
             (
                 conversation_id,
                 worker_conversation_role_materials(ticket.id).role_text,
-                '[["PLAN_ACTOR","worker"],["PLAN_TICKET_ID","' + ticket.id + '"]]'
+                '[["PLAN_ACTOR","worker"],["PLAN_TICKET_ID","' + ticket.id + '"]]',
             ),
         )
         system = _KillWatchingConversationSystem(kill_fails=kill_fails)
@@ -294,9 +289,7 @@ def test_an_immutable_record_mismatch_refuses_association_and_kills_the_start(
     asyncio.run(exercise())
 
 
-def test_the_start_request_carries_every_resolved_value(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
+def test_the_start_request_carries_every_resolved_value(tmp_db: Connection, ticket: Ticket) -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()
         seen: list[ConversationStartRequest] = []
@@ -353,9 +346,7 @@ def test_the_start_request_carries_every_resolved_value(
     asyncio.run(exercise())
 
 
-def test_a_change_on_a_held_message_records_nothing_yet(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
+def test_a_change_on_a_held_message_records_nothing_yet(tmp_db: Connection, ticket: Ticket) -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()
         conversation_id = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
@@ -363,8 +354,13 @@ def test_a_change_on_a_held_message_records_nothing_yet(
         await system.send(conversation_id, text_message_content("incumbent"), sender_label="owner")
 
         fate = await _sent(
-            system, tmp_db, ticket.id, "work the step",
-            mode=PromptDeliveryMode.run_when_free, model="sonnet", now=20,
+            system,
+            tmp_db,
+            ticket.id,
+            "work the step",
+            mode=PromptDeliveryMode.run_when_free,
+            model="sonnet",
+            now=20,
         )
 
         assert isinstance(fate, PromptDeliveryQueued)
@@ -375,9 +371,7 @@ def test_a_change_on_a_held_message_records_nothing_yet(
     asyncio.run(exercise())
 
 
-def test_a_change_on_a_refused_delivery_records_nothing(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
+def test_a_change_on_a_refused_delivery_records_nothing(tmp_db: Connection, ticket: Ticket) -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()
         conversation_id = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
@@ -461,16 +455,10 @@ class _RelinkingConversationSystem:
         held_prompt_id: str,
         mode: HeldPromptPromotionMode,
     ) -> HeldPromptPromotionFate | None:
-        return await self._system.promote_held_prompt(
-            conversation_id, held_prompt_id, mode
-        )
+        return await self._system.promote_held_prompt(conversation_id, held_prompt_id, mode)
 
-    async def discard_held_prompt(
-        self, conversation_id: str, held_prompt_id: str
-    ) -> bool:
-        return await self._system.discard_held_prompt(
-            conversation_id, held_prompt_id
-        )
+    async def discard_held_prompt(self, conversation_id: str, held_prompt_id: str) -> bool:
+        return await self._system.discard_held_prompt(conversation_id, held_prompt_id)
 
     async def kill(self, conversation_id: str) -> None:
         await self._system.kill(conversation_id)
@@ -665,9 +653,7 @@ def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_c
             folder_path=original_folder,
             now=2,
         )
-        tmp_db.execute(
-            "UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id)
-        )
+        tmp_db.execute("UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id))
         system = InMemoryConversationSystem()
         conversation_id = await _started(
             system,

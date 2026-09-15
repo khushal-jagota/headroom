@@ -391,12 +391,25 @@ def apply_policy(conn: sqlite3.Connection, now: int) -> int:
         subscriptions = active_subscription_ids(conn)
         for row in rows:
             payload = json.loads(str(row["payload"]))
-            fact = NotificationFact(
-                fact_id=str(row["fact_id"]),
-                notification_type=str(row["notification_type"]),
-                subject=_principal_from_stored_subject(
+            fact_id = str(row["fact_id"])
+            try:
+                subject = _principal_from_stored_subject(
                     str(row["subject_kind"]), str(row["subject_id"])
-                ),
+                )
+            except ValueError:
+                # Old arbitrary-agent facts have no Principal in the closed vocabulary.
+                # They never matched a saved preference, so preserve that suppression.
+                conn.execute(
+                    "INSERT INTO notification_decisions(fact_id, outcome, decided_at) "
+                    "VALUES (?, 'suppress', ?)",
+                    (fact_id, now),
+                )
+                decisions += 1
+                continue
+            fact = NotificationFact(
+                fact_id=fact_id,
+                notification_type=str(row["notification_type"]),
+                subject=subject,
                 # Facts copied by notification_subjects retain their original payload
                 # so an undecided pre-upgrade fact remains usable without rewriting history.
                 subject_label=str(

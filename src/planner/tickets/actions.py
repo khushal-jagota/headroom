@@ -11,7 +11,7 @@ from typing import Final
 from planner.conversation.contracts import ConversationSystem, PromptDeliveryRefused
 from planner.conversation.message_content import text_message_content
 from planner.core import links as core_links
-from planner.core.contracts import LinkKind, Priority
+from planner.core.contracts import LinkKind, Principal, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.runtime.conversation_start import send_to_ticket_conversation
@@ -68,7 +68,7 @@ def create_ticket(
     conn: sqlite3.Connection,
     *,
     title: str,
-    actor: str,
+    principal: Principal,
     now: int,
     title_max_chars: int,
     worker_type: str,
@@ -104,7 +104,7 @@ def create_ticket(
     return tickets_data.create_ticket(
         conn,
         title=title,
-        actor=actor,
+        principal=principal,
         now=now,
         title_max_chars=title_max_chars,
         kickoff_note=kickoff_note,
@@ -129,7 +129,7 @@ def create_ticket_from_external_work(
     title: str,
     target_stage: str,
     provided_values: Mapping[str, str],
-    actor: str,
+    principal: Principal,
     now: int,
     title_max_chars: int,
     worker_type: str,
@@ -167,7 +167,7 @@ def create_ticket_from_external_work(
         kickoff_note=kickoff_note,
         target_stage=target_stage,
         provided_values=provided_values,
-        actor=actor,
+        principal=principal,
         now=now,
         title_max_chars=title_max_chars,
         recap=recap,
@@ -239,7 +239,7 @@ async def return_ticket_for_revision(
     ticket_id: str,
     *,
     message: str,
-    actor: str,
+    principal: Principal,
     now: int,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
@@ -263,7 +263,7 @@ async def return_ticket_for_revision(
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
     resolution.decide_return_for_revision(
         ticket,
-        actor,
+        principal,
         worker_type_definition=worker_type_definition,
     )
     expected_proposal = ticket.pending_proposal
@@ -303,7 +303,7 @@ async def return_ticket_for_revision(
         conn,
         ticket_id,
         message=message,
-        actor=actor,
+        principal=principal,
         now=now,
         expected_proposal=expected_proposal,
         supervisor_sprint_item_id=supervisor_sprint_item_id,

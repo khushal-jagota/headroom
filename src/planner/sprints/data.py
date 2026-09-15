@@ -14,7 +14,7 @@ from typing import NamedTuple, cast
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core import links as core_links
 from planner.core.clock import Clock
-from planner.core.contracts import Priority
+from planner.core.contracts import Principal, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.sprints.contracts import (
@@ -440,11 +440,11 @@ def update_supervisor_launch_configuration(
     item_id: str,
     configuration: SprintItemSupervisorLaunchConfiguration,
     *,
-    actor: str,
+    principal: Principal,
     clock: Clock,
 ) -> SprintItem:
     """Save the complete configuration that an accepted supervisor message used."""
-    admission.require_direct_actor(actor, "update_supervisor_launch_configuration")
+    admission.require_direct_principal(principal, "update_supervisor_launch_configuration")
     _load_item(conn, item_id)
     with _tx(conn):
         conn.execute(

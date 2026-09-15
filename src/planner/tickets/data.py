@@ -15,7 +15,13 @@ from typing import Protocol
 
 from planner.conversation.contracts import require_conversation_backend_key
 from planner.core import links as core_links
-from planner.core.contracts import LinkKind, Priority
+from planner.core.contracts import (
+    LinkKind,
+    Principal,
+    PrincipalKind,
+    Priority,
+    principal_legacy_actor,
+)
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.days import data as days_data
@@ -414,7 +420,7 @@ def _load_ticket_for_write(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
 
 def _seed_kickoff(
     kickoff_note: str | None,
-    actor: str,
+    principal: Principal,
     now: int,
     *,
     stage: str,
@@ -439,7 +445,7 @@ def _seed_kickoff(
     return (
         stage,
         {},
-        PendingTicketProposal("kickoff", kickoff_note, actor, now),
+        PendingTicketProposal("kickoff", kickoff_note, principal_legacy_actor(principal), now),
         TicketStatus.awaiting_approval,
     )
 
@@ -448,11 +454,22 @@ def _require_current_supervisor_parent(
     conn: sqlite3.Connection,
     ticket: Ticket,
     sprint_item_id: str | None,
+    principal: Principal,
     action: str = "Ticket review",
 ) -> None:
     """Recheck exact current parent while the resolving write holds its transaction."""
-    if sprint_item_id is None:
+    if principal.kind is not PrincipalKind.sprint_item and sprint_item_id is None:
         return
+    if principal.kind is not PrincipalKind.sprint_item or sprint_item_id != principal.id:
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            f"{action} is not available to this Sprint Item supervisor",
+            {
+                "actor": principal_legacy_actor(principal),
+                "sprint_item_id": sprint_item_id,
+                "ticket_id": ticket.id,
+            },
+        )
     row = conn.execute(
         "SELECT 1 FROM sprint_items AS item "
         "WHERE item.id = ? AND item.kind = 'normal' AND ? = item.id",
@@ -463,7 +480,7 @@ def _require_current_supervisor_parent(
             ErrorCode.agent_forbidden,
             f"{action} is not available to this Sprint Item supervisor",
             {
-                "actor": admission.SPRINT_ITEM_SUPERVISOR_ACTOR,
+                "actor": principal_legacy_actor(principal),
                 "sprint_item_id": sprint_item_id,
                 "ticket_id": ticket.id,
             },
@@ -967,7 +984,7 @@ def create_ticket(
     conn: sqlite3.Connection,
     *,
     title: str,
-    actor: str,
+    principal: Principal,
     now: int,
     title_max_chars: int,
     kickoff_note: str | None = "",
@@ -1034,7 +1051,7 @@ def create_ticket(
         at_cap = stated_at_cap or AtCap.propose
         stage, initial_values, initial_proposal, initial_ticket_status = _seed_kickoff(
             kickoff_note,
-            actor,
+            principal,
             now,
             stage=initial_stage,
             ceiling=ceiling,
@@ -1095,7 +1112,7 @@ def create_ticket_from_external_work(
     title: str,
     target_stage: str,
     provided_values: Mapping[str, str],
-    actor: str,
+    principal: Principal,
     now: int,
     title_max_chars: int,
     kickoff_note: str | None = None,
@@ -1243,7 +1260,7 @@ def reconcile_ticket_from_external_work(
     *,
     target_stage: str,
     provided_values: Mapping[str, str],
-    actor: str,
+    principal: Principal,
     now: int,
     kickoff_note: str | None = None,
     recap: str | None = None,
@@ -1457,7 +1474,7 @@ def file_current_proposal_with_recap(
     *,
     body: str,
     recap: str,
-    actor: str,
+    principal: Principal,
     now: int,
 ) -> Ticket:
     """Worker proposal surface: infer the current gating field and update recap atomically.
@@ -1474,7 +1491,7 @@ def file_current_proposal_with_recap(
         decision = resolution.decide_file_proposal(
             ticket,
             body,
-            actor,
+            principal,
             now,
             worker_type_definition=worker_type_definition,
         )
@@ -1509,7 +1526,7 @@ def accept_proposal(
     ticket_id: str,
     *,
     field: str,
-    actor: str,
+    principal: Principal,
     now: int,
     edited_body: str | None = None,
     next_ceiling: NextCeiling | None = None,
@@ -1520,11 +1537,11 @@ def accept_proposal(
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
-        _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id)
+        _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id, principal)
         decision = resolution.decide_accept(
             ticket,
             field,
-            actor,
+            principal,
             edited_body,
             next_ceiling,
             at_cap,
@@ -1532,7 +1549,7 @@ def accept_proposal(
         )
         updated = _apply_decision(conn, ticket, decision, now)
         if edited_body is not None:
-            ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
+            ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         if decision.stage != ticket.stage:
             _write_entered_stage_ticket_status(
                 conn,
@@ -1725,9 +1742,11 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
         return updated
 
 
-def request_user_help(conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: int) -> Ticket:
+def request_user_help(
+    conn: sqlite3.Connection, ticket_id: str, *, principal: Principal, now: int
+) -> Ticket:
     """Pause a Worker-owned Ticket for explicit human help."""
-    admission.require_worker_actor(actor, "request user help")
+    admission.require_ticket_principal(principal, "request user help")
     with _txn(conn):
         ticket, _worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
@@ -1768,16 +1787,16 @@ def edit_pending_proposal(
     *,
     field: str,
     new_body: str,
-    actor: str,
+    principal: Principal,
     now: int,
 ) -> Ticket:
     with _txn(conn):
         ticket, definition = _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         decision = resolution.decide_edit_pending_proposal(
-            ticket, field, new_body, actor, worker_type_definition=definition
+            ticket, field, new_body, principal, worker_type_definition=definition
         )
         updated = _apply_decision(conn, ticket, decision, now)
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return updated
 
 
@@ -1787,7 +1806,7 @@ def edit_field_value(
     *,
     field: str,
     new_body: str,
-    actor: str,
+    principal: Principal,
     now: int,
 ) -> Ticket:
     with _txn(conn):
@@ -1798,11 +1817,11 @@ def edit_field_value(
             ticket,
             field,
             new_body,
-            actor,
+            principal,
             worker_type_definition=worker_type_definition,
         )
         updated = _apply_decision(conn, ticket, decision, now)
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return updated
 
 
@@ -1811,7 +1830,7 @@ def return_for_revision(
     ticket_id: str,
     *,
     message: str,
-    actor: str,
+    principal: Principal,
     now: int,
     expected_proposal: PendingTicketProposal | None = None,
     supervisor_sprint_item_id: str | None = None,
@@ -1821,7 +1840,7 @@ def return_for_revision(
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
-        _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id)
+        _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id, principal)
         field = worker_type_definition.gating_field(ticket.stage)
         current_proposal = ticket.pending_proposal
         if expected_proposal is not None and current_proposal != expected_proposal:
@@ -1832,7 +1851,7 @@ def return_for_revision(
             )
         decision = resolution.decide_return_for_revision(
             ticket,
-            actor,
+            principal,
             worker_type_definition=worker_type_definition,
         )
         _apply_decision(conn, ticket, decision, now)
@@ -1840,12 +1859,14 @@ def return_for_revision(
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def drop_ticket(conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: int) -> Ticket:
+def drop_ticket(
+    conn: sqlite3.Connection, ticket_id: str, *, principal: Principal, now: int
+) -> Ticket:
     with _txn(conn):
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
-        decision = resolution.decide_drop(ticket, actor)
+        decision = resolution.decide_drop(ticket, principal)
         updated = _apply_decision(conn, ticket, decision, now)
         _write_resting_ticket_status(
             conn,
@@ -1860,7 +1881,7 @@ def delete_ticket(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    actor: str,
+    principal: Principal,
     now: int,
     even_while_running: bool = False,
     supervisor_sprint_item_id: str | None = None,
@@ -1881,11 +1902,11 @@ def delete_ticket(
     admits it and names that Item here, and the parent is rechecked inside the
     transaction, because a Ticket can move between the two.
     """
-    admission.require_direct_or_supervisor_actor(actor, "delete_ticket")
+    admission.require_direct_or_supervisor_principal(principal, "delete_ticket")
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
         _require_current_supervisor_parent(
-            conn, ticket, supervisor_sprint_item_id, "Ticket deletion"
+            conn, ticket, supervisor_sprint_item_id, principal, "Ticket deletion"
         )
         if not even_while_running and ticket.ticket_status is TicketStatus.agent:
             raise PlannerError(
@@ -1956,30 +1977,30 @@ def change_scope(
     *,
     ceiling: str,
     at_cap: AtCap,
-    actor: str,
+    principal: Principal,
     now: int,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
-    if actor == admission.SPRINT_ITEM_SUPERVISOR_ACTOR and supervisor_sprint_item_id is None:
+    if principal.kind is PrincipalKind.sprint_item and supervisor_sprint_item_id is None:
         raise PlannerError(
             ErrorCode.agent_forbidden,
             "change_scope requires the Sprint Item supervisor parent",
-            {"actor": actor, "ticket_id": ticket_id},
+            {"actor": principal_legacy_actor(principal), "ticket_id": ticket_id},
         )
     with _txn(conn):
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
-        _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id)
+        _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id, principal)
         decision = resolution.decide_scope_change(
             ticket,
             ceiling,
             at_cap,
-            actor,
+            principal,
             worker_type_definition=worker_type_definition,
         )
         updated = _apply_decision(conn, ticket, decision, now)
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         if ticket.ticket_status in {
             TicketStatus.empty,
             TicketStatus.blocked,
@@ -2000,7 +2021,7 @@ def replace_guidance(
     ticket_id: str,
     *,
     body: str,
-    actor: str,
+    principal: Principal,
     now: int,
 ) -> Ticket:
     """Replace the Ticket's durable guidance without changing its workflow."""
@@ -2010,7 +2031,7 @@ def replace_guidance(
             "UPDATE tickets SET guidance = ?, updated_at = ? WHERE id = ?",
             (body, now, ticket_id),
         )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -2019,7 +2040,7 @@ def append_guidance(
     ticket_id: str,
     *,
     body: str,
-    actor: str,
+    principal: Principal,
     now: int,
 ) -> Ticket:
     """Append in one transaction; an empty append changes nothing."""
@@ -2032,7 +2053,7 @@ def append_guidance(
             "UPDATE tickets SET guidance = ?, updated_at = ? WHERE id = ?",
             (guidance, now, ticket_id),
         )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -2042,19 +2063,19 @@ def edit_ticket(
     *,
     edit: TicketEdit,
     title_max_chars: int,
-    actor: str,
+    principal: Principal,
     now: int,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
-    if actor == admission.SPRINT_ITEM_SUPERVISOR_ACTOR and supervisor_sprint_item_id is None:
+    if principal.kind is PrincipalKind.sprint_item and supervisor_sprint_item_id is None:
         raise PlannerError(
             ErrorCode.agent_forbidden,
             "edit_ticket requires the Sprint Item supervisor parent",
-            {"actor": actor, "ticket_id": ticket_id},
+            {"actor": principal_legacy_actor(principal), "ticket_id": ticket_id},
         )
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
-        _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id)
+        _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id, principal)
 
         title = edit["title"] if "title" in edit else ticket.title
         priority = edit["priority"] if "priority" in edit else ticket.priority
@@ -2095,12 +2116,12 @@ def edit_ticket(
             f"UPDATE tickets SET {assignments}, updated_at = ? WHERE id = ?",
             (*params, now, ticket_id),
         )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return _load_ticket_for_write(conn, ticket_id)
 
 
 def write_recap(
-    conn: sqlite3.Connection, ticket_id: str, *, body: str, actor: str, now: int
+    conn: sqlite3.Connection, ticket_id: str, *, body: str, principal: Principal, now: int
 ) -> Ticket:
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
@@ -2108,7 +2129,7 @@ def write_recap(
             "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?",
             (body, now, ticket_id),
         )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -2117,7 +2138,7 @@ def classify_ticket(
     ticket_id: str,
     *,
     sprint_item_id: str,
-    actor: str,
+    principal: Principal,
     now: int,
     admit: Callable[[], None] | None = None,
 ) -> Ticket:
@@ -2149,7 +2170,7 @@ def unclassify_ticket(
     ticket_id: str,
     *,
     sprint_item_id: str,
-    actor: str,
+    principal: Principal,
     now: int,
     admit: Callable[[], None] | None = None,
 ) -> Ticket:

@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
 from tests.support.ticket_progress import advance_ticket
 
 from planner.core.contracts import LinkKind, Priority
@@ -51,7 +52,7 @@ def _ticket(
         conn,
         worker_type=worker_type,
         title=f"{worker_type} ticket",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
         project_id=project_id,
@@ -61,7 +62,7 @@ def _ticket(
         conn,
         ticket.id,
         field="kickoff",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=2,
         next_ceiling=ceiling or definition.first_worker_stage(),
         at_cap=at_cap,
@@ -214,13 +215,18 @@ def test_scope_permission_uses_the_ticket_worker_type_definition(
         ticket = _ticket(conn, worker_type=worker_type, ceiling=ceiling, at_cap=at_cap)
         if worker_type == "new_worker":
             tickets_data.file_current_proposal_with_recap(
-                conn, ticket.id, body="understanding", actor="agent", now=3, recap="Current work"
+                conn,
+                ticket.id,
+                body="understanding",
+                principal=TEST_TICKET_PRINCIPAL,
+                now=3,
+                recap="Current work",
             )
             ticket = tickets_data.accept_proposal(
                 conn,
                 ticket.id,
                 field="understanding",
-                actor="human",
+                principal=OWNER_PRINCIPAL,
                 now=4,
                 next_ceiling=ceiling,
                 at_cap=at_cap,
@@ -244,9 +250,9 @@ def test_a_completing_blocker_frees_its_target(tmp_path: Path, settled_stage: st
         assert not _ready(conn, target)
 
         if settled_stage == "done":
-            advance_ticket(conn, blocker.id, new_stage="done", actor="human", now=5)
+            advance_ticket(conn, blocker.id, new_stage="done", principal=OWNER_PRINCIPAL, now=5)
         else:
-            tickets_data.drop_ticket(conn, blocker.id, actor="human", now=5)
+            tickets_data.drop_ticket(conn, blocker.id, principal=OWNER_PRINCIPAL, now=5)
 
         assert tickets_data.read_ticket(conn, target.id).ticket_status is TicketStatus.empty
         assert _ready(conn, target)
@@ -281,7 +287,7 @@ def test_a_ready_ticket_names_no_blocker(tmp_path: Path) -> None:
 
 
 def _to_closeout(conn: sqlite3.Connection, ticket_id: str) -> None:
-    advance_ticket(conn, ticket_id, new_stage="needs_closeout", actor="human", now=5)
+    advance_ticket(conn, ticket_id, new_stage="needs_closeout", principal=OWNER_PRINCIPAL, now=5)
 
 
 @pytest.mark.parametrize(

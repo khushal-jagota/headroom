@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 
+from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
 from planner.sprints import data
 from planner.sprints.contracts import CarryOutcomeResult, SprintOutcomeCommitment
@@ -46,7 +47,7 @@ def carry_outcome(
     outcome_id: str,
     ticket_ids: list[str],
     *,
-    actor: str,
+    principal: Principal,
     now: int,
     admit: Callable[[], None],
 ) -> CarryOutcomeResult:
@@ -86,7 +87,7 @@ def carry_outcome(
                     ticket.id,
                     edit={"sprint_id": target_sprint_id},
                     title_max_chars=TITLE_MAX_CHARS,
-                    actor=actor,
+                    principal=principal,
                     now=now,
                 )
         return CarryOutcomeResult(

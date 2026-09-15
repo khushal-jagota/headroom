@@ -8,6 +8,7 @@ from sqlite3 import Connection
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.core.clock import TestClock as MutableClock
 from planner.core.clock import parse_fake_now
@@ -27,7 +28,7 @@ def _ticket(conn: Connection, now: int) -> Ticket:
         conn,
         worker_type="coding",
         title="Phone-worthy work",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
     )
@@ -245,6 +246,38 @@ def test_policy_resolves_the_same_type_independently_by_subject(tmp_path: Path) 
             "ORDER BY f.subject_kind"
         )
     ] == [("agent", "notify"), ("ticket", "suppress")]
+    conn.close()
+
+
+def test_policy_suppresses_a_legacy_arbitrary_agent_fact_and_continues(
+    tmp_path: Path,
+) -> None:
+    conn = connect(str(tmp_path / "legacy-agent-fact.db"))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    notifications_data.project_facts(conn)
+    tickets_data.mark_ticket_errored(conn, ticket.id, error="stopped", now=2)
+    notifications_data.project_facts(conn)
+    conn.execute("INSERT INTO agents(agent_key) VALUES ('reviewer')")
+    conn.execute(
+        "INSERT INTO notification_facts"
+        "(fact_id, notification_type, subject_kind, agent_key, source_kind, "
+        "source_id, source_sequence, occurred_at, payload) "
+        "VALUES ('legacy:reviewer:1', 'worker_failed', 'agent', 'reviewer', "
+        "'conversation', 'c_legacy', 1, 1, '{\"subject_label\":\"Reviewer\"}')"
+    )
+
+    assert notifications_data.apply_policy(conn, 3) == 2
+    assert [
+        (str(row["fact_id"]), str(row["outcome"]))
+        for row in conn.execute(
+            "SELECT fact_id, outcome FROM notification_decisions ORDER BY fact_id"
+        )
+    ] == [
+        ("legacy:reviewer:1", "suppress"),
+        (f"ticket:{ticket.id}:1", "notify"),
+    ]
+    assert conn.execute("SELECT COUNT(*) FROM notification_intents").fetchone()[0] == 1
     conn.close()
 
 

@@ -33,3 +33,8 @@ def test_singletons_and_work_objects_have_required_stable_ids() -> None:
 def test_principal_rejects_invalid_ids(kind: PrincipalKind, principal_id: str) -> None:
     with pytest.raises(ValueError):
         Principal(kind, principal_id)
+
+
+def test_principal_rejects_a_runtime_kind_outside_the_closed_enum() -> None:
+    with pytest.raises(ValueError, match="principal kind must be a PrincipalKind"):
+        Principal("agent", "reviewer")  # type: ignore[arg-type]

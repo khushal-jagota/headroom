@@ -7,6 +7,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.core.clock import TestClock as MutableClock
 from planner.core.contracts import Priority
@@ -251,7 +252,7 @@ def test_production_planning_schedules_suppress_prelaid_tickets_without_backfill
         ticket = tickets_actions.create_ticket(
             tmp_db,
             title=f"Manual {worker_type}",
-            actor="owner",
+            principal=OWNER_PRINCIPAL,
             now=int(morning.timestamp()) - 60,
             title_max_chars=TITLE_MAX_CHARS,
             worker_type=worker_type,
@@ -410,7 +411,7 @@ def test_failure_is_recorded_once_and_does_not_stop_another_schedule(
     blocker = tickets_actions.create_ticket(
         tmp_db,
         title="Temporary blocker",
-        actor="owner",
+        principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",

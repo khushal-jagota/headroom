@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from sqlite3 import Connection
 
+from tests.support.principals import OWNER_PRINCIPAL
+
 from planner.core.clock import TestClock as ClockForTest
 from planner.list_reads.contracts import ListPageRequest
 from planner.tickets import data as tickets_data
@@ -20,7 +22,7 @@ def _ticket(conn: Connection, clock: ClockForTest, title: str) -> str:
         conn,
         worker_type="coding",
         title=title,
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=clock.now_unix(),
         title_max_chars=200,
     ).id

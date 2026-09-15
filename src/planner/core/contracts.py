@@ -35,6 +35,8 @@ class Principal:
     id: str
 
     def __post_init__(self) -> None:
+        if not isinstance(self.kind, PrincipalKind):
+            raise ValueError("principal kind must be a PrincipalKind")
         if not self.id or self.id != self.id.strip():
             raise ValueError("principal id must be non-empty and must not contain outer whitespace")
         singleton_id = {
@@ -47,6 +49,16 @@ class Principal:
 
 OWNER_PRINCIPAL: Final = Principal(PrincipalKind.owner, OWNER_PRINCIPAL_ID)
 CHIEF_PRINCIPAL: Final = Principal(PrincipalKind.chief, CHIEF_PRINCIPAL_ID)
+
+
+def principal_legacy_actor(principal: Principal) -> str:
+    """Serialize a Principal for unchanged audit rows and error payloads."""
+    return {
+        PrincipalKind.owner: "unattributed",
+        PrincipalKind.chief: "chief",
+        PrincipalKind.sprint_item: "sprint_item_supervisor",
+        PrincipalKind.ticket: "worker",
+    }[principal.kind]
 
 
 class Priority(StrEnum):  # SPEC §3.2/§3.3 — homed in core (shared vocabulary)
@@ -115,9 +127,7 @@ class ErrorCode(StrEnum):
 
 
 class PlannerError(Exception):
-    def __init__(
-        self, code: ErrorCode, message: str, detail: JsonDict | None = None
-    ) -> None:
+    def __init__(self, code: ErrorCode, message: str, detail: JsonDict | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message

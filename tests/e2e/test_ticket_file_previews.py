@@ -16,6 +16,7 @@ from playwright.sync_api import (
     Route,
 )
 from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
+from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
 
 from planner.core.db import connect
 from planner.tickets import data as tickets_data
@@ -82,14 +83,19 @@ def _settle_success(
     """Seed saved Markdown through the same proposal/accept writers as ordinary work."""
     with closing(connect(str(server.db_path))) as conn:
         ticket = tickets_data.file_current_proposal_with_recap(
-            conn, ticket_id, body=body, recap="Preview content ready.", actor="worker", now=2
+            conn,
+            ticket_id,
+            body=body,
+            recap="Preview content ready.",
+            principal=TEST_TICKET_PRINCIPAL,
+            now=2,
         )
         if ticket.pending_proposal is not None:
             ticket = tickets_data.accept_proposal(
                 conn,
                 ticket_id,
                 field="success",
-                actor="human",
+                principal=OWNER_PRINCIPAL,
                 now=2,
                 next_ceiling="none",
                 at_cap=AtCap.propose,
@@ -98,7 +104,7 @@ def _settle_success(
         assert ticket.field_values["success"] == body
         assert ticket.pending_proposal is None
         if dropped:
-            tickets_data.drop_ticket(conn, ticket_id, actor="human", now=2)
+            tickets_data.drop_ticket(conn, ticket_id, principal=OWNER_PRINCIPAL, now=2)
 
 
 def _open_ticket_field(page: Page, field: str) -> None:

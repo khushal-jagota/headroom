@@ -14,7 +14,13 @@ from typing import Final, Literal
 
 from fastapi import Request
 
-from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.core.contracts import (
+    CHIEF_PRINCIPAL,
+    OWNER_PRINCIPAL,
+    Principal,
+    PrincipalKind,
+    principal_legacy_actor,
+)
 from planner.core.errors import ErrorCode, PlannerError
 
 X_PLAN_ACTOR: Final = "X-Plan-Actor"
@@ -23,9 +29,6 @@ X_PLAN_SPRINT_ITEM_ID: Final = "X-Plan-Sprint-Item-ID"
 PLAN_ACTOR_SCOPE_KEY: Final = "planner.request_actor"
 PLAN_TICKET_ID_SCOPE_KEY: Final = "planner.request_ticket_id"
 PLAN_SPRINT_ITEM_ID_SCOPE_KEY: Final = "planner.request_sprint_item_id"
-_CHIEF_ACTOR: Final = "chief"
-_WORKER_ACTOR: Final = "worker"
-SPRINT_ITEM_SUPERVISOR_ACTOR: Final = "sprint_item_supervisor"
 
 PlanningCapability = Literal[
     "planning-day",
@@ -40,16 +43,6 @@ PLANNING_CAPABILITIES: Final[frozenset[str]] = frozenset(
 @dataclass(frozen=True)
 class RequestContext:
     principal: Principal
-
-    @property
-    def actor(self) -> str:
-        """Return the existing audit-row value at the legacy data boundary."""
-        return {
-            PrincipalKind.owner: "unattributed",
-            PrincipalKind.chief: _CHIEF_ACTOR,
-            PrincipalKind.ticket: _WORKER_ACTOR,
-            PrincipalKind.sprint_item: SPRINT_ITEM_SUPERVISOR_ACTOR,
-        }[self.principal.kind]
 
 
 def _normalize(raw: str | None) -> str | None:
@@ -69,11 +62,11 @@ def _classify(
     normalized_sprint_item_id = _normalize(sprint_item_id)
     if actor is None:
         return RequestContext(OWNER_PRINCIPAL)
-    if actor == _CHIEF_ACTOR:
+    if actor == "chief":
         return RequestContext(CHIEF_PRINCIPAL)
-    if actor == _WORKER_ACTOR and normalized_ticket_id is not None:
+    if actor == "worker" and normalized_ticket_id is not None:
         return RequestContext(Principal(PrincipalKind.ticket, normalized_ticket_id))
-    if actor == SPRINT_ITEM_SUPERVISOR_ACTOR and normalized_sprint_item_id is not None:
+    if actor == "sprint_item_supervisor" and normalized_sprint_item_id is not None:
         return RequestContext(Principal(PrincipalKind.sprint_item, normalized_sprint_item_id))
     raise PlannerError(
         ErrorCode.agent_forbidden,
@@ -162,7 +155,7 @@ def require_ticket_delete(
             ErrorCode.agent_forbidden,
             "Ticket deletion is not available to this actor",
             {
-                "actor": ctx.actor,
+                "actor": principal_legacy_actor(ctx.principal),
                 "sprint_item_id": (
                     ctx.principal.id if ctx.principal.kind is PrincipalKind.sprint_item else None
                 ),
@@ -179,7 +172,7 @@ def _reject_sprint_item_supervisor_write(
         ErrorCode.agent_forbidden,
         "Ticket review is not available to this Sprint Item supervisor",
         {
-            "actor": ctx.actor,
+            "actor": principal_legacy_actor(ctx.principal),
             "sprint_item_id": sprint_item_id,
             "ticket_id": ticket_id,
         },
@@ -190,7 +183,7 @@ def _reject_sprint_item_supervisor_read(ctx: RequestContext, sprint_item_id: str
     raise PlannerError(
         ErrorCode.agent_forbidden,
         "Sprint Item read is not available to this supervisor",
-        {"actor": ctx.actor, "sprint_item_id": sprint_item_id},
+        {"actor": principal_legacy_actor(ctx.principal), "sprint_item_id": sprint_item_id},
     )
 
 
@@ -201,7 +194,7 @@ def require_direct_write(ctx: RequestContext) -> None:
     raise PlannerError(
         ErrorCode.agent_forbidden,
         "direct operation is not available to this actor",
-        {"actor": ctx.actor},
+        {"actor": principal_legacy_actor(ctx.principal)},
     )
 
 
@@ -219,7 +212,7 @@ def require_feedback_use(conn: sqlite3.Connection, ctx: RequestContext, ticket_i
     raise PlannerError(
         ErrorCode.agent_forbidden,
         "feedback use is not available to this actor",
-        {"actor": ctx.actor, "ticket_id": ticket_id},
+        {"actor": principal_legacy_actor(ctx.principal), "ticket_id": ticket_id},
     )
 
 
@@ -245,7 +238,7 @@ def _reject_ticket_worker_write(ctx: RequestContext) -> None:
     raise PlannerError(
         ErrorCode.agent_forbidden,
         "ticket operation is not available to this worker",
-        {"actor": ctx.actor},
+        {"actor": principal_legacy_actor(ctx.principal)},
     )
 
 
@@ -282,7 +275,7 @@ def _reject_planning_write(
     raise PlannerError(
         ErrorCode.agent_forbidden,
         "planning operation is not available to this worker",
-        {"actor": ctx.actor, "capability": capability},
+        {"actor": principal_legacy_actor(ctx.principal), "capability": capability},
     )
 
 
@@ -293,7 +286,7 @@ def require_chief(ctx: RequestContext) -> None:
     raise PlannerError(
         ErrorCode.agent_forbidden,
         "chief operation requires the chief actor",
-        {"actor": ctx.actor},
+        {"actor": principal_legacy_actor(ctx.principal)},
     )
 
 
@@ -310,5 +303,5 @@ def reject_agent_fields(
             raise PlannerError(
                 ErrorCode.agent_forbidden,
                 "direct-only field",
-                {"field": key, "actor": ctx.actor},
+                {"field": key, "actor": principal_legacy_actor(ctx.principal)},
             )

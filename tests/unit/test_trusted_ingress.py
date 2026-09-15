@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.core import server as server_module
 from planner.core.clock import build_clock
@@ -56,7 +57,11 @@ def _ticket(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
         return create_ticket(
-            conn, title="Trusted ingress ticket", actor="human", now=0, title_max_chars=200,
+            conn,
+            title="Trusted ingress ticket",
+            principal=OWNER_PRINCIPAL,
+            now=0,
+            title_max_chars=200,
             worker_type="coding",
         ).id
     finally:
