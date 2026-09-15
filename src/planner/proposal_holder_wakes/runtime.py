@@ -203,12 +203,20 @@ class ProposalHolderWakeLoop:
         )
         self._thread.start()
 
-    def stop(self, *, deadline: float | None = None) -> None:
+    def stop(self, *, deadline: float | None = None) -> bool:
+        """Stop polling and report whether every scheduled delivery settled.
+
+        A timed-out delivery is cancelled, but cancellation completion belongs to the
+        server event loop. The caller must retain the machine lock when this returns
+        false, so no replacement executor can reach the same backend before process exit.
+        """
         self._stop.set()
         self._wake.set()
         if self._thread is not None:
             timeout = 10.0 if deadline is None else max(0.0, deadline - monotonic())
             self._thread.join(timeout=timeout)
+            if self._thread.is_alive():
+                return False
             self._thread = None
         with self._in_flight_lock:
             in_flight = tuple(self._in_flight)
@@ -219,6 +227,9 @@ class ProposalHolderWakeLoop:
             )
             for future in pending:
                 future.cancel()
+            if pending:
+                return False
+        return True
 
     def _run_loop(self, interval: int) -> None:
         while not self._stop.is_set():

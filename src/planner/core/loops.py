@@ -11,7 +11,9 @@ from planner.conversation.contracts import ConversationSystem
 from planner.core import change_signal
 from planner.core.clock import Clock
 from planner.core.config import Config
+from planner.core.db import connect
 from planner.notifications.runtime import NotificationLoop
+from planner.proposal_holder_wakes import data as proposal_holder_wakes_data
 from planner.proposal_holder_wakes.runtime import ProposalHolderWakeLoop
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
 from planner.runtime.worker_step_readiness_loop import WorkerStepReadinessLoop
@@ -42,8 +44,9 @@ class BackgroundLoops:
         self._stop_waking_on_change = stop_waking_on_change
         self._shutdown_grace_seconds = shutdown_grace_seconds
         self._stopped = False
+        self._shutdown_settled: bool | None = None
 
-    async def stop(self, *, deadline: float | None = None) -> None:
+    async def stop(self, *, deadline: float | None = None) -> bool:
         """Stop listening, stop polling, let the steps in flight land, release the lock.
 
         The loop is stopped on a worker thread because its own drain waits on tasks that
@@ -51,7 +54,7 @@ class BackgroundLoops:
         """
         global _active
         if self._stopped:
-            return
+            return self._shutdown_settled is not False
         self._stopped = True
         if self._stop_waking_on_change is not None:
             self._stop_waking_on_change()
@@ -73,15 +76,22 @@ class BackgroundLoops:
                 self.worker_step_readiness_loop.stop,
                 deadline=deadline,
             )
+        wake_deliveries_settled = True
         if self.proposal_holder_wake_loop is not None:
-            await asyncio.to_thread(
+            wake_deliveries_settled = await asyncio.to_thread(
                 self.proposal_holder_wake_loop.stop,
                 deadline=deadline,
             )
-        if self._lock_path is not None:
+        if self._lock_path is not None and wake_deliveries_settled:
             release_machine_lock(self._lock_path)
-        if _active is self:
+        elif self._lock_path is not None:
+            _LOGGER.error(
+                "Machine lock retained because proposal-holder wake delivery did not settle"
+            )
+        self._shutdown_settled = wake_deliveries_settled
+        if _active is self and wake_deliveries_settled:
             _active = None
+        return wake_deliveries_settled
 
 
 _active: BackgroundLoops | None = None
@@ -116,16 +126,25 @@ def start_background_loops(
     if not config.dispatch_enabled:
         _LOGGER.info("Background scheduling and dispatch disabled (dispatch_enabled=false)")
     elif not ensure_machine_lock(config.dispatcher_lock_path):
-        _LOGGER.info(
-            "Background loops not started: another process holds the polling lock"
-        )
+        _LOGGER.info("Background loops not started: another process holds the polling lock")
     else:
         candidate_loop: WorkerStepReadinessLoop | None = None
         candidate_schedule_loop: ScheduledTicketLoop | None = None
         candidate_notification_loop: NotificationLoop | None = None
         candidate_wake_loop: ProposalHolderWakeLoop | None = None
         candidate_unsubscribe: Callable[[], None] | None = None
+        wake_deliveries_settled = True
         try:
+            # Only the machine-lock owner can reset a crash-abandoned delivery claim.
+            # This remains database-only startup work; the wake loop performs all I/O.
+            wake_conn = connect(config.db_path, config.db_busy_timeout_ms)
+            try:
+                proposal_holder_wakes_data.recover_interrupted_deliveries(
+                    wake_conn, now=clock.now_unix()
+                )
+                proposal_holder_wakes_data.reconcile_missing(wake_conn, now=clock.now_unix())
+            finally:
+                wake_conn.close()
             candidate_schedule_loop = ScheduledTicketLoop(
                 config.db_path,
                 clock,
@@ -157,7 +176,6 @@ def start_background_loops(
             candidate_schedule_loop.start(config.tick_seconds)
             candidate_loop.start(config.tick_seconds)
             candidate_notification_loop.start(config.tick_seconds)
-            candidate_wake_loop.start(config.tick_seconds)
 
             def wake_reconcilers() -> None:
                 candidate_loop.wake()
@@ -165,6 +183,9 @@ def start_background_loops(
                 candidate_wake_loop.wake()
 
             candidate_unsubscribe = change_signal.subscribe(wake_reconcilers)
+            # Start the only loop that can reach a proposal holder last. No later
+            # startup action can fail and orphan one of its delivery tasks.
+            candidate_wake_loop.start(config.tick_seconds)
         except Exception:
             _LOGGER.exception("Background loops failed to start")
             if candidate_unsubscribe is not None:
@@ -186,10 +207,19 @@ def start_background_loops(
                     _LOGGER.exception("partially started notification loop failed to stop")
             if candidate_wake_loop is not None:
                 try:
-                    candidate_wake_loop.stop()
+                    wake_deliveries_settled = candidate_wake_loop.stop()
                 except Exception:
+                    wake_deliveries_settled = False
                     _LOGGER.exception("partially started proposal wake loop failed to stop")
-            release_machine_lock(config.dispatcher_lock_path)
+            if wake_deliveries_settled:
+                release_machine_lock(config.dispatcher_lock_path)
+            else:
+                _LOGGER.error(
+                    "Machine lock retained after startup failure because proposal-holder "
+                    "wake delivery did not settle"
+                )
+                proposal_holder_wake_loop = candidate_wake_loop
+                lock_path = config.dispatcher_lock_path
         else:
             worker_step_readiness_loop = candidate_loop
             scheduled_ticket_loop = candidate_schedule_loop

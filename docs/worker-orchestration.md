@@ -171,11 +171,13 @@ loop probes the same sender identity until the conversation reports durable deli
 
 The proposal-holder wake loop shares the process machine lock and server event loop with
 the other reconcilers. Database change signals wake it promptly, while its periodic tick
-is the retry backstop. It schedules at most one delivery per Ticket at a time. Startup
-returns crash-abandoned `delivering` rows to `pending` without changing their attempt
-identity, so conversation idempotency either discovers the earlier success or safely
-recreates a lost queue. A post-wire transcript failure becomes terminal `uncertain`; it
-is visible for repair and never retried automatically.
+is the retry backstop. It schedules at most one delivery per Ticket at a time. After it
+owns the machine lock, startup returns crash-abandoned `delivering` rows to `pending`
+without changing their attempt identity. A second server therefore cannot reset a live
+delivery claim. Conversation idempotency either discovers the earlier success or safely
+recreates a lost queue. Shutdown retains the lock if a delivery does not settle before
+the deadline; process exit then releases it. A post-wire transcript failure becomes
+terminal `uncertain`; it is visible for repair and never retried automatically.
 
 _Code paths:_ `src/planner/proposal_holder_wakes/`, `src/planner/core/loops.py`.
 

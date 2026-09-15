@@ -179,22 +179,6 @@ def create_app(
         )
         await conversation.system.start_idle_child_janitor()
 
-        # Reset crash-abandoned claims before the recurring loop's immediate first poll.
-        # Delivery stays off the lifespan path, so an unavailable agent cannot delay
-        # serving HTTP.
-        from planner.proposal_holder_wakes import data as proposal_holder_wakes_data
-
-        wake_conn = conn_factory()
-        try:
-            proposal_holder_wakes_data.recover_interrupted_deliveries(
-                wake_conn, now=clock.now_unix()
-            )
-            proposal_holder_wakes_data.reconcile_missing(
-                wake_conn, now=clock.now_unix()
-            )
-        finally:
-            wake_conn.close()
-
         lifecycle_observer = asyncio.create_task(
             observe_path_changes(deployment_lifecycle_path, change_signal.emit)
         )
