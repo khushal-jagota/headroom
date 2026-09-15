@@ -26,6 +26,7 @@
     promptLabelFor,
     turnEndingSentence,
     PROMPT_DISCARDED_SENTENCE,
+    PROPOSAL_DELIVERY_FAILED_SENTENCE,
     TURN_STOPPED_SENTENCE
   } from "../../lib/conversation/transcript";
   import { modelDisplayName } from "../../lib/conversation/composer";
@@ -155,6 +156,12 @@
           {promptLabelFor(item.row.senderLabel, ownSenderLabel) ?? "your message"} · delivery uncertain · do not resend
         </div>
         <MessagePieces content={item.row.content} {conversationId} {ticketId} />
+      </article>
+    {:else if item.row.kind === "proposal_delivery_failed"}
+      <article class="chat-system c2-refused" data-conversation-row="proposal_delivery_failed">
+        <div class="c2-label">
+          {PROPOSAL_DELIVERY_FAILED_SENTENCE} after {item.row.attemptCount} attempts
+        </div>
       </article>
     {:else if item.row.kind === "prompt_discarded"}
       <article class="chat-system" data-conversation-row="prompt_discarded">

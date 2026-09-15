@@ -560,6 +560,17 @@ class ConversationSystem(Protocol):
         """Record one terminal uncertain outcome without another backend delivery."""
         ...
 
+    async def record_proposal_delivery_failed(
+        self,
+        conversation_id: str,
+        *,
+        attempt_count: int,
+        last_error: str,
+        sender_message_id: str,
+    ) -> None:
+        """Record one terminal proposal-alert failure without a backend delivery."""
+        ...
+
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
         """Capture the exact active turn that a Send Message may answer."""
         ...

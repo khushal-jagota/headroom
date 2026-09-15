@@ -35,7 +35,9 @@ from planner.message_delivery.service import send_system_message
 from planner.proposal_holder_wakes import data as wake_data
 from planner.proposal_holder_wakes.contracts import proposal_ready_message
 from planner.proposal_holder_wakes.runtime import (
+    PROPOSAL_WAKE_MAXIMUM_ATTEMPTS,
     ProposalHolderWakeLoop,
+    proposal_wake_refusal_retry_delay,
 )
 from planner.proposal_holder_wakes.runtime import (
     _deliver_pending_wakes as deliver_pending_wakes,
@@ -44,7 +46,7 @@ from planner.runtime.lock import ensure_machine_lock, release_machine_lock
 from planner.runtime.logic.worker_step_prompt import proposal_returned_for_revision_prompt
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap
+from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap, TicketStatus
 
 
 def _target(conn: Connection, holder: Principal, *, now: int = 1) -> str:
@@ -92,6 +94,19 @@ def _reject(conn: Connection, ticket_id: str, *, now: int = 3) -> None:
         lifecycle_message=proposal_returned_for_revision_prompt(),
         principal=OWNER_PRINCIPAL,
         now=now,
+    )
+
+
+def _link_worker_conversation(conn: Connection, ticket_id: str, *, now: int = 1) -> None:
+    conn.execute(
+        "INSERT INTO conversations "
+        "(conversation_id,backend_key,model,workspace_folder,access,created_at) "
+        "VALUES ('c_worker','codex','test-model','/tmp','full',?)",
+        (now,),
+    )
+    tickets_data.write_ticket_conversation_start(
+        conn, ticket_id, conversation_id="c_worker", backend="codex",
+        model="test-model", reasoning_effort=None, now=now,
     )
 
 
@@ -293,6 +308,165 @@ def test_definite_refusal_advances_attempt_then_recovery_delivers_once(
         f"proposal-holder-wake:{ticket_id}:1:2",
     ]
     assert transcript == [proposal_ready_message(ticket_id)]
+
+
+def test_definite_refusal_backoff_is_exponential_and_capped() -> None:
+    assert [proposal_wake_refusal_retry_delay(attempt) for attempt in range(1, 11)] == [
+        1, 2, 4, 8, 16, 32, 60, 60, 60, 60,
+    ]
+
+
+@pytest.mark.parametrize("later_action", ["rejection", "replacement", "restart"])
+def test_tenth_refusal_visibility_is_retried_after_later_ticket_changes(
+    tmp_db: Connection,
+    fake_clock: Clock,
+    monkeypatch: pytest.MonkeyPatch,
+    later_action: str,
+) -> None:
+    ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
+    _link_worker_conversation(tmp_db, ticket_id)
+    _file(tmp_db, ticket_id, body="Persistent refusal", now=2)
+    tmp_db.execute(
+        "UPDATE proposal_holder_wakes SET delivery_attempt=? WHERE ticket_id=?",
+        (PROPOSAL_WAKE_MAXIMUM_ATTEMPTS, ticket_id),
+    )
+    monkeypatch.setattr(
+        "planner.proposal_holder_wakes.runtime.message_delivery_service.send_system_message",
+        AsyncMock(return_value=MessageDeliveryResult(
+            CHIEF_PRINCIPAL, "c_chief", PromptDeliveryRefused(
+                PromptDeliveryRefusalReason.write_to_backend_failed
+            )
+        )),
+    )
+    monkeypatch.setattr(
+        "planner.proposal_holder_wakes.runtime.message_delivery_service."
+        "send_ticket_outbox_message",
+        AsyncMock(
+            return_value=MessageDeliveryResult(
+                Principal(PrincipalKind.ticket, ticket_id),
+                "c_worker",
+                PromptDeliveryStarted(),
+            )
+        ),
+    )
+    conversations = AsyncMock()
+    conversations.record_proposal_delivery_failed.side_effect = RuntimeError(
+        "event store unavailable"
+    )
+
+    assert asyncio.run(deliver_pending_wakes(conversations, tmp_db, fake_clock)) == 0
+    ticket = tickets_data.read_ticket(tmp_db, ticket_id)
+    assert _wake_state(tmp_db, ticket_id) == "failed"
+    assert ticket.ticket_status is TicketStatus.errored
+    assert ticket.backend_error == (
+        "Proposal alert failed after 10 delivery attempts: write_to_backend_failed"
+    )
+    assert len(wake_data.unrecorded_proposal_delivery_failures(
+        tmp_db, ticket_id=ticket_id
+    )) == 1
+
+    if later_action == "rejection":
+        _reject(tmp_db, ticket_id, now=3)
+        assert tickets_data.read_ticket(tmp_db, ticket_id).ticket_status is TicketStatus.errored
+        assert wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
+    elif later_action == "replacement":
+        _file(tmp_db, ticket_id, body="Replacement", now=3)
+    else:
+        tickets_data.clear_ticket_error_for_restart(tmp_db, ticket_id, now=3)
+
+    if later_action != "rejection":
+        conversations.record_proposal_delivery_failed.side_effect = None
+    asyncio.run(
+        deliver_pending_wakes(
+            conversations,
+            tmp_db,
+            fake_clock,
+            ticket_id=ticket_id,
+        )
+    )
+    assert len(wake_data.unrecorded_proposal_delivery_failures(
+        tmp_db, ticket_id=ticket_id
+    )) == 1
+    assert conversations.record_proposal_delivery_failed.await_count == 2
+    if later_action == "rejection":
+        assert tickets_data.read_ticket(tmp_db, ticket_id).ticket_status is TicketStatus.agent
+        assert not wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
+
+
+@pytest.mark.parametrize("later_action", ["approval", "replacement"])
+def test_a_stale_tenth_refusal_cannot_fail_newer_ticket_state(
+    tmp_db: Connection, fake_clock: Clock, later_action: str
+) -> None:
+    ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
+    _link_worker_conversation(tmp_db, ticket_id)
+    _file(tmp_db, ticket_id, body="Old", now=2)
+    tmp_db.execute(
+        "UPDATE proposal_holder_wakes SET delivery_attempt=? WHERE ticket_id=?",
+        (PROPOSAL_WAKE_MAXIMUM_ATTEMPTS, ticket_id),
+    )
+    stale = wake_data.claim_due(tmp_db, now=fake_clock.now_unix(), ticket_id=ticket_id)[0]
+    if later_action == "approval":
+        tickets_data.accept_proposal(
+            tmp_db,
+            ticket_id,
+            field="success",
+            principal=CHIEF_PRINCIPAL,
+            now=3,
+            next_ceiling="needs_approach",
+            at_cap=AtCap.propose,
+            next_holder=OWNER_PRINCIPAL,
+        )
+    else:
+        _file(tmp_db, ticket_id, body="Replacement", now=3)
+
+    assert not wake_data.record_terminal_failure(
+        tmp_db, stale, error="write_to_backend_failed", now=4
+    )
+    expected_wake_state = "cancelled" if later_action == "approval" else "pending"
+    assert _wake_state(tmp_db, ticket_id) == expected_wake_state
+    expected_status = (
+        TicketStatus.empty
+        if later_action == "approval"
+        else TicketStatus.awaiting_approval
+    )
+    assert tickets_data.read_ticket(tmp_db, ticket_id).ticket_status is expected_status
+    assert tmp_db.execute(
+        "SELECT 1 FROM proposal_delivery_failures WHERE ticket_id=?", (ticket_id,)
+    ).fetchone() is None
+
+
+def test_acceptance_preserves_the_failure_until_the_next_worker_start(
+    tmp_db: Connection, fake_clock: Clock
+) -> None:
+    ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
+    _link_worker_conversation(tmp_db, ticket_id)
+    _file(tmp_db, ticket_id, body="Ready", now=2)
+    tmp_db.execute(
+        "UPDATE proposal_holder_wakes SET delivery_attempt=? WHERE ticket_id=?",
+        (PROPOSAL_WAKE_MAXIMUM_ATTEMPTS, ticket_id),
+    )
+    wake = wake_data.claim_due(
+        tmp_db, now=fake_clock.now_unix(), ticket_id=ticket_id
+    )[0]
+    assert wake_data.record_terminal_failure(
+        tmp_db, wake, error="write_to_backend_failed", now=3
+    )
+
+    accepted = tickets_data.accept_proposal(
+        tmp_db,
+        ticket_id,
+        field="success",
+        principal=CHIEF_PRINCIPAL,
+        now=4,
+        next_ceiling="needs_approach",
+        at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
+    )
+
+    assert accepted.stage == "needs_approach"
+    assert accepted.pending_proposal is None
+    assert accepted.ticket_status is TicketStatus.errored
+    assert wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
 
 
 def test_queued_wake_stays_claimed_until_durable_replay_settles_it(

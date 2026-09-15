@@ -92,12 +92,7 @@ when they ask.
   the separation between direct approval commands and the approval-free `worker`
   subgroup.
 
-## Not built yet
-
-- **Recovery from a failed run** — an errored ticket is stuck (see
-  `worker-orchestration.md`).
-
 ---
 
-_Last verified: 2026-08-14 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-09-15 · Covers the system landscape; each doc carries its own
 code paths._

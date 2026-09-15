@@ -8,6 +8,7 @@ import logging
 import sqlite3
 import threading
 from time import monotonic
+from typing import Final
 
 from planner.conversation.contracts import (
     ConversationSystem,
@@ -22,6 +23,18 @@ from planner.proposal_holder_wakes import data
 from planner.tickets import data as tickets_data
 
 _LOG = logging.getLogger(__name__)
+PROPOSAL_WAKE_RETRY_BASE_SECONDS: Final[int] = 1
+PROPOSAL_WAKE_RETRY_CAP_SECONDS: Final[int] = 60
+PROPOSAL_WAKE_MAXIMUM_ATTEMPTS: Final[int] = 10
+
+
+def proposal_wake_refusal_retry_delay(delivery_attempt: int) -> int:
+    if delivery_attempt < 1:
+        raise ValueError("delivery_attempt must be positive")
+    return min(
+        PROPOSAL_WAKE_RETRY_CAP_SECONDS,
+        PROPOSAL_WAKE_RETRY_BASE_SECONDS * (1 << (delivery_attempt - 1)),
+    )
 
 
 async def _deliver_pending_wakes(
@@ -36,6 +49,8 @@ async def _deliver_pending_wakes(
     now = clock.now_unix()
     data.reconcile_missing(conn, now=now)
     delivered_count = 0
+    if ticket_id is not None:
+        await _record_proposal_delivery_failures(conversations, conn, ticket_id=ticket_id)
     for wake in data.claim_due(
         conn,
         now=now,
@@ -64,13 +79,20 @@ async def _deliver_pending_wakes(
             )
             continue
         if isinstance(result.fate, PromptDeliveryRefused):
-            data.record_refusal(
-                conn,
-                wake,
-                error=result.fate.refusal_reason.value,
-                retry_at=now + retry_delay_seconds,
-                now=now,
-            )
+            refusal = result.fate.refusal_reason.value
+            if wake.delivery_attempt >= PROPOSAL_WAKE_MAXIMUM_ATTEMPTS:
+                if data.record_terminal_failure(conn, wake, error=refusal, now=now):
+                    await _record_proposal_delivery_failures(
+                        conversations, conn, ticket_id=wake.ticket_id
+                    )
+            else:
+                data.record_refusal(
+                    conn,
+                    wake,
+                    error=refusal,
+                    retry_at=now + proposal_wake_refusal_retry_delay(wake.delivery_attempt),
+                    now=now,
+                )
         elif isinstance(result.fate, PromptDeliveryQueued):
             # The held queue is process-local. Keep the claim and replay its stable ID:
             # a live queue still says queued, durable delivery says started, and restart
@@ -94,6 +116,28 @@ async def _deliver_pending_wakes(
             retry_delay_seconds=retry_delay_seconds,
         )
     return delivered_count
+
+
+async def _record_proposal_delivery_failures(
+    conversations: ConversationSystem,
+    conn: sqlite3.Connection,
+    *,
+    ticket_id: str,
+) -> None:
+    for failure in data.unrecorded_proposal_delivery_failures(conn, ticket_id=ticket_id):
+        try:
+            await conversations.record_proposal_delivery_failed(
+                failure.conversation_id,
+                attempt_count=failure.attempt_count,
+                last_error=failure.last_error,
+                sender_message_id=failure.visibility_message_id,
+            )
+        except Exception:
+            _LOG.exception(
+                "proposal delivery failure record failed (ticket=%s generation=%s)",
+                ticket_id,
+                failure.proposal_generation,
+            )
 
 
 async def _deliver_rejection_messages(
@@ -163,9 +207,10 @@ async def _deliver_rejection_messages(
                     ticket_id=ticket_id,
                 )
             continue
-        if data.settle_rejection_message(
-            conn, message, state="delivered", now=now
-        ):
+        if data.settle_rejection_message(conn, message, state="delivered", now=now):
+            tickets_data.settle_proposal_delivery_error_after_worker_start(
+                conn, ticket_id, now=now
+            )
             delivered_count += 1
 
 

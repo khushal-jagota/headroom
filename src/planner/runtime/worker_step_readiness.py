@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from planner.proposal_holder_wakes import data as proposal_holder_wakes_data
 from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
 from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -97,8 +98,14 @@ def worker_step_blocker(
     )
     if ownership_mode is StageOwnershipMode.user:
         return "the Stage belongs to the user"
-    # `empty` is the only startable control state. Ownership refuses user-owned work.
-    if ticket.ticket_status is not TicketStatus.empty:
+    recoverable_proposal_delivery_error = (
+        ticket.ticket_status is TicketStatus.errored
+        and ticket.pending_proposal is None
+        and proposal_holder_wakes_data.has_unresolved_proposal_delivery_failure(
+            conn, ticket.id
+        )
+    )
+    if ticket.ticket_status is not TicketStatus.empty and not recoverable_proposal_delivery_error:
         return f"the Ticket is at {ticket.ticket_status.value}, so no worker step is due"
     if ownership_mode is StageOwnershipMode.paired:
         opened = conn.execute(

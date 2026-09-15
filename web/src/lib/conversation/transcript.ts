@@ -68,6 +68,14 @@ export type TranscriptRow =
     }
   | {
       key: string;
+      kind: "proposal_delivery_failed";
+      sequence: number;
+      createdAt: number;
+      attemptCount: number;
+      lastError: string;
+    }
+  | {
+      key: string;
       kind: "prompt_discarded";
       sequence: number;
       createdAt: number;
@@ -195,6 +203,7 @@ export function refusalSentence(reason: PromptDeliveryRefusalReason): string {
 /** What a message that was taken back before anything received it says about itself. The
  *  thread says it beside the message, and the rest line says it on its own. */
 export const PROMPT_DISCARDED_SENTENCE = "discarded without being delivered";
+export const PROPOSAL_DELIVERY_FAILED_SENTENCE = "proposal alert could not reach its holder";
 export const AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE = "context was not compacted";
 
 const TURN_ENDING_SENTENCES: Record<ConversationTurnEnding, string> = {
@@ -313,6 +322,16 @@ export function transcriptRows(
           createdAt,
           content: messageContentOf(event.payload),
           senderLabel: event.payload.sender_label
+        });
+        break;
+      case "proposal_delivery_failed":
+        rows.push({
+          key: `e${sequence}`,
+          kind: "proposal_delivery_failed",
+          sequence,
+          createdAt,
+          attemptCount: event.payload.attempt_count,
+          lastError: event.payload.last_error
         });
         break;
       case "prompt_discarded":

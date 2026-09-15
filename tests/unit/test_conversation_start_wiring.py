@@ -205,6 +205,21 @@ class _LinkWatchingConversationSystem:
             recipient=recipient,
         )
 
+    async def record_proposal_delivery_failed(
+        self,
+        conversation_id: str,
+        *,
+        attempt_count: int,
+        last_error: str,
+        sender_message_id: str,
+    ) -> None:
+        await self._system.record_proposal_delivery_failed(
+            conversation_id,
+            attempt_count=attempt_count,
+            last_error=last_error,
+            sender_message_id=sender_message_id,
+        )
+
     async def active_turn_reference(
         self, conversation_id: str
     ) -> ConversationTurnReference | None:
@@ -643,6 +658,21 @@ class _RelinkingConversationSystem:
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+        )
+
+    async def record_proposal_delivery_failed(
+        self,
+        conversation_id: str,
+        *,
+        attempt_count: int,
+        last_error: str,
+        sender_message_id: str,
+    ) -> None:
+        await self._system.record_proposal_delivery_failed(
+            conversation_id,
+            attempt_count=attempt_count,
+            last_error=last_error,
+            sender_message_id=sender_message_id,
         )
 
     async def active_turn_reference(

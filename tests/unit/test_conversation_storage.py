@@ -42,6 +42,7 @@ from planner.conversation.events import (
     PromptDeliveryUncertainEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
+    ProposalDeliveryFailedEventPayload,
     TokenUsageEventPayload,
     ToolCallFinishedEventPayload,
     ToolCallStartedEventPayload,
@@ -96,6 +97,11 @@ EVERY_PAYLOAD: tuple[ConversationEventPayload, ...] = (
     A_PROMPT,
     A_REFUSED_DELIVERY,
     A_UNCERTAIN_DELIVERY,
+    ProposalDeliveryFailedEventPayload(
+        attempt_count=10,
+        last_error="write_to_backend_failed",
+        sender_message_id="proposal-failure-1",
+    ),
     PromptDiscardedEventPayload(content=text_message_content("never ran"), sender_label="owner"),
     MessageToOwnerEventPayload(
         content=text_message_content("status"),

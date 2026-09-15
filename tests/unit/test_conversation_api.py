@@ -1487,6 +1487,34 @@ def test_the_rows_after_a_position_come_back_in_order_and_decoded(harness: _Harn
     _run(exercise)
 
 
+def test_proposal_delivery_failure_is_public_without_a_backend_write(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "proposal-failure")
+            for _ in range(2):
+                await harness.system.record_proposal_delivery_failed(
+                    "proposal-failure",
+                    attempt_count=10,
+                    last_error="write_to_backend_failed",
+                    sender_message_id="proposal-delivery-failed:t_one:1",
+                )
+            events = (await client.get(
+                "/api/conversation/conversations/proposal-failure/events"
+            )).json()["events"]
+            assert len(events) == 1
+            assert events[0]["kind"] == "proposal_delivery_failed"
+            assert events[0]["payload"] == {
+                "attempt_count": 10,
+                "last_error": "write_to_backend_failed",
+                "sender_message_id": "proposal-delivery-failed:t_one:1",
+            }
+            assert harness.backend("proposal-failure").written_texts == []
+
+    _run(exercise)
+
+
 def test_claude_legacy_image_detail_stays_in_rows_but_not_public_replays(
     harness: _Harness,
 ) -> None:

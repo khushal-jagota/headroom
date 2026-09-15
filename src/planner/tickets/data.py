@@ -1512,6 +1512,9 @@ def clear_ticket_error_for_restart(
         ticket = _load_ticket_for_write(conn, ticket_id)
         if ticket.ticket_status is not TicketStatus.errored:
             return ticket
+        proposal_holder_wakes_data.resolve_proposal_delivery_failures(
+            conn, ticket_id, now=now
+        )
         _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
         return _load_ticket_for_write(conn, ticket_id)
 
@@ -1523,6 +1526,7 @@ def release_worker_step_claim(
     expected_status: TicketStatus,
     expected_status_revision: int,
     now: int,
+    restore_error: str | None = None,
 ) -> bool:
     """Give a worker-step claim back, but only if the Ticket has not moved on since.
 
@@ -1540,7 +1544,13 @@ def release_worker_step_claim(
             return False
         if ticket.ticket_status_revision != expected_status_revision:
             return False
-        _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
+        _write_ticket_status(
+            conn,
+            ticket_id,
+            TicketStatus.errored if restore_error is not None else TicketStatus.empty,
+            now,
+            error=restore_error,
+        )
         return True
 
 
@@ -1555,6 +1565,38 @@ def mark_ticket_errored(
         _load_ticket_for_write(conn, ticket_id)
         _write_ticket_status(conn, ticket_id, TicketStatus.errored, now, error=error)
         return _load_ticket_for_write(conn, ticket_id)
+
+
+def settle_proposal_delivery_error_after_worker_start(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    now: int,
+) -> bool:
+    """Resolve proposal-delivery errors after a confirmed Worker start."""
+    with _txn(conn):
+        ticket = _load_ticket_for_write(conn, ticket_id)
+        rows = conn.execute(
+            "SELECT attempt_count,last_error FROM proposal_delivery_failures "
+            "WHERE ticket_id=? AND resolved_at IS NULL",
+            (ticket_id,),
+        ).fetchall()
+        if not rows:
+            return False
+        proposal_errors = {
+            f"Proposal alert failed after {int(row['attempt_count'])} delivery attempts: "
+            f"{str(row['last_error'])}"
+            for row in rows
+        }
+        proposal_holder_wakes_data.resolve_proposal_delivery_failures(
+            conn, ticket_id, now=now
+        )
+        if (
+            ticket.ticket_status is TicketStatus.errored
+            and ticket.backend_error in proposal_errors
+        ):
+            _write_ticket_status(conn, ticket_id, TicketStatus.agent, now)
+        return True
 
 
 def file_current_proposal_with_recap(
@@ -1654,6 +1696,13 @@ def accept_proposal(
         updated = _apply_decision(conn, ticket, decision, now)
         if edited_body is not None:
             ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
+        if (
+            ticket.ticket_status is TicketStatus.errored
+            and proposal_holder_wakes_data.has_unresolved_proposal_delivery_failure(
+                conn, ticket_id
+            )
+        ):
+            return _load_ticket_for_write(conn, ticket_id)
         if decision.stage != ticket.stage:
             _write_entered_stage_ticket_status(
                 conn,
@@ -1947,6 +1996,13 @@ def return_for_revision(
             now=now,
         )
         _apply_decision(conn, ticket, decision, now)
+        if (
+            ticket.ticket_status is TicketStatus.errored
+            and proposal_holder_wakes_data.has_unresolved_proposal_delivery_failure(
+                conn, ticket_id
+            )
+        ):
+            return _load_ticket_for_write(conn, ticket_id)
         _write_ticket_status(conn, ticket_id, TicketStatus.agent, now)
         return _load_ticket_for_write(conn, ticket_id)
 

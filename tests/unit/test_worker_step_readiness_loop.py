@@ -142,6 +142,25 @@ class _World:
         with self.connect() as conn:
             return tickets_data.read_ticket(conn, ticket_id)
 
+    def add_proposal_delivery_failure(self, ticket_id: str, conversation_id: str) -> str:
+        error = "Proposal alert failed after 10 delivery attempts: write_to_backend_failed"
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO conversations "
+                "(conversation_id,backend_key,model,workspace_folder,access,created_at) "
+                "VALUES (?,?,?,'/tmp','full',1)",
+                (conversation_id, "codex", "a-model"),
+            )
+            conn.execute(
+                "INSERT INTO proposal_delivery_failures "
+                "(ticket_id,proposal_generation,conversation_id,attempt_count,last_error,"
+                "visibility_message_id,created_at,resolved_at) "
+                "VALUES (?,1,?,10,'write_to_backend_failed',?,1,NULL)",
+                (ticket_id, conversation_id, f"proposal-delivery-failed:{ticket_id}:1"),
+            )
+            tickets_data.mark_ticket_errored(conn, ticket_id, error=error, now=1)
+        return error
+
     def skill_bindings(self) -> list[sqlite3.Row]:
         with self.connect() as conn:
             return conn.execute(
@@ -302,6 +321,43 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     # A refused delivery reached nobody, so the context is still owed.
     assert world.pending_context_keys(ticket_id) == ["ticket_changed"]
     assert world.skill_bindings() == []
+
+
+def test_a_refused_recovery_start_restores_the_proposal_delivery_error(
+    world: _World,
+) -> None:
+    ticket_id = world.ready_ticket(conversation_id="conv-recovery-refuse")
+    world.start_conversation("conv-recovery-refuse")
+    error = world.add_proposal_delivery_failure(ticket_id, "conv-recovery-refuse")
+    world.conversations.arm_backend_write_failure("conv-recovery-refuse")
+
+    assert world.start_step(ticket_id) is False
+    ticket = world.ticket(ticket_id)
+    assert ticket.ticket_status is TicketStatus.errored
+    assert ticket.backend_error == error
+    with world.connect() as conn:
+        assert conn.execute(
+            "SELECT resolved_at FROM proposal_delivery_failures WHERE ticket_id=?",
+            (ticket_id,),
+        ).fetchone()["resolved_at"] is None
+
+
+def test_a_successful_worker_start_clears_the_proposal_delivery_error(
+    world: _World,
+) -> None:
+    ticket_id = world.ready_ticket(conversation_id="conv-recovery-success")
+    world.start_conversation("conv-recovery-success")
+    world.add_proposal_delivery_failure(ticket_id, "conv-recovery-success")
+
+    assert world.start_step(ticket_id) is True
+    ticket = world.ticket(ticket_id)
+    assert ticket.ticket_status is TicketStatus.agent
+    assert ticket.backend_error is None
+    with world.connect() as conn:
+        assert conn.execute(
+            "SELECT resolved_at FROM proposal_delivery_failures WHERE ticket_id=?",
+            (ticket_id,),
+        ).fetchone()["resolved_at"] is not None
 
 
 def test_a_refused_paired_opener_rearms_the_stage(world: _World) -> None:

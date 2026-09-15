@@ -30,6 +30,16 @@ class ProposalHolderWake:
 
 
 @dataclass(frozen=True, slots=True)
+class ProposalDeliveryFailure:
+    ticket_id: str
+    proposal_generation: int
+    conversation_id: str
+    attempt_count: int
+    last_error: str
+    visibility_message_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class TicketRejectionMessage:
     id: str
     ticket_id: str

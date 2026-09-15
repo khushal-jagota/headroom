@@ -96,6 +96,7 @@ from planner.conversation.events import (
     PromptDeliveryUncertainEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
+    ProposalDeliveryFailedEventPayload,
     TokenUsageEventPayload,
     ToolCallFinishedEventPayload,
     ToolCallProgressFrame,
@@ -673,6 +674,41 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
+                ),
+            )
+
+    async def record_proposal_delivery_failed(
+        self,
+        conversation_id: str,
+        *,
+        attempt_count: int,
+        last_error: str,
+        sender_message_id: str,
+    ) -> None:
+        """Append one exact-once runtime failure row without touching the backend."""
+        if attempt_count < 1 or not last_error.strip() or not sender_message_id.strip():
+            raise ValueError("proposal delivery failure fields must be non-empty")
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            raise ValueError("no such conversation")
+        async with state.lock:
+            outcome = await self._store.sender_message_outcome(
+                conversation_id, sender_message_id
+            )
+            if outcome is not None:
+                payload = outcome.payload
+                if not isinstance(payload, ProposalDeliveryFailedEventPayload) or (
+                    payload.attempt_count,
+                    payload.last_error,
+                ) != (attempt_count, last_error):
+                    raise ValueError("sender_message_id already names a different message")
+                return
+            await self._append_event(
+                state,
+                ProposalDeliveryFailedEventPayload(
+                    attempt_count=attempt_count,
+                    last_error=last_error,
+                    sender_message_id=sender_message_id,
                 ),
             )
 

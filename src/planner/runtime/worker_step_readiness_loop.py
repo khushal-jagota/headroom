@@ -37,6 +37,7 @@ from planner.conversation.message_content import text_message_content
 from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.days.logic import dates
+from planner.proposal_holder_wakes import data as proposal_holder_wakes_data
 from planner.runtime import conversation_start, worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import worker_step_prompt
 from planner.skill_versions import (
@@ -45,6 +46,7 @@ from planner.skill_versions import (
     settle_worker_step_skill_bindings,
 )
 from planner.tickets import data as tickets_data
+from planner.tickets.contracts import TicketStatus
 from planner.worker_context.contracts import WorkerContextService
 from planner.worker_settings.service import database_parent_from_connection
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -83,6 +85,14 @@ async def start_ready_worker_step(
         if database_parent is None:
             raise RuntimeError("worker-step skill bindings need a file-backed database")
         ticket = tickets_data.read_ticket(conn, ticket_id)
+        proposal_delivery_error = (
+            ticket.backend_error
+            if ticket.ticket_status is TicketStatus.errored
+            and proposal_holder_wakes_data.has_unresolved_proposal_delivery_failure(
+                conn, ticket_id
+            )
+            else None
+        )
         conversation_id = ticket.conversation_id
         if conversation_id is not None and await conversation_system.is_running(conversation_id):
             # An occupied worker is left alone for this pass. Queueing stays the answer
@@ -110,13 +120,18 @@ async def start_ready_worker_step(
         )
         sender_message_id = f"worker_step_message_{uuid4().hex}"
 
-        def give_the_claim_back(*, opener_succeeded: bool = False) -> None:
+        def give_the_claim_back(
+            *, opener_succeeded: bool = False, restore_previous_error: bool = True
+        ) -> None:
             released = tickets_data.release_worker_step_claim(
                 conn,
                 ticket_id,
                 expected_status=departure_status,
                 expected_status_revision=departure_status_revision,
                 now=now(),
+                restore_error=(
+                    proposal_delivery_error if restore_previous_error else None
+                ),
             )
             if released and paired_opener and not opener_succeeded:
                 tickets_data.forget_paired_stage_opener(
@@ -192,8 +207,15 @@ async def start_ready_worker_step(
             # in-memory conversation system used by focused worker-step tests.
             settle_worker_step_skill_bindings(conn, sender_message_id, delivered=True)
 
+        proposal_holder_wakes_data.resolve_proposal_delivery_failures(
+            conn, ticket_id, now=now()
+        )
+
         if paired_opener:
-            give_the_claim_back(opener_succeeded=True)
+            give_the_claim_back(
+                opener_succeeded=True,
+                restore_previous_error=False,
+            )
 
         try:
             worker_context_service.acknowledge(ticket_id, prepared.receipts)

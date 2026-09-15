@@ -9,6 +9,7 @@ from contextlib import contextmanager
 
 from planner.core.contracts import Principal, PrincipalKind
 from planner.proposal_holder_wakes.contracts import (
+    ProposalDeliveryFailure,
     ProposalHolderWake,
     TicketRejectionMessage,
     proposal_ready_message,
@@ -19,6 +20,7 @@ _REJECTION_SENDER_MESSAGE_ID_SQL = (
     "message.rejection_generation || ':' || message.sequence || ':' || "
     "message.delivery_attempt"
 )
+_PROPOSAL_FAILURE_VISIBILITY_ID_SQL = "failure.visibility_message_id"
 
 
 @contextmanager
@@ -254,7 +256,22 @@ def due_ticket_ids(conn: sqlite3.Connection, *, now: int) -> tuple[str, ...]:
             + ")"
         ).fetchall()
     }
-    return tuple(sorted(proposal_ids | rejection_ids | uncertain_visibility_ids))
+    failure_visibility_ids = {
+        str(row["ticket_id"])
+        for row in conn.execute(
+            "SELECT failure.ticket_id FROM proposal_delivery_failures AS failure "
+            "WHERE failure.conversation_id IS NOT NULL AND NOT EXISTS ("
+            "SELECT 1 FROM conversation_events AS event "
+            "WHERE event.conversation_id=failure.conversation_id "
+            "AND event.kind='proposal_delivery_failed' "
+            "AND json_extract(event.payload,'$.sender_message_id')="
+            + _PROPOSAL_FAILURE_VISIBILITY_ID_SQL
+            + ")"
+        ).fetchall()
+    }
+    return tuple(sorted(
+        proposal_ids | rejection_ids | uncertain_visibility_ids | failure_visibility_ids
+    ))
 
 
 def has_delivering(conn: sqlite3.Connection) -> bool:
@@ -319,6 +336,55 @@ def unrecorded_uncertain_rejection_messages(
     return tuple(
         (str(row["conversation_id"]), _rejection_message_from_row(row)) for row in rows
     )
+
+
+def unrecorded_proposal_delivery_failures(
+    conn: sqlite3.Connection, *, ticket_id: str
+) -> tuple[ProposalDeliveryFailure, ...]:
+    """Return terminal failures still missing their Worker runtime row."""
+    rows = conn.execute(
+        "SELECT failure.* FROM proposal_delivery_failures AS failure "
+        "WHERE failure.ticket_id=? AND failure.conversation_id IS NOT NULL "
+        "AND NOT EXISTS (SELECT 1 FROM conversation_events AS event "
+        "WHERE event.conversation_id=failure.conversation_id "
+        "AND event.kind='proposal_delivery_failed' "
+        "AND json_extract(event.payload,'$.sender_message_id')="
+        + _PROPOSAL_FAILURE_VISIBILITY_ID_SQL
+        + ") ORDER BY failure.proposal_generation",
+        (ticket_id,),
+    ).fetchall()
+    return tuple(
+        ProposalDeliveryFailure(
+            ticket_id=str(row["ticket_id"]),
+            proposal_generation=int(row["proposal_generation"]),
+            conversation_id=str(row["conversation_id"]),
+            attempt_count=int(row["attempt_count"]),
+            last_error=str(row["last_error"]),
+            visibility_message_id=str(row["visibility_message_id"]),
+        )
+        for row in rows
+    )
+
+
+def has_unresolved_proposal_delivery_failure(
+    conn: sqlite3.Connection, ticket_id: str
+) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM proposal_delivery_failures "
+        "WHERE ticket_id=? AND resolved_at IS NULL LIMIT 1",
+        (ticket_id,),
+    ).fetchone() is not None
+
+
+def resolve_proposal_delivery_failures(
+    conn: sqlite3.Connection, ticket_id: str, *, now: int
+) -> int:
+    cursor = conn.execute(
+        "UPDATE proposal_delivery_failures SET resolved_at=? "
+        "WHERE ticket_id=? AND resolved_at IS NULL",
+        (now, ticket_id),
+    )
+    return cursor.rowcount
 
 
 def _rejection_message_from_row(row: sqlite3.Row) -> TicketRejectionMessage:
@@ -454,6 +520,52 @@ def record_refusal(
         ),
     )
     return cursor.rowcount == 1
+
+
+def record_terminal_failure(
+    conn: sqlite3.Connection,
+    wake: ProposalHolderWake,
+    *,
+    error: str,
+    now: int,
+) -> bool:
+    """Settle one exact refusal, retain visibility, and mark its Ticket errored."""
+    from planner.tickets import data as tickets_data
+
+    with _transaction(conn):
+        cursor = conn.execute(
+            "UPDATE proposal_holder_wakes SET state='failed',last_error=?,updated_at=? "
+            "WHERE ticket_id=? AND proposal_generation=? AND delivery_attempt=? "
+            "AND state='delivering'",
+            (error, now, wake.ticket_id, wake.proposal_generation, wake.delivery_attempt),
+        )
+        if cursor.rowcount != 1:
+            return False
+        ticket = tickets_data.read_ticket(conn, wake.ticket_id)
+        conn.execute(
+            "INSERT INTO proposal_delivery_failures "
+            "(ticket_id,proposal_generation,conversation_id,attempt_count,last_error,"
+            "visibility_message_id,created_at,resolved_at) VALUES (?,?,?,?,?,?,?,NULL)",
+            (
+                wake.ticket_id,
+                wake.proposal_generation,
+                ticket.conversation_id,
+                wake.delivery_attempt,
+                error,
+                f"proposal-delivery-failed:{wake.ticket_id}:{wake.proposal_generation}",
+                now,
+            ),
+        )
+        tickets_data.mark_ticket_errored(
+            conn,
+            wake.ticket_id,
+            error=(
+                f"Proposal alert failed after {wake.delivery_attempt} delivery attempts: "
+                f"{error}"
+            ),
+            now=now,
+        )
+        return True
 
 
 def record_exception(

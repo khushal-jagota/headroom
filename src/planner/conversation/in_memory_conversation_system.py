@@ -61,6 +61,7 @@ class InMemoryConversationObservationKind(StrEnum):
     prompt_delivered = "prompt_delivered"
     prompt_delivery_refused = "prompt_delivery_refused"
     prompt_delivery_uncertain = "prompt_delivery_uncertain"
+    proposal_delivery_failed = "proposal_delivery_failed"
     prompt_discarded = "prompt_discarded"
     turn_ended = "turn_ended"
     permission_asked = "permission_asked"
@@ -97,6 +98,8 @@ class InMemoryConversationObservation:
     mode: PromptDeliveryMode | None = None
     turn_ending: InMemoryConversationTurnEnding | None = None
     refusal_reason: PromptDeliveryRefusalReason | None = None
+    attempt_count: int | None = None
+    last_error: str | None = None
     permission_ask_id: str | None = None
     user_input_request_id: str | None = None
     user_input_questions: tuple[UserInputQuestion, ...] | None = None
@@ -523,6 +526,38 @@ class InMemoryConversationSystem:
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
+            )
+        )
+
+    async def record_proposal_delivery_failed(
+        self,
+        conversation_id: str,
+        *,
+        attempt_count: int,
+        last_error: str,
+        sender_message_id: str,
+    ) -> None:
+        if attempt_count < 1 or not last_error.strip() or not sender_message_id.strip():
+            raise ValueError("proposal delivery failure fields must be non-empty")
+        state = self._conversations.get(conversation_id)
+        if state is None:
+            raise ValueError("no such conversation")
+        for observed in state.observations:
+            if observed.sender_message_id != sender_message_id:
+                continue
+            if (
+                observed.kind is not InMemoryConversationObservationKind.proposal_delivery_failed
+                or observed.attempt_count != attempt_count
+                or observed.last_error != last_error
+            ):
+                raise ValueError("sender_message_id already names a different message")
+            return
+        state.observations.append(
+            InMemoryConversationObservation(
+                kind=InMemoryConversationObservationKind.proposal_delivery_failed,
+                attempt_count=attempt_count,
+                last_error=last_error,
+                sender_message_id=sender_message_id,
             )
         )
 
