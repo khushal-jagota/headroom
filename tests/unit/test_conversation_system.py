@@ -867,7 +867,9 @@ def test_uncertain_rejection_fact_settles_and_later_rejections_continue(
         )
 
         append_delivered_prompt = harness.store.append_delivered_prompt
+        append_event = harness.store.append_event
         fail_next_prompt_record = True
+        uncertainty_record_failures_remaining = 2
 
         async def fail_first_prompt_record(*args: Any, **kwargs: Any) -> Any:
             nonlocal fail_next_prompt_record
@@ -876,9 +878,22 @@ def test_uncertain_rejection_fact_settles_and_later_rejections_continue(
                 raise sqlite3.OperationalError("injected prompt record failure")
             return await append_delivered_prompt(*args, **kwargs)
 
+        async def fail_first_uncertainty_records(
+            conversation_id: str, payload: Any, **kwargs: Any
+        ) -> Any:
+            nonlocal uncertainty_record_failures_remaining
+            if (
+                isinstance(payload, PromptDeliveryUncertainEventPayload)
+                and uncertainty_record_failures_remaining
+            ):
+                uncertainty_record_failures_remaining -= 1
+                raise sqlite3.OperationalError("injected uncertainty record failure")
+            return await append_event(conversation_id, payload, **kwargs)
+
         monkeypatch.setattr(
             harness.store, "append_delivered_prompt", fail_first_prompt_record
         )
+        monkeypatch.setattr(harness.store, "append_event", fail_first_uncertainty_records)
 
         assert await deliver_pending_wakes(
             harness.system, conn, clock, ticket_id=target_id
@@ -894,9 +909,20 @@ def test_uncertain_rejection_fact_settles_and_later_rejections_continue(
             (1, 2, "delivered"),
         ]
         first_events = [event.payload for event in await harness.events("c-worker")]
+        assert not any(
+            isinstance(payload, PromptDeliveryUncertainEventPayload)
+            for payload in first_events
+        )
+        from planner.proposal_holder_wakes import data as wake_data
+
+        assert wake_data.due_ticket_ids(conn, now=clock.now_unix()) == (target_id,)
+        assert await deliver_pending_wakes(
+            harness.system, conn, clock, ticket_id=target_id
+        ) == 0
+        recovered_events = [event.payload for event in await harness.events("c-worker")]
         uncertain = [
             payload
-            for payload in first_events
+            for payload in recovered_events
             if isinstance(payload, PromptDeliveryUncertainEventPayload)
         ]
         assert len(uncertain) == 1
@@ -910,6 +936,7 @@ def test_uncertain_rejection_fact_settles_and_later_rejections_continue(
             "The decider's comment follows.",
             "First comment.",
         )
+        assert wake_data.due_ticket_ids(conn, now=clock.now_unix()) == ()
 
         await harness.complete_turn("c-worker")
         tickets_data.file_current_proposal_with_recap(
@@ -958,8 +985,6 @@ def test_uncertain_rejection_fact_settles_and_later_rejections_continue(
             "The decider's comment follows.",
             "Second comment.",
         )
-        from planner.proposal_holder_wakes import data as wake_data
-
         assert wake_data.due_ticket_ids(conn, now=clock.now_unix()) == ()
         conn.close()
 

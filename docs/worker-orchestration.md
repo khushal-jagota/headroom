@@ -155,8 +155,9 @@ sender identities preserve transcript order and prevent duplicates across retrie
 process restarts. A refusal leaves the message pending for retry. An accepted prompt
 with a failed transcript write becomes terminal `uncertain`, so Panels never sends it
 twice. The conversation shows that uncertain attempt, and later rejection messages
-continue in order. Reply bookkeeping credits the source turn after the commit and cannot
-undo the rejection.
+continue in order. If the runtime row fails too, the same recovery loop recreates that
+row from the durable rejection record without another backend send. Reply bookkeeping
+credits the source turn after the commit and cannot undo the rejection.
 
 _Code path:_ `src/planner/tickets/actions.py`.
 

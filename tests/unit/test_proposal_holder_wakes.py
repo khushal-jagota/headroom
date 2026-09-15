@@ -537,10 +537,11 @@ def test_uncertain_rejection_message_is_settled_and_its_successor_proceeds(
         "send_ticket_outbox_message",
         send,
     )
+    conversations = AsyncMock()
 
     assert asyncio.run(
         deliver_pending_wakes(
-            object(),  # type: ignore[arg-type]
+            conversations,
             tmp_db,
             fake_clock,
             ticket_id=ticket_id,
@@ -548,7 +549,7 @@ def test_uncertain_rejection_message_is_settled_and_its_successor_proceeds(
     ) == 1
     assert asyncio.run(
         deliver_pending_wakes(
-            object(),  # type: ignore[arg-type]
+            conversations,
             tmp_db,
             fake_clock,
             ticket_id=ticket_id,

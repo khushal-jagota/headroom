@@ -327,6 +327,8 @@ same machine-lock-owned recovery loop sends both records after the commit and pr
 their separate attribution. Durable sender identities make retries idempotent. A
 post-wire record failure stays terminal and visible as `uncertain`, but it is settled
 for ordering. The messages after it continue without a retry of the uncertain message.
+If its conversation row also fails, the recovery loop writes that row later without
+another backend send.
 The ticket's stage never changes: a pending
 gated proposal is cleared, settled values remain, and the ticket leaves Review while
 its control status is `agent`. The gated field can therefore be revised
