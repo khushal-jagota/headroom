@@ -60,7 +60,7 @@ describe("shared work-attention precedence", () => {
     );
     expect(dayVisualTicket(dayTicket)).toMatchObject({
       group: "awaiting_approval",
-      state: "current-awaiting-approval"
+      state: "needs-me"
     });
     expect(feedbackTicketStageState(feedbackTicket)).toBe("current-awaiting-approval");
     expect(feedbackTicketStateLabel(feedbackTicket)).toBe("Awaiting approval");
@@ -89,9 +89,53 @@ describe("shared work-attention precedence", () => {
     expect(workspaceCardGroupKey(boardCard("t_attention", assignedAndReply))).toBe("assigned");
     expect(dayVisualTicket(dayTicket)).toMatchObject({
       group: "assigned",
-      state: "current-paired"
+      state: "needs-me"
     });
     expect(feedbackTicketStageState(feedbackTicket)).toBe("current-paired");
     expect(feedbackTicketStateLabel(feedbackTicket)).toBe("Assigned");
+  });
+
+  it.each([
+    {
+      awaiting_approval: false,
+      assigned: true,
+      awaiting_reply: false,
+      expectedGroup: "assigned"
+    },
+    {
+      awaiting_approval: true,
+      assigned: false,
+      awaiting_reply: false,
+      expectedGroup: "awaiting_approval"
+    }
+  ])("keeps Day errors visible across owner-attention states", (overlap) => {
+    const facts = {
+      ...ticketFacts,
+      ...overlap,
+      ticket_status: "errored",
+      agent_state: "errored" as const
+    };
+    const feedbackTicket: FeedbackTicket = {
+      id: "t_errored",
+      title: "Errored",
+      ...facts
+    };
+    const dayTicket: DayTicket = {
+      id: "t_errored",
+      title: "Errored",
+      stage: facts.stage,
+      ticket_status: facts.ticket_status,
+      conversation_id: null,
+      gating_field: "implementation",
+      ...overlap,
+      agent_state: "errored"
+    };
+
+    expect(sprintTicketCondition(facts).mark).toBe("errored");
+    expect(feedbackTicketStageState(feedbackTicket)).toBe("errored");
+    expect(dayVisualTicket(dayTicket)).toMatchObject({
+      group: overlap.expectedGroup,
+      state: "errored"
+    });
   });
 });

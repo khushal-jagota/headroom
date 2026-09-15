@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from planner.conversation import storage as conversation_storage
 from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
@@ -343,6 +344,59 @@ def test_owner_read_position_is_server_side_monotonic_and_bounded(
         assert await store.advance_owner_read_through_sequence("missing", 1) is None
 
     asyncio.run(exercise())
+
+
+def test_owner_read_position_and_attention_state_share_one_immediate_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "read-attention-transaction.db"
+    schema_connection = connect(str(db_path))
+    create_schema(schema_connection)
+    schema_connection.close()
+    store = ConversationStore(str(db_path), integer_now=lambda: 1_700_000_000)
+
+    async def prepare() -> None:
+        await store.create_conversation(_resolved())
+        link = connect(str(db_path))
+        link.execute(
+            "INSERT INTO agents(agent_key, conversation_id) VALUES ('chief_of_staff', 'c')"
+        )
+        link.close()
+        await store.append_event(
+            "c",
+            MessageToOwnerEventPayload(
+                content=text_message_content("status"),
+                sender=Principal(PrincipalKind.chief, "chief"),
+                recipient=OWNER_PRINCIPAL,
+                sender_label="Chief of Staff",
+            ),
+        )
+
+    asyncio.run(prepare())
+    trace: list[str] = []
+    real_connect = connect
+
+    def traced_connect(path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
+        connection = real_connect(path, busy_timeout_ms)
+        connection.set_trace_callback(trace.append)
+        return connection
+
+    monkeypatch.setattr(conversation_storage, "connect", traced_connect)
+    asyncio.run(store.advance_owner_read_through_sequence("c", 1))
+
+    statements = [statement.strip().upper() for statement in trace]
+    assert statements.count("BEGIN IMMEDIATE") == 1
+    begin = statements.index("BEGIN IMMEDIATE")
+    commit = statements.index("COMMIT")
+    transaction = statements[begin:commit]
+    assert any(
+        statement.startswith("UPDATE CONVERSATIONS SET OWNER_READ")
+        for statement in transaction
+    )
+    assert any(
+        statement.startswith("INSERT INTO NOTIFICATION_ATTENTION_STATE")
+        for statement in transaction
+    )
 
 
 def test_an_owner_reply_advances_read_in_the_prompt_transaction(
