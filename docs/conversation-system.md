@@ -45,6 +45,9 @@ Every conversation opens through the Focus lens. Focus shows the owner's prompts
 explicit messages addressed to the owner, permission requests, agent questions, and
 the answers that settle those requests. Historical owner prompts without principals use
 their established owner label, so they remain readable without a record migration.
+Failed turns, stopped turns, and missing explicit replies remain visible as compact
+system rows. Complete turn boundaries still settle the Focus thread when runtime rows
+are hidden.
 Full shows the complete runtime notebook. The header toggle and the unmodified `f` key
 switch the lens without replacing the conversation. Editable controls keep the key.
 
@@ -52,6 +55,10 @@ The lens changes only what the person reads. Liveness, streaming, reconnects, an
 snapshots continue to use the complete feed. A switch to another conversation invalidates
 the old read and tail. A late snapshot, row, frame, or refresh from the old conversation
 cannot change the newly opened conversation.
+
+While active Focus is open, the owner read position advances through the newest delivered
+row. Runtime-only rows can clear an unread mark because Focus displays every result that
+needs the owner's attention.
 
 An open conversation is handed each new row directly, so it never has to be told to
 come and look. That is why most rows are written quietly: a historical agent-message row, a tool

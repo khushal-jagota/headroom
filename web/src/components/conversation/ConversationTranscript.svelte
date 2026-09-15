@@ -12,9 +12,12 @@
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import { readableConversationDetail } from "../../lib/conversation/conversationDetail";
   import {
-    threadItems,
     type ThreadItem
   } from "../../lib/conversation/threadLayout";
+  import {
+    conversationThreadItemsForLens,
+    type ConversationLens
+  } from "../../lib/conversation/lens";
   import {
     AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE,
     askDeadSentence,
@@ -30,6 +33,8 @@
 
   let {
     rows,
+    visibleRows,
+    lens,
     conversationId,
     models = [],
     ownSenderLabel = null,
@@ -37,6 +42,8 @@
     ticketId = null
   }: {
     rows: readonly TranscriptRow[];
+    visibleRows: readonly TranscriptRow[];
+    lens: ConversationLens;
     /** Which conversation these rows belong to, so a piece naming a file it kept has
      *  somewhere to fetch it from. */
     conversationId: string;
@@ -49,7 +56,7 @@
     ownSenderLabel?: string | null;
   } = $props();
 
-  let items = $derived<ThreadItem[]>(threadItems(rows));
+  let items = $derived<ThreadItem[]>(conversationThreadItemsForLens(rows, visibleRows, lens));
   // Opening a turn opens every run inside it, so there is one place to open a turn
   // rather than one per batch of tool calls in it.
   let expandedTurns = $state<Record<string, boolean>>({});

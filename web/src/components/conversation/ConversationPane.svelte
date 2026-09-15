@@ -41,6 +41,7 @@
     conversationExists = false,
     workspaceFolder = null,
     rows = [],
+    visibleRows = null,
     outgoingMessages = [],
     running = false,
     ask = null,
@@ -88,6 +89,8 @@
     conversationExists?: boolean;
     workspaceFolder?: string | null;
     rows?: readonly TranscriptRow[];
+    /** Rows this lens draws. The complete rows still own turn structure. */
+    visibleRows?: readonly TranscriptRow[] | null;
     /** Messages this browser has sent that the record does not have yet, oldest first. */
     outgoingMessages?: readonly OutgoingMessage[];
     running?: boolean;
@@ -176,10 +179,11 @@
   );
 
   // Only at rest is there a bar to put it in. Peeked and opened have the turn head.
-  let taskProgress = $derived(taskProgressFrom(rows));
+  let rowsForLens = $derived(visibleRows ?? rows);
+  let taskProgress = $derived(taskProgressFrom(rowsForLens));
   let restLine = $derived(
     conversationState === "rest"
-      ? restLineFrom(rows, ownSenderLabel ?? "", { ...taskProgress, turnRunning: running })
+      ? restLineFrom(rowsForLens, ownSenderLabel ?? "", { ...taskProgress, turnRunning: running })
       : null
   );
 
@@ -346,6 +350,8 @@
     {conversationId}
     {ticketId}
     {rows}
+    visibleRows={rowsForLens}
+    {lens}
     {outgoingMessages}
     {models}
     {ownSenderLabel}

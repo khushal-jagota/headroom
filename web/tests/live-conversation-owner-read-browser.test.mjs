@@ -144,7 +144,7 @@ with sync_playwright() as playwright:
 
     def api(route):
         request = route.request
-        if request.url.endswith("/events?after=0"):
+        if "/events?after=" in request.url:
             route.fulfill(json={"events": []})
         elif request.url.endswith("/owner-read"):
             owner_reads.append(request.post_data_json["through_sequence"])
@@ -189,6 +189,94 @@ with sync_playwright() as playwright:
     # The focus event must retry the row that arrived while focus was elsewhere.
     # No later transcript row exists to move the component's read effect.
     assert owner_reads == [1], owner_reads
+
+    # A turn with no Focus content still clears the durable unread position. Runtime rows
+    # remain hidden, but active Focus acknowledges the newest delivered row.
+    page.evaluate("""window.__emitConversationRow({
+      conversation_id: "focus-fixture",
+      sequence: 2,
+      kind: "prompt",
+      payload: {
+        text: "automatic loop prompt",
+        sender_label: "loop",
+        mode: "queue",
+        sender: { kind: "sprint_item", id: "fixture" },
+        recipient: { kind: "ticket", id: "fixture" }
+      },
+      created_at: 2
+    })""")
+    page.evaluate("""window.__emitConversationRow({
+      conversation_id: "focus-fixture",
+      sequence: 3,
+      kind: "agent_message",
+      payload: { text: "runtime-only result" },
+      created_at: 3
+    })""")
+    page.evaluate("""window.__emitConversationRow({
+      conversation_id: "focus-fixture",
+      sequence: 4,
+      kind: "plan_updated",
+      payload: { entries: [{ text: "Inspect hidden plan", status: "in_progress" }] },
+      created_at: 4
+    })""")
+    page.wait_for_timeout(100)
+    assert owner_reads[-1] == 4, owner_reads
+    assert page.get_by_text("automatic loop prompt", exact=True).count() == 0
+    assert page.get_by_text("runtime-only result", exact=True).count() == 0
+    assert page.locator("[data-conversation-task-progress]").count() == 0
+    lens_toggle = page.locator("[data-conversation-lens-toggle]")
+    lens_toggle.click()
+    page.get_by_text("automatic loop prompt", exact=True).wait_for()
+    page.get_by_text("runtime-only result", exact=True).wait_for()
+    page.locator("[data-conversation-task-progress]").wait_for()
+    lens_toggle.click()
+    assert page.get_by_text("automatic loop prompt", exact=True).count() == 0
+    assert page.get_by_text("runtime-only result", exact=True).count() == 0
+    assert page.locator("[data-conversation-task-progress]").count() == 0
+    page.evaluate("""window.__emitConversationRow({
+      conversation_id: "focus-fixture",
+      sequence: 5,
+      kind: "turn_ended",
+      payload: { ending: "completed", error_summary: null },
+      created_at: 5
+    })""")
+    page.wait_for_timeout(100)
+    assert owner_reads[-1] == 5, owner_reads
+
+    page.evaluate("""window.__emitConversationRow({
+      conversation_id: "focus-fixture",
+      sequence: 6,
+      kind: "turn_ended",
+      payload: { ending: "failed", error_summary: "backend exited" },
+      created_at: 6
+    })""")
+    page.get_by_text("turn failed · backend exited", exact=True).wait_for()
+    page.evaluate("""window.__emitConversationRow({
+      conversation_id: "focus-fixture",
+      sequence: 7,
+      kind: "explicit_reply_missing",
+      payload: { prompt_sender: { kind: "owner", id: "owner" } },
+      created_at: 7
+    })""")
+    page.locator('[data-conversation-row="explicit_reply_missing"]').wait_for()
+
+    page.evaluate("""window.__emitConversationRow({
+      conversation_id: "focus-fixture",
+      sequence: 8,
+      kind: "prompt",
+      payload: {
+        text: "turn that loses its ending",
+        sender_label: "owner",
+        mode: "queue",
+        sender: { kind: "owner", id: "owner" },
+        recipient: { kind: "ticket", id: "fixture" }
+      },
+      created_at: 8
+    })""")
+    SNAPSHOT["latest_sequence"] = 8
+    SNAPSHOT["is_running"] = False
+    page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+    page.get_by_text("turn stopped without an ending", exact=True).wait_for()
     browser.close()
 
 print("live-conversation-owner-read-browser.test.mjs: all assertions passed")

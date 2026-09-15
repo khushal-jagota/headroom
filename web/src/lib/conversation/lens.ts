@@ -1,5 +1,6 @@
 /** The two ways to read one conversation record. */
 import type { ConversationFeed } from "./feed";
+import { threadItems, type ThreadItem } from "./threadLayout";
 import type { TranscriptRow } from "./transcript";
 import type { ConversationEvent, HeldPrompt } from "./wire";
 
@@ -28,6 +29,8 @@ export function conversationEventIsInFocus(
         );
     case "message_to_owner":
       return event.payload.recipient.kind === "owner";
+    case "explicit_reply_missing":
+      return true;
     case "permission_asked":
     case "permission_answered":
     case "user_input_requested":
@@ -49,14 +52,15 @@ export function conversationFeedForLens(
   const events: ConversationEvent[] = [];
   let focusedTurnHasContent = false;
   for (const event of feed.events) {
-    if (conversationEventIsInFocus(event, ownerSenderLabel)) {
+    if (event.kind === "turn_ended") {
+      // Every ending remains available to settle the complete turn structure. Focus only
+      // draws endings that report a failure or stop, plus completed endings that settle
+      // an ask inside the focused projection.
+      if (focusedTurnHasContent || event.payload.ending !== "completed") events.push(event);
+      focusedTurnHasContent = false;
+    } else if (conversationEventIsInFocus(event, ownerSenderLabel)) {
       events.push(event);
       focusedTurnHasContent = true;
-    } else if (event.kind === "turn_ended") {
-      // The boundary settles focused asks and lets the read position cover a focused
-      // turn. The row is structural in Focus and is removed from the visible rows below.
-      if (focusedTurnHasContent) events.push(event);
-      focusedTurnHasContent = false;
     }
   }
   return {
@@ -79,9 +83,23 @@ export function conversationRowsForLens(
     || row.kind === "prompt_uncertain"
     || row.kind === "prompt_discarded"
     || row.kind === "agent_message"
+    || row.kind === "explicit_reply_missing"
     || row.kind === "permission_ask"
     || row.kind === "user_input"
+    || (row.kind === "turn_ended" && row.ending !== "completed")
+    || row.kind === "turn_stopped"
   ));
+}
+
+/** Build every turn from the complete record, then hide rows outside the selected lens. */
+export function conversationThreadItemsForLens(
+  rows: readonly TranscriptRow[],
+  visibleRows: readonly TranscriptRow[],
+  lens: ConversationLens
+): ThreadItem[] {
+  if (lens === "full") return threadItems(rows);
+  const visibleKeys = new Set(visibleRows.map((row) => row.key));
+  return threadItems(rows, (row) => visibleKeys.has(row.key));
 }
 
 /** Held prompts are messages too, but only owner-authored ones belong in Focus. */

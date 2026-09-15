@@ -12,7 +12,7 @@ const openAndReadable: OwnerReadEligibility = {
   conversationState: "opened",
   documentIsVisible: true,
   windowIsFocused: true,
-  transcriptLatestSequence: 7,
+  deliveredLatestSequence: 7,
   snapshot: { latestSequence: 7, ownerReadThroughSequence: 3 }
 };
 
@@ -29,21 +29,21 @@ describe("Conversation owner read eligibility", () => {
     expect(eligibleOwnerReadSequence({ ...openAndReadable, windowIsFocused: false })).toBeNull();
   });
 
-  it("does not use a snapshot position before its transcript rows arrive", () => {
+  it("does not use a snapshot position before its delivered rows arrive", () => {
     expect(eligibleOwnerReadSequence({
       ...openAndReadable,
-      transcriptLatestSequence: 0,
+      deliveredLatestSequence: 0,
       snapshot: { latestSequence: 7, ownerReadThroughSequence: 0 }
     })).toBeNull();
   });
 
   it.each([null, "peeked", "opened"] as const)(
-    "advances an open, visible, focused %s pane only to the transcript position",
+    "advances an open, visible, focused %s pane only to the delivered position",
     (conversationState) => {
       expect(eligibleOwnerReadSequence({
         ...openAndReadable,
         conversationState,
-        transcriptLatestSequence: 5,
+        deliveredLatestSequence: 5,
         snapshot: { latestSequence: 9, ownerReadThroughSequence: 3 }
       })).toBe(5);
     }

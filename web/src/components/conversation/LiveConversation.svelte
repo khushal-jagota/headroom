@@ -179,14 +179,17 @@
     )
   );
   let visibleFeed = $derived(conversationFeedForLens(feed, lens, senderLabel));
-  let rows = $derived(conversationRowsForLens(
+  let rows = $derived(transcriptRows(feed, {
+    turnStoppedWithoutAnEnding: liveness.turnStoppedWithoutAnEnding
+  }));
+  let visibleRows = $derived(conversationRowsForLens(
     transcriptRows(visibleFeed, {
       turnStoppedWithoutAnEnding: liveness.turnStoppedWithoutAnEnding
     }),
     lens
   ));
-  let ask = $derived(liveAskFrom(rows));
-  let userInput = $derived(liveUserInputFrom(rows));
+  let ask = $derived(liveAskFrom(visibleRows));
+  let userInput = $derived(liveUserInputFrom(visibleRows));
   let advancingRead: { conversationId: string; sequence: number } | null = null;
   $effect(() => {
     void attentionPulse;
@@ -197,7 +200,7 @@
         // Focus can leave the top document through a preview iframe without a window
         // blur event. Ask the document again when a new row is about to be credited.
         windowIsFocused: windowIsFocused && document.hasFocus(),
-        transcriptLatestSequence: lens === "focus" ? visibleFeed.latestSequence : 0,
+        deliveredLatestSequence: lens === "focus" ? feed.latestSequence : 0,
         snapshot: {
           latestSequence: view.latest_sequence,
           ownerReadThroughSequence: view.owner_read_through_sequence
@@ -766,6 +769,7 @@
   bind:backends
   workspaceFolder={view?.workspace_folder ?? null}
   {rows}
+  {visibleRows}
   outgoingMessages={transcriptOutgoingMessages}
   heldPromptRows={visibleHeldRows}
   supportsSteer={view?.supports_steer ?? false}

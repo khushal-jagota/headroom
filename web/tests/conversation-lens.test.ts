@@ -4,6 +4,7 @@ import { emptyConversationFeed, feedWithCommittedEvents } from "../src/lib/conve
 import {
   conversationFeedForLens,
   conversationRowsForLens,
+  conversationThreadItemsForLens,
   heldPromptIsInLens
 } from "../src/lib/conversation/lens";
 import { transcriptRows } from "../src/lib/conversation/transcript";
@@ -91,14 +92,68 @@ describe("Conversation lenses", () => {
     expect(focused.latestSequence).toBe(3);
   });
 
-  it("keeps runtime-only missing-reply markers out of Focus", () => {
+  it("shows missing replies and failed or stopped turns as compact Focus rows", () => {
     const fullFeed = feedWithCommittedEvents(emptyConversationFeed(), [
       event(1, "explicit_reply_missing", { prompt_sender: ticket }),
-      event(2, "explicit_reply_missing", { prompt_sender: owner })
+      event(2, "explicit_reply_missing", { prompt_sender: owner }),
+      event(3, "turn_ended", { ending: "failed", error_summary: "backend exited" })
     ]);
+    const focused = conversationFeedForLens(fullFeed, "focus", "owner");
 
-    expect(conversationFeedForLens(fullFeed, "focus", "owner").events).toEqual([]);
+    expect(focused.events.map((row) => row.sequence)).toEqual([1, 2, 3]);
+    expect(conversationRowsForLens(transcriptRows(focused), "focus")).toEqual([
+      expect.objectContaining({ kind: "explicit_reply_missing", sequence: 1 }),
+      expect.objectContaining({ kind: "explicit_reply_missing", sequence: 2 }),
+      expect.objectContaining({
+        kind: "turn_ended",
+        ending: "failed",
+        errorSummary: "backend exited"
+      })
+    ]);
+    const stoppedRows = transcriptRows(emptyConversationFeed(), {
+      turnStoppedWithoutAnEnding: true
+    });
+    expect(conversationRowsForLens(stoppedRows, "focus")).toEqual([
+      expect.objectContaining({ kind: "turn_stopped" })
+    ]);
     expect(conversationFeedForLens(fullFeed, "full", "owner")).toBe(fullFeed);
+  });
+
+  it("settles complete turn structure before Focus hides runtime rows", () => {
+    const fullFeed = feedWithCommittedEvents(emptyConversationFeed(), [
+      event(1, "prompt", {
+        text: "first prompt",
+        sender_label: "owner",
+        mode: "queue",
+        sender: owner,
+        recipient: ticket
+      }),
+      event(2, "message_to_owner", {
+        text: "first reply",
+        sender_label: "Ticket",
+        sender: ticket,
+        recipient: owner
+      }),
+      event(3, "turn_ended", { ending: "completed", error_summary: null }),
+      event(4, "prompt", {
+        text: "second prompt",
+        sender_label: "owner",
+        mode: "queue",
+        sender: owner,
+        recipient: ticket
+      })
+    ]);
+    const rows = transcriptRows(fullFeed);
+    const visibleRows = conversationRowsForLens(
+      transcriptRows(conversationFeedForLens(fullFeed, "focus", "owner")),
+      "focus"
+    );
+    const turns = conversationThreadItemsForLens(rows, visibleRows, "focus")
+      .filter((item) => item.kind === "turn");
+
+    expect(turns).toHaveLength(2);
+    expect(turns[0]).toMatchObject({ turnKey: "turn:e1", settled: true, isLatest: false });
+    expect(turns[1]).toMatchObject({ turnKey: "turn:e4", settled: false, isLatest: true });
   });
 
   it("applies the same principal and legacy rules to held prompts", () => {
