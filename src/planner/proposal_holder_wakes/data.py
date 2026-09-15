@@ -14,6 +14,12 @@ from planner.proposal_holder_wakes.contracts import (
     proposal_ready_message,
 )
 
+_REJECTION_SENDER_MESSAGE_ID_SQL = (
+    "'ticket-rejection:' || message.ticket_id || ':' || "
+    "message.rejection_generation || ':' || message.sequence || ':' || "
+    "message.delivery_attempt"
+)
+
 
 @contextmanager
 def _transaction(conn: sqlite3.Connection) -> Iterator[None]:
@@ -234,7 +240,21 @@ def due_ticket_ids(conn: sqlite3.Connection, *, now: int) -> tuple[str, ...]:
             (now,),
         ).fetchall()
     }
-    return tuple(sorted(proposal_ids | rejection_ids))
+    uncertain_visibility_ids = {
+        str(row["ticket_id"])
+        for row in conn.execute(
+            "SELECT DISTINCT message.ticket_id "
+            "FROM ticket_rejection_messages AS message JOIN tickets "
+            "ON tickets.id=message.ticket_id "
+            "WHERE message.state='uncertain' AND tickets.conversation_id IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM conversation_events AS event "
+            "WHERE event.kind='prompt_delivery_uncertain' "
+            "AND json_extract(event.payload,'$.sender_message_id')="
+            + _REJECTION_SENDER_MESSAGE_ID_SQL
+            + ")"
+        ).fetchall()
+    }
+    return tuple(sorted(proposal_ids | rejection_ids | uncertain_visibility_ids))
 
 
 def has_delivering(conn: sqlite3.Connection) -> bool:
@@ -252,7 +272,7 @@ def has_delivering(conn: sqlite3.Connection) -> bool:
 def claim_due_rejection_message(
     conn: sqlite3.Connection, *, ticket_id: str, now: int
 ) -> TicketRejectionMessage | None:
-    """Claim the first unfinished message for one rejection in transcript order."""
+    """Claim the first unsettled message for one Ticket in transcript order."""
     with _transaction(conn):
         row = conn.execute(
             "SELECT * FROM ticket_rejection_messages AS message "
@@ -262,7 +282,7 @@ def claim_due_rejection_message(
             "AND (earlier.rejection_generation < message.rejection_generation OR "
             "(earlier.rejection_generation=message.rejection_generation "
             "AND earlier.sequence < message.sequence)) "
-            "AND earlier.state != 'delivered') "
+            "AND earlier.state NOT IN ('delivered','uncertain')) "
             "ORDER BY rejection_generation,sequence LIMIT 1",
             (ticket_id, now),
         ).fetchone()
@@ -276,22 +296,48 @@ def claim_due_rejection_message(
             )
             if cursor.rowcount != 1:
                 return None
-        sender_kind = row["sender_kind"]
-        sender = (
-            None
-            if sender_kind is None
-            else Principal(PrincipalKind(str(sender_kind)), str(row["sender_id"]))
-        )
-        return TicketRejectionMessage(
-            id=str(row["id"]),
-            ticket_id=str(row["ticket_id"]),
-            rejection_generation=int(row["rejection_generation"]),
-            sequence=int(row["sequence"]),
-            delivery_attempt=int(row["delivery_attempt"]),
-            message=str(row["message"]),
-            sender=sender,
-            retry_at=int(row["retry_at"]),
-        )
+        return _rejection_message_from_row(row)
+
+
+def unrecorded_uncertain_rejection_messages(
+    conn: sqlite3.Connection, *, ticket_id: str
+) -> tuple[tuple[str, TicketRejectionMessage], ...]:
+    """Return uncertain outcomes whose conversation still lacks its runtime row."""
+    rows = conn.execute(
+        "SELECT message.*,tickets.conversation_id "
+        "FROM ticket_rejection_messages AS message JOIN tickets "
+        "ON tickets.id=message.ticket_id "
+        "WHERE message.ticket_id=? AND message.state='uncertain' "
+        "AND tickets.conversation_id IS NOT NULL "
+        "AND NOT EXISTS (SELECT 1 FROM conversation_events AS event "
+        "WHERE event.kind='prompt_delivery_uncertain' "
+        "AND json_extract(event.payload,'$.sender_message_id')="
+        + _REJECTION_SENDER_MESSAGE_ID_SQL
+        + ") ORDER BY message.rejection_generation,message.sequence",
+        (ticket_id,),
+    ).fetchall()
+    return tuple(
+        (str(row["conversation_id"]), _rejection_message_from_row(row)) for row in rows
+    )
+
+
+def _rejection_message_from_row(row: sqlite3.Row) -> TicketRejectionMessage:
+    sender_kind = row["sender_kind"]
+    sender = (
+        None
+        if sender_kind is None
+        else Principal(PrincipalKind(str(sender_kind)), str(row["sender_id"]))
+    )
+    return TicketRejectionMessage(
+        id=str(row["id"]),
+        ticket_id=str(row["ticket_id"]),
+        rejection_generation=int(row["rejection_generation"]),
+        sequence=int(row["sequence"]),
+        delivery_attempt=int(row["delivery_attempt"]),
+        message=str(row["message"]),
+        sender=sender,
+        retry_at=int(row["retry_at"]),
+    )
 
 
 def settle_rejection_message(

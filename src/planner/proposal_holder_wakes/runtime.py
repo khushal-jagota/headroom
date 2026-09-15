@@ -104,6 +104,11 @@ async def _deliver_rejection_messages(
     ticket_id: str,
     retry_delay_seconds: int,
 ) -> int:
+    await _record_rejection_uncertainties(
+        conversations,
+        conn,
+        ticket_id=ticket_id,
+    )
     delivered_count = 0
     while True:
         now = clock.now_unix()
@@ -144,18 +149,51 @@ async def _deliver_rejection_messages(
         if isinstance(result.fate, PromptDeliveryQueued):
             return delivered_count
         if isinstance(result.fate, PromptDeliveryUncertain):
-            data.settle_rejection_message(
+            settled = data.settle_rejection_message(
                 conn,
                 message,
                 state="uncertain",
                 error="conversation delivery outcome is uncertain; automatic retry disabled",
                 now=now,
             )
-            return delivered_count
+            if settled:
+                await _record_rejection_uncertainties(
+                    conversations,
+                    conn,
+                    ticket_id=ticket_id,
+                )
+            continue
         if data.settle_rejection_message(
             conn, message, state="delivered", now=now
         ):
             delivered_count += 1
+
+
+async def _record_rejection_uncertainties(
+    conversations: ConversationSystem,
+    conn: sqlite3.Connection,
+    *,
+    ticket_id: str,
+) -> None:
+    """Recover visible runtime rows without retransmitting uncertain messages."""
+    for conversation_id, message in data.unrecorded_uncertain_rejection_messages(
+        conn, ticket_id=ticket_id
+    ):
+        try:
+            await message_delivery_service.record_ticket_outbox_uncertainty(
+                conversations,
+                ticket_id=ticket_id,
+                conversation_id=conversation_id,
+                message=message.message,
+                sender=message.sender,
+                sender_message_id=message.sender_message_id,
+            )
+        except Exception:
+            _LOG.exception(
+                "ticket rejection uncertainty record failed (ticket=%s message=%s)",
+                ticket_id,
+                message.id,
+            )
 
 
 class ProposalHolderWakeLoop:

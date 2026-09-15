@@ -512,17 +512,24 @@ def test_rejection_messages_retry_in_order_with_stable_attempt_identity(
     ]
 
 
-def test_uncertain_rejection_message_is_terminal_and_not_retried(
+def test_uncertain_rejection_message_is_settled_and_its_successor_proceeds(
     tmp_db: Connection, fake_clock: Clock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ticket_id = _target(tmp_db, OWNER_PRINCIPAL)
     _file(tmp_db, ticket_id, body="Reject", now=2)
     _reject(tmp_db, ticket_id)
     send = AsyncMock(
-        return_value=MessageDeliveryResult(
-            Principal(PrincipalKind.ticket, ticket_id),
-            "c-worker",
-            PromptDeliveryUncertain(),
+        side_effect=(
+            MessageDeliveryResult(
+                Principal(PrincipalKind.ticket, ticket_id),
+                "c-worker",
+                PromptDeliveryUncertain(),
+            ),
+            MessageDeliveryResult(
+                Principal(PrincipalKind.ticket, ticket_id),
+                "c-worker",
+                PromptDeliveryStarted(),
+            ),
         )
     )
     monkeypatch.setattr(
@@ -530,23 +537,31 @@ def test_uncertain_rejection_message_is_terminal_and_not_retried(
         "send_ticket_outbox_message",
         send,
     )
+    conversations = AsyncMock()
 
-    for _ in range(2):
-        assert asyncio.run(
-            deliver_pending_wakes(
-                object(),  # type: ignore[arg-type]
-                tmp_db,
-                fake_clock,
-                ticket_id=ticket_id,
-            )
-        ) == 0
-    send.assert_awaited_once()
+    assert asyncio.run(
+        deliver_pending_wakes(
+            conversations,
+            tmp_db,
+            fake_clock,
+            ticket_id=ticket_id,
+        )
+    ) == 1
+    assert asyncio.run(
+        deliver_pending_wakes(
+            conversations,
+            tmp_db,
+            fake_clock,
+            ticket_id=ticket_id,
+        )
+    ) == 0
+    assert send.await_count == 2
     states = tmp_db.execute(
         "SELECT sequence,state FROM ticket_rejection_messages "
         "WHERE ticket_id=? ORDER BY sequence",
         (ticket_id,),
     ).fetchall()
-    assert [tuple(row) for row in states] == [(1, "uncertain"), (2, "pending")]
+    assert [tuple(row) for row in states] == [(1, "uncertain"), (2, "delivered")]
 
 
 def test_recurring_loop_retries_temporary_startup_refusal_without_restart(

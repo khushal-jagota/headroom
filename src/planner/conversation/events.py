@@ -245,7 +245,7 @@ class PromptDeliveryRefusedEventPayload:
 
 @dataclass(frozen=True, slots=True)
 class PromptDeliveryUncertainEventPayload:
-    """A steering attempt whose admission stayed unknown after possible transmission.
+    """A prompt whose admission stayed unknown after possible transmission.
 
     This is a terminal delivery record. Panels does not retry it, and a sender-id replay
     reads this row instead of transmitting the same guidance again.

@@ -177,6 +177,29 @@ async def send_ticket_outbox_message(
     return MessageDeliveryResult(recipient, delivered.conversation_id, delivered.fate)
 
 
+async def record_ticket_outbox_uncertainty(
+    conversations: ConversationSystem,
+    *,
+    ticket_id: str,
+    conversation_id: str,
+    message: str,
+    sender: Principal | None,
+    sender_message_id: str,
+) -> None:
+    """Expose one terminal outbox uncertainty without another backend delivery."""
+    await conversations.record_prompt_delivery_uncertain(
+        conversation_id,
+        text_message_content(message),
+        sender_label="Panels" if sender is None else sender_label(RequestContext(sender)),
+        mode=PromptDeliveryMode.queue,
+        sender_message_id=sender_message_id,
+        sender=sender,
+        recipient=(
+            None if sender is None else Principal(PrincipalKind.ticket, ticket_id)
+        ),
+    )
+
+
 def _prompt_mode(mode: MessageDeliveryMode | PromptDeliveryMode) -> PromptDeliveryMode:
     if isinstance(mode, PromptDeliveryMode):
         return mode
