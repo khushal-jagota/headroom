@@ -145,27 +145,27 @@ already had five minutes.
 
 ## Sending a proposal back
 
-When the holder returns a proposal for revision, Panels forms one backend prompt: first
-a system-authored rejection-and-return lifecycle fact, then the decider's separately
-attributed comment. The transcript preserves them as two rows in that order.
+When the holder returns a proposal for revision, one Ticket transaction checks every
+authorization and current-parent route. It commits the decision and two ordered outbox
+records: a Panels lifecycle fact, then the decider's separately attributed comment.
+The transaction performs no backend I/O.
 
-Panels opens the Ticket transaction and checks every authorization and current-parent
-route before the send. A definite refusal rolls back without a transcript row, turn, or
-Ticket change. After backend acceptance, the decision and both prompt rows commit in the
-same SQLite transaction. The backend cannot participate in that database transaction;
-if the wire accepts the prompt but the commit fails, Panels reports an uncertain,
-non-retryable outcome and discards the backend child so its response cannot attach to an
-unrecorded prompt. Reply bookkeeping credits the exact source turn captured before the
-send and is best-effort after the commit, so it cannot undo the rejection.
+The machine-lock-owned delivery loop sends those records after the commit. Durable
+sender identities preserve transcript order and prevent duplicates across retries and
+process restarts. A refusal leaves the message pending for retry. An accepted prompt
+with a failed transcript write becomes terminal `uncertain`, so Panels never sends it
+twice. Reply bookkeeping credits the source turn after the commit and cannot undo the
+rejection.
 
 _Code path:_ `src/planner/tickets/actions.py`.
 
 ## Waking a non-owner proposal holder
 
 Filing a parked proposal commits a durable wake row and returns without backend I/O.
-Only the machine-lock-owned loop claims that row as `delivering`. While claimed,
-approval, rejection, replacement, and other proposal cancellation refuse rather than
-letting an obsolete wake land after the proposal changes. Definite refusal advances the
+Only the machine-lock-owned loop claims that row as `delivering`. A decision,
+replacement, or deletion cancels or supersedes any undelivered wake in its own database
+transaction. A wake that already reached the wire is harmless because the holder reads
+canonical Ticket state. Definite refusal advances the
 attempt identity and returns the row to `pending`. A queued prompt stays `delivering`
 because that queue is process-local; the loop probes the same sender identity until the
 conversation reports durable delivery.
@@ -187,9 +187,8 @@ _Code paths:_ `src/planner/proposal_holder_wakes/`, `src/planner/core/loops.py`.
 
 Everything above talks to the conversation system through one small contract: start a
 conversation, send into it, ask whether it is running, ask whether it is waiting on a
-permission, kill it. The specialized rejection batch additionally requires an already
-open SQLite transaction and a mutation to commit with its prompt rows. Nothing here knows what a backend is, what ACP is, or what a
-session id looks like.
+permission, kill it. Nothing here knows what a backend is, what ACP is, or what a session
+id looks like.
 
 The system behind that contract is the real one, and the only one. The same object the
 browser's conversation pane uses is the object a worker step sends into, so a Ticket's

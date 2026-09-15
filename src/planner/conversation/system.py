@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sqlite3
 import time
 from collections import deque
 from collections.abc import Callable, Coroutine, Mapping
@@ -59,7 +58,6 @@ from planner.conversation.backends.contracts import (
 )
 from planner.conversation.contracts import (
     AddressedPromptDeliveryReceipt,
-    AtomicPromptMessage,
     ComposerCatalogEntry,
     ConversationBackendKey,
     ConversationStartRequest,
@@ -392,102 +390,6 @@ class SqliteProcessConversationSystem:
             recipient=recipient,
         )
         return receipt.fate
-
-    async def send_atomic_prompt_batch(
-        self,
-        conversation_id: str,
-        messages: tuple[AtomicPromptMessage, ...],
-        *,
-        transaction_connection: sqlite3.Connection,
-        commit_mutation: Callable[[], None],
-    ) -> PromptDeliveryFate:
-        """Deliver attributed messages through one wire write and one record transaction.
-
-        This operation never queues and never interrupts another turn. Atomic callers
-        need a definite answer now: a busy line is a refusal they can retry without any
-        message, record, or turn residue.
-        """
-        if not messages:
-            raise ValueError("an atomic prompt batch must contain a message")
-        for message in messages:
-            require_message_content(message.content)
-        state = await self._conversation_state(conversation_id)
-        if state is None:
-            return PromptDeliveryRefused(PromptDeliveryRefusalReason.no_such_conversation)
-        state.last_touched_monotonic = self._monotonic_now()
-        await self._acquire_settled(state)
-        try:
-            if state.running_turn is not None or state.held_prompts:
-                return PromptDeliveryRefused(
-                    PromptDeliveryRefusalReason.running_turn_cannot_accept_steer
-                )
-            recorded = tuple(
-                _HeldPrompt(
-                    held_prompt_id="",
-                    content=message.content,
-                    sender_label=message.sender_label,
-                    model_change=None,
-                    reasoning_effort_change=None,
-                    sender_message_id=None,
-                    sent_at_unix_milliseconds=None,
-                    snapshot_sent_at_unix_milliseconds=0,
-                    sender=message.sender,
-                    recipient=message.recipient,
-                    queue_reason=PromptQueueReason.requested,
-                    owner_read_through_sequence=None,
-                )
-                for message in messages
-            )
-            reservation = self._reserve_turn(state)
-        finally:
-            state.lock.release()
-        combined = one_prompt_from(recorded)
-        try:
-            delivery = await self._deliver_prompt(
-                state,
-                reservation.token,
-                content=combined,
-                sender_label=recorded[0].sender_label,
-                mode=PromptDeliveryMode.queue,
-                model_change=None,
-                reasoning_effort_change=None,
-                automatic_compaction=False,
-            )
-        except BaseException:
-            self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
-            raise
-        try:
-            started = await self._finalize_delivery(
-                state,
-                reservation,
-                delivery.refusal_reason,
-                content=recorded[0].content,
-                sender_label=recorded[0].sender_label,
-                mode=PromptDeliveryMode.queue,
-                model_change=None,
-                reasoning_effort_change=None,
-                sender_message_id=None,
-                sent_at_unix_milliseconds=None,
-                sender=recorded[0].sender,
-                recipient=recorded[0].recipient,
-                record_refusal=False,
-                phase_when_not_started=_ConversationPhase.idle,
-                also_delivered=recorded[1:],
-                transaction_connection=transaction_connection,
-                commit_mutation=commit_mutation,
-            )
-        except BaseException:
-            # The wire write may have landed, but the shared SQLite unit did not. Stop
-            # and forget this child so no response can attach to an unrecorded prompt.
-            child = state.child
-            if child is not None:
-                await self._discard_child(state, child)
-            self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
-            return PromptDeliveryUncertain()
-        if started:
-            return PromptDeliveryStarted()
-        assert delivery.refusal_reason is not None
-        return PromptDeliveryRefused(delivery.refusal_reason)
 
     async def send_with_receipt(
         self,
@@ -1899,8 +1801,6 @@ class SqliteProcessConversationSystem:
         phase_when_not_started: _ConversationPhase,
         also_delivered: tuple[_HeldPrompt, ...] = (),
         owner_read_through_sequence: int | None = None,
-        transaction_connection: sqlite3.Connection | None = None,
-        commit_mutation: Callable[[], None] | None = None,
     ) -> bool:
         """Turn a delivery that has happened, or failed to, into the record and the state.
 
@@ -1989,8 +1889,6 @@ class SqliteProcessConversationSystem:
                         for message in also_delivered
                     ),
                     owner_read_through_sequence=owner_read_through_sequence,
-                    transaction_connection=transaction_connection,
-                    commit_mutation=commit_mutation,
                 )
                 self._take_in_written_rows(state, written)
                 if carried_change is not None:

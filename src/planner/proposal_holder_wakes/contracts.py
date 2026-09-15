@@ -27,3 +27,22 @@ class ProposalHolderWake:
             f"proposal-holder-wake:{self.ticket_id}:"
             f"{self.proposal_generation}:{self.delivery_attempt}"
         )
+
+
+@dataclass(frozen=True, slots=True)
+class TicketRejectionMessage:
+    id: str
+    ticket_id: str
+    rejection_generation: int
+    sequence: int
+    delivery_attempt: int
+    message: str
+    sender: Principal | None
+    retry_at: int
+
+    @property
+    def sender_message_id(self) -> str:
+        return (
+            f"ticket-rejection:{self.ticket_id}:{self.rejection_generation}:"
+            f"{self.sequence}:{self.delivery_attempt}"
+        )

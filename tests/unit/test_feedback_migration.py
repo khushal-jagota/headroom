@@ -62,6 +62,6 @@ def test_feedback_migration_preserves_tickets_and_sets_deleted_ticket_to_null(
     assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
     assert (
         upgraded.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        == "proposal_holder_wakes"
+        == "durable_rejection_messages"
     )
     upgraded.close()

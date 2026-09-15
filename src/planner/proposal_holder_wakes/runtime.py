@@ -85,7 +85,77 @@ async def _deliver_pending_wakes(
             )
         elif data.mark_delivered(conn, wake, now=now):
             delivered_count += 1
+    if ticket_id is not None:
+        delivered_count += await _deliver_rejection_messages(
+            conversations,
+            conn,
+            clock,
+            ticket_id=ticket_id,
+            retry_delay_seconds=retry_delay_seconds,
+        )
     return delivered_count
+
+
+async def _deliver_rejection_messages(
+    conversations: ConversationSystem,
+    conn: sqlite3.Connection,
+    clock: Clock,
+    *,
+    ticket_id: str,
+    retry_delay_seconds: int,
+) -> int:
+    delivered_count = 0
+    while True:
+        now = clock.now_unix()
+        message = data.claim_due_rejection_message(conn, ticket_id=ticket_id, now=now)
+        if message is None:
+            return delivered_count
+        try:
+            result = await message_delivery_service.send_ticket_outbox_message(
+                conversations,
+                conn,
+                clock,
+                ticket_id,
+                message.message,
+                sender=message.sender,
+                sender_message_id=message.sender_message_id,
+            )
+        except Exception as error:
+            data.settle_rejection_message(
+                conn,
+                message,
+                state="pending",
+                retry_at=now + retry_delay_seconds,
+                error=str(error),
+                now=now,
+            )
+            return delivered_count
+        if isinstance(result.fate, PromptDeliveryRefused):
+            data.settle_rejection_message(
+                conn,
+                message,
+                state="pending",
+                retry_at=now + retry_delay_seconds,
+                error=result.fate.refusal_reason.value,
+                advance_attempt=True,
+                now=now,
+            )
+            return delivered_count
+        if isinstance(result.fate, PromptDeliveryQueued):
+            return delivered_count
+        if isinstance(result.fate, PromptDeliveryUncertain):
+            data.settle_rejection_message(
+                conn,
+                message,
+                state="uncertain",
+                error="conversation delivery outcome is uncertain; automatic retry disabled",
+                now=now,
+            )
+            return delivered_count
+        if data.settle_rejection_message(
+            conn, message, state="delivered", now=now
+        ):
+            delivered_count += 1
 
 
 class ProposalHolderWakeLoop:

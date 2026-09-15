@@ -8,7 +8,6 @@ import sqlite3
 from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -29,6 +28,7 @@ from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
 from planner.message_delivery.contracts import MessageDeliveryResult
+from planner.proposal_holder_wakes import data as proposal_holder_wakes_data
 from planner.proposal_holder_wakes.runtime import _deliver_pending_wakes as deliver_pending_wakes
 from planner.sprints import data as sprints_data
 from planner.tickets import actions, data, views
@@ -495,12 +495,6 @@ def test_supervisor_revision_checks_current_item_before_sending(
         "UPDATE tickets SET conversation_id = 'c_worker' WHERE id = ?",
         (ticket.id,),
     )
-    batch = AsyncMock()
-    monkeypatch.setattr(
-        "planner.tickets.actions.message_delivery_service.send_ticket_revision_batch",
-        batch,
-    )
-
     with pytest.raises(PlannerError) as forbidden:
         asyncio.run(
             actions.return_ticket_for_revision(
@@ -514,10 +508,16 @@ def test_supervisor_revision_checks_current_item_before_sending(
             )
         )
     assert forbidden.value.code is ErrorCode.agent_forbidden
-    batch.assert_not_awaited()
+    assert (
+        tmp_db.execute(
+            "SELECT COUNT(*) FROM ticket_rejection_messages WHERE ticket_id=?",
+            (ticket.id,),
+        ).fetchone()[0]
+        == 0
+    )
 
 
-def test_supervisor_revision_batch_owns_the_ticket_mutation(
+def test_supervisor_revision_records_ordered_messages_with_the_ticket_mutation(
     tmp_db: Connection,
     fake_clock: Clock,
     monkeypatch: pytest.MonkeyPatch,
@@ -532,20 +532,9 @@ def test_supervisor_revision_batch_owns_the_ticket_mutation(
         (holder_item.id, ticket.id),
     )
 
-    async def accept_batch(*_args: Any, **kwargs: Any) -> SimpleNamespace:
-        assert kwargs["required_sprint_item_id"] == holder_item.id
-        assert data.read_ticket(tmp_db, ticket.id).pending_proposal is not None
-        kwargs["commit_mutation"]()
-        return SimpleNamespace(fate=PromptDeliveryStarted())
-
-    monkeypatch.setattr(
-        "planner.tickets.actions.message_delivery_service.send_ticket_revision_batch",
-        AsyncMock(side_effect=accept_batch),
-    )
-
     revised = asyncio.run(
         actions.return_ticket_for_revision(
-            object(),  # type: ignore[arg-type]
+            AsyncMock(),
             tmp_db,
             ticket.id,
             message="Revise.",
@@ -557,9 +546,25 @@ def test_supervisor_revision_batch_owns_the_ticket_mutation(
 
     assert revised.pending_proposal is None
     assert revised.ticket_status.value == "agent"
+    rows = tmp_db.execute(
+        "SELECT sequence,message,sender_kind,sender_id,state "
+        "FROM ticket_rejection_messages WHERE ticket_id=? ORDER BY sequence",
+        (ticket.id,),
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        (
+            1,
+            "Your proposal was rejected and returned for revision. "
+            "The decider's comment follows.",
+            None,
+            None,
+            "pending",
+        ),
+        (2, "Revise.", "sprint_item", holder_item.id, "pending"),
+    ]
 
 
-def test_revision_batch_refusal_preserves_the_proposal(
+def test_comment_record_failure_rolls_back_the_decision_and_both_messages(
     tmp_db: Connection,
     fake_clock: Clock,
     monkeypatch: pytest.MonkeyPatch,
@@ -569,22 +574,22 @@ def test_revision_batch_refusal_preserves_the_proposal(
         "UPDATE tickets SET conversation_id = 'c_worker' WHERE id = ?",
         (ticket.id,),
     )
-    batch = AsyncMock(
-        return_value=SimpleNamespace(
-            fate=PromptDeliveryRefused(
-                PromptDeliveryRefusalReason.write_to_backend_failed
-            )
-        )
-    )
+    original_insert = proposal_holder_wakes_data._insert_rejection_message  # noqa: SLF001
+
+    def fail_comment(*args: Any, **kwargs: Any) -> None:
+        if kwargs["sequence"] == 2:
+            raise ValueError("comment record refused")
+        original_insert(*args, **kwargs)
+
     monkeypatch.setattr(
-        "planner.tickets.actions.message_delivery_service.send_ticket_revision_batch",
-        batch,
+        "planner.proposal_holder_wakes.data._insert_rejection_message", fail_comment
     )
 
-    with pytest.raises(PlannerError) as refused:
+    conversation = AsyncMock()
+    with pytest.raises(ValueError, match="comment record refused"):
         asyncio.run(
             actions.return_ticket_for_revision(
-                object(),  # type: ignore[arg-type]
+                conversation,
                 tmp_db,
                 ticket.id,
                 message="Revise this boundary.",
@@ -592,17 +597,20 @@ def test_revision_batch_refusal_preserves_the_proposal(
                 clock=fake_clock,
             )
         )
-    assert refused.value.code is ErrorCode.gateway_offline
     unchanged = data.read_ticket(tmp_db, ticket.id)
     assert unchanged.pending_proposal == ticket.pending_proposal
     assert unchanged.ticket_status == ticket.ticket_status
-    call = batch.await_args
-    assert call is not None
-    assert call.kwargs["ctx"] == RequestContext(OWNER_PRINCIPAL)
-    assert call.kwargs["comment"] == "Revise this boundary."
+    assert (
+        tmp_db.execute(
+            "SELECT COUNT(*) FROM ticket_rejection_messages WHERE ticket_id=?",
+            (ticket.id,),
+        ).fetchone()[0]
+        == 0
+    )
+    conversation.send_prompt.assert_not_awaited()
 
 
-def test_revision_rechecks_after_send_and_owner_override_becomes_holder(
+def test_owner_override_becomes_holder_and_records_owner_comment(
     tmp_db: Connection,
     fake_clock: Clock,
     monkeypatch: pytest.MonkeyPatch,
@@ -613,19 +621,9 @@ def test_revision_rechecks_after_send_and_owner_override_becomes_holder(
         (ticket.id,),
     )
 
-    async def delivered(*_args: Any, **kwargs: Any) -> SimpleNamespace:
-        current = data.read_ticket(tmp_db, ticket.id)
-        assert current.pending_proposal == ticket.pending_proposal
-        kwargs["commit_mutation"]()
-        return SimpleNamespace(fate=PromptDeliveryStarted())
-
-    monkeypatch.setattr(
-        "planner.tickets.actions.message_delivery_service.send_ticket_revision_batch",
-        delivered,
-    )
     revised = asyncio.run(
         actions.return_ticket_for_revision(
-            object(),  # type: ignore[arg-type]
+            AsyncMock(),
             tmp_db,
             ticket.id,
             message="Revise.",
@@ -635,6 +633,13 @@ def test_revision_rechecks_after_send_and_owner_override_becomes_holder(
     )
     assert revised.pending_proposal is None
     assert revised.ceiling_holder == OWNER_PRINCIPAL
+    comment = tmp_db.execute(
+        "SELECT sender_kind,sender_id,message FROM ticket_rejection_messages "
+        "WHERE ticket_id=? AND sequence=2",
+        (ticket.id,),
+    ).fetchone()
+    assert comment is not None
+    assert tuple(comment) == ("owner", "owner", "Revise.")
 
 
 def test_revision_credits_the_exact_source_turn_captured_before_delivery(
@@ -651,14 +656,6 @@ def test_revision_credits_the_exact_source_turn_captured_before_delivery(
         AsyncMock(return_value=captured),
     )
 
-    async def delivered(*_args: Any, **kwargs: Any) -> SimpleNamespace:
-        kwargs["commit_mutation"]()
-        return SimpleNamespace(fate=PromptDeliveryStarted())
-
-    monkeypatch.setattr(
-        "planner.tickets.actions.message_delivery_service.send_ticket_revision_batch",
-        delivered,
-    )
     asyncio.run(
         actions.return_ticket_for_revision(
             conversation,
