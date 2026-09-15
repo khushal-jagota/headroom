@@ -1113,14 +1113,18 @@ async def propose_current_field(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    conversations: Conversations,
 ) -> JsonDict:
+    if ctx.principal != Principal(PrincipalKind.ticket, ticket_id):
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            "only the Ticket's own Worker can file its proposal",
+            {"ticket_id": ticket_id},
+        )
     body = ProposeWithRecapBody(
         body=body_str(raw, "body"),
         recap=body_str(raw, "recap"),
     )
-    ticket = await tickets_actions.file_current_proposal(
-        conversations,
+    ticket = tickets_actions.file_current_proposal(
         conn,
         ticket_id,
         body=body["body"],

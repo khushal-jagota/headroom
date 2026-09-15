@@ -208,7 +208,9 @@ _Code paths:_ `src/planner/tickets/logic/machine.py`, `src/planner/tickets/data.
 
 ## The one rule: proposals and the single door
 
-Workers never change settled values or advance Stages directly. A worker that wants to
+Workers never change settled values or advance Stages directly. Only a Ticket's own
+Worker principal can file that Ticket's proposal; a supervisor, holder Ticket, or other
+Worker cannot file on its behalf. A worker that wants to
 move work forward files a **proposal** on the blank the current Stage gates. The
 proposal resolver is the only thing that can turn a proposal into a real value or
 advance the Stage. A Ticket has at most one pending proposal, always for its current
@@ -309,18 +311,24 @@ belongs in the Ticket conversation. Either kind leaves Review the moment its sta
 changes, whichever way that happens.
 
 Replying to the worker does not decide its proposal. The proposal stays pending and
-addressed to its holder until a decision or a replacement proposal arrives.
+addressed to its holder until a decision or a replacement proposal arrives. A non-owner
+holder receives a concise Panels-authored proposal-ready fact through its exact Chief,
+Sprint Item, or Ticket conversation. The proposal write also writes a durable delivery
+intent. Startup reconciliation recovers both interrupted delivery and proposals that
+predate that intent, while a generation-and-attempt message identity prevents duplicate
+transcript rows. Owner-held proposals remain on Review and use the owner-only push path.
 
 The Review screen can also send an owner-addressed ticket back instead of accepting it,
 whatever field is currently gated. The owner writes short guidance in the review card.
-Panels first records a concise system lifecycle message, then sends the comment from the
-deciding principal to the exact Ticket worker conversation, and only then hands the
-Ticket back to the worker — that order matters,
-because the hand-back deletes the pending proposal and could not be honestly undone if
-the send had failed.
-A refused send changes no Ticket state and can be retried. The system lifecycle message
-states the rejection separately from the decider's comment; if that comment is refused,
-the database proposal remains pending so its delivery can be retried safely. The ticket's stage never changes: a pending
+Panels sends one backend prompt containing a concise system lifecycle fact followed by
+the comment from the deciding principal. They remain two separately attributed transcript
+rows. The already-open Ticket transaction validates authority and route, and the Ticket
+decision plus both prompt rows then commit as one SQLite unit. A definite backend refusal
+rolls that unit back, leaving no message, turn, or Ticket residue, and can be retried.
+The backend and SQLite cannot share a distributed transaction: a failure after the wire
+accepts the batch but before SQLite commits is reported as uncertain and non-retryable,
+and Panels stops and discards that backend child so no response can attach to the
+unrecorded prompt. The ticket's stage never changes: a pending
 gated proposal is cleared, settled values remain, and the ticket leaves Review while
 its control status is `agent`. The gated field can therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
@@ -335,9 +343,14 @@ Scope cannot change while a proposal waits, so its address stays stable.
 
 A parked proposal reaches only its holder. Owner-held proposals appear in Review and
 produce the owner's needs-approval notification. For a Chief, Sprint Item, or other
-Ticket holder, Panels sends a concise addressed wake-up from the proposing Ticket; the
-holder then reads the proposal from canonical Ticket state. If that delivery is refused,
-the API reports a retryable error and preserves the already parked proposal.
+Ticket holder, Panels sends a concise system-authored wake-up to that holder's exact
+conversation; the holder then reads the proposal from canonical Ticket state. Filing
+commits the parked proposal and its durable intent without contacting the holder. Only
+the machine-lock-owned recovery loop claims and delivers that intent. It wakes on the
+database change signal and retries definite refusals. While a send is claimed, approval
+and replacement are refused for retry rather than allowing a stale wake through. A
+post-wire record failure becomes terminal `uncertain` state and is never retried
+automatically.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`

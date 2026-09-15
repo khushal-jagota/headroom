@@ -25,6 +25,8 @@ from planner.core.contracts import (
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.days import data as days_data
+from planner.proposal_holder_wakes import data as proposal_holder_wakes_data
+from planner.proposal_holder_wakes.contracts import proposal_ready_message
 from planner.tickets import worker_context as ticket_worker_context
 from planner.tickets.contracts import (
     AtCap,
@@ -635,6 +637,8 @@ def _apply_decision(
     new_ceiling = decision.ceiling
     new_at_cap = decision.at_cap
     _validate_ceiling_holder(conn, decision.ceiling_holder, ticket_id=ticket.id)
+    if ticket.pending_proposal is not None and decision.pending_proposal is None:
+        proposal_holder_wakes_data.cancel(conn, ticket.id, now=now)
     # Pre-persist door: the prospective (stage, ceiling) must be registry-valid for
     # this ticket's type before any SQL — the enforcement the dropped DB CHECKs gave.
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
@@ -1533,6 +1537,12 @@ def file_current_proposal_with_recap(
     a recap, so this writer validates and writes it in the same transaction even when the
     proposal parks at the first success gate.
     """
+    if principal != Principal(PrincipalKind.ticket, ticket_id):
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            "only the Ticket's own Worker can file its proposal",
+            {"ticket_id": ticket_id},
+        )
     admission.validate_body(recap, "recap")
     with _txn(conn):
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
@@ -1551,6 +1561,13 @@ def file_current_proposal_with_recap(
             (recap, now, ticket_id),
         )
         if decision.pending_proposal is not None:
+            proposal_holder_wakes_data.record_replacement(
+                conn,
+                ticket_id,
+                holder=decision.ceiling_holder,
+                message=proposal_ready_message(ticket_id),
+                now=now,
+            )
             _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
         else:
             updated = _load_ticket_for_write(conn, ticket_id)
@@ -1970,6 +1987,7 @@ def delete_ticket(
     admission.require_direct_or_supervisor_principal(principal, "delete_ticket")
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
+        proposal_holder_wakes_data.require_not_delivering(conn, ticket_id)
         _require_current_supervisor_parent(
             conn, ticket, supervisor_sprint_item_id, principal, "Ticket deletion"
         )

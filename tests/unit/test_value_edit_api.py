@@ -7,7 +7,7 @@ from sqlite3 import Connection
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
+from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -73,10 +73,20 @@ def _passed_ticket(db_path: Path) -> str:
             now=0,
         )
         file_current_proposal_with_recap(
-            conn, ticket.id, body="success v1", recap="r", principal=TEST_TICKET_PRINCIPAL, now=0
+            conn,
+            ticket.id,
+            body="success v1",
+            recap="r",
+            principal=ticket_principal(ticket.id),
+            now=0,
         )
         file_current_proposal_with_recap(
-            conn, ticket.id, body="approach v1", recap="r", principal=TEST_TICKET_PRINCIPAL, now=0
+            conn,
+            ticket.id,
+            body="approach v1",
+            recap="r",
+            principal=ticket_principal(ticket.id),
+            now=0,
         )
     finally:
         conn.close()
@@ -101,7 +111,7 @@ def test_put_proposal_agent_edits_pending_proposal_in_place(tmp_path: Path) -> N
     conn = connect(str(db_path))
     try:
         ticket = file_current_proposal_with_recap(
-            conn, tid, body="plan draft", recap="r", principal=TEST_TICKET_PRINCIPAL, now=23
+            conn, tid, body="plan draft", recap="r", principal=ticket_principal(tid), now=23
         )
         original = ticket.pending_proposal
         assert original is not None

@@ -44,6 +44,9 @@ it. You can use `approve` and `reject` only when your Sprint Item is that holder
 Ticket must also remain its current child. When the user asks for a decision, judge the
 proposal against the Ticket brief, the settled fields, and concrete evidence. The Worker
 never supplies independent approval for its own work. Your confidence is not evidence.
+When a Worker parks a proposal addressed here, Panels sends this supervisor a concise
+system-authored proposal-ready fact. That wake is durable and idempotent; inspect the
+canonical Ticket for the proposal itself rather than relying on message text.
 
 ## What you can do
 
@@ -65,11 +68,12 @@ never supplies independent approval for its own work. Your confidence is not evi
 - `approve` resolves a parked proposal. Supply `--ceiling` and `--at-cap`. The next holder
   defaults to this Sprint Item. Use `--holder-kind` and `--holder-id` to address another
   principal explicitly.
-- `reject` first records Panels' rejection-and-return lifecycle fact, then sends focused
-  guidance from this Sprint Item to the exact Ticket worker conversation. Every
-  authorization and current-child check runs before either message. Panels clears the
-  proposal only after both messages are accepted and repeats the checks transactionally;
-  a refused send leaves the proposal unchanged.
+- `reject` sends one atomic prompt containing Panels' rejection-and-return lifecycle fact
+  followed by focused guidance attributed to this Sprint Item. Every authorization and
+  current-child check runs before the send. The decision and both durable transcript rows
+  share one SQLite commit; a definite refusal leaves no message, turn, or Ticket residue.
+  A post-wire commit failure is uncertain and non-retryable, and Panels discards that
+  backend child.
 - `add-to-day` and `remove-from-day` change Day membership.
 - `block` and `unblock` change blocker links inside the Item boundary.
 - `artifact-list`, `artifact-write`, and `artifact-delete` manage Item artifacts.

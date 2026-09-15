@@ -16,6 +16,7 @@ build. They are deliberately absent from this module rather than sketched.
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -374,6 +375,33 @@ class AddressedPromptDeliveryReceipt:
 
     fate: PromptDeliveryFate
     newly_accepted: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AtomicPromptMessage:
+    """One independently attributed row in an all-or-nothing backend prompt."""
+
+    content: MessageContent
+    sender_label: str
+    sender: Principal | None = None
+    recipient: Principal | None = None
+
+
+class AtomicPromptBatchConversationSystem(Protocol):
+    """Several message rows, one wire write, and one caller-owned SQLite commit.
+
+    ``transaction_connection`` must already hold an open immediate transaction.
+    ``commit_mutation`` writes the application fact through that same connection.
+    """
+
+    async def send_atomic_prompt_batch(
+        self,
+        conversation_id: str,
+        messages: tuple[AtomicPromptMessage, ...],
+        *,
+        transaction_connection: sqlite3.Connection,
+        commit_mutation: Callable[[], None],
+    ) -> PromptDeliveryFate: ...
 
 
 type HeldPromptPromotionFate = (

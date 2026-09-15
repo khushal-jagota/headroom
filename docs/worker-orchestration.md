@@ -145,28 +145,50 @@ already had five minutes.
 
 ## Sending a proposal back
 
-When the holder returns a proposal for revision, Panels first delivers a system-authored
-rejection-and-return lifecycle fact, then Send Message delivers the decider's separately
-attributed comment. The Ticket then goes back out to the worker.
+When the holder returns a proposal for revision, Panels forms one backend prompt: first
+a system-authored rejection-and-return lifecycle fact, then the decider's separately
+attributed comment. The transcript preserves them as two rows in that order.
 
-The order is: check every authorization and current-parent route, send both messages in
-that order, and only then write. It has to be that way round,
-because the write is the one part that cannot be undone honestly — it deletes the
-pending proposal, so undoing a failed send afterwards would leave nothing to approve. A
-refused delivery changes no Ticket state and comes back as an error the decider can
-retry. The first message records the rejection as a lifecycle fact, separately from the
-comment and its sender. Panels repeats the authorization, route, and proposal-identity
-checks between the messages and again in the final transaction for races. A send that succeeded before that recheck can
-leave a message with an intact proposal; a retry may duplicate it. Visible, harmless,
-and far better than losing the proposal.
+Panels opens the Ticket transaction and checks every authorization and current-parent
+route before the send. A definite refusal rolls back without a transcript row, turn, or
+Ticket change. After backend acceptance, the decision and both prompt rows commit in the
+same SQLite transaction. The backend cannot participate in that database transaction;
+if the wire accepts the prompt but the commit fails, Panels reports an uncertain,
+non-retryable outcome and discards the backend child so its response cannot attach to an
+unrecorded prompt. Reply bookkeeping credits the exact source turn captured before the
+send and is best-effort after the commit, so it cannot undo the rejection.
 
 _Code path:_ `src/planner/tickets/actions.py`.
+
+## Waking a non-owner proposal holder
+
+Filing a parked proposal commits a durable wake row and returns without backend I/O.
+Only the machine-lock-owned loop claims that row as `delivering`. While claimed,
+approval, rejection, replacement, and other proposal cancellation refuse rather than
+letting an obsolete wake land after the proposal changes. Definite refusal advances the
+attempt identity and returns the row to `pending`. A queued prompt stays `delivering`
+because that queue is process-local; the loop probes the same sender identity until the
+conversation reports durable delivery.
+
+The proposal-holder wake loop shares the process machine lock and server event loop with
+the other reconcilers. Database change signals wake it promptly, while its periodic tick
+is the retry backstop. It schedules at most one delivery per Ticket at a time. After it
+owns the machine lock, startup returns crash-abandoned `delivering` rows to `pending`
+without changing their attempt identity. A second server therefore cannot reset a live
+delivery claim. Conversation idempotency either discovers the earlier success or safely
+recreates a lost queue. Shutdown retains the lock if a delivery does not settle before
+the deadline or a durable `delivering` row still represents a process-local queue.
+Process exit then releases the lock. A post-wire transcript failure becomes terminal
+`uncertain`; it is visible for repair and never retried automatically.
+
+_Code paths:_ `src/planner/proposal_holder_wakes/`, `src/planner/core/loops.py`.
 
 ## The seam: one conversation contract
 
 Everything above talks to the conversation system through one small contract: start a
 conversation, send into it, ask whether it is running, ask whether it is waiting on a
-permission, kill it. Nothing here knows what a backend is, what ACP is, or what a
+permission, kill it. The specialized rejection batch additionally requires an already
+open SQLite transaction and a mutation to commit with its prompt rows. Nothing here knows what a backend is, what ACP is, or what a
 session id looks like.
 
 The system behind that contract is the real one, and the only one. The same object the

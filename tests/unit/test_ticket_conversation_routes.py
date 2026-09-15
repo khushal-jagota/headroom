@@ -16,7 +16,7 @@ from sqlite3 import Connection
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
-from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
+from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationObservationKind,
@@ -325,7 +325,7 @@ def _park_on_a_proposal(db_path: Path, ticket_id: str) -> None:
             conn,
             ticket_id,
             body="how we will know",
-            principal=TEST_TICKET_PRINCIPAL,
+            principal=ticket_principal(ticket_id),
             now=1,
             recap="Current work",
         )

@@ -13,7 +13,7 @@ from datetime import datetime
 from sqlite3 import Connection
 
 import pytest
-from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
+from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 from tests.support.probe import (
     NEEDS_ALPHA,
     install_probe_registry,
@@ -70,7 +70,7 @@ def test_item_tickets_probe_child_decodes(
         tmp_db,
         probe.id,
         body="alpha body",
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=ticket_principal(probe.id),
         now=3,
         recap="Current work",
     )
@@ -104,7 +104,12 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
     # Accept kickoff (default ceiling is now needs_kickoff, so kickoff parks until
     # accepted), expanding the ceiling to needs_success; a success proposal then parks.
     file_current_proposal_with_recap(
-        tmp_db, child.id, body="k", principal=TEST_TICKET_PRINCIPAL, now=2, recap="Current work"
+        tmp_db,
+        child.id,
+        body="k",
+        principal=ticket_principal(child.id),
+        now=2,
+        recap="Current work",
     )
     accept_proposal(
         tmp_db,
@@ -117,7 +122,12 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
         next_holder=OWNER_PRINCIPAL,
     )
     file_current_proposal_with_recap(
-        tmp_db, child.id, body="s", principal=TEST_TICKET_PRINCIPAL, now=3, recap="Current work"
+        tmp_db,
+        child.id,
+        body="s",
+        principal=ticket_principal(child.id),
+        now=3,
+        recap="Current work",
     )
 
     rows = item_tickets(tmp_db, item.id)

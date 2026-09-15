@@ -6,7 +6,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
-from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
+from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 from tests.support.probe import FIELD_ALPHA as A_FIELD
 from tests.support.probe import FIELD_BETA as B_FIELD
 from tests.support.probe import NEEDS_ALPHA as A
@@ -119,7 +119,7 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
     )
     assert ticket.stage == A and ticket.field_values == {"kickoff": ""}
     ticket = data.file_current_proposal_with_recap(
-        tmp_db, tid, body="alpha", recap="r1", principal=TEST_TICKET_PRINCIPAL, now=now
+        tmp_db, tid, body="alpha", recap="r1", principal=ticket_principal(tid), now=now
     )
     assert (
         ticket.stage == B
@@ -127,11 +127,11 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
         and ticket.pending_proposal is None
     )
     ticket = data.file_current_proposal_with_recap(
-        tmp_db, tid, body="beta 1", recap="r2", principal=TEST_TICKET_PRINCIPAL, now=now
+        tmp_db, tid, body="beta 1", recap="r2", principal=ticket_principal(tid), now=now
     )
     assert ticket.pending_proposal == PendingTicketProposal(B_FIELD, "beta 1", "worker", now)
     ticket = data.file_current_proposal_with_recap(
-        tmp_db, tid, body="beta 2", recap="r3", principal=TEST_TICKET_PRINCIPAL, now=now
+        tmp_db, tid, body="beta 2", recap="r3", principal=ticket_principal(tid), now=now
     )
     assert ticket.pending_proposal == PendingTicketProposal(B_FIELD, "beta 2", "worker", now)
     ticket = data.accept_proposal(
@@ -167,7 +167,7 @@ def test_recap_writer_infers_probe_gate(
         next_holder=OWNER_PRINCIPAL,
     )
     ticket = data.file_current_proposal_with_recap(
-        tmp_db, tid, body="alpha", recap="probe recap", principal=TEST_TICKET_PRINCIPAL, now=now
+        tmp_db, tid, body="alpha", recap="probe recap", principal=ticket_principal(tid), now=now
     )
     assert ticket.pending_proposal is not None
     assert ticket.recap == "probe recap" and ticket.pending_proposal.field == A_FIELD

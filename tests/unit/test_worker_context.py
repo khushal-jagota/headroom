@@ -4,7 +4,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
-from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
+from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL, ticket_principal
 
 from planner.core.contracts import Priority
 from planner.core.db import connect
@@ -195,7 +195,7 @@ def test_only_edited_approval_produces_context_at_each_approval_gate(
                 tmp_db,
                 ticket.id,
                 body=prior,
-                principal=TEST_TICKET_PRINCIPAL,
+                principal=ticket_principal(ticket.id),
                 now=11,
                 recap="Current work",
             )
@@ -203,7 +203,7 @@ def test_only_edited_approval_produces_context_at_each_approval_gate(
             tmp_db,
             ticket.id,
             body="draft",
-            principal=TEST_TICKET_PRINCIPAL,
+            principal=ticket_principal(ticket.id),
             now=12,
             recap="Current work",
         )
@@ -247,7 +247,7 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
             tmp_db,
             ticket.id,
             body=field,
-            principal=TEST_TICKET_PRINCIPAL,
+            principal=ticket_principal(ticket.id),
             now=21,
             recap="Current work",
         )
@@ -268,7 +268,7 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
         tmp_db,
         ticket.id,
         body="closeout draft",
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=ticket_principal(ticket.id),
         now=23,
         recap="Current work",
     )
@@ -292,7 +292,7 @@ def test_human_recap_marks_context_but_agent_recap_does_not(tmp_db: Connection) 
         tmp_db,
         ticket.id,
         body="success",
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=ticket_principal(ticket.id),
         now=28,
         recap="Current work",
     )

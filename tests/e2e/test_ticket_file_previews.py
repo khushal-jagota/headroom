@@ -16,7 +16,7 @@ from playwright.sync_api import (
     Route,
 )
 from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
-from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
+from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 
 from planner.core.db import connect
 from planner.tickets import data as tickets_data
@@ -87,7 +87,7 @@ def _settle_success(
             ticket_id,
             body=body,
             recap="Preview content ready.",
-            principal=TEST_TICKET_PRINCIPAL,
+            principal=ticket_principal(ticket_id),
             now=2,
         )
         if ticket.pending_proposal is not None:
