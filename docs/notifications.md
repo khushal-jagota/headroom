@@ -8,8 +8,8 @@ Panels.
 ## What becomes a notification
 
 Notification sources do not send messages. They first write a small, normalized fact:
-the notification type, time, and a typed subject. A subject is either a Ticket or an
-agent, with its stable identity and display label. One policy function is the only door
+the notification type, time, and a subject principal. The principal uses the same kind
+and ID contract as requests and messages. One policy function is the only door
 from that fact to a notification intent. It reads the saved choice for that type and
 either suppresses the fact or creates the privacy-safe title, body, exact subject link,
 and replacement tag.
@@ -81,4 +81,4 @@ Code paths: `src/planner/notifications/`, the notification database migrations,
 `static/service-worker.js`, and
 `web/src/routes/NotificationsRoute.svelte`.
 
-_Last verified: 2026-08-15._
+_Last verified: 2026-09-15._

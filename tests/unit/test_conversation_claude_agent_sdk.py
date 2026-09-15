@@ -973,6 +973,71 @@ def test_the_commands_claude_takes_are_reported_as_the_session_is_established(
     _run(exercise)
 
 
+def test_an_ordinary_catalog_command_keeps_exact_native_dispatch_text(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, _, clients = _bench(
+            _start_request(workspace_folder=tmp_path),
+            handshake={
+                "commands": [
+                    {"name": "review", "description": "Review the working tree"}
+                ]
+            },
+        )
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        sender_content = text_message_content("/review focus on tests")
+
+        await child.write_prompt(
+            TURN,
+            text_message_content("You are the worker.\n\n/review focus on tests"),
+            sender_content=sender_content,
+            sender_label="owner",
+            mode=PromptDeliveryMode.run_when_free,
+            model_change=None,
+            reasoning_effort_change=None,
+        )
+
+        assert clients[0].prompts == ["/review focus on tests"]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_steered_catalog_command_keeps_exact_native_dispatch_text(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, _, clients = _bench(
+            _start_request(workspace_folder=tmp_path),
+            handshake={
+                "commands": [
+                    {"name": "review", "description": "Review the working tree"}
+                ]
+            },
+        )
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        await _write(child, "start")
+
+        outcome = await child.steer(
+            TURN,
+            text_message_content("/review focus on tests"),
+            sender_label="owner",
+        )
+
+        assert isinstance(outcome, BackendSteerAccepted)
+        assert clients[0].streamed_messages[-1]["message"]["content"] == [
+            {"type": "text", "text": "/review focus on tests"}
+        ]
+        await child.stop()
+
+    _run(exercise)
+
+
 def test_the_commands_are_the_answer_for_this_conversations_own_folder(
     tmp_path: Path,
 ) -> None:
@@ -1251,17 +1316,16 @@ def test_the_rebound_child_takes_the_prompt_that_asked_for_it(tmp_path: Path) ->
             model_change="claude-sonnet-4-5",
             reasoning_effort_change="high",
         )
-        assert clients[0].prompts == ["on the other model please"]
+        assert clients[0].prompts == ["owner:\non the other model please"]
         await child.stop()
 
     _run(exercise)
 
 
-def test_the_label_and_the_mode_are_taken_and_dropped(tmp_path: Path) -> None:
-    """The SDK's wire carries a user message and nothing alongside it, so they go nowhere.
+def test_the_label_is_in_the_prompt_and_the_mode_is_dropped(tmp_path: Path) -> None:
+    """The SDK's wire carries the sender label inside the user message.
 
-    The turn runs the same either way, which is what the seam says of a backend with no
-    channel for a message's own metadata.
+    The delivery mode still has no SDK channel, so it does not alter the wire message.
     """
 
     async def exercise() -> None:
@@ -1279,7 +1343,7 @@ def test_the_label_and_the_mode_are_taken_and_dropped(tmp_path: Path) -> None:
             model_change=None,
             reasoning_effort_change=None,
         )
-        assert clients[0].prompts == ["hello"]
+        assert clients[0].prompts == ["the automatic loop:\nhello"]
         await child.stop()
 
     _run(exercise)
@@ -1318,7 +1382,9 @@ def test_steering_uses_one_uuid_and_accepts_a_provider_queue_receipt(
         assert len(clients[0].watched_user_message_uuids) == 1
         sent = clients[0].streamed_messages[-1]
         assert sent["uuid"] == clients[0].watched_user_message_uuids[0]
-        assert sent["message"]["content"] == [{"type": "text", "text": "go left"}]
+        assert sent["message"]["content"] == [
+            {"type": "text", "text": "owner:\ngo left"}
+        ]
         await child.stop()
 
     _run(exercise)
@@ -1359,7 +1425,10 @@ def test_steering_keeps_rich_content_under_its_owned_uuid(tmp_path: Path) -> Non
         assert isinstance(outcome, BackendSteerAccepted)
         sent = clients[0].streamed_messages[-1]
         assert sent["uuid"] == clients[0].watched_user_message_uuids[-1]
-        assert sent["message"]["content"][0] == {"type": "text", "text": "read both"}
+        assert sent["message"]["content"][0] == {
+            "type": "text",
+            "text": "owner:\nread both",
+        }
         assert sent["message"]["content"][1]["source"]["data"] == b64encode(
             b"image bytes"
         ).decode("ascii")
@@ -1559,7 +1628,7 @@ def test_multiple_steers_settle_under_one_turn_after_one_correlated_result(
         assert sink.message_texts[-1] == (TURN, "late owned result")
 
         await _write(child, "ordinary queue successor", TURN_2)
-        assert clients[0].prompts[-1] == "ordinary queue successor"
+        assert clients[0].prompts[-1] == "owner:\nordinary queue successor"
         clients[0].say(_result(result_uuid="next-result"))
         await clients[0].until_taken_in()
         assert [ending["turn"] for ending in sink.endings] == [TURN, TURN_2]
@@ -2223,7 +2292,7 @@ def test_a_turn_this_adapter_stopped_is_an_interruption_whatever_it_reports(
         assert sink.endings[0]["error_summary"] is None
         # The child is still up: the next turn continues the same conversation.
         await _write(child, "carry on")
-        assert clients[0].prompts == ["hello", "carry on"]
+        assert clients[0].prompts == ["owner:\nhello", "owner:\ncarry on"]
         await child.stop()
 
     _run(exercise)
@@ -2242,7 +2311,7 @@ def test_a_child_whose_stream_ends_mid_turn_fails_the_turn(tmp_path: Path) -> No
         assert sink.endings[0]["ending"] is ConversationTurnEnding.failed
         with pytest.raises(NeedsRebind):
             await _write(child, "follow-up")
-        assert clients[0].prompts == ["hello"]
+        assert clients[0].prompts == ["owner:\nhello"]
         assert sink.message_texts == []
         await child.stop()
 
@@ -3171,18 +3240,17 @@ async def _until_the_turn_ends(sink: _RecordingSink, *, seconds: float = 180.0) 
 def test_a_message_that_is_only_words_still_goes_as_the_string_it_always_did(
     tmp_path: Path,
 ) -> None:
-    """The common case is untouched.
+    """The labeled common case still uses the SDK's direct string form.
 
     The SDK wraps a string in exactly the envelope the richer form builds by hand, so
-    keeping the string means an ordinary prompt is byte for byte what it has always been
-    and the other form is reached only by a message that needs it.
+    the richer form is reached only by a message that needs it.
     """
 
     async def exercise() -> None:
         child, _, clients = await _connected_bench(tmp_path)
         await _write(child, "just words")
 
-        assert clients[0].prompts == ["just words"]
+        assert clients[0].prompts == ["owner:\njust words"]
         assert clients[0].streamed_messages == []
 
     _run(exercise)
@@ -3219,7 +3287,7 @@ def test_a_picture_reaches_claude_as_a_content_block_beside_the_words(
         assert sent["type"] == "user"
         assert sent["message"]["role"] == "user"
         assert sent["message"]["content"] == [
-            {"type": "text", "text": "look at this"},
+            {"type": "text", "text": "owner:\nlook at this"},
             {
                 "type": "image",
                 "source": {
@@ -3258,6 +3326,7 @@ def test_a_file_reaches_claude_as_explicit_managed_path_context(tmp_path: Path) 
         )
         sent = clients[0].streamed_messages[0]
         assert sent["message"]["content"] == [
+            {"type": "text", "text": "owner:"},
             {
                 "type": "text",
                 "text": (

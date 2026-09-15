@@ -253,7 +253,7 @@ def test_codex_joins_paginated_metadata_to_callable_apps_and_enabled_plugins(
     _run(exercise)
 
 
-def test_catalog_invocations_add_structured_inputs_without_rewriting_the_text(
+def test_catalog_invocations_add_structured_inputs_beside_sender_labeled_text(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
@@ -275,15 +275,15 @@ def test_catalog_invocations_add_structured_inputs_without_rewriting_the_text(
 
             inputs = [message["params"]["input"] for message in scripted.all_sent("turn/start")]
             assert inputs[0] == [
-                {"type": "text", "text": prompts[0]},
+                {"type": "text", "text": f"owner:\n{prompts[0]}"},
                 {"type": "skill", "name": "ship-it", "path": "/skills/ship-it/SKILL.md"},
             ]
             assert inputs[1] == [
-                {"type": "text", "text": prompts[1]},
+                {"type": "text", "text": f"owner:\n{prompts[1]}"},
                 {"type": "mention", "name": "Demo App", "path": "app://demo"},
             ]
             assert inputs[2] == [
-                {"type": "text", "text": prompts[2]},
+                {"type": "text", "text": f"owner:\n{prompts[2]}"},
                 {
                     "type": "mention",
                     "name": "Analytics",
@@ -365,7 +365,7 @@ def test_reserved_tokens_away_from_absolute_message_start_remain_prose(
             await scripted.write_prompt(1, text_message_content(prompt))
             await scripted.sink.wait_for_the_turn_to_end()
             assert scripted.sent("turn/start")["params"]["input"] == [
-                {"type": "text", "text": prompt}
+                {"type": "text", "text": f"owner:\n{prompt}"}
             ]
 
     _run(exercise)
@@ -434,7 +434,7 @@ def test_the_systems_composed_role_does_not_hide_a_first_prompt_catalog_invocati
             ][0]
             if expected_method == "turn/start":
                 assert received["params"]["input"] == [
-                    {"type": "text", "text": f"{ROLE_TEXT}\n\n{prompt_text}"},
+                    {"type": "text", "text": f"owner:\n{ROLE_TEXT}\n\n{prompt_text}"},
                     {
                         "type": "skill",
                         "name": "ship-it",
@@ -609,7 +609,7 @@ def test_a_persisted_cursor_without_a_delivered_prompt_keeps_first_prompt_dispat
                 }
                 assert received["params"]["input"][0] == {
                     "type": "text",
-                    "text": f"{ROLE_TEXT}\n\n{prompt_text}",
+                    "text": f"owner:\n{ROLE_TEXT}\n\n{prompt_text}",
                 }
             else:
                 assert received["params"] == {"threadId": "thread-1"}
@@ -875,7 +875,7 @@ def test_native_review_failure_is_a_refused_prompt_and_does_not_poison_the_next_
             await scripted.write_prompt(2, text_message_content("ordinary"))
             await scripted.sink.wait_for_the_turn_to_end()
             assert scripted.sent("turn/start")["params"]["input"] == [
-                {"type": "text", "text": "ordinary"}
+                {"type": "text", "text": "owner:\nordinary"}
             ]
 
     _run(exercise)
@@ -1347,7 +1347,7 @@ def test_a_resumed_thread_never_treats_user_authored_role_text_as_a_core_envelop
             await scripted.sink.wait_for_the_turn_to_end()
 
             assert scripted.sent("turn/start")["params"]["input"] == [
-                {"type": "text", "text": user_text}
+                {"type": "text", "text": f"owner:\n{user_text}"}
             ]
 
     _run(exercise)
@@ -1416,7 +1416,7 @@ def test_a_turn_carries_the_text_the_values_and_the_access_posture(tmp_path: Pat
 
             turn = scripted.sent("turn/start")["params"]
             assert turn["threadId"] == "thread-1"
-            assert turn["input"] == [{"type": "text", "text": "hello"}]
+            assert turn["input"] == [{"type": "text", "text": "owner:\nhello"}]
             assert turn["model"] == "gpt-5.4-mini"
             assert turn["effort"] == "medium"
             assert turn["approvalPolicy"] == "never"
@@ -2375,7 +2375,7 @@ def test_codex_steers_encoded_content_into_the_captured_turn(tmp_path: Path) -> 
                 "threadId": "thread-1",
                 "expectedTurnId": "turn-1",
                 "input": [
-                    {"type": "text", "text": "keep going"},
+                    {"type": "text", "text": "owner:\nkeep going"},
                     {"type": "localImage", "path": str(image.absolute_path)},
                     {
                         "type": "text",
@@ -2473,7 +2473,7 @@ def test_codex_maps_native_non_admission_without_retry(
             assert outcome == BackendSteerRefused(reason)
             assert len(scripted.all_sent("turn/steer")) == 1
             assert scripted.sent("turn/start")["params"]["input"] == [
-                {"type": "text", "text": "start"}
+                {"type": "text", "text": "owner:\nstart"}
             ]
             await scripted.child.cancel_running_turn()
 
@@ -3065,7 +3065,7 @@ def test_a_picture_reaches_codex_as_the_file_it_is(tmp_path: Path) -> None:
 
             given = scripted.sent("turn/start")["params"]["input"]
             assert given == [
-                {"type": "text", "text": "look at this"},
+                {"type": "text", "text": "owner:\nlook at this"},
                 {"type": "localImage", "path": str(kept.absolute_path)},
             ]
 
@@ -3095,6 +3095,7 @@ def test_a_file_reaches_codex_as_explicit_managed_path_context(tmp_path: Path) -
                 reasoning_effort_change=None,
             )
             assert scripted.sent("turn/start")["params"]["input"] == [
+                {"type": "text", "text": "owner:"},
                 {
                     "type": "text",
                     "text": (

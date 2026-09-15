@@ -8,14 +8,9 @@ from planner.conversation.contracts import ConversationSystem, PromptDeliveryMod
 from planner.conversation.message_content import text_message_content
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
-from planner.message_delivery.contracts import (
-    MessageDeliveryMode,
-    MessageDeliveryResult,
-    MessageTarget,
-    MessageTargetType,
-    ResolvedMessageDestination,
-)
+from planner.message_delivery.contracts import MessageDeliveryMode, MessageDeliveryResult
 from planner.runtime import conversation_start
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
@@ -25,15 +20,13 @@ from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 
 def sender_label(ctx: RequestContext) -> str:
     """Name the ordinary Panels caller without treating the label as authority."""
-    if not ctx.is_attributed:
+    if ctx.principal.kind is PrincipalKind.owner:
         return "You"
-    if ctx.actor == "chief":
+    if ctx.principal.kind is PrincipalKind.chief:
         return "Chief"
-    if ctx.actor == "worker" and ctx.ticket_id is not None:
-        return f"Ticket {ctx.ticket_id}"
-    if ctx.actor == "sprint_item_supervisor" and ctx.sprint_item_id is not None:
-        return f"Sprint Item {ctx.sprint_item_id}"
-    return ctx.actor
+    if ctx.principal.kind is PrincipalKind.ticket:
+        return f"Ticket {ctx.principal.id}"
+    return f"Sprint Item {ctx.principal.id}"
 
 
 async def send_message(
@@ -41,7 +34,7 @@ async def send_message(
     conn: sqlite3.Connection,
     clock: Clock,
     ctx: RequestContext,
-    target: MessageTarget,
+    recipient: Principal,
     message: str,
     mode: MessageDeliveryMode = MessageDeliveryMode.queue,
 ) -> MessageDeliveryResult:
@@ -54,8 +47,8 @@ async def send_message(
         MessageDeliveryMode.send_now: PromptDeliveryMode.send_now,
     }[mode]
 
-    if target.target_type is MessageTargetType.ticket:
-        ticket_id = _required_target_id(target)
+    if recipient.kind is PrincipalKind.ticket:
+        ticket_id = recipient.id
         ticket = tickets_data.read_ticket(conn, ticket_id)
         delivered = await conversation_start.send_to_ticket_conversation(
             conversations,
@@ -68,8 +61,7 @@ async def send_message(
             mode=prompt_mode,
             now=clock.now_unix(),
         )
-        resolved = ResolvedMessageDestination("ticket", ticket_id)
-    elif target.target_type is MessageTargetType.chief:
+    elif recipient.kind is PrincipalKind.chief:
         delivered = await conversation_start.send_to_agent_conversation(
             conversations,
             conn,
@@ -81,9 +73,8 @@ async def send_message(
             sender_label=label,
             mode=prompt_mode,
         )
-        resolved = ResolvedMessageDestination("agent", CHIEF_SETTINGS_KEY)
-    elif target.target_type is MessageTargetType.sprint_item:
-        item_id = _required_target_id(target)
+    elif recipient.kind is PrincipalKind.sprint_item:
+        item_id = recipient.id
         async with sprints_service.supervisor_lifecycle_lock(item_id):
             item = sprints_data.read_item(conn, item_id).item
             delivered = await conversation_start.send_to_agent_conversation(
@@ -100,46 +91,15 @@ async def send_message(
                 mode=prompt_mode,
                 required_sprint_item_id=item_id,
             )
-        resolved = ResolvedMessageDestination("agent", item.supervisor_agent_key)
     else:
-        agent_key = _required_target_id(target)
-        row = conn.execute(
-            "SELECT conversation_id FROM agents WHERE agent_key = ?", (agent_key,)
-        ).fetchone()
-        if row is None:
-            raise PlannerError(
-                ErrorCode.not_found,
-                "agent not found",
-                {"agent_key": agent_key},
-            )
-        conversation_id = None if row["conversation_id"] is None else str(row["conversation_id"])
-        if conversation_id is None:
-            raise PlannerError(
-                ErrorCode.validation,
-                "agent has no current conversation and no start configuration",
-                {"agent_key": agent_key},
-            )
-        delivered = await conversation_start.send_to_agent_conversation(
-            conversations,
-            conn,
-            agent_key,
-            content,
-            None,
-            conversation_id=conversation_id,
-            sender_label=label,
-            mode=prompt_mode,
+        raise PlannerError(
+            ErrorCode.validation,
+            "the owner does not have a deliverable conversation",
+            {"kind": recipient.kind.value, "id": recipient.id},
         )
-        resolved = ResolvedMessageDestination("agent", agent_key)
 
     return MessageDeliveryResult(
-        target=target,
-        resolved_destination=resolved,
+        recipient=recipient,
         conversation_id=delivered.conversation_id,
         fate=delivered.fate,
     )
-
-
-def _required_target_id(target: MessageTarget) -> str:
-    if target.target_id is None:  # guarded by the API contract
-        raise AssertionError(f"{target.target_type} target has no id")
-    return target.target_id

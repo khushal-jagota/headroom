@@ -16,15 +16,11 @@ from planner.conversation.contracts import (
 )
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
+from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal
 from planner.core.errors import ErrorCode, PlannerError
 from planner.message_delivery import api
 from planner.message_delivery import service as message_delivery_service
-from planner.message_delivery.contracts import (
-    MessageDeliveryMode,
-    MessageDeliveryResult,
-    MessageTarget,
-    ResolvedMessageDestination,
-)
+from planner.message_delivery.contracts import MessageDeliveryMode, MessageDeliveryResult
 
 
 @pytest.mark.parametrize(
@@ -48,21 +44,20 @@ def test_api_defaults_and_validates_the_public_mode(
         _conn: Connection,
         _clock: Clock,
         _ctx: RequestContext,
-        target: MessageTarget,
+        recipient: Principal,
         _message: str,
         mode: MessageDeliveryMode,
     ) -> MessageDeliveryResult:
         captured.append(mode)
         return MessageDeliveryResult(
-            target,
-            ResolvedMessageDestination("agent", "chief"),
+            recipient,
             "c_one",
             PromptDeliveryUncertain(),
         )
 
     monkeypatch.setattr(message_delivery_service, "send_message", send_message)
     body: dict[str, object] = {
-        "target": {"type": "chief"},
+        "target": {"kind": "chief", "id": "chief"},
         "message": "Guide it",
     }
     if body_mode is not None:
@@ -72,13 +67,15 @@ def test_api_defaults_and_validates_the_public_mode(
         api.send_message(
             body,
             cast(Connection, object()),
-            RequestContext("unattributed", False, False),
+            RequestContext(OWNER_PRINCIPAL),
             cast(Clock, object()),
             cast(ConversationSystem, object()),
         )
     )
 
     assert captured == [expected]
+    assert result["target"] == {"kind": "chief", "id": "chief"}
+    assert "resolved_destination" not in result
     assert result["fate"] == "uncertain"
 
 
@@ -90,13 +87,12 @@ def test_api_serializes_the_conversation_refusal_reason(
         _conn: Connection,
         _clock: Clock,
         _ctx: RequestContext,
-        target: MessageTarget,
+        recipient: Principal,
         _message: str,
         _mode: MessageDeliveryMode,
     ) -> MessageDeliveryResult:
         return MessageDeliveryResult(
-            target,
-            ResolvedMessageDestination("agent", "chief"),
+            recipient,
             None,
             PromptDeliveryRefused(PromptDeliveryRefusalReason.no_running_turn_to_steer_into),
         )
@@ -104,9 +100,13 @@ def test_api_serializes_the_conversation_refusal_reason(
     monkeypatch.setattr(message_delivery_service, "send_message", send_message)
     result = asyncio.run(
         api.send_message(
-            {"target": {"type": "chief"}, "message": "Guide it", "mode": "steer"},
+            {
+                "target": {"kind": "chief", "id": "chief"},
+                "message": "Guide it",
+                "mode": "steer",
+            },
             cast(Connection, object()),
-            RequestContext("unattributed", False, False),
+            RequestContext(OWNER_PRINCIPAL),
             cast(Clock, object()),
             cast(ConversationSystem, object()),
         )
@@ -124,3 +124,13 @@ def test_api_rejects_values_outside_the_public_mode_contract(invalid: object) ->
     assert caught.value.code is ErrorCode.validation
     assert caught.value.message == "mode must be queue, steer, or send_now"
     assert caught.value.detail == {"mode": invalid}
+
+
+def test_api_uses_the_shared_principal_shape_and_rejects_agent_keys() -> None:
+    assert api._principal({"kind": "chief", "id": "chief"}) == CHIEF_PRINCIPAL
+
+    with pytest.raises(PlannerError) as caught:
+        api._principal({"kind": "agent", "id": "reviewer"})
+
+    assert caught.value.code is ErrorCode.validation
+    assert caught.value.detail == {"kind": "agent"}

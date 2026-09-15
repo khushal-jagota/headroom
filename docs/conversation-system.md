@@ -179,19 +179,18 @@ success, refusal, failure, or a completed turn with no compaction confirmation.
 ## Sending
 
 The top-level `panels send-message` command is the plain-text command-line door into this
-same send operation. It resolves a Chief, Ticket, Sprint Item, or registered agent, then
-uses that owner's current conversation path. It creates the normal conversation for the
-first three owner types when any send needs one. Every mode starts a turn for an idle
-agent. A general agent row has no launch configuration, so it can receive a
-message only while it points to a current conversation. The command adds no second
-transport, queue, or conversation record.
+same send operation. It accepts a Chief, Ticket, or Sprint Item principal, then uses that
+principal's current conversation path. It creates the normal conversation when any send
+needs one, and every mode starts a turn when the recipient is idle. Agent keys remain a
+private resolution detail. The command adds no second transport, queue, or conversation
+record.
 
 The composer accepts pictures and supported files from its pickers, the clipboard, or
 a drop. Attachments wait beside the draft and can be removed one at a time. They can
 travel with words or form the whole message. There is no separate upload conversation
 or attachment record.
 
-The command accepts `--mode queue|steer|send_now`. Queue is the default for agent sends.
+The command accepts `--mode queue|steer|send_now`. Queue is the default for command sends.
 Queue holds behind active work. Steer asks the current turn to admit the message. Send now
 interrupts current work and starts the message first. The Send Message API accepts the
 same three values and defaults an omitted value to `queue`.
@@ -205,12 +204,15 @@ enters the queue, because a retry can deliver the same message twice.
 When the agent frees, everything waiting goes to it as one prompt rather than one
 turn each. The messages keep their order and each keeps its sender's name in front
 of its own words, so an agent handed one run of text can still tell who said what.
-Nothing is summarised or reworded, and a single waiting message is sent exactly as
-it was. The record is not collapsed with the prompt: each message still gets its own
-row, because a row names one sender's message id and that id is how a sender
+Nothing else is summarised or reworded. The adapter adds the first sender's name,
+and the held-line combiner adds each later sender's name exactly once. The record is
+not collapsed with the prompt: each message still gets its own row with its original
+content, because a row names one sender's message id and that id is how a sender
 recognises its own message when the record hands it back. A message that asks to run
 on a different model starts the next turn instead of joining this one, because a turn
-runs on one model and the messages in front of it never named that one.
+runs on one model and the messages in front of it never named that one. A message that
+starts with a slash token also gets its own turn. This keeps a possible native command at
+the absolute start and prevents a later command from becoming part of an earlier prompt.
 
 A waiting message that cannot be delivered at all is written down as discarded, and
 the line carries on to the next one. One message nobody can deliver does not take the
@@ -502,13 +504,16 @@ line, or a trigger on a later line does not open the menu. The composer narrows 
 eligible list as text is typed.
 
 A choice replaces the active token with the entry's exact insertion text. That result is
-still an ordinary draft. Message delivery and transcript rendering do not interpret or
-rewrite it.
+still an ordinary draft. The backend adapter resolves a live catalog command from the
+sender's original draft and keeps the exact slash command for native dispatch. Other
+delivered content gets the sender's name at its start. Transcript rendering keeps the
+original draft.
 
 Hermes maps the command lists that it volunteers into slash command entries. Claude maps
 the command list from its process handshake in the same way, so project commands still
 follow the conversation folder. Their visible text is `/name`, and their insertion text
-is `/name `.
+is `/name `. Their adapters retain the live command names so ordinary and steered command
+dispatch keeps the slash token at the absolute start.
 
 Codex reads its catalog from the app-server after each thread starts or resumes. It joins
 enabled skills, callable installed apps, and enabled installed plugins with the native
@@ -581,4 +586,4 @@ child process runs. A conversation with no report yet offers nothing.
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-09-11._
+_Last verified: 2026-09-15._

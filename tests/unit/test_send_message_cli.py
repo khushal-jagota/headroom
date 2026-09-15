@@ -15,18 +15,17 @@ from planner.cli.main import main
 
 
 @pytest.mark.parametrize(
-    ("selector", "target"),
+    ("selector", "recipient"),
     [
-        (("--chief",), {"type": "chief"}),
-        (("--ticket", "t_one"), {"type": "ticket", "id": "t_one"}),
-        (("--sprint-item", "si_one"), {"type": "sprint_item", "id": "si_one"}),
-        (("--agent", "reviewer"), {"type": "agent", "id": "reviewer"}),
+        (("--chief",), {"kind": "chief", "id": "chief"}),
+        (("--ticket", "t_one"), {"kind": "ticket", "id": "t_one"}),
+        (("--sprint-item", "si_one"), {"kind": "sprint_item", "id": "si_one"}),
     ],
 )
 def test_each_selector_posts_one_general_send(
     monkeypatch: pytest.MonkeyPatch,
     selector: tuple[str, ...],
-    target: dict[str, str],
+    recipient: dict[str, str],
 ) -> None:
     recorded: dict[str, Any] = {}
 
@@ -46,7 +45,7 @@ def test_each_selector_posts_one_general_send(
         "method": "POST",
         "path": "/api/messages/send",
         "as_json": True,
-        "json_body": {"target": target, "message": "Hello", "mode": "queue"},
+        "json_body": {"target": recipient, "message": "Hello", "mode": "queue"},
         "request_actor": "ordinary",
     }
 
@@ -112,6 +111,16 @@ def test_cli_rejects_ambiguous_or_empty_input(args: tuple[str, ...]) -> None:
     assert json.loads(result.stderr)["error"]["code"] == "validation"
 
 
+def test_cli_does_not_expose_an_arbitrary_agent_target() -> None:
+    result = CliRunner().invoke(
+        main,
+        ["send-message", "--agent", "reviewer", "--message", "Hello"],
+    )
+
+    assert result.exit_code == 2
+    assert "No such option '--agent'" in result.output
+
+
 def test_uncertain_fate_is_preserved_in_json_and_normal_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -120,7 +129,15 @@ def test_uncertain_fate_is_preserved_in_json_and_normal_output(
 
     json_result = CliRunner().invoke(
         main,
-        ["send-message", "--chief", "--message", "Guide it", "--mode", "steer", "--json"],
+        [
+            "send-message",
+            "--chief",
+            "--message",
+            "Guide it",
+            "--mode",
+            "steer",
+            "--json",
+        ],
     )
     normal_result = CliRunner().invoke(
         main,

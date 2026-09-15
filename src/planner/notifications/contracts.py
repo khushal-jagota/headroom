@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import Final
 
-NotificationSubjectKind = Literal["ticket", "agent", "sprint_item"]
+from planner.core.contracts import Principal, PrincipalKind
+
 TICKET_NOTIFICATION_SUBJECT_KEY: Final = "tickets"
 SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY: Final = "sprint_item_supervisors"
 
@@ -22,6 +23,7 @@ class NotificationType:
 class NotificationSubject:
     key: str
     label: str
+    principal_kind: PrincipalKind
     notification_type_ids: tuple[str, ...]
 
 
@@ -68,6 +70,7 @@ NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
     NotificationSubject(
         TICKET_NOTIFICATION_SUBJECT_KEY,
         "Tickets",
+        PrincipalKind.ticket,
         (
             "ticket_needs_approval",
             "needs_input",
@@ -79,11 +82,13 @@ NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
     NotificationSubject(
         "chief_of_staff",
         "Chief of Staff",
+        PrincipalKind.chief,
         ("needs_input", "permission_requested", "worker_completed", "worker_failed"),
     ),
     NotificationSubject(
         SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY,
         "Sprint Item supervisors",
+        PrincipalKind.sprint_item,
         ("worker_failed",),
     ),
 )
@@ -101,8 +106,7 @@ def notification_preference_is_valid(subject_key: str, notification_type: str) -
 class NotificationFact:
     fact_id: str
     notification_type: str
-    subject_kind: NotificationSubjectKind
-    subject_id: str
+    subject: Principal
     subject_label: str
     occurred_at: int
 

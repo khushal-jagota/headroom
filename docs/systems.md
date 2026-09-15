@@ -179,7 +179,9 @@ _Code paths:_ `web/src/`, `assets/`, and `web/dist/`.
 Tickets, schedules, and environments. `worker` files Ticket proposals, recaps, notes,
 and help requests. `chief` performs only bounded external-work intake.
 
-Requests carry explicit actor context. Direct-only operations reject Worker claims.
+Every request resolves to one principal: the owner, Chief, a Sprint Item, or a Ticket.
+An unattributed browser request resolves to the owner. Direct-only operations reject
+Ticket and Sprint Item principals.
 The `planning-day`, `planning-midday-check`, and `planning-sprint` Workers are the narrow
 exception: the server resolves the claimed Ticket's stored Worker type before it admits
 the matching Day or Sprint write. Missing or mismatched claims fail closed. These local
@@ -241,4 +243,4 @@ _Code paths:_ `src/planner/environments/`, `src/planner/notifications/`,
 
 ---
 
-_Last verified: 2026-08-14._
+_Last verified: 2026-09-15._

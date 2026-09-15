@@ -9,7 +9,7 @@ from pathlib import Path
 
 from planner.core import db
 from planner.core.clock import Clock
-from planner.core.contracts import Priority
+from planner.core.contracts import OWNER_PRINCIPAL, Priority
 from planner.days import data as days_data
 from planner.files.logic.paths import ticket_files_root
 from planner.projects import data as projects_data
@@ -196,7 +196,7 @@ def _create_tickets(
             "kickoff": "Build fictional state only.",
             "success": "Staging data is isolated from live data.",
         },
-        actor="fake-fixture",
+        principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         kickoff_note="Build fictional state only.",
@@ -213,7 +213,7 @@ def _create_tickets(
             "kickoff": "Invent a representative worker without creating registry rows.",
             "understanding": "Use existing registered Worker types only.",
         },
-        actor="fake-fixture",
+        principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         kickoff_note="Invent a representative worker without creating registry rows.",
@@ -230,7 +230,7 @@ def _create_tickets(
             "kickoff": "Inspect reset behavior in fictional staging.",
             "understanding": "The reset should replace data only for that instance.",
         },
-        actor="fake-fixture",
+        principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         kickoff_note="Inspect reset behavior in fictional staging.",
@@ -242,7 +242,7 @@ def _create_tickets(
     initiative = tickets_data.create_ticket(
         conn,
         title="Draft fictional initiative outline",
-        actor="fake-fixture",
+        principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         kickoff_note="Keep this pending to show approval state.",

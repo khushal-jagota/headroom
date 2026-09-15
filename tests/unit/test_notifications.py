@@ -8,14 +8,16 @@ from sqlite3 import Connection
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.core.clock import TestClock as MutableClock
 from planner.core.clock import parse_fake_now
 from planner.core.config import load_config
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.notifications import data as notifications_data
-from planner.notifications.contracts import NotificationFact
+from planner.notifications.contracts import NOTIFICATION_SUBJECTS, NotificationFact
 from planner.notifications.logic.policy import decide_notification
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket
@@ -26,7 +28,7 @@ def _ticket(conn: Connection, now: int) -> Ticket:
         conn,
         worker_type="coding",
         title="Phone-worthy work",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
     )
@@ -58,8 +60,7 @@ def test_policy_is_the_one_privacy_safe_fact_to_intent_door() -> None:
     fact = NotificationFact(
         fact_id="ticket:t_example:1",
         notification_type="ticket_needs_approval",
-        subject_kind="ticket",
-        subject_id="t_example",
+        subject=Principal(PrincipalKind.ticket, "t_example"),
         subject_label="Private ticket title",
         occurred_at=1,
     )
@@ -70,6 +71,14 @@ def test_policy_is_the_one_privacy_safe_fact_to_intent_door() -> None:
     assert intent.route == "/#/workspace/t_example"
     assert intent.tag == "panels-ticket-t_example"
     assert "transcript" not in intent.body.lower()
+
+
+def test_preference_subjects_use_the_shared_principal_kinds() -> None:
+    assert {subject.key: subject.principal_kind for subject in NOTIFICATION_SUBJECTS} == {
+        "tickets": PrincipalKind.ticket,
+        "chief_of_staff": PrincipalKind.chief,
+        "sprint_item_supervisors": PrincipalKind.sprint_item,
+    }
 
 
 def test_status_projection_policy_and_delivery_are_exact_once(tmp_path: Path) -> None:
@@ -237,6 +246,38 @@ def test_policy_resolves_the_same_type_independently_by_subject(tmp_path: Path) 
             "ORDER BY f.subject_kind"
         )
     ] == [("agent", "notify"), ("ticket", "suppress")]
+    conn.close()
+
+
+def test_policy_suppresses_a_legacy_arbitrary_agent_fact_and_continues(
+    tmp_path: Path,
+) -> None:
+    conn = connect(str(tmp_path / "legacy-agent-fact.db"))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    notifications_data.project_facts(conn)
+    tickets_data.mark_ticket_errored(conn, ticket.id, error="stopped", now=2)
+    notifications_data.project_facts(conn)
+    conn.execute("INSERT INTO agents(agent_key) VALUES ('reviewer')")
+    conn.execute(
+        "INSERT INTO notification_facts"
+        "(fact_id, notification_type, subject_kind, agent_key, source_kind, "
+        "source_id, source_sequence, occurred_at, payload) "
+        "VALUES ('legacy:reviewer:1', 'worker_failed', 'agent', 'reviewer', "
+        "'conversation', 'c_legacy', 1, 1, '{\"subject_label\":\"Reviewer\"}')"
+    )
+
+    assert notifications_data.apply_policy(conn, 3) == 2
+    assert [
+        (str(row["fact_id"]), str(row["outcome"]))
+        for row in conn.execute(
+            "SELECT fact_id, outcome FROM notification_decisions ORDER BY fact_id"
+        )
+    ] == [
+        ("legacy:reviewer:1", "suppress"),
+        (f"ticket:{ticket.id}:1", "notify"),
+    ]
+    assert conn.execute("SELECT COUNT(*) FROM notification_intents").fetchone()[0] == 1
     conn.close()
 
 

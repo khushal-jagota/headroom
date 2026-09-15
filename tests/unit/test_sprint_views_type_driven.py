@@ -13,6 +13,7 @@ from datetime import datetime
 from sqlite3 import Connection
 
 import pytest
+from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
 from tests.support.probe import (
     NEEDS_ALPHA,
     install_probe_registry,
@@ -47,7 +48,7 @@ def test_item_tickets_probe_child_decodes(
     probe = create_ticket(
         tmp_db,
         title="Probe child",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
         worker_type="probe",
@@ -59,13 +60,18 @@ def test_item_tickets_probe_child_decodes(
         tmp_db,
         probe.id,
         field="kickoff",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=2,
         next_ceiling=NEEDS_ALPHA,
         at_cap=AtCap.propose,
     )
     file_current_proposal_with_recap(
-        tmp_db, probe.id, body="alpha body", actor="agent", now=3, recap="Current work"
+        tmp_db,
+        probe.id,
+        body="alpha body",
+        principal=TEST_TICKET_PRINCIPAL,
+        now=3,
+        recap="Current work",
     )
 
     rows = item_tickets(tmp_db, item.id)
@@ -89,7 +95,7 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
         tmp_db,
         worker_type="coding",
         title="Coding child",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
         sprint_item_id=item.id,
@@ -97,19 +103,19 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
     # Accept kickoff (default ceiling is now needs_kickoff, so kickoff parks until
     # accepted), expanding the ceiling to needs_success; a success proposal then parks.
     file_current_proposal_with_recap(
-        tmp_db, child.id, body="k", actor="agent", now=2, recap="Current work"
+        tmp_db, child.id, body="k", principal=TEST_TICKET_PRINCIPAL, now=2, recap="Current work"
     )
     accept_proposal(
         tmp_db,
         child.id,
         field="kickoff",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=2,
         next_ceiling="needs_success",
         at_cap=AtCap.propose,
     )
     file_current_proposal_with_recap(
-        tmp_db, child.id, body="s", actor="agent", now=3, recap="Current work"
+        tmp_db, child.id, body="s", principal=TEST_TICKET_PRINCIPAL, now=3, recap="Current work"
     )
 
     rows = item_tickets(tmp_db, item.id)
@@ -132,7 +138,7 @@ def test_item_tickets_carries_the_two_facts_the_status_group_rule_needs(
         tmp_db,
         worker_type="coding",
         title="Coding child",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
         sprint_item_id=item.id,
@@ -141,7 +147,7 @@ def test_item_tickets_carries_the_two_facts_the_status_group_rule_needs(
         tmp_db,
         worker_type="coding",
         title="Blocker",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
     )
@@ -182,7 +188,7 @@ def test_item_tickets_identifies_only_runnable_empty_closeout_tickets(
         tmp_db,
         worker_type="coding",
         title="Closeout classification",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
         sprint_item_id=item.id,

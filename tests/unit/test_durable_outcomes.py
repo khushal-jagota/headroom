@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlite3 import Connection
 
 import pytest
+from tests.support.principals import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
 from tests.support.ticket_progress import advance_ticket
 
 from planner.core.authctx import _classify, require_planning_write, require_ticket_worker_write
@@ -21,7 +22,7 @@ def _ticket(conn: Connection, outcome_id: str, sprint_id: str, title: str) -> Ti
     return tickets.create_ticket(
         conn,
         title=title,
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
         worker_type="coding",
@@ -57,15 +58,29 @@ def test_two_sprint_outcome_journey_preserves_history_context_and_exact_partitio
     done = _ticket(tmp_db, outcome.id, first.id, "Completed history")
     chosen = _ticket(tmp_db, outcome.id, first.id, "Selected work")
     left = _ticket(tmp_db, outcome.id, first.id, "Not selected")
-    advance_ticket(tmp_db, done.id, new_stage="done", actor="human", now=2)
+    advance_ticket(tmp_db, done.id, new_stage="done", principal=OWNER_PRINCIPAL, now=2)
     before_done = dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (done.id,)).fetchone())
     result = commitments.carry_outcome(
-        tmp_db, first.id, second.id, outcome.id, [chosen.id], actor="human", now=2, admit=admit
+        tmp_db,
+        first.id,
+        second.id,
+        outcome.id,
+        [chosen.id],
+        principal=OWNER_PRINCIPAL,
+        now=2,
+        admit=admit,
     )
     assert result["ticket_ids"] == [chosen.id]
     assert (
         commitments.carry_outcome(
-            tmp_db, first.id, second.id, outcome.id, [chosen.id], actor="human", now=3, admit=admit
+            tmp_db,
+            first.id,
+            second.id,
+            outcome.id,
+            [chosen.id],
+            principal=OWNER_PRINCIPAL,
+            now=3,
+            admit=admit,
         )
         == result
     )
@@ -92,15 +107,24 @@ def test_two_sprint_outcome_journey_preserves_history_context_and_exact_partitio
         chosen.id: (second.id, "Second"),
         left.id: (first.id, "First"),
     }
-    tickets.unclassify_ticket(tmp_db, chosen.id, sprint_item_id=outcome.id, actor="human", now=4)
+    tickets.unclassify_ticket(
+        tmp_db, chosen.id, sprint_item_id=outcome.id, principal=OWNER_PRINCIPAL, now=4
+    )
     assert tickets.read_ticket(tmp_db, chosen.id).sprint_id == second.id
     assert [
         t["id"]
         for t in views.sprint_tracking_view(tmp_db, second.id, "2026-07-09")["unclassified_tickets"]
     ] == [chosen.id]
-    tickets.classify_ticket(tmp_db, chosen.id, sprint_item_id=outcome.id, actor="human", now=5)
+    tickets.classify_ticket(
+        tmp_db, chosen.id, sprint_item_id=outcome.id, principal=OWNER_PRINCIPAL, now=5
+    )
     tickets.edit_ticket(
-        tmp_db, chosen.id, edit={"sprint_id": None}, title_max_chars=200, actor="human", now=6
+        tmp_db,
+        chosen.id,
+        edit={"sprint_id": None},
+        title_max_chars=200,
+        principal=OWNER_PRINCIPAL,
+        now=6,
     )
     assert tickets.read_ticket(tmp_db, chosen.id).sprint_item_id == outcome.id
     assert (
@@ -127,7 +151,7 @@ def test_carry_rejects_entire_stale_selection_and_preserves_existing_authority(
     valid = _ticket(tmp_db, outcome.id, first.id, "Valid")
     stale = _ticket(tmp_db, outcome.id, first.id, "Completed since selection")
     commitments.set_commitment(tmp_db, first.id, outcome.id, committed=True, admit=lambda: None)
-    advance_ticket(tmp_db, stale.id, new_stage="done", actor="human", now=2)
+    advance_ticket(tmp_db, stale.id, new_stage="done", principal=OWNER_PRINCIPAL, now=2)
     with pytest.raises(PlannerError, match="no longer eligible"):
         commitments.carry_outcome(
             tmp_db,
@@ -135,7 +159,7 @@ def test_carry_rejects_entire_stale_selection_and_preserves_existing_authority(
             second.id,
             outcome.id,
             [valid.id, stale.id],
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=2,
             admit=lambda: None,
         )
@@ -159,17 +183,24 @@ def test_carry_rejects_entire_stale_selection_and_preserves_existing_authority(
         tmp_db,
         stale.id,
         sprint_item_id=other.id,
-        actor="worker",
+        principal=TEST_TICKET_PRINCIPAL,
         now=3,
         admit=lambda: require_ticket_worker_write(tmp_db, worker),
     )
     assert tickets.read_ticket(tmp_db, stale.id).sprint_item_id == other.id
     supervisor = _classify("sprint_item_supervisor", None, outcome.id)
     tickets.edit_ticket(
-        tmp_db, valid.id, edit={"sprint_id": second.id}, title_max_chars=200, actor="human", now=3
+        tmp_db,
+        valid.id,
+        edit={"sprint_id": second.id},
+        title_max_chars=200,
+        principal=OWNER_PRINCIPAL,
+        now=3,
     )
     assert require_current_child(tmp_db, supervisor, outcome.id, valid.id).id == valid.id
-    tickets.classify_ticket(tmp_db, valid.id, sprint_item_id=other.id, actor="human", now=4)
+    tickets.classify_ticket(
+        tmp_db, valid.id, sprint_item_id=other.id, principal=OWNER_PRINCIPAL, now=4
+    )
     with pytest.raises(PlannerError):
         require_current_child(tmp_db, supervisor, outcome.id, valid.id)
 
@@ -181,7 +212,7 @@ def test_creation_validates_explicit_placement_and_blockers_without_an_outcome(
         tickets.create_ticket(
             tmp_db,
             title="Invalid Sprint",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,
             worker_type="coding",
@@ -192,7 +223,7 @@ def test_creation_validates_explicit_placement_and_blockers_without_an_outcome(
         tickets.create_ticket(
             tmp_db,
             title="Invalid blocker",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,
             worker_type="coding",
@@ -205,7 +236,7 @@ def test_creation_validates_explicit_placement_and_blockers_without_an_outcome(
             kickoff_note="External context",
             target_stage="needs_success",
             provided_values={},
-            actor="chief",
+            principal=CHIEF_PRINCIPAL,
             now=1,
             title_max_chars=200,
             worker_type="coding",

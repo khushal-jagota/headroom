@@ -23,6 +23,7 @@ import uvicorn
 from playwright.sync_api import BrowserContext, Page, Request
 from tests.e2e.harness import REPO_ROOT, WAIT_MS, ApiHelper, JsonObject, ServerHandle
 from tests.e2e.test_dev_conversation_pane import HOLD_THE_SEND
+from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.backends.contracts import BackendSteerAccepted, BackendSteerOutcome
 from planner.conversation.contracts import ConversationBackendKey
@@ -76,7 +77,7 @@ def _browser_server_with_accepting_backend(tmp_path: Path) -> Iterator[tuple[str
             connection,
             worker_type="coding",
             title="Send the worker pictures",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=0,
             title_max_chars=200,
         )
@@ -106,9 +107,7 @@ def _browser_server_with_accepting_backend(tmp_path: Path) -> Iterator[tuple[str
     setattr(
         server_module,
         backend_factories_attribute,
-        lambda **_machine: {
-            key: _accepting_backend_factory for key in ConversationBackendKey
-        },
+        lambda **_machine: {key: _accepting_backend_factory for key in ConversationBackendKey},
     )
     app = server_module.create_app(
         config,
@@ -228,9 +227,11 @@ def test_a_reply_in_the_pane_pairs_the_ticket_and_a_refusal_leaves_it_parked(
     # reply, and the screen says so as soon as the send comes back.
     page.fill(COMPOSER, "here is what I think of that", timeout=WAIT_MS)
     with page.expect_response(
-        lambda response: response.request.method == "POST"
-        and response.url.endswith(f"/api/tickets/{ticket_id}/human-reply")
-        and response.status < 300,
+        lambda response: (
+            response.request.method == "POST"
+            and response.url.endswith(f"/api/tickets/{ticket_id}/human-reply")
+            and response.status < 300
+        ),
         timeout=WAIT_MS,
     ):
         page.click(SEND, timeout=WAIT_MS)

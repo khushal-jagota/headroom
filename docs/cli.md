@@ -74,14 +74,14 @@ record shapes. Direct `show` commands also keep their full record shapes.
 ## The verbs
 
 - **`send-message`** — send one text message through the existing conversation path.
-  Select exactly one destination with `--chief`, `--ticket <id>`, `--sprint-item <id>`,
-  or `--agent <key>`. Supply the text with `--message` or `--body-file`; `--body-file -`
-  reads stdin. Use `--mode queue`, `--mode steer`, or `--mode send_now`. Queue holds a
-  busy message. Steer injects into current work. Send now interrupts current work.
-  Queue remains the command default. Every mode starts a turn when the agent is idle.
-  Any mode can create the normal conversation for a Ticket, Chief, or supervisor.
-  An arbitrary registered agent must already have a current conversation because its row
-  does not contain launch settings. The result names the resolved destination,
+  Select exactly one destination with `--chief`, `--ticket <id>`, or `--sprint-item <id>`.
+  Supply the text with `--message` or `--body-file`; `--body-file -` reads stdin. Use
+  `--mode queue`, `--mode steer`, or `--mode send_now`. Queue holds a busy message. Steer
+  injects into current work. Send now interrupts current work. The default is `queue`.
+  Every mode starts a turn when the recipient is idle and can create the normal
+  conversation on the first message. The recipient uses the shared principal shape: a
+  kind and its stable ID. Agent keys and conversation resolution stay inside the server.
+  The result names the recipient,
   conversation, and delivery fate. Started means delivery began. Queued names its position
   while it waits for the busy conversation. Injected means the current turn admitted a
   steer. Refused includes the reason that delivery was impossible. Uncertain means a steer
@@ -287,14 +287,19 @@ resolve to the same project.
 
 ## Ticket Worker identity
 
+A request resolves to one principal with a kind and ID. The four kinds are owner, Chief,
+Sprint Item, and Ticket. A browser request with no employee attribution resolves to the
+owner principal.
+
 A Ticket worker runs with `PLAN_ACTOR=worker` and its own `PLAN_TICKET_ID`. The CLI
 forwards those as `X-Plan-Actor` and `X-Plan-Ticket-ID`, including when the worker uses
-an ordinary command. The server checks that the claimed Ticket exists. Any Ticket
+an ordinary command. The server resolves that pair to the Ticket principal and checks
+that the Ticket exists. Any Ticket
 worker can use the existing commands that move Tickets and add or remove blocking
 links. The exact `planning-day`, `planning-midday-check`, and `planning-sprint`
 Worker types keep their other narrow day or sprint writes.
 
-This is a truthful local process claim, like the existing actor header, not a
+This is a truthful local process claim, not a
 cryptographic login or bearer token. Requests arriving through trusted remote ingress
 have both headers removed. Missing, unknown, or mismatched worker claims fail closed.
 
@@ -325,4 +330,4 @@ and creation options have been removed.
 
 ---
 
-_Last verified: 2026-09-11._
+_Last verified: 2026-09-15._

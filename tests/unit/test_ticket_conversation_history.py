@@ -5,6 +5,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.contracts import (
     ConversationAccess,
@@ -30,7 +31,7 @@ def ticket(tmp_db: Connection) -> Ticket:
         tmp_db,
         title="History",
         worker_type="coding",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
     )
@@ -88,10 +89,10 @@ def test_durable_record_fallback_accepts_matching_immutable_start_values(
         "workspace_folder, role_text, identity_environment_variables, access, "
         "vendor_session_cursor, latest_sequence, composer_catalog, created_at) "
         "VALUES ('conv_existing', 'claude', 'new-model', 'low', '/worktree', "
-        "'Ticket worker', '[[\"PLAN_ACTOR\",\"worker\"],[\"PLAN_TICKET_ID\",\"t\"]]', "
+        '\'Ticket worker\', \'[["PLAN_ACTOR","worker"],["PLAN_TICKET_ID","t"]]\', '
         "'full', 'session-now', 7, '[{\"kind\":\"command\","
-        "\"display_text\":\"/review\",\"insertion_text\":\"/review \","
-        "\"description\":\"Review\",\"argument_hint\":null}]', 1)"
+        '"display_text":"/review","insertion_text":"/review ",'
+        '"description":"Review","argument_hint":null}]\', 1)'
     )
 
     ensure_started_conversation_record(tmp_db, _resolved("conv_existing"), created_at=99)
@@ -117,9 +118,7 @@ def test_detail_orders_history_and_owner_lookup_resolves_past_conversations(
             "INSERT INTO ticket_conversations (conversation_id, ticket_id) VALUES (?, ?)",
             (conversation_id, ticket.id),
         )
-    tmp_db.execute(
-        "UPDATE tickets SET conversation_id = 'conv_z' WHERE id = ?", (ticket.id,)
-    )
+    tmp_db.execute("UPDATE tickets SET conversation_id = 'conv_z' WHERE id = ?", (ticket.id,))
 
     detail = ticket_views.ticket_detail(tmp_db, ticket.id, 30)
 
@@ -141,7 +140,7 @@ def test_ticket_deletion_cascades_only_its_history_associations(
         ("conv_kept_record", ticket.id),
     )
 
-    tickets_data.delete_ticket(tmp_db, ticket.id, actor="human", now=20)
+    tickets_data.delete_ticket(tmp_db, ticket.id, principal=OWNER_PRINCIPAL, now=20)
 
     assert tmp_db.execute("SELECT * FROM ticket_conversations").fetchone() is None
     assert (

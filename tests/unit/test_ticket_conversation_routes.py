@@ -16,6 +16,7 @@ from sqlite3 import Connection
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
+from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
 
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationObservationKind,
@@ -58,7 +59,7 @@ def _ticket(db_path: Path) -> str:
             conn,
             worker_type="coding",
             title="Talk to it first",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=0,
             title_max_chars=_TITLE_MAX_CHARS,
         )
@@ -305,7 +306,7 @@ def _past_kickoff(db_path: Path, ticket_id: str) -> None:
             conn,
             ticket_id,
             field="kickoff",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=1,
             next_ceiling=NO_FURTHER,
             at_cap=AtCap.propose,
@@ -320,7 +321,12 @@ def _park_on_a_proposal(db_path: Path, ticket_id: str) -> None:
     conn: Connection = connect(str(db_path))
     try:
         tickets_data.file_current_proposal_with_recap(
-            conn, ticket_id, body="how we will know", actor="agent", now=1, recap="Current work"
+            conn,
+            ticket_id,
+            body="how we will know",
+            principal=TEST_TICKET_PRINCIPAL,
+            now=1,
+            recap="Current work",
         )
         conn.commit()
     finally:

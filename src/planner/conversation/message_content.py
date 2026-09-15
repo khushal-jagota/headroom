@@ -149,6 +149,34 @@ def prefix_message_content_text(
     return (MessageText(text=prefix), *content)
 
 
+def sender_labeled_message_content(
+    content: MessageContent, sender_label: str
+) -> MessageContent:
+    """Put the sender's name at the start of the content delivered to an agent."""
+    return prefix_message_content_text(content, f"{sender_label}:", "\n")
+
+
+def message_content_starts_with_command(
+    content: MessageContent, command_names: set[str] | frozenset[str]
+) -> bool:
+    """Whether the message starts with one exact slash command from a live catalog."""
+    if not message_content_starts_with_slash_token(content):
+        return False
+    first = content[0]
+    assert isinstance(first, MessageText)
+    token = first.text.split(maxsplit=1)[0]
+    return token[1:] in command_names
+
+
+def message_content_starts_with_slash_token(content: MessageContent) -> bool:
+    """Whether the message can be a native slash command at a backend boundary."""
+    first = content[0] if content else None
+    if not isinstance(first, MessageText) or not first.text.startswith("/"):
+        return False
+    token = first.text.split(maxsplit=1)[0]
+    return len(token) > 1
+
+
 # --- the one JSON form ----------------------------------------------------------------------
 
 # What a stored message looks like when it is only written words, and what it has always

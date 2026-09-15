@@ -44,6 +44,7 @@ from planner.conversation.message_content import (
     MessageContent,
     MessageText,
     message_content_text,
+    sender_labeled_message_content,
     text_message_content,
 )
 
@@ -333,7 +334,9 @@ class ConversationContractConformanceSuite:
             assert await subject.system.is_running("c") is True
             assert await subject.backend_writes("c") == (
                 BackendWrite(
-                    content=text_message_content("first"),
+                    content=sender_labeled_message_content(
+                        text_message_content("first"), "owner"
+                    ),
                     sender_label="owner",
                     mode=PromptDeliveryMode.queue,
                 ),
@@ -408,7 +411,7 @@ class ConversationContractConformanceSuite:
             )
             assert fate == PromptDeliveryStarted()
             assert await subject.system.is_running("c") is True
-            assert _written_texts(await subject.backend_writes("c")) == ("first",)
+            assert _written_texts(await subject.backend_writes("c")) == ("owner:\nfirst",)
             facts = await subject.recorded_facts("c")
             assert _facts_of_kind(facts, RecordedFactKind.turn_ended) == ()
 
@@ -464,13 +467,16 @@ class ConversationContractConformanceSuite:
                 sender_label="owner",
                 mode=PromptDeliveryMode.send_now,
             ) == PromptDeliveryStarted()
-            assert _written_texts(await subject.backend_writes("c")) == ("incumbent", "urgent")
+            assert _written_texts(await subject.backend_writes("c")) == (
+                "owner:\nincumbent",
+                "owner:\nurgent",
+            )
             # The send-now went ahead of the line. What is left of the line keeps its
             # order and goes to the agent as one prompt.
             await subject.complete_running_turn("c")
             assert _written_texts(await subject.backend_writes("c")) == (
-                "incumbent",
-                "urgent",
+                "owner:\nincumbent",
+                "owner:\nurgent",
                 "owner:\nheld-a\n\nowner:\nheld-b",
             )
 
@@ -497,6 +503,83 @@ class ConversationContractConformanceSuite:
                     mode=PromptDeliveryMode.steer,
                 )
                 assert fate == PromptDeliveryInjected()
+
+        self._run(exercise)
+
+    def test_a_command_shaped_first_held_message_gets_its_own_turn(self) -> None:
+        async def exercise(subject: ConversationSystemUnderTest) -> None:
+            await subject.system.start_conversation(_start_request("c"))
+            await subject.system.send(
+                "c", text_message_content("incumbent"), sender_label="owner"
+            )
+            await subject.system.send(
+                "c", text_message_content("/review focus"), sender_label="captain"
+            )
+            await subject.system.send(
+                "c", text_message_content("after command"), sender_label="loop"
+            )
+
+            await subject.complete_running_turn("c")
+            assert _written_texts(await subject.backend_writes("c")) == (
+                "owner:\nincumbent",
+                "captain:\n/review focus",
+            )
+            delivered = _facts_of_kind(
+                await subject.recorded_facts("c"), RecordedFactKind.prompt_delivered
+            )
+            assert tuple(fact.sender_label for fact in delivered) == (
+                "owner",
+                "captain",
+            )
+
+            await subject.complete_running_turn("c")
+            assert _written_texts(await subject.backend_writes("c"))[-1] == (
+                "loop:\nafter command"
+            )
+
+        self._run(exercise)
+
+    def test_a_command_shaped_later_held_message_starts_after_the_earlier_prompt(
+        self,
+    ) -> None:
+        async def exercise(subject: ConversationSystemUnderTest) -> None:
+            await subject.system.start_conversation(_start_request("c"))
+            await subject.system.send(
+                "c", text_message_content("incumbent"), sender_label="owner"
+            )
+            await subject.system.send(
+                "c", text_message_content("before command"), sender_label="loop"
+            )
+            await subject.system.send(
+                "c", text_message_content("/review focus"), sender_label="captain"
+            )
+            await subject.system.send(
+                "c", text_message_content("after command"), sender_label="owner"
+            )
+
+            await subject.complete_running_turn("c")
+            assert _written_texts(await subject.backend_writes("c"))[-1] == (
+                "loop:\nbefore command"
+            )
+
+            await subject.complete_running_turn("c")
+            assert _written_texts(await subject.backend_writes("c"))[-1] == (
+                "captain:\n/review focus"
+            )
+
+            await subject.complete_running_turn("c")
+            assert _written_texts(await subject.backend_writes("c"))[-1] == (
+                "owner:\nafter command"
+            )
+            delivered = _facts_of_kind(
+                await subject.recorded_facts("c"), RecordedFactKind.prompt_delivered
+            )
+            assert tuple(fact.sender_label for fact in delivered) == (
+                "owner",
+                "loop",
+                "captain",
+                "owner",
+            )
 
         self._run(exercise)
 
@@ -549,7 +632,7 @@ class ConversationContractConformanceSuite:
             )
             assert fate == PromptDeliveryStarted()
             expected_write = BackendWrite(
-                content=text_message_content("steered"),
+                content=text_message_content("owner:\nsteered"),
                 sender_label="owner",
                 mode=PromptDeliveryMode.queue,
             )
@@ -586,12 +669,16 @@ class ConversationContractConformanceSuite:
             assert _facts_of_kind(facts, RecordedFactKind.turn_ended) == ()
             assert await subject.backend_writes("c") == (
                 BackendWrite(
-                    content=text_message_content("incumbent"),
+                    content=sender_labeled_message_content(
+                        text_message_content("incumbent"), "owner"
+                    ),
                     sender_label="owner",
                     mode=PromptDeliveryMode.queue,
                 ),
                 BackendWrite(
-                    content=text_message_content("steered"),
+                    content=sender_labeled_message_content(
+                        text_message_content("steered"), "owner"
+                    ),
                     sender_label="owner",
                     mode=PromptDeliveryMode.steer,
                 ),
@@ -603,9 +690,9 @@ class ConversationContractConformanceSuite:
         """A message is what it holds, all the way through.
 
         Every piece the sender put in reaches the backend, in the order they were put in,
-        and the record holds the same message rather than the words out of it. A system
-        that carried only the words would pass every other exercise here and fail this
-        one, which is the point of it.
+        and the wire adds only the sender label. The record holds the original message
+        rather than the words out of it. A system that carried only the words would pass
+        every other exercise here and fail this one.
         """
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
@@ -625,7 +712,7 @@ class ConversationContractConformanceSuite:
             assert fate == PromptDeliveryStarted()
             assert await subject.backend_writes("c") == (
                 BackendWrite(
-                    content=message,
+                    content=sender_labeled_message_content(message, "owner"),
                     sender_label="owner",
                     mode=PromptDeliveryMode.queue,
                 ),
@@ -652,7 +739,9 @@ class ConversationContractConformanceSuite:
             assert fate == PromptDeliveryStarted()
             assert await subject.backend_writes("c") == (
                 BackendWrite(
-                    content=text_message_content("the exact text"),
+                    content=sender_labeled_message_content(
+                        text_message_content("the exact text"), "owner"
+                    ),
                     sender_label="owner",
                     mode=PromptDeliveryMode.queue,
                 ),
@@ -676,7 +765,9 @@ class ConversationContractConformanceSuite:
             )
             assert fate == PromptDeliveryInjected()
             assert (await subject.backend_writes("c"))[-1] == BackendWrite(
-                content=text_message_content("the exact steer"),
+                content=sender_labeled_message_content(
+                    text_message_content("the exact steer"), "owner"
+                ),
                 sender_label="owner",
                 mode=PromptDeliveryMode.steer,
             )
@@ -751,7 +842,7 @@ class ConversationContractConformanceSuite:
                 mode=PromptDeliveryMode.steer,
             ) == PromptDeliveryStarted()
             assert _written_texts(await subject.backend_writes("idle-steer")) == (
-                "refused-text",
+                "owner:\nrefused-text",
             )
 
             await subject.system.start_conversation(
@@ -769,7 +860,9 @@ class ConversationContractConformanceSuite:
                     sender_label="owner",
                     mode=PromptDeliveryMode.steer,
                 ) == PromptDeliveryQueued(queue_position=1)
-            assert _written_texts(await subject.backend_writes("no-steer")) == ("incumbent",)
+            assert _written_texts(await subject.backend_writes("no-steer")) == (
+                "owner:\nincumbent",
+            )
 
         self._run(exercise)
 
@@ -803,7 +896,10 @@ class ConversationContractConformanceSuite:
                     mode=PromptDeliveryMode.queue,
                 ),
             )
-            assert _written_texts(await subject.backend_writes("c")) == ("incumbent", "held")
+            assert _written_texts(await subject.backend_writes("c")) == (
+                "owner:\nincumbent",
+                "automatic-loop:\nheld",
+            )
 
         self._run(exercise)
 
@@ -826,7 +922,9 @@ class ConversationContractConformanceSuite:
                 ("held-a", PromptDeliveryRefusalReason.write_to_backend_failed),
                 ("held-b", PromptDeliveryRefusalReason.write_to_backend_failed),
             )
-            assert _written_texts(await subject.backend_writes("c")) == ("incumbent",)
+            assert _written_texts(await subject.backend_writes("c")) == (
+                "owner:\nincumbent",
+            )
             assert await subject.system.is_running("c") is False
 
         self._run(exercise)
@@ -1039,7 +1137,9 @@ class ConversationContractConformanceSuite:
                 sender_label="owner",
                 mode=PromptDeliveryMode.steer,
             ) == PromptDeliveryQueued(queue_position=1)
-            assert _written_texts(await subject.backend_writes("steered")) == ("incumbent",)
+            assert _written_texts(await subject.backend_writes("steered")) == (
+                "owner:\nincumbent",
+            )
             assert await subject.system.is_running("steered") is True
             [held] = await subject.system.held_prompts("steered")
             assert held.queue_reason is PromptQueueReason.steer_refused
@@ -1075,7 +1175,9 @@ class ConversationContractConformanceSuite:
                 fact.text
                 for fact in _facts_of_kind(facts, RecordedFactKind.prompt_delivery_refused)
             ) == ("held-a", "held-b")
-            assert _written_texts(await subject.backend_writes("c")) == ("incumbent",)
+            assert _written_texts(await subject.backend_writes("c")) == (
+                "owner:\nincumbent",
+            )
 
         self._run(exercise)
 
@@ -1153,7 +1255,10 @@ class ConversationContractConformanceSuite:
             await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             await subject.system.send("c", text_message_content("held"), sender_label="owner")
             await subject.system.interrupt("c")
-            assert _written_texts(await subject.backend_writes("c")) == ("incumbent", "held")
+            assert _written_texts(await subject.backend_writes("c")) == (
+                "owner:\nincumbent",
+                "owner:\nheld",
+            )
             assert await subject.system.is_running("c") is True
 
         self._run(exercise)
@@ -1186,7 +1291,10 @@ class ConversationContractConformanceSuite:
             await subject.system.send("c", text_message_content("held"), sender_label="owner")
             await subject.complete_running_turn("c")
             assert await subject.system.is_running("c") is True
-            assert _written_texts(await subject.backend_writes("c")) == ("incumbent", "held")
+            assert _written_texts(await subject.backend_writes("c")) == (
+                "owner:\nincumbent",
+                "owner:\nheld",
+            )
 
         self._run(exercise)
 
@@ -1527,7 +1635,9 @@ class ConversationContractConformanceSuite:
 
             await subject.complete_running_turn("c")
             assert await subject.backend_model("c") == "next-model"
-            assert "held with change" in _written_texts(await subject.backend_writes("c"))
+            assert "owner:\nheld with change" in _written_texts(
+                await subject.backend_writes("c")
+            )
 
         self._run(exercise)
 
@@ -1637,7 +1747,9 @@ class ConversationContractConformanceSuite:
             )
             assert isinstance(fate, PromptDeliveryStarted)
             assert await subject.system.is_running("c")
-            assert "after the kill" in _written_texts(await subject.backend_writes("c"))
+            assert "owner:\nafter the kill" in _written_texts(
+                await subject.backend_writes("c")
+            )
 
         self._run(exercise)
 

@@ -25,6 +25,7 @@ import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from tests.support.principals import OWNER_PRINCIPAL
 
 import planner.conversation.api as conversation_api
 import planner.conversation.contracts as conversation_contracts
@@ -135,6 +136,7 @@ class _FakeBackend:
     def written_texts(self) -> list[str]:
         """The words of each message written. The messages themselves are above."""
         return [message_content_text(content) for content in self.written_contents]
+
     steered_contents: list[MessageContent] = field(default_factory=list)
     steer_outcome: BackendSteerOutcome = field(default_factory=BackendSteerAccepted)
     permission_answers: dict[str, str] = field(default_factory=dict)
@@ -186,9 +188,7 @@ class _FakeBackendChild:
         )
         if self._backend.needs_failed_child_recovery_once:
             self._backend.needs_failed_child_recovery_once = False
-            raise NeedsRebind(
-                self._backend.conversation_id, failed_child_recovery=True
-            )
+            raise NeedsRebind(self._backend.conversation_id, failed_child_recovery=True)
         if self._backend.write_fails:
             raise PromptWriteFailed(self._backend.conversation_id)
         self._backend.written_contents.append(content)
@@ -452,9 +452,7 @@ class _Harness:
         backend = self.backend(conversation_id)
         token = backend.live_turn_token
         assert token is not None and backend.sink is not None
-        await backend.sink.tool_call_progress(
-            token, tool_call_id=tool_call_id, detail=detail
-        )
+        await backend.sink.tool_call_progress(token, tool_call_id=tool_call_id, detail=detail)
         await self.settle()
 
     async def model_is_thinking(self, conversation_id: str) -> None:
@@ -505,16 +503,14 @@ def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
     asyncio.run(asyncio.wait_for(exercise(), 20.0))
 
 
-def _associate_ticket_conversations(
-    harness: _Harness, *, active: str, past: str
-) -> None:
+def _associate_ticket_conversations(harness: _Harness, *, active: str, past: str) -> None:
     conn = connect(str(harness.db_path))
     try:
         ticket = tickets_data.create_ticket(
             conn,
             title="Conversation boundary",
             worker_type="coding",
-            actor="human",
+            principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,
         )
@@ -647,9 +643,7 @@ class _EventStreamDrive:
             if frame.startswith(":"):
                 continue
             name_line, data_line = frame.strip().split("\n", 1)
-            return name_line.removeprefix("event: "), json.loads(
-                data_line.removeprefix("data: ")
-            )
+            return name_line.removeprefix("event: "), json.loads(data_line.removeprefix("data: "))
 
 
 # --- starting a conversation ----------------------------------------------------------------
@@ -854,9 +848,9 @@ def test_every_fate_a_send_can_have_comes_back_tagged(
         monkeypatch.setattr(conversation_api, "backend_supports_steer", lambda _key: True)
         async with harness.client() as client:
             await _start(client, "c")
-            assert (
-                await client.get("/api/conversation/conversations/c")
-            ).json()["supports_steer"] is True
+            assert (await client.get("/api/conversation/conversations/c")).json()[
+                "supports_steer"
+            ] is True
 
             started = await client.post(
                 "/api/conversation/conversations/c/send",
@@ -1011,9 +1005,9 @@ def test_what_a_sender_minted_reaches_the_row_its_message_becomes(harness: _Harn
 
             payloads = {
                 row["kind"]: row["payload"]
-                for row in (
-                    await client.get("/api/conversation/conversations/c/events")
-                ).json()["events"]
+                for row in (await client.get("/api/conversation/conversations/c/events")).json()[
+                    "events"
+                ]
             }
             assert payloads["prompt"] == {
                 "text": "first",
@@ -1051,9 +1045,9 @@ def test_what_a_sender_minted_reaches_the_row_its_message_becomes(harness: _Harn
 
             assert [
                 row["payload"]
-                for row in (
-                    await client.get("/api/conversation/conversations/k/events")
-                ).json()["events"]
+                for row in (await client.get("/api/conversation/conversations/k/events")).json()[
+                    "events"
+                ]
                 if row["kind"] == "prompt_discarded"
             ] == [{"text": "never ran", "sender_label": "owner", "sender_message_id": "m-3"}]
 
@@ -1079,8 +1073,7 @@ def test_user_input_replays_after_refresh_and_posts_a_complete_answer_map(
             assert view["pending_permission_ask"] is None
             assert view["pending_user_input"]["request_id"] == request.request_id
             question_ids = [
-                question["question_id"]
-                for question in view["pending_user_input"]["questions"]
+                question["question_id"] for question in view["pending_user_input"]["questions"]
             ]
             assert question_ids == [
                 "scope",
@@ -1130,9 +1123,7 @@ def test_a_waiting_message_can_be_taken_back_by_the_name_its_sender_gave_it(
                 },
             )
             assert queued.json()["fate"] == "queued"
-            held = (await client.get("/api/conversation/conversations/c")).json()[
-                "held_prompts"
-            ]
+            held = (await client.get("/api/conversation/conversations/c")).json()["held_prompts"]
             assert len(held) == 1
             assert held[0]["sender_message_id"] == "message-one"
 
@@ -1179,9 +1170,7 @@ def test_a_waiting_message_can_be_promoted_by_its_server_owned_id(
                     "sent_at_unix_milliseconds": 1234,
                 },
             )
-            held = (await client.get("/api/conversation/conversations/c")).json()[
-                "held_prompts"
-            ][0]
+            held = (await client.get("/api/conversation/conversations/c")).json()["held_prompts"][0]
             assert held == {
                 "held_prompt_id": held["held_prompt_id"],
                 "text": "held",
@@ -1239,9 +1228,9 @@ def test_the_tail_signals_that_held_prompts_changed(harness: _Harness) -> None:
                     LIVE_FRAME_STREAM_NAME,
                     {"frame": "held_prompts_changed"},
                 )
-                held = (await client.get(
-                    "/api/conversation/conversations/c"
-                )).json()["held_prompts"][0]
+                held = (await client.get("/api/conversation/conversations/c")).json()[
+                    "held_prompts"
+                ][0]
                 await client.delete(
                     f"/api/conversation/conversations/c/held-prompts/{held['held_prompt_id']}"
                 )
@@ -1252,9 +1241,9 @@ def test_the_tail_signals_that_held_prompts_changed(harness: _Harness) -> None:
 
             # An empty queue still wakes a new binder. This closes the inverse race:
             # its earlier view may have contained the row that was just discarded.
-            latest = (await client.get(
-                "/api/conversation/conversations/c"
-            )).json()["latest_sequence"]
+            latest = (await client.get("/api/conversation/conversations/c")).json()[
+                "latest_sequence"
+            ]
             async with _EventStreamDrive(
                 harness.app,
                 "/api/conversation/conversations/c/tail",
@@ -1385,9 +1374,9 @@ def test_the_rows_after_a_position_come_back_in_order_and_decoded(harness: _Harn
             )
             await harness.complete_turn("c")
 
-            everything = (
-                await client.get("/api/conversation/conversations/c/events")
-            ).json()["events"]
+            everything = (await client.get("/api/conversation/conversations/c/events")).json()[
+                "events"
+            ]
             assert [event["sequence"] for event in everything] == [1, 2]
             assert [event["kind"] for event in everything] == ["prompt", "turn_ended"]
             assert everything[0]["payload"] == {
@@ -1438,9 +1427,7 @@ def test_claude_legacy_image_detail_stays_in_rows_but_not_public_replays(
                     tool_call_status=ToolCallStatus.completed,
                     detail=legacy_detail,
                 ),
-                AgentMessageEventPayload(
-                    content=text_message_content("The image is clear.")
-                ),
+                AgentMessageEventPayload(content=text_message_content("The image is clear.")),
             ):
                 await harness.store.append_event("claude-images", payload)
 
@@ -1599,9 +1586,7 @@ def test_public_replays_keep_non_claude_and_unrecognized_json_detail(
                     ),
                 )
                 events = (
-                    await client.get(
-                        f"/api/conversation/conversations/{conversation_id}/events"
-                    )
+                    await client.get(f"/api/conversation/conversations/{conversation_id}/events")
                 ).json()["events"]
                 assert events[0]["payload"]["detail"] == detail
 
@@ -1637,9 +1622,7 @@ def test_a_public_read_carries_the_start_of_a_long_tool_output_and_says_so(
             ):
                 await harness.store.append_event("long-output", payload)
 
-            response = await client.get(
-                "/api/conversation/conversations/long-output/events"
-            )
+            response = await client.get("/api/conversation/conversations/long-output/events")
             fetched = response.json()["events"]
             assert fetched[0]["payload"] == {
                 "tool_call_id": "call-1",
@@ -1761,9 +1744,7 @@ def test_the_tail_replays_then_carries_on_with_no_gap_and_no_repeat(
                     for text in ("row three", "row four"):
                         stored = await harness.store.append_event(
                             conversation_id,
-                            AgentMessageEventPayload(
-                                content=text_message_content(text)
-                            ),
+                            AgentMessageEventPayload(content=text_message_content(text)),
                         )
                         harness.live_tail.publish_event(stored)
                 return await read_events_after(conversation_id, after_sequence)
@@ -2230,9 +2211,7 @@ def test_backend_refresh_resolves_scopes_and_keeps_cached_usage_after_failure(
                 executable_path=f"/bin/{backend_key.value}",
                 version="1.0.0",
                 identity=None,
-                available_models=(
-                    BackendModel(model_id="spark[1m]", display_name="Spark 5 (1M)"),
-                ),
+                available_models=(BackendModel(model_id="spark[1m]", display_name="Spark 5 (1M)"),),
                 reasoning_effort_options=(),
                 default_model_id="spark[1m]",
                 default_reasoning_effort=None,
@@ -2293,9 +2272,7 @@ def test_backend_refresh_resolves_scopes_and_keeps_cached_usage_after_failure(
                 "model_id": "spark[1m]",
             }
         ]
-        assert by_backend["claude"]["cached_usage"]["observed_at"] == (
-            "2026-09-09T12:00:00Z"
-        )
+        assert by_backend["claude"]["cached_usage"]["observed_at"] == ("2026-09-09T12:00:00Z")
 
     _run(exercise)
 
@@ -2311,9 +2288,7 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
     boot = connect(str(db_path))
     create_schema(boot)
     boot.close()
-    config = load_config(
-        path=None, env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)}
-    )
+    config = load_config(path=None, env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)})
 
     def conn_factory() -> sqlite3.Connection:
         return connect(str(db_path))
@@ -2411,9 +2386,7 @@ def test_a_picture_sent_with_a_message_is_kept_and_the_row_names_what_was_kept(
             )
             assert sent.json() == {"fate": "started"}
 
-            rows = (
-                await client.get("/api/conversation/conversations/c/events")
-            ).json()["events"]
+            rows = (await client.get("/api/conversation/conversations/c/events")).json()["events"]
             payload = rows[0]["payload"]
             assert payload["content"][0] == {"piece": "text", "text": "look at this"}
             picture = payload["content"][1]
@@ -2462,9 +2435,7 @@ def test_a_data_file_is_validated_kept_and_served_with_server_metadata(
             )
             assert sent.json() == {"fate": "started"}
 
-            rows = (await client.get("/api/conversation/conversations/c/events")).json()[
-                "events"
-            ]
+            rows = (await client.get("/api/conversation/conversations/c/events")).json()["events"]
             piece = rows[0]["payload"]["content"][0]
             assert piece == {
                 "piece": "file",
@@ -2599,16 +2570,11 @@ def test_the_raw_message_envelope_has_an_exact_boundary_and_counts_all_images(
                 },
             )
             assert rejected.status_code == 422
-            assert (
-                rejected.json()["detail"]
-                == "a conversation message's images are too large"
-            )
+            assert rejected.json()["detail"] == "a conversation message's images are too large"
             assert (
                 await client.get("/api/conversation/conversations/aggregate/events")
             ).json() == {"events": []}
-            aggregate_files = (
-                harness.db_path.parent / "files" / "conversations" / "aggregate"
-            )
+            aggregate_files = harness.db_path.parent / "files" / "conversations" / "aggregate"
             assert not aggregate_files.exists()
 
     _run(exercise)
@@ -2662,9 +2628,7 @@ def test_a_message_with_nothing_in_it_is_refused_rather_than_recorded(
             )
             assert empty.status_code == 422
 
-            rows = (
-                await client.get("/api/conversation/conversations/c/events")
-            ).json()["events"]
+            rows = (await client.get("/api/conversation/conversations/c/events")).json()["events"]
             assert rows == []
 
     _run(exercise)
