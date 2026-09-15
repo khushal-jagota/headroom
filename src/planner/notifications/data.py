@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.notifications import attention as attention_data
 from planner.notifications.contracts import (
     NOTIFICATION_SUBJECTS,
     NOTIFICATION_TYPE_BY_ID,
@@ -268,49 +269,17 @@ def _agent_label(agent_key: str) -> str:
     return agent_key.replace("_", " ").title()
 
 
-def _conversation_attention(conn: sqlite3.Connection) -> dict[str, tuple[bool, bool, int, int]]:
-    rows = conn.execute(
-        "SELECT c.conversation_id, c.latest_sequence, "
-        "COALESCE(MAX(CASE WHEN e.kind = 'message_to_owner' THEN e.sequence END), 0) "
-        "> c.owner_read_through_sequence AS unread_message, "
-        "EXISTS (SELECT 1 FROM conversation_events asked WHERE "
-        "asked.conversation_id = c.conversation_id AND asked.kind = 'permission_asked' "
-        "AND NOT EXISTS (SELECT 1 FROM conversation_events answered WHERE "
-        "answered.conversation_id = c.conversation_id AND answered.kind = 'permission_answered' "
-        "AND json_extract(answered.payload, '$.ask_id') = "
-        "json_extract(asked.payload, '$.ask_id') AND answered.sequence > asked.sequence)) "
-        "OR EXISTS (SELECT 1 FROM conversation_events asked WHERE "
-        "asked.conversation_id = c.conversation_id AND asked.kind = 'user_input_requested' "
-        "AND NOT EXISTS (SELECT 1 FROM conversation_events answered WHERE "
-        "answered.conversation_id = c.conversation_id "
-        "AND answered.kind IN ('user_input_answered','user_input_failed') "
-        "AND json_extract(answered.payload, '$.request_id') = "
-        "json_extract(asked.payload, '$.request_id') AND answered.sequence > asked.sequence)) "
-        "AS pending_ask, "
-        "COALESCE((SELECT CASE WHEN recent.kind = 'turn_ended' "
-        "AND json_extract(recent.payload, '$.ending') = 'failed' THEN 1 ELSE 0 END "
-        "FROM conversation_events recent WHERE recent.conversation_id = c.conversation_id "
-        "AND recent.kind IN ('prompt','turn_ended') "
-        "AND recent.sequence > COALESCE((SELECT ack.through_sequence "
-        "FROM conversation_error_acknowledgements ack "
-        "WHERE ack.conversation_id = c.conversation_id), 0) "
-        "ORDER BY recent.sequence DESC LIMIT 1), 0) AS errored, "
-        "COALESCE(MAX(e.created_at), c.created_at) AS occurred_at "
-        "FROM conversations c LEFT JOIN conversation_events e "
-        "ON e.conversation_id = c.conversation_id GROUP BY c.conversation_id"
-    ).fetchall()
-    return {
-        str(row["conversation_id"]): (
-            bool(row["unread_message"]) or bool(row["pending_ask"]),
-            bool(row["errored"]),
-            int(row["latest_sequence"]),
-            int(row["occurred_at"]),
-        )
-        for row in rows
-    }
-
-
 def _project_attention_facts(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "DELETE FROM notification_attention_edges WHERE "
+        "(subject_kind = 'ticket' AND NOT EXISTS ("
+        "SELECT 1 FROM tickets WHERE tickets.id = notification_attention_edges.subject_id)) "
+        "OR (subject_kind = 'sprint_item' AND NOT EXISTS ("
+        "SELECT 1 FROM sprint_items "
+        "WHERE sprint_items.id = notification_attention_edges.subject_id)) "
+        "OR (subject_kind = 'agent' AND NOT EXISTS ("
+        "SELECT 1 FROM agents WHERE agents.agent_key = notification_attention_edges.subject_id))"
+    )
     conn.execute(
         "DELETE FROM notification_attention_state WHERE "
         "(subject_kind = 'ticket' AND NOT EXISTS ("
@@ -321,7 +290,7 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
         "OR (subject_kind = 'agent' AND NOT EXISTS ("
         "SELECT 1 FROM agents WHERE agents.agent_key = notification_attention_state.subject_id))"
     )
-    conversations = _conversation_attention(conn)
+    conversations = attention_data.conversation_attention(conn)
     desired: dict[tuple[str, str, str], tuple[bool, Principal, str, int]] = {}
     ticket_rows = conn.execute(
         "SELECT id, title, stage, worker_type, ticket_status, pending_proposal, "
@@ -393,42 +362,42 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
                 conversation[3],
             )
 
-    prior = {
-        (str(row["subject_kind"]), str(row["subject_id"]), str(row["notification_type"])): (
-            bool(row["active"]),
-            int(row["generation"]),
+    attention_data.reconcile_attention(
+        conn,
+        {key: (active, occurred_at) for key, (active, _, _, occurred_at) in desired.items()},
+    )
+    for row in conn.execute(
+        "SELECT subject_kind, subject_id, notification_type, generation, occurred_at "
+        "FROM notification_attention_edges WHERE projected=0 "
+        "ORDER BY occurred_at, subject_kind, subject_id, "
+        "notification_type, generation"
+    ):
+        key = (
+            str(row["subject_kind"]),
+            str(row["subject_id"]),
+            str(row["notification_type"]),
         )
-        for row in conn.execute(
-            "SELECT subject_kind, subject_id, notification_type, active, generation "
-            "FROM notification_attention_state"
+        current = desired.get(key)
+        if current is None:
+            continue
+        _, subject, label, _ = current
+        generation = int(row["generation"])
+        _insert_fact(
+            conn,
+            fact_id=f"attention:{key[0]}:{key[1]}:{key[2]}:{generation}",
+            notification_type=key[2],
+            subject=subject,
+            subject_label=label,
+            source_kind="ticket" if subject.kind is PrincipalKind.ticket else "conversation",
+            source_id=f"{key[0]}:{key[1]}:{key[2]}",
+            source_sequence=generation,
+            occurred_at=int(row["occurred_at"]),
         )
-    }
-    for key, (active, subject, label, occurred_at) in desired.items():
-        prior_active, generation = prior.get(key, (False, 0))
-        if active and not prior_active:
-            generation += 1
-            stored_kind, stored_id, notification_type = key
-            _insert_fact(
-                conn,
-                fact_id=f"attention:{stored_kind}:{stored_id}:{notification_type}:{generation}",
-                notification_type=notification_type,
-                subject=subject,
-                subject_label=label,
-                source_kind=(
-                    "ticket" if subject.kind is PrincipalKind.ticket else "conversation"
-                ),
-                source_id=f"{stored_kind}:{stored_id}:{notification_type}",
-                source_sequence=generation,
-                occurred_at=occurred_at,
-            )
-        if key not in prior or active != prior_active:
-            conn.execute(
-                "INSERT INTO notification_attention_state"
-                "(subject_kind, subject_id, notification_type, active, generation) "
-                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(subject_kind, subject_id, notification_type) "
-                "DO UPDATE SET active=excluded.active, generation=excluded.generation",
-                (*key, int(active), generation),
-            )
+        conn.execute(
+            "UPDATE notification_attention_edges SET projected=1 WHERE subject_kind=? "
+            "AND subject_id=? AND notification_type=? AND generation=?",
+            (*key, generation),
+        )
 
 
 def project_facts(conn: sqlite3.Connection) -> int:

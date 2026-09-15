@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import subprocess
@@ -10,6 +11,14 @@ import pytest
 from fastapi.testclient import TestClient
 from tests.support.principals import OWNER_PRINCIPAL
 
+from planner.conversation.contracts import (
+    ConversationAccess,
+    ConversationBackendKey,
+    ResolvedConversationStart,
+)
+from planner.conversation.events import MessageToOwnerEventPayload
+from planner.conversation.message_content import text_message_content
+from planner.conversation.storage import ConversationStore
 from planner.core.clock import TestClock as MutableClock
 from planner.core.clock import parse_fake_now
 from planner.core.config import load_config
@@ -21,7 +30,7 @@ from planner.notifications.contracts import NOTIFICATION_SUBJECTS, NotificationF
 from planner.notifications.logic.policy import decide_notification
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket
+from planner.tickets.contracts import TITLE_MAX_CHARS, StageOwnershipMode, Ticket
 
 
 def _ticket(conn: Connection, now: int) -> Ticket:
@@ -271,6 +280,60 @@ def test_attention_facts_emit_once_per_rising_edge(tmp_path: Path) -> None:
     conn.close()
 
 
+def test_reply_clear_and_rise_between_projector_polls_keeps_both_edges(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "coalesced-reply-edges.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    notifications_data.project_facts(conn)
+    store = ConversationStore(str(db_path), integer_now=lambda: 2)
+
+    async def exercise() -> None:
+        await store.create_conversation(
+            ResolvedConversationStart(
+                conversation_id="c_coalesced",
+                backend_key=ConversationBackendKey.codex,
+                model="test-model",
+                reasoning_effort=None,
+                role_materials=None,
+                workspace_folder=tmp_path,
+                access=ConversationAccess.full,
+            )
+        )
+        tickets_data.write_ticket_conversation_start(
+            conn,
+            ticket.id,
+            conversation_id="c_coalesced",
+            backend="codex",
+            model="test-model",
+            reasoning_effort=None,
+            now=2,
+        )
+        message = MessageToOwnerEventPayload(
+            content=text_message_content("status"),
+            sender=Principal(PrincipalKind.ticket, ticket.id),
+            recipient=OWNER_PRINCIPAL,
+            sender_label=ticket.title,
+        )
+        await store.append_event("c_coalesced", message)
+        await store.advance_owner_read_through_sequence("c_coalesced", 1)
+        await store.append_event("c_coalesced", message)
+
+    asyncio.run(exercise())
+    notifications_data.project_facts(conn)
+    facts = conn.execute(
+        "SELECT fact_id FROM notification_facts WHERE notification_type='awaiting_reply' "
+        "ORDER BY source_sequence"
+    ).fetchall()
+    assert [str(row["fact_id"]) for row in facts] == [
+        f"attention:ticket:{ticket.id}:awaiting_reply:1",
+        f"attention:ticket:{ticket.id}:awaiting_reply:2",
+    ]
+    conn.close()
+
+
 def test_error_fact_repeats_only_after_explicit_restart_clears_it(tmp_path: Path) -> None:
     conn = connect(str(tmp_path / "error-edges.db"))
     create_schema(conn)
@@ -278,10 +341,7 @@ def test_error_fact_repeats_only_after_explicit_restart_clears_it(tmp_path: Path
     notifications_data.project_facts(conn)
 
     tickets_data.mark_ticket_errored(conn, ticket.id, error="first", now=2)
-    notifications_data.project_facts(conn)
-    assert notifications_data.project_facts(conn) == 0
     tickets_data.clear_ticket_error_for_restart(conn, ticket.id, now=3)
-    notifications_data.project_facts(conn)
     tickets_data.mark_ticket_errored(conn, ticket.id, error="second", now=4)
     notifications_data.project_facts(conn)
 
@@ -294,6 +354,54 @@ def test_error_fact_repeats_only_after_explicit_restart_clears_it(tmp_path: Path
     ] == [
         f"attention:ticket:{ticket.id}:errored:1",
         f"attention:ticket:{ticket.id}:errored:2",
+    ]
+    conn.close()
+
+
+def test_assignment_clear_and_rise_between_projector_polls_keeps_both_edges(
+    tmp_path: Path,
+) -> None:
+    conn = connect(str(tmp_path / "coalesced-assignment-edges.db"))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    conn.execute(
+        "UPDATE tickets SET stage='needs_success', ceiling='needs_success', "
+        "default_stage_ownership_mode='worker', stage_ownership_overrides='{}', "
+        "pending_proposal=NULL WHERE id=?",
+        (ticket.id,),
+    )
+    notifications_data.project_facts(conn)
+
+    tickets_data.set_stage_ownership(
+        conn,
+        ticket.id,
+        stage="needs_success",
+        ownership_mode=StageOwnershipMode.user,
+        now=2,
+    )
+    tickets_data.set_stage_ownership(
+        conn,
+        ticket.id,
+        stage="needs_success",
+        ownership_mode=StageOwnershipMode.worker,
+        now=3,
+    )
+    tickets_data.set_stage_ownership(
+        conn,
+        ticket.id,
+        stage="needs_success",
+        ownership_mode=StageOwnershipMode.user,
+        now=4,
+    )
+    notifications_data.project_facts(conn)
+
+    facts = conn.execute(
+        "SELECT fact_id FROM notification_facts WHERE notification_type='assigned' "
+        "ORDER BY source_sequence"
+    ).fetchall()
+    assert [str(row["fact_id"]) for row in facts] == [
+        f"attention:ticket:{ticket.id}:assigned:1",
+        f"attention:ticket:{ticket.id}:assigned:2",
     ]
     conn.close()
 

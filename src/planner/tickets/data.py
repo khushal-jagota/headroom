@@ -25,6 +25,7 @@ from planner.core.contracts import (
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.days import data as days_data
+from planner.notifications.attention import capture_ticket_attention
 from planner.proposal_holder_wakes import data as proposal_holder_wakes_data
 from planner.proposal_holder_wakes.contracts import proposal_ready_message
 from planner.tickets import worker_context as ticket_worker_context
@@ -703,6 +704,7 @@ def _apply_decision(
             # Completed into done/dropped: drop the blocks links this Ticket holds and
             # rewrite each named target's status in this same transaction.
             _release_outgoing_blocks_links(conn, ticket.id, affected_blocked_target_ids, now)
+    capture_ticket_attention(conn, ticket.id, now)
     return _load_ticket(conn, ticket.id)
 
 
@@ -739,6 +741,7 @@ def _write_ticket_status(
             ticket_id,
         ),
     )
+    capture_ticket_attention(conn, ticket_id, now)
 
 
 def _resting_status_for_ticket(
@@ -1720,6 +1723,7 @@ def set_stage_ownership(
             "UPDATE tickets SET stage_ownership_overrides = ?, updated_at = ? WHERE id = ?",
             (_stage_ownership_overrides_to_json(overrides), now, ticket_id),
         )
+        capture_ticket_attention(conn, ticket_id, now)
         updated = _load_ticket_for_write(conn, ticket_id)
         assert effective_after is not None
         if (
@@ -1768,6 +1772,7 @@ def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> T
             "UPDATE tickets SET stage_ownership_overrides = ?, updated_at = ? WHERE id = ?",
             (_stage_ownership_overrides_to_json(overrides), now, ticket_id),
         )
+        capture_ticket_attention(conn, ticket_id, now)
         updated = _load_ticket_for_write(conn, ticket_id)
         if effective_before is not StageOwnershipMode.user and updated.ticket_status not in (
             TicketStatus.agent,
@@ -1816,6 +1821,7 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
             "UPDATE tickets SET stage_ownership_overrides = ?, updated_at = ? WHERE id = ?",
             (_stage_ownership_overrides_to_json(overrides), now, ticket_id),
         )
+        capture_ticket_attention(conn, ticket_id, now)
         updated = _load_ticket_for_write(conn, ticket_id)
         if effective_before is not effective_after and updated.ticket_status not in (
             TicketStatus.agent,

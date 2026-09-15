@@ -51,6 +51,7 @@ from planner.conversation.events import (
 )
 from planner.core.contracts import PrincipalKind
 from planner.core.db import commit_without_change_signal, connect
+from planner.notifications.attention import capture_conversation_attention
 from planner.skill_versions import settle_worker_step_skill_bindings
 
 DEFAULT_BUSY_TIMEOUT_MILLISECONDS = 5000
@@ -453,6 +454,7 @@ class ConversationStore:
                     "WHERE conversation_id = ?",
                     (through_sequence, conversation_id),
                 )
+                capture_conversation_attention(conn, conversation_id, self._integer_now())
             row = conn.execute(
                 "SELECT * FROM conversations WHERE conversation_id = ?",
                 (conversation_id,),
@@ -494,6 +496,7 @@ class ConversationStore:
                     "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
                     (owner_read_through_sequence, conversation_id),
                 )
+            capture_conversation_attention(conn, conversation_id, stored.created_at)
             _commit_appended_rows(conn, (payload,))
         except BaseException:
             if conn.in_transaction:
@@ -562,6 +565,7 @@ class ConversationStore:
                     "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
                     (read_through, conversation_id),
                 )
+            capture_conversation_attention(conn, conversation_id, written[-1].created_at)
             _commit_appended_rows(conn, payloads)
         except BaseException:
             if conn.in_transaction:
@@ -605,6 +609,7 @@ class ConversationStore:
                     "latest_agent_activity_sequence WHERE conversation_id = ?",
                     (conversation_id,),
                 )
+            capture_conversation_attention(conn, conversation_id, ended.created_at)
             _commit_appended_rows(conn, payloads)
         except BaseException:
             if conn.in_transaction:

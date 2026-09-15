@@ -286,6 +286,15 @@ def upgrade() -> None:
         "generation INTEGER NOT NULL CHECK (generation >= 0),"
         "PRIMARY KEY(subject_kind, subject_id, notification_type))"
     )
+    op.execute(
+        "CREATE TABLE notification_attention_edges ("
+        "subject_kind TEXT NOT NULL CHECK (subject_kind IN ('ticket','agent','sprint_item')),"
+        "subject_id TEXT NOT NULL, notification_type TEXT NOT NULL CHECK (notification_type IN "
+        "('awaiting_reply','awaiting_approval','assigned','errored')),"
+        "generation INTEGER NOT NULL CHECK (generation > 0), occurred_at INTEGER NOT NULL,"
+        "projected INTEGER NOT NULL DEFAULT 0 CHECK (projected IN (0,1)),"
+        "PRIMARY KEY(subject_kind, subject_id, notification_type, generation))"
+    )
     _seed_notification_attention_state()
     violations = op.get_bind().exec_driver_sql("PRAGMA foreign_key_check").fetchall()
     if violations:
