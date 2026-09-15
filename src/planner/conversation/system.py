@@ -807,6 +807,7 @@ class SqliteProcessConversationSystem:
                     immediate_fate = await self._record_steer_outcome(
                         state,
                         BackendSteerRefused(immediate_refusal),
+                        turn_token=steer_turn_token,
                         content=held.content,
                         sender_label=held.sender_label,
                         sender_message_id=held.sender_message_id,
@@ -886,6 +887,7 @@ class SqliteProcessConversationSystem:
             fate = await self._record_steer_outcome(
                 state,
                 steer_outcome,
+                turn_token=steer_turn_token,
                 content=held.content,
                 sender_label=held.sender_label,
                 sender_message_id=held.sender_message_id,
@@ -1482,6 +1484,7 @@ class SqliteProcessConversationSystem:
             return await self._record_steer_outcome(
                 state,
                 steer_outcome,
+                turn_token=running.token,
                 content=content,
                 sender_label=sender_label,
                 sender_message_id=sender_message_id,
@@ -1994,6 +1997,7 @@ class SqliteProcessConversationSystem:
         state: _ConversationState,
         outcome: BackendSteerOutcome,
         *,
+        turn_token: TurnToken | None,
         content: MessageContent,
         sender_label: str,
         sender_message_id: str | None,
@@ -2015,7 +2019,11 @@ class SqliteProcessConversationSystem:
                     recipient=recipient,
                 ),
             )
-            if sender is not None and state.running_turn is not None:
+            if (
+                sender is not None
+                and state.running_turn is not None
+                and state.running_turn.token == turn_token
+            ):
                 state.running_turn.prompt_senders.setdefault(sender, None)
             return PromptDeliveryInjected()
         if isinstance(outcome, BackendSteerRefused):
@@ -2046,7 +2054,11 @@ class SqliteProcessConversationSystem:
                 recipient=recipient,
             ),
         )
-        if sender is not None and state.running_turn is not None:
+        if (
+            sender is not None
+            and state.running_turn is not None
+            and state.running_turn.token == turn_token
+        ):
             # The backend may have accepted the text. Treating it as part of this turn
             # avoids a false silence marker and matches the delivery's non-retry fate.
             state.running_turn.prompt_senders.setdefault(sender, None)

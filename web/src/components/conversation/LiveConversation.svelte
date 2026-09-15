@@ -28,6 +28,7 @@
   import { fateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
   import { heldPromptRows } from "../../lib/conversation/heldPrompts";
   import type { ConversationState } from "../../lib/conversation/conversationState";
+  import { eligibleOwnerReadSequence } from "../../lib/conversation/ownerRead";
   import {
     afterTheRecordHasBeenRead,
     mintOutgoingMessage,
@@ -153,6 +154,8 @@
    *  remain the stable owner key when session storage refuses a canonical-id migration;
    *  record reconciliation then empties that exact key instead of orphaning it. */
   let activePersistenceId = $state<string | null>(null);
+  let documentIsVisible = $state(false);
+  let windowIsFocused = $state(false);
 
   let stream: ConversationStream | null = null;
 
@@ -176,18 +179,28 @@
   let userInput = $derived(liveUserInputFrom(rows));
   let advancingRead: { conversationId: string; sequence: number } | null = null;
   $effect(() => {
-    if (
-      view !== null
-      && view.latest_sequence > view.owner_read_through_sequence
-      && (advancingRead?.conversationId !== view.conversation_id
-        || view.latest_sequence > advancingRead.sequence)
-    ) {
+    if (view !== null) {
+      const eligibleSequence = eligibleOwnerReadSequence({
+        conversationState,
+        documentIsVisible,
+        windowIsFocused,
+        transcriptLatestSequence: feed.latestSequence,
+        snapshot: {
+          latestSequence: view.latest_sequence,
+          ownerReadThroughSequence: view.owner_read_through_sequence
+        }
+      });
+      if (
+        eligibleSequence === null
+        || (advancingRead?.conversationId === view.conversation_id
+          && eligibleSequence <= advancingRead.sequence)
+      ) return;
       const reading = view;
       advancingRead = {
         conversationId: reading.conversation_id,
-        sequence: reading.latest_sequence
+        sequence: eligibleSequence
       };
-      void advanceOwnerRead(reading.conversation_id, reading.latest_sequence)
+      void advanceOwnerRead(reading.conversation_id, eligibleSequence)
         .then((advanced) => {
           if (view?.conversation_id === reading.conversation_id) {
             view = { ...view, owner_read_through_sequence: advanced };
@@ -199,6 +212,22 @@
           }
         });
     }
+  });
+
+  onMount(() => {
+    const readAttentionState = () => {
+      documentIsVisible = document.visibilityState === "visible";
+      windowIsFocused = document.hasFocus();
+    };
+    readAttentionState();
+    document.addEventListener("visibilitychange", readAttentionState);
+    window.addEventListener("focus", readAttentionState);
+    window.addEventListener("blur", readAttentionState);
+    return () => {
+      document.removeEventListener("visibilitychange", readAttentionState);
+      window.removeEventListener("focus", readAttentionState);
+      window.removeEventListener("blur", readAttentionState);
+    };
   });
   let running = $derived(liveness.isRunning);
   // The conversation's own backend, and before there is one what starting it would use.

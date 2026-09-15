@@ -110,12 +110,14 @@ One screen per part of the system:
   carries where its own conversation's last turn ended, so opening the ticket or the
   Item is what puts its mark out.
 
-  The owner read position is durable and server-side, so opening a conversation clears
-  the same dot on every browser. The client advances it only to a sequence the server has
-  already recorded; the server keeps the position monotonic and clamps oversized values.
-  The position is per conversation, so pressing New starts unread rather than inheriting
-  the old conversation's reading. A failed advance over-shows attention rather than
-  hiding a reply.
+  The owner read position is durable and server-side, so reading a conversation clears
+  the same dot on every browser. The client advances it only while the conversation pane
+  is open, the document is visible, and the window has focus. It advances only through
+  the newest transcript row that this browser received, even when a newer conversation
+  snapshot arrived first. The server keeps the position monotonic and clamps oversized
+  values. The position is per conversation, so pressing New starts unread rather than
+  inheriting the old conversation's reading. A failed advance over-shows attention rather
+  than hiding a reply.
 
   On screens wider than 960px, the right side starts with a quiet invitation. An Item
   title opens the existing Sprint Item workspace at `#/workspace/item/<item-id>`.

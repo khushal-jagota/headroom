@@ -902,12 +902,15 @@ def test_an_unconfirmed_steer_is_uncertain_and_leaves_the_turn_alone(
         await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
         harness.backend("c").write_fails = True
 
-        assert await harness.system.send(
-            "c",
-            text_message_content("steered"),
-            sender_label="owner",
-            mode=PromptDeliveryMode.steer,
-        ) == PromptDeliveryUncertain()
+        assert (
+            await harness.system.send(
+                "c",
+                text_message_content("steered"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
+            )
+            == PromptDeliveryUncertain()
+        )
         assert harness.backend("c").written_texts() == ("incumbent",)
         assert await harness.system.is_running("c") is True
         assert await harness.recorded_kinds("c") == (
@@ -970,6 +973,75 @@ def test_an_accepted_steer_receipt_can_follow_its_turn_and_a_replacement(
         assert list(await harness.recorded_prompts("c")) == expected_prompts
         assert list(await harness.recorded_kinds("c")) == expected_kinds
         assert await harness.system.is_running("c") is replacement_starts
+        assert backend.steer_tokens == [TurnToken("c", 1)]
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    ("steer_outcome", "expected_fate", "recorded_payload_type"),
+    [
+        (BackendSteerAccepted(), PromptDeliveryInjected(), PromptEventPayload),
+        (BackendSteerUncertain(), PromptDeliveryUncertain(), PromptDeliveryUncertainEventPayload),
+    ],
+)
+def test_a_delayed_direct_steer_receipt_does_not_credit_its_sender_to_the_replacement_turn(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    steer_outcome: BackendSteerOutcome,
+    expected_fate: PromptDeliveryInjected | PromptDeliveryUncertain,
+    recorded_payload_type: type[PromptEventPayload] | type[PromptDeliveryUncertainEventPayload],
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        recipient = Principal(PrincipalKind.ticket, "t_worker")
+        chief = Principal(PrincipalKind.chief, "chief")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        backend = harness.backend("c")
+        backend.steer_outcome = steer_outcome
+        backend.steer_has_begun = asyncio.Event()
+        backend.steers_wait_for_release = asyncio.Event()
+
+        steering = asyncio.create_task(
+            harness.system.send(
+                "c",
+                text_message_content("late addressed steer"),
+                sender_label="Chief",
+                mode=PromptDeliveryMode.steer,
+                sender_message_id="late-direct-id",
+                sender=chief,
+                recipient=recipient,
+            )
+        )
+        await backend.steer_has_begun.wait()
+        await harness.complete_turn("c")
+        await harness.system.send(
+            "c",
+            text_message_content("replacement"),
+            sender_label="owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=recipient,
+        )
+        replacement = await harness.system.active_turn_reference("c")
+        assert replacement is not None
+        await harness.system.record_explicit_reply(replacement, OWNER_PRINCIPAL)
+
+        backend.steers_wait_for_release.set()
+        assert await steering == expected_fate
+        await harness.complete_turn("c")
+
+        payloads = [event.payload for event in await harness.events("c")]
+        assert any(
+            isinstance(payload, recorded_payload_type)
+            and payload.sender_message_id == "late-direct-id"
+            and payload.sender == chief
+            and payload.recipient == recipient
+            for payload in payloads
+        )
+        assert not any(
+            isinstance(payload, ExplicitReplyMissingEventPayload) for payload in payloads
+        )
         assert backend.steer_tokens == [TurnToken("c", 1)]
 
     _run(exercise)
@@ -3087,6 +3159,125 @@ def test_uncertain_promoted_steer_settles_only_the_selected_held_row(
         ]
         assert len(uncertain_rows) == 1
         assert uncertain_rows[0].sender_message_id == "selected-id"
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    ("steer_outcome", "expected_fate"),
+    [
+        (BackendSteerAccepted(), PromptDeliveryInjected()),
+        (BackendSteerUncertain(), PromptDeliveryUncertain()),
+    ],
+)
+def test_a_promoted_steer_credits_its_sender_while_the_target_turn_remains_active(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    steer_outcome: BackendSteerOutcome,
+    expected_fate: PromptDeliveryInjected | PromptDeliveryUncertain,
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        recipient = Principal(PrincipalKind.ticket, "t_worker")
+        chief = Principal(PrincipalKind.chief, "chief")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        await harness.system.send(
+            "c",
+            text_message_content("addressed promotion"),
+            sender_label="Chief",
+            sender=chief,
+            recipient=recipient,
+        )
+        selected = (await harness.system.held_prompts("c"))[0]
+        harness.backend("c").steer_outcome = steer_outcome
+
+        assert (
+            await harness.system.promote_held_prompt(
+                "c", selected.held_prompt_id, HeldPromptPromotionMode.steer
+            )
+            == expected_fate
+        )
+        await harness.complete_turn("c")
+
+        markers = [
+            event.payload.prompt_sender
+            for event in await harness.events("c")
+            if isinstance(event.payload, ExplicitReplyMissingEventPayload)
+        ]
+        assert markers == [chief]
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    ("steer_outcome", "expected_fate", "recorded_payload_type"),
+    [
+        (BackendSteerAccepted(), PromptDeliveryInjected(), PromptEventPayload),
+        (BackendSteerUncertain(), PromptDeliveryUncertain(), PromptDeliveryUncertainEventPayload),
+    ],
+)
+def test_a_delayed_promoted_steer_receipt_does_not_credit_its_sender_to_the_replacement_turn(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    steer_outcome: BackendSteerOutcome,
+    expected_fate: PromptDeliveryInjected | PromptDeliveryUncertain,
+    recorded_payload_type: type[PromptEventPayload] | type[PromptDeliveryUncertainEventPayload],
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        recipient = Principal(PrincipalKind.ticket, "t_worker")
+        chief = Principal(PrincipalKind.chief, "chief")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        await harness.system.send(
+            "c",
+            text_message_content("late addressed promotion"),
+            sender_label="Chief",
+            sender_message_id="late-promoted-id",
+            sender=chief,
+            recipient=recipient,
+        )
+        selected = (await harness.system.held_prompts("c"))[0]
+        backend = harness.backend("c")
+        backend.steer_outcome = steer_outcome
+        backend.steer_has_begun = asyncio.Event()
+        backend.steers_wait_for_release = asyncio.Event()
+
+        steering = asyncio.create_task(
+            harness.system.promote_held_prompt(
+                "c", selected.held_prompt_id, HeldPromptPromotionMode.steer
+            )
+        )
+        await backend.steer_has_begun.wait()
+        await harness.complete_turn("c")
+        await harness.system.send(
+            "c",
+            text_message_content("replacement"),
+            sender_label="owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=recipient,
+        )
+        replacement = await harness.system.active_turn_reference("c")
+        assert replacement is not None
+        await harness.system.record_explicit_reply(replacement, OWNER_PRINCIPAL)
+
+        backend.steers_wait_for_release.set()
+        assert await steering == expected_fate
+        await harness.complete_turn("c")
+
+        payloads = [event.payload for event in await harness.events("c")]
+        assert any(
+            isinstance(payload, recorded_payload_type)
+            and payload.sender_message_id == "late-promoted-id"
+            and payload.sender == chief
+            and payload.recipient == recipient
+            for payload in payloads
+        )
+        assert not any(
+            isinstance(payload, ExplicitReplyMissingEventPayload) for payload in payloads
+        )
+        assert backend.steer_tokens == [TurnToken("c", 1)]
 
     _run(exercise)
 
