@@ -161,7 +161,7 @@ def test_in_memory_replays_report_freshness_and_silence_matches_production() -> 
         )
         recipient = Principal(PrincipalKind.ticket, "t_one")
         content = text_message_content("Please report")
-        first = await system.send(
+        first = await system.send_with_receipt(
             "c",
             content,
             sender_label="owner",
@@ -169,7 +169,7 @@ def test_in_memory_replays_report_freshness_and_silence_matches_production() -> 
             sender=OWNER_PRINCIPAL,
             recipient=recipient,
         )
-        replay = await system.send(
+        replay = await system.send_with_receipt(
             "c",
             content,
             sender_label="owner",
@@ -177,10 +177,10 @@ def test_in_memory_replays_report_freshness_and_silence_matches_production() -> 
             sender=OWNER_PRINCIPAL,
             recipient=recipient,
         )
-        assert isinstance(first, PromptDeliveryStarted) and first.newly_accepted
-        assert isinstance(replay, PromptDeliveryStarted) and not replay.newly_accepted
+        assert isinstance(first.fate, PromptDeliveryStarted) and first.newly_accepted
+        assert isinstance(replay.fate, PromptDeliveryStarted) and not replay.newly_accepted
 
-        queued = await system.send(
+        queued = await system.send_with_receipt(
             "c",
             text_message_content("next"),
             sender_label="owner",
@@ -188,7 +188,7 @@ def test_in_memory_replays_report_freshness_and_silence_matches_production() -> 
             sender=OWNER_PRINCIPAL,
             recipient=recipient,
         )
-        queued_replay = await system.send(
+        queued_replay = await system.send_with_receipt(
             "c",
             text_message_content("next"),
             sender_label="owner",
@@ -196,8 +196,8 @@ def test_in_memory_replays_report_freshness_and_silence_matches_production() -> 
             sender=OWNER_PRINCIPAL,
             recipient=recipient,
         )
-        assert isinstance(queued, PromptDeliveryQueued) and queued.newly_accepted
-        assert isinstance(queued_replay, PromptDeliveryQueued)
+        assert isinstance(queued.fate, PromptDeliveryQueued) and queued.newly_accepted
+        assert isinstance(queued_replay.fate, PromptDeliveryQueued)
         assert not queued_replay.newly_accepted
 
         system.complete_running_turn("c")

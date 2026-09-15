@@ -15,9 +15,11 @@ import pytest
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.contracts import (
+    AddressedPromptDeliveryReceipt,
     ConversationAccess,
     ConversationBackendKey,
     ConversationStartRequest,
+    ConversationTurnReference,
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
@@ -132,6 +134,33 @@ class _LinkWatchingConversationSystem:
             recipient=recipient,
         )
 
+    async def send_with_receipt(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
+    ) -> AddressedPromptDeliveryReceipt:
+        return await self._system.send_with_receipt(
+            conversation_id,
+            content,
+            sender_label=sender_label,
+            mode=mode,
+            model_change=model_change,
+            reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
+        )
+
     async def record_message_to_owner(
         self,
         conversation_id: str,
@@ -152,6 +181,16 @@ class _LinkWatchingConversationSystem:
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         )
+
+    async def active_turn_reference(
+        self, conversation_id: str
+    ) -> ConversationTurnReference | None:
+        return await self._system.active_turn_reference(conversation_id)
+
+    async def record_explicit_reply(
+        self, turn: ConversationTurnReference, recipient: Principal
+    ) -> None:
+        await self._system.record_explicit_reply(turn, recipient)
 
     async def interrupt(self, conversation_id: str) -> None:
         await self._system.interrupt(conversation_id)
@@ -510,6 +549,35 @@ class _RelinkingConversationSystem:
         self._relink()
         return fate
 
+    async def send_with_receipt(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
+    ) -> AddressedPromptDeliveryReceipt:
+        receipt = await self._system.send_with_receipt(
+            conversation_id,
+            content,
+            sender_label=sender_label,
+            mode=mode,
+            model_change=model_change,
+            reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
+        )
+        self._relink()
+        return receipt
+
     async def record_message_to_owner(
         self,
         conversation_id: str,
@@ -530,6 +598,16 @@ class _RelinkingConversationSystem:
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         )
+
+    async def active_turn_reference(
+        self, conversation_id: str
+    ) -> ConversationTurnReference | None:
+        return await self._system.active_turn_reference(conversation_id)
+
+    async def record_explicit_reply(
+        self, turn: ConversationTurnReference, recipient: Principal
+    ) -> None:
+        await self._system.record_explicit_reply(turn, recipient)
 
     async def interrupt(self, conversation_id: str) -> None:
         await self._system.interrupt(conversation_id)

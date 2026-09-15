@@ -17,7 +17,7 @@ build. They are deliberately absent from this module rather than sketched.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Final, Protocol
@@ -286,7 +286,7 @@ class PromptDeliveryStarted:
     this class carries no field that could name one.
     """
 
-    newly_accepted: bool = field(default=True, compare=False, repr=False)
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,7 +304,6 @@ class PromptDeliveryQueued:
     """
 
     queue_position: int
-    newly_accepted: bool = field(default=True, compare=False, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,7 +314,7 @@ class PromptDeliveryInjected:
     model read the message, complied with it, or left the turn running.
     """
 
-    newly_accepted: bool = field(default=True, compare=False, repr=False)
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,13 +344,10 @@ class PromptDeliveryUncertain:
     claim about provider receipt, model receipt, or later compliance.
     """
 
-    newly_accepted: bool = field(default=True, compare=False, repr=False)
+    pass
 
 
-# The fate of one delivery. Fate means it happened, never that it was attempted. Each
-# accepted fate also carries an internal attribution bit. It is false only when a
-# sender-message replay found an earlier outcome; equality and repr omit it so the
-# established public fate remains unchanged.
+# The fate of one delivery. Fate means it happened, never that it was attempted.
 # Each member claims exactly the layer it names and no more: started means written to a live
 # backend's wire, queued means held by the conversation system, injected means admitted
 # to the captured running turn, refused means proven non-admission, and uncertain means a
@@ -365,6 +361,19 @@ type PromptDeliveryFate = (
     | PromptDeliveryRefused
     | PromptDeliveryUncertain
 )
+
+
+@dataclass(frozen=True, slots=True)
+class AddressedPromptDeliveryReceipt:
+    """An internal receipt for reply attribution after one addressed send.
+
+    The public fate stays the complete conversation contract. ``newly_accepted`` is
+    false only when the sender's message id replayed an earlier outcome, so a retry in a
+    later source turn cannot claim that it answered that turn.
+    """
+
+    fate: PromptDeliveryFate
+    newly_accepted: bool
 
 
 type HeldPromptPromotionFate = (
@@ -497,6 +506,28 @@ class ConversationSystem(Protocol):
         ``sender_label`` says who sent the text — the automatic loop or the owner, for
         example. It is recorded on the prompt event and it is display-only: nothing else
         consumes it and nothing branches on it.
+        """
+        ...
+
+    async def send_with_receipt(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
+    ) -> AddressedPromptDeliveryReceipt:
+        """Run the canonical send and expose replay freshness to addressed-send wiring.
+
+        Ordinary callers use ``send`` and receive only the stable public fate. This
+        receipt exists so Send Message can credit a reply only for the first accepted
+        delivery of a sender-minted message id.
         """
         ...
 

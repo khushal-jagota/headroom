@@ -57,6 +57,7 @@ from planner.conversation.backends.contracts import (
     UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
+    AddressedPromptDeliveryReceipt,
     ComposerCatalogEntry,
     ConversationBackendKey,
     ConversationStartRequest,
@@ -371,6 +372,34 @@ class SqliteProcessConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
     ) -> PromptDeliveryFate:
+        receipt = await self.send_with_receipt(
+            conversation_id,
+            content,
+            sender_label=sender_label,
+            mode=mode,
+            model_change=model_change,
+            reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
+        )
+        return receipt.fate
+
+    async def send_with_receipt(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
+    ) -> AddressedPromptDeliveryReceipt:
         """Send a message in. See the contract; the two sender-minted fields are extra.
 
         ``sender_message_id`` and ``sent_at_unix_milliseconds`` are the sender's own facts
@@ -382,8 +411,11 @@ class SqliteProcessConversationSystem:
 
         state = await self._conversation_state(conversation_id)
         if state is None:
-            return PromptDeliveryRefused(
-                refusal_reason=PromptDeliveryRefusalReason.no_such_conversation
+            return AddressedPromptDeliveryReceipt(
+                fate=PromptDeliveryRefused(
+                    refusal_reason=PromptDeliveryRefusalReason.no_such_conversation
+                ),
+                newly_accepted=False,
             )
         state.last_touched_monotonic = self._monotonic_now()
 
@@ -416,8 +448,9 @@ class SqliteProcessConversationSystem:
                                 raise ValueError(
                                     "sender_message_id already names a different message"
                                 )
-                            return PromptDeliveryQueued(
-                                queue_position=position, newly_accepted=False
+                            return AddressedPromptDeliveryReceipt(
+                                fate=PromptDeliveryQueued(queue_position=position),
+                                newly_accepted=False,
                             )
                 if settled is not None:
                     # The first send of this same message has not finished. Its fate is
@@ -440,16 +473,23 @@ class SqliteProcessConversationSystem:
                         raise ValueError("sender_message_id already names a different message")
                     if isinstance(payload, PromptEventPayload):
                         if payload.mode is PromptDeliveryMode.steer:
-                            return PromptDeliveryInjected(newly_accepted=False)
-                        return PromptDeliveryStarted(newly_accepted=False)
+                            fate: PromptDeliveryFate = PromptDeliveryInjected()
+                        else:
+                            fate = PromptDeliveryStarted()
+                        return AddressedPromptDeliveryReceipt(fate, newly_accepted=False)
                     if isinstance(payload, PromptDeliveryUncertainEventPayload):
-                        return PromptDeliveryUncertain(newly_accepted=False)
+                        return AddressedPromptDeliveryReceipt(
+                            PromptDeliveryUncertain(), newly_accepted=False
+                        )
                     reason = getattr(
                         payload,
                         "refusal_reason",
                         PromptDeliveryRefusalReason.write_to_backend_failed,
                     )
-                    return PromptDeliveryRefused(refusal_reason=reason)
+                    return AddressedPromptDeliveryReceipt(
+                        PromptDeliveryRefused(refusal_reason=reason),
+                        newly_accepted=False,
+                    )
                 async with state.lock:
                     if sender_message_id in state.admitted_sender_messages:
                         continue
@@ -463,7 +503,7 @@ class SqliteProcessConversationSystem:
 
         try:
             if mode is PromptDeliveryMode.steer:
-                return await self._steer(
+                fate = await self._steer(
                     state,
                     content,
                     sender_label,
@@ -474,8 +514,8 @@ class SqliteProcessConversationSystem:
                     sender,
                     recipient,
                 )
-            if mode is PromptDeliveryMode.send_now:
-                return await self._send_now(
+            elif mode is PromptDeliveryMode.send_now:
+                fate = await self._send_now(
                     state,
                     content,
                     sender_label,
@@ -486,16 +526,21 @@ class SqliteProcessConversationSystem:
                     sender,
                     recipient,
                 )
-            return await self._queue(
-                state,
-                content,
-                sender_label,
-                model_change,
-                reasoning_effort_change,
-                sender_message_id,
-                sent_at_unix_milliseconds,
-                sender,
-                recipient,
+            else:
+                fate = await self._queue(
+                    state,
+                    content,
+                    sender_label,
+                    model_change,
+                    reasoning_effort_change,
+                    sender_message_id,
+                    sent_at_unix_milliseconds,
+                    sender,
+                    recipient,
+                )
+            return AddressedPromptDeliveryReceipt(
+                fate=fate,
+                newly_accepted=not isinstance(fate, PromptDeliveryRefused),
             )
         finally:
             if sender_message_id is not None:
@@ -1083,7 +1128,7 @@ class SqliteProcessConversationSystem:
                         or held.recipient != recipient
                     ):
                         raise ValueError("sender_message_id already names a different message")
-                    return PromptDeliveryQueued(queue_position=position, newly_accepted=False)
+                    return PromptDeliveryQueued(queue_position=position)
             # Held if anything at all is going on, and held if anything is already
             # waiting: a message that arrived later never runs earlier.
             if (

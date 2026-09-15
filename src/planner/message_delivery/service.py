@@ -260,7 +260,7 @@ async def send_message(
     if (
         source_turn is not None
         and not isinstance(delivered.fate, PromptDeliveryRefused)
-        and delivered.fate.newly_accepted
+        and delivered.newly_accepted
     ):
         await conversations.record_explicit_reply(source_turn, recipient)
     return result

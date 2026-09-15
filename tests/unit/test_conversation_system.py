@@ -43,6 +43,7 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
+    ConversationTurnReference,
     HeldPromptPromotionMode,
     PromptDeliveryInjected,
     PromptDeliveryMode,
@@ -787,7 +788,7 @@ def test_reply_credit_names_one_turn_and_the_end_lock_wins_the_race(
         await _start(harness, "c")
         ticket = Principal(PrincipalKind.ticket, "t_worker")
 
-        async def begin():  # type: ignore[no-untyped-def]
+        async def begin() -> ConversationTurnReference:
             await harness.system.send(
                 "c",
                 text_message_content("Please report"),
@@ -905,7 +906,7 @@ def test_an_unconfirmed_steer_is_uncertain_and_leaves_the_turn_alone(
             text_message_content("steered"),
             sender_label="owner",
             mode=PromptDeliveryMode.steer,
-        ) == PromptDeliveryUncertain(newly_accepted=False)
+        ) == PromptDeliveryUncertain()
         assert harness.backend("c").written_texts() == ("incumbent",)
         assert await harness.system.is_running("c") is True
         assert await harness.recorded_kinds("c") == (
@@ -986,14 +987,14 @@ def test_a_provider_refused_steer_falls_back_to_one_queued_message(
         )
         content = text_message_content("refused steer")
 
-        first = await harness.system.send(
+        first = await harness.system.send_with_receipt(
             "c",
             content,
             sender_label="owner",
             mode=PromptDeliveryMode.steer,
             sender_message_id="refused-id",
         )
-        duplicate = await harness.system.send(
+        duplicate = await harness.system.send_with_receipt(
             "c",
             content,
             sender_label="owner",
@@ -1001,8 +1002,10 @@ def test_a_provider_refused_steer_falls_back_to_one_queued_message(
             sender_message_id="refused-id",
         )
 
-        assert first == PromptDeliveryQueued(queue_position=1)
-        assert duplicate == PromptDeliveryQueued(queue_position=1)
+        assert first.fate == PromptDeliveryQueued(queue_position=1)
+        assert duplicate.fate == PromptDeliveryQueued(queue_position=1)
+        assert first.newly_accepted
+        assert not duplicate.newly_accepted
         assert backend.steer_tokens == [TurnToken("c", 1)]
         assert await harness.recorded_kinds("c") == (ConversationEventKind.prompt,)
         [held] = await harness.system.held_prompts("c")
@@ -1819,14 +1822,14 @@ def test_boundary_duplicate_waits_for_compaction_and_runs_once(harness: _Harness
         await harness.complete_turn("c")
         harness.clock.advance(50 * 60)
         content = text_message_content("at the boundary")
-        first = await harness.system.send(
+        first = await harness.system.send_with_receipt(
             "c", content, sender_label="owner", sender_message_id="same-id"
         )
-        duplicate = await harness.system.send(
+        duplicate = await harness.system.send_with_receipt(
             "c", content, sender_label="owner", sender_message_id="same-id"
         )
-        assert isinstance(first, PromptDeliveryQueued)
-        assert isinstance(duplicate, PromptDeliveryQueued)
+        assert isinstance(first.fate, PromptDeliveryQueued)
+        assert isinstance(duplicate.fate, PromptDeliveryQueued)
         assert first.newly_accepted
         assert not duplicate.newly_accepted
         assert harness.backend("c").written_texts() == ("first", "/compact")
@@ -2014,13 +2017,17 @@ def test_dequeued_sender_identity_stays_admitted_until_the_prompt_row_exists(
         ending = asyncio.create_task(harness.complete_turn("c"))
         await backend.write_has_begun.wait()
         duplicate = asyncio.create_task(
-            harness.system.send("c", content, sender_label="owner", sender_message_id="held-race")
+            harness.system.send_with_receipt(
+                "c", content, sender_label="owner", sender_message_id="held-race"
+            )
         )
         await asyncio.sleep(0)
         assert not duplicate.done()
         backend.writes_wait_for_release.set()
         await ending
-        assert await duplicate == PromptDeliveryStarted(newly_accepted=False)
+        duplicate_receipt = await duplicate
+        assert duplicate_receipt.fate == PromptDeliveryStarted()
+        assert not duplicate_receipt.newly_accepted
         assert backend.written_texts().count("held once") == 1
 
     _run(exercise)

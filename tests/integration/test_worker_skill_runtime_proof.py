@@ -36,14 +36,12 @@ from planner.conversation.contracts import (
     ConversationStartRequest,
 )
 from planner.conversation.events import (
-    AgentMessageEventPayload,
+    AgentMessageDeltaFrame,
     ConversationEventKind,
     TurnEndedEventPayload,
 )
-from planner.conversation.message_content import (
-    message_content_text,
-    text_message_content,
-)
+from planner.conversation.live_tail import ConversationLiveTail, ConversationTailSubscription
+from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
@@ -95,10 +93,12 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_a_real_prompt
         )
         factory = HermesAcpBackendChildFactory(launch)
         store = ConversationStore(str(database_path))
+        live_tail = ConversationLiveTail()
         system = SqliteProcessConversationSystem(
             store=store,
             message_files=ConversationMessageFiles(str(database_path)),
             backend_child_factories={key: factory for key in ConversationBackendKey},
+            live_tail=live_tail,
         )
         try:
             await system.start_conversation(
@@ -110,12 +110,16 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_a_real_prompt
                     workspace_folder=REPOSITORY_ROOT,
                 )
             )
-            await system.send(
-                CONVERSATION_ID,
-                text_message_content("Read and acknowledge the installed coding Worker guidance."),
-                sender_label="loop",
-            )
-            await _waited_for_the_turn_to_end(store)
+            with live_tail.subscribe(CONVERSATION_ID) as watching:
+                await system.send(
+                    CONVERSATION_ID,
+                    text_message_content(
+                        "Read and acknowledge the installed coding Worker guidance."
+                    ),
+                    sender_label="loop",
+                )
+                acknowledgement = await _waited_for_runtime_text(watching)
+                await _waited_for_the_turn_to_end(store)
         finally:
             await system.shutdown()
 
@@ -124,18 +128,13 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_a_real_prompt
             event for event in events if event.kind is ConversationEventKind.turn_ended
         ]
         assert len(endings) == 1, events
-        # The agent refuses the turn when either half is missing, so a completed turn is
-        # the claim and its text is the evidence.
+        # The agent refuses the turn when either half is missing. Its runtime answer and
+        # completed turn prove both checks without turning backend prose into a record.
         final_turn_ended = endings[0].payload
         assert isinstance(final_turn_ended, TurnEndedEventPayload)
         assert str(final_turn_ended.ending) == "completed", final_turn_ended
-        agent_messages: list[str] = []
-        for event in events:
-            if event.kind is ConversationEventKind.agent_message:
-                agent_message_payload = event.payload
-                assert isinstance(agent_message_payload, AgentMessageEventPayload)
-                agent_messages.append(message_content_text(agent_message_payload.content))
-        assert agent_messages == [WORKTREE_ACKNOWLEDGEMENT]
+        assert acknowledgement == WORKTREE_ACKNOWLEDGEMENT
+        assert all(event.kind is not ConversationEventKind.agent_message for event in events)
 
     # Playwright's session fixture may already own an event loop when the complete E2E
     # suite reaches this synchronous test. Keep the ACP proof isolated from that loop.
@@ -151,3 +150,15 @@ async def _waited_for_the_turn_to_end(store: ConversationStore, timeout: float =
             return
         await asyncio.sleep(0.05)
     raise AssertionError("the proof agent's turn never ended")
+
+
+async def _waited_for_runtime_text(
+    watching: ConversationTailSubscription, timeout: float = 30.0
+) -> str:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        remaining = deadline - asyncio.get_running_loop().time()
+        item = await asyncio.wait_for(watching.next_item(), remaining)
+        if isinstance(item, AgentMessageDeltaFrame):
+            return item.text_delta
+    raise AssertionError("the proof agent's runtime acknowledgement never arrived")

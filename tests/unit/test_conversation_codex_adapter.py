@@ -63,7 +63,7 @@ from planner.conversation.contracts import (
     backend_supports_steer,
 )
 from planner.conversation.events import (
-    AgentMessageEventPayload,
+    ConversationEventKind,
     ConversationTurnEnding,
     PromptEventPayload,
     ToolCallStatus,
@@ -454,7 +454,9 @@ def test_the_systems_composed_role_does_not_hide_a_first_prompt_catalog_invocati
     _run(exercise)
 
 
-def test_goal_command_records_one_durable_answer_and_completed_turn(tmp_path: Path) -> None:
+def test_goal_command_runs_once_and_completes_without_durable_backend_prose(
+    tmp_path: Path,
+) -> None:
     async def exercise() -> None:
         database_path = tmp_path / "goal-system.db"
         connection = connect(str(database_path))
@@ -492,25 +494,30 @@ def test_goal_command_records_one_durable_answer_and_completed_turn(tmp_path: Pa
             assert fate == PromptDeliveryStarted()
             await system.wait_until_quiescent()
             events = await store.read_events_after("goal-system", 0)
-            messages = [
-                event.payload
-                for event in events
-                if isinstance(event.payload, AgentMessageEventPayload)
-            ]
             endings = [
                 event.payload
                 for event in events
                 if isinstance(event.payload, TurnEndedEventPayload)
             ]
-            assert [message_content_text(message.content) for message in messages] == [
-                "Goal set: Keep the result durable"
-            ]
+            assert all(event.kind is not ConversationEventKind.agent_message for event in events)
             assert [ending.ending for ending in endings] == [ConversationTurnEnding.completed]
-            assert not [
-                entry
-                for entry in transcript_path.read_text(encoding="utf-8").splitlines()
-                if '"method": "turn/start"' in entry
+            transcript = [
+                json.loads(line)
+                for line in transcript_path.read_text(encoding="utf-8").splitlines()
             ]
+            received = [entry["received"] for entry in transcript if "received" in entry]
+            assert [
+                entry["params"]
+                for entry in received
+                if entry.get("method") == "thread/goal/set"
+            ] == [
+                {
+                    "threadId": "thread-1",
+                    "objective": "Keep the result durable",
+                    "status": "active",
+                }
+            ]
+            assert not [entry for entry in received if entry.get("method") == "turn/start"]
         finally:
             await system.shutdown()
 

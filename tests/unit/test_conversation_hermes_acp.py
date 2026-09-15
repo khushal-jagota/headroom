@@ -68,7 +68,7 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
-    AgentMessageEventPayload,
+    AgentMessageDeltaFrame,
     ContextCompactedEventPayload,
     ConversationEventKind,
     ConversationTurnEnding,
@@ -422,18 +422,16 @@ def test_a_thought_is_never_stored_and_only_its_arrival_is_shown(tmp_path: Path)
 
             assert shown == ModelThinkingFrame()
 
-            await subject.tell_agent(
-                "c", {"command": "emit_agent_message", "text": "the answer"}
-            )
+            with subject.watch("c") as watching:
+                await subject.tell_agent(
+                    "c", {"command": "emit_agent_message", "text": "the answer"}
+                )
+                answer = await _next_frame(watching)
+            assert answer == AgentMessageDeltaFrame(text_delta="the answer")
             await subject.complete_running_turn("c")
 
             events = await subject.recorded_events("c")
-            texts = [
-                message_content_text(event.payload.content)
-                for event in events
-                if isinstance(event.payload, AgentMessageEventPayload)
-            ]
-            assert texts == ["the answer"]
+            assert all(event.kind is not ConversationEventKind.agent_message for event in events)
             # Not a word of the thought reached the record.
             assert all("hmm" not in str(event.payload) for event in events)
 
@@ -491,26 +489,37 @@ def test_the_agents_plan_is_written_down_whole_every_time_it_changes(
     _run(exercise)
 
 
-def test_an_agent_message_is_one_row_however_many_pieces_it_arrived_in(tmp_path: Path) -> None:
+def test_agent_message_pieces_are_shown_in_order_and_never_stored(tmp_path: Path) -> None:
     async def exercise() -> None:
         async with open_conversation_system_under_test() as subject:
             await _start_and_send(subject, tmp_path)
-            for piece in ("one ", "two ", "three"):
+            shown: list[object] = []
+            with subject.watch("c") as watching:
+                for piece in ("one ", "two ", "three"):
+                    await subject.tell_agent(
+                        "c",
+                        {"command": "emit_agent_message", "text": piece, "message_id": "m-1"},
+                    )
+                    shown.append(await _next_frame(watching))
                 await subject.tell_agent(
                     "c",
-                    {"command": "emit_agent_message", "text": piece, "message_id": "m-1"},
+                    {
+                        "command": "emit_agent_message",
+                        "text": "next message",
+                        "message_id": "m-2",
+                    },
                 )
-            await subject.tell_agent(
-                "c", {"command": "emit_agent_message", "text": "next message", "message_id": "m-2"}
-            )
+                shown.append(await _next_frame(watching))
             await subject.complete_running_turn("c")
 
-            texts = [
-                message_content_text(event.payload.content)
-                for event in await subject.recorded_events("c")
-                if isinstance(event.payload, AgentMessageEventPayload)
+            assert shown == [
+                AgentMessageDeltaFrame(text_delta="one "),
+                AgentMessageDeltaFrame(text_delta="two "),
+                AgentMessageDeltaFrame(text_delta="three"),
+                AgentMessageDeltaFrame(text_delta="next message"),
             ]
-            assert texts == ["one two three", "next message"]
+            events = await subject.recorded_events("c")
+            assert all(event.kind is not ConversationEventKind.agent_message for event in events)
 
     _run(exercise)
 

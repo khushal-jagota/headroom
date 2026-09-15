@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from planner.conversation.contracts import (
+    AddressedPromptDeliveryReceipt,
     ConversationAlreadyStarted,
     ConversationStartRequest,
     ConversationTurnReference,
@@ -239,12 +240,43 @@ class InMemoryConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
     ) -> PromptDeliveryFate:
+        receipt = await self.send_with_receipt(
+            conversation_id,
+            content,
+            sender_label=sender_label,
+            mode=mode,
+            model_change=model_change,
+            reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
+        )
+        return receipt.fate
+
+    async def send_with_receipt(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
+    ) -> AddressedPromptDeliveryReceipt:
         require_message_content(content)
 
         state = self._conversations.get(conversation_id)
         if state is None:
-            return PromptDeliveryRefused(
-                refusal_reason=PromptDeliveryRefusalReason.no_such_conversation
+            return AddressedPromptDeliveryReceipt(
+                fate=PromptDeliveryRefused(
+                    refusal_reason=PromptDeliveryRefusalReason.no_such_conversation
+                ),
+                newly_accepted=False,
             )
 
         if sender_message_id is not None:
@@ -258,7 +290,9 @@ class InMemoryConversationSystem:
                     held.recipient,
                 ) != (content, sender_label, sender, recipient):
                     raise ValueError("sender_message_id already names a different message")
-                return PromptDeliveryQueued(queue_position=position, newly_accepted=False)
+                return AddressedPromptDeliveryReceipt(
+                    PromptDeliveryQueued(queue_position=position), newly_accepted=False
+                )
             for observed in reversed(state.observations):
                 if observed.sender_message_id != sender_message_id:
                     continue
@@ -271,15 +305,20 @@ class InMemoryConversationSystem:
                     raise ValueError("sender_message_id already names a different message")
                 if observed.kind is InMemoryConversationObservationKind.prompt_delivered:
                     if observed.mode is PromptDeliveryMode.steer:
-                        return PromptDeliveryInjected(newly_accepted=False)
-                    return PromptDeliveryStarted(newly_accepted=False)
+                        fate: PromptDeliveryFate = PromptDeliveryInjected()
+                    else:
+                        fate = PromptDeliveryStarted()
+                    return AddressedPromptDeliveryReceipt(fate, newly_accepted=False)
                 if observed.kind is InMemoryConversationObservationKind.prompt_delivery_refused:
                     assert observed.refusal_reason is not None
-                    return PromptDeliveryRefused(refusal_reason=observed.refusal_reason)
+                    return AddressedPromptDeliveryReceipt(
+                        PromptDeliveryRefused(refusal_reason=observed.refusal_reason),
+                        newly_accepted=False,
+                    )
                 raise ValueError("sender_message_id already names a different message")
 
         if state.running_turn is None:
-            return self._start_turn(
+            fate = self._start_turn(
                 state,
                 content,
                 sender_label,
@@ -291,9 +330,8 @@ class InMemoryConversationSystem:
                 sender=sender,
                 recipient=recipient,
             )
-
-        if mode is PromptDeliveryMode.queue:
-            return self._hold_prompt(
+        elif mode is PromptDeliveryMode.queue:
+            fate = self._hold_prompt(
                 state,
                 content,
                 sender_label,
@@ -305,12 +343,11 @@ class InMemoryConversationSystem:
                 sender=sender,
                 recipient=recipient,
             )
-
-        if mode is PromptDeliveryMode.steer:
+        elif mode is PromptDeliveryMode.steer:
             if any(not isinstance(piece, MessageText) for piece in content):
-                reason = PromptQueueReason.attachment
+                queue_reason: PromptQueueReason | None = PromptQueueReason.attachment
             elif model_change is not None or reasoning_effort_change is not None:
-                reason = PromptQueueReason.run_change
+                queue_reason = PromptQueueReason.run_change
             else:
                 steer_fate = self._steer(
                     state,
@@ -322,41 +359,47 @@ class InMemoryConversationSystem:
                     recipient=recipient,
                 )
                 if isinstance(steer_fate, PromptDeliveryInjected):
-                    return steer_fate
-                reason = PromptQueueReason.steer_refused
-            return self._hold_prompt(
+                    fate = steer_fate
+                    queue_reason = None
+                else:
+                    queue_reason = PromptQueueReason.steer_refused
+            if queue_reason is not None:
+                fate = self._hold_prompt(
+                    state,
+                    content,
+                    sender_label,
+                    model_change,
+                    reasoning_effort_change,
+                    sender_message_id,
+                    sent_at_unix_milliseconds,
+                    queue_reason,
+                    sender=sender,
+                    recipient=recipient,
+                )
+        else:
+            # send-now against a busy agent: the incumbent dies first, and this message runs
+            # next — ahead of everything already held, which keeps its order behind it.
+            self._end_running_turn(state, InMemoryConversationTurnEnding.interrupted)
+            fate = self._start_turn(
                 state,
                 content,
                 sender_label,
+                mode,
                 model_change,
                 reasoning_effort_change,
-                sender_message_id,
-                sent_at_unix_milliseconds,
-                reason,
+                sender_message_id=sender_message_id,
+                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
             )
-
-        # send-now against a busy agent: the incumbent dies first, and this message runs
-        # next — ahead of everything already held, which keeps its order behind it.
-        self._end_running_turn(state, InMemoryConversationTurnEnding.interrupted)
-        start_fate = self._start_turn(
-            state,
-            content,
-            sender_label,
-            mode,
-            model_change,
-            reasoning_effort_change,
-            sender_message_id=sender_message_id,
-            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-            sender=sender,
-            recipient=recipient,
+            if isinstance(fate, PromptDeliveryRefused):
+                # The incumbent is already dead and the agent is free, so the held prompts
+                # are owed their run even though this delivery could not happen.
+                self._drain(state)
+        return AddressedPromptDeliveryReceipt(
+            fate=fate,
+            newly_accepted=not isinstance(fate, PromptDeliveryRefused),
         )
-        if isinstance(start_fate, PromptDeliveryRefused):
-            # The incumbent is already dead and the agent is free, so the held prompts
-            # are owed their run even though this delivery could not happen.
-            self._drain(state)
-        return start_fate
 
     def _hold_prompt(
         self,

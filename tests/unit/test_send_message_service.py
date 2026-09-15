@@ -329,7 +329,6 @@ def test_service_preserves_terminal_steer_fates_without_another_send(
     ("fate", "credited"),
     [
         (PromptDeliveryStarted(), True),
-        (PromptDeliveryStarted(newly_accepted=False), False),
         (PromptDeliveryQueued(queue_position=2), True),
         (PromptDeliveryInjected(), True),
         (PromptDeliveryUncertain(), True),
@@ -365,7 +364,7 @@ def test_employee_send_credits_only_an_accepted_reply_to_the_captured_source_tur
     monkeypatch.setattr(
         conversation_start,
         "send_to_ticket_conversation",
-        AsyncMock(return_value=DeliveredMessage("c_recipient", fate)),
+        AsyncMock(return_value=DeliveredMessage("c_recipient", fate, credited)),
     )
 
     asyncio.run(
