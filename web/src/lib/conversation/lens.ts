@@ -28,8 +28,6 @@ export function conversationEventIsInFocus(
         );
     case "message_to_owner":
       return event.payload.recipient.kind === "owner";
-    case "explicit_reply_missing":
-      return event.payload.prompt_sender.kind === "owner";
     case "permission_asked":
     case "permission_answered":
     case "user_input_requested":
@@ -81,7 +79,6 @@ export function conversationRowsForLens(
     || row.kind === "prompt_uncertain"
     || row.kind === "prompt_discarded"
     || row.kind === "agent_message"
-    || row.kind === "explicit_reply_missing"
     || row.kind === "permission_ask"
     || row.kind === "user_input"
   ));

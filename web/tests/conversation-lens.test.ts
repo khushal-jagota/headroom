@@ -91,17 +91,14 @@ describe("Conversation lenses", () => {
     expect(focused.latestSequence).toBe(3);
   });
 
-  it("keeps an owner-addressed missing-reply marker and hides another principal's marker", () => {
-    const focused = conversationFeedForLens(
-      feedWithCommittedEvents(emptyConversationFeed(), [
-        event(1, "explicit_reply_missing", { prompt_sender: ticket }),
-        event(2, "explicit_reply_missing", { prompt_sender: owner })
-      ]),
-      "focus",
-      "owner"
-    );
+  it("keeps runtime-only missing-reply markers out of Focus", () => {
+    const fullFeed = feedWithCommittedEvents(emptyConversationFeed(), [
+      event(1, "explicit_reply_missing", { prompt_sender: ticket }),
+      event(2, "explicit_reply_missing", { prompt_sender: owner })
+    ]);
 
-    expect(focused.events.map((row) => row.sequence)).toEqual([2]);
+    expect(conversationFeedForLens(fullFeed, "focus", "owner").events).toEqual([]);
+    expect(conversationFeedForLens(fullFeed, "full", "owner")).toBe(fullFeed);
   });
 
   it("applies the same principal and legacy rules to held prompts", () => {
