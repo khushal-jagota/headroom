@@ -348,7 +348,11 @@ def project_facts(conn: sqlite3.Connection) -> int:
                     event_notification_type = "permission_requested"
                 elif kind == "user_input_requested":
                     event_notification_type = "needs_input"
-                elif kind == "turn_ended" and payload.get("ending") == "completed":
+                elif (
+                    kind == "turn_ended"
+                    and payload.get("ending") == "completed"
+                    and payload.get("automatic_compaction_result") != "not_compacted"
+                ):
                     event_notification_type = "worker_completed"
                 elif kind == "turn_ended" and payload.get("ending") == "failed":
                     event_notification_type = "worker_failed"

@@ -2493,11 +2493,12 @@ def test_automatic_compaction_uses_claudes_exact_command_and_typed_boundary(
     "response_text", ("Not enough messages to compact.", None),
     ids=("refusal", "silent"),
 )
+@pytest.mark.parametrize("model", ("fable[1m]", "opus[1m]"))
 def test_automatic_compaction_completion_without_a_boundary_stays_completed(
-    tmp_path: Path, response_text: str | None
+    tmp_path: Path, response_text: str | None, model: str
 ) -> None:
     async def exercise() -> None:
-        resolved = _start_request(workspace_folder=tmp_path, model="opus[1m]")
+        resolved = _start_request(workspace_folder=tmp_path, model=model)
         child, sink, clients = _bench(resolved)
         await child.start(resolved, vendor_session_cursor=None)
         content = text_message_content("/compact")

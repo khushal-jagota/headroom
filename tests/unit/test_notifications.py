@@ -162,6 +162,42 @@ def test_conversation_events_project_to_the_catalogue_once(tmp_path: Path) -> No
     conn.close()
 
 
+def test_not_compacted_maintenance_does_not_project_a_worker_completion(
+    tmp_path: Path,
+) -> None:
+    conn = connect(str(tmp_path / "maintenance-conversation-facts.db"))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    conn.execute(
+        "INSERT INTO conversations"
+        "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
+        "VALUES ('c_maintenance', 'claude', '/tmp/workspace', 'full', 1, 1)"
+    )
+    conn.execute(
+        "UPDATE tickets SET conversation_id = 'c_maintenance' WHERE id = ?",
+        (ticket.id,),
+    )
+    conn.execute(
+        "INSERT INTO conversation_events"
+        "(conversation_id, sequence, kind, payload, created_at) "
+        "VALUES ('c_maintenance', 1, 'turn_ended', ?, 2)",
+        (
+            '{"automatic_compaction_result":"not_compacted",'
+            '"ending":"completed","error_summary":null}',
+        ),
+    )
+
+    notifications_data.project_facts(conn)
+
+    assert conn.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 0
+    cursor = conn.execute(
+        "SELECT sequence FROM notification_projection_cursors "
+        "WHERE source_kind = 'conversation' AND source_id = 'c_maintenance'"
+    ).fetchone()
+    assert cursor is not None and cursor["sequence"] == 1
+    conn.close()
+
+
 def test_chief_conversation_events_use_agent_destination_and_one_coalescing_tag(
     tmp_path: Path,
 ) -> None:
