@@ -3643,6 +3643,12 @@ select {
   flex: 0 0 auto;
 }
 
+/* The shared Ticket row keeps its mark slot. Workspace leaves that slot empty when
+ * neither a reply nor active work exists. Error does not introduce another mark. */
+.board-workspace-stage-mark[data-workspace-mark="none"] {
+  visibility: hidden;
+}
+
 /* --- Priority tile ------------------------------------------------------- */
 
 .priority-tile {

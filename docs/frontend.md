@@ -38,26 +38,29 @@ One screen per part of the system:
   appear. The Chief of Staff row leads, and under it a selector chooses one of two views
   over the same tickets: **Tickets** or **Sprint Items**.
 
-  The rail holds every derived work group, in one order: Errored, Needs you, Assigned,
-  Agent, Waiting to Closeout, Awaiting approval, Waiting for Kickoff, Empty, Blocked,
-  Done. Every parked proposal sits under Awaiting approval, because there is one
-  approval gate; a proposal still gated on its kickoff splits out into its own group. A
-  ticket whose own run errored reaches the rail and Sprint Item page as Errored. A group
-  with no tickets is not drawn.
+  The Tickets view starts with three owner-attention groups in this order: Awaiting
+  approval, Paired, and Messages. A ticket appears in only its first applicable group.
+  Approval takes precedence over assignment, and assignment takes precedence over a
+  reply. Empty groups are not drawn. Every ticket outside these groups follows in the
+  existing status order, so no ticket becomes unreachable.
 
-  Three groups arrive shut: Waiting for Kickoff, Blocked and Done. Every other group
-  arrives open. A shut group is still its own group, with its own name and count, and
+  Blocked and Done arrive shut. Every other group arrives open. A shut group is still
+  its own group, with its own name and count, and
   the reader opens it — nothing hides behind a "+n more", and no status is missing from
   the rail. Rows inside a group are ordered by activity, newest first.
 
-  The Tickets view is every ticket on today, in a box per group.
+  The Tickets view is every ticket on today. Each owner-attention group and each
+  remaining status group has its own box. Rows inside each group retain activity order,
+  newest first.
 
-  The Sprint Items view is one box per Sprint Item with a ticket on today. A shut Item
-  shows a line of counts — how many tickets it has in each group, quiet groups included;
-  an Item with no tickets on today shows no line. Clicking anywhere in the box selects
-  the Item and opens its workspace beside the rail. That is all a click on an Item ever does: no click shuts
-  an Item, so a reader inside one of its tickets clicks the Item to come back to it. An
-  open Item shows the same status groups nested inside it, without their own boxes.
+  The Sprint Items view is one box per Sprint Item with a ticket on today. Each Item
+  shows only its non-empty Awaiting approval, Paired, and Messages child groups. Quiet
+  child tickets remain available in the Tickets view and the Item workspace. A shut
+  Item shows a line of counts for its owner-attention groups. Clicking anywhere in the
+  box selects the Item and opens its workspace beside the rail. That is all a click on
+  an Item ever does: no click shuts an Item. A reader inside one of its tickets clicks
+  the Item to come back to it. An
+  open Item shows the same owner-attention groups nested inside it, without their own boxes.
   Folding one of those groups, or opening a ticket, leaves the Item open. Items are
   ordered by priority and then by age, so an Item holds its place while its tickets move
   under it.
@@ -80,14 +83,15 @@ One screen per part of the system:
   leaves that Item open around it — the address names the Item as well as the ticket —
   and the mark moves to the ticket, because being open carries no mark of its own.
 
-  The Item title carries a mark for the Item's own supervisor, read exactly the way a
-  ticket row's mark is read and fed by the same fact: an unseen completed turn. Its
-  transcript shows a system marker when no explicit Send Message answered the principal
-  who prompted that turn.
-  A ticket without a Sprint Item appears in the Tickets
-  view like any other. Every Ticket row is the shared Ticket row and keeps the existing
-  conversation mark; it carries its priority tile in the Tickets view and drops it inside
-  a Sprint Item, where the Item is the thing being read.
+  Every Ticket row uses its existing mark slot. A reply waiting for Khushal gives it the
+  blue dot. Otherwise active agent work gives it the spinner. Idle and error states show
+  no mark. An Item title rolls up its own facts and every child ticket: any owner
+  attention gives it the blue dot, otherwise any active work gives it the spinner.
+  Attention takes precedence over active work.
+  A ticket without a Sprint Item appears in the Tickets view like any other. Every
+  Ticket row is the shared Ticket row and uses the same blue dot and spinner. It carries
+  its priority tile in the Tickets view and drops it inside a Sprint Item, where the Item
+  is the thing being read.
 
   The Chief of Staff row starts with its bundled portrait. The portrait is an agent
   identity on this row only; ticket rows and Worker types do not use it.

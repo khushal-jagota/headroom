@@ -3,13 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   buildWorkspaceRail,
   workspaceCardGroupKey,
-  workspaceGroups
+  workspaceGroups,
+  workspaceSprintItemRowMark,
+  workspaceTicketRowMark
 } from "../src/lib/workspaceRail";
 import {
   parseWorkspaceAddress,
   whatTheAddressOpens
 } from "../src/lib/workspaceAddress";
-import { conversationSignalPresentation } from "../src/lib/conversationSignalPresentation";
 import type { BoardCard, BoardSprintItem } from "../src/lib/types";
 import { boardCard as card } from "./boardCardFixture";
 
@@ -48,19 +49,19 @@ describe("Workspace rail", () => {
     );
   });
 
-  it("splits a kickoff approval from every later approval", () => {
+  it("keeps kickoff approvals in the owner attention group", () => {
     expect(
       workspaceCardGroupKey(
         card("a", { awaiting_approval: true, gating_field: "kickoff" })
       )
-    ).toBe("waiting_for_kickoff");
-    // The gating field only splits a Ticket that is awaiting approval.
+    ).toBe("awaiting_approval");
+    // The gating field does not classify a Ticket without current attention.
     expect(
       workspaceCardGroupKey(card("b", { ticket_status: "agent", gating_field: "kickoff" }))
     ).toBe("agent");
   });
 
-  it("orders and labels every group, and collapses the three quiet ones", () => {
+  it("puts the three owner attention groups before every remaining group", () => {
     const groups = workspaceGroups([
       card("done", { stage: "done", is_done: true }),
       card("resting"),
@@ -75,22 +76,20 @@ describe("Workspace rail", () => {
     ]);
 
     expect(groups.map((group) => group.label)).toEqual([
+      "Awaiting approval",
+      "Paired",
+      "Messages",
       "Errored",
-      "Needs you",
-      "Assigned",
       "Agent",
       "Waiting to Closeout",
-      "Awaiting approval",
-      "Waiting for Kickoff",
       "Empty",
       "Blocked",
       "Done"
     ]);
-    // A quiet group arrives shut, with its own count for the reader to open. It is
-    // never absent: no status is filtered out of the rail.
+    // Quiet status groups arrive shut, with their own count for the reader to open.
     expect(
       groups.filter((group) => group.defaultCollapsed).map((group) => group.key)
-    ).toEqual(["waiting_for_kickoff", "blocked", "done"]);
+    ).toEqual(["blocked", "done"]);
   });
 
   it("draws a board of only quiet Tickets rather than nothing", () => {
@@ -124,7 +123,7 @@ describe("Workspace rail", () => {
     ]);
   });
 
-  it("gives both views the same groups over one board", () => {
+  it("shows only non-empty attention groups beneath a Sprint Item", () => {
     const rail = buildWorkspaceRail(
       [
         card("owned", { assigned: true, sprint_item_id: "si_one" }),
@@ -140,15 +139,33 @@ describe("Workspace rail", () => {
       "owned",
       "shut"
     ]);
-    // An Item's own groups are the same groups, shut the same way.
+    // Quiet child Tickets remain in the Tickets view, not under the Item heading.
     expect(rail.items[0].groups.map((group) => group.label)).toEqual([
-      "Assigned",
-      "Blocked"
+      "Paired"
     ]);
-    expect(rail.items[0].groups.map((group) => group.defaultCollapsed)).toEqual([
-      false,
-      true
+  });
+
+  it("places each overlapping child Ticket in only its first attention group", () => {
+    const rail = buildWorkspaceRail(
+      [
+        card("all-three", {
+          sprint_item_id: "si_one",
+          awaiting_approval: true,
+          assigned: true,
+          awaiting_reply: true
+        }),
+        card("reply", { sprint_item_id: "si_one", awaiting_reply: true })
+      ],
+      [item("si_one")]
+    );
+
+    expect(rail.items[0].groups.map((group) => group.label)).toEqual([
+      "Awaiting approval",
+      "Messages"
     ]);
+    expect(
+      rail.items[0].groups.flatMap((group) => group.cards.map((entry) => entry.id))
+    ).toEqual(["all-three", "reply"]);
   });
 
   it("orders Items by priority then a fixed creation-time tie-break", () => {
@@ -206,7 +223,7 @@ describe("Workspace rail", () => {
     expect(oneNeedsReply.items.map((entry) => entry.id)).toEqual(["si_older", "si_newer"]);
   });
 
-  it("marks an Item from its own supervisor, not from its Tickets", () => {
+  it("marks an Item from its own attention and the complete Ticket rollup", () => {
     const rail = buildWorkspaceRail(
       [
         card("its-ticket", {
@@ -218,10 +235,7 @@ describe("Workspace rail", () => {
       [item("si_one", { conversation_id: "conv-supervisor", awaiting_reply: true })]
     );
 
-    expect(rail.items[0].signals).toEqual({
-      awaiting_reply: true,
-      agent_state: "idle"
-    });
+    expect(rail.items[0].mark).toBe("attention");
   });
 
   it("takes an Item's attention from its child Ticket rollup", () => {
@@ -234,7 +248,7 @@ describe("Workspace rail", () => {
       ]
     );
 
-    expect(conversationSignalPresentation(rail.items[0].signals).state).toBe("needs-me");
+    expect(rail.items[0].mark).toBe("attention");
   });
 
   it("marks an Item its conversation has replied on", () => {
@@ -243,9 +257,7 @@ describe("Workspace rail", () => {
       [item("si_one", { conversation_id: "conv-supervisor", awaiting_reply: true })]
     );
 
-    expect(
-      conversationSignalPresentation(rail.items[0].signals).state
-    ).toBe("needs-me");
+    expect(rail.items[0].mark).toBe("attention");
   });
 
   it("leaves an Item its conversation has never spoken on unlit", () => {
@@ -254,15 +266,13 @@ describe("Workspace rail", () => {
       [item("si_one", { conversation_id: "conv-supervisor" })]
     );
 
-    expect(
-      conversationSignalPresentation(rail.items[0].signals).state
-    ).toBe("upcoming");
+    expect(rail.items[0].mark).toBeNull();
   });
 
   it("says nothing about an Item the board has no summary for", () => {
     const rail = buildWorkspaceRail([card("orphan", { sprint_item_id: "si_gone" })], []);
 
-    expect(rail.items[0].signals).toEqual({ awaiting_reply: false, agent_state: "idle" });
+    expect(rail.items[0].mark).toBeNull();
     expect(rail.items[0].createdAt).toBe(0);
   });
 
@@ -279,11 +289,9 @@ describe("Workspace rail", () => {
       [item("si_done")]
     );
 
-    // The Item keeps its box, and its Done group with it. A rested Item counts and
-    // names its finished work, shut.
+    // The Item keeps its box, but quiet child Tickets do not create headings.
     expect(rail.items[0].title).toBe("Finished outcome");
-    expect(rail.items[0].groups.map((group) => group.label)).toEqual(["Done"]);
-    expect(rail.items[0].groups[0].defaultCollapsed).toBe(true);
+    expect(rail.items[0].groups).toEqual([]);
     expect(rail.items[0].rested).toBe(true);
   });
 
@@ -303,13 +311,51 @@ describe("Workspace rail", () => {
     );
     expect(mixed.items[0].rested).toBe(false);
 
-    // A Blocked Ticket is not done, so it keeps the Item awake even though it draws
-    // no group of its own in the rail.
+    // A Blocked Ticket is not done, so the Item is not rested.
     const blocked = buildWorkspaceRail(
       [card("blocked", { ticket_status: "blocked", sprint_item_id: "si_three" })],
       [item("si_three")]
     );
     expect(blocked.items[0].rested).toBe(false);
+  });
+
+  it("uses only reply and active-work marks on Ticket rows", () => {
+    expect(
+      workspaceTicketRowMark(card("reply", { awaiting_reply: true, agent_state: "working" }))
+    ).toBe("attention");
+    expect(workspaceTicketRowMark(card("approval", { awaiting_approval: true }))).toBeNull();
+    expect(workspaceTicketRowMark(card("working", { agent_state: "working" }))).toBe("working");
+    expect(workspaceTicketRowMark(card("error", { agent_state: "errored" }))).toBeNull();
+    expect(workspaceTicketRowMark(card("idle"))).toBeNull();
+  });
+
+  it("lets any Item attention win over any active work", () => {
+    expect(
+      workspaceSprintItemRowMark(
+        item("attention", {
+          assigned: true,
+          ticket_rollup: {
+            awaiting_reply: false,
+            awaiting_approval: false,
+            assigned: false,
+            agent_state: "working"
+          }
+        })
+      )
+    ).toBe("attention");
+    expect(
+      workspaceSprintItemRowMark(
+        item("working", {
+          ticket_rollup: {
+            awaiting_reply: false,
+            awaiting_approval: false,
+            assigned: false,
+            agent_state: "working"
+          }
+        })
+      )
+    ).toBe("working");
+    expect(workspaceSprintItemRowMark(item("error", { agent_state: "errored" }))).toBeNull();
   });
 });
 

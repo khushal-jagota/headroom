@@ -4,7 +4,9 @@
   import { conversationSignalPresentation } from "../lib/conversationSignalPresentation";
   import {
     buildWorkspaceRail,
+    workspaceTicketRowMark,
     type WorkspaceRailItem,
+    type WorkspaceRowMark,
     type WorkspaceTicketGroup
   } from "../lib/workspaceRail";
   import {
@@ -91,20 +93,18 @@
       : null
   );
 
-  function cardPresentation(card: BoardCard) {
-    return conversationSignalPresentation(
-      {
-        awaiting_reply: card.awaiting_reply,
-        agent_state: card.agent_state
-      }
-    );
+  function rowMarkPresentation(mark: WorkspaceRowMark) {
+    if (mark === "attention") return { state: "needs-me" as const, ariaLabel: "Message" };
+    if (mark === "working") {
+      return { state: "current-running" as const, ariaLabel: "Agent working" };
+    }
+    return { state: "upcoming" as const, ariaLabel: "Nothing waiting" };
   }
 
   // Awake beats rested: a done Item that needs the user, is mid-turn, or holds a
   // reply this browser has not seen yet stays with the live Items.
   function itemIsAwake(item: WorkspaceRailItem): boolean {
-    const state = conversationSignalPresentation(item.signals).state;
-    return state === "needs-me" || state === "current-running" || state === "current-awaiting-approval";
+    return item.mark !== null;
   }
 
   // A stable partition, not a re-sort: live-or-awake Items keep rail.items's
@@ -119,7 +119,8 @@
 </script>
 
 {#snippet ticketRow(card: BoardCard, withPriority: boolean, insideItemId: string | null)}
-  {@const presentation = cardPresentation(card)}
+  {@const mark = workspaceTicketRowMark(card)}
+  {@const presentation = rowMarkPresentation(mark)}
   <SprintTicketRow
     priority={withPriority ? card.priority : null}
     title={card.title}
@@ -133,7 +134,9 @@
       "data-awaiting-reply": card.awaiting_reply ? "true" : "false",
       "data-awaiting-approval": card.awaiting_approval ? "true" : "false",
       "data-assigned": card.assigned ? "true" : "false",
-      "data-agent-state": card.agent_state
+      "data-agent-state": card.agent_state,
+      "data-workspace-mark": mark ?? "none",
+      "aria-hidden": mark === null ? "true" : undefined
     }}
     data-card=""
     data-ticket-id={card.id}
@@ -177,7 +180,7 @@
 {#snippet sprintItem(item: WorkspaceRailItem)}
   {@const open = opening.openItemId === item.id}
   {@const selected = opening.markedItemId === item.id}
-  {@const presentation = conversationSignalPresentation(item.signals)}
+  {@const presentation = rowMarkPresentation(item.mark)}
   <section
     class="board-workspace-item"
     class:board-workspace-item--selected={selected}
@@ -199,14 +202,15 @@
         class="board-workspace-item-title"
         class:board-workspace-item-title--rested={item.rested && !itemIsAwake(item)}
       >{item.title}</span>
-      <StageMark
-        state={presentation.state}
-        class="board-workspace-stage-mark"
-        data-stage-state={presentation.state}
-        data-awaiting-reply={item.signals.awaiting_reply ? "true" : "false"}
-        data-agent-state={item.signals.agent_state}
-        aria-label={presentation.ariaLabel}
-      />
+      {#if item.mark !== null}
+        <StageMark
+          state={presentation.state}
+          class="board-workspace-stage-mark"
+          data-stage-state={presentation.state}
+          data-workspace-mark={item.mark}
+          aria-label={presentation.ariaLabel}
+        />
+      {/if}
     </button>
     {#if open}
       <!-- A fold or a Ticket inside the Item is not a click on the Item. -->

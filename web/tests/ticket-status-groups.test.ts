@@ -100,10 +100,7 @@ describe("Ticket status groups", () => {
     );
   });
 
-  it("names a paired Ticket with a filed proposal the same on the rail and the Sprint Item page", () => {
-    // The reproduction: the user messages a Ticket that was awaiting approval, and the
-    // proposal stays filed. The two screens hold their own keys, so the label is where
-    // they have to agree.
+  it("uses the Workspace's owner-facing Paired label for an assigned Ticket", () => {
     const railGroups = workspaceGroups([
       boardCard("t_assigned", { assigned: true, has_pending_proposal: true })
     ]);
@@ -111,7 +108,7 @@ describe("Ticket status groups", () => {
       ticketWithFiledProposal({ assigned: true })
     );
     const pageLabel = TICKET_STATUS_GROUPS.find((group) => group.key === pageKey)?.label;
-    expect(railGroups.map((group) => group.label)).toEqual([pageLabel]);
+    expect(railGroups.map((group) => group.label)).toEqual(["Paired"]);
     expect(pageLabel).toBe("Assigned");
   });
 });
