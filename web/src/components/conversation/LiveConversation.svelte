@@ -28,7 +28,10 @@
   import { fateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
   import { heldPromptRows } from "../../lib/conversation/heldPrompts";
   import type { ConversationState } from "../../lib/conversation/conversationState";
-  import { eligibleOwnerReadSequence } from "../../lib/conversation/ownerRead";
+  import {
+    eligibleOwnerReadSequence,
+    watchOwnerReadAttention
+  } from "../../lib/conversation/ownerRead";
   import {
     afterTheRecordHasBeenRead,
     mintOutgoingMessage,
@@ -214,21 +217,10 @@
     }
   });
 
-  onMount(() => {
-    const readAttentionState = () => {
-      documentIsVisible = document.visibilityState === "visible";
-      windowIsFocused = document.hasFocus();
-    };
-    readAttentionState();
-    document.addEventListener("visibilitychange", readAttentionState);
-    window.addEventListener("focus", readAttentionState);
-    window.addEventListener("blur", readAttentionState);
-    return () => {
-      document.removeEventListener("visibilitychange", readAttentionState);
-      window.removeEventListener("focus", readAttentionState);
-      window.removeEventListener("blur", readAttentionState);
-    };
-  });
+  onMount(() => watchOwnerReadAttention(document, window, (attention) => {
+    documentIsVisible = attention.documentIsVisible;
+    windowIsFocused = attention.windowIsFocused;
+  }));
   let running = $derived(liveness.isRunning);
   // The conversation's own backend, and before there is one what starting it would use.
   // Those are the only two answers there are: a backend nobody has said is not shown.

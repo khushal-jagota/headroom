@@ -13,6 +13,25 @@ export type OwnerReadEligibility = {
   readonly snapshot: OwnerReadSnapshot;
 };
 
+export type OwnerReadAttention = {
+  readonly documentIsVisible: boolean;
+  readonly windowIsFocused: boolean;
+};
+
+type AttentionListener = () => void;
+
+export type OwnerReadDocumentAttentionTarget = {
+  readonly visibilityState: string;
+  hasFocus(): boolean;
+  addEventListener(type: "visibilitychange", listener: AttentionListener): void;
+  removeEventListener(type: "visibilitychange", listener: AttentionListener): void;
+};
+
+export type OwnerReadWindowAttentionTarget = {
+  addEventListener(type: "focus" | "blur", listener: AttentionListener): void;
+  removeEventListener(type: "focus" | "blur", listener: AttentionListener): void;
+};
+
 /** Return the transcript position that the owner can truthfully mark as read.
  *
  * A null conversation state is the full-container form of the pane. Layered panes count
@@ -31,4 +50,27 @@ export function eligibleOwnerReadSequence({
   if (!documentIsVisible || !windowIsFocused) return null;
   if (transcriptLatestSequence <= snapshot.ownerReadThroughSequence) return null;
   return transcriptLatestSequence;
+}
+
+/** Keep the browser attention inputs current for the owner-read rule. */
+export function watchOwnerReadAttention(
+  documentTarget: OwnerReadDocumentAttentionTarget,
+  windowTarget: OwnerReadWindowAttentionTarget,
+  publish: (attention: OwnerReadAttention) => void
+): () => void {
+  const publishCurrentAttention = () => {
+    publish({
+      documentIsVisible: documentTarget.visibilityState === "visible",
+      windowIsFocused: documentTarget.hasFocus()
+    });
+  };
+  publishCurrentAttention();
+  documentTarget.addEventListener("visibilitychange", publishCurrentAttention);
+  windowTarget.addEventListener("focus", publishCurrentAttention);
+  windowTarget.addEventListener("blur", publishCurrentAttention);
+  return () => {
+    documentTarget.removeEventListener("visibilitychange", publishCurrentAttention);
+    windowTarget.removeEventListener("focus", publishCurrentAttention);
+    windowTarget.removeEventListener("blur", publishCurrentAttention);
+  };
 }

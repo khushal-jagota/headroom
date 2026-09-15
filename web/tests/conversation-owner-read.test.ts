@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   eligibleOwnerReadSequence,
+  watchOwnerReadAttention,
+  type OwnerReadAttention,
+  type OwnerReadDocumentAttentionTarget,
   type OwnerReadEligibility
 } from "../src/lib/conversation/ownerRead";
 
@@ -45,4 +48,65 @@ describe("Conversation owner read eligibility", () => {
       })).toBe(5);
     }
   );
+});
+
+class FakeAttentionTarget {
+  private readonly listeners = new Map<string, Set<() => void>>();
+
+  addEventListener(type: string, listener: () => void): void {
+    const listeners = this.listeners.get(type) ?? new Set<() => void>();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: () => void): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  dispatch(type: string): void {
+    for (const listener of this.listeners.get(type) ?? []) listener();
+  }
+}
+
+class FakeAttentionDocument extends FakeAttentionTarget
+  implements OwnerReadDocumentAttentionTarget {
+  visibilityState = "visible";
+  focused = true;
+
+  hasFocus(): boolean {
+    return this.focused;
+  }
+}
+
+describe("Conversation owner read attention", () => {
+  it("publishes focus and visibility changes until its listener is removed", () => {
+    const documentTarget = new FakeAttentionDocument();
+    const windowTarget = new FakeAttentionTarget();
+    const received: OwnerReadAttention[] = [];
+    const stop = watchOwnerReadAttention(
+      documentTarget,
+      windowTarget,
+      (attention) => received.push(attention)
+    );
+
+    documentTarget.focused = false;
+    windowTarget.dispatch("blur");
+    documentTarget.visibilityState = "hidden";
+    documentTarget.dispatch("visibilitychange");
+    documentTarget.visibilityState = "visible";
+    documentTarget.focused = true;
+    windowTarget.dispatch("focus");
+
+    expect(received).toEqual([
+      { documentIsVisible: true, windowIsFocused: true },
+      { documentIsVisible: true, windowIsFocused: false },
+      { documentIsVisible: false, windowIsFocused: false },
+      { documentIsVisible: true, windowIsFocused: true }
+    ]);
+
+    stop();
+    documentTarget.focused = false;
+    windowTarget.dispatch("blur");
+    expect(received).toHaveLength(4);
+  });
 });
