@@ -120,17 +120,12 @@ def test_upgrade_keys_preferences_by_subject_and_preserves_notification_history(
             "FROM notification_preferences ORDER BY subject_key, notification_type"
         )
     ] == [
-        ("chief_of_staff", "needs_input", 1, 12),
-        ("chief_of_staff", "permission_requested", 0, 13),
-        ("chief_of_staff", "worker_completed", 1, 14),
-        ("chief_of_staff", "worker_failed", 0, 15),
-        # The ping revision seeds this one row: supervisor failures arrive off.
-        ("sprint_item_supervisors", "worker_failed", 0, 0),
-        ("tickets", "needs_input", 1, 12),
-        ("tickets", "permission_requested", 0, 13),
-        ("tickets", "ticket_needs_approval", 0, 11),
-        ("tickets", "worker_completed", 1, 14),
-        ("tickets", "worker_failed", 0, 15),
+        ("chief_of_staff", "awaiting_reply", 1, 13),
+        ("chief_of_staff", "errored", 0, 15),
+        ("sprint_item_supervisors", "errored", 0, 0),
+        ("tickets", "awaiting_approval", 0, 11),
+        ("tickets", "awaiting_reply", 1, 13),
+        ("tickets", "errored", 0, 15),
     ]
     assert [
         tuple(row)
@@ -146,13 +141,6 @@ def test_upgrade_keys_preferences_by_subject_and_preserves_notification_history(
             "agent",
             "chief_of_staff",
             '{"subject_label":"Chief of Staff"}',
-        ),
-        (
-            "old:ticket-input",
-            "needs_input",
-            "ticket",
-            ticket_id,
-            '{"ticket_title":"Existing Ticket"}',
         ),
     ]
     assert tuple(
@@ -198,6 +186,6 @@ def test_upgrade_keys_preferences_by_subject_and_preserves_notification_history(
         ("ticket", ticket_id, 0),
     ]
     notifications_data.project_facts(upgraded)
-    assert upgraded.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 2
+    assert upgraded.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 1
     assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
     upgraded.close()

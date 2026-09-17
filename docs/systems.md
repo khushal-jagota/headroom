@@ -55,8 +55,9 @@ Days orient one planning date. Tickets carry bounded work and own their Project 
 optional Sprint placement. Outcomes hold shared context and their supervisor across
 Sprints. A commitment chooses an Outcome for a Sprint before Tickets exist. Carrying
 selected unfinished Tickets never moves completed history. Backlog lists unscheduled
-Tickets and offers a collapsed Outcome browser. Ideas remember possibilities. Projects
-classify Tickets, Outcomes and Ideas.
+Tickets and offers a collapsed Outcome browser. Ideas remember possibilities. Feedback
+records loose notes and their handled Ticket history. Projects classify Tickets, Outcomes,
+and Ideas.
 
 Each domain owns its contracts, rules, writers, views, and HTTP routes. Cross-domain
 actions use those owners. The planning date changes at 05:00 local time. Stored Sprint
@@ -67,6 +68,7 @@ Read the focused pages for the product surfaces:
 - **Days** (`days.md`)
 - **Sprints** (`sprints.md`)
 - **Backlog & Ideas** (`backlog-and-ideas.md`)
+- **Feedback** (`feedback.md`)
 - **Projects** (`projects.md`)
 
 _Code paths:_ `src/planner/days/`, `src/planner/sprints/`,
@@ -84,10 +86,12 @@ values and advances the Stage. Scope controls how far worker-owned Stages can ad
 Ownership says whether the worker, user, or both drive the current Stage. A paired Stage
 gets one automatic opening turn and then continues in the same Ticket conversation.
 
-Ticket status is separate control state: `empty`, `blocked`, `agent`, `paired`,
-`awaiting_approval`, `needs_user`, `user`, or `errored`.
-The Review screen contains today's parked proposals and help requests. Workspace
-groups today's Tickets by this operating state.
+Ticket status is separate control state: `empty`, `blocked`, `agent`,
+`awaiting_approval`, or `errored`. One shared list projection derives whether work
+awaits Khushal's reply, awaits approval, is assigned to Khushal, and whether the agent
+is working, idle, or errored. Review contains today's owner-addressed proposals and
+non-owner proposals whose alerts reached the terminal refusal limit.
+Addressed help messages stay in conversation and appear through the same attention facts.
 
 Read **Tickets & the gates** (`tickets-and-gates.md`) and **Worker types**
 (`worker-types.md`).
@@ -119,9 +123,11 @@ conversation system supplies the one fact the record cannot: whether that Ticket
 worker is already busy.
 
 One guarded status flip out of `empty` is the claim. There is no claim stamp or run row.
-Panels then starts or reuses the Ticket conversation and sends the Stage instruction
-with pending Worker context. Started and queued both count as delivered. Only refusal
-releases the claim.
+Paired claims also record one opener fact for the current Stage entry. An accepted
+paired opener returns the status to `empty`, while readiness uses the fact to prevent a
+repeat. Panels then starts or reuses the Ticket conversation and sends the Stage
+instruction with pending Worker context. Started and queued both count as delivered.
+Refusal releases every claim and removes any tentative opener fact.
 
 Nothing watches a turn end. A Ticket moves only when someone acts on it. A process crash
 can therefore leave a Ticket marked `agent` with no live turn. Panels leaves that
@@ -155,7 +161,7 @@ _Code paths:_ `src/planner/conversation/` and
 ### 7. The human interface
 
 The Svelte app is built by Vite and served by FastAPI. Home, Review, Workspace, Ticket,
-Sprint, Backlog, Ideas, Config, Backends, Notifications, and Scheduled tasks are server
+Sprint, Backlog, Ideas, Feedback, Config, Backends, Notifications, and Scheduled tasks are server
 projections. The Chief conversation is the first Workspace row. Former Agents routes
 redirect to Workspace or Config.
 
@@ -177,7 +183,9 @@ _Code paths:_ `web/src/`, `assets/`, and `web/dist/`.
 Tickets, schedules, and environments. `worker` files Ticket proposals, recaps, notes,
 and help requests. `chief` performs only bounded external-work intake.
 
-Requests carry explicit actor context. Direct-only operations reject Worker claims.
+Every request resolves to one principal: the owner, Chief, a Sprint Item, or a Ticket.
+An unattributed browser request resolves to the owner. Direct-only operations reject
+Ticket and Sprint Item principals.
 The `planning-day`, `planning-midday-check`, and `planning-sprint` Workers are the narrow
 exception: the server resolves the claimed Ticket's stored Worker type before it admits
 the matching Day or Sprint write. Missing or mismatched claims fail closed. These local
@@ -227,8 +235,6 @@ _Code paths:_ `src/planner/environments/`, `src/planner/notifications/`,
 
 ## Deferred
 
-- **Errored Ticket recovery.** An errored Ticket has no retry or clear path. Trigger: a
-  product decision defines safe retry semantics.
 - **Held-message durability.** A server restart loses messages still held in memory.
   Trigger: restart loss becomes important enough to persist the queue.
 - **Missed schedule occurrences.** Exact-minute schedules do not backfill downtime.
@@ -239,4 +245,4 @@ _Code paths:_ `src/planner/environments/`, `src/planner/notifications/`,
 
 ---
 
-_Last verified: 2026-08-14._
+_Last verified: 2026-09-15._

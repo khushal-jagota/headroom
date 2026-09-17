@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from planner.core.contracts import ErrorCode, PlannerError
+from planner.core.contracts import (
+    OWNER_PRINCIPAL,
+    ErrorCode,
+    PlannerError,
+    Principal,
+    PrincipalKind,
+    principal_legacy_actor,
+)
 from planner.tickets.contracts import (
     AtCap,
     NextCeiling,
@@ -23,24 +30,35 @@ def _accept_gating_proposal(
     field: str,
     stored_body: str,
     scope: ScopePair | None,
+    next_holder: Principal | None = None,
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
     target = worker_type_definition.advance_target(ticket.stage)
     if target is None:
         raise PlannerError(ErrorCode.validation, "stage has no advance target")
+    ceiling_holder = ticket.ceiling_holder
+    if scope is not None:
+        assert next_holder is not None
+        ceiling_holder = next_holder
     return replace(
         Decision.from_ticket(ticket),
         field_values={**ticket.field_values, field: stored_body},
         pending_proposal=None,
         stage=target,
         ceiling=ticket.ceiling if scope is None else scope.next_ceiling,
+        ceiling_holder=ceiling_holder,
         at_cap=ticket.at_cap if scope is None else scope.at_cap,
     )
 
 
 def decide_file_proposal(
-    ticket: Ticket, body: str, actor: str, now: int, *, worker_type_definition: WorkerTypeDefinition
+    ticket: Ticket,
+    body: str,
+    principal: Principal,
+    now: int,
+    *,
+    worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
     admission.validate_body(body, "proposal body")
     field = worker_type_definition.gating_field(ticket.stage)
@@ -72,7 +90,7 @@ def decide_file_proposal(
         )
     return replace(
         Decision.from_ticket(ticket),
-        pending_proposal=PendingTicketProposal(field, body, actor, now),
+        pending_proposal=PendingTicketProposal(field, body, principal_legacy_actor(principal), now),
     )
 
 
@@ -90,14 +108,15 @@ def _pending(ticket: Ticket, field: str, definition: WorkerTypeDefinition) -> Pe
 def decide_accept(
     ticket: Ticket,
     field: str,
-    actor: str,
+    principal: Principal,
     edited_body: str | None,
     next_ceiling: NextCeiling | None,
     at_cap: AtCap | None,
+    next_holder: Principal | None,
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
-    admission.require_direct_or_supervisor_actor(actor, "accept_proposal")
+    _require_proposal_decider(ticket, principal, "accept_proposal")
     if edited_body is not None:
         admission.validate_body(edited_body, "edit-accept text")
     proposal = _pending(ticket, field, worker_type_definition)
@@ -107,11 +126,18 @@ def decide_accept(
     scope = machine.resolve_scope(
         target, next_ceiling, at_cap, worker_type_definition=worker_type_definition
     )
+    if next_holder is None:
+        raise PlannerError(
+            ErrorCode.scope_missing,
+            "approval requires the holder for the next ceiling",
+            {"missing": ["next_holder"]},
+        )
     return _accept_gating_proposal(
         ticket,
         field,
         proposal.body if edited_body is None else edited_body,
         scope,
+        next_holder,
         worker_type_definition=worker_type_definition,
     )
 
@@ -120,7 +146,7 @@ def decide_edit_pending_proposal(
     ticket: Ticket,
     field: str,
     new_body: str,
-    actor: str,
+    principal: Principal,
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
@@ -133,12 +159,12 @@ def decide_edit_value(
     ticket: Ticket,
     field: str,
     new_body: str,
-    actor: str,
+    principal: Principal,
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
     admission.validate_body(new_body, "field value")
-    admission.require_direct_actor(actor, "edit_field_value")
+    admission.require_direct_principal(principal, "edit_field_value")
     if ticket.stage == "dropped":
         raise PlannerError(ErrorCode.validation, "dropped tickets cannot be edited")
     if (
@@ -160,9 +186,9 @@ def decide_edit_value(
 
 
 def decide_return_for_revision(
-    ticket: Ticket, actor: str, *, worker_type_definition: WorkerTypeDefinition
+    ticket: Ticket, principal: Principal, *, worker_type_definition: WorkerTypeDefinition
 ) -> Decision:
-    admission.require_direct_or_supervisor_actor(actor, "return_for_revision")
+    _require_proposal_decider(ticket, principal, "return_for_revision")
     if ticket.ticket_status is TicketStatus.agent:
         raise PlannerError(
             ErrorCode.already_running, "the ticket worker is already revising this proposal"
@@ -175,11 +201,15 @@ def decide_return_for_revision(
     if field is None:
         raise PlannerError(ErrorCode.validation, "ticket has no approval item to return")
     _pending(ticket, field, worker_type_definition)
-    return replace(Decision.from_ticket(ticket), pending_proposal=None)
+    return replace(
+        Decision.from_ticket(ticket),
+        pending_proposal=None,
+        ceiling_holder=(OWNER_PRINCIPAL if principal == OWNER_PRINCIPAL else ticket.ceiling_holder),
+    )
 
 
-def decide_drop(ticket: Ticket, actor: str) -> Decision:
-    admission.require_direct_actor(actor, "drop_ticket")
+def decide_drop(ticket: Ticket, principal: Principal) -> Decision:
+    admission.require_direct_principal(principal, "drop_ticket")
     if ticket.stage in ("done", "dropped"):
         raise PlannerError(
             ErrorCode.validation, "terminal tickets cannot be dropped", {"stage": ticket.stage}
@@ -201,13 +231,44 @@ def decide_scope_change(
     ticket: Ticket,
     ceiling: str,
     at_cap: AtCap,
-    actor: str,
+    principal: Principal,
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
-    admission.require_direct_or_supervisor_actor(actor, "change_scope")
+    admission.require_direct_or_supervisor_principal(principal, "change_scope")
+    if ticket.pending_proposal is not None:
+        raise PlannerError(
+            ErrorCode.validation,
+            "scope cannot change while a proposal is pending",
+            {"ticket_id": ticket.id},
+        )
     return replace(
         Decision.from_ticket(ticket),
         ceiling=worker_type_definition.resolve_ceiling(ceiling),
+        ceiling_holder=principal,
         at_cap=at_cap,
+    )
+
+
+def _require_proposal_decider(ticket: Ticket, principal: Principal, action: str) -> None:
+    """Permit the addressed holder, plus Khushal's owner override."""
+    if principal == Principal(PrincipalKind.ticket, ticket.id):
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            f"{action} cannot be decided by the Ticket's own worker",
+            {"action": action, "ticket_id": ticket.id},
+        )
+    if principal == OWNER_PRINCIPAL or principal == ticket.ceiling_holder:
+        return
+    raise PlannerError(
+        ErrorCode.agent_forbidden,
+        f"{action} is available only to the proposal holder or owner",
+        {
+            "action": action,
+            "actor": principal_legacy_actor(principal),
+            "holder": {
+                "kind": ticket.ceiling_holder.kind.value,
+                "id": ticket.ceiling_holder.id,
+            },
+        },
     )

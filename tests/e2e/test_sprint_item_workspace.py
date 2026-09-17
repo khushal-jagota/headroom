@@ -109,6 +109,16 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
             "sprint_id": sprint["id"],
         },
     )
+    backlog_ticket = _post(
+        server,
+        "/api/tickets",
+        {
+            "title": "Keep the Backlog Ticket name visible",
+            "worker_type": "coding",
+            "kickoff_note": "Start.",
+            "sprint_item_id": item["id"],
+        },
+    )
     removed = httpx.delete(
         f"{server.base}/api/day/today/tickets/{review_ticket['id']}", timeout=10.0
     )
@@ -116,7 +126,11 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     api.direct_post(
         server,
         f"/api/tickets/{review_ticket['id']}/accept/kickoff",
-        {"next_ceiling": "needs_success", "at_cap": "propose"},
+        {
+            "next_ceiling": "needs_success",
+            "at_cap": "propose",
+            "next_holder": {"kind": "owner", "id": "owner"},
+        },
     )
     proposed = httpx.post(
         f"{server.base}/api/tickets/{review_ticket['id']}/propose",
@@ -135,10 +149,30 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
         timeout=10.0,
     )
     assert artifact.status_code < 300, artifact.text
+    for index in range(6):
+        extra = httpx.put(
+            f"{server.base}/api/items/{item['id']}/supervisor/artifacts/evidence-{index}.txt",
+            headers={
+                "X-Plan-Actor": "sprint_item_supervisor",
+                "X-Plan-Sprint-Item-ID": str(item["id"]),
+            },
+            json={"content": str(index)},
+            timeout=10.0,
+        )
+        assert extra.status_code < 300, extra.text
+    api.direct_patch(
+        server,
+        f"/api/items/{item['id']}",
+        {"body": f"[Open proof](/files/sprint-items/{item['id']}/artifacts/proof.md)"},
+    )
 
     past_id = "conv_workspace_past"
     active_id = "conv_workspace_active"
     with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "UPDATE tickets SET ticket_status = 'agent', sprint_id = NULL WHERE id = ?",
+            (backlog_ticket["id"],),
+        )
         _store_supervisor_conversation(
             conn,
             item_id=str(item["id"]),
@@ -165,6 +199,30 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
         f'[data-sprint-item-view="{item["id"]}"]',
     )
     page.locator(f'[data-sprint-ticket-id="{today_ticket["id"]}"]').wait_for(timeout=WAIT_MS)
+    backlog_row = page.locator(f'[data-sprint-ticket-id="{backlog_ticket["id"]}"]')
+    backlog_title = backlog_row.get_by_text("Keep the Backlog Ticket name visible", exact=True)
+    backlog_placement = backlog_row.locator("[data-ticket-backlog]")
+    backlog_title.wait_for(timeout=WAIT_MS)
+    backlog_placement.wait_for(state="attached", timeout=WAIT_MS)
+    assert backlog_placement.text_content() == "Backlog"
+    assert backlog_row.get_attribute("data-ticket-state") == "current-paired"
+    assert backlog_row.get_attribute("href") == (
+        f"#/workspace/item/{item['id']}/{backlog_ticket['id']}"
+    )
+    assert backlog_row.locator("xpath=ancestor::details[1]").get_attribute(
+        "data-workspace-group"
+    ) == "current-paired"
+    desktop_geometry = page.evaluate(
+        """([rowSelector]) => {
+            const row = document.querySelector(rowSelector);
+            const title = row.querySelector('.ticket-row-title').getBoundingClientRect();
+            const placement = row.querySelector('[data-ticket-backlog]').getBoundingClientRect();
+            return { titleWidth: title.width, titleTop: title.top, placementTop: placement.top };
+        }""",
+        [f'[data-sprint-ticket-id="{backlog_ticket["id"]}"]'],
+    )
+    assert desktop_geometry["titleWidth"] > 200, desktop_geometry
+    assert abs(desktop_geometry["titleTop"] - desktop_geometry["placementTop"]) < 2
     # Remaining Tickets starts collapsed, and its rows carry the shared row grammar:
     # the condition is the stage mark's label, not a separate word.
     remaining = page.locator('[data-workspace-section="remaining"]')
@@ -173,18 +231,42 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     off_today = page.locator(f'[data-sprint-ticket-id="{review_ticket["id"]}"]')
     assert off_today.get_attribute("data-ticket-state") == "current-awaiting-approval"
     off_today.get_by_label("to review").wait_for(timeout=WAIT_MS)
-    # Artifacts arrives shut too, so the index is opened the same way.
-    artifacts = page.locator('[data-workspace-section="artifacts"]')
-    assert artifacts.get_attribute("open") is None
-    artifacts.locator("> summary").click()
-    page.get_by_text("proof.md", exact=True).wait_for(timeout=WAIT_MS)
+    artifacts = page.locator("[data-artifact-strip]")
+    artifacts.wait_for(timeout=WAIT_MS)
+    assert artifacts.locator("[data-artifact-chip]").count() == 7
+    assert artifacts.get_by_role("button", name="+2 more").is_visible()
+    artifacts.get_by_role("button", name="+2 more").click()
+    assert artifacts.get_by_role("button", name="Show fewer").is_visible()
+
+    brief_link = page.get_by_role("link", name="Open proof")
+    brief_link.focus()
+    brief_link.click()
+    preview = page.locator("[data-ticket-artifact]")
+    preview.wait_for(timeout=WAIT_MS)
+    assert preview.evaluate("element => document.activeElement === element") is True
+    assert page.locator("[data-conversation-input]").is_visible()
+    preview.locator("[data-ticket-artifact-close]").click()
+    preview.wait_for(state="detached", timeout=WAIT_MS)
+
+    proof_chip = artifacts.locator('[data-artifact-chip="artifacts/proof.md"]')
+    proof_chip.focus()
+    proof_chip.click()
+    preview.wait_for(timeout=WAIT_MS)
+    page.keyboard.press("Escape")
+    preview.wait_for(state="detached", timeout=WAIT_MS)
+    assert proof_chip.evaluate("element => document.activeElement === element") is True
 
     history = page.get_by_label("Sprint Item conversation")
     history.select_option(past_id)
     page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
+    assert page.get_by_text("Past supervisor marker", exact=True).count() == 0
+    page.locator("[data-conversation-lens-toggle]").click()
     page.get_by_text("Past supervisor marker", exact=True).wait_for(timeout=WAIT_MS)
     assert page.locator('[data-conversation-read-only-boundary="true"]').count() == 1
     history.select_option("__current__")
+    assert page.locator("[data-conversation-lens-toggle]").inner_text() == "Focus"
+    assert page.get_by_text("Current supervisor marker", exact=True).count() == 0
+    page.locator("[data-conversation-lens-toggle]").click()
     page.get_by_text("Current supervisor marker", exact=True).wait_for(timeout=WAIT_MS)
 
     api.direct_patch(
@@ -200,6 +282,23 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     page.locator("[data-sprint-item-view]").wait_for(timeout=WAIT_MS)
     assert page.locator("[data-conversation-input]").is_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= 390") is True
+    narrow_geometry = page.evaluate(
+        """([rowSelector]) => {
+            const row = document.querySelector(rowSelector);
+            const title = row.querySelector('.ticket-row-title').getBoundingClientRect();
+            return {
+                rowWidth: row.getBoundingClientRect().width,
+                titleWidth: title.width
+            };
+        }""",
+        [f'[data-sprint-ticket-id="{backlog_ticket["id"]}"]'],
+    )
+    assert narrow_geometry["titleWidth"] > narrow_geometry["rowWidth"] / 2, narrow_geometry
+    assert artifacts.get_by_role("button", name="Show fewer").is_hidden()
+    assert artifacts.locator("[data-artifact-chip]").nth(6).is_visible()
+    assert artifacts.locator(".artifact-strip-items").evaluate(
+        "element => element.scrollWidth >= element.clientWidth"
+    ) is True
 
     # The same component also renders from the Workspace route, where no Sprint screen
     # surrounds it. That route is where the pane's own rules were dead, so a phone is

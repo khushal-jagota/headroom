@@ -109,8 +109,7 @@ class TurnToken:
     the adapter puts it on everything it later reports about that turn. It is what lets
     the core tell this turn's news from the news of a turn that has already been ended and
     replaced. A cancelled turn's late-arriving live and operational events are dropped.
-    One finished agent message may still be kept from the most recently ended turn: it is
-    durable conversation content even when the backend reported its ending first.
+    Finished backend prose is runtime-only, including when it arrives after the ending.
     """
 
     conversation_id: str
@@ -188,9 +187,7 @@ class BackendEventSink(Protocol):
         of reasoning is one fact — the agent is working — however many pieces it came in.
         """
 
-    async def agent_message_completed(
-        self, turn_token: TurnToken, content: MessageContent
-    ) -> None:
+    async def agent_message_completed(self, turn_token: TurnToken, content: MessageContent) -> None:
         """The whole of a finished agent message.
 
         Nearly always one piece of written words, which is what an agent's message nearly
@@ -231,9 +228,7 @@ class BackendEventSink(Protocol):
         detail: str | None,
     ) -> None: ...
 
-    async def plan_updated(
-        self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]
-    ) -> None:
+    async def plan_updated(self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]) -> None:
         """The agent's plan, whole, as it now stands.
 
         Report the entire plan every time it changes rather than what moved in it: the
@@ -272,9 +267,7 @@ class BackendEventSink(Protocol):
         without it a transcript's earlier context goes silently.
         """
 
-    async def permission_ask_raised(
-        self, turn_token: TurnToken, ask: BackendPermissionAsk
-    ) -> None:
+    async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
         """The agent asked for permission.
 
         The core records the ask and shows it. Nothing is answered here and no answer is
@@ -371,10 +364,10 @@ class BackendChild(Protocol):
     ) -> None:
         """Start a turn with this message, on these values.
 
-        ``content`` is the complete message that goes to the backend. ``sender_content``
-        is the exact message the sender wrote before the core added conversation-owned
-        material such as the first-prompt role envelope. An adapter can use sender content
-        to resolve backend-specific composer entries, but it must send ``content``.
+        ``content`` is the complete message after the core adds conversation-owned
+        material such as the first-prompt role envelope. ``sender_content`` is the exact
+        message the sender wrote. An adapter uses sender content to resolve a catalog
+        command and sends that exact command through the backend's command route.
 
         **Every piece goes over the wire, or none of it does.** The core has already
         refused a message carrying a piece this backend cannot be handed, so an adapter
@@ -386,10 +379,10 @@ class BackendChild(Protocol):
         adapter is handed the way to reach them when it is made. Some backends want the
         path and some want the bytes, and both are one step from the same value.
 
-        ``sender_label`` and ``mode`` travel with the text as the backend's own metadata
-        — who sent it and how it was meant to meet the agent. Nothing branches on them,
-        here or anywhere: a backend that has a metadata channel is handed them and a
-        backend that has none drops them, and the turn runs the same either way.
+        For a real prompt delivery, the adapter puts ``sender_label`` at the start of the
+        wire content. ``mode`` travels through backend metadata where that channel exists.
+        A catalog command keeps its exact leading slash token instead of becoming a model
+        prompt, and automatic maintenance keeps its exact backend command.
 
         The change and the prompt are one operation because they are one act: the message
         carries the change, so **a change must not stand if the write does not**. How that
@@ -416,7 +409,9 @@ class BackendChild(Protocol):
         """Try to admit a message to the exact turn named by ``turn_token``.
 
         The adapter validates the target before transmission and never substitutes a newer
-        turn. It returns one explicit outcome and never retries or falls back to a prompt.
+        turn. A real prompt steer starts with its sender label. A catalog command steer
+        keeps its exact command text. The adapter returns one explicit outcome and never
+        retries or falls back to a prompt.
         """
 
     async def cancel_running_turn(self) -> None:

@@ -67,7 +67,7 @@ describe("composer draft transaction", () => {
     const suppliedDraft = draft({ pendingImages });
     const suppliedRunValues = { ...carriedRunValues };
 
-    const attempt = beginComposerSend(suppliedDraft, suppliedRunValues, "run_when_free");
+    const attempt = beginComposerSend(suppliedDraft, suppliedRunValues);
 
     expect(attempt.content).toEqual([
       { piece: "text", text: "look here" },
@@ -89,6 +89,10 @@ describe("composer draft transaction", () => {
       reasoningEffort: "low",
       backendKey: "claude"
     });
+    expect(attempt.draftAfterSend).toMatchObject({
+      pickedModel: null,
+      pickedReasoningEffort: null
+    });
     expect(attempt.draftBeforeSend).toEqual(suppliedDraft);
     expect(attempt.draftBeforeSend).not.toBe(suppliedDraft);
     expect(attempt.draftBeforeSend.pendingImages).not.toBe(pendingImages);
@@ -104,8 +108,7 @@ describe("composer draft transaction", () => {
   it("sends and restores files with the rest of a refused draft", () => {
     const attempt = beginComposerSend(
       draft({ pendingFiles: [pendingFile(4, "facts.json", "e30=")] }),
-      carriedRunValues,
-      "run_when_free"
+      carriedRunValues
     );
 
     expect(attempt.content.at(-1)).toEqual({
@@ -129,7 +132,7 @@ describe("composer draft transaction", () => {
   });
 
   it("restores the sent text, images, picks, ids, and revision after a definite refusal", () => {
-    const attempt = beginComposerSend(draft(), carriedRunValues, "run_when_free");
+    const attempt = beginComposerSend(draft(), carriedRunValues);
 
     const restoration = restoreRefusedComposerSend(
       attempt.draftAfterSend,

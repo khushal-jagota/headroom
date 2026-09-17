@@ -27,7 +27,17 @@
   } from "../../lib/conversation/feed";
   import { fateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
   import { heldPromptRows } from "../../lib/conversation/heldPrompts";
+  import {
+    conversationFeedForLens,
+    conversationRowsForLens,
+    heldPromptIsInLens,
+    type ConversationLens
+  } from "../../lib/conversation/lens";
   import type { ConversationState } from "../../lib/conversation/conversationState";
+  import {
+    eligibleOwnerReadSequence,
+    watchOwnerReadAttention
+  } from "../../lib/conversation/ownerRead";
   import {
     afterTheRecordHasBeenRead,
     mintOutgoingMessage,
@@ -49,10 +59,10 @@
     liveUserInputFrom,
     transcriptRows
   } from "../../lib/conversation/transcript";
-  import { writeReplyWatermark } from "../../lib/replyWatermark";
   import {
     answerPermissionAsk,
     answerUserInput,
+    advanceOwnerRead,
     discardHeldPrompt,
     interruptConversation,
     openConversationTail,
@@ -84,7 +94,6 @@
     emptyState,
     sendMessage,
     onNewConversation,
-    onMessageAccepted,
     readOnly = false,
     ticketId = null
   }: {
@@ -122,10 +131,6 @@
     onNewConversation?: () => Promise<void>;
     /** One display boundary for historical transcripts. The pane removes every action. */
     readOnly?: boolean;
-    /** A message typed here reached the conversation — started, held, or steered into the
-     *  running turn. Not called for a refusal, which reached nothing. What that means is
-     *  the caller's business; this only says it happened. */
-    onMessageAccepted?: () => Promise<void>;
   } = $props();
 
   let view = $state<ConversationView | null>(null);
@@ -145,6 +150,7 @@
   let askNote = $state<string | null>(null);
   let busy = $state(false);
   let opening = $state(false);
+  let lens = $state<ConversationLens>("focus");
   /** The conversation this component currently has open. It follows the prop, and a start
    *  sets it directly, because the message that caused the start has to go somewhere now
    *  rather than after the parent's own state has come back round. */
@@ -153,6 +159,11 @@
    *  remain the stable owner key when session storage refuses a canonical-id migration;
    *  record reconciliation then empties that exact key instead of orphaning it. */
   let activePersistenceId = $state<string | null>(null);
+  let documentIsVisible = $state(false);
+  let windowIsFocused = $state(false);
+  /** Every browser attention event moves this value. Focus can return without changing
+   *  the cached booleans, and that event must still retry rows that arrived while away. */
+  let attentionPulse = $state(0);
 
   let stream: ConversationStream | null = null;
 
@@ -167,20 +178,63 @@
       view === null ? null : { latestSequence: view.latest_sequence, isRunning: view.is_running }
     )
   );
-  let rows = $derived(
-    transcriptRows(feed, {
+  let visibleFeed = $derived(conversationFeedForLens(feed, lens, senderLabel));
+  let rows = $derived(transcriptRows(feed, {
+    turnStoppedWithoutAnEnding: liveness.turnStoppedWithoutAnEnding
+  }));
+  let visibleRows = $derived(conversationRowsForLens(
+    transcriptRows(visibleFeed, {
       turnStoppedWithoutAnEnding: liveness.turnStoppedWithoutAnEnding
-    })
-  );
-  let ask = $derived(liveAskFrom(rows));
-  let userInput = $derived(liveUserInputFrom(rows));
-  // Looking at a conversation is what reading it means. While this pane is showing one,
-  // the reader has seen it as far as the record goes — including mid-turn, because a
-  // turn that has not ended yet is not a reply waiting for anybody. The board's reply
-  // mark is drawn from this and from nothing else.
+    }),
+    lens
+  ));
+  let ask = $derived(liveAskFrom(visibleRows));
+  let userInput = $derived(liveUserInputFrom(visibleRows));
+  let advancingRead: { conversationId: string; sequence: number } | null = null;
   $effect(() => {
-    if (view !== null) writeReplyWatermark(view.conversation_id, view.latest_sequence);
+    void attentionPulse;
+    if (view !== null) {
+      const eligibleSequence = eligibleOwnerReadSequence({
+        conversationState,
+        documentIsVisible,
+        // Focus can leave the top document through a preview iframe without a window
+        // blur event. Ask the document again when a new row is about to be credited.
+        windowIsFocused: windowIsFocused && document.hasFocus(),
+        deliveredLatestSequence: lens === "focus" ? feed.latestSequence : 0,
+        snapshot: {
+          latestSequence: view.latest_sequence,
+          ownerReadThroughSequence: view.owner_read_through_sequence
+        }
+      });
+      if (
+        eligibleSequence === null
+        || (advancingRead?.conversationId === view.conversation_id
+          && eligibleSequence <= advancingRead.sequence)
+      ) return;
+      const reading = view;
+      advancingRead = {
+        conversationId: reading.conversation_id,
+        sequence: eligibleSequence
+      };
+      void advanceOwnerRead(reading.conversation_id, eligibleSequence)
+        .then((advanced) => {
+          if (view?.conversation_id === reading.conversation_id) {
+            view = { ...view, owner_read_through_sequence: advanced };
+          }
+        })
+        .catch(() => {
+          if (advancingRead?.conversationId === reading.conversation_id) {
+            advancingRead = null;
+          }
+        });
+    }
   });
+
+  onMount(() => watchOwnerReadAttention(document, window, (attention) => {
+    documentIsVisible = attention.documentIsVisible;
+    windowIsFocused = attention.windowIsFocused;
+    attentionPulse += 1;
+  }));
   let running = $derived(liveness.isRunning);
   // The conversation's own backend, and before there is one what starting it would use.
   // Those are the only two answers there are: a backend nobody has said is not shown.
@@ -200,7 +254,9 @@
     )
   );
   let serverHeldSenderIds = $derived(
-    new Set((view?.held_prompts ?? []).flatMap((held) =>
+    new Set((view?.held_prompts ?? []).filter((held) =>
+      heldPromptIsInLens(held, lens, senderLabel)
+    ).flatMap((held) =>
       held.sender_message_id == null ? [] : [held.sender_message_id]
     ))
   );
@@ -216,7 +272,10 @@
       !stackOutgoingMessages.some((stackMessage) => stackMessage.messageId === message.messageId)
     )
   );
-  let heldRows = $derived(heldPromptRows(view?.held_prompts ?? [], stackOutgoingMessages));
+  let visibleHeldRows = $derived(heldPromptRows(
+    (view?.held_prompts ?? []).filter((held) => heldPromptIsInLens(held, lens, senderLabel)),
+    stackOutgoingMessages
+  ));
 
   // A queued or accepted-steer note describes traffic that a turn ending settles. A
   // refusal or uncertainty outlives endings: it is cleared by the next send, not by a
@@ -248,6 +307,8 @@
     if (wanted === null) {
       closeStream();
       openedId = null;
+      lens = "focus";
+      opening = false;
       view = null;
       feed = emptyConversationFeed();
       composerStackMessageIds = [];
@@ -260,6 +321,7 @@
   async function adopt(id: string): Promise<void> {
     closeStream();
     openedId = id;
+    lens = "focus";
     view = null;
     feed = emptyConversationFeed();
     // A reload can happen after the first request reached the server but before its
@@ -270,14 +332,15 @@
         ? await moveRememberedOutgoingMessages(persistenceKey, id)
         : true
     );
+    if (openedId !== id) return;
     activePersistenceId = persistenceMoved ? id : persistenceKey;
     if (!persistenceMoved) {
       errorNote = "The browser could not restore a pending file into this conversation.";
     }
     // Whatever this tab was still holding for this conversation when it was last here.
-    sentMessages = reserveRecalledOutgoingMessages(
-      await recallOutgoingMessages(activePersistenceId)
-    );
+    const recalled = await recallOutgoingMessages(activePersistenceId);
+    if (openedId !== id) return;
+    sentMessages = reserveRecalledOutgoingMessages(recalled);
     composerStackMessageIds = sentMessages
       .filter((message) => message.knownFate === "waiting_for_the_agent")
       .map((message) => message.messageId);
@@ -301,10 +364,13 @@
 
   /** Open, reload, second tab, tab return — one path for all of them. */
   async function openConversation(id: string): Promise<void> {
+    if (openedId !== id) return;
     opening = true;
+    let snapshot: ConversationView;
     try {
-      view = await readConversation(id);
+      snapshot = await readConversation(id);
     } catch (error) {
+      if (openedId !== id) return;
       if (error instanceof ConversationWireError && error.status === 404) {
         // A 404 is a conversation named but never started: the empty state, not a failure.
         // It is also an answer — there is no record and there never was — so anything this
@@ -316,22 +382,31 @@
       opening = false;
       return;
     }
+    if (openedId !== id) return;
+    view = snapshot;
     connectionTrouble = false;
-    stream = createConversationStream(
+    let localStream: ConversationStream;
+    localStream = createConversationStream(
       id,
       {
         readEventsAfter,
         openTail: (tailId, after, handlers) =>
           openConversationTail(tailId, after, {
-            onCommittedEvent: handlers.onCommittedEvent,
-            onLiveFrame: handlers.onLiveFrame,
+            onCommittedEvent: (event) => {
+              if (openedId === id && stream === localStream) handlers.onCommittedEvent(event);
+            },
+            onLiveFrame: (frame) => {
+              if (openedId === id && stream === localStream) handlers.onLiveFrame(frame);
+            },
             onTrouble: () => {
+              if (openedId !== id || stream !== localStream) return;
               connectionTrouble = true;
               handlers.onTrouble();
             }
           })
       },
       (next) => {
+        if (openedId !== id || stream !== localStream) return;
         feed = next;
         // The record draws a message once it has it. A copy it now holds is not redrawn
         // somewhere else — it simply stops being drawn.
@@ -342,18 +417,31 @@
       // Every connect asks the system about itself again, after the rows are in. This is
       // the after-a-restart path: the rows still leave a turn open, and only the system
       // can say nothing is running behind it any more.
-      () => void refreshView(),
-      () => void refreshView(),
-      () => (livenessPulse += 1)
+      () => {
+        if (openedId === id && stream === localStream) void refreshView(id);
+      },
+      () => {
+        if (openedId === id && stream === localStream) void refreshView(id);
+      },
+      () => {
+        if (openedId === id && stream === localStream) livenessPulse += 1;
+      }
     );
+    if (openedId !== id) {
+      localStream.close();
+      return;
+    }
+    stream = localStream;
     try {
-      await stream.connect();
+      await localStream.connect();
+      if (openedId !== id || stream !== localStream) return;
       theRecordHasBeenRead();
     } catch (error) {
+      if (openedId !== id || stream !== localStream) return;
       connectionTrouble = true;
       errorNote = sentenceFor(error);
     } finally {
-      opening = false;
+      if (openedId === id && stream === localStream) opening = false;
     }
   }
 
@@ -371,10 +459,11 @@
     if (told !== sentMessages) void holdOnTo(told);
   }
 
-  async function refreshView(): Promise<void> {
-    if (openedId === null) return;
+  async function refreshView(requestedId: string | null = openedId): Promise<void> {
+    if (requestedId === null || openedId !== requestedId) return;
     try {
-      view = await readConversation(openedId);
+      const refreshed = await readConversation(requestedId);
+      if (openedId === requestedId) view = refreshed;
     } catch {
       // The rows are the record; a snapshot that did not come back changes nothing here.
     }
@@ -462,6 +551,7 @@
         // what this browser is holding is the message being sent right now, which is newer
         // than anything remembered.
         openedId = delivered.conversation_id;
+        lens = "focus";
         await openConversation(delivered.conversation_id);
       }
       const terminalFate = fate.fate === "refused" || fate.fate === "uncertain";
@@ -481,9 +571,6 @@
         }
       }
       await refreshView();
-      // Told only after the conversation took it. Refusal and uncertainty are both
-      // terminal here, so neither can trigger caller work or an automatic resend.
-      await onMessageAccepted?.();
       return true;
     } catch (error) {
       errorNote = sentenceFor(error);
@@ -643,6 +730,7 @@
     void holdOnTo([]);
     composerStackMessageIds = [];
     openedId = null;
+    lens = "focus";
     view = null;
     feed = emptyConversationFeed();
     fateNote = null;
@@ -655,7 +743,14 @@
       if (document.visibilityState !== "visible") return;
       // Coming back to the tab is the same read as opening it: what has happened since
       // the row this reader holds?
-      stream?.connect().catch(() => (connectionTrouble = true));
+      const reconnectingStream = stream;
+      const reconnectingId = openedId;
+      if (reconnectingStream === null || reconnectingId === null) return;
+      reconnectingStream.connect().catch(() => {
+        if (stream === reconnectingStream && openedId === reconnectingId) {
+          connectionTrouble = true;
+        }
+      });
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
@@ -674,8 +769,9 @@
   bind:backends
   workspaceFolder={view?.workspace_folder ?? null}
   {rows}
+  {visibleRows}
   outgoingMessages={transcriptOutgoingMessages}
-  heldPromptRows={heldRows}
+  heldPromptRows={visibleHeldRows}
   supportsSteer={view?.supports_steer ?? false}
   ownSenderLabel={senderLabel}
   {livenessPulse}
@@ -694,6 +790,7 @@
   {errorNote}
   {connectionTrouble}
   {readOnly}
+  bind:lens
   composerPlaceholder={composerPlaceholder
     ?? (started ? `Message ${label}...` : "Send the first message to start it...")}
   composerDisabled={busy || opening}

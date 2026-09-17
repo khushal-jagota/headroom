@@ -7,6 +7,7 @@ import {
   feedWithLiveFrame
 } from "../src/lib/conversation/feed";
 import {
+  AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE,
   askDeadSentence,
   liveAskFrom,
   liveUserInputFrom,
@@ -19,6 +20,7 @@ import {
 import type { ConversationEvent } from "../src/lib/conversation/wire";
 import {
   agentMessageEvent,
+  explicitReplyMissingEvent,
   permissionAskedEvent,
   promptEvent,
   toolCallFinishedEvent,
@@ -42,6 +44,29 @@ function rowOfKind<Kind extends TranscriptRow["kind"]>(
 }
 
 describe("Conversation transcript", () => {
+  it("recognises the server-trusted owner label as the local sender", () => {
+    expect(promptLabelFor("owner", "owner")).toBeNull();
+    expect(promptLabelFor("Ticket t_one", "owner")).toBe("Ticket t_one");
+  });
+
+  it("renders a missing explicit reply as a system marker, not an agent message", () => {
+    const rows = rowsFrom([
+      promptEvent(1, "Please report back"),
+      explicitReplyMissingEvent(2, { kind: "owner", id: "owner" }),
+      turnEndedEvent(3)
+    ]);
+
+    expect(rows.map((row) => row.kind)).toEqual([
+      "prompt",
+      "explicit_reply_missing",
+      "turn_ended"
+    ]);
+    expect(rowOfKind(rows, "explicit_reply_missing").promptSender).toEqual({
+      kind: "owner",
+      id: "owner"
+    });
+  });
+
   it("reconciles a tool start and finish into one completed row", () => {
     const rows = rowsFrom([
       promptEvent(1, "do it"),
@@ -64,7 +89,7 @@ describe("Conversation transcript", () => {
       status: "completed",
       detail: "42 lines"
     });
-    expect(rows[0]).toMatchObject({ kind: "prompt", mode: "run_when_free" });
+    expect(rows[0]).toMatchObject({ kind: "prompt", mode: "queue" });
     expect(tools[0]).toMatchObject({ cappedDetailSequence: null });
   });
 
@@ -202,7 +227,7 @@ describe("Conversation transcript", () => {
       payload: {
         text: "held text",
         sender_label: "owner",
-        mode: "run_when_free",
+        mode: "queue",
         refusal_reason: "backend_did_not_start"
       },
       created_at: 1_700_000_000
@@ -216,6 +241,27 @@ describe("Conversation transcript", () => {
     expect(refusalSentence("backend_did_not_start")).toBe("the backend would not start");
     expect(turnEndingSentence("failed", "child died")).toBe("turn failed · child died");
     expect(turnEndingSentence("interrupted", null)).toBe("turn interrupted");
+  });
+
+  it("projects a completed unconfirmed maintenance turn as a neutral result", () => {
+    const ended = {
+      conversation_id: "c1",
+      sequence: 1,
+      kind: "turn_ended",
+      payload: {
+        ending: "completed",
+        error_summary: null,
+        automatic_compaction_result: "not_compacted"
+      },
+      created_at: 1_700_000_000
+    } satisfies ConversationEvent;
+
+    expect(rowOfKind(rowsFrom([ended]), "turn_ended")).toMatchObject({
+      ending: "completed",
+      errorSummary: null,
+      automaticCompactionResult: "not_compacted"
+    });
+    expect(AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE).toBe("context was not compacted");
   });
 
   it("projects uncertain steering as its own terminal message row", () => {
@@ -238,6 +284,25 @@ describe("Conversation transcript", () => {
     });
   });
 
+  it("projects a bounded proposal delivery failure as one compact runtime row", () => {
+    const failure = {
+      conversation_id: "c1",
+      sequence: 1,
+      kind: "proposal_delivery_failed",
+      payload: {
+        attempt_count: 10,
+        last_error: "write_to_backend_failed",
+        sender_message_id: "proposal-delivery-failed:t_one:1"
+      },
+      created_at: 1_700_000_000
+    } satisfies ConversationEvent;
+
+    expect(rowOfKind(rowsFrom([failure]), "proposal_delivery_failed")).toMatchObject({
+      attemptCount: 10,
+      lastError: "write_to_backend_failed"
+    });
+  });
+
   it("preserves image pieces on both sides and normalizes legacy text", () => {
     const content = [
       { piece: "text" as const, text: "look at this" },
@@ -248,7 +313,7 @@ describe("Conversation transcript", () => {
         conversation_id: "c1",
         sequence: 1,
         kind: "prompt",
-        payload: { content, sender_label: "owner", mode: "run_when_free" },
+        payload: { content, sender_label: "owner", mode: "queue" },
         created_at: 1_700_000_000
       },
       {

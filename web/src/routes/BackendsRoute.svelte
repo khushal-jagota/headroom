@@ -1,7 +1,10 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import UsageRings from "../components/conversation/UsageRings.svelte";
-  import { refreshBackendSnapshots } from "../lib/conversation/backendRefresh";
+  import {
+    loadBackendPageSnapshots,
+    refreshBackendSnapshots
+  } from "../lib/conversation/backendRefresh";
   import {
     ConversationWireError,
     readBackends,
@@ -30,9 +33,13 @@
   async function loadBackends(): Promise<void> {
     error = null;
     try {
-      backends = await readBackends();
-    } catch (problem) {
-      error = sentenceFor(problem);
+      const result = await loadBackendPageSnapshots(async (ordinarySnapshots) => {
+        backends = ordinarySnapshots;
+        loading = false;
+        await tick();
+      });
+      if (result.snapshots !== null) backends = result.snapshots;
+      error = result.error;
     } finally {
       loading = false;
     }
@@ -243,7 +250,7 @@
         </section>
       {/each}
     </div>
-    <p class="note">Refresh re-reads every backend. It spends a little Codex allowance when Codex's reading is stale.</p>
+    <p class="note">Refresh re-reads Codex and Claude usage. Their update checks run in the background after this page opens.</p>
   {/if}
 </section>
 

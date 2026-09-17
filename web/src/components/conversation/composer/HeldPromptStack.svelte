@@ -27,6 +27,13 @@
     return null;
   }
 
+  function queueReason(row: HeldPromptRow): string | null {
+    if (row.queueReason === "attachment") return "Queued because attachments cannot steer";
+    if (row.queueReason === "run_change") return "Queued to apply the run change";
+    if (row.queueReason === "steer_refused") return "Queued because the turn did not accept steering";
+    return null;
+  }
+
   async function act(key: string, action: () => Promise<void> | void): Promise<void> {
     if (actionInFlight !== null) return;
     actionInFlight = key;
@@ -49,6 +56,7 @@
       {#each rows as row (row.key)}
         {@const actionable = row.heldPromptId !== null && actionInFlight === null}
         {@const word = stateWord(row)}
+        {@const reason = queueReason(row)}
         <li
           class="chat-qrow"
           class:is-leaving={actionInFlight === row.key}
@@ -68,6 +76,7 @@
           >×</button>
           <span class="chat-qrow-txt">{heldPromptRowLabel(row)}</span>
           {#if word}<span class="chat-qrow-state">{word}</span>{/if}
+          {#if reason}<span class="chat-qrow-state">{reason}</span>{/if}
           <button
             type="button"
             class="chat-qrow-act"

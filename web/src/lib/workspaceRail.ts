@@ -1,27 +1,26 @@
-import type { ConversationSignals } from "./conversationSignalPresentation";
-import { labelize } from "./ui";
+import { labelize, type FieldStageVisualState } from "./ui";
 import type { BoardCard, BoardSprintItem, Priority } from "./types";
+import { primaryWorkAttention } from "./workAttentionPresentation";
 
-// Presentation only: the top-to-bottom order of the status groups. A group with no
-// Tickets is not drawn, and a status not named here appends as its own group after
-// these, in the order first seen.
-const GROUP_ORDER: readonly string[] = [
+const ATTENTION_GROUP_ORDER = [
+  "awaiting_approval",
+  "assigned",
+  "awaiting_reply"
+] as const;
+
+// Tickets outside the three attention groups keep the status order the Workspace
+// already used. Unknown statuses still follow these in the order first seen.
+const REMAINDER_GROUP_ORDER: readonly string[] = [
   "errored",
-  "needs_user",
-  "user",
-  "paired",
   "agent",
   "waiting_to_closeout",
-  "awaiting_approval",
+  "status_awaiting_approval",
   "waiting_for_kickoff",
   "empty",
   "blocked",
   "done"
 ];
 
-// The three the reader opens for themselves. They are still their own group: nothing
-// hides behind a count. The rail carries every group a Ticket lands in — a quiet group
-// arrives shut, never absent — so no status is ever unreachable from the rail.
 const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set([
   "waiting_for_kickoff",
   "blocked",
@@ -29,7 +28,10 @@ const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set([
 ]);
 
 const GROUP_LABELS: Readonly<Record<string, string>> = {
-  needs_user: "Needs you",
+  awaiting_approval: "Awaiting approval",
+  assigned: "Paired",
+  awaiting_reply: "Messages",
+  status_awaiting_approval: "Awaiting an agent's approval",
   waiting_to_closeout: "Waiting to Closeout",
   waiting_for_kickoff: "Waiting for Kickoff"
 };
@@ -41,20 +43,23 @@ export type WorkspaceTicketGroup = {
   cards: BoardCard[];
 };
 
+export type WorkspaceRowMark = "attention" | "working" | null;
+
+export type WorkspaceRowMarkPresentation = {
+  state: FieldStageVisualState;
+  ariaLabel: string;
+};
+
 export type WorkspaceRailItem = {
   id: string;
   title: string;
   priority: Priority;
   createdAt: number;
-  signals: ConversationSignals;
+  mark: WorkspaceRowMark;
   groups: WorkspaceTicketGroup[];
-  // Every one of the Item's Tickets on today is done. Read from all of the Item's
-  // Tickets, so a Blocked, Empty, or Waiting to Closeout Ticket keeps the Item awake.
   rested: boolean;
 };
 
-// The two views over one board: every Ticket in its status group, and every Sprint
-// Item with the same groups over its own Tickets.
 export type WorkspaceRail = {
   groups: WorkspaceTicketGroup[];
   items: WorkspaceRailItem[];
@@ -62,30 +67,56 @@ export type WorkspaceRail = {
 
 const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
 
-// Every Ticket sits in exactly one group: Done wins, a resting Closeout Ticket that the
-// server says is runnable gets its server-projected semantic exception, and a Kickoff
-// approval uses the existing gating field to split from later approvals. Every other
-// Ticket uses its own status.
-export function workspaceCardGroupKey(card: BoardCard): string {
+function workspaceRemainderGroupKey(card: BoardCard): string {
   if (card.is_done) return "done";
   if (card.waiting_to_closeout) return "waiting_to_closeout";
-  if (card.ticket_status === "awaiting_approval" && card.gating_field === "kickoff") {
-    return "waiting_for_kickoff";
-  }
+  if (card.ticket_status === "awaiting_approval") return "status_awaiting_approval";
   return String(card.ticket_status);
+}
+
+// Each Ticket gets one group. Attention wins in the shared canonical order. Tickets
+// without attention retain the status group that made them reachable before.
+export function workspaceCardGroupKey(card: BoardCard): string {
+  return primaryWorkAttention(card) ?? workspaceRemainderGroupKey(card);
+}
+
+export function workspaceTicketRowMark(card: BoardCard): WorkspaceRowMark {
+  if (card.awaiting_reply) return "attention";
+  if (card.agent_state === "working") return "working";
+  return null;
+}
+
+export function workspaceRowMarkPresentation(
+  mark: WorkspaceRowMark
+): WorkspaceRowMarkPresentation {
+  if (mark === "attention") {
+    return { state: "current-awaiting-approval", ariaLabel: "Message" };
+  }
+  if (mark === "working") {
+    return { state: "current-running", ariaLabel: "Agent working" };
+  }
+  return { state: "upcoming", ariaLabel: "Nothing waiting" };
+}
+
+export function workspaceSprintItemRowMark(item: BoardSprintItem): WorkspaceRowMark {
+  if (item.awaiting_reply || item.ticket_rollup.awaiting_reply) return "attention";
+  if (item.agent_state === "working" || item.ticket_rollup.agent_state === "working") {
+    return "working";
+  }
+  return null;
 }
 
 function priorityRank(priority: Priority): number {
   return PRIORITY_ORDER.indexOf(priority);
 }
 
-// Newest activity first. The rail answers "what moved", so nothing else orders a row.
 function cardOrder(left: BoardCard, right: BoardCard): number {
   return right.activity_at - left.activity_at || left.id.localeCompare(right.id);
 }
 
-export function workspaceGroups(
-  cards: readonly BoardCard[]
+function groupCards(
+  cards: readonly BoardCard[],
+  keys: readonly string[]
 ): WorkspaceTicketGroup[] {
   const byGroup = new Map<string, BoardCard[]>();
   const firstSeen: string[] = [];
@@ -97,8 +128,8 @@ export function workspaceGroups(
     }
     byGroup.get(key)?.push(card);
   }
-  const orderedKeys = GROUP_ORDER.filter((key) => byGroup.has(key)).concat(
-    firstSeen.filter((key) => !GROUP_ORDER.includes(key))
+  const orderedKeys = keys.filter((key) => byGroup.has(key)).concat(
+    firstSeen.filter((key) => !keys.includes(key))
   );
   return orderedKeys.map((key) => ({
     key,
@@ -106,6 +137,22 @@ export function workspaceGroups(
     defaultCollapsed: DEFAULT_COLLAPSED_GROUPS.has(key),
     cards: [...(byGroup.get(key) ?? [])].sort(cardOrder)
   }));
+}
+
+// The Tickets view starts with attention, then preserves every remaining status group.
+export function workspaceGroups(cards: readonly BoardCard[]): WorkspaceTicketGroup[] {
+  return groupCards(cards, [...ATTENTION_GROUP_ORDER, ...REMAINDER_GROUP_ORDER]);
+}
+
+// An Item exposes only work that needs the owner. Quiet child Tickets remain available
+// from the Tickets view and from the Item workspace.
+export function workspaceAttentionGroups(
+  cards: readonly BoardCard[]
+): WorkspaceTicketGroup[] {
+  return groupCards(
+    cards.filter((card) => primaryWorkAttention(card) !== null),
+    ATTENTION_GROUP_ORDER
+  );
 }
 
 export function buildWorkspaceRail(
@@ -130,20 +177,12 @@ export function buildWorkspaceRail(
       title: first.sprint_item_title ?? "Untitled Sprint Item",
       priority: first.sprint_item_priority ?? "P3",
       createdAt: summary?.created_at ?? 0,
-      // The Item's own conversation, read exactly as a card's is. Its reply only ever
-      // follows a message of the reader's, because nothing else starts one.
-      signals: {
-        conversation_id: summary?.conversation_id ?? null,
-        needs_me: summary?.needs_me ?? false,
-        agent_working: summary?.agent_working ?? false,
-        unread_position: summary?.latest_turn_ended_sequence ?? 0
-      },
-      groups: workspaceGroups(groupedCards),
+      mark: summary ? workspaceSprintItemRowMark(summary) : null,
+      groups: workspaceAttentionGroups(groupedCards),
       rested: groupedCards.every((groupedCard) => groupedCard.is_done)
     } satisfies WorkspaceRailItem;
   });
 
-  // Priority, then age. An Item holds its place while its Tickets move under it.
   items.sort(
     (left, right) =>
       priorityRank(left.priority) - priorityRank(right.priority) ||

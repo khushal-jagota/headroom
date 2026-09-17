@@ -1,8 +1,7 @@
 """SQLite ownership for conversations and the rows they record.
 
-Every call here opens its own connection inside a worker thread and closes it before
-returning, so nothing is shared across threads and no connection outlives the one
-operation it was opened for.
+Calls open their own connection inside a worker thread and close it before returning.
+Conversation delivery never receives or owns an application transaction.
 
 Appending a row is one immediate transaction: take the write lock, read where the
 conversation's record has got to, insert the next row, move the conversation's marker
@@ -36,8 +35,10 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
+    AutomaticCompactionResult,
     ConversationEventKind,
     ConversationEventPayload,
+    MessageToOwnerEventPayload,
     ModelChangedEventPayload,
     PromptDeliveryRefusedEventPayload,
     PromptDeliveryUncertainEventPayload,
@@ -48,7 +49,9 @@ from planner.conversation.events import (
     conversation_event_payload_kind,
     conversation_event_payload_to_canonical_json,
 )
+from planner.core.contracts import PrincipalKind
 from planner.core.db import commit_without_change_signal, connect
+from planner.notifications.attention import capture_conversation_attention
 from planner.skill_versions import settle_worker_step_skill_bindings
 
 DEFAULT_BUSY_TIMEOUT_MILLISECONDS = 5000
@@ -106,6 +109,8 @@ class ConversationRecord:
     latest_agent_activity_at: int | None
     latest_agent_activity_sequence: int
     automatically_compacted_through_sequence: int
+    automatic_compaction_attempted_through_sequence: int
+    owner_read_through_sequence: int
     created_at: int
 
     def resolved_start(self) -> ResolvedConversationStart:
@@ -137,6 +142,14 @@ class ConversationRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ConversationAttentionFacts:
+    """Durable conversation facts used by work-list attention projection."""
+
+    unread_message_to_owner: bool
+    last_turn_failed: bool
+
+
+@dataclass(frozen=True, slots=True)
 class StoredConversationEvent:
     """One row of a conversation's record, as it was written."""
 
@@ -148,7 +161,7 @@ class StoredConversationEvent:
 
 
 class ConversationStore:
-    """One short-lived connection per call, and one immediate transaction per append."""
+    """Short-lived append transactions, with one explicit shared-transaction seam."""
 
     def __init__(
         self,
@@ -175,6 +188,7 @@ class ConversationStore:
         *,
         agent_activity: bool = False,
         automatic_compaction_confirmed: bool = False,
+        owner_read_through_sequence: int | None = None,
     ) -> StoredConversationEvent:
         """Write the next row of this conversation's record and return it as written."""
         return await asyncio.to_thread(
@@ -183,6 +197,42 @@ class ConversationStore:
             payload,
             agent_activity,
             automatic_compaction_confirmed,
+            owner_read_through_sequence,
+        )
+
+    async def append_message_to_owner(
+        self, conversation_id: str, payload: MessageToOwnerEventPayload
+    ) -> StoredConversationEvent:
+        """Write one owner-bound message without a backend call."""
+        return await self.append_event(conversation_id, payload)
+
+    async def append_turn_ending(
+        self,
+        conversation_id: str,
+        payloads: tuple[ConversationEventPayload, ...],
+        *,
+        agent_activity: bool,
+        automatic_compaction_confirmed: bool,
+        automatic_compaction_result: AutomaticCompactionResult | None,
+    ) -> tuple[StoredConversationEvent, ...]:
+        """Atomically append silence markers followed by their turn ending."""
+        return await asyncio.to_thread(
+            self._append_turn_ending_sync,
+            conversation_id,
+            payloads,
+            agent_activity,
+            automatic_compaction_confirmed,
+            automatic_compaction_result,
+        )
+
+    async def advance_owner_read_through_sequence(
+        self, conversation_id: str, through_sequence: int
+    ) -> ConversationRecord | None:
+        """Move the owner's position forward, bounded by the current record."""
+        return await asyncio.to_thread(
+            self._advance_owner_read_through_sequence_sync,
+            conversation_id,
+            through_sequence,
         )
 
     async def conversations_due_for_automatic_compaction(
@@ -202,6 +252,7 @@ class ConversationStore:
         prompt: PromptEventPayload,
         model_change: ModelChangedEventPayload | None,
         extra_prompts: tuple[PromptEventPayload, ...] = (),
+        owner_read_through_sequence: int | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Write everything one delivery leaves behind, as one thing that either all
         happened or none of it did.
@@ -218,6 +269,8 @@ class ConversationStore:
         that is not there, or a conversation moved onto a model its record never mentions.
 
         The change is written before the prompt, because it is what the prompt ran under.
+        A held owner prompt can supply its earlier admission position. This prevents its
+        later delivery from crediting rows that arrived after the owner left.
         Returns the rows in the order they were written.
         """
         return await asyncio.to_thread(
@@ -226,6 +279,7 @@ class ConversationStore:
             prompt,
             model_change,
             extra_prompts,
+            owner_read_through_sequence,
         )
 
     async def read_events_after(
@@ -264,6 +318,18 @@ class ConversationStore:
         nothing.
         """
         return await asyncio.to_thread(self._latest_turn_ended_sequences_sync, conversation_ids)
+
+    async def owner_read_through_sequences(
+        self, conversation_ids: Collection[str]
+    ) -> dict[str, int]:
+        """Return the owner's durable position for each existing conversation."""
+        return await asyncio.to_thread(self._owner_read_through_sequences_sync, conversation_ids)
+
+    async def attention_facts(
+        self, conversation_ids: Collection[str]
+    ) -> dict[str, ConversationAttentionFacts]:
+        """Return owner-message and last-turn facts for a list of conversations."""
+        return await asyncio.to_thread(self._attention_facts_sync, conversation_ids)
 
     async def has_delivered_prompt(self, conversation_id: str) -> bool:
         """Whether any prompt has ever reached this conversation's backend.
@@ -314,6 +380,8 @@ class ConversationStore:
             latest_agent_activity_at=None,
             latest_agent_activity_sequence=0,
             automatically_compacted_through_sequence=0,
+            automatic_compaction_attempted_through_sequence=0,
+            owner_read_through_sequence=0,
             created_at=self._integer_now(),
         )
         conn = self._connect()
@@ -324,7 +392,9 @@ class ConversationStore:
                 "identity_environment_variables, access, vendor_session_cursor, "
                 "composer_catalog, latest_sequence, latest_agent_activity_at, "
                 "latest_agent_activity_sequence, automatically_compacted_through_sequence, "
-                "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "automatic_compaction_attempted_through_sequence, "
+                "owner_read_through_sequence, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     record.conversation_id,
                     str(record.backend_key),
@@ -340,6 +410,8 @@ class ConversationStore:
                     record.latest_agent_activity_at,
                     record.latest_agent_activity_sequence,
                     record.automatically_compacted_through_sequence,
+                    record.automatic_compaction_attempted_through_sequence,
+                    record.owner_read_through_sequence,
                     record.created_at,
                 ),
             )
@@ -357,8 +429,40 @@ class ConversationStore:
                 "workspace_folder, role_text, identity_environment_variables, access, "
                 "vendor_session_cursor, composer_catalog, latest_sequence, "
                 "latest_agent_activity_at, latest_agent_activity_sequence, "
-                "automatically_compacted_through_sequence, created_at "
+                "automatically_compacted_through_sequence, "
+                "automatic_compaction_attempted_through_sequence, "
+                "owner_read_through_sequence, "
+                "created_at "
                 "FROM conversations WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        return None if row is None else _conversation_record(row)
+
+    def _advance_owner_read_through_sequence_sync(
+        self, conversation_id: str, through_sequence: int
+    ) -> ConversationRecord | None:
+        if through_sequence < 0:
+            raise ValueError("through_sequence must be non-negative")
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute(
+                    "UPDATE conversations SET owner_read_through_sequence = "
+                    "MAX(owner_read_through_sequence, MIN(?, latest_sequence)) "
+                    "WHERE conversation_id = ?",
+                    (through_sequence, conversation_id),
+                )
+                capture_conversation_attention(conn, conversation_id, self._integer_now())
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+            else:
+                conn.execute("COMMIT")
+            row = conn.execute(
+                "SELECT * FROM conversations WHERE conversation_id = ?",
                 (conversation_id,),
             ).fetchone()
         finally:
@@ -371,6 +475,7 @@ class ConversationStore:
         payload: ConversationEventPayload,
         agent_activity: bool,
         automatic_compaction_confirmed: bool,
+        owner_read_through_sequence: int | None,
     ) -> StoredConversationEvent:
         conn = self._connect()
         try:
@@ -386,9 +491,18 @@ class ConversationStore:
             if automatic_compaction_confirmed:
                 conn.execute(
                     "UPDATE conversations SET automatically_compacted_through_sequence = "
+                    "latest_agent_activity_sequence, "
+                    "automatic_compaction_attempted_through_sequence = "
                     "latest_agent_activity_sequence WHERE conversation_id = ?",
                     (conversation_id,),
                 )
+            if owner_read_through_sequence is not None:
+                conn.execute(
+                    "UPDATE conversations SET owner_read_through_sequence = "
+                    "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
+                    (owner_read_through_sequence, conversation_id),
+                )
+            capture_conversation_attention(conn, conversation_id, stored.created_at)
             _commit_appended_rows(conn, (payload,))
         except BaseException:
             if conn.in_transaction:
@@ -408,7 +522,8 @@ class ConversationStore:
                 "WHERE latest_agent_activity_at IS NOT NULL "
                 "AND latest_agent_activity_at <= ? "
                 "AND latest_agent_activity_at > ? "
-                "AND latest_agent_activity_sequence > automatically_compacted_through_sequence "
+                "AND latest_agent_activity_sequence > "
+                "automatic_compaction_attempted_through_sequence "
                 "ORDER BY latest_agent_activity_at, conversation_id",
                 (due_at_or_before, activity_after),
             ).fetchall()
@@ -422,6 +537,7 @@ class ConversationStore:
         prompt: PromptEventPayload,
         model_change: ModelChangedEventPayload | None,
         extra_prompts: tuple[PromptEventPayload, ...] = (),
+        owner_read_through_sequence: int | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         prompts: tuple[ConversationEventPayload, ...] = (prompt, *extra_prompts)
         payloads: tuple[ConversationEventPayload, ...] = (
@@ -437,6 +553,69 @@ class ConversationStore:
                     "WHERE conversation_id = ?",
                     (model_change.model, model_change.reasoning_effort, conversation_id),
                 )
+            owner_reply_sequences = [
+                event.sequence
+                for event in written
+                if isinstance(event.payload, PromptEventPayload)
+                and event.payload.sender is not None
+                and event.payload.sender.kind is PrincipalKind.owner
+            ]
+            if owner_reply_sequences:
+                read_through = (
+                    max(owner_reply_sequences)
+                    if owner_read_through_sequence is None
+                    else owner_read_through_sequence
+                )
+                conn.execute(
+                    "UPDATE conversations SET owner_read_through_sequence = "
+                    "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
+                    (read_through, conversation_id),
+                )
+            capture_conversation_attention(conn, conversation_id, written[-1].created_at)
+            _commit_appended_rows(conn, payloads)
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+        return written
+
+    def _append_turn_ending_sync(
+        self,
+        conversation_id: str,
+        payloads: tuple[ConversationEventPayload, ...],
+        agent_activity: bool,
+        automatic_compaction_confirmed: bool,
+        automatic_compaction_result: AutomaticCompactionResult | None,
+    ) -> tuple[StoredConversationEvent, ...]:
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            written = self._insert_rows(conn, conversation_id, payloads)
+            ended = written[-1]
+            if agent_activity:
+                conn.execute(
+                    "UPDATE conversations SET latest_agent_activity_at = ?, "
+                    "latest_agent_activity_sequence = ? WHERE conversation_id = ?",
+                    (ended.created_at, ended.sequence, conversation_id),
+                )
+            if automatic_compaction_confirmed:
+                conn.execute(
+                    "UPDATE conversations SET automatically_compacted_through_sequence = "
+                    "latest_agent_activity_sequence, "
+                    "automatic_compaction_attempted_through_sequence = "
+                    "latest_agent_activity_sequence WHERE conversation_id = ?",
+                    (conversation_id,),
+                )
+            elif automatic_compaction_result is AutomaticCompactionResult.not_compacted:
+                conn.execute(
+                    "UPDATE conversations SET "
+                    "automatic_compaction_attempted_through_sequence = "
+                    "latest_agent_activity_sequence WHERE conversation_id = ?",
+                    (conversation_id,),
+                )
+            capture_conversation_attention(conn, conversation_id, ended.created_at)
             _commit_appended_rows(conn, payloads)
         except BaseException:
             if conn.in_transaction:
@@ -548,7 +727,7 @@ class ConversationStore:
                 "WHERE conversation_id=? AND json_extract(payload,'$.sender_message_id')=? "
                 "AND kind IN "
                 "('prompt','prompt_delivery_refused','prompt_delivery_uncertain',"
-                "'prompt_discarded') LIMIT 1",
+                "'prompt_discarded','message_to_owner','proposal_delivery_failed') LIMIT 1",
                 (conversation_id, sender_message_id),
             ).fetchone()
         finally:
@@ -572,6 +751,66 @@ class ConversationStore:
         finally:
             conn.close()
         return {str(row["conversation_id"]): int(row["latest_turn_ended_sequence"]) for row in rows}
+
+    def _owner_read_through_sequences_sync(
+        self, conversation_ids: Collection[str]
+    ) -> dict[str, int]:
+        ids = tuple(dict.fromkeys(conversation_ids))
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT conversation_id, owner_read_through_sequence FROM conversations "
+                f"WHERE conversation_id IN ({placeholders})",
+                ids,
+            ).fetchall()
+        finally:
+            conn.close()
+        return {
+            str(row["conversation_id"]): int(row["owner_read_through_sequence"]) for row in rows
+        }
+
+    def _attention_facts_sync(
+        self, conversation_ids: Collection[str]
+    ) -> dict[str, ConversationAttentionFacts]:
+        ids = tuple(dict.fromkeys(conversation_ids))
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT c.conversation_id, c.owner_read_through_sequence, "
+                "MAX(CASE WHEN e.kind = 'message_to_owner' THEN e.sequence END) "
+                "AS latest_owner_message, "
+                "(SELECT CASE WHEN te.kind = 'turn_ended' "
+                " THEN json_extract(te.payload, '$.ending') ELSE NULL END "
+                " FROM conversation_events te "
+                " WHERE te.conversation_id = c.conversation_id "
+                " AND te.kind IN ('prompt','turn_ended') "
+                " AND te.sequence > COALESCE((SELECT a.through_sequence "
+                " FROM conversation_error_acknowledgements a "
+                " WHERE a.conversation_id = c.conversation_id), 0) "
+                " ORDER BY te.sequence DESC LIMIT 1) AS last_turn_ending "
+                "FROM conversations c LEFT JOIN conversation_events e "
+                "ON e.conversation_id = c.conversation_id "
+                f"WHERE c.conversation_id IN ({placeholders}) GROUP BY c.conversation_id",
+                ids,
+            ).fetchall()
+        finally:
+            conn.close()
+        return {
+            str(row["conversation_id"]): ConversationAttentionFacts(
+                unread_message_to_owner=(
+                    row["latest_owner_message"] is not None
+                    and int(row["latest_owner_message"]) > int(row["owner_read_through_sequence"])
+                ),
+                last_turn_failed=str(row["last_turn_ending"] or "") == "failed",
+            )
+            for row in rows
+        }
 
     def _has_delivered_prompt_sync(self, conversation_id: str) -> bool:
         conn = self._connect()
@@ -717,6 +956,10 @@ def _conversation_record(row: sqlite3.Row) -> ConversationRecord:
         automatically_compacted_through_sequence=int(
             row["automatically_compacted_through_sequence"]
         ),
+        automatic_compaction_attempted_through_sequence=int(
+            row["automatic_compaction_attempted_through_sequence"]
+        ),
+        owner_read_through_sequence=int(row["owner_read_through_sequence"]),
         created_at=int(row["created_at"]),
     )
 

@@ -35,10 +35,11 @@
   import TicketPriorityControl from "../components/TicketPriorityControl.svelte";
   import TicketVerdict from "../components/TicketVerdict.svelte";
   import TicketTroubleNotes from "../components/TicketTroubleNotes.svelte";
-  import FileDocument from "../components/FileDocument.svelte";
+  import ArtifactPreview from "../components/ArtifactPreview.svelte";
+  import ArtifactStrip from "../components/ArtifactStrip.svelte";
+  import { ticketArtifactStripItems } from "../lib/artifactStrip";
   import { isPlainLinkClick } from "../lib/linkClick";
   import {
-    resolvePreview,
     targetFromPreviewHref,
     type ManagedFileTarget
   } from "../lib/filePreview";
@@ -100,17 +101,17 @@
    */
   let seededConversationStateFromStatus = false;
   $effect(() => {
-    const status = ticket.data?.ticket_status;
+    const ownership = ticket.data?.effective_stage_ownership_mode;
     if (
       !ticket.isFetchedAfterMount ||
       !ticket.isSuccess ||
-      status === undefined ||
+      ownership === undefined ||
       seededConversationStateFromStatus
     ) {
       return;
     }
     seededConversationStateFromStatus = true;
-    conversationState = initialTicketConversationState(status);
+    conversationState = initialTicketConversationState(ownership);
   });
 
   /** A click outside the conversation dismisses it to rest. */
@@ -129,8 +130,6 @@
   /** The artifact this screen is showing, when the host does not keep it in an address. */
   let heldFile = $state<ManagedFileTarget | null>(null);
   let shownFile = $derived(onOpenFile ? openFile : heldFile);
-  let shownFileLabel = $derived(shownFile ? resolvePreview(shownFile).label : "");
-  let shownFileIsHtml = $derived(shownFile ? resolvePreview(shownFile).kind === "html" : false);
   let artifactReloadSignal = $state(0);
 
   /** Show a file on this screen, or close the one it is showing.
@@ -148,8 +147,9 @@
     else heldFile = file;
     if (file && conversationState === "opened") conversationState = "peeked";
     if (!file) {
-      whatHadFocus?.focus();
+      const restoreFocus = whatHadFocus;
       whatHadFocus = null;
+      queueMicrotask(() => restoreFocus?.focus());
     }
   }
 
@@ -210,26 +210,6 @@
       });
   });
 
-  /** Say that the person here has replied to this Ticket's worker.
-   *
-   * A Ticket parked on a proposal is waiting for its owner, and a reply is an answer of a
-   * kind: it moves to paired. The server owns which statuses move — this says only that a
-   * reply happened, and says it after the conversation took the message, because a reply
-   * that reached nothing is not a reply.
-   *
-   * This screen is the one place that knows both halves. The conversation system is told
-   * nothing about Tickets, and the send door it offers knows nothing about them either.
-   */
-  async function recordHumanReply(): Promise<void> {
-    try {
-      await mutateJson(`/api/tickets/${stableId}/human-reply`, { method: "POST" });
-    } catch (err) {
-      // The message itself got through. Failing to move the Ticket is worth saying and
-      // not worth taking the reply back for.
-      headerError = err;
-    }
-  }
-
   /** Start this Ticket's conversation, so the first message has somewhere to go.
    *
    * The readiness loop starts one when it has a step to send; this is what happens when a
@@ -279,15 +259,10 @@
     return currentStageOwnershipOverride(detail) === "user";
   }
 
-  function isWaitingForUser(detail: TicketDetail): boolean {
-    return detail.ticket_status === "needs_user";
-  }
-
   function userOwnsCurrentStage(detail: TicketDetail): boolean {
     return (
       detail.effective_stage_ownership_mode === "user" ||
-      hasExplicitCurrentStageUserOverride(detail) ||
-      isWaitingForUser(detail)
+      hasExplicitCurrentStageUserOverride(detail)
     );
   }
 
@@ -336,8 +311,7 @@
     try {
       if (
         userOwnsCurrentStage(detail) &&
-        !hasExplicitCurrentStageUserOverride(detail) &&
-        !isWaitingForUser(detail)
+        !hasExplicitCurrentStageUserOverride(detail)
       ) {
         await saveStageOwner(detail, "worker");
       } else {
@@ -351,8 +325,8 @@
 
   function currentStageRunLabel(detail: TicketDetail): string | null {
     if (detail.blocked || detail.ticket_status === "blocked") return null;
-    if (detail.ticket_status === "awaiting_approval") return "awaiting approval";
-    if (userOwnsCurrentStage(detail)) {
+    if (detail.awaiting_approval) return "awaiting approval";
+    if (detail.assigned) {
       return "you're on it";
     }
     return null;
@@ -446,7 +420,7 @@
             {/if}
           </div>
           <div class="ticket-title-row">
-            <div class="ticket-title">
+            <div class="ticket-title" data-feedback-page-title>
               <InlineEdit
                 value={detail.title}
                 placeholder="Untitled"
@@ -472,7 +446,7 @@
             </ClampedText>
           </div>
           <div class="ticket-operating">
-            {#if detail.stage !== "done" && detail.stage !== "needs_kickoff"}
+            {#if detail.stage !== "done" && detail.stage !== "needs_kickoff" && detail.pending_proposal === null}
               <details class="ticket-leash" bind:this={leashMenu} data-leash>
                 <summary
                   class="ticket-leash-face"
@@ -541,6 +515,9 @@
         </header>
 
         <div class="ticket-col">
+          {#if lc}
+            <ArtifactStrip items={ticketArtifactStripItems(lc.fieldIds, detail.field_values, detail.pending_proposal)} />
+          {/if}
           <TicketVerdict stage={detail.stage} verdict={detail.verdict} onSave={saveVerdict} />
           <TicketTroubleNotes notes={detail.trouble_notes} />
           <div class="fields">
@@ -634,39 +611,13 @@
         </div>
       </main>
       {#if shownFile}
-        <!-- The artifact fills the document's box and is drawn over it. The Ticket keeps
-             its layout and its scroll place underneath, so closing gives back the page
-             the reader left, and the conversation below keeps its own share. -->
-        <aside
-          class="ticket-artifact"
-          data-ticket-artifact
-          aria-label={shownFileLabel}
-          tabindex="-1"
-          bind:this={artifactElement}
-        >
-          <div class="ticket-artifact-bar">
-            <span class="ticket-artifact-name">{shownFileLabel}</span>
-            <div class="ticket-artifact-actions">
-              {#if shownFileIsHtml}
-                <button
-                  type="button"
-                  class="ticket-artifact-action"
-                  data-ticket-artifact-refresh
-                  onclick={() => artifactReloadSignal += 1}
-                >Refresh</button>
-              {/if}
-              <button
-                type="button"
-                class="ticket-artifact-action"
-                data-ticket-artifact-close
-                onclick={() => showFile(null)}
-              >Close</button>
-            </div>
-          </div>
-          <div class="ticket-artifact-body">
-            <FileDocument target={shownFile} reloadSignal={artifactReloadSignal} />
-          </div>
-        </aside>
+        <ArtifactPreview
+          target={shownFile}
+          reloadSignal={artifactReloadSignal}
+          bind:element={artifactElement}
+          onRefresh={() => artifactReloadSignal += 1}
+          onClose={() => showFile(null)}
+        />
       {/if}
       </div>
       <div
@@ -687,7 +638,6 @@
             senderLabel="owner"
             sendMessage={sendToTicketWorker}
             onNewConversation={resetTicketConversation}
-            onMessageAccepted={recordHumanReply}
           />
         </div>
       </div>

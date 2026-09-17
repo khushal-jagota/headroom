@@ -41,11 +41,26 @@ try {
       content: [{ piece: "text", text: words(index) }]
     }))
   );
+  let visibleRows = $state<any[] | null>(null);
   let nextRowIndex = 28;
   let running = $state(false);
   let heldPromptRows = $state<any[]>([]);
   let supportsSteer = $state(false);
   let conversationState = $state<ConversationState>("rest");
+  let lens = $state<"focus" | "full">("focus");
+
+  async function captureSend(content: any[], mode: string, picked: any): Promise<boolean> {
+    (window as any).__sentModes = [...((window as any).__sentModes ?? []), mode];
+    (window as any).__sentRuns = [...((window as any).__sentRuns ?? []), picked];
+    heldPromptRows = [{
+      key: "composer-fallback",
+      heldPromptId: "composer-fallback",
+      content,
+      state: "held",
+      queueReason: picked.model === null ? "steer_refused" : "run_change"
+    }];
+    return true;
+  }
 
   function dismissConversation(): void {
     conversationState = "rest";
@@ -102,7 +117,7 @@ try {
         createdAt: 2_000,
         content: [{ piece: "text", text: "Continue" }],
         senderLabel: "owner",
-        mode: "run_when_free",
+        mode: "queue",
         sentAtUnixMilliseconds: 2_000
       },
       {
@@ -125,8 +140,43 @@ try {
       key: "held-1",
       heldPromptId: "held-1",
       content: [{ piece: "text", text: "waiting guidance" }],
-      state: "queued"
+      state: "held",
+      queueReason: "steer_refused"
     }];
+  };
+  (window as any).__showSettledFocusRestLine = () => {
+    rows = [
+      {
+        key: "settled-prompt",
+        kind: "prompt",
+        sequence: 2_000,
+        createdAt: 3_000,
+        content: [{ piece: "text", text: "finish this" }],
+        senderLabel: "owner",
+        mode: "queue",
+        sentAtUnixMilliseconds: 3_000
+      },
+      {
+        key: "settled-reply",
+        kind: "agent_message",
+        sequence: 2_001,
+        createdAt: 3_001,
+        content: [{ piece: "text", text: "settled reply" }]
+      },
+      {
+        key: "settled-end",
+        kind: "turn_ended",
+        sequence: 2_002,
+        createdAt: 3_002,
+        ending: "completed",
+        errorSummary: null,
+        automaticCompactionResult: null
+      }
+    ];
+    visibleRows = rows.slice(0, -1);
+    lens = "focus";
+    running = false;
+    conversationState = "rest";
   };
 </script>
 
@@ -142,17 +192,26 @@ try {
     <div class="conversation-column">
       <ConversationPane
         bind:conversationState
+        bind:lens
         conversationId="browser-fixture"
         label="Worker"
         conversationExists
         {rows}
+        {visibleRows}
         {running}
         {heldPromptRows}
         {supportsSteer}
+        backendKey="claude"
+        current={{ model: "opus", reasoningEffort: "high" }}
+        models={[
+          { model_id: "opus", display_name: "Opus", enabled: true },
+          { model_id: "sonnet", display_name: "Sonnet", enabled: true,
+            reasoning_effort_options: [] }
+        ]}
+        effortOptions={["high"]}
         outgoingMessages={[]}
         ownSenderLabel="owner"
-        showRunPicker={false}
-        onSend={async () => true}
+        onSend={captureSend}
       />
     </div>
   </section>
@@ -291,6 +350,9 @@ with sync_playwright() as playwright:
     state(page, "peeked")
     assert page.locator(THREAD).is_visible()
     assert page.locator("[data-conversation-rest-bar]").count() == 0
+    send_mode = page.locator("[data-conversation-send-mode]")
+    assert send_mode.input_value() == "steer"
+    assert send_mode.locator("option").all_text_contents() == ["Steer", "Queue", "Send now"]
 
     page.locator(INPUT).fill("the draft stays exactly here")
     page.locator(INPUT).evaluate("box => box.setSelectionRange(9, 9)")
@@ -301,6 +363,20 @@ with sync_playwright() as playwright:
     state(page, "opened")
     assert draft(page) == expected_draft, (draft(page), expected_draft)
     assert page.evaluate("window.__conversationInputSurvived()") is True
+
+    # One shared header control and the F shortcut switch the lens in place. Editable
+    # controls keep ordinary F input, and modified shortcuts do nothing.
+    lens_toggle = page.locator("[data-conversation-lens-toggle]")
+    assert lens_toggle.inner_text() == "Focus"
+    lens_toggle.click()
+    assert lens_toggle.inner_text() == "Full"
+    page.keyboard.press("f")
+    assert lens_toggle.inner_text() == "Focus"
+    page.keyboard.press("Control+f")
+    assert lens_toggle.inner_text() == "Focus"
+    page.locator(INPUT).press("f")
+    assert lens_toggle.inner_text() == "Focus"
+    expected_draft = draft(page)
 
     # Ticket content dismisses opened in one step without replacing or clearing the draft.
     page.locator("[data-ticket-behind]").click()
@@ -392,6 +468,25 @@ with sync_playwright() as playwright:
     assert round(strip_box["height"]) == 34
     assert round(composer_box["y"] - strip_box["y"] - strip_box["height"]) == 8
 
+    # The composer defaults to steer, and its queued fallback reason reaches the held row.
+    page.locator(INPUT).fill("default steer")
+    page.locator(INPUT).press("Enter")
+    page.wait_for_function("window.__sentModes?.length === 1")
+    assert page.evaluate("window.__sentModes") == ["steer"]
+    page.locator('[data-conversation-held-row="composer-fallback"]').wait_for()
+    assert "turn did not accept steering" in page.locator("[data-conversation-held-stack]").inner_text()
+
+    # A run change remains attached to the default steer send. The server-visible
+    # fallback is a queued message that explains it is waiting to apply that change.
+    page.locator("[data-conversation-picker-model] [data-conversation-picker-trigger]").click()
+    page.locator('[data-conversation-picker-choice="sonnet"]').click()
+    page.locator(INPUT).fill("steer with a run change")
+    page.locator(INPUT).press("Enter")
+    page.wait_for_function("window.__sentModes?.length === 2")
+    assert page.evaluate("window.__sentModes") == ["steer", "steer"]
+    assert page.evaluate("window.__sentRuns[1].model") == "sonnet"
+    assert "apply the run change" in page.locator("[data-conversation-held-stack]").inner_text()
+
     # The server capability controls one provider-neutral steering action.
     page.evaluate("window.__showHeldPrompt(false)")
     page.locator('[data-conversation-held-row="held-1"]').wait_for()
@@ -401,6 +496,13 @@ with sync_playwright() as playwright:
     steer.wait_for()
     assert steer.inner_text() == "Steer"
     assert "Hermes" not in page.locator("[data-conversation-held-stack]").inner_text()
+
+    # A completed owner turn uses the hidden ending for structure. The collapsed Focus
+    # line shows the reply without a live working timer.
+    page.evaluate("window.__showSettledFocusRestLine()")
+    state(page, "rest")
+    assert page.locator("[data-conversation-rest-line]").inner_text() == "settled reply"
+    assert page.locator("[data-conversation-rest-bar] .c2-rest-working").count() == 0
 
     browser.close()
 

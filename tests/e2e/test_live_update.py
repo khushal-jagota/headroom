@@ -108,10 +108,10 @@ def test_a_change_reaches_the_open_board_without_a_reload(
         context_factory(), server, "#/workspace?view=tickets", 'section[data-screen="workspace"]'
     )
     card = f'[data-card][data-ticket-id="{ticket_id}"]'
-    # The Ticket waits on its kickoff, and that group arrives shut. Whether it does is
-    # the rail's choice, so this test opens the group rather than assume either way.
+    # The kickoff proposal belongs to the canonical owner-approval group. Whether that
+    # group arrives open is the rail's choice, so this test opens it explicitly.
     page.wait_for_selector(card, state="attached", timeout=WAIT_MS)
-    open_status_group(page, "waiting_for_kickoff")
+    open_status_group(page, "awaiting_approval")
     assert "Board card before the change" in page.inner_text(card)
 
     _mark_page(page)

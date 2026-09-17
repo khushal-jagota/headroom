@@ -174,6 +174,7 @@
   } = $props();
 
   let text = $state("");
+  let deliveryMode = $state<PromptDeliveryMode>("steer");
   let runSelection = $state<ComposerRunSelection>({
     pickedBackend: null,
     pickedModel: null,
@@ -252,7 +253,8 @@
     startsOnReasoningEffort,
     inputDisabled,
     hasSendableContent: text.trim() !== "" || pendingImages.length > 0 || pendingFiles.length > 0,
-    sendsInFlight
+    sendsInFlight,
+    deliveryMode
   });
   let runControlsView = $derived(resolveComposerRunControls(runControlsInput));
   /** A retained page must not reload while this composer owns work or a user decision. */
@@ -267,6 +269,7 @@
     || runSelection.pickedBackend !== null
     || runSelection.pickedModel !== null
     || runSelection.pickedReasoningEffort !== null
+    || deliveryMode !== "steer"
   );
 
   function publishCompositionState(active: boolean): void {
@@ -386,8 +389,7 @@
     if ((!trimmed && pendingImages.length === 0 && pendingFiles.length === 0) || inputDisabled) return;
     const attempt = beginComposerSend(
       currentComposerDraft(),
-      runControlsView.carriedRunValues,
-      "run_when_free"
+      runControlsView.carriedRunValues
     );
     applyComposerDraft(attempt.draftAfterSend);
     cursorAt = 0;
@@ -398,7 +400,7 @@
     try {
       const delivered = await onSend(
         [...attempt.content],
-        "run_when_free",
+        deliveryMode,
         attempt.carriedRunValues
       );
       if (!delivered) await restoreRefusedAttempt(attempt);
@@ -416,6 +418,7 @@
       intent: "choose_reasoning_effort",
       reasoningEffort
     }),
+    chooseDeliveryMode: (mode) => { deliveryMode = mode; },
     send: () => void send(),
     stop: () => onStop?.()
   };

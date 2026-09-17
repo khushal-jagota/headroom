@@ -1,8 +1,8 @@
 """The text Panels itself sends into a Ticket's conversation.
 
-Two openers live here. One asks the worker to take the Ticket's next step; the other
-carries the owner's guidance after a proposal was sent back. Nothing here reads a
-database, a clock or a conversation — a Ticket and its Worker type go in, text comes out.
+Two lifecycle prompts live here. One asks the worker to take the Ticket's next step; the
+other records its proposal rejection before the decider's separately attributed comment
+arrives. Nothing here reads a database, a clock or a conversation.
 """
 
 from __future__ import annotations
@@ -12,8 +12,8 @@ from typing import Final
 from planner.tickets.contracts import StageOwnershipMode, Ticket
 from planner.worker_types.contracts import WorkerTypeDefinition
 
-REVISION_GUIDANCE_PREFIX: Final = (
-    "The user rejected your proposal and provided the following guidance:"
+PROPOSAL_RETURNED_FOR_REVISION: Final = (
+    "Your proposal was rejected and returned for revision. The decider's comment follows."
 )
 
 
@@ -56,6 +56,6 @@ def worker_step_prompt(
     )
 
 
-def revision_guidance_prompt(guidance: str) -> str:
-    """Carry the owner's guidance back to the worker whose proposal was returned."""
-    return f"{REVISION_GUIDANCE_PREFIX}\n\n{guidance}"
+def proposal_returned_for_revision_prompt() -> str:
+    """Tell the worker the lifecycle transition separately from anyone's comment."""
+    return PROPOSAL_RETURNED_FOR_REVISION

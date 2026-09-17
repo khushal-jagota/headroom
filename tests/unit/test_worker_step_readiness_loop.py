@@ -18,6 +18,7 @@ from time import monotonic, sleep
 from typing import cast
 
 import pytest
+from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.ticket_progress import advance_ticket
 
 from planner.conversation.contracts import (
@@ -83,7 +84,7 @@ class _World:
                 conn,
                 worker_type="coding",
                 title=title,
-                actor="human",
+                principal=OWNER_PRINCIPAL,
                 now=0,
                 title_max_chars=200,
             )
@@ -91,10 +92,11 @@ class _World:
                 conn,
                 ticket.id,
                 field="kickoff",
-                actor="human",
+                principal=OWNER_PRINCIPAL,
                 now=0,
                 next_ceiling="none",
                 at_cap=AtCap.propose,
+                next_holder=OWNER_PRINCIPAL,
             )
             if ownership_mode is not None:
                 tickets_data.set_stage_ownership(
@@ -302,6 +304,32 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     assert world.skill_bindings() == []
 
 
+def test_a_refused_paired_opener_rearms_the_stage(world: _World) -> None:
+    ticket_id = world.ready_ticket(
+        ownership_mode=StageOwnershipMode.paired,
+        conversation_id="conv-paired-refuse",
+    )
+    world.start_conversation("conv-paired-refuse")
+    world.conversations.arm_backend_write_failure("conv-paired-refuse")
+
+    assert world.start_step(ticket_id) is False
+    assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
+    with world.connect() as conn:
+        assert (
+            conn.execute(
+                "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ?",
+                (ticket_id,),
+            ).fetchone()
+            is None
+        )
+        assert worker_step_readiness.is_ready_for_worker_step(
+            conn,
+            tickets_data.read_ticket(conn, ticket_id),
+            planning_day_id=TODAY_DAY_ID,
+            worker_type_definition=configured_worker_type_registry().require("coding"),
+        )
+
+
 def test_a_queued_send_counts_as_a_success(world: _World) -> None:
     # The occupancy pre-check is the loop's own; a collision that slips past it queues,
     # and a held message is delivered work, not a failure.
@@ -377,7 +405,7 @@ class _QueueingConversationSystem:
         text: str,
         *,
         sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
@@ -489,7 +517,9 @@ def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _Worl
     world.start_conversation("conv-opener")
     guidance = "Keep the owner’s boundary.\n\n  Exact whitespace stays.  "
     with world.connect() as conn:
-        tickets_data.replace_guidance(conn, ticket_id, body=guidance, actor="human", now=0)
+        tickets_data.replace_guidance(
+            conn, ticket_id, body=guidance, principal=OWNER_PRINCIPAL, now=0
+        )
     world.add_pending_context(ticket_id, "ticket_changed", "The user renamed the ticket.")
 
     assert world.start_step(ticket_id) is True
@@ -497,7 +527,7 @@ def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _Worl
     writes = world.conversations.backend_prompt_writes("conv-opener")
     assert len(writes) == 1
     assert writes[0].sender_label == "loop"
-    assert writes[0].mode is PromptDeliveryMode.run_when_free
+    assert writes[0].mode is PromptDeliveryMode.queue
     sender_message_id = world.conversations.observations("conv-opener")[-1].sender_message_id
     assert sender_message_id is not None
     assert f"Work ticket {ticket_id} — Ship it" in writes[0].text
@@ -511,7 +541,7 @@ def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _Worl
     assert {row["sender_message_id"] for row in bindings} == {sender_message_id}
 
 
-def test_a_paired_owned_stage_departs_at_paired_and_gets_the_paired_opener(
+def test_a_paired_owned_stage_rests_empty_after_its_single_paired_opener(
     world: _World,
 ) -> None:
     ticket_id = world.ready_ticket(
@@ -523,10 +553,12 @@ def test_a_paired_owned_stage_departs_at_paired_and_gets_the_paired_opener(
 
     assert world.start_step(ticket_id) is True
 
-    assert world.ticket(ticket_id).ticket_status is TicketStatus.paired
+    assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
     text = world.conversations.backend_prompt_writes("conv-paired")[0].text
     assert "open the paired discussion for the 'success' field" in text
     assert "Stage owner: paired" in text
+    assert world.start_step(ticket_id) is False
+    assert len(world.conversations.backend_prompt_writes("conv-paired")) == 1
 
 
 def test_a_ticket_that_is_not_ready_is_never_sent_to(world: _World) -> None:
@@ -574,7 +606,7 @@ class _HeldAtTheOccupancyCheck:
         text: str,
         *,
         sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
@@ -664,7 +696,9 @@ def test_one_closeout_lane_takes_one_ticket_per_pass(world: _World) -> None:
     second = world.ready_ticket(title="Closeout two")
     with world.connect() as conn:
         for ticket_id in (first, second):
-            advance_ticket(conn, ticket_id, new_stage="needs_closeout", actor="human", now=0)
+            advance_ticket(
+                conn, ticket_id, new_stage="needs_closeout", principal=OWNER_PRINCIPAL, now=0
+            )
         conn.execute("UPDATE tickets SET updated_at = 10 WHERE id = ?", (first,))
         conn.execute("UPDATE tickets SET updated_at = 20 WHERE id = ?", (second,))
     readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)

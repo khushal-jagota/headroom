@@ -6,30 +6,24 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from planner.conversation.contracts import PromptDeliveryFate
+from planner.core.contracts import Principal
 
 
-class MessageTargetType(StrEnum):
-    chief = "chief"
-    ticket = "ticket"
-    sprint_item = "sprint_item"
-    agent = "agent"
+class MessageDeliveryMode(StrEnum):
+    """The public Send Message choices."""
 
-
-@dataclass(frozen=True, slots=True)
-class MessageTarget:
-    target_type: MessageTargetType
-    target_id: str | None = None
+    queue = "queue"
+    steer = "steer"
+    send_now = "send_now"
 
 
 @dataclass(frozen=True, slots=True)
-class ResolvedMessageDestination:
-    destination_type: str
-    destination_id: str
+class MessageRecordedToOwner:
+    """The addressed row landed and no backend received it."""
 
 
 @dataclass(frozen=True, slots=True)
 class MessageDeliveryResult:
-    target: MessageTarget
-    resolved_destination: ResolvedMessageDestination
+    recipient: Principal
     conversation_id: str | None
-    fate: PromptDeliveryFate
+    fate: PromptDeliveryFate | MessageRecordedToOwner

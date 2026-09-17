@@ -12,12 +12,14 @@
  */
 
 import type {
+  AutomaticCompactionResult,
   ConversationTurnEnding,
   MessagePiece,
   PermissionAskOption,
   PlanEntry,
   PromptDeliveryMode,
   PromptDeliveryRefusalReason,
+  Principal,
   UserInputAnswers,
   UserInputQuestion
 } from "./wire";
@@ -66,6 +68,14 @@ export type TranscriptRow =
     }
   | {
       key: string;
+      kind: "proposal_delivery_failed";
+      sequence: number;
+      createdAt: number;
+      attemptCount: number;
+      lastError: string;
+    }
+  | {
+      key: string;
       kind: "prompt_discarded";
       sequence: number;
       createdAt: number;
@@ -78,6 +88,13 @@ export type TranscriptRow =
       sequence: number;
       createdAt: number;
       content: readonly MessagePiece[];
+    }
+  | {
+      key: string;
+      kind: "explicit_reply_missing";
+      sequence: number;
+      createdAt: number;
+      promptSender: Principal;
     }
   | {
       key: string;
@@ -154,6 +171,7 @@ export type TranscriptRow =
       createdAt: number;
       ending: ConversationTurnEnding;
       errorSummary: string | null;
+      automaticCompactionResult: AutomaticCompactionResult | null;
     }
   /** The agent's plan as of this row. It is never drawn as a line of its own — the plan
    *  strip is its rendering — so it exists here only to reach the turn it belongs to. */
@@ -185,6 +203,8 @@ export function refusalSentence(reason: PromptDeliveryRefusalReason): string {
 /** What a message that was taken back before anything received it says about itself. The
  *  thread says it beside the message, and the rest line says it on its own. */
 export const PROMPT_DISCARDED_SENTENCE = "discarded without being delivered";
+export const PROPOSAL_DELIVERY_FAILED_SENTENCE = "proposal alert could not reach its holder";
+export const AUTOMATIC_COMPACTION_NOT_CONFIRMED_SENTENCE = "context was not compacted";
 
 const TURN_ENDING_SENTENCES: Record<ConversationTurnEnding, string> = {
   completed: "turn complete",
@@ -304,6 +324,16 @@ export function transcriptRows(
           senderLabel: event.payload.sender_label
         });
         break;
+      case "proposal_delivery_failed":
+        rows.push({
+          key: `e${sequence}`,
+          kind: "proposal_delivery_failed",
+          sequence,
+          createdAt,
+          attemptCount: event.payload.attempt_count,
+          lastError: event.payload.last_error
+        });
+        break;
       case "prompt_discarded":
         rows.push({
           key: `e${sequence}`,
@@ -315,12 +345,22 @@ export function transcriptRows(
         });
         break;
       case "agent_message":
+      case "message_to_owner":
         rows.push({
           key: `e${sequence}`,
           kind: "agent_message",
           sequence,
           createdAt,
           content: messageContentOf(event.payload)
+        });
+        break;
+      case "explicit_reply_missing":
+        rows.push({
+          key: `e${sequence}`,
+          kind: "explicit_reply_missing",
+          sequence,
+          createdAt,
+          promptSender: event.payload.prompt_sender
         });
         break;
       case "tool_call_started":
@@ -507,7 +547,8 @@ export function transcriptRows(
           sequence,
           createdAt,
           ending: event.payload.ending,
-          errorSummary: event.payload.error_summary
+          errorSummary: event.payload.error_summary,
+          automaticCompactionResult: event.payload.automatic_compaction_result ?? null
         });
         break;
     }
@@ -545,6 +586,19 @@ export function transcriptRows(
   }
 
   return rows;
+}
+
+export function principalLabel(principal: Principal): string {
+  switch (principal.kind) {
+    case "owner": return "owner";
+    case "chief": return "Chief";
+    case "ticket": return `Ticket ${principal.id}`;
+    case "sprint_item": return `Sprint Item ${principal.id}`;
+  }
+}
+
+export function explicitReplyMissingSentence(principal: Principal): string {
+  return `No explicit message was sent to ${principalLabel(principal)}.`;
 }
 
 function newestCreatedAt(feed: ConversationFeed): number {

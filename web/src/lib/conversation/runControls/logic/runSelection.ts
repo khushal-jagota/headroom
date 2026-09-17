@@ -82,12 +82,17 @@ function submitProjection(
   input: ComposerRunControlsInput
 ): ComposerRunControlsView["submit"] {
   const sending = input.sendsInFlight > 0 && !input.running;
+  const mode = input.deliveryMode ?? "steer";
   return {
     active: input.hasSendableContent,
     sending,
     disabled: input.inputDisabled || !input.hasSendableContent,
-    title: sending ? "On its way" : input.running ? "Queue this message" : "Send",
-    ariaLabel: sending ? "On its way" : input.running ? "Queue this message" : "Send"
+    title: sending ? "On its way" : mode === "steer"
+      ? "Steer this message"
+      : mode === "send_now" ? "Send this message now" : "Queue this message",
+    ariaLabel: sending ? "On its way" : mode === "steer"
+      ? "Steer this message"
+      : mode === "send_now" ? "Send this message now" : "Queue this message"
   };
 }
 
@@ -154,7 +159,8 @@ export function resolveComposerRunControls(
       backendEffortOptions: catalog.effortOptions
     },
     submit: submitProjection(input),
-    showStop: input.running
+    showStop: input.running,
+    deliveryMode: input.deliveryMode ?? "steer"
   };
 }
 

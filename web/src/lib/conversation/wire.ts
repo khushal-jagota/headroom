@@ -25,16 +25,16 @@ export const CONVERSATION_BACKEND_KEYS: readonly ConversationBackendKey[] = [
   "claude"
 ];
 
-/** Steering is a per-backend fact the server states, not a runtime negotiation. */
-export const BACKEND_KEYS_SUPPORTING_STEER: readonly ConversationBackendKey[] = ["hermes"];
+export type PromptDeliveryMode = "queue" | "send_now" | "steer";
 
-export function backendSupportsSteer(backendKey: ConversationBackendKey | null): boolean {
-  return backendKey !== null && BACKEND_KEYS_SUPPORTING_STEER.includes(backendKey);
-}
-
-export type PromptDeliveryMode = "run_when_free" | "send_now" | "steer";
+export type PromptQueueReason =
+  | "requested"
+  | "attachment"
+  | "run_change"
+  | "steer_refused";
 
 export type ConversationTurnEnding = "completed" | "failed" | "interrupted";
+export type AutomaticCompactionResult = "not_compacted";
 
 export type ToolCallStatus = "completed" | "failed";
 
@@ -76,6 +76,16 @@ export type MessageContent = MessagePiece[];
  * rewritten and an ordinary row never grows. Everything else is stored under `content`.
  */
 export type StoredMessageContent = { text: string } | { content: MessagePiece[] };
+
+export type Principal = {
+  kind: "owner" | "chief" | "sprint_item" | "ticket";
+  id: string;
+};
+
+type AddressedMessageFields = {
+  sender?: Principal;
+  recipient?: Principal;
+};
 
 /** Either stored shape, read as the pieces the message is made of.
  *
@@ -164,6 +174,9 @@ export type HeldPrompt = StoredMessageContent & {
   sender_message_id?: string | null;
   sender_label: string;
   sent_at_unix_milliseconds: number;
+  sender?: Principal | null;
+  recipient?: Principal | null;
+  queue_reason: PromptQueueReason;
 };
 
 /** What a conversation is, what it is doing, and what it is waiting on. */
@@ -178,6 +191,7 @@ export type ConversationView = {
   role_text: string | null;
   identity_environment_variable_names: string[];
   latest_sequence: number;
+  owner_read_through_sequence: number;
   is_running: boolean;
   held_prompts: HeldPrompt[];
   pending_permission_ask: PendingPermissionAsk | null;
@@ -214,6 +228,7 @@ export type ConversationEvent =
         sender_label: string;
         mode: PromptDeliveryMode;
       } & SenderMintedPromptFields
+        & AddressedMessageFields
     >
   | Row<
       "prompt_delivery_refused",
@@ -222,7 +237,7 @@ export type ConversationEvent =
         mode: PromptDeliveryMode;
         refusal_reason: PromptDeliveryRefusalReason;
         sender_message_id?: string;
-      }
+      } & AddressedMessageFields
     >
   | Row<
       "prompt_delivery_uncertain",
@@ -230,13 +245,27 @@ export type ConversationEvent =
         sender_label: string;
         mode: PromptDeliveryMode;
         sender_message_id?: string;
-      }
+      } & AddressedMessageFields
+    >
+  | Row<
+      "proposal_delivery_failed",
+      { attempt_count: number; last_error: string; sender_message_id: string }
     >
   | Row<
       "prompt_discarded",
       StoredMessageContent & { sender_label: string; sender_message_id?: string }
+        & AddressedMessageFields
+    >
+  | Row<
+      "message_to_owner",
+      StoredMessageContent & {
+        sender_label: string;
+        sender: Principal;
+        recipient: Principal;
+      } & SenderMintedPromptFields
     >
   | Row<"agent_message", StoredMessageContent>
+  | Row<"explicit_reply_missing", { prompt_sender: Principal }>
   | Row<
       "tool_call_started",
       { tool_call_id: string; title: string; tool_kind: string; detail: string | null }
@@ -286,7 +315,14 @@ export type ConversationEvent =
   /** The agent's plan as it stands now. Each row is the whole plan, not a change to it,
    *  so the newest one is the plan and the ones before it are history. */
   | Row<"plan_updated", { entries: PlanEntry[] }>
-  | Row<"turn_ended", { ending: ConversationTurnEnding; error_summary: string | null }>;
+  | Row<
+      "turn_ended",
+      {
+        ending: ConversationTurnEnding;
+        error_summary: string | null;
+        automatic_compaction_result?: AutomaticCompactionResult;
+      }
+    >;
 
 export type ConversationEventKind = ConversationEvent["kind"];
 
@@ -534,6 +570,17 @@ export function startConversation(body: StartConversationBody): Promise<Conversa
 
 export function readConversation(conversationId: string): Promise<ConversationView> {
   return request<ConversationView>(`/conversations/${encodeURIComponent(conversationId)}`);
+}
+
+export async function advanceOwnerRead(
+  conversationId: string,
+  throughSequence: number
+): Promise<number> {
+  const answer = await request<{ owner_read_through_sequence: number }>(
+    `/conversations/${encodeURIComponent(conversationId)}/owner-read`,
+    postJson({ through_sequence: throughSequence })
+  );
+  return answer.owner_read_through_sequence;
 }
 
 export async function readEventsAfter(

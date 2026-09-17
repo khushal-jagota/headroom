@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from planner.conversation import storage as conversation_storage
 from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
@@ -23,10 +24,13 @@ from planner.conversation.contracts import (
 from planner.conversation.events import (
     CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION,
     AgentMessageEventPayload,
+    AutomaticCompactionResult,
     ContextCompactedEventPayload,
     ConversationEventKind,
     ConversationEventPayload,
     ConversationTurnEnding,
+    ExplicitReplyMissingEventPayload,
+    MessageToOwnerEventPayload,
     ModelChangedEventPayload,
     PermissionAnsweredEventPayload,
     PermissionAskedEventPayload,
@@ -38,6 +42,7 @@ from planner.conversation.events import (
     PromptDeliveryUncertainEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
+    ProposalDeliveryFailedEventPayload,
     TokenUsageEventPayload,
     ToolCallFinishedEventPayload,
     ToolCallStartedEventPayload,
@@ -64,17 +69,18 @@ from planner.conversation.storage import (
     ConversationStore,
 )
 from planner.core import change_signal
+from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 
 A_PROMPT = PromptEventPayload(
     content=text_message_content("hello"),
     sender_label="owner",
-    mode=PromptDeliveryMode.run_when_free,
+    mode=PromptDeliveryMode.queue,
 )
 A_REFUSED_DELIVERY = PromptDeliveryRefusedEventPayload(
     content=text_message_content("held"),
     sender_label="automatic-loop",
-    mode=PromptDeliveryMode.run_when_free,
+    mode=PromptDeliveryMode.queue,
     refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed,
 )
 A_UNCERTAIN_DELIVERY = PromptDeliveryUncertainEventPayload(
@@ -91,8 +97,20 @@ EVERY_PAYLOAD: tuple[ConversationEventPayload, ...] = (
     A_PROMPT,
     A_REFUSED_DELIVERY,
     A_UNCERTAIN_DELIVERY,
+    ProposalDeliveryFailedEventPayload(
+        attempt_count=10,
+        last_error="write_to_backend_failed",
+        sender_message_id="proposal-failure-1",
+    ),
     PromptDiscardedEventPayload(content=text_message_content("never ran"), sender_label="owner"),
+    MessageToOwnerEventPayload(
+        content=text_message_content("status"),
+        sender=Principal(PrincipalKind.ticket, "t_one"),
+        recipient=OWNER_PRINCIPAL,
+        sender_label="Ticket t_one",
+    ),
     AN_AGENT_MESSAGE,
+    ExplicitReplyMissingEventPayload(prompt_sender=OWNER_PRINCIPAL),
     ToolCallStartedEventPayload(
         tool_call_id="call-1", title="Read file", tool_kind="read", detail="/tmp/x"
     ),
@@ -182,20 +200,32 @@ def test_every_payload_survives_the_round_trip_through_its_stored_text() -> None
         assert conversation_event_payload_from_canonical_json(kind, stored) == payload
 
 
+def test_legacy_run_when_free_rows_decode_as_queue() -> None:
+    decoded = conversation_event_payload_from_canonical_json(
+        ConversationEventKind.prompt,
+        '{"mode":"run_when_free","sender_label":"owner","text":"old"}',
+    )
+
+    assert decoded == PromptEventPayload(
+        content=text_message_content("old"),
+        sender_label="owner",
+        mode=PromptDeliveryMode.queue,
+    )
+
+
 def test_what_a_sender_minted_is_stored_and_read_back_exactly() -> None:
     """The sender's id and instant are kept as given, and survive the round trip."""
     minted = PromptEventPayload(
         content=text_message_content("go"),
         sender_label="owner",
-        mode=PromptDeliveryMode.run_when_free,
+        mode=PromptDeliveryMode.queue,
         sender_message_id="m-1",
         sent_at_unix_milliseconds=1_700_000_000_123,
     )
-
     stored = conversation_event_payload_to_canonical_json(minted)
 
     assert stored == (
-        '{"mode":"run_when_free","sender_label":"owner","sender_message_id":"m-1",'
+        '{"mode":"queue","sender_label":"owner","sender_message_id":"m-1",'
         '"sent_at_unix_milliseconds":1700000000123,"text":"go"}'
     )
     assert (
@@ -204,19 +234,43 @@ def test_what_a_sender_minted_is_stored_and_read_back_exactly() -> None:
     )
 
 
+def test_addressed_prompts_are_new_and_legacy_prompts_still_decode() -> None:
+    sender = Principal(PrincipalKind.ticket, "t_one")
+    addressed = PromptEventPayload(
+        content=text_message_content("go"),
+        sender_label="Ticket t_one",
+        mode=PromptDeliveryMode.queue,
+        sender=sender,
+        recipient=OWNER_PRINCIPAL,
+    )
+    stored = conversation_event_payload_to_canonical_json(addressed)
+    assert '"sender":{"id":"t_one","kind":"ticket"}' in stored
+    assert '"recipient":{"id":"owner","kind":"owner"}' in stored
+    assert (
+        conversation_event_payload_from_canonical_json(ConversationEventKind.prompt, stored)
+        == addressed
+    )
+
+    legacy = '{"mode":"run_when_free","sender_label":"owner","text":"old"}'
+    decoded = conversation_event_payload_from_canonical_json(ConversationEventKind.prompt, legacy)
+    assert isinstance(decoded, PromptEventPayload)
+    assert decoded.sender is None
+    assert decoded.recipient is None
+
+
 def test_a_sent_message_carries_its_id_into_whichever_row_it_becomes() -> None:
     """A sender can recognise its message in every durable delivery outcome."""
     for payload in (
         PromptEventPayload(
             content=text_message_content("go"),
             sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
+            mode=PromptDeliveryMode.queue,
             sender_message_id="m-1",
         ),
         PromptDeliveryRefusedEventPayload(
             content=text_message_content("go"),
             sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
+            mode=PromptDeliveryMode.queue,
             refusal_reason=PromptDeliveryRefusalReason.backend_did_not_start,
             sender_message_id="m-1",
         ),
@@ -272,6 +326,133 @@ def test_a_conversation_is_read_back_as_it_was_written(store: ConversationStore)
         # The row can answer for the start request that made it, which is what a child
         # spawned long afterwards is started from.
         assert read.resolved_start() == resolved
+
+    asyncio.run(exercise())
+
+
+def test_owner_read_position_is_server_side_monotonic_and_bounded(
+    store: ConversationStore,
+) -> None:
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        await store.append_event("c", AN_AGENT_MESSAGE)
+        advanced = await store.advance_owner_read_through_sequence("c", 1)
+        assert advanced is not None
+        assert advanced.owner_read_through_sequence == 1
+
+        stale = await store.advance_owner_read_through_sequence("c", 0)
+        assert stale is not None
+        assert stale.owner_read_through_sequence == 1
+
+        oversized = await store.advance_owner_read_through_sequence("c", 999)
+        assert oversized is not None
+        assert oversized.owner_read_through_sequence == 1
+        assert await store.advance_owner_read_through_sequence("missing", 1) is None
+
+    asyncio.run(exercise())
+
+
+def test_owner_read_position_and_attention_state_share_one_immediate_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "read-attention-transaction.db"
+    schema_connection = connect(str(db_path))
+    create_schema(schema_connection)
+    schema_connection.close()
+    store = ConversationStore(str(db_path), integer_now=lambda: 1_700_000_000)
+
+    async def prepare() -> None:
+        await store.create_conversation(_resolved())
+        link = connect(str(db_path))
+        link.execute(
+            "INSERT INTO agents(agent_key, conversation_id) VALUES ('chief_of_staff', 'c')"
+        )
+        link.close()
+        await store.append_event(
+            "c",
+            MessageToOwnerEventPayload(
+                content=text_message_content("status"),
+                sender=Principal(PrincipalKind.chief, "chief"),
+                recipient=OWNER_PRINCIPAL,
+                sender_label="Chief of Staff",
+            ),
+        )
+
+    asyncio.run(prepare())
+    trace: list[str] = []
+    real_connect = connect
+
+    def traced_connect(path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
+        connection = real_connect(path, busy_timeout_ms)
+        connection.set_trace_callback(trace.append)
+        return connection
+
+    monkeypatch.setattr(conversation_storage, "connect", traced_connect)
+    asyncio.run(store.advance_owner_read_through_sequence("c", 1))
+
+    statements = [statement.strip().upper() for statement in trace]
+    assert statements.count("BEGIN IMMEDIATE") == 1
+    begin = statements.index("BEGIN IMMEDIATE")
+    commit = statements.index("COMMIT")
+    transaction = statements[begin:commit]
+    assert any(
+        statement.startswith("UPDATE CONVERSATIONS SET OWNER_READ")
+        for statement in transaction
+    )
+    assert any(
+        statement.startswith("INSERT INTO NOTIFICATION_ATTENTION_STATE")
+        for statement in transaction
+    )
+
+
+def test_an_owner_reply_advances_read_in_the_prompt_transaction(
+    store: ConversationStore,
+) -> None:
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        await store.append_event("c", AN_AGENT_MESSAGE)
+        await store.append_delivered_prompt(
+            "c",
+            prompt=PromptEventPayload(
+                content=text_message_content("reply"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+                sender=OWNER_PRINCIPAL,
+                recipient=Principal(PrincipalKind.ticket, "t_one"),
+            ),
+            model_change=None,
+        )
+        record = await store.read_conversation("c")
+        assert record is not None
+        assert record.owner_read_through_sequence == record.latest_sequence == 2
+
+    asyncio.run(exercise())
+
+
+def test_an_owner_reply_can_credit_only_its_earlier_admission_position(
+    store: ConversationStore,
+) -> None:
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        await store.append_event("c", AN_AGENT_MESSAGE)
+        await store.append_event("c", AN_AGENT_MESSAGE)
+        await store.append_delivered_prompt(
+            "c",
+            prompt=PromptEventPayload(
+                content=text_message_content("queued earlier"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+                sender=OWNER_PRINCIPAL,
+                recipient=Principal(PrincipalKind.ticket, "t_one"),
+            ),
+            model_change=None,
+            owner_read_through_sequence=1,
+        )
+
+        record = await store.read_conversation("c")
+        assert record is not None
+        assert record.latest_sequence == 3
+        assert record.owner_read_through_sequence == 1
 
     asyncio.run(exercise())
 
@@ -415,9 +596,7 @@ def test_a_delivery_carrying_a_change_writes_both_rows_and_moves_the_conversatio
         written = await store.append_delivered_prompt(
             "c",
             prompt=A_PROMPT,
-            model_change=ModelChangedEventPayload(
-                model="second-model", reasoning_effort="high"
-            ),
+            model_change=ModelChangedEventPayload(model="second-model", reasoning_effort="high"),
         )
 
         # The change is written before the prompt, because it is what the prompt ran under.
@@ -458,9 +637,7 @@ def test_a_delivery_that_cannot_be_written_leaves_no_part_of_itself_behind(
             await store.append_delivered_prompt(
                 "c",
                 prompt=A_PROMPT,
-                model_change=ModelChangedEventPayload(
-                    model="never-model", reasoning_effort=None
-                ),
+                model_change=ModelChangedEventPayload(model="never-model", reasoning_effort=None),
             )
 
         read = await store.read_conversation("c")
@@ -471,8 +648,7 @@ def test_a_delivery_that_cannot_be_written_leaves_no_part_of_itself_behind(
         # Sequence 2 is empty: the change row went in and came back out again with the
         # prompt row that could not follow it. Only the squatter at 3 is left.
         assert [
-            (event.sequence, str(event.kind))
-            for event in await store.read_events_after("c", 0)
+            (event.sequence, str(event.kind)) for event in await store.read_events_after("c", 0)
         ] == [(1, "prompt"), (3, "agent_message")]
 
     asyncio.run(exercise())
@@ -497,6 +673,65 @@ def test_rows_are_numbered_from_one_and_move_the_conversations_marker(
         assert read.latest_sequence == 2
 
     asyncio.run(exercise())
+
+
+def test_turn_settlement_moves_the_matching_automatic_compaction_markers(
+    store: ConversationStore,
+) -> None:
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        activity = await store.append_event("c", AN_AGENT_MESSAGE, agent_activity=True)
+
+        await store.append_turn_ending(
+            "c",
+            (
+                TurnEndedEventPayload(
+                    ending=ConversationTurnEnding.completed,
+                    automatic_compaction_result=AutomaticCompactionResult.not_compacted,
+                ),
+            ),
+            agent_activity=False,
+            automatic_compaction_confirmed=False,
+            automatic_compaction_result=AutomaticCompactionResult.not_compacted,
+        )
+        not_compacted = await store.read_conversation("c")
+        assert not_compacted is not None
+        assert not_compacted.automatically_compacted_through_sequence == 0
+        assert (
+            not_compacted.automatic_compaction_attempted_through_sequence
+            == activity.sequence
+        )
+
+        later_activity = await store.append_event("c", AN_AGENT_MESSAGE, agent_activity=True)
+        await store.append_event(
+            "c", ContextCompactedEventPayload(), automatic_compaction_confirmed=True
+        )
+        compacted = await store.read_conversation("c")
+        assert compacted is not None
+        assert compacted.automatically_compacted_through_sequence == later_activity.sequence
+        assert (
+            compacted.automatic_compaction_attempted_through_sequence
+            == later_activity.sequence
+        )
+
+    asyncio.run(exercise())
+
+
+def test_not_compacted_turn_result_round_trips_and_old_turn_endings_still_read() -> None:
+    payload = TurnEndedEventPayload(
+        ending=ConversationTurnEnding.completed,
+        automatic_compaction_result=AutomaticCompactionResult.not_compacted,
+    )
+    encoded = conversation_event_payload_to_canonical_json(payload)
+    assert '"automatic_compaction_result":"not_compacted"' in encoded
+    assert (
+        conversation_event_payload_from_canonical_json(ConversationEventKind.turn_ended, encoded)
+        == payload
+    )
+    assert conversation_event_payload_from_canonical_json(
+        ConversationEventKind.turn_ended,
+        '{"ending":"completed","error_summary":null}',
+    ) == TurnEndedEventPayload(ending=ConversationTurnEnding.completed)
 
 
 def test_the_record_is_read_back_in_order_from_any_position(store: ConversationStore) -> None:
@@ -543,9 +778,7 @@ def test_appends_racing_each_other_each_get_a_number_of_their_own(
 A_MESSAGE_WITH_MORE_THAN_WORDS = PromptEventPayload(
     content=(
         MessageText(text="look at this"),
-        MessageImage(
-            stored_file_id="f_abc", media_type="image/png", file_name="screenshot.png"
-        ),
+        MessageImage(stored_file_id="f_abc", media_type="image/png", file_name="screenshot.png"),
         MessageFile(
             stored_file_id="f_data",
             media_type="text/csv",
@@ -555,7 +788,7 @@ A_MESSAGE_WITH_MORE_THAN_WORDS = PromptEventPayload(
         MessageText(text="and tell me what it is"),
     ),
     sender_label="owner",
-    mode=PromptDeliveryMode.run_when_free,
+    mode=PromptDeliveryMode.queue,
 )
 
 
@@ -579,13 +812,13 @@ def test_a_row_written_before_messages_could_hold_anything_else_still_reads() ->
     message in the record looks like today. It reads back as one piece of written words,
     because that is what it always was.
     """
-    as_it_was_written = '{"mode":"run_when_free","sender_label":"owner","text":"hello"}'
+    as_it_was_written = '{"mode":"queue","sender_label":"owner","text":"hello"}'
     assert conversation_event_payload_from_canonical_json(
         ConversationEventKind.prompt, as_it_was_written
     ) == PromptEventPayload(
         content=(MessageText(text="hello"),),
         sender_label="owner",
-        mode=PromptDeliveryMode.run_when_free,
+        mode=PromptDeliveryMode.queue,
     )
     assert conversation_event_payload_from_canonical_json(
         ConversationEventKind.agent_message, '{"text":"the answer"}'

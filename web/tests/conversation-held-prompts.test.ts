@@ -13,7 +13,7 @@ function local(
     messageId,
     content: [{ piece: "text", text: `local ${messageId}` }],
     senderLabel: "owner",
-    mode: "run_when_free",
+    mode: "queue",
     sentAtUnixMilliseconds,
     knownFate
   };
@@ -29,6 +29,7 @@ function held(
     sender_message_id: senderMessageId,
     sender_label: "owner",
     sent_at_unix_milliseconds: 100,
+    queue_reason: "requested",
     text
   };
 }

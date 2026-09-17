@@ -100,16 +100,29 @@ async def start_ready_worker_step(
             return False
         departure_status = claimed.ticket_status
         departure_status_revision = claimed.ticket_status_revision
+        paired_opener = (
+            conn.execute(
+                "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
+                (ticket_id, claimed.stage),
+            ).fetchone()
+            is not None
+        )
         sender_message_id = f"worker_step_message_{uuid4().hex}"
 
-        def give_the_claim_back() -> None:
-            tickets_data.release_worker_step_claim(
+        def give_the_claim_back(*, opener_succeeded: bool = False) -> None:
+            released = tickets_data.release_worker_step_claim(
                 conn,
                 ticket_id,
                 expected_status=departure_status,
                 expected_status_revision=departure_status_revision,
                 now=now(),
             )
+            if released and paired_opener and not opener_succeeded:
+                tickets_data.forget_paired_stage_opener(
+                    conn,
+                    ticket_id,
+                    stage=claimed.stage,
+                )
 
         def remove_tentative_bindings() -> None:
             delete_worker_step_skill_bindings(conn, sender_message_id)
@@ -142,7 +155,7 @@ async def start_ready_worker_step(
                 conversation_id=conversation_id,
                 created_conversation_id=conversation_start.new_conversation_id(),
                 sender_label=LOOP_SENDER_LABEL,
-                mode=PromptDeliveryMode.run_when_free,
+                mode=PromptDeliveryMode.queue,
                 sender_message_id=sender_message_id,
                 worker_type_registry=worker_type_registry,
                 now=now(),
@@ -177,6 +190,9 @@ async def start_ready_worker_step(
             # transaction as its prompt row. This idempotent update also supports the
             # in-memory conversation system used by focused worker-step tests.
             settle_worker_step_skill_bindings(conn, sender_message_id, delivered=True)
+
+        if paired_opener:
+            give_the_claim_back(opener_succeeded=True)
 
         try:
             worker_context_service.acknowledge(ticket_id, prepared.receipts)

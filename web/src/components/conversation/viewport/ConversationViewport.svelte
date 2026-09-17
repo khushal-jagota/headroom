@@ -10,6 +10,7 @@
   import ConversationTranscript from "../ConversationTranscript.svelte";
   import MessagePieces from "../MessagePieces.svelte";
   import type { ConversationState } from "../../../lib/conversation/conversationState";
+  import type { ConversationLens } from "../../../lib/conversation/lens";
   import {
     outgoingMessageNote,
     type OutgoingMessage
@@ -25,6 +26,8 @@
   let {
     conversationId,
     rows,
+    visibleRows,
+    lens,
     outgoingMessages,
     models,
     ownSenderLabel,
@@ -36,6 +39,8 @@
     conversationId: string;
     ticketId?: string | null;
     rows: readonly TranscriptRow[];
+    visibleRows: readonly TranscriptRow[];
+    lens: ConversationLens;
     outgoingMessages: readonly OutgoingMessage[];
     models: readonly BackendModel[];
     ownSenderLabel: string | null;
@@ -84,7 +89,7 @@
   function modeChip(mode: PromptDeliveryMode): string | null {
     if (mode === "send_now") return "sent now";
     if (mode === "steer") return "steered";
-    return null;
+    return "queued";
   }
 
   /** Move only far enough that the newest line is in sight, and only ever forwards. */
@@ -407,6 +412,8 @@
     {/if}
     <ConversationTranscript
       {rows}
+      {visibleRows}
+      {lens}
       {models}
       {ownSenderLabel}
       {livenessPulse}

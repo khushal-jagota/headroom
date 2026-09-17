@@ -16,10 +16,12 @@ from planner.conversation.contracts import (
     PromptDeliveryQueued,
     PromptDeliveryRefused,
 )
-from planner.conversation.message_content import text_message_content
 from planner.core.authctx import RequestContext, require_sprint_item_supervisor_ticket_write
+from planner.core.clock import Clock
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files.logic.paths import sprint_item_files_root
+from planner.message_delivery import service as message_delivery_service
 from planner.runtime import conversation_start, worker_step_readiness
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
@@ -57,10 +59,7 @@ def ticket_context(
     with _coherent_read(conn):
         ticket = require_current_child(conn, ctx, sprint_item_id, ticket_id)
         triggering_message = None
-        if (
-            triggering_message_sequence is not None
-            and ticket.conversation_id is not None
-        ):
+        if triggering_message_sequence is not None and ticket.conversation_id is not None:
             row = conn.execute(
                 "SELECT sequence, kind, payload, created_at FROM conversation_events "
                 "WHERE conversation_id = ? AND kind = 'agent_message' AND sequence = ?",
@@ -209,6 +208,8 @@ def require_restartable_child(
                 },
             )
         return ticket
+    if ticket.ticket_status is TicketStatus.errored:
+        return ticket
     if ticket.conversation_id is None:
         # A restart whose start was refused lands here. Restarting again is how a
         # supervisor corrects the launch configuration it named the first time.
@@ -251,9 +252,7 @@ async def restart_worker(
         else False
     )
     if killed_conversation_id is not None:
-        await conversation_start.reset_ticket_conversation(
-            conversations, conn, ticket_id, now=now
-        )
+        await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
     conn.execute("BEGIN IMMEDIATE")
     try:
         if ticket.ticket_status is TicketStatus.agent:
@@ -270,6 +269,8 @@ async def restart_worker(
                     "the Ticket moved while it was being restarted",
                     {"ticket_id": ticket_id},
                 )
+        elif ticket.ticket_status is TicketStatus.errored:
+            tickets_data.clear_ticket_error_for_restart(conn, ticket_id, now=now)
         if write_employee_configuration is not None:
             write_employee_configuration(conn)
         conn.execute("COMMIT")
@@ -314,34 +315,20 @@ async def message_current_worker(
     sprint_item_id: str,
     ticket_id: str,
     *,
-    conversation_id: str,
     message: str,
-    now: int,
+    clock: Clock,
 ) -> dict[str, object]:
     if not message.strip():
         raise PlannerError(ErrorCode.validation, "Worker message must be non-empty", {})
-    ticket = require_current_child(conn, ctx, sprint_item_id, ticket_id)
-    if ticket.conversation_id is None:
-        raise PlannerError(
-            ErrorCode.not_found,
-            "the ticket has no current Worker conversation",
-            {"ticket_id": ticket_id},
-        )
-    if ticket.conversation_id != conversation_id:
-        raise PlannerError(
-            ErrorCode.not_found,
-            "the ticket is not in that current Worker conversation",
-            {"ticket_id": ticket_id, "conversation_id": conversation_id},
-        )
+    require_current_child(conn, ctx, sprint_item_id, ticket_id)
     item = sprints_data.read_item(conn, sprint_item_id).item
-    delivered = await conversation_start.send_to_ticket_conversation(
+    delivered = await message_delivery_service.send_message(
         conversations,
         conn,
-        ticket_id,
-        text_message_content(message.strip()),
-        conversation_id=conversation_id,
-        sender_label=item.supervisor_agent_key,
-        now=now,
+        clock,
+        ctx,
+        Principal(PrincipalKind.ticket, ticket_id),
+        message.strip(),
         required_sprint_item_id=sprint_item_id,
     )
     if isinstance(delivered.fate, PromptDeliveryRefused):
@@ -373,12 +360,34 @@ def list_artifacts(
 ) -> dict[str, object]:
     _require_item(conn, ctx, sprint_item_id)
     root = _artifact_root(db_path, sprint_item_id, create=False)
-    paths = [] if root is None else sorted(
-        path.relative_to(root).as_posix()
-        for path in root.rglob("*")
-        if path.is_file() and not path.is_symlink()
+    paths = (
+        []
+        if root is None
+        else sorted(
+            path.relative_to(root).as_posix()
+            for path in root.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        )
     )
     return {"sprint_item_id": sprint_item_id, "artifacts": paths}
+
+
+def list_artifact_details(
+    conn: sqlite3.Connection, ctx: RequestContext, sprint_item_id: str, db_path: str
+) -> list[dict[str, object]]:
+    """Return read-only file facts for the Sprint Item workspace."""
+    _require_item(conn, ctx, sprint_item_id)
+    root = _artifact_root(db_path, sprint_item_id, create=False)
+    if root is None:
+        return []
+    return [
+        {
+            "path": f"{SUPERVISOR_ARTIFACTS_DIRECTORY}/{path.relative_to(root).as_posix()}",
+            "modified_at": path.stat().st_mtime,
+        }
+        for path in root.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    ]
 
 
 def write_artifact(
@@ -405,8 +414,7 @@ def write_artifact(
         "sprint_item_id": sprint_item_id,
         "path": f"{SUPERVISOR_ARTIFACTS_DIRECTORY}/{relative_path}",
         "url": (
-            f"/files/sprint-items/{sprint_item_id}/"
-            f"{SUPERVISOR_ARTIFACTS_DIRECTORY}/{relative_path}"
+            f"/files/sprint-items/{sprint_item_id}/{SUPERVISOR_ARTIFACTS_DIRECTORY}/{relative_path}"
         ),
     }
 
@@ -477,9 +485,7 @@ def _safe_artifact_target(root: Path, relative_path: str) -> Path:
     try:
         target.parent.resolve().relative_to(root)
     except (OSError, ValueError) as exc:
-        raise PlannerError(
-            ErrorCode.validation, "unsafe Sprint Item artifact path", {}
-        ) from exc
+        raise PlannerError(ErrorCode.validation, "unsafe Sprint Item artifact path", {}) from exc
     return target
 
 

@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
   import { conversationSignalPresentation } from "../lib/conversationSignalPresentation";
-  import { onReplyWatermarkMoved, readReplyWatermark } from "../lib/replyWatermark";
   import {
     buildWorkspaceRail,
+    workspaceRowMarkPresentation,
+    workspaceTicketRowMark,
     type WorkspaceRailItem,
     type WorkspaceTicketGroup
   } from "../lib/workspaceRail";
@@ -82,66 +82,21 @@
     window.location.hash = workspaceAddress(address.selection, next);
   }
 
-  let howFarThisBrowserHasRead = $state<Record<string, number>>({});
-
-  function rereadWhereThisBrowserHasGot(): void {
-    const positions: Record<string, number> = {};
-    for (const card of allCards) {
-      if (card.conversation_id) {
-        positions[card.conversation_id] = readReplyWatermark(card.conversation_id);
-      }
-    }
-    for (const item of rail.items) {
-      const conversationId = item.signals.conversation_id;
-      if (conversationId) {
-        positions[conversationId] = readReplyWatermark(conversationId);
-      }
-    }
-    const chiefConversationId = workers.data?.chief_of_staff.conversation_id;
-    if (chiefConversationId) {
-      positions[chiefConversationId] = readReplyWatermark(chiefConversationId);
-    }
-    howFarThisBrowserHasRead = positions;
-  }
-
   let chiefPresentation = $derived(
     workers.data
       ? conversationSignalPresentation(
           {
-            conversation_id: workers.data.chief_of_staff.conversation_id,
-            needs_me: workers.data.chief_of_staff.needs_me,
-            agent_working: workers.data.chief_of_staff.agent_working,
-            unread_position: workers.data.chief_of_staff.latest_turn_ended_sequence
-          },
-          howFarThisBrowserHasRead
+            awaiting_reply: workers.data.chief_of_staff.needs_me,
+            agent_state: workers.data.chief_of_staff.agent_working ? "working" : "idle"
+          }
         )
       : null
   );
 
-  onMount(() => onReplyWatermarkMoved(rereadWhereThisBrowserHasGot));
-  $effect(() => {
-    board.data;
-    workers.data;
-    rereadWhereThisBrowserHasGot();
-  });
-
-  function cardPresentation(card: BoardCard) {
-    return conversationSignalPresentation(
-      {
-        conversation_id: card.conversation_id,
-        needs_me: card.needs_me,
-        agent_working: card.agent_working,
-        unread_position: card.latest_turn_ended_sequence
-      },
-      howFarThisBrowserHasRead
-    );
-  }
-
   // Awake beats rested: a done Item that needs the user, is mid-turn, or holds a
   // reply this browser has not seen yet stays with the live Items.
   function itemIsAwake(item: WorkspaceRailItem): boolean {
-    const state = conversationSignalPresentation(item.signals, howFarThisBrowserHasRead).state;
-    return state === "needs-me" || state === "current-running" || state === "current-awaiting-approval";
+    return item.mark !== null;
   }
 
   // A stable partition, not a re-sort: live-or-awake Items keep rail.items's
@@ -156,7 +111,8 @@
 </script>
 
 {#snippet ticketRow(card: BoardCard, withPriority: boolean, insideItemId: string | null)}
-  {@const presentation = cardPresentation(card)}
+  {@const mark = workspaceTicketRowMark(card)}
+  {@const presentation = workspaceRowMarkPresentation(mark)}
   <SprintTicketRow
     priority={withPriority ? card.priority : null}
     title={card.title}
@@ -167,9 +123,12 @@
     stageMarkClass="board-workspace-stage-mark"
     stageMarkAttributes={{
       "data-stage-state": presentation.state,
-      "data-needs-me": card.needs_me ? "true" : "false",
-      "data-agent-working": card.agent_working ? "true" : "false",
-      "data-latest-turn-ended": card.latest_turn_ended_sequence
+      "data-awaiting-reply": card.awaiting_reply ? "true" : "false",
+      "data-awaiting-approval": card.awaiting_approval ? "true" : "false",
+      "data-assigned": card.assigned ? "true" : "false",
+      "data-agent-state": card.agent_state,
+      "data-workspace-mark": mark ?? "none",
+      "aria-hidden": mark === null ? "true" : undefined
     }}
     data-card=""
     data-ticket-id={card.id}
@@ -213,10 +172,7 @@
 {#snippet sprintItem(item: WorkspaceRailItem)}
   {@const open = opening.openItemId === item.id}
   {@const selected = opening.markedItemId === item.id}
-  {@const presentation = conversationSignalPresentation(
-    item.signals,
-    howFarThisBrowserHasRead
-  )}
+  {@const presentation = workspaceRowMarkPresentation(item.mark)}
   <section
     class="board-workspace-item"
     class:board-workspace-item--selected={selected}
@@ -242,9 +198,8 @@
         state={presentation.state}
         class="board-workspace-stage-mark"
         data-stage-state={presentation.state}
-        data-needs-me={item.signals.needs_me ? "true" : "false"}
-        data-agent-working={item.signals.agent_working ? "true" : "false"}
-        data-latest-turn-ended={item.signals.unread_position}
+        data-workspace-mark={item.mark ?? "none"}
+        aria-hidden={item.mark === null ? "true" : undefined}
         aria-label={presentation.ariaLabel}
       />
     </button>

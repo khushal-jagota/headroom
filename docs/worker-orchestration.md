@@ -28,9 +28,8 @@ all of these hold right now:
 1. It is on today's planning day.
 2. Its Stage is not terminal and has a next blank to fill.
 3. The Stage's owner is not the user.
-4. Its status is `empty`. This one fact carries most of the rule: a Ticket that is
-   blocked, paired, waiting for approval, asking for help, held by the user, already
-   out with a worker, or errored is by definition not `empty`.
+4. Its status is `empty`. This fact keeps blocked work, parked approvals, active claims,
+   and errors out of the runnable set. User-owned Stages are already excluded by rule 3.
 5. Nothing is already parked on that blank waiting for approval.
 6. Scope permits work at the current ceiling.
 7. If the blank is Closeout, no other Ticket in the same project-and-Worker-type lane
@@ -41,11 +40,14 @@ Then one more question that the record cannot answer: **is this Ticket's worker 
 right now?** The conversation system is asked directly, and a busy worker is left alone
 for this pass.
 
-If everything says yes, Panels takes the Ticket out of `empty` in a single guarded
-write — to `agent` for a worker-owned Stage, to `paired` for a paired one. That flip
-**is** the claim. There is no claim stamp and no separate run record. The readiness
-questions are all asked again inside that write, so two racers both re-check under the
-same lock and only one of them writes.
+If everything says yes, Panels takes the Ticket from `empty` to `agent` in one guarded
+write. That flip **is** the claim. There is no claim stamp or general run record. For a
+paired Stage, the same transaction records a tentative opener fact for that Stage entry.
+Readiness checks that fact, not the Ticket status, to prevent a second opener. A refused
+send removes the fact. An accepted send keeps it and returns the Ticket to `empty`.
+The canonical Stage writer clears the fact when the Ticket leaves that Stage. A later
+Stage entry can therefore receive its own opener without a database trigger.
+All readiness questions run again inside the write, so only one racer wins the claim.
 
 Checking too often costs nothing: the check reads and decides, and writes nothing. So
 the loop does not wait out its timer. Every write committed through the database door
@@ -145,25 +147,61 @@ already had five minutes.
 
 ## Sending a proposal back
 
-When the owner returns a proposal for revision, the guidance goes to the worker as a
-real message in the same conversation, and the Ticket goes back out to it.
+When the holder returns a proposal for revision, one Ticket transaction checks every
+authorization and current-parent route. It commits the decision and two ordered outbox
+records: a Panels lifecycle fact, then the decider's separately attributed comment.
+The transaction performs no backend I/O.
 
-The order is: check everything, send, and only then write. It has to be that way round,
-because the write is the one part that cannot be undone honestly — it deletes the
-pending proposal, so undoing a failed send afterwards would leave nothing to approve. A
-refused delivery changes nothing at all and comes back as an error the owner can retry
-cleanly. The one residue is a send that succeeded and a write that then failed: the
-guidance is out and the proposal is intact, so a retry may deliver the same guidance
-twice. Visible, harmless, and far better than losing the proposal.
+The machine-lock-owned delivery loop sends those records after the commit. Durable
+sender identities preserve transcript order and prevent duplicates across retries and
+process restarts. A refusal leaves the message pending for retry. An accepted prompt
+with a failed transcript write becomes terminal `uncertain`, so Panels never sends it
+twice. The conversation shows that uncertain attempt, and later rejection messages
+continue in order. If the runtime row fails too, the same recovery loop recreates that
+row from the durable rejection record without another backend send. Reply bookkeeping
+credits the source turn after the commit and cannot undo the rejection.
 
 _Code path:_ `src/planner/tickets/actions.py`.
+
+## Waking a non-owner proposal holder
+
+Filing a parked proposal commits a durable wake row and returns without backend I/O.
+Only the machine-lock-owned loop claims that row as `delivering`. A decision,
+replacement, or deletion cancels or supersedes any undelivered wake in its own database
+transaction. A wake that already reached the wire is harmless because the holder reads
+canonical Ticket state. Definite refusal advances the attempt identity and uses delays
+of 1, 2, 4, 8, 16, 32, then 60 seconds. Ten total attempts end in `failed`. The same
+transaction records immutable failure visibility and surfaces the proposal to the owner.
+It does not change the proposal holder or Ticket status. The failure settles the wake,
+so later messages can proceed. A queued prompt stays `delivering`
+because that queue is process-local; the loop probes the same sender identity until the
+conversation reports durable delivery.
+
+The proposal-holder wake loop shares the process machine lock and server event loop with
+the other reconcilers. Database change signals wake it promptly, while its periodic tick
+is the retry backstop. It schedules at most one delivery per Ticket at a time. After it
+owns the machine lock, startup returns crash-abandoned `delivering` rows to `pending`
+without changing their attempt identity. A second server therefore cannot reset a live
+delivery claim. Conversation idempotency either discovers the earlier success or safely
+recreates a lost queue. Shutdown retains the lock if a delivery does not settle before
+the deadline or a durable `delivering` row still represents a process-local queue.
+Process exit then releases the lock. A post-wire transcript failure becomes terminal
+`uncertain`; it is visible for repair and never retried automatically.
+
+The source Ticket's Worker conversation shows one compact failure row. This row never
+goes to the backend. Its stable identity and immutable failure history let the loop
+recover the row after a storage fault, cancellation, replacement, or restart. A later
+proposal decision or replacement removes the owner surface. Runtime-row recovery remains
+independent, so the compact row still appears after a decision, replacement, or restart.
+
+_Code paths:_ `src/planner/proposal_holder_wakes/`, `src/planner/core/loops.py`.
 
 ## The seam: one conversation contract
 
 Everything above talks to the conversation system through one small contract: start a
 conversation, send into it, ask whether it is running, ask whether it is waiting on a
-permission, kill it. Nothing here knows what a backend is, what ACP is, or what a
-session id looks like.
+permission, kill it. Nothing here knows what a backend is, what ACP is, or what a session
+id looks like.
 
 The system behind that contract is the real one, and the only one. The same object the
 browser's conversation pane uses is the object a worker step sends into, so a Ticket's
@@ -227,11 +265,10 @@ _Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`,
 - **The front end** (`frontend.md`) owns the row marks these signals feed.
 - **The command-line tool** (`cli.md`) is the surface the worker acts through.
 
-## Deferred
-
-- **Retry after an errored Ticket.** An errored Ticket still needs a deliberate way
-  back. Trigger: a product decision about what retry should mean.
+An errored worker-owned Ticket remains errored through reads and owner replies. A
+successful start supersedes the failed turn in derived agent state. A Sprint Item
+supervisor can use explicit restart, which clears the error before a new start.
 
 ---
 
-_Last verified: 2026-08-10._
+_Last verified: 2026-09-15._

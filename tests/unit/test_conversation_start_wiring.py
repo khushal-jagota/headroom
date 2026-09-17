@@ -12,11 +12,14 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.contracts import (
+    AddressedPromptDeliveryReceipt,
     ConversationAccess,
     ConversationBackendKey,
     ConversationStartRequest,
+    ConversationTurnReference,
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
@@ -32,7 +35,7 @@ from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
 from planner.conversation.message_content import MessageContent, text_message_content
-from planner.core.contracts import Priority
+from planner.core.contracts import Principal, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.projects.data import create_project, update_project
 from planner.runtime.conversation_start import (
@@ -58,7 +61,7 @@ def ticket(tmp_db: Connection) -> Ticket:
     return create_ticket(
         tmp_db,
         title="A conversation ticket",
-        actor="human",
+        principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
         worker_type="coding",
@@ -110,11 +113,13 @@ class _LinkWatchingConversationSystem:
         content: MessageContent,
         *,
         sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
     ) -> PromptDeliveryFate:
         return await self._system.send(
             conversation_id,
@@ -125,7 +130,105 @@ class _LinkWatchingConversationSystem:
             reasoning_effort_change=reasoning_effort_change,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
         )
+
+    async def send_with_receipt(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
+    ) -> AddressedPromptDeliveryReceipt:
+        return await self._system.send_with_receipt(
+            conversation_id,
+            content,
+            sender_label=sender_label,
+            mode=mode,
+            model_change=model_change,
+            reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
+        )
+
+    async def record_message_to_owner(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        sender: Principal,
+        recipient: Principal,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+    ) -> None:
+        await self._system.record_message_to_owner(
+            conversation_id,
+            content,
+            sender_label=sender_label,
+            sender=sender,
+            recipient=recipient,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+        )
+
+    async def record_prompt_delivery_uncertain(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode,
+        sender_message_id: str,
+        sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
+    ) -> None:
+        await self._system.record_prompt_delivery_uncertain(
+            conversation_id,
+            content,
+            sender_label=sender_label,
+            mode=mode,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
+        )
+
+    async def record_proposal_delivery_failed(
+        self,
+        conversation_id: str,
+        *,
+        attempt_count: int,
+        last_error: str,
+        sender_message_id: str,
+    ) -> None:
+        await self._system.record_proposal_delivery_failed(
+            conversation_id,
+            attempt_count=attempt_count,
+            last_error=last_error,
+            sender_message_id=sender_message_id,
+        )
+
+    async def active_turn_reference(
+        self, conversation_id: str
+    ) -> ConversationTurnReference | None:
+        return await self._system.active_turn_reference(conversation_id)
+
+    async def record_explicit_reply(
+        self, turn: ConversationTurnReference, recipient: Principal
+    ) -> None:
+        await self._system.record_explicit_reply(turn, recipient)
 
     async def interrupt(self, conversation_id: str) -> None:
         await self._system.interrupt(conversation_id)
@@ -139,16 +242,10 @@ class _LinkWatchingConversationSystem:
         held_prompt_id: str,
         mode: HeldPromptPromotionMode,
     ) -> HeldPromptPromotionFate | None:
-        return await self._system.promote_held_prompt(
-            conversation_id, held_prompt_id, mode
-        )
+        return await self._system.promote_held_prompt(conversation_id, held_prompt_id, mode)
 
-    async def discard_held_prompt(
-        self, conversation_id: str, held_prompt_id: str
-    ) -> bool:
-        return await self._system.discard_held_prompt(
-            conversation_id, held_prompt_id
-        )
+    async def discard_held_prompt(self, conversation_id: str, held_prompt_id: str) -> bool:
+        return await self._system.discard_held_prompt(conversation_id, held_prompt_id)
 
     async def kill(self, conversation_id: str) -> None:
         await self._system.kill(conversation_id)
@@ -212,7 +309,7 @@ async def _sent(
     *,
     model: str | None = None,
     reasoning_effort: str | None = None,
-    mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+    mode: PromptDeliveryMode = PromptDeliveryMode.queue,
     sender_label: str = "loop",
     now: int,
 ) -> PromptDeliveryFate:
@@ -255,6 +352,44 @@ def test_a_start_that_loses_the_active_pointer_race_records_no_history(
     asyncio.run(exercise())
 
 
+def test_first_message_materializes_attachments_only_for_the_race_winner(
+    tmp_db: Connection, ticket: Ticket
+) -> None:
+    async def exercise() -> None:
+        winner = "conv_winner"
+        materialized_for: list[str] = []
+
+        class _WinnerLinksDuringStart(InMemoryConversationSystem):
+            async def start_conversation(self, request: ConversationStartRequest) -> None:
+                await super().start_conversation(request)
+                tmp_db.execute(
+                    "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+                    (winner, ticket.id),
+                )
+                tmp_db.commit()
+
+        async def content_for(conversation_id: str) -> MessageContent:
+            materialized_for.append(conversation_id)
+            return text_message_content("message with attachment")
+
+        delivered = await send_to_ticket_conversation(
+            _WinnerLinksDuringStart(),
+            tmp_db,
+            ticket.id,
+            content_for,
+            conversation_id=None,
+            created_conversation_id="conv_loser",
+            sender_label="owner",
+            now=20,
+        )
+
+        assert delivered.conversation_id == winner
+        assert isinstance(delivered.fate, PromptDeliveryRefused)
+        assert materialized_for == [winner]
+
+    asyncio.run(exercise())
+
+
 @pytest.mark.parametrize("kill_fails", [False, True])
 def test_an_immutable_record_mismatch_refuses_association_and_kills_the_start(
     tmp_db: Connection, ticket: Ticket, kill_fails: bool
@@ -268,7 +403,7 @@ def test_an_immutable_record_mismatch_refuses_association_and_kills_the_start(
             (
                 conversation_id,
                 worker_conversation_role_materials(ticket.id).role_text,
-                '[["PLAN_ACTOR","worker"],["PLAN_TICKET_ID","' + ticket.id + '"]]'
+                '[["PLAN_ACTOR","worker"],["PLAN_TICKET_ID","' + ticket.id + '"]]',
             ),
         )
         system = _KillWatchingConversationSystem(kill_fails=kill_fails)
@@ -294,9 +429,7 @@ def test_an_immutable_record_mismatch_refuses_association_and_kills_the_start(
     asyncio.run(exercise())
 
 
-def test_the_start_request_carries_every_resolved_value(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
+def test_the_start_request_carries_every_resolved_value(tmp_db: Connection, ticket: Ticket) -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()
         seen: list[ConversationStartRequest] = []
@@ -312,7 +445,7 @@ def test_the_start_request_carries_every_resolved_value(
                 content: MessageContent,
                 *,
                 sender_label: str,
-                mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+                mode: PromptDeliveryMode = PromptDeliveryMode.queue,
                 model_change: str | None = None,
                 reasoning_effort_change: str | None = None,
             ) -> PromptDeliveryFate:
@@ -353,18 +486,21 @@ def test_the_start_request_carries_every_resolved_value(
     asyncio.run(exercise())
 
 
-def test_a_change_on_a_held_message_records_nothing_yet(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
+def test_a_change_on_a_held_message_records_nothing_yet(tmp_db: Connection, ticket: Ticket) -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()
         conversation_id = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
-        # Put a turn on the agent, so the next run-when-free message is held.
+        # Put a turn on the agent, so the next queue message is held.
         await system.send(conversation_id, text_message_content("incumbent"), sender_label="owner")
 
         fate = await _sent(
-            system, tmp_db, ticket.id, "work the step",
-            mode=PromptDeliveryMode.run_when_free, model="sonnet", now=20,
+            system,
+            tmp_db,
+            ticket.id,
+            "work the step",
+            mode=PromptDeliveryMode.queue,
+            model="sonnet",
+            now=20,
         )
 
         assert isinstance(fate, PromptDeliveryQueued)
@@ -375,9 +511,7 @@ def test_a_change_on_a_held_message_records_nothing_yet(
     asyncio.run(exercise())
 
 
-def test_a_change_on_a_refused_delivery_records_nothing(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
+def test_a_change_on_a_refused_delivery_records_nothing(tmp_db: Connection, ticket: Ticket) -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()
         conversation_id = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
@@ -430,11 +564,13 @@ class _RelinkingConversationSystem:
         content: MessageContent,
         *,
         sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
     ) -> PromptDeliveryFate:
         fate = await self._system.send(
             conversation_id,
@@ -445,9 +581,109 @@ class _RelinkingConversationSystem:
             reasoning_effort_change=reasoning_effort_change,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
         )
         self._relink()
         return fate
+
+    async def send_with_receipt(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
+    ) -> AddressedPromptDeliveryReceipt:
+        receipt = await self._system.send_with_receipt(
+            conversation_id,
+            content,
+            sender_label=sender_label,
+            mode=mode,
+            model_change=model_change,
+            reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
+        )
+        self._relink()
+        return receipt
+
+    async def record_message_to_owner(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        sender: Principal,
+        recipient: Principal,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+    ) -> None:
+        await self._system.record_message_to_owner(
+            conversation_id,
+            content,
+            sender_label=sender_label,
+            sender=sender,
+            recipient=recipient,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+        )
+
+    async def record_prompt_delivery_uncertain(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode,
+        sender_message_id: str,
+        sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
+    ) -> None:
+        await self._system.record_prompt_delivery_uncertain(
+            conversation_id,
+            content,
+            sender_label=sender_label,
+            mode=mode,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
+        )
+
+    async def record_proposal_delivery_failed(
+        self,
+        conversation_id: str,
+        *,
+        attempt_count: int,
+        last_error: str,
+        sender_message_id: str,
+    ) -> None:
+        await self._system.record_proposal_delivery_failed(
+            conversation_id,
+            attempt_count=attempt_count,
+            last_error=last_error,
+            sender_message_id=sender_message_id,
+        )
+
+    async def active_turn_reference(
+        self, conversation_id: str
+    ) -> ConversationTurnReference | None:
+        return await self._system.active_turn_reference(conversation_id)
+
+    async def record_explicit_reply(
+        self, turn: ConversationTurnReference, recipient: Principal
+    ) -> None:
+        await self._system.record_explicit_reply(turn, recipient)
 
     async def interrupt(self, conversation_id: str) -> None:
         await self._system.interrupt(conversation_id)
@@ -461,16 +697,10 @@ class _RelinkingConversationSystem:
         held_prompt_id: str,
         mode: HeldPromptPromotionMode,
     ) -> HeldPromptPromotionFate | None:
-        return await self._system.promote_held_prompt(
-            conversation_id, held_prompt_id, mode
-        )
+        return await self._system.promote_held_prompt(conversation_id, held_prompt_id, mode)
 
-    async def discard_held_prompt(
-        self, conversation_id: str, held_prompt_id: str
-    ) -> bool:
-        return await self._system.discard_held_prompt(
-            conversation_id, held_prompt_id
-        )
+    async def discard_held_prompt(self, conversation_id: str, held_prompt_id: str) -> bool:
+        return await self._system.discard_held_prompt(conversation_id, held_prompt_id)
 
     async def kill(self, conversation_id: str) -> None:
         await self._system.kill(conversation_id)
@@ -636,7 +866,7 @@ def test_resetting_discards_a_message_the_conversation_was_holding(
         # Freeing the agent would have let the held message run. It never reached the
         # backend, and its discard is on the record rather than silent.
         assert [write.text for write in system.backend_prompt_writes(conversation_id)] == [
-            "running work"
+            "loop:\nrunning work"
         ]
         discarded = [
             (observation.text, observation.sender_label)
@@ -665,9 +895,7 @@ def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_c
             folder_path=original_folder,
             now=2,
         )
-        tmp_db.execute(
-            "UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id)
-        )
+        tmp_db.execute("UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id))
         system = InMemoryConversationSystem()
         conversation_id = await _started(
             system,

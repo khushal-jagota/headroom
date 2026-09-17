@@ -39,15 +39,14 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "durable_outcomes"
+HEAD_REVISION = "proposal_delivery_failures"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
-CURRENT_SCHEMA_OBJECT_COUNT = 52
+CURRENT_SCHEMA_OBJECT_COUNT = 66
 
-# The eight statuses this build ends on, as the CHECK constraint renders them.
+# The five statuses this build ends on, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
-    "ticket_status IN ('empty','blocked','agent','paired','awaiting_approval',"
-    "'needs_user','user','errored')"
+    "ticket_status IN ('empty','blocked','agent','awaiting_approval','errored')"
 )
 
 # The names the reshape moved off. None of them survives, in the schema or in the rows.
@@ -99,6 +98,9 @@ def _table_structure_before_status_changed_at(
 ) -> dict[str, object]:
     """The tickets structure before its status-tracking columns were added."""
     columns = list(structure["columns"])  # type: ignore[call-overload]
+    holder_column = columns.pop()
+    assert holder_column[:3] == ("ceiling_holder", "TEXT", 1)
+    assert json.loads(str(holder_column[3]).strip("'")) == {"kind": "owner", "id": "owner"}
     assert columns.pop() == ("archived_field_content", "TEXT", 1, "''", 0)
     assert columns.pop() == ("pending_proposal", "TEXT", 0, None, 0)
     columns = [
@@ -239,6 +241,16 @@ def test_fresh_database_is_built_and_marked_at_the_current_revision(
     }
     assert day_columns["midday_reconciliation"] == "''"
     assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
+    wake_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='proposal_holder_wakes'"
+    ).fetchone()[0]
+    assert "'pending','delivering','delivered','uncertain','cancelled'" in wake_sql
+    rejection_sql = conn.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type='table' AND name='ticket_rejection_messages'"
+    ).fetchone()[0]
+    assert "UNIQUE(ticket_id,rejection_generation,sequence)" in rejection_sql
+    assert "sequence=1 AND sender_kind IS NULL AND sender_id IS NULL" in rejection_sql
     # Carried so a fresh database is not distinguishable from one the old ladder built.
     # An older checkout reads this marker to decide what it still has to do.
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 37
@@ -328,18 +340,27 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
     } == {
         "t_empty": "empty",
         "t_agent": "agent",
-        "t_paired": "paired",
-        "t_takeover": "user",
-        "t_discussion": "paired",
+        "t_paired": "empty",
+        "t_takeover": "empty",
+        "t_discussion": "empty",
         "t_awaiting": "awaiting_approval",
-        "t_needs_user": "needs_user",
-        "t_errored": "errored",
+        "t_needs_user": "agent",
+        "t_errored": "empty",
         "t_live_blocker": "empty",
         "t_finished_blocker": "empty",
         "t_blocked": "blocked",
         "t_freed": "empty",
         "t_blocked_and_done": "blocked",
     }
+    assert [
+        (str(row[0]), str(row[1]))
+        for row in conn.execute(
+            "SELECT ticket_id, stage FROM ticket_paired_stage_openers ORDER BY ticket_id"
+        )
+    ] == [
+        ("t_discussion", "needs_kickoff"),
+        ("t_paired", "needs_kickoff"),
+    ]
 
     # Two rebuilds dropped and recreated the table the children hang off. With foreign keys
     # enforced those drops would have emptied both of these and said nothing about it.

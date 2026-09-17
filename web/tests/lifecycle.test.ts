@@ -182,6 +182,7 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     employee_configuration_editable: true,
     stage: "needs_success",
     ceiling: "done",
+    ceiling_holder: { kind: "owner", id: "owner" },
     at_cap: "propose",
     suggested_next_ceiling: "needs_success",
     priority: "P1",

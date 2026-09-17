@@ -31,9 +31,10 @@ export function boardCard(id: string, values: Partial<BoardCard> = {}): BoardCar
     sprint_item_id: null,
     sprint_item_title: null,
     sprint_item_priority: null,
-    agent_working: false,
-    needs_me: false,
-    latest_turn_ended_sequence: 0,
+    awaiting_reply: false,
+    awaiting_approval: false,
+    assigned: false,
+    agent_state: "idle",
     ...values
   };
 }

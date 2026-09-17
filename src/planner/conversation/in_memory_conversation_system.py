@@ -18,8 +18,10 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from planner.conversation.contracts import (
+    AddressedPromptDeliveryReceipt,
     ConversationAlreadyStarted,
     ConversationStartRequest,
+    ConversationTurnReference,
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
@@ -30,6 +32,8 @@ from planner.conversation.contracts import (
     PromptDeliveryRefusalReason,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
+    PromptDeliveryUncertain,
+    PromptQueueReason,
     ResolvedConversationStart,
     backend_supports_steer,
 )
@@ -43,9 +47,12 @@ from planner.conversation.logic.held_line import (
 )
 from planner.conversation.message_content import (
     MessageContent,
+    MessageText,
     message_content_text,
     require_message_content,
+    sender_labeled_message_content,
 )
+from planner.core.contracts import Principal
 
 
 class InMemoryConversationObservationKind(StrEnum):
@@ -53,6 +60,8 @@ class InMemoryConversationObservationKind(StrEnum):
 
     prompt_delivered = "prompt_delivered"
     prompt_delivery_refused = "prompt_delivery_refused"
+    prompt_delivery_uncertain = "prompt_delivery_uncertain"
+    proposal_delivery_failed = "proposal_delivery_failed"
     prompt_discarded = "prompt_discarded"
     turn_ended = "turn_ended"
     permission_asked = "permission_asked"
@@ -60,6 +69,8 @@ class InMemoryConversationObservationKind(StrEnum):
     user_input_requested = "user_input_requested"
     user_input_answered = "user_input_answered"
     model_changed = "model_changed"
+    message_to_owner = "message_to_owner"
+    explicit_reply_missing = "explicit_reply_missing"
 
 
 class InMemoryConversationTurnEnding(StrEnum):
@@ -87,6 +98,8 @@ class InMemoryConversationObservation:
     mode: PromptDeliveryMode | None = None
     turn_ending: InMemoryConversationTurnEnding | None = None
     refusal_reason: PromptDeliveryRefusalReason | None = None
+    attempt_count: int | None = None
+    last_error: str | None = None
     permission_ask_id: str | None = None
     user_input_request_id: str | None = None
     user_input_questions: tuple[UserInputQuestion, ...] | None = None
@@ -95,6 +108,8 @@ class InMemoryConversationObservation:
     reasoning_effort: str | None = None
     sender_message_id: str | None = None
     sent_at_unix_milliseconds: int | None = None
+    sender: Principal | None = None
+    recipient: Principal | None = None
 
     @property
     def text(self) -> str | None:
@@ -156,6 +171,9 @@ class _InMemoryBackendSession:
 
 @dataclass
 class _RunningTurn:
+    turn_number: int
+    prompt_senders: dict[Principal, None] = field(default_factory=dict)
+    explicit_reply_recipients: set[Principal] = field(default_factory=set)
     pending_permission_ask_ids: set[str] = field(default_factory=set)
     pending_user_input_questions: dict[str, tuple[UserInputQuestion, ...]] = field(
         default_factory=dict
@@ -171,7 +189,10 @@ class _HeldPrompt:
     reasoning_effort_change: str | None = None
     sender_message_id: str | None = None
     sent_at_unix_milliseconds: int | None = None
+    sender: Principal | None = None
+    recipient: Principal | None = None
     snapshot_sent_at_unix_milliseconds: int = 0
+    queue_reason: PromptQueueReason = PromptQueueReason.requested
 
 
 @dataclass
@@ -186,6 +207,7 @@ class _ConversationState:
     observations: list[InMemoryConversationObservation] = field(default_factory=list)
     permission_asks_raised: int = 0
     user_input_requests_raised: int = 0
+    next_turn_number: int = 1
     armed_backend_start_failure: bool = False
     armed_session_load_failure: bool = False
     armed_backend_write_failure: bool = False
@@ -215,58 +237,159 @@ class InMemoryConversationSystem:
         content: MessageContent,
         *,
         sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
     ) -> PromptDeliveryFate:
-        if mode is PromptDeliveryMode.steer and (
-            model_change is not None or reasoning_effort_change is not None
-        ):
-            raise ValueError(
-                "a steer cannot carry a model or reasoning-effort change: the turn it "
-                "joins is already running"
-            )
+        receipt = await self.send_with_receipt(
+            conversation_id,
+            content,
+            sender_label=sender_label,
+            mode=mode,
+            model_change=model_change,
+            reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
+        )
+        return receipt.fate
+
+    async def send_with_receipt(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
+    ) -> AddressedPromptDeliveryReceipt:
         require_message_content(content)
 
         state = self._conversations.get(conversation_id)
         if state is None:
-            return PromptDeliveryRefused(
-                refusal_reason=PromptDeliveryRefusalReason.no_such_conversation
+            return AddressedPromptDeliveryReceipt(
+                fate=PromptDeliveryRefused(
+                    refusal_reason=PromptDeliveryRefusalReason.no_such_conversation
+                ),
+                newly_accepted=False,
             )
 
-        if mode is PromptDeliveryMode.steer:
-            return self._steer(
+        if sender_message_id is not None:
+            for position, held in enumerate(state.held_prompts, start=1):
+                if held.sender_message_id != sender_message_id:
+                    continue
+                if (
+                    held.content,
+                    held.sender_label,
+                    held.sender,
+                    held.recipient,
+                ) != (content, sender_label, sender, recipient):
+                    raise ValueError("sender_message_id already names a different message")
+                return AddressedPromptDeliveryReceipt(
+                    PromptDeliveryQueued(queue_position=position), newly_accepted=False
+                )
+            for observed in reversed(state.observations):
+                if observed.sender_message_id != sender_message_id:
+                    continue
+                if (
+                    observed.content,
+                    observed.sender_label,
+                    observed.sender,
+                    observed.recipient,
+                ) != (content, sender_label, sender, recipient):
+                    raise ValueError("sender_message_id already names a different message")
+                if observed.kind is InMemoryConversationObservationKind.prompt_delivered:
+                    if observed.mode is PromptDeliveryMode.steer:
+                        fate: PromptDeliveryFate = PromptDeliveryInjected()
+                    else:
+                        fate = PromptDeliveryStarted()
+                    return AddressedPromptDeliveryReceipt(fate, newly_accepted=False)
+                if observed.kind is InMemoryConversationObservationKind.prompt_delivery_refused:
+                    assert observed.refusal_reason is not None
+                    return AddressedPromptDeliveryReceipt(
+                        PromptDeliveryRefused(refusal_reason=observed.refusal_reason),
+                        newly_accepted=False,
+                    )
+                if observed.kind is InMemoryConversationObservationKind.prompt_delivery_uncertain:
+                    return AddressedPromptDeliveryReceipt(
+                        PromptDeliveryUncertain(), newly_accepted=False
+                    )
+                raise ValueError("sender_message_id already names a different message")
+
+        if state.running_turn is None:
+            fate = self._start_turn(
                 state,
                 content,
                 sender_label,
+                PromptDeliveryMode.queue if mode is PromptDeliveryMode.steer else mode,
+                model_change,
+                reasoning_effort_change,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                sender=sender,
+                recipient=recipient,
             )
-
-        if mode is PromptDeliveryMode.run_when_free and state.running_turn is not None:
-            state.held_prompts_created += 1
-            state.held_prompts.append(
-                _HeldPrompt(
-                    held_prompt_id=f"held-{state.held_prompts_created}",
-                    content=content,
-                    sender_label=sender_label,
-                    model_change=model_change,
-                    reasoning_effort_change=reasoning_effort_change,
+        elif mode is PromptDeliveryMode.queue:
+            fate = self._hold_prompt(
+                state,
+                content,
+                sender_label,
+                model_change,
+                reasoning_effort_change,
+                sender_message_id,
+                sent_at_unix_milliseconds,
+                PromptQueueReason.requested,
+                sender=sender,
+                recipient=recipient,
+            )
+        elif mode is PromptDeliveryMode.steer:
+            if any(not isinstance(piece, MessageText) for piece in content):
+                queue_reason: PromptQueueReason | None = PromptQueueReason.attachment
+            elif model_change is not None or reasoning_effort_change is not None:
+                queue_reason = PromptQueueReason.run_change
+            else:
+                steer_fate = self._steer(
+                    state,
+                    content,
+                    sender_label,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                    snapshot_sent_at_unix_milliseconds=(
-                        sent_at_unix_milliseconds
-                        if sent_at_unix_milliseconds is not None
-                        else state.held_prompts_created
-                    ),
+                    sender=sender,
+                    recipient=recipient,
                 )
-            )
-            return PromptDeliveryQueued(queue_position=len(state.held_prompts))
-
-        if state.running_turn is None:
-            return self._start_turn(
+                if isinstance(steer_fate, PromptDeliveryInjected):
+                    fate = steer_fate
+                    queue_reason = None
+                else:
+                    queue_reason = PromptQueueReason.steer_refused
+            if queue_reason is not None:
+                fate = self._hold_prompt(
+                    state,
+                    content,
+                    sender_label,
+                    model_change,
+                    reasoning_effort_change,
+                    sender_message_id,
+                    sent_at_unix_milliseconds,
+                    queue_reason,
+                    sender=sender,
+                    recipient=recipient,
+                )
+        else:
+            # send-now against a busy agent: the incumbent dies first, and this message runs
+            # next — ahead of everything already held, which keeps its order behind it.
+            self._end_running_turn(state, InMemoryConversationTurnEnding.interrupted)
+            fate = self._start_turn(
                 state,
                 content,
                 sender_label,
@@ -275,26 +398,185 @@ class InMemoryConversationSystem:
                 reasoning_effort_change,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                sender=sender,
+                recipient=recipient,
             )
-
-        # send-now against a busy agent: the incumbent dies first, and this message runs
-        # next — ahead of everything already held, which keeps its order behind it.
-        self._end_running_turn(state, InMemoryConversationTurnEnding.interrupted)
-        fate = self._start_turn(
-            state,
-            content,
-            sender_label,
-            mode,
-            model_change,
-            reasoning_effort_change,
-            sender_message_id=sender_message_id,
-            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            if isinstance(fate, PromptDeliveryRefused):
+                # The incumbent is already dead and the agent is free, so the held prompts
+                # are owed their run even though this delivery could not happen.
+                self._drain(state)
+        return AddressedPromptDeliveryReceipt(
+            fate=fate,
+            newly_accepted=not isinstance(fate, PromptDeliveryRefused),
         )
-        if isinstance(fate, PromptDeliveryRefused):
-            # The incumbent is already dead and the agent is free, so the held prompts
-            # are owed their run even though this delivery could not happen.
-            self._drain(state)
-        return fate
+
+    def _hold_prompt(
+        self,
+        state: _ConversationState,
+        content: MessageContent,
+        sender_label: str,
+        model_change: str | None,
+        reasoning_effort_change: str | None,
+        sender_message_id: str | None,
+        sent_at_unix_milliseconds: int | None,
+        queue_reason: PromptQueueReason,
+        *,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
+    ) -> PromptDeliveryQueued:
+        state.held_prompts_created += 1
+        state.held_prompts.append(
+            _HeldPrompt(
+                held_prompt_id=f"held-{state.held_prompts_created}",
+                content=content,
+                sender_label=sender_label,
+                model_change=model_change,
+                reasoning_effort_change=reasoning_effort_change,
+                sender_message_id=sender_message_id,
+                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                snapshot_sent_at_unix_milliseconds=(
+                    sent_at_unix_milliseconds
+                    if sent_at_unix_milliseconds is not None
+                    else state.held_prompts_created
+                ),
+                queue_reason=queue_reason,
+                sender=sender,
+                recipient=recipient,
+            )
+        )
+        return PromptDeliveryQueued(queue_position=len(state.held_prompts))
+
+    async def record_message_to_owner(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        sender: Principal,
+        recipient: Principal,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+    ) -> None:
+        require_message_content(content)
+        state = self._conversations.get(conversation_id)
+        if state is None:
+            raise ValueError("no such conversation")
+        if sender_message_id is not None:
+            for observed in state.observations:
+                if observed.sender_message_id != sender_message_id:
+                    continue
+                if (
+                    observed.kind is not InMemoryConversationObservationKind.message_to_owner
+                    or observed.content != content
+                    or observed.sender != sender
+                    or observed.recipient != recipient
+                ):
+                    raise ValueError("sender_message_id already names a different message")
+                return
+        state.observations.append(
+            InMemoryConversationObservation(
+                kind=InMemoryConversationObservationKind.message_to_owner,
+                content=content,
+                sender_label=sender_label,
+                sender_message_id=sender_message_id,
+                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                sender=sender,
+                recipient=recipient,
+            )
+        )
+        if state.running_turn is not None:
+            state.running_turn.explicit_reply_recipients.add(recipient)
+
+    async def record_prompt_delivery_uncertain(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode,
+        sender_message_id: str,
+        sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
+    ) -> None:
+        require_message_content(content)
+        state = self._conversations.get(conversation_id)
+        if state is None:
+            raise ValueError("no such conversation")
+        for observed in state.observations:
+            if observed.sender_message_id != sender_message_id:
+                continue
+            if (
+                observed.kind is not InMemoryConversationObservationKind.prompt_delivery_uncertain
+                or observed.content != content
+                or observed.sender_label != sender_label
+                or observed.mode is not mode
+                or observed.sender != sender
+                or observed.recipient != recipient
+            ):
+                raise ValueError("sender_message_id already names a different message")
+            return
+        state.observations.append(
+            InMemoryConversationObservation(
+                kind=InMemoryConversationObservationKind.prompt_delivery_uncertain,
+                content=content,
+                sender_label=sender_label,
+                mode=mode,
+                sender_message_id=sender_message_id,
+                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                sender=sender,
+                recipient=recipient,
+            )
+        )
+
+    async def record_proposal_delivery_failed(
+        self,
+        conversation_id: str,
+        *,
+        attempt_count: int,
+        last_error: str,
+        sender_message_id: str,
+    ) -> None:
+        if attempt_count < 1 or not last_error.strip() or not sender_message_id.strip():
+            raise ValueError("proposal delivery failure fields must be non-empty")
+        state = self._conversations.get(conversation_id)
+        if state is None:
+            raise ValueError("no such conversation")
+        for observed in state.observations:
+            if observed.sender_message_id != sender_message_id:
+                continue
+            if (
+                observed.kind is not InMemoryConversationObservationKind.proposal_delivery_failed
+                or observed.attempt_count != attempt_count
+                or observed.last_error != last_error
+            ):
+                raise ValueError("sender_message_id already names a different message")
+            return
+        state.observations.append(
+            InMemoryConversationObservation(
+                kind=InMemoryConversationObservationKind.proposal_delivery_failed,
+                attempt_count=attempt_count,
+                last_error=last_error,
+                sender_message_id=sender_message_id,
+            )
+        )
+
+    async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
+        state = self._conversations.get(conversation_id)
+        if state is None or state.running_turn is None:
+            return None
+        return ConversationTurnReference(conversation_id, state.running_turn.turn_number)
+
+    async def record_explicit_reply(
+        self, turn: ConversationTurnReference, recipient: Principal
+    ) -> None:
+        state = self._conversations.get(turn.conversation_id)
+        if (
+            state is not None
+            and state.running_turn is not None
+            and state.running_turn.turn_number == turn.turn_number
+        ):
+            state.running_turn.explicit_reply_recipients.add(recipient)
 
     async def interrupt(self, conversation_id: str) -> None:
         state = self._conversations.get(conversation_id)
@@ -314,6 +596,9 @@ class InMemoryConversationSystem:
                 sender_label=held.sender_label,
                 sender_message_id=held.sender_message_id,
                 sent_at_unix_milliseconds=held.snapshot_sent_at_unix_milliseconds,
+                sender=held.sender,
+                recipient=held.recipient,
+                queue_reason=held.queue_reason,
             )
             for held in state.held_prompts
         )
@@ -343,9 +628,7 @@ class InMemoryConversationSystem:
         fate: HeldPromptPromotionFate
         if mode is HeldPromptPromotionMode.send_now:
             if state.running_turn is not None:
-                self._end_running_turn(
-                    state, InMemoryConversationTurnEnding.interrupted
-                )
+                self._end_running_turn(state, InMemoryConversationTurnEnding.interrupted)
             fate = self._start_turn(
                 state,
                 held.content,
@@ -355,6 +638,8 @@ class InMemoryConversationSystem:
                 held.reasoning_effort_change,
                 sender_message_id=held.sender_message_id,
                 sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                sender=held.sender,
+                recipient=held.recipient,
             )
         else:
             fate = self._steer(
@@ -363,6 +648,8 @@ class InMemoryConversationSystem:
                 held.sender_label,
                 sender_message_id=held.sender_message_id,
                 sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                sender=held.sender,
+                recipient=held.recipient,
             )
 
         if isinstance(fate, PromptDeliveryRefused):
@@ -379,14 +666,14 @@ class InMemoryConversationSystem:
                     refusal_reason=fate.refusal_reason,
                     sender_message_id=held.sender_message_id,
                     sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                    sender=held.sender,
+                    recipient=held.recipient,
                 )
             )
             self._drain(state)
         return fate
 
-    async def discard_held_prompt(
-        self, conversation_id: str, held_prompt_id: str
-    ) -> bool:
+    async def discard_held_prompt(self, conversation_id: str, held_prompt_id: str) -> bool:
         state = self._conversations.get(conversation_id)
         if state is None:
             return False
@@ -401,6 +688,8 @@ class InMemoryConversationSystem:
                     sender_label=held.sender_label,
                     sender_message_id=held.sender_message_id,
                     sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                    sender=held.sender,
+                    recipient=held.recipient,
                 )
             )
             return True
@@ -421,6 +710,8 @@ class InMemoryConversationSystem:
                     sender_label=held.sender_label,
                     sender_message_id=held.sender_message_id,
                     sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                    sender=held.sender,
+                    recipient=held.recipient,
                 )
             )
         if state.running_turn is not None:
@@ -542,8 +833,7 @@ class InMemoryConversationSystem:
         if (
             questions is None
             or len(answers_by_question_id) != len(answers)
-            or set(answers_by_question_id)
-            != {question.question_id for question in questions}
+            or set(answers_by_question_id) != {question.question_id for question in questions}
         ):
             return False
         ordered_answers = tuple(
@@ -664,6 +954,8 @@ class InMemoryConversationSystem:
         *,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
         recorded_messages: Sequence[_HeldPrompt] = (),
     ) -> _InMemoryBackendSession | PromptDeliveryRefused:
         established = self._establish_backend_session(state)
@@ -691,7 +983,9 @@ class InMemoryConversationSystem:
             )
         established.prompt_writes.append(
             InMemoryBackendPromptWrite(
-                content=content, sender_label=sender_label, mode=mode
+                content=sender_labeled_message_content(content, sender_label),
+                sender_label=sender_label,
+                mode=mode,
             )
         )
         if recorded_messages:
@@ -707,6 +1001,8 @@ class InMemoryConversationSystem:
                         mode=mode,
                         sender_message_id=message.sender_message_id,
                         sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+                        sender=message.sender,
+                        recipient=message.recipient,
                     )
                 )
             return established
@@ -718,6 +1014,8 @@ class InMemoryConversationSystem:
                 mode=mode,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                sender=sender,
+                recipient=recipient,
             )
         )
         return established
@@ -733,6 +1031,8 @@ class InMemoryConversationSystem:
         *,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
         recorded_messages: Sequence[_HeldPrompt] = (),
     ) -> PromptDeliveryStarted | PromptDeliveryRefused:
         written = self._write_to_backend(
@@ -744,11 +1044,30 @@ class InMemoryConversationSystem:
             reasoning_effort_change,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
             recorded_messages=recorded_messages,
         )
         if isinstance(written, PromptDeliveryRefused):
             return written
-        state.running_turn = _RunningTurn()
+        prompt_senders: dict[Principal, None] = {}
+        messages = recorded_messages or (
+            _HeldPrompt(
+                held_prompt_id="",
+                content=content,
+                sender_label=sender_label,
+                sender=sender,
+                recipient=recipient,
+            ),
+        )
+        for message in messages:
+            if message.sender is not None:
+                prompt_senders.setdefault(message.sender, None)
+        state.running_turn = _RunningTurn(
+            turn_number=state.next_turn_number,
+            prompt_senders=prompt_senders,
+        )
+        state.next_turn_number += 1
         return PromptDeliveryStarted()
 
     def _steer(
@@ -759,6 +1078,8 @@ class InMemoryConversationSystem:
         *,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
     ) -> PromptDeliveryInjected | PromptDeliveryRefused:
         if not backend_supports_steer(state.resolved_start.backend_key):
             return PromptDeliveryRefused(
@@ -775,20 +1096,35 @@ class InMemoryConversationSystem:
             PromptDeliveryMode.steer,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            sender=sender,
+            recipient=recipient,
         )
         if isinstance(written, PromptDeliveryRefused):
             return written
+        if sender is not None and state.running_turn is not None:
+            state.running_turn.prompt_senders.setdefault(sender, None)
         return PromptDeliveryInjected()
 
     def _end_running_turn(
         self, state: _ConversationState, ending: InMemoryConversationTurnEnding
     ) -> None:
+        running = state.running_turn
+        assert running is not None
         state.running_turn = None
         session = state.backend_session
         if ending is InMemoryConversationTurnEnding.interrupted and session is not None:
             # Only an interruption cancels the child. A turn that completed or failed
             # ended on the backend's own account, with nothing left to cancel.
             session.cancellations += 1
+        for prompt_sender in running.prompt_senders:
+            if prompt_sender in running.explicit_reply_recipients:
+                continue
+            state.observations.append(
+                InMemoryConversationObservation(
+                    kind=InMemoryConversationObservationKind.explicit_reply_missing,
+                    sender=prompt_sender,
+                )
+            )
         state.observations.append(
             InMemoryConversationObservation(
                 kind=InMemoryConversationObservationKind.turn_ended,
@@ -812,11 +1148,13 @@ class InMemoryConversationSystem:
                 state,
                 one_prompt_from(run),
                 held.sender_label,
-                PromptDeliveryMode.run_when_free,
+                PromptDeliveryMode.queue,
                 held.model_change,
                 held.reasoning_effort_change,
                 sender_message_id=held.sender_message_id,
                 sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                sender=held.sender,
+                recipient=held.recipient,
                 recorded_messages=run,
             )
             if isinstance(fate, PromptDeliveryRefused):
@@ -826,9 +1164,11 @@ class InMemoryConversationSystem:
                             kind=InMemoryConversationObservationKind.prompt_delivery_refused,
                             content=message.content,
                             sender_label=message.sender_label,
-                            mode=PromptDeliveryMode.run_when_free,
+                            mode=PromptDeliveryMode.queue,
                             refusal_reason=fate.refusal_reason,
                             sender_message_id=message.sender_message_id,
                             sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
+                            sender=message.sender,
+                            recipient=message.recipient,
                         )
                     )

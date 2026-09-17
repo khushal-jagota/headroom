@@ -16,13 +16,24 @@ build. They are deliberately absent from this module rather than sketched.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Final, Protocol
 
 from planner.conversation.message_content import MessageContent
-from planner.core.contracts import ErrorCode, PlannerError
+from planner.core.contracts import ErrorCode, PlannerError, Principal
+
+type ConversationMessageContent = MessageContent | Callable[[str], Awaitable[MessageContent]]
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationTurnReference:
+    """The public, opaque-enough name of one active turn in one conversation."""
+
+    conversation_id: str
+    turn_number: int
 
 
 class ConversationBackendKey(StrEnum):
@@ -188,7 +199,7 @@ class ResolvedConversationStart:
 class PromptDeliveryMode(StrEnum):
     """How a sent message should meet the agent. One parameter, three values.
 
-    ``run_when_free`` is the default. If the agent is idle the message starts a turn
+    ``queue`` is the default. If the agent is idle the message starts a turn
     straight away. If the agent is busy the message is held, and it runs when the agent
     frees up.
 
@@ -199,13 +210,13 @@ class PromptDeliveryMode(StrEnum):
     dead all the same and the agent is free, so the messages that were already held run
     from that point.
 
-    ``steer`` injects the text into the turn that is already running, without ending it.
-    Whether a backend can do this is a per-backend fact. A steer is refused when no
-    turn is running, or when the backend cannot steer. Admission may include a native
-    continuation owned by the same captured Panels turn.
+    ``steer`` injects text into a running turn without ending it. It starts a turn when
+    the agent is idle. Attachments, run changes, and confirmed admission refusals enter
+    the queue. An uncertain admission never enters the queue because the backend may
+    already hold the message.
     """
 
-    run_when_free = "run_when_free"
+    queue = "queue"
     send_now = "send_now"
     steer = "steer"
 
@@ -215,6 +226,15 @@ class HeldPromptPromotionMode(StrEnum):
 
     send_now = "send_now"
     steer = "steer"
+
+
+class PromptQueueReason(StrEnum):
+    """Why a message entered the held line instead of steering a running turn."""
+
+    requested = "requested"
+    attachment = "attachment"
+    run_change = "run_change"
+    steer_refused = "steer_refused"
 
 
 class PromptDeliveryRefusalReason(StrEnum):
@@ -266,6 +286,8 @@ class PromptDeliveryStarted:
     this class carries no field that could name one.
     """
 
+    pass
+
 
 @dataclass(frozen=True, slots=True)
 class PromptDeliveryQueued:
@@ -291,6 +313,8 @@ class PromptDeliveryInjected:
     The turn can finish before this result returns. Admission does not claim that the
     model read the message, complied with it, or left the turn running.
     """
+
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,9 +344,11 @@ class PromptDeliveryUncertain:
     claim about provider receipt, model receipt, or later compliance.
     """
 
+    pass
 
-# The fate of one delivery. Fate means it happened, never that it was attempted. Each
-# member claims exactly the layer it names and no more: started means written to a live
+
+# The fate of one delivery. Fate means it happened, never that it was attempted.
+# Each member claims exactly the layer it names and no more: started means written to a live
 # backend's wire, queued means held by the conversation system, injected means admitted
 # to the captured running turn, refused means proven non-admission, and uncertain means a
 # steering attempt may have crossed the backend boundary without a trustworthy answer.
@@ -335,6 +361,19 @@ type PromptDeliveryFate = (
     | PromptDeliveryRefused
     | PromptDeliveryUncertain
 )
+
+
+@dataclass(frozen=True, slots=True)
+class AddressedPromptDeliveryReceipt:
+    """An internal receipt for reply attribution after one addressed send.
+
+    The public fate stays the complete conversation contract. ``newly_accepted`` is
+    false only when the sender's message id replayed an earlier outcome, so a retry in a
+    later source turn cannot claim that it answered that turn.
+    """
+
+    fate: PromptDeliveryFate
+    newly_accepted: bool
 
 
 type HeldPromptPromotionFate = (
@@ -360,6 +399,9 @@ class HeldPrompt:
     sender_label: str
     sender_message_id: str | None
     sent_at_unix_milliseconds: int
+    sender: Principal | None = None
+    recipient: Principal | None = None
+    queue_reason: PromptQueueReason = PromptQueueReason.requested
 
 
 class ConversationAlreadyStarted(Exception):
@@ -420,11 +462,13 @@ class ConversationSystem(Protocol):
         content: MessageContent,
         *,
         sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
     ) -> PromptDeliveryFate:
         """Send a message into a conversation. This is the only way anything gets to an agent.
 
@@ -434,8 +478,8 @@ class ConversationSystem(Protocol):
         (``MessageContentEmpty``, which is a ``ValueError``), because an empty send would
         put an empty prompt in front of an agent and tell nobody it had.
 
-        ``mode`` decides how the text meets the agent — run when free, send now, or
-        steer into the running turn — and defaults to run-when-free. See
+        ``mode`` decides how the text meets the agent — queue, send now, or
+        steer into the running turn — and defaults to queue. See
         ``PromptDeliveryMode`` for what each one does against an idle and a busy agent.
 
         ``model_change`` and ``reasoning_effort_change`` let this message carry a
@@ -444,11 +488,10 @@ class ConversationSystem(Protocol):
         no other way to change either, so browsing a picker changes nothing and an
         abandoned choice never touches the conversation. The change lands with the
         delivery: a held message applies it when it runs, and a refused delivery
-        changes nothing. How a backend realizes it — a per-turn parameter, or
+        changes nothing. A steer with a change falls back to the queue. How a backend
+        realizes it — a per-turn parameter, or
         restarting the backend session under the same conversation id — is internal,
-        and the change is recorded as an event. A steer cannot carry a change, because
-        the turn it joins is already running; that is a caller error (``ValueError``),
-        not a delivery fate.
+        and the change is recorded as an event.
 
         The return value is the fate of this delivery, and fate means it happened, never
         that it was attempted. See ``PromptDeliveryFate``: started, queued, injected, or
@@ -463,6 +506,83 @@ class ConversationSystem(Protocol):
         ``sender_label`` says who sent the text — the automatic loop or the owner, for
         example. It is recorded on the prompt event and it is display-only: nothing else
         consumes it and nothing branches on it.
+        """
+        ...
+
+    async def send_with_receipt(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
+    ) -> AddressedPromptDeliveryReceipt:
+        """Run the canonical send and expose replay freshness to addressed-send wiring.
+
+        Ordinary callers use ``send`` and receive only the stable public fate. This
+        receipt exists so Send Message can credit a reply only for the first accepted
+        delivery of a sender-minted message id.
+        """
+        ...
+
+    async def record_message_to_owner(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        sender: Principal,
+        recipient: Principal,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+    ) -> None:
+        """Record one addressed message that no backend receives."""
+        ...
+
+    async def record_prompt_delivery_uncertain(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode,
+        sender_message_id: str,
+        sent_at_unix_milliseconds: int | None = None,
+        sender: Principal | None = None,
+        recipient: Principal | None = None,
+    ) -> None:
+        """Record one terminal uncertain outcome without another backend delivery."""
+        ...
+
+    async def record_proposal_delivery_failed(
+        self,
+        conversation_id: str,
+        *,
+        attempt_count: int,
+        last_error: str,
+        sender_message_id: str,
+    ) -> None:
+        """Record one terminal proposal-alert failure without a backend delivery."""
+        ...
+
+    async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
+        """Capture the exact active turn that a Send Message may answer."""
+        ...
+
+    async def record_explicit_reply(
+        self, turn: ConversationTurnReference, recipient: Principal
+    ) -> None:
+        """Credit an accepted Send Message to the active turn in its sender conversation.
+
+        The message itself belongs to its destination conversation. This records no
+        second row. If the named turn has ended or changed, its ending won the race and
+        the later send cannot rewrite what that turn said.
         """
         ...
 

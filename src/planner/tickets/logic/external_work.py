@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 
-from planner.core.contracts import ErrorCode, PlannerError
+from planner.core.contracts import ErrorCode, PlannerError, Principal
 from planner.tickets.contracts import Ticket
 from planner.tickets.logic import admission
 from planner.tickets.logic.decisions import Decision
@@ -20,6 +20,7 @@ def decide_external_work(
     ticket: Ticket,
     target_stage: str,
     provided_values: Mapping[str, str],
+    principal: Principal,
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
@@ -86,4 +87,5 @@ def decide_external_work(
         field_values=new_fields,
         stage=target_stage,
         ceiling=target_stage,
+        ceiling_holder=principal,
     )

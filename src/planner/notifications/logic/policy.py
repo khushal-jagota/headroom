@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from planner.core.contracts import PrincipalKind
 from planner.notifications.contracts import (
     NOTIFICATION_TYPE_BY_ID,
     NotificationFact,
@@ -9,20 +10,28 @@ from planner.notifications.contracts import (
 )
 
 _REASONS = {
-    "ticket_needs_approval": "needs your approval",
-    "needs_input": "needs your input",
-    "permission_requested": "is waiting for permission",
-    "worker_completed": "has a completed worker reply",
-    "worker_failed": "has a failed worker reply",
+    "awaiting_reply": "has a message for you",
+    "awaiting_approval": "needs your approval",
+    "assigned": "is assigned to you",
+    "errored": "has an error",
 }
 
 
 def _subject_route(fact: NotificationFact) -> str:
-    if fact.subject_kind == "ticket":
-        return f"/#/workspace/{fact.subject_id}"
-    if fact.subject_kind == "agent":
-        return f"/#/agents/{fact.subject_id.replace('_', '-')}"
-    raise ValueError(f"unknown notification subject kind: {fact.subject_kind}")
+    if fact.subject.kind is PrincipalKind.ticket:
+        return f"/#/workspace/{fact.subject.id}"
+    if fact.subject.kind is PrincipalKind.chief:
+        return "/#/agents/chief-of-staff"
+    if fact.subject.kind is PrincipalKind.sprint_item:
+        return f"/#/workspace/item/{fact.subject.id}"
+    raise ValueError(f"unknown notification subject kind: {fact.subject.kind.value}")
+
+
+def _subject_tag(fact: NotificationFact) -> str:
+    """Keep the existing OS replacement key while policy uses Principals."""
+    if fact.subject.kind is PrincipalKind.chief:
+        return "panels-agent-chief_of_staff"
+    return f"panels-{fact.subject.kind.value}-{fact.subject.id}"
 
 
 def decide_notification(fact: NotificationFact, *, enabled: bool) -> NotificationIntent | None:
@@ -33,8 +42,12 @@ def decide_notification(fact: NotificationFact, *, enabled: bool) -> Notificatio
     """
     if fact.notification_type not in NOTIFICATION_TYPE_BY_ID:
         raise ValueError(f"unknown notification type: {fact.notification_type}")
-    if fact.subject_kind not in {"ticket", "agent"}:
-        raise ValueError(f"unknown notification subject kind: {fact.subject_kind}")
+    if fact.subject.kind not in {
+        PrincipalKind.ticket,
+        PrincipalKind.chief,
+        PrincipalKind.sprint_item,
+    }:
+        raise ValueError(f"unknown notification subject kind: {fact.subject.kind.value}")
     if not enabled:
         return None
     reason = _REASONS[fact.notification_type]
@@ -44,5 +57,5 @@ def decide_notification(fact: NotificationFact, *, enabled: bool) -> Notificatio
         body=f"{fact.subject_label} {reason}.",
         route=_subject_route(fact),
         # OS notification replacement is the final overlap coalescing boundary.
-        tag=f"panels-{fact.subject_kind}-{fact.subject_id}",
+        tag=_subject_tag(fact),
     )

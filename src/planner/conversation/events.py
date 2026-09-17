@@ -8,9 +8,9 @@ Two kinds of thing travel through the conversation system and only one of them i
 
 - **Event kinds** — the kinds below. Each has a payload type and a canonical JSON form, and
   each is written to ``conversation_events`` when the thing it names has finished
-  happening: the prompt reached the backend, the agent's message is complete, the tool
-  call started, the tool call finished, the turn ended, the message that was waiting was
-  thrown away.
+  happening: the prompt reached the backend, a tool call started or finished, the turn
+  ended, or the message that was waiting was thrown away. Historical agent-message rows
+  remain readable, but new backend prose is runtime-only.
 - **Live tail frames** — the half-finished text a backend streams while it works. They are
   shown and then forgotten. They are not rows, they have no kind, and nothing stores them.
 
@@ -36,6 +36,7 @@ from planner.conversation.message_content import (
     message_content_from_stored,
     message_content_json_entries,
 )
+from planner.core.contracts import Principal, PrincipalKind
 
 
 class ConversationEventKind(StrEnum):
@@ -50,8 +51,11 @@ class ConversationEventKind(StrEnum):
     prompt = "prompt"
     prompt_delivery_refused = "prompt_delivery_refused"
     prompt_delivery_uncertain = "prompt_delivery_uncertain"
+    proposal_delivery_failed = "proposal_delivery_failed"
     prompt_discarded = "prompt_discarded"
     agent_message = "agent_message"
+    message_to_owner = "message_to_owner"
+    explicit_reply_missing = "explicit_reply_missing"
     tool_call_started = "tool_call_started"
     tool_call_finished = "tool_call_finished"
     permission_asked = "permission_asked"
@@ -69,6 +73,7 @@ class ConversationEventKind(StrEnum):
 CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION: Final = frozenset(
     {
         ConversationEventKind.agent_message,
+        ConversationEventKind.proposal_delivery_failed,
         ConversationEventKind.tool_call_started,
         ConversationEventKind.tool_call_finished,
         ConversationEventKind.plan_updated,
@@ -99,8 +104,7 @@ def conversation_event_kinds_need_the_change_signal(
     as one transaction, and the signal carries nothing that could name part of it.
     """
     return any(
-        kind not in CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION
-        for kind in kinds
+        kind not in CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION for kind in kinds
     )
 
 
@@ -110,6 +114,12 @@ class ConversationTurnEnding(StrEnum):
     completed = "completed"
     failed = "failed"
     interrupted = "interrupted"
+
+
+class AutomaticCompactionResult(StrEnum):
+    """The terminal maintenance result that needs an explicit durable distinction."""
+
+    not_compacted = "not_compacted"
 
 
 class ToolCallStatus(StrEnum):
@@ -205,6 +215,8 @@ class PromptEventPayload:
     mode: PromptDeliveryMode
     sender_message_id: str | None = None
     sent_at_unix_milliseconds: int | None = None
+    sender: Principal | None = None
+    recipient: Principal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,11 +240,14 @@ class PromptDeliveryRefusedEventPayload:
     mode: PromptDeliveryMode
     refusal_reason: PromptDeliveryRefusalReason
     sender_message_id: str | None = None
+    sent_at_unix_milliseconds: int | None = None
+    sender: Principal | None = None
+    recipient: Principal | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class PromptDeliveryUncertainEventPayload:
-    """A steering attempt whose admission stayed unknown after possible transmission.
+    """A prompt whose admission stayed unknown after possible transmission.
 
     This is a terminal delivery record. Panels does not retry it, and a sender-id replay
     reads this row instead of transmitting the same guidance again.
@@ -244,6 +259,19 @@ class PromptDeliveryUncertainEventPayload:
     sender_label: str
     mode: PromptDeliveryMode
     sender_message_id: str | None = None
+    sent_at_unix_milliseconds: int | None = None
+    sender: Principal | None = None
+    recipient: Principal | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProposalDeliveryFailedEventPayload:
+    """One proposal alert that stopped after its bounded refusal policy."""
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.proposal_delivery_failed
+    attempt_count: int
+    last_error: str
+    sender_message_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,7 +282,7 @@ class PromptDiscardedEventPayload:
     must never disappear without a trace — so each discarded message is written down,
     with who sent it, in the order it was waiting in.
 
-    There is no mode: only a run-when-free message is ever held, so there is nothing a
+    There is no mode: only a queue message is ever held, so there is nothing a
     mode could tell anyone here.
 
     ``sender_message_id`` is here for the same reason it is on a refusal: this is one of
@@ -266,11 +294,28 @@ class PromptDiscardedEventPayload:
     content: MessageContent
     sender_label: str
     sender_message_id: str | None = None
+    sent_at_unix_milliseconds: int | None = None
+    sender: Principal | None = None
+    recipient: Principal | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MessageToOwnerEventPayload:
+    """One addressed employee message for the owner, with no backend delivery."""
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.message_to_owner
+
+    content: MessageContent
+    sender: Principal
+    recipient: Principal
+    sender_label: str
+    sender_message_id: str | None = None
+    sent_at_unix_milliseconds: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class AgentMessageEventPayload:
-    """A completed agent message, whole, as the backend finished it.
+    """A historical completed agent message from before backend prose became runtime-only.
 
     Usually one run of markdown, which is what an agent's message nearly always is. A
     backend that hands back a file it produced puts that in the same message, and it is a
@@ -280,6 +325,20 @@ class AgentMessageEventPayload:
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.agent_message
 
     content: MessageContent
+
+
+@dataclass(frozen=True, slots=True)
+class ExplicitReplyMissingEventPayload:
+    """A turn ended without an explicit message to one of its prompt senders.
+
+    This is a system marker, not an addressed message. ``prompt_sender`` identifies the
+    person whose delivered prompt went unanswered without making the marker itself a
+    message to that person.
+    """
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.explicit_reply_missing
+
+    prompt_sender: Principal
 
 
 @dataclass(frozen=True, slots=True)
@@ -431,22 +490,26 @@ class ContextCompactedEventPayload:
 class TurnEndedEventPayload:
     """A turn that has stopped running, and why.
 
-    ``error_summary`` is filled only for a failure. A completed or interrupted turn has
-    nothing to summarise.
+    ``error_summary`` is filled only for a failure. ``automatic_compaction_result`` is
+    filled when a completed maintenance turn did not produce a confirmed boundary.
     """
 
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.turn_ended
 
     ending: ConversationTurnEnding
     error_summary: str | None = None
+    automatic_compaction_result: AutomaticCompactionResult | None = None
 
 
 type ConversationEventPayload = (
     PromptEventPayload
     | PromptDeliveryRefusedEventPayload
     | PromptDeliveryUncertainEventPayload
+    | ProposalDeliveryFailedEventPayload
     | PromptDiscardedEventPayload
+    | MessageToOwnerEventPayload
     | AgentMessageEventPayload
+    | ExplicitReplyMissingEventPayload
     | ToolCallStartedEventPayload
     | ToolCallFinishedEventPayload
     | PermissionAskedEventPayload
@@ -466,9 +529,9 @@ type ConversationEventPayload = (
 class AgentMessageDeltaFrame:
     """A piece of an agent message that has not finished arriving.
 
-    It is shown as the live tail and then forgotten. When the message finishes, the whole
-    of it is written as one ``agent_message`` row; the pieces are never stored, so a
-    reader who arrives late sees the finished message and misses nothing.
+    It is shown as the live tail and then forgotten. Completion does not turn it into a
+    durable or addressed message; a reader who arrives later sees the turn outcome and
+    any explicit Send Message instead.
     """
 
     text_delta: str
@@ -499,10 +562,7 @@ class HeldPromptsChangedFrame:
 
 
 type ConversationLiveTailFrame = (
-    AgentMessageDeltaFrame
-    | ToolCallProgressFrame
-    | ModelThinkingFrame
-    | HeldPromptsChangedFrame
+    AgentMessageDeltaFrame | ToolCallProgressFrame | ModelThinkingFrame | HeldPromptsChangedFrame
 )
 
 
@@ -543,9 +603,8 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
-                **_entry_if_minted(
-                    "sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds
-                ),
+                **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
+                **_principal_entries(payload.sender, payload.recipient),
             }
         case PromptDeliveryRefusedEventPayload():
             return {
@@ -554,6 +613,8 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "mode": str(payload.mode),
                 "refusal_reason": str(payload.refusal_reason),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
+                **_principal_entries(payload.sender, payload.recipient),
             }
         case PromptDeliveryUncertainEventPayload():
             return {
@@ -561,15 +622,40 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
+                **_principal_entries(payload.sender, payload.recipient),
+            }
+        case ProposalDeliveryFailedEventPayload():
+            return {
+                "attempt_count": payload.attempt_count,
+                "last_error": payload.last_error,
+                "sender_message_id": payload.sender_message_id,
             }
         case PromptDiscardedEventPayload():
             return {
                 **message_content_json_entries(payload.content),
                 "sender_label": payload.sender_label,
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
+                **_principal_entries(payload.sender, payload.recipient),
+            }
+        case MessageToOwnerEventPayload():
+            return {
+                **message_content_json_entries(payload.content),
+                "sender_label": payload.sender_label,
+                **_principal_entries(payload.sender, payload.recipient),
+                **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
             }
         case AgentMessageEventPayload():
             return message_content_json_entries(payload.content)
+        case ExplicitReplyMissingEventPayload():
+            return {
+                "prompt_sender": {
+                    "kind": payload.prompt_sender.kind.value,
+                    "id": payload.prompt_sender.id,
+                }
+            }
         case ToolCallStartedEventPayload():
             return {
                 "tool_call_id": payload.tool_call_id,
@@ -633,8 +719,7 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
         case PlanUpdatedEventPayload():
             return {
                 "entries": [
-                    {"text": entry.text, "status": str(entry.status)}
-                    for entry in payload.entries
+                    {"text": entry.text, "status": str(entry.status)} for entry in payload.entries
                 ]
             }
         case ModelChangedEventPayload():
@@ -649,9 +734,21 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
         case ContextCompactedEventPayload():
             return {}
         case TurnEndedEventPayload():
-            return {"ending": str(payload.ending), "error_summary": payload.error_summary}
+            return {
+                "ending": str(payload.ending),
+                "error_summary": payload.error_summary,
+                **_entry_if_minted(
+                    "automatic_compaction_result", payload.automatic_compaction_result
+                ),
+            }
         case _:
             assert_never(payload)
+
+
+def _prompt_delivery_mode_from_stored(stored: dict[str, Any]) -> PromptDeliveryMode:
+    """Read the retired persisted name while every new row uses ``queue``."""
+    value = _text(stored, "mode")
+    return PromptDeliveryMode.queue if value == "run_when_free" else PromptDeliveryMode(value)
 
 
 def _payload_from_json_object(
@@ -662,35 +759,81 @@ def _payload_from_json_object(
             return PromptEventPayload(
                 content=message_content_from_stored(stored),
                 sender_label=_text(stored, "sender_label"),
-                mode=PromptDeliveryMode(_text(stored, "mode")),
+                mode=_prompt_delivery_mode_from_stored(stored),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
                 sent_at_unix_milliseconds=_optional_whole_number(
                     stored, "sent_at_unix_milliseconds"
                 ),
+                sender=_optional_principal(stored, "sender"),
+                recipient=_optional_principal(stored, "recipient"),
             )
         case ConversationEventKind.prompt_delivery_refused:
             return PromptDeliveryRefusedEventPayload(
                 content=message_content_from_stored(stored),
                 sender_label=_text(stored, "sender_label"),
-                mode=PromptDeliveryMode(_text(stored, "mode")),
+                mode=_prompt_delivery_mode_from_stored(stored),
                 refusal_reason=PromptDeliveryRefusalReason(_text(stored, "refusal_reason")),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
+                sent_at_unix_milliseconds=_optional_whole_number(
+                    stored, "sent_at_unix_milliseconds"
+                ),
+                sender=_optional_principal(stored, "sender"),
+                recipient=_optional_principal(stored, "recipient"),
             )
         case ConversationEventKind.prompt_delivery_uncertain:
             return PromptDeliveryUncertainEventPayload(
                 content=message_content_from_stored(stored),
                 sender_label=_text(stored, "sender_label"),
-                mode=PromptDeliveryMode(_text(stored, "mode")),
+                mode=_prompt_delivery_mode_from_stored(stored),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
+                sent_at_unix_milliseconds=_optional_whole_number(
+                    stored, "sent_at_unix_milliseconds"
+                ),
+                sender=_optional_principal(stored, "sender"),
+                recipient=_optional_principal(stored, "recipient"),
+            )
+        case ConversationEventKind.proposal_delivery_failed:
+            attempt_count = _optional_whole_number(stored, "attempt_count")
+            if attempt_count is None:
+                raise ValueError("attempt_count must be a whole number")
+            return ProposalDeliveryFailedEventPayload(
+                attempt_count=attempt_count,
+                last_error=_text(stored, "last_error"),
+                sender_message_id=_text(stored, "sender_message_id"),
             )
         case ConversationEventKind.prompt_discarded:
             return PromptDiscardedEventPayload(
                 content=message_content_from_stored(stored),
                 sender_label=_text(stored, "sender_label"),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
+                sent_at_unix_milliseconds=_optional_whole_number(
+                    stored, "sent_at_unix_milliseconds"
+                ),
+                sender=_optional_principal(stored, "sender"),
+                recipient=_optional_principal(stored, "recipient"),
+            )
+        case ConversationEventKind.message_to_owner:
+            sender = _optional_principal(stored, "sender")
+            recipient = _optional_principal(stored, "recipient")
+            if sender is None or recipient is None:
+                raise ValueError("message_to_owner requires sender and recipient")
+            return MessageToOwnerEventPayload(
+                content=message_content_from_stored(stored),
+                sender=sender,
+                recipient=recipient,
+                sender_label=_text(stored, "sender_label"),
+                sender_message_id=_optional_text(stored, "sender_message_id"),
+                sent_at_unix_milliseconds=_optional_whole_number(
+                    stored, "sent_at_unix_milliseconds"
+                ),
             )
         case ConversationEventKind.agent_message:
             return AgentMessageEventPayload(content=message_content_from_stored(stored))
+        case ConversationEventKind.explicit_reply_missing:
+            prompt_sender = _optional_principal(stored, "prompt_sender")
+            if prompt_sender is None:
+                raise ValueError("explicit_reply_missing requires prompt_sender")
+            return ExplicitReplyMissingEventPayload(prompt_sender=prompt_sender)
         case ConversationEventKind.tool_call_started:
             return ToolCallStartedEventPayload(
                 tool_call_id=_text(stored, "tool_call_id"),
@@ -791,6 +934,11 @@ def _payload_from_json_object(
             return TurnEndedEventPayload(
                 ending=ConversationTurnEnding(_text(stored, "ending")),
                 error_summary=_optional_text(stored, "error_summary"),
+                automatic_compaction_result=(
+                    None
+                    if (result := _optional_text(stored, "automatic_compaction_result")) is None
+                    else AutomaticCompactionResult(result)
+                ),
             )
         case _:
             assert_never(kind)
@@ -803,6 +951,28 @@ def _entry_if_minted(field_name: str, value: object) -> dict[str, Any]:
     by a sender that mints nothing is the same text it has always been.
     """
     return {} if value is None else {field_name: value}
+
+
+def _principal_entries(sender: Principal | None, recipient: Principal | None) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    if sender is not None:
+        result["sender"] = {"kind": sender.kind.value, "id": sender.id}
+    if recipient is not None:
+        result["recipient"] = {"kind": recipient.kind.value, "id": recipient.id}
+    return result
+
+
+def _optional_principal(stored: dict[str, Any], field_name: str) -> Principal | None:
+    value = stored.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be a principal object or absent")
+    kind = value.get("kind")
+    principal_id = value.get("id")
+    if not isinstance(kind, str) or not isinstance(principal_id, str):
+        raise ValueError(f"{field_name} must contain text kind and id")
+    return Principal(PrincipalKind(kind), principal_id)
 
 
 def _text(stored: dict[str, Any], field_name: str) -> str:

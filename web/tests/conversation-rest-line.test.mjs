@@ -42,6 +42,7 @@ const transpiledModules = [
   ["conversationDetail.ts", "conversationDetail.mjs"],
   ["toolCallPresentation/index.ts", "toolCallPresentation.mjs"],
   ["taskProgress.ts", "taskProgress.mjs"],
+  ["lens.ts", "lens.mjs"],
   ["restLine.ts", "restLine.mjs"]
 ];
 
@@ -69,6 +70,10 @@ for (const [sourcePath, outputName] of transpiledModules) {
     .replace(
       /from\s+["']\.\/taskProgress["']/g,
       'from "./taskProgress.mjs"'
+    )
+    .replace(
+      /from\s+["']\.\/lens["']/g,
+      'from "./lens.mjs"'
     );
   await writeFile(join(directory, outputName), output, "utf8");
 }
@@ -77,6 +82,7 @@ const { emptyConversationFeed, feedWithCommittedEvents } = await import(
   join(directory, "feed.mjs")
 );
 const { transcriptRows } = await import(join(directory, "transcript.mjs"));
+const { taskProgressFrom } = await import(join(directory, "taskProgress.mjs"));
 const { restLineFrom, REST_LINE_MAXIMUM_CHARACTERS } = await import(
   join(directory, "restLine.mjs")
 );
@@ -95,7 +101,7 @@ function prompt(text, senderLabel = "owner") {
   return row("prompt", {
     content: [{ piece: "text", text }],
     senderLabel,
-    mode: "run_when_free",
+    mode: "queue",
     sentAtUnixMilliseconds: SENT_AT
   });
 }
@@ -306,6 +312,21 @@ const PLAN = [
 }
 
 {
+  // Focus hides the completed ending as a row, but the complete record still settles the
+  // turn behind the collapsed pane. The reply must not keep a live timer forever.
+  const rows = [prompt("go"), agentMessage("done"), turnEnded("completed")];
+  const visibleRows = rows.slice(0, -1);
+  const line = restLineFrom(
+    rows,
+    "owner",
+    taskProgressFrom(visibleRows),
+    { visibleRows, lens: "focus" }
+  );
+  assert.equal(line.text, "done");
+  assert.equal(line.workingSinceUnixMilliseconds, null);
+}
+
+{
   // A turn that failed or was interrupted is news, and the reason travels with it.
   assert.equal(
     restLineFrom([prompt("go"), agentMessage("half"), turnEnded("failed", "the child stopped")], "owner")
@@ -451,7 +472,7 @@ const PLAN = [
     event(1, "prompt", {
       text: "go",
       sender_label: "owner",
-      mode: "run_when_free",
+      mode: "queue",
       sent_at_unix_milliseconds: 1_700_000_000_400
     }),
     event(2, "plan_updated", { entries: PLAN }),

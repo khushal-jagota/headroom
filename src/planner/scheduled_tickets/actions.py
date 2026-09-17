@@ -9,7 +9,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import cast
 
-from planner.core.contracts import Priority
+from planner.core.contracts import OWNER_PRINCIPAL, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.scheduled_tickets import data
 from planner.scheduled_tickets.contracts import (
@@ -290,7 +290,7 @@ def _settle_occurrence(
             ticket = tickets_actions.create_ticket(
                 conn,
                 title=schedule.template.title,
-                actor="scheduler",
+                principal=OWNER_PRINCIPAL,
                 now=now,
                 title_max_chars=TITLE_MAX_CHARS,
                 worker_type=schedule.template.worker_type,

@@ -120,11 +120,8 @@ def effective_stage_ownership_mode(
 
 
 def resting_ticket_status(ownership_mode: StageOwnershipMode) -> TicketStatus:
-    if ownership_mode is StageOwnershipMode.worker:
-        return TicketStatus.empty
-    if ownership_mode is StageOwnershipMode.user:
-        return TicketStatus.user
-    return TicketStatus.paired
+    """All ownership modes enter at the one unclaimed control state."""
+    return TicketStatus.empty
 
 
 def worker_step_departure_status(ownership_mode: StageOwnershipMode) -> TicketStatus:
@@ -138,10 +135,8 @@ def worker_step_departure_status(ownership_mode: StageOwnershipMode) -> TicketSt
     A user-owned Stage never has a worker step to depart on: readiness rejects it before
     a claim is attempted, so reaching here is a bug rather than a case to map.
     """
-    if ownership_mode is StageOwnershipMode.worker:
+    if ownership_mode in {StageOwnershipMode.worker, StageOwnershipMode.paired}:
         return TicketStatus.agent
-    if ownership_mode is StageOwnershipMode.paired:
-        return TicketStatus.paired
     raise PlannerError(
         ErrorCode.validation,
         "a user-owned stage has no worker step to depart on",

@@ -1,4 +1,3 @@
-import { previewHashHref, sprintItemFileTarget } from "./filePreview";
 import {
   TICKET_STATUS_GROUPS,
   ticketStatusGroupKey,
@@ -48,33 +47,13 @@ export function remainingWorkspaceTicketGroups(
 
 export function workspaceProgress(workspace: SprintItemWorkspace): string {
   const tickets = workspace.tickets.filter((ticket) => ticket.stage !== "dropped");
-  const done = tickets.filter((ticket) => ticket.stage === "done").length;
-  return tickets.length ? `${done}/${tickets.length} Tickets done` : "No Tickets";
+  if (!tickets.length) return "No Tickets";
+  const open = tickets.filter((ticket) => ticket.stage !== "done");
+  if (!open.length) return `All ${tickets.length} done`;
+  const needsYou = open.filter((ticket) => ticketStatusGroupKey(ticket) === "needs-me").length;
+  return `${open.length} open${needsYou ? ` · ${needsYou} needs you` : ""}`;
 }
 
-export function workspaceTicketSprintLabel(ticket: SprintItemWorkspaceTicket): string {
-  if (ticket.sprint_id === null) return "Backlog";
-  return ticket.sprint_name || ticket.sprint_id;
-}
-
-export type WorkspaceArtifactRow = {
-  path: string;
-  label: string;
-  kind: string;
-  href: string | null;
-};
-
-// A row's href is null only when the path itself cannot resolve to a real managed file —
-// it must never be an empty string, which renders as a dead anchor.
-export function workspaceArtifactRows(workspace: SprintItemWorkspace): WorkspaceArtifactRow[] {
-  return workspace.artifacts.map((path) => {
-    const target = sprintItemFileTarget(workspace.id, path);
-    const dot = path.lastIndexOf(".");
-    return {
-      path,
-      label: path.split("/").at(-1) || path,
-      kind: dot < 0 ? "file" : path.slice(dot + 1),
-      href: target ? previewHashHref(target) : null
-    };
-  });
+export function workspaceTicketIsBacklog(ticket: SprintItemWorkspaceTicket): boolean {
+  return ticket.sprint_id === null && ticket.stage !== "done" && ticket.stage !== "dropped";
 }

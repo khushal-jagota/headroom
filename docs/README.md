@@ -1,7 +1,7 @@
 # Panels — the map
 
 Panels is a personal planning and work system that runs on one host. Its record contains
-**Days**, **Sprints**, **Sprint Items**, **Tickets**, **Ideas**, and **Projects**. Tickets
+**Days**, **Sprints**, **Sprint Items**, **Tickets**, **Ideas**, **Feedback**, and **Projects**. Tickets
 can carry work for an AI Worker, paired work, or user-owned personal tasks. Each Ticket
 owns its Project and optional Sprint placement. An Outcome holds optional shared context across Sprints. Explicit commitments select
 Outcomes before Tickets exist; Tickets keep their own scheduling. The stored Item
@@ -80,7 +80,8 @@ when they ask.
   `planning-day` and `planning-midday-check` Workers.
 - **Sprints** (`sprints.md`) — direct Ticket placement, optional Sprint Item
   classification, Project tracking, and the Sprint documents.
-- **Backlog & Ideas** (`backlog-and-ideas.md`) — the two catch surfaces.
+- **Backlog & Ideas** (`backlog-and-ideas.md`) — committed work and remembered possibilities.
+- **Feedback** (`feedback.md`) — loose notes captured from any page and their handled history.
 - **Projects** (`projects.md`) — the data-backed project catalog.
 
 **The two interfaces**
@@ -91,12 +92,7 @@ when they ask.
   the separation between direct approval commands and the approval-free `worker`
   subgroup.
 
-## Not built yet
-
-- **Recovery from a failed run** — an errored ticket is stuck (see
-  `worker-orchestration.md`).
-
 ---
 
-_Last verified: 2026-08-14 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-09-15 · Covers the system landscape; each doc carries its own
 code paths._
