@@ -39,10 +39,10 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "delete_proposal_delivery_outbox"
+HEAD_REVISION = "remove_ticket_alias_and_backend_error"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
-CURRENT_SCHEMA_OBJECT_COUNT = 60
+CURRENT_SCHEMA_OBJECT_COUNT = 59
 
 # The five statuses this build ends on, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
@@ -152,6 +152,21 @@ def _without_direct_sprint_placement(structure: dict[str, object]) -> dict[str, 
     return {**structure, "columns": columns, "foreign_keys": foreign_keys}
 
 
+def _without_removed_ticket_fields(structure: dict[str, object]) -> dict[str, object]:
+    """The adopted Ticket table after unused payload columns leave the schema."""
+    columns = [
+        column
+        for column in structure["columns"]  # type: ignore[attr-defined]
+        if column[0] not in {"alias", "backend_error"}
+    ]
+    indexes = [
+        index
+        for index in structure["indexes"]  # type: ignore[attr-defined]
+        if index[0] != "idx_tickets_alias"
+    ]
+    return {**structure, "columns": columns, "indexes": indexes}
+
+
 def _revision(conn: sqlite3.Connection) -> str:
     return str(conn.execute("SELECT version_num FROM alembic_version").fetchone()[0])
 
@@ -248,6 +263,12 @@ def test_fresh_database_is_built_and_marked_at_the_current_revision(
     }
     assert day_columns["midday_reconciliation"] == "''"
     assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
+    ticket_columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")}
+    assert "alias" not in ticket_columns
+    assert "backend_error" not in ticket_columns
+    assert "idx_tickets_alias" not in {
+        str(row["name"]) for row in conn.execute("PRAGMA index_list(tickets)")
+    }
     assert not {
         "proposal_holder_wakes",
         "ticket_rejection_messages",
@@ -281,7 +302,7 @@ def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(
     assert _revision(conn) == HEAD_REVISION
     assert _table_structure_before_status_changed_at(
         _table_structure(conn, "tickets")
-    ) == _with_the_conversation_link_renamed(structure_before)
+    ) == _without_removed_ticket_fields(_with_the_conversation_link_renamed(structure_before))
     assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
     assert tuple(
         conn.execute("SELECT title, ticket_status FROM tickets WHERE id = 't_old'").fetchone()
@@ -375,11 +396,10 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
     )
     assert conn.execute("SELECT count(*) FROM links").fetchone()[0] == 4
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-    # Columns, outgoing foreign keys and indexes, including the unique one on alias: a
-    # rebuild recreates only what it was handed, and drops the rest without a trace.
+    # Every retained column, outgoing foreign key, and index survives the rebuild.
     assert _table_structure_before_status_changed_at(
         _table_structure(conn, "tickets")
-    ) == _with_the_conversation_link_renamed(structure_before)
+    ) == _without_removed_ticket_fields(_with_the_conversation_link_renamed(structure_before))
 
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"

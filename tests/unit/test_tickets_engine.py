@@ -460,18 +460,14 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
 
     t = data.release_ticket(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.empty
-    t = data.mark_ticket_errored(tmp_db, t.id, error="boom", now=now)
+    t = data.mark_ticket_errored(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.errored
-    assert t.backend_error == "boom"
 
     t = data.drop_ticket(tmp_db, t.id, principal=OWNER_PRINCIPAL, now=now + 1)
     assert t.ticket_status is TicketStatus.empty
-    assert t.backend_error is None
-    assert tuple(
-        tmp_db.execute(
-            "SELECT ticket_status, backend_error FROM tickets WHERE id = ?", (t.id,)
-        ).fetchone()
-    ) == ("empty", None)
+    assert tmp_db.execute(
+        "SELECT ticket_status FROM tickets WHERE id = ?", (t.id,)
+    ).fetchone()[0] == "empty"
 
 
 def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(

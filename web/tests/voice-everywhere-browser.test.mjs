@@ -150,7 +150,7 @@ TICKET = {
   "stage": "needs_implementation", "ceiling": "done", "at_cap": "propose",
   "suggested_next_ceiling": "needs_closeout", "priority": "P2",
   "resolved_priority_anchors": {"sprint_item": None, "project": None},
-  "ticket_status": "awaiting_approval", "backend_error": None,
+  "ticket_status": "awaiting_approval",
   "stage_ownership_overrides": {}, "default_stage_ownership_mode": "worker",
   "effective_stage_ownership_mode": "worker", "conversation_id": None,
   "conversation_history": [], "verdict": None, "trouble_notes": [],

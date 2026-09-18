@@ -16,7 +16,6 @@ export function boardCard(id: string, values: Partial<BoardCard> = {}): BoardCar
     activity_at: 0,
     has_pending_proposal: false,
     ticket_status: "empty",
-    backend_error: null,
     worker_type: "coding",
     employee_backend: "codex",
     stage: "needs_implementation",

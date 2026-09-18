@@ -79,17 +79,17 @@ in a message that was actually sent — never because a row was written somewher
 
 ### Confirmed Worker failures
 
-A Ticket becomes `errored` only when the active backend Worker reports a concrete
-failure. The Ticket stores exact failure text in `backend_error`, returns it through
-Ticket and Board reads, and shows it on the Ticket page.
+A Ticket can use `errored` as a durable marker that its Worker failed. The conversation
+record keeps the failed turn and its detail. Operator logs keep the same failure for
+diagnosis. The Ticket does not store a second copy of the error text.
 
 A read or owner reply does not clear the error. Derived agent state also retains the
 latest failed turn until a later start succeeds or an explicit restart resets it.
 During the attention-state upgrade, Panels acknowledges failures older than 24 hours.
 Newer failures and all later failures keep the normal persistent error behavior.
 
-A refused Worker step gives its claim back. Workspace uses only the Ticket's canonical
-`backend_error` for exceptional treatment.
+A refused Worker step gives its claim back. Workspace derives a failed Worker from the
+Ticket status or the latest conversation turn.
 
 ### Work completed outside Panels
 

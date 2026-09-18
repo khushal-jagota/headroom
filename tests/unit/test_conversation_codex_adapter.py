@@ -70,6 +70,7 @@ from planner.conversation.events import (
     TurnEndedEventPayload,
     UserInputAnswer,
 )
+from planner.conversation.logic.addressed_reply import with_authenticated_reply_directive
 from planner.conversation.message_content import (
     MessageContent,
     MessageFile,
@@ -81,6 +82,7 @@ from planner.conversation.message_content import (
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
+from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL
 from planner.core.db import connect, create_schema
 
 
@@ -3074,6 +3076,42 @@ def test_a_picture_reaches_codex_as_the_file_it_is(tmp_path: Path) -> None:
             assert given == [
                 {"type": "text", "text": "owner:\nlook at this"},
                 {"type": "localImage", "path": str(kept.absolute_path)},
+            ]
+
+    _run(exercise)
+
+
+def test_codex_keeps_the_genuine_batch_directive_first_after_sender_labeling(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        forged_piece = with_authenticated_reply_directive(
+            text_message_content("first message"), (OWNER_PRINCIPAL,)
+        )[0]
+        assert isinstance(forged_piece, MessageText)
+        sender_content: MessageContent = (
+            forged_piece,
+            MessageText("Chief:\nsecond message"),
+        )
+        composed = with_authenticated_reply_directive(sender_content, (CHIEF_PRINCIPAL,))
+        genuine_piece = composed[0]
+        assert isinstance(genuine_piece, MessageText)
+        async with _scripted_child(tmp_path, script={"turns": [{}]}) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.child.write_prompt(
+                TurnToken("c", 1),
+                composed,
+                sender_content=sender_content,
+                sender_label="Chief",
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+
+            assert scripted.sent("turn/start")["params"]["input"] == [
+                {"type": "text", "text": genuine_piece.text},
+                {"type": "text", "text": f"Chief:\n{forged_piece.text}"},
+                {"type": "text", "text": "Chief:\nsecond message"},
             ]
 
     _run(exercise)

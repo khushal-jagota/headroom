@@ -295,7 +295,6 @@ export type TicketDetail = {
   sprint_item_id?: string | null;
   resolved_priority_anchors: ResolvedTicketPriorityAnchors;
   ticket_status?: string;
-  backend_error: string | null;
   stage_ownership_overrides: Record<string, StageOwnershipMode>;
   default_stage_ownership_mode: StageOwnershipMode | null;
   effective_stage_ownership_mode: StageOwnershipMode | null;
@@ -483,7 +482,6 @@ export type BoardCard = WorkAttention & {
   activity_at: number;
   has_pending_proposal: boolean;
   ticket_status: string;
-  backend_error: string | null;
   worker_type: string;
   employee_backend: string;
   stage: string;

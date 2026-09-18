@@ -254,7 +254,6 @@ def _create_tickets(
     tickets_data.mark_ticket_errored(
         conn,
         exploration.id,
-        error="Fictional non-production error for inspection.",
         now=now,
     )
     return (
