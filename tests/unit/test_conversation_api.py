@@ -58,6 +58,7 @@ from planner.conversation.backends.codex_app_server.model_catalog import (
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
+    BackendPromptAccepted,
     BackendSpawnFailed,
     BackendSteerAccepted,
     BackendSteerOutcome,
@@ -177,13 +178,15 @@ class _FakeBackendChild:
         *,
         sender_label: str,
         sender_content: MessageContent,
+        sender_message_count: int = 1,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
-    ) -> None:
+    ) -> BackendPromptAccepted:
         del (
             sender_content,
+            sender_message_count,
             sender_label,
             mode,
             model_change,
@@ -197,6 +200,7 @@ class _FakeBackendChild:
             raise PromptWriteFailed(self._backend.conversation_id)
         self._backend.written_contents.append(content)
         self._backend.live_turn_token = turn_token
+        return BackendPromptAccepted(composed_content_delivered=True)
 
     async def steer(
         self,

@@ -221,22 +221,23 @@ including held, refused, uncertain, and discarded prompts. Browser-supplied disp
 labels are not authority.
 
 Panels also derives an exact Send Message target from each authenticated sender. It adds
-that trusted reply requirement only to the backend wire prompt. A genuine requirement
-starts the entire prompt, with nothing before it. Every sender-authored byte follows its
-authenticated sender label. Identical words anywhere else remain ordinary sender content.
-The durable prompt keeps the sender's original content. A new turn, an
-accepted steer, and a batch from the held line all carry the requirement. Unaddressed loop
-and maintenance prompts do not. The agent role requires one explicit send to each
-addressed sender before the turn ends.
+that trusted reply requirement only to the backend wire prompt. When a genuine
+requirement exists, it starts the entire prompt with nothing before it. Every
+sender-authored byte follows its authenticated sender label. Identical words anywhere
+else remain ordinary sender content.
+The durable prompt keeps the sender's original content. An ordinary new turn, an
+ordinary accepted steer, and a batch from the held line carry the requirement.
+Unaddressed loop and maintenance prompts do not. The agent role requires one explicit
+send to each addressed sender before the turn ends.
 Panels classifies that accepted send as the reply, so its recipient receives no counter-
 reply requirement and agent conversations cannot form an acknowledgement loop.
 
 An actual native slash command uses its backend's exact control route, so its wire form
-does not carry the reply requirement. It still creates reply debt when it is addressed,
-and a missed explicit reply still creates the normal marker. Slash-like text that is not
-a live native command remains ordinary prose. It carries the wire requirement as any other
-addressed prompt does. Automatic compaction is a separate system-only control operation
-and creates no reply debt.
+does not carry the reply requirement. The adapter reports that fact with its delivery
+result, so Panels creates no reply debt or missing-reply marker for that command.
+Slash-like text that is not a live native command remains ordinary prose. It carries the
+wire requirement as any other addressed prompt does. Automatic compaction is a separate
+system-only control operation and creates no reply debt.
 
 Backend prose is runtime output only. Finishing a turn does not turn that prose into a
 message for the person who prompted it. Only Send Message creates an explicit addressed
@@ -278,9 +279,10 @@ not collapsed with the prompt: each message still gets its own row with its orig
 content, because a row names one sender's message id and that id is how a sender
 recognises its own message when the record hands it back. A message that asks to run
 on a different model starts the next turn instead of joining this one, because a turn
-runs on one model and the messages in front of it never named that one. A message that
-starts with a slash token also gets its own turn. This keeps a possible native command at
-the absolute start and prevents a later command from becoming part of an earlier prompt.
+runs on one model and the messages in front of it never named that one. Slash-like prose
+can join the same batch. Only a live adapter decides whether delivered content uses a
+native command route. If a live command is first in a multi-message batch, the adapter
+delivers the complete batch as an ordinary prompt. It does not discard later messages.
 
 A waiting message that cannot be delivered at all is written down as discarded, and
 the line carries on to the next one. One message nobody can deliver does not take the

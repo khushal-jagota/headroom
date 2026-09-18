@@ -274,6 +274,7 @@ class _PromptDeliveryAttempt:
 
     refusal_reason: PromptDeliveryRefusalReason | None = None
     record_refusal: bool = False
+    composed_content_delivered: bool = True
 
 
 type _BackendEventHandler = Callable[[], Coroutine[Any, Any, None]]
@@ -881,6 +882,7 @@ class SqliteProcessConversationSystem:
                     reservation.token,
                     content=held.content,
                     sender_label=held.sender_label,
+                    sender_message_count=1,
                     mode=PromptDeliveryMode.send_now,
                     model_change=held.model_change,
                     reasoning_effort_change=held.reasoning_effort_change,
@@ -907,6 +909,7 @@ class SqliteProcessConversationSystem:
                     sender=held.sender,
                     recipient=held.recipient,
                     reply_requested=held.reply_requested,
+                    composed_content_delivered=delivery.composed_content_delivered,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.idle,
                     owner_read_through_sequence=(
@@ -1696,6 +1699,7 @@ class SqliteProcessConversationSystem:
                 reservation.token,
                 content=content,
                 sender_label=sender_label,
+                sender_message_count=1,
                 mode=mode,
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
@@ -1733,6 +1737,7 @@ class SqliteProcessConversationSystem:
                 sender=sender,
                 recipient=recipient,
                 reply_requested=reply_requested,
+                composed_content_delivered=delivery.composed_content_delivered,
                 record_refusal=delivery.record_refusal,
                 phase_when_not_started=_ConversationPhase.idle,
                 owner_read_through_sequence=owner_read_through_sequence,
@@ -1783,6 +1788,7 @@ class SqliteProcessConversationSystem:
         *,
         content: MessageContent,
         sender_label: str,
+        sender_message_count: int,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
@@ -1805,11 +1811,12 @@ class SqliteProcessConversationSystem:
             await self._compose_prompt_content(state, content), reply_senders
         )
         try:
-            await child.write_prompt(
+            accepted = await child.write_prompt(
                 turn_token,
                 composed,
                 sender_content=content,
                 sender_label=sender_label,
+                sender_message_count=sender_message_count,
                 mode=mode,
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
@@ -1818,22 +1825,27 @@ class SqliteProcessConversationSystem:
         except PromptWriteFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.write_to_backend_failed)
         except NeedsRebind as rebind:
-            refusal = await self._rebind_and_write_prompt(
+            rebound = await self._rebind_and_write_prompt(
                 state,
                 turn_token,
                 content=composed,
                 sender_content=content,
                 sender_label=sender_label,
+                sender_message_count=sender_message_count,
                 mode=mode,
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
                 automatic_compaction=automatic_compaction,
             )
-            return _PromptDeliveryAttempt(
-                refusal,
-                record_refusal=refusal is not None and rebind.failed_child_recovery,
+            return replace(
+                rebound,
+                record_refusal=(
+                    rebound.refusal_reason is not None and rebind.failed_child_recovery
+                ),
             )
-        return _PromptDeliveryAttempt()
+        return _PromptDeliveryAttempt(
+            composed_content_delivered=accepted.composed_content_delivered
+        )
 
     async def _rebind_and_write_prompt(
         self,
@@ -1843,11 +1855,12 @@ class SqliteProcessConversationSystem:
         content: MessageContent,
         sender_content: MessageContent,
         sender_label: str,
+        sender_message_count: int,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool,
-    ) -> PromptDeliveryRefusalReason | None:
+    ) -> _PromptDeliveryAttempt:
         """Start the child again on the new values, under the same conversation, and write.
 
         This is the path for a backend that cannot be moved onto another model without
@@ -1867,21 +1880,28 @@ class SqliteProcessConversationSystem:
             if not await self._stop_child(state, old_child):
                 state.child = old_child
                 state.child_is_quarantined = True
-                return PromptDeliveryRefusalReason.write_to_backend_failed
+                return _PromptDeliveryAttempt(
+                    PromptDeliveryRefusalReason.write_to_backend_failed
+                )
         try:
             child = await self._ensure_child(
                 state, model=model_change, reasoning_effort=reasoning_effort_change
             )
         except BackendSpawnFailed:
-            return PromptDeliveryRefusalReason.backend_did_not_start
+            return _PromptDeliveryAttempt(
+                PromptDeliveryRefusalReason.backend_did_not_start
+            )
         except SessionLoadFailed:
-            return PromptDeliveryRefusalReason.session_did_not_load
+            return _PromptDeliveryAttempt(
+                PromptDeliveryRefusalReason.session_did_not_load
+            )
         try:
-            await child.write_prompt(
+            accepted = await child.write_prompt(
                 turn_token,
                 content,
                 sender_content=sender_content,
                 sender_label=sender_label,
+                sender_message_count=sender_message_count,
                 mode=mode,
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
@@ -1889,11 +1909,15 @@ class SqliteProcessConversationSystem:
             )
         except (PromptWriteFailed, NeedsRebind):
             await self._discard_child(state, child)
-            return PromptDeliveryRefusalReason.write_to_backend_failed
+            return _PromptDeliveryAttempt(
+                PromptDeliveryRefusalReason.write_to_backend_failed
+            )
         except BaseException:
             await self._discard_child(state, child)
             raise
-        return None
+        return _PromptDeliveryAttempt(
+            composed_content_delivered=accepted.composed_content_delivered
+        )
 
     async def _finalize_delivery(
         self,
@@ -1911,6 +1935,7 @@ class SqliteProcessConversationSystem:
         sender: Principal | None,
         recipient: Principal | None,
         reply_requested: bool,
+        composed_content_delivered: bool,
         record_refusal: bool,
         phase_when_not_started: _ConversationPhase,
         also_delivered: tuple[_HeldPrompt, ...] = (),
@@ -2018,9 +2043,16 @@ class SqliteProcessConversationSystem:
                     prompt_senders={
                         principal: None
                         for principal in (
-                            sender if reply_requested else None,
+                            (
+                                sender
+                                if reply_requested and composed_content_delivered
+                                else None
+                            ),
                             *(
-                                message.sender if message.reply_requested else None
+                                message.sender
+                                if message.reply_requested
+                                and composed_content_delivered
+                                else None
                                 for message in also_delivered
                             ),
                         )
@@ -2076,6 +2108,7 @@ class SqliteProcessConversationSystem:
                     reservation.token,
                     content=combined,
                     sender_label=held.sender_label,
+                    sender_message_count=len(batch),
                     mode=PromptDeliveryMode.queue,
                     model_change=held.model_change,
                     reasoning_effort_change=held.reasoning_effort_change,
@@ -2135,6 +2168,7 @@ class SqliteProcessConversationSystem:
                     sender=held.sender,
                     recipient=held.recipient,
                     reply_requested=held.reply_requested,
+                    composed_content_delivered=delivery.composed_content_delivered,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.draining,
                     also_delivered=rest,
@@ -2217,6 +2251,7 @@ class SqliteProcessConversationSystem:
             )
             if (
                 reply_requested
+                and outcome.composed_content_delivered
                 and sender is not None
                 and state.running_turn is not None
                 and state.running_turn.token == turn_token
@@ -2263,6 +2298,7 @@ class SqliteProcessConversationSystem:
         )
         if (
             reply_requested
+            and outcome.composed_content_delivered
             and sender is not None
             and state.running_turn is not None
             and state.running_turn.token == turn_token

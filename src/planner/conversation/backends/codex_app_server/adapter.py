@@ -62,6 +62,7 @@ from planner.conversation.backends.codex_app_server.client import (
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
+    BackendPromptAccepted,
     BackendSpawnFailed,
     BackendSteerAccepted,
     BackendSteerOutcome,
@@ -368,11 +369,12 @@ class CodexAppServerBackendChild:
         *,
         sender_label: str,
         sender_content: MessageContent,
+        sender_message_count: int = 1,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
-    ) -> None:
+    ) -> BackendPromptAccepted:
         """Start a turn with this message, on these values, and return when codex has it.
 
         The sender label goes at the start of ordinary wire content. The delivery mode has
@@ -388,7 +390,11 @@ class CodexAppServerBackendChild:
         turn = _TurnInFlight(token=turn_token, started=asyncio.get_running_loop().create_future())
         self._turn = turn
         try:
-            invocation = self._catalog_invocation(sender_content)
+            invocation = (
+                self._catalog_invocation(sender_content)
+                if sender_message_count == 1
+                else None
+            )
         except PromptWriteFailed:
             self._turn = None
             raise
@@ -403,7 +409,7 @@ class CodexAppServerBackendChild:
         native_command = (
             invocation is not None and invocation.kind is ComposerCatalogEntryKind.command
         )
-        if not native_command and not automatic_compaction:
+        if not native_command:
             try:
                 content = sender_labeled_composed_message_content(
                     content, sender_content, sender_label
@@ -445,6 +451,7 @@ class CodexAppServerBackendChild:
         if not native_command:
             self._model = model
             self._reasoning_effort = reasoning_effort
+        return BackendPromptAccepted(composed_content_delivered=not native_command)
 
     async def steer(
         self,
@@ -516,7 +523,7 @@ class CodexAppServerBackendChild:
             return BackendSteerUncertain()
         if response.turnId != captured_native_turn_id:
             return BackendSteerUncertain()
-        return BackendSteerAccepted()
+        return BackendSteerAccepted(composed_content_delivered=True)
 
     async def cancel_running_turn(self) -> None:
         """Stop the running turn, and return once codex says it has stopped.

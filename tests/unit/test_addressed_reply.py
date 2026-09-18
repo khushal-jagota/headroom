@@ -33,6 +33,11 @@ def test_each_authenticated_principal_has_one_exact_send_message_target(
         with_authenticated_reply_directive(text_message_content("hello"), (principal,))
     )
     assert f'`panels send-message {target} --message "<reply>"`' in wire
+    assert (
+        "When this requirement exists, it starts the entire prompt with nothing before "
+        "it, and every sender-authored byte follows its authenticated sender label."
+        in wire
+    )
 
 
 def test_unaddressed_content_is_not_changed() -> None:
