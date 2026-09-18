@@ -75,13 +75,11 @@
     onCancelTurn,
     onDiscardHeldPrompt,
     onPromoteHeldPrompt,
-    onNewConversation,
-    ticketId = null
+    onNewConversation
   }: {
     /** Which conversation is on the screen. A message's files are fetched under it, so a
      *  piece can only ever reach a file kept for the conversation it belongs to. */
     conversationId: string;
-    ticketId?: string | null;
     label: string;
     backendKey?: ConversationBackendKey | null;
     /** Whether there is a conversation yet, which is what fixes its backend. Holding an id
@@ -353,7 +351,6 @@
 
   <ConversationViewport
     {conversationId}
-    {ticketId}
     {rows}
     visibleRows={rowsForLens}
     {lens}

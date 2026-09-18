@@ -33,11 +33,9 @@
     ownSenderLabel,
     livenessPulse,
     conversationState,
-    emptyState,
-    ticketId = null
+    emptyState
   }: {
     conversationId: string;
-    ticketId?: string | null;
     rows: readonly TranscriptRow[];
     visibleRows: readonly TranscriptRow[];
     lens: ConversationLens;
@@ -418,7 +416,6 @@
       {ownSenderLabel}
       {livenessPulse}
       {conversationId}
-      {ticketId}
     />
     {#each outgoingMessages as message (message.messageId)}
       {@const chip = modeChip(message.mode)}
@@ -430,7 +427,7 @@
             {#if chip}<span class="c2-chip">{chip}</span>{/if}
           </div>
         {/if}
-        <MessagePieces content={message.content} {conversationId} {ticketId} />
+        <MessagePieces content={message.content} {conversationId} />
       </article>
     {/each}
     {#if reservedSpacePixels > 0}

@@ -39,8 +39,7 @@
     conversationId,
     models = [],
     ownSenderLabel = null,
-    livenessPulse = 0,
-    ticketId = null
+    livenessPulse = 0
   }: {
     rows: readonly TranscriptRow[];
     visibleRows: readonly TranscriptRow[];
@@ -48,7 +47,6 @@
     /** Which conversation these rows belong to, so a piece naming a file it kept has
      *  somewhere to fetch it from. */
     conversationId: string;
-    ticketId?: string | null;
     models?: readonly BackendModel[];
     /** Moves whenever a live frame arrives, so a running turn can say it is alive. */
     livenessPulse?: number;
@@ -142,21 +140,21 @@
             {label ?? ""}{#if chip}<span class="c2-chip">{chip}</span>{/if}
           </div>
         {/if}
-        <MessagePieces content={item.row.content} {conversationId} {ticketId} />
+        <MessagePieces content={item.row.content} {conversationId} />
       </article>
     {:else if item.row.kind === "prompt_refused"}
       <article class="chat-system c2-refused" data-conversation-row="prompt_refused">
         <div class="c2-label">
           {promptLabelFor(item.row.senderLabel, ownSenderLabel) ?? "your message"} · not delivered · {item.row.sentence}
         </div>
-        <MessagePieces content={item.row.content} {conversationId} {ticketId} />
+        <MessagePieces content={item.row.content} {conversationId} />
       </article>
     {:else if item.row.kind === "prompt_uncertain"}
       <article class="chat-system c2-refused" data-conversation-row="prompt_uncertain">
         <div class="c2-label">
           {promptLabelFor(item.row.senderLabel, ownSenderLabel) ?? "your message"} · delivery uncertain · do not resend
         </div>
-        <MessagePieces content={item.row.content} {conversationId} {ticketId} />
+        <MessagePieces content={item.row.content} {conversationId} />
       </article>
     {:else if item.row.kind === "proposal_delivery_failed"}
       <article class="chat-system c2-refused" data-conversation-row="proposal_delivery_failed">
@@ -169,11 +167,11 @@
         <div class="c2-label">
           {promptLabelFor(item.row.senderLabel, ownSenderLabel) ?? "your message"} · {PROMPT_DISCARDED_SENTENCE}
         </div>
-        <MessagePieces content={item.row.content} {conversationId} {ticketId} />
+        <MessagePieces content={item.row.content} {conversationId} />
       </article>
     {:else if item.row.kind === "agent_message"}
       <article class="chat-a" data-conversation-row="agent_message">
-        <MessagePieces content={item.row.content} {conversationId} {ticketId} />
+        <MessagePieces content={item.row.content} {conversationId} />
       </article>
     {:else if item.row.kind === "explicit_reply_missing"}
       <div class="acp-turn-end" data-conversation-row="explicit_reply_missing">
@@ -181,7 +179,7 @@
       </div>
     {:else if item.row.kind === "streaming_agent_message"}
       <article class="chat-a c2-streaming" data-conversation-row="streaming">
-        <MarkdownBlock text={item.row.text} {ticketId} />
+        <MarkdownBlock text={item.row.text} />
       </article>
     {:else if item.row.kind === "permission_ask"}
       {@const detail = readableConversationDetail(item.row.detail)}
