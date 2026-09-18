@@ -419,22 +419,28 @@ with sync_playwright() as playwright:
     model_trigger = model_picker.locator("[data-conversation-picker-trigger]")
     model_label = model_trigger.get_attribute("aria-label")
     model_trigger.press("ArrowDown")
+    page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
     model_controlled = model_trigger.get_attribute("aria-controls")
     assert model_controlled and model_picker.locator(f"#{model_controlled}").get_attribute("role") == "listbox"
     assert model_picker.locator("button").evaluate_all("buttons => buttons.filter(button => button.tabIndex === 0).length") == 1
     model_picker.locator('[data-conversation-picker-choice="sonnet"]').hover()
     assert model_trigger.get_attribute("aria-label") == model_label
     model_picker.get_by_role("listbox").press("s")
-    page.wait_for_function("document.querySelector('[data-conversation-picker-choice=sonnet]')?.getAttribute('data-conversation-picker-active') === 'true'")
+    page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=sonnet]')?.getAttribute('data-conversation-picker-active') === 'true'")
     model_picker.get_by_role("listbox").press("Enter")
+    page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('sonnet')")
     assert "sonnet" in model_trigger.get_attribute("aria-label").lower()
     model_trigger.press("ArrowDown")
+    page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
     model_picker.get_by_role("listbox").press("Home")
     model_picker.get_by_role("listbox").press(" ")
+    page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('opus')")
     assert "opus" in model_trigger.get_attribute("aria-label").lower()
     model_trigger.press("ArrowDown")
+    page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
     model_picker.get_by_role("listbox").press("End")
     model_picker.get_by_role("listbox").press("Enter")
+    page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('sonnet')")
     assert "sonnet" in model_trigger.get_attribute("aria-label").lower()
     model_trigger.press("ArrowDown")
     page.evaluate("window.__setComposerDisabled(true)")
@@ -453,6 +459,7 @@ with sync_playwright() as playwright:
     # The delivery chooser follows the product picker contract for pointer, keyboard,
     # focus return, outside dismissal, and disabled state.
     send_mode_trigger.click()
+    page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
     send_mode_panel = page.locator("[data-conversation-send-mode-panel]")
     controlled = send_mode_trigger.get_attribute("aria-controls")
     assert controlled and send_mode.locator(f"#{controlled}").get_attribute("role") == "listbox"
@@ -469,22 +476,27 @@ with sync_playwright() as playwright:
     assert send_mode_trigger.evaluate("button => document.activeElement === button") is True
 
     send_mode_trigger.press("ArrowDown")
+    page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
     send_mode_panel.press("Tab")
     assert page.locator("[data-conversation-send-mode-panel]").count() == 0
     assert send_mode.evaluate("root => !root.contains(document.activeElement)") is True
 
     send_mode_trigger.focus()
     send_mode_trigger.press("ArrowDown")
+    page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
     assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Steer"
     send_mode.get_by_role("listbox").press("q")
-    page.wait_for_function("document.querySelector('[data-conversation-send-mode-choice=queue]')?.getAttribute('data-listbox-picker-active') === 'true'")
+    page.wait_for_function("document.querySelector('[data-conversation-send-mode] [data-conversation-send-mode-choice=queue]')?.getAttribute('data-listbox-picker-active') === 'true'")
     assert send_mode_panel.get_by_role("option", name="Queue").get_attribute("data-listbox-picker-active") == "true"
     send_mode.get_by_role("listbox").press("Enter")
+    page.wait_for_function("document.querySelector('[data-conversation-send-mode-trigger]')?.getAttribute('aria-label') === 'Message delivery mode: Queue'")
     assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Queue"
     send_mode_trigger.click()
+    page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
     send_mode.get_by_role("listbox").press("Home")
     send_mode.get_by_role("listbox").press("ArrowDown")
     send_mode.get_by_role("listbox").press(" ")
+    page.wait_for_function("document.querySelector('[data-conversation-send-mode-trigger]')?.getAttribute('aria-label') === 'Message delivery mode: Queue'")
     assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Queue"
     page.wait_for_function("document.activeElement?.hasAttribute('data-conversation-send-mode-trigger')")
     assert send_mode_trigger.evaluate("button => document.activeElement === button") is True
