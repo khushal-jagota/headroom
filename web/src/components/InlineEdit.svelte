@@ -125,6 +125,9 @@
       editing = false;
       paint(raw);
     } catch (err) {
+      // The visible error is the retry boundary. Clear the save guard first so an
+      // immediate focus and blur can resubmit the preserved Markdown source.
+      inFlight = false;
       error = err;
       editing = true;
       if (markdown) pendingMarkdownSave = raw;
