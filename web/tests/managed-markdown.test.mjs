@@ -9,10 +9,6 @@ const srcRoot = new URL("../src/", import.meta.url);
 const libRoot = new URL("../src/lib/", import.meta.url);
 const componentRoot = new URL("../src/components/", import.meta.url);
 const ownerUrl = new URL("../src/lib/managedMarkdown.ts", import.meta.url);
-const ticketDevServerLinkUrl = new URL(
-  "../src/lib/ticketDevServerLink.ts",
-  import.meta.url
-);
 
 async function productionFiles(directory, suffixes) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -27,8 +23,8 @@ async function productionFiles(directory, suffixes) {
 
 // Static ownership and deletion contract.
 const ownerSource = await readFile(ownerUrl, "utf8");
-const ticketDevServerLinkSource = await readFile(ticketDevServerLinkUrl, "utf8");
 const pipelineSource = await readFile(new URL("../src/lib/markdownPipeline.ts", import.meta.url), "utf8");
+const appSource = await readFile(new URL("../src/App.svelte", import.meta.url), "utf8");
 for (const declaration of [
   "export type ReadOnlyManagedMarkdownInput",
   "export interface ReadOnlyManagedMarkdownSurface",
@@ -50,6 +46,16 @@ const sourceByName = new Map(
     productionSources.map(async (url) => [basename(url.pathname), await readFile(url, "utf8")])
   )
 );
+for (const removedDevelopmentModule of [
+  "DevConversationRoute.svelte",
+  "DevFilePreviewGalleryRoute.svelte",
+  "NewConversationForm.svelte",
+  "ticketDevServerLink.ts"
+]) {
+  assert.ok(!sourceByName.has(removedDevelopmentModule), removedDevelopmentModule);
+}
+assert.ok(!appSource.includes('name === "dev"'));
+assert.ok(!appSource.includes('route.name === "dev"'));
 for (const token of [
   "new MutationObserver",
   "markdownAtomicSlot"
@@ -75,7 +81,6 @@ for (const token of ["data-markdown-source-token"]) {
   );
 }
 assert.ok(ownerSource.includes('from "./markdownPipeline"'));
-assert.ok(ownerSource.includes('from "./ticketDevServerLink"'));
 assert.ok(pipelineSource.includes("remarkGfm"));
 assert.ok(pipelineSource.includes("rehypeSanitize"));
 assert.ok(pipelineSource.includes("rehypeToRemark"));
@@ -131,11 +136,8 @@ for (const conversationComponent of [
   "ConversationTranscript.svelte",
   "MessagePieces.svelte"
 ]) {
-  assert.match(sourceByName.get(conversationComponent), /ticketId/, conversationComponent);
+  assert.doesNotMatch(sourceByName.get(conversationComponent), /ticketId/, conversationComponent);
 }
-assert.match(sourceByName.get("TicketRoute.svelte"), /ticketId=\{detail\.id\}/);
-assert.doesNotMatch(sourceByName.get("ChiefConversation.svelte"), /ticketId=/);
-assert.doesNotMatch(sourceByName.get("DevConversationRoute.svelte"), /ticketId=/);
 assert.ok(!(await readFile(new URL("../src/vite-env.d.ts", import.meta.url), "utf8")).includes(
   "Planner?:"
 ));
@@ -406,9 +408,7 @@ globalThis.__managedMarkdownFilePreview = {
     if (/\.(png|jpg|gif|webp|svg)$/i.test(name)) return { kind: "image" };
     if (/\.md$/i.test(name)) return { kind: "markdown" };
     return { kind: "external" };
-  },
-  // The address shape only; the real recognizer owns origin and range checks.
-  isTicketDevServerHref: (href) => /^\/dev\/tickets\/t_[a-z0-9]+\/[0-9]{1,5}(?:[/?#]|$)/.test(href)
+  }
 };
 
 function text(value) {
@@ -471,33 +471,6 @@ function renderedMarkdown(source) {
         element("a", [text("elsewhere")], {
           href: "https://example.com/page",
           "data-markdown-source-token": "[elsewhere](https://example.com/page)"
-        })
-      ])
-    );
-  } else if (source.includes("[take one]")) {
-    rendered.appendChild(
-      element("p", [text("Look at "), element("a", [text("take one")], {
-        href: "/dev/tickets/t_demo/8791/",
-        "data-markdown-source-token": "[take one](/dev/tickets/t_demo/8791/)"
-      })])
-    );
-  } else if (source.includes("[no port]")) {
-    rendered.appendChild(
-      element("p", [
-        element("a", [text("no port")], {
-          href: "/dev/tickets/t_demo/",
-          "data-markdown-source-token": "[no port](/dev/tickets/t_demo/)"
-        }),
-        text(" and "),
-        element("a", [text("bad port")], {
-          href: "/dev/tickets/t_demo/80x/",
-          "data-markdown-source-token": "[bad port](/dev/tickets/t_demo/80x/)"
-        }),
-        text(" and "),
-        element("a", [text("off site")], {
-          href: "https://example.com/dev/tickets/t_demo/8791/",
-          "data-markdown-source-token":
-            "[off site](https://example.com/dev/tickets/t_demo/8791/)"
         })
       ])
     );
@@ -603,44 +576,6 @@ globalThis.window = {
   location: { origin: "https://panels.test" }
 };
 
-const ticketDevServerLinkCompiled = ts.transpileModule(ticketDevServerLinkSource, {
-  compilerOptions: {
-    module: ts.ModuleKind.ES2022,
-    target: ts.ScriptTarget.ES2022,
-    verbatimModuleSyntax: true
-  }
-}).outputText;
-const helperTempDir = await mkdtemp(join(tmpdir(), "planner-ticket-dev-server-link-"));
-const helperModulePath = join(helperTempDir, "ticketDevServerLink.mjs");
-await writeFile(helperModulePath, ticketDevServerLinkCompiled, "utf8");
-const { ticketDevServerHref } = await import(helperModulePath);
-await rm(helperTempDir, { recursive: true, force: true });
-globalThis.__managedMarkdownTicketDevServerLink = { ticketDevServerHref };
-
-assert.equal(
-  ticketDevServerHref(
-    "http://localhost:4173/nested/page?theme=dark#result",
-    "t_demo"
-  ),
-  "/dev/tickets/t_demo/4173/nested/page?theme=dark#result"
-);
-assert.equal(
-  ticketDevServerHref("http://127.0.0.1:80?ready=yes#top", "ticket / one"),
-  "/dev/tickets/ticket%20%2F%20one/80/?ready=yes#top"
-);
-for (const unchanged of [
-  "http://localhost/path",
-  "https://localhost:4173/path",
-  "http://localhost.example:4173/path",
-  "http://[::1]:4173/path",
-  "http://user@localhost:4173/path",
-  "http://127.0.0.1:0/path",
-  "http://127.0.0.1:65536/path",
-  "/already/local"
-]) {
-  assert.equal(ticketDevServerHref(unchanged, "t_demo"), unchanged);
-}
-
 const executableSource = ownerSource
   .replace(
     'import { mount, unmount } from "svelte";',
@@ -651,16 +586,12 @@ const executableSource = ownerSource
     "const FilePreview = globalThis.__managedMarkdownSvelte.FilePreview;"
   )
   .replace(
-    'import { isTicketDevServerHref, resolvePreview, targetFromHref } from "./filePreview";',
-    "const { isTicketDevServerHref, resolvePreview, targetFromHref } = globalThis.__managedMarkdownFilePreview;"
+    'import { resolvePreview, targetFromHref } from "./filePreview";',
+    "const { resolvePreview, targetFromHref } = globalThis.__managedMarkdownFilePreview;"
   )
   .replace(
     'import { renderMarkdownToElement, serializeMarkdownDomToSource } from "./markdownPipeline";',
     "const { renderMarkdownToElement, serializeMarkdownDomToSource } = globalThis.__managedMarkdownPipeline;"
-  )
-  .replace(
-    'import { ticketDevServerHref } from "./ticketDevServerLink";',
-    "const { ticketDevServerHref } = globalThis.__managedMarkdownTicketDevServerLink;"
   );
 const compiled = ts.transpileModule(executableSource, {
   compilerOptions: {
@@ -695,6 +626,7 @@ assert.equal(readOnlyHost.children[0].textContent, "safe <text>");
 
 const ordinaryLinkHost = host();
 const ordinaryLinks = createManagedMarkdownSurface(ordinaryLinkHost, { mode: "read-only" });
+const ordinaryLinkMountCount = mountCalls.length;
 ordinaryLinks.update({
   source: "[Dev](http://localhost:4173/nested/page?theme=dark#result)",
   emptyText: "",
@@ -705,67 +637,7 @@ assert.equal(
   ordinaryLinkHost.querySelector("a[href]").getAttribute("href"),
   "http://localhost:4173/nested/page?theme=dark#result"
 );
-
-// A loopback link with a Ticket id becomes the ingress address, and the preview then
-// claims it like any other preview-server link: the anchor becomes a preview slot.
-const ticketLinkHost = host();
-const ticketLinks = createManagedMarkdownSurface(ticketLinkHost, { mode: "read-only" });
-const ticketLinkMountCount = mountCalls.length;
-ticketLinks.update({
-  source: "[Dev](http://localhost:4173/nested/page?theme=dark#result)",
-  emptyText: "",
-  depth: 0,
-  visited: [],
-  ticketId: "t_demo"
-});
-assert.equal(ticketLinkHost.querySelector("a[href]"), null);
-assert.equal(mountCalls.length, ticketLinkMountCount + 1);
-assert.equal(mountCalls.at(-1).options.target.className, "file-preview-slot");
-assert.deepEqual(mountCalls.at(-1).options.props.target, {
-  kind: "external-link",
-  href: "/dev/tickets/t_demo/4173/nested/page?theme=dark#result",
-  label: "Dev"
-});
-
-// A preview-server link written directly into the Markdown is claimed on any surface,
-// with no Ticket id passed in.
-const previewServerHost = host();
-const previewServerLinks = createManagedMarkdownSurface(previewServerHost, {
-  mode: "read-only"
-});
-const previewServerMountCount = mountCalls.length;
-previewServerLinks.update({
-  source: "Look at [take one](/dev/tickets/t_demo/8791/)",
-  emptyText: "",
-  depth: 0,
-  visited: []
-});
-assert.equal(previewServerHost.querySelector("a[href]"), null);
-assert.equal(mountCalls.length, previewServerMountCount + 1);
-assert.deepEqual(mountCalls.at(-1).options.props.target, {
-  kind: "external-link",
-  href: "/dev/tickets/t_demo/8791/",
-  label: "take one"
-});
-previewServerLinks.destroy();
-
-// Addresses that only resemble a preview-server link stay ordinary anchors.
-const nearMissHost = host();
-const nearMissLinks = createManagedMarkdownSurface(nearMissHost, { mode: "read-only" });
-const nearMissMountCount = mountCalls.length;
-nearMissLinks.update({
-  source:
-    "[no port](/dev/tickets/t_demo/) and [bad port](/dev/tickets/t_demo/80x/) and [off site](https://example.com/dev/tickets/t_demo/8791/)",
-  emptyText: "",
-  depth: 0,
-  visited: []
-});
-assert.equal(mountCalls.length, nearMissMountCount);
-assert.deepEqual(
-  nearMissHost.querySelectorAll("a[href]").map((anchor) => anchor.getAttribute("href")),
-  ["/dev/tickets/t_demo/", "/dev/tickets/t_demo/80x/", "https://example.com/dev/tickets/t_demo/8791/"]
-);
-nearMissLinks.destroy();
+assert.equal(mountCalls.length, ordinaryLinkMountCount);
 
 readOnly.update({
   source: "[Doc](ignored)",

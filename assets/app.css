@@ -916,40 +916,6 @@ textarea {
   width: 100%;
 }
 
-.worker-kickoff-default {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) 0;
-  border-bottom: var(--border-hairline) solid var(--border-color);
-}
-
-.worker-kickoff-default h2 {
-  margin: 0;
-  font-size: var(--type-base);
-}
-
-.worker-kickoff-default p {
-  margin: var(--space-1) 0 0;
-  color: var(--text-muted);
-  font-size: var(--type-sm);
-}
-
-.worker-kickoff-default select {
-  appearance: none;
-  min-width: 11rem;
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--surface-recessed);
-  color: var(--text-strong);
-  padding: var(--space-2) var(--space-3);
-}
-
-.worker-kickoff-default select[data-saving="true"] {
-  opacity: 0.65;
-}
-
 .worker-stage-table {
   width: 100%;
   border-collapse: collapse;
@@ -981,21 +947,6 @@ textarea {
 .worker-stage-id {
   display: block;
   overflow-wrap: anywhere;
-}
-
-.worker-owner-select {
-  width: 100%;
-  max-width: calc(var(--space-7) * 3);
-  min-width: 0;
-  background: var(--surface-recessed);
-  color: var(--text-strong);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-2);
-}
-
-.worker-owner-select[data-saving="true"] {
-  color: var(--text-faint);
 }
 
 .worker-readonly-owner {
@@ -1109,10 +1060,6 @@ textarea {
   .worker-stage-table th:first-child,
   .worker-stage-table td:first-child {
     width: 58%;
-  }
-
-  .worker-owner-select {
-    max-width: 100%;
   }
 
 }
@@ -1509,7 +1456,7 @@ textarea {
 /* --- Buttons (shared style class, not a component) ----------------------- */
 
 /* THE BUTTON — one base + three variants. Quiet = the neutral bordered chip (default);
- * primary = the accent surface; pill = the borderless inline pill (copy/takeover). */
+ * primary = the accent surface; pill = the borderless inline pill. */
 .button {
   cursor: pointer;
   text-decoration: none;
@@ -2500,7 +2447,7 @@ button.list-row:hover .list-row-title {
   min-width: 0;
   margin-top: var(--space-1);
 }
-.chat-foot > .model-picker { flex: 1 1 0; width: 0; }
+.chat-foot > [data-conversation-model-picker] { flex: 1 1 0; width: 0; }
 .chat-slash {
   background: none;
   border: none;
@@ -2537,20 +2484,6 @@ button.list-row:hover .list-row-title {
   gap: var(--space-1);
   min-width: 0;
 }
-.chat-send-mode {
-  box-sizing: border-box;
-  width: calc(var(--space-7) + var(--space-5));
-  min-width: 0;
-  height: var(--space-5);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--text-muted);
-  font: inherit;
-  font-size: var(--type-xs);
-  padding: 0 var(--space-1);
-}
-.chat-send-mode:disabled { opacity: 0.5; }
 .chat-send {
   width: var(--space-5); height: var(--space-5);
   border: none;
@@ -4348,22 +4281,6 @@ select {
   color: var(--accent-bright);
 }
 
-.ticket-stage-run-action {
-  padding: 0 2px;
-  border: 0;
-  background: none;
-  color: var(--text-faintest);
-  font: inherit;
-  font-size: var(--type-xs);
-  letter-spacing: 0;
-  text-transform: none;
-  cursor: pointer;
-}
-
-.ticket-stage-run-action:hover {
-  color: var(--text-default);
-}
-
 .disclosure--stage > .disclosure-body {
   min-width: 0;
   max-width: 100%;
@@ -4968,15 +4885,7 @@ select {
   color: var(--text-default);
 }
 
-.ticket-backend-error {
-  margin-top: var(--space-3);
-  color: var(--accent-error);
-  font-size: var(--type-sm);
-  line-height: 1.5;
-  white-space: pre-wrap;
-}
-
-/* The leash is one disclosure that holds scope, takeover, and copy. */
+/* The leash is one disclosure that holds the scope controls. */
 .ticket-leash {
   position: relative;
   display: block;
@@ -5021,10 +4930,6 @@ select {
 .ticket-leash-value {
   color: var(--text-muted);
   transition: color var(--motion-fast) var(--motion-ease);
-}
-
-.ticket-leash-face--held .ticket-leash-value {
-  color: var(--accent-bright);
 }
 
 .ticket-leash-menu {

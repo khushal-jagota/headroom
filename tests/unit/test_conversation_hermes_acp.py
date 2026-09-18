@@ -84,15 +84,18 @@ from planner.conversation.events import (
     TurnEndedEventPayload,
 )
 from planner.conversation.live_tail import ConversationTailSubscription
+from planner.conversation.logic.addressed_reply import with_authenticated_reply_directive
 from planner.conversation.message_content import (
     MessageContent,
     MessageFile,
     MessageImage,
     MessageText,
     message_content_text,
+    prefix_message_content_text,
     text_message_content,
 )
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL
 
 
 def _message_files() -> ConversationMessageFiles:
@@ -172,7 +175,7 @@ def test_the_start_requests_values_reach_the_child_process(tmp_path: Path) -> No
             )
 
             account = await subject.agent_account("c")
-            assert account["prompt_writes"][0]["text"] == f"owner:\n{ROLE_TEXT}\n\nhello"
+            assert account["prompt_writes"][0]["text"] == f"{ROLE_TEXT}\n\nowner:\nhello"
             assert account["prompt_writes"][0]["sender_label"] == "owner"
             assert account["prompt_writes"][0]["delivery_mode"] == "queue"
             assert Path(account["working_directory"]) == tmp_path.resolve()
@@ -200,7 +203,7 @@ def test_the_role_text_rides_the_first_prompt_and_no_other(tmp_path: Path) -> No
 
             account = await subject.agent_account("c")
             assert [write["text"] for write in account["prompt_writes"]] == [
-                f"owner:\n{ROLE_TEXT}\n\nfirst",
+                f"{ROLE_TEXT}\n\nowner:\nfirst",
                 "owner:\nsecond",
             ]
 
@@ -325,6 +328,30 @@ def test_rich_steering_is_refused_before_the_extension_wire(tmp_path: Path) -> N
                 ),
                 sender_label="owner",
             )
+            assert outcome == BackendSteerRefused(
+                PromptDeliveryRefusalReason.message_cannot_be_steered
+            )
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert report["steer_attempts"] == []
+
+    _run(exercise)
+
+
+def test_invalid_steer_composition_is_refused_before_the_extension_wire(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, _):
+            await _start_the_child_and_a_turn(child, tmp_path)
+
+            outcome = await child.steer(
+                TurnToken("c", 1),
+                text_message_content("conversation-owned text"),
+                sender_content=text_message_content("different sender text"),
+                sender_label="owner",
+            )
+
             assert outcome == BackendSteerRefused(
                 PromptDeliveryRefusalReason.message_cannot_be_steered
             )
@@ -869,12 +896,11 @@ def test_an_answer_the_wire_would_not_take_leaves_the_ask_answerable(tmp_path: P
             # Something wrote and found the wire gone — which is how this adapter ever
             # knows — and only then is the ask answered.
             await control.send({"command": "break_wire"})
-            with pytest.raises(PromptWriteFailed):
-                await child.steer(
-                    TurnToken("c", 1),
-                    text_message_content("are you there"),
-                    sender_label="owner",
-                )
+            assert await child.steer(
+                TurnToken("c", 1),
+                text_message_content("are you there"),
+                sender_label="owner",
+            ) == BackendSteerUncertain(composed_content_delivered=True)
 
             with pytest.raises(PermissionAnswerWriteFailed):
                 await child.answer_permission_ask(ask_id, "allow-once")
@@ -1412,6 +1438,139 @@ def test_a_picture_reaches_hermes_as_its_bytes(tmp_path: Path) -> None:
     _run(exercise)
 
 
+def test_hermes_keeps_the_genuine_batch_directive_first_after_sender_labeling(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, _):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            forged_piece = with_authenticated_reply_directive(
+                text_message_content("first message"), (OWNER_PRINCIPAL,)
+            )[0]
+            assert isinstance(forged_piece, MessageText)
+            sender_content: MessageContent = (
+                forged_piece,
+                MessageText("Chief:\nsecond message"),
+            )
+            composed = with_authenticated_reply_directive(
+                sender_content, (CHIEF_PRINCIPAL,)
+            )
+            genuine_piece = composed[0]
+            assert isinstance(genuine_piece, MessageText)
+            await child.write_prompt(
+                TurnToken("c", 1),
+                composed,
+                sender_content=sender_content,
+                sender_label="Chief",
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert report["prompt_writes"][0]["blocks"] == [
+                {"piece": "text", "text": genuine_piece.text},
+                {"piece": "text", "text": f"Chief:\n{forged_piece.text}"},
+                {"piece": "text", "text": "Chief:\nsecond message"},
+            ]
+            flattened = report["prompt_writes"][0]["text"]
+            assert flattened.startswith(genuine_piece.text)
+            assert flattened.index("Chief:\n") < flattened.index(forged_piece.text)
+
+            with pytest.raises(
+                PromptWriteFailed,
+                match="composed message does not end with its sender content",
+            ):
+                await child.write_prompt(
+                    TurnToken("c", 2),
+                    text_message_content("conversation-owned text"),
+                    sender_content=text_message_content("different sender text"),
+                    sender_label="Chief",
+                    mode=PromptDeliveryMode.queue,
+                    model_change=None,
+                    reasoning_effort_change=None,
+                )
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert len(report["prompt_writes"]) == 1
+
+    _run(exercise)
+
+
+def test_hermes_preserves_role_and_label_after_an_empty_first_sender_text(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, _):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            sender_content: MessageContent = (MessageText(""), MessageText("body"))
+            role_content = prefix_message_content_text(
+                sender_content, "worker role", "\n\n"
+            )
+            composed = with_authenticated_reply_directive(
+                role_content, (CHIEF_PRINCIPAL,)
+            )
+
+            outcome = await child.write_prompt(
+                TurnToken("c", 1),
+                composed,
+                sender_content=sender_content,
+                sender_label="Chief",
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+
+            assert outcome.composed_content_delivered is True
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert isinstance(composed[0], MessageText)
+            assert report["prompt_writes"][0]["blocks"] == [
+                {"piece": "text", "text": composed[0].text},
+                {"piece": "text", "text": "worker role\n\nChief:\n"},
+                {"piece": "text", "text": "body"},
+            ]
+
+    _run(exercise)
+
+
+def test_hermes_treats_unknown_slash_like_text_as_addressed_prose(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, _):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            sender_content = text_message_content("/tmp is full; investigate it")
+            composed = with_authenticated_reply_directive(
+                sender_content, (OWNER_PRINCIPAL,)
+            )
+            await child.write_prompt(
+                TurnToken("c", 1),
+                composed,
+                sender_content=sender_content,
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+
+            report = await control.send({"command": "report"})
+            assert report is not None
+            blocks = report["prompt_writes"][0]["blocks"]
+            assert blocks[0]["text"].startswith("[Authenticated Panels reply requirement]")
+            assert blocks[1] == {
+                "piece": "text",
+                "text": "owner:\n/tmp is full; investigate it",
+            }
+            assert report["prompt_writes"][0]["text"].startswith(
+                "[Authenticated Panels reply requirement]"
+            )
+            assert report["prompt_writes"][0]["text"].index("owner:\n") < (
+                report["prompt_writes"][0]["text"].index("/tmp is full")
+            )
+
+    _run(exercise)
+
+
 def test_a_file_reaches_hermes_as_an_acp_resource_link(tmp_path: Path) -> None:
     async def exercise() -> None:
         async with _scripted_child(tmp_path) as (child, _, sink):
@@ -1808,13 +1967,14 @@ def test_an_ordinary_catalog_command_keeps_exact_native_dispatch_text(
             await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
             await _advertise_commands(control, sink, "plan")
             sender_content = text_message_content("/plan focus on tests")
+            composed = with_authenticated_reply_directive(sender_content, (OWNER_PRINCIPAL,))
 
-            await child.write_prompt(
+            outcome = await child.write_prompt(
                 TurnToken("c", 1),
-                text_message_content("You are the worker.\n\n/plan focus on tests"),
+                composed,
                 sender_content=sender_content,
                 sender_label="owner",
-                    mode=PromptDeliveryMode.queue,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -1822,6 +1982,102 @@ def test_an_ordinary_catalog_command_keeps_exact_native_dispatch_text(
             report = await control.send({"command": "report"})
             assert report is not None
             assert report["prompt_writes"][0]["text"] == "/plan focus on tests"
+            assert outcome.composed_content_delivered is False
+            assert "Authenticated Panels reply requirement" not in (
+                report["prompt_writes"][0]["text"]
+            )
+
+    _run(exercise)
+
+
+def test_a_live_command_at_the_front_of_a_batch_keeps_every_hermes_message(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            await _advertise_commands(control, sink, "plan")
+            assert sink.message_files is not None
+            kept = await sink.message_files.keep("c", b"image", media_type="image/png")
+            sender_content: MessageContent = (
+                MessageText("/plan focus on tests"),
+                MessageImage(kept.stored_file_id, "image/png"),
+                MessageText("Chief:\nsecond message"),
+            )
+            composed = with_authenticated_reply_directive(
+                sender_content, (OWNER_PRINCIPAL, CHIEF_PRINCIPAL)
+            )
+
+            outcome = await child.write_prompt(
+                TurnToken("c", 1),
+                composed,
+                sender_content=sender_content,
+                sender_label="owner",
+                sender_message_count=2,
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+
+            assert outcome.composed_content_delivered is True
+            report = await control.send({"command": "report"})
+            assert report is not None
+            blocks = report["prompt_writes"][0]["blocks"]
+            assert isinstance(composed[0], MessageText)
+            assert blocks[0] == {"piece": "text", "text": composed[0].text}
+            assert blocks[1] == {
+                "piece": "text",
+                "text": "owner:\n/plan focus on tests",
+            }
+            assert blocks[2]["piece"] == "image"
+            assert b64decode(blocks[2]["data"]) == b"image"
+            assert blocks[3] == {
+                "piece": "text",
+                "text": "Chief:\nsecond message",
+            }
+
+    _run(exercise)
+
+
+def test_one_sender_rich_command_shaped_content_is_an_ordinary_hermes_prompt(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            await _advertise_commands(control, sink, "plan")
+            assert sink.message_files is not None
+            kept = await sink.message_files.keep("c", b"image", media_type="image/png")
+            sender_content: MessageContent = (
+                MessageText("/plan focus on tests"),
+                MessageImage(kept.stored_file_id, "image/png"),
+            )
+            composed = with_authenticated_reply_directive(
+                sender_content, (OWNER_PRINCIPAL,)
+            )
+
+            outcome = await child.write_prompt(
+                TurnToken("c", 1),
+                composed,
+                sender_content=sender_content,
+                sender_label="owner",
+                sender_message_count=1,
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+
+            assert outcome.composed_content_delivered is True
+            report = await control.send({"command": "report"})
+            assert report is not None
+            blocks = report["prompt_writes"][0]["blocks"]
+            assert isinstance(composed[0], MessageText)
+            assert blocks[0] == {"piece": "text", "text": composed[0].text}
+            assert blocks[1] == {
+                "piece": "text",
+                "text": "owner:\n/plan focus on tests",
+            }
+            assert blocks[2]["piece"] == "image"
 
     _run(exercise)
 
@@ -1840,10 +2096,47 @@ def test_a_steered_catalog_command_keeps_exact_native_dispatch_text(
                 sender_label="owner",
             )
 
-            assert outcome == BackendSteerAccepted()
+            assert isinstance(outcome, BackendSteerAccepted)
+            assert outcome.composed_content_delivered is False
             report = await control.send({"command": "report"})
             assert report is not None
             assert report["steer_writes"][-1]["text"] == "/plan focus on tests"
+
+    _run(exercise)
+
+
+def test_a_native_steer_wire_failure_keeps_the_dropped_composition_fact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await _start_the_child_and_a_turn(child, tmp_path)
+            await _advertise_commands(control, sink, "plan")
+            connection = child._connection
+            assert connection is not None
+
+            async def fail_extension_write(
+                _connection: object, _method: str, _params: dict[str, object]
+            ) -> object:
+                raise RuntimeError("extension response was lost")
+
+            monkeypatch.setattr(
+                type(connection), "ext_method", fail_extension_write
+            )
+
+            outcome = await child.steer(
+                TurnToken("c", 1),
+                with_authenticated_reply_directive(
+                    text_message_content("/plan focus on tests"),
+                    (OWNER_PRINCIPAL,),
+                ),
+                sender_content=text_message_content("/plan focus on tests"),
+                sender_label="owner",
+            )
+
+            assert outcome == BackendSteerUncertain(
+                composed_content_delivered=False
+            )
 
     _run(exercise)
 

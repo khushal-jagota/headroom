@@ -88,7 +88,7 @@ direct CLI ──────────────────┼──► do
                              │                                      │
 Ticket Worker ─► proposal resolver                                 │ commit
 planning Worker ─► guarded Day or Sprint writer                    ▼
-Chief ───────────► external-work reconciliation             change signal
+direct user ─────► user-owned Ticket gate                    change signal
                                                                     │
                          ┌──────────────────────────────────────────┤
                          ▼                                          ▼
@@ -136,7 +136,7 @@ Chief ───────────► external-work reconciliation         
         </details>
         <details>
           <summary><span class="number">08</span><span><b>CLI and authority</b><span>Direct actions, Worker proposals, planning claims, and Chief intake.</span></span></summary>
-          <div class="body"><p>The CLI speaks HTTP. Direct-only routes reject Worker claims. Three planning Worker types receive only their matching Day or Sprint write. Chief operations import external work but do not expose a general Stage setter.</p><p class="paths"><code>src/planner/cli/</code> · <code>src/planner/core/authctx.py</code></p></div>
+          <div class="body"><p>The CLI speaks HTTP. Direct-only routes reject Worker claims. Three planning Worker types receive only their matching Day or Sprint write. A direct user can settle the unset gate of the current user-owned Stage. No operation exposes a general Stage setter.</p><p class="paths"><code>src/planner/cli/</code> · <code>src/planner/core/authctx.py</code></p></div>
         </details>
         <details>
           <summary><span class="number">09</span><span><b>Runtime and operations</b><span>Isolated environments, exact-app deployment, backups, and notifications.</span></span></summary>

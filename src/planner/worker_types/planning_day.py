@@ -22,7 +22,7 @@ PLANNING_DAY_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
             "Direction",
             "direction",
             False,
-            StageOwnershipMode.paired,
+            StageOwnershipMode.user,
         ),
         StageDefinition(
             "needs_day_changes",
@@ -48,7 +48,6 @@ PLANNING_DAY_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         toolset_profile="default",
         default_backend="claude",
     ),
-    supports_prefix_reconciliation=True,
 )
 
 

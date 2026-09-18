@@ -8,7 +8,7 @@ import json
 import sqlite3
 from dataclasses import asdict
 
-from planner.core import links as core_links
+from planner.core import ticket_blocks
 from planner.core.contracts import BlockerSummary, JsonDict
 from planner.judgments import data as judgments_data
 from planner.list_reads.configuration import TICKET_RECAP_PREVIEW_CHARS
@@ -102,22 +102,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         },
         "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
-        "backend_error": ticket.backend_error,
-        "stage_ownership_overrides": {
-            stage: mode.value for stage, mode in ticket.stage_ownership_overrides.items()
-        },
-        "default_stage_ownership_mode": (
-            ticket.default_stage_ownership_mode.value
-            if ticket.default_stage_ownership_mode is not None
-            else None
-        ),
-        "effective_stage_ownership_mode": (
-            ticket.effective_stage_ownership_mode.value
-            if ticket.effective_stage_ownership_mode is not None
-            else None
-        ),
         "conversation_id": ticket.conversation_id,
-        "alias": ticket.alias,
         "field_values": dict(ticket.field_values),
         "pending_proposal": asdict(ticket.pending_proposal)
         if ticket.pending_proposal is not None
@@ -319,7 +304,7 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
         "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id ASC",
         (ticket_id,),
     ).fetchall()
-    blocker_summary = core_links.blocker_summary(conn, ticket_id)
+    blocker_summary = ticket_blocks.blocker_summary(conn, ticket_id)
     conversation_rows = conn.execute(
         "SELECT ticket_conversations.conversation_id, conversations.created_at "
         "FROM ticket_conversations JOIN conversations "
@@ -368,11 +353,15 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
 def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
     ticket = tickets_data.read_ticket(conn, ticket_id)
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
+    ownership = machine.stage_ownership_mode(
+        ticket.stage,
+        worker_type_definition=worker_type_definition,
+    )
 
     def show(value: str | None) -> str:
         return value if value else "(none)"
 
-    blocker_summary = core_links.blocker_summary(conn, ticket_id)
+    blocker_summary = ticket_blocks.blocker_summary(conn, ticket_id)
     blocked_by_rows = tuple(row for row in blocker_summary.blocked_by if row.active)
     blocked_by_block = (
         "\n".join(f"- {row.title} ({row.ticket_id}, {row.stage})" for row in blocked_by_rows)
@@ -389,7 +378,7 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"priority: {ticket.priority.value}\n"
         f"employee_backend: {ticket.employee_backend}\n"
         "owner: "
-        f"{ticket.effective_stage_ownership_mode.value if ticket.effective_stage_ownership_mode is not None else '(none)'}\n"  # noqa: E501
+        f"{ownership.value if ownership is not None else '(none)'}\n"
         f"\n"
         f"{field_blocks}"
         f"pending proposal:\n"
@@ -430,7 +419,6 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "tickets.conversation_id, "
         "tickets.ticket_status, "
         "tickets.ceiling, tickets.at_cap, "
-        "tickets.backend_error, "
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
@@ -440,7 +428,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         (day_id,),
     ).fetchall()
     registry = configured_worker_type_registry()
-    blocked_target_ids = core_links.blocked_target_ids(conn)
+    blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     coding_order = registry.require("coding").stage_ids()
     column_order: list[str] = list(coding_order)
     by_stage: dict[str, list[tuple[tuple[int, int, str, int], BoardCard]]] = {
@@ -489,9 +477,6 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "activity_at": int(row["updated_at"]),
             "has_pending_proposal": row["pending_proposal"] is not None,
             "ticket_status": ticket_status,
-            "backend_error": (
-                str(row["backend_error"]) if row["backend_error"] is not None else None
-            ),
             "worker_type": worker_type,
             "employee_backend": str(row["employee_backend"]),
             "stage": stage,
@@ -500,7 +485,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "gating_field_label": gating_field_label,
             "is_done": stage == worker_type_definition.completed_stage(),
             "is_dropped": stage == worker_type_definition.dropped_stage.id,
-            "blocked": str(row["id"]) in blocked_target_ids,
+            "blocked": str(row["id"]) in blocked_ticket_ids,
             "conversation_id": (
                 str(row["conversation_id"]) if row["conversation_id"] is not None else None
             ),
@@ -591,10 +576,7 @@ def _board_sprint_items(
 def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
     rows = conn.execute(
         "SELECT id, title, stage, worker_type, ticket_status, ticket_status_changed_at, "
-        "pending_proposal, ceiling_holder, "
-        "EXISTS (SELECT 1 FROM proposal_delivery_failures failure "
-        "WHERE failure.ticket_id=tickets.id AND failure.resolved_at IS NULL) "
-        "AS proposal_surfaced_to_owner FROM tickets "
+        "pending_proposal, ceiling_holder FROM tickets "
         "WHERE id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) ORDER BY id",
         (day_id,),
     ).fetchall()
@@ -605,9 +587,7 @@ def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
         if ticket_status != TicketStatus.awaiting_approval.value:
             continue
         holder = json.loads(str(row["ceiling_holder"]))
-        if holder != {"kind": "owner", "id": "owner"} and not bool(
-            row["proposal_surfaced_to_owner"]
-        ):
+        if holder != {"kind": "owner", "id": "owner"}:
             continue
         worker_type_definition = registry.require(str(row["worker_type"]))
         stage = str(row["stage"])

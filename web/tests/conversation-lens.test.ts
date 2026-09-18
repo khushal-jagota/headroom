@@ -1,11 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { emptyConversationFeed, feedWithCommittedEvents } from "../src/lib/conversation/feed";
 import {
   conversationFeedForLens,
+  conversationLensPreference,
   conversationRowsForLens,
   conversationThreadItemsForLens,
-  heldPromptIsInLens
+  heldPromptIsInLens,
+  rememberConversationLensPreference
 } from "../src/lib/conversation/lens";
 import { transcriptRows } from "../src/lib/conversation/transcript";
 import type { ConversationEvent, HeldPrompt } from "../src/lib/conversation/wire";
@@ -28,6 +30,36 @@ function event(
 }
 
 describe("Conversation lenses", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("keeps one valid browser preference and otherwise defaults to Focus", () => {
+    const values = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value)
+      }
+    });
+
+    expect(conversationLensPreference()).toBe("focus");
+    values.set("panels.conversation.lens", "wide");
+    expect(conversationLensPreference()).toBe("focus");
+    rememberConversationLensPreference("full");
+    expect(conversationLensPreference()).toBe("full");
+  });
+
+  it("still works when browser preference storage is unavailable", () => {
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: () => { throw new Error("blocked"); },
+        setItem: () => { throw new Error("blocked"); }
+      }
+    });
+
+    expect(conversationLensPreference()).toBe("focus");
+    expect(() => rememberConversationLensPreference("full")).not.toThrow();
+  });
+
   it("focuses on owner messages, addressed replies, asks, and ask settlements", () => {
     const events = [
       event(1, "prompt", {
@@ -59,22 +91,16 @@ describe("Conversation lenses", () => {
       event(6, "permission_answered", { ask_id: "ask-1", option_id: "allow" }),
       event(7, "user_input_requested", { request_id: "input-1", questions: [] }),
       event(8, "user_input_failed", { request_id: "input-1", detail: "invalid" }),
-      event(9, "turn_ended", { ending: "completed", error_summary: null }),
-      event(10, "proposal_delivery_failed", {
-        attempt_count: 10,
-        last_error: "write_to_backend_failed",
-        sender_message_id: "proposal-failure-1"
-      })
+      event(9, "turn_ended", { ending: "completed", error_summary: null })
     ];
     const fullFeed = feedWithCommittedEvents(emptyConversationFeed(), events);
     const focused = conversationFeedForLens(fullFeed, "focus", "Khushal");
 
-    expect(focused.events.map((row) => row.sequence)).toEqual([1, 4, 5, 6, 7, 8, 9, 10]);
-    expect(focused.latestSequence).toBe(10);
+    expect(focused.events.map((row) => row.sequence)).toEqual([1, 4, 5, 6, 7, 8, 9]);
+    expect(focused.latestSequence).toBe(9);
     expect(conversationRowsForLens(transcriptRows(focused), "focus").map((row) => row.kind))
       .toEqual([
-        "prompt", "agent_message", "permission_ask", "user_input",
-        "proposal_delivery_failed"
+        "prompt", "agent_message", "permission_ask", "user_input"
       ]);
     expect(conversationFeedForLens(fullFeed, "full", "Khushal")).toBe(fullFeed);
   });

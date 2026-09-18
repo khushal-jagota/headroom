@@ -1,9 +1,10 @@
 """A person answering a Ticket's worker, in the browser where they answer it.
 
 A Ticket parked on a filed proposal is waiting for its owner. Replying to the worker is
-an answer of a kind — the proposal is being discussed rather than approved — so the
-Ticket moves to paired. The ticket screen is the one place that knows both halves, and it
-says a reply happened only once the conversation has taken the message.
+an answer of a kind — the proposal is being discussed rather than approved. The Ticket
+remains awaiting approval while its reply attention records the discussion. The ticket
+screen is the one place that knows both halves, and it says a reply happened only once
+the conversation has taken the message.
 
 No agent is involved and none is needed. The send is held inside the page and answered
 with whatever fate this test chooses, so nothing is ever spawned. Everything else is real
@@ -22,10 +23,13 @@ from pathlib import Path
 import uvicorn
 from playwright.sync_api import BrowserContext, Page, Request
 from tests.e2e.harness import REPO_ROOT, WAIT_MS, ApiHelper, JsonObject, ServerHandle
-from tests.e2e.test_dev_conversation_pane import HOLD_THE_SEND
 from tests.support.principals import OWNER_PRINCIPAL
 
-from planner.conversation.backends.contracts import BackendSteerAccepted, BackendSteerOutcome
+from planner.conversation.backends.contracts import (
+    BackendPromptAccepted,
+    BackendSteerAccepted,
+    BackendSteerOutcome,
+)
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core import server as server_module
 from planner.core.clock import build_clock
@@ -40,6 +44,31 @@ FATE = f"{TICKET_SCREEN} [data-conversation-fate]"
 PROPOSAL = "# Success criteria\n\nThe suite goes green.\n"
 REFUSED_TEXT = "did this reach anything"
 
+HOLD_THE_SEND = """
+window.__heldSends = [];
+const realFetch = window.fetch.bind(window);
+window.fetch = (input, init) => {
+  const url = typeof input === 'string' ? input : input.url;
+  if (typeof url === 'string' && url.includes('/send')) {
+    return new Promise((resolve, reject) => {
+      window.__heldSends.push({
+        body: init && init.body ? JSON.parse(init.body) : null,
+        answer: (fate) => resolve(new Response(JSON.stringify(fate), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })),
+        turnAway: (detail) => resolve(new Response(JSON.stringify({ detail }), {
+          status: 422,
+          headers: { 'Content-Type': 'application/json' }
+        })),
+        fail: () => reject(new TypeError('the send got nowhere'))
+      });
+    });
+  }
+  return realFetch(input, init);
+};
+"""
+
 
 class _AcceptingBackendChild:
     """The real conversation core's deterministic sink for this browser round trip."""
@@ -47,8 +76,10 @@ class _AcceptingBackendChild:
     async def start(self, _resolved_start: object, *, vendor_session_cursor: str | None) -> None:
         del vendor_session_cursor
 
-    async def write_prompt(self, *_args: object, **_kwargs: object) -> None:
-        return None
+    async def write_prompt(
+        self, *_args: object, **_kwargs: object
+    ) -> BackendPromptAccepted:
+        return BackendPromptAccepted(composed_content_delivered=True)
 
     async def steer(self, *_args: object, **_kwargs: object) -> BackendSteerOutcome:
         return BackendSteerAccepted()

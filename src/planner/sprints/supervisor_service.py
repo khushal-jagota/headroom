@@ -178,15 +178,13 @@ def require_restartable_child(
     """
     ticket = require_current_child(conn, ctx, sprint_item_id, ticket_id)
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
-    ownership_mode = machine.effective_stage_ownership_mode(
+    ownership_mode = machine.stage_ownership_mode(
         ticket.stage,
-        ticket.stage_ownership_overrides,
         worker_type_definition=worker_type_definition,
-        default_stage_ownership_mode=ticket.default_stage_ownership_mode,
     )
     if ownership_mode is not StageOwnershipMode.worker:
-        # A Paired Stage rests where it departs, so no code can tell a dead paired worker
-        # from a discussion waiting on the user, and a restart there would kill a
+        # A user-owned Stage opens one collaborative discussion, so no code can tell a
+        # dead worker from a discussion waiting on the user. A restart there would kill a
         # conversation the user is in.
         raise PlannerError(
             ErrorCode.validation,

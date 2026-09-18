@@ -29,7 +29,7 @@ const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set([
 
 const GROUP_LABELS: Readonly<Record<string, string>> = {
   awaiting_approval: "Awaiting approval",
-  assigned: "Paired",
+  assigned: "Assigned",
   awaiting_reply: "Messages",
   status_awaiting_approval: "Awaiting an agent's approval",
   waiting_to_closeout: "Waiting to Closeout",

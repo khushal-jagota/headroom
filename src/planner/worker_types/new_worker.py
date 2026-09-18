@@ -20,7 +20,7 @@ NEW_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
             "Understanding",
             "understanding",
             False,
-            StageOwnershipMode.paired,
+            StageOwnershipMode.user,
         ),
         StageDefinition("needs_stages", "Stages", "stages", False, StageOwnershipMode.worker),
         StageDefinition("needs_thinking", "Thinking", "thinking", False, StageOwnershipMode.worker),
@@ -29,7 +29,7 @@ NEW_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
             "Runtime Defaults",
             "runtime_defaults",
             False,
-            StageOwnershipMode.paired,
+            StageOwnershipMode.user,
         ),
         StageDefinition("needs_drafting", "Drafting", "drafting", False, StageOwnershipMode.worker),
         StageDefinition("needs_closeout", "Closeout", "closeout", False, StageOwnershipMode.worker),
@@ -52,7 +52,6 @@ NEW_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         toolset_profile="default",
         default_backend="codex",
     ),
-    supports_prefix_reconciliation=True,
 )
 
 

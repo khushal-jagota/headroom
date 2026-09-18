@@ -205,13 +205,13 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     backlog_title.wait_for(timeout=WAIT_MS)
     backlog_placement.wait_for(state="attached", timeout=WAIT_MS)
     assert backlog_placement.text_content() == "Backlog"
-    assert backlog_row.get_attribute("data-ticket-state") == "current-paired"
+    assert backlog_row.get_attribute("data-ticket-state") == "current-assigned"
     assert backlog_row.get_attribute("href") == (
         f"#/workspace/item/{item['id']}/{backlog_ticket['id']}"
     )
     assert backlog_row.locator("xpath=ancestor::details[1]").get_attribute(
         "data-workspace-group"
-    ) == "current-paired"
+    ) == "current-assigned"
     desktop_geometry = page.evaluate(
         """([rowSelector]) => {
             const row = document.querySelector(rowSelector);
@@ -264,10 +264,10 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     page.get_by_text("Past supervisor marker", exact=True).wait_for(timeout=WAIT_MS)
     assert page.locator('[data-conversation-read-only-boundary="true"]').count() == 1
     history.select_option("__current__")
-    assert page.locator("[data-conversation-lens-toggle]").inner_text() == "Focus"
-    assert page.get_by_text("Current supervisor marker", exact=True).count() == 0
-    page.locator("[data-conversation-lens-toggle]").click()
+    assert page.locator("[data-conversation-lens-toggle]").inner_text() == "Full"
     page.get_by_text("Current supervisor marker", exact=True).wait_for(timeout=WAIT_MS)
+    page.locator("[data-conversation-lens-toggle]").click()
+    assert page.get_by_text("Current supervisor marker", exact=True).count() == 0
 
     api.direct_patch(
         server,

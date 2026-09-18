@@ -136,70 +136,6 @@ async def send_system_message(
     return MessageDeliveryResult(recipient, delivered.conversation_id, delivered.fate)
 
 
-async def send_ticket_outbox_message(
-    conversations: ConversationSystem,
-    conn: sqlite3.Connection,
-    clock: Clock,
-    ticket_id: str,
-    message: str,
-    *,
-    sender: Principal | None,
-    sender_message_id: str,
-) -> MessageDeliveryResult:
-    """Deliver one durable Ticket message without source-turn bookkeeping."""
-    if conn.in_transaction:
-        raise RuntimeError("backend delivery requires a connection outside a transaction")
-    recipient = Principal(PrincipalKind.ticket, ticket_id)
-    if sender is None:
-        return await send_system_message(
-            conversations,
-            conn,
-            clock,
-            recipient,
-            message,
-            sender_message_id=sender_message_id,
-        )
-    async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
-        ticket = tickets_data.read_ticket(conn, ticket_id)
-        delivered = await conversation_start.send_to_ticket_conversation(
-            conversations,
-            conn,
-            ticket_id,
-            text_message_content(message),
-            conversation_id=ticket.conversation_id,
-            created_conversation_id=conversation_start.new_conversation_id(),
-            sender_label=sender_label(RequestContext(sender)),
-            sender_message_id=sender_message_id,
-            sender=sender,
-            recipient=recipient,
-            now=clock.now_unix(),
-        )
-    return MessageDeliveryResult(recipient, delivered.conversation_id, delivered.fate)
-
-
-async def record_ticket_outbox_uncertainty(
-    conversations: ConversationSystem,
-    *,
-    ticket_id: str,
-    conversation_id: str,
-    message: str,
-    sender: Principal | None,
-    sender_message_id: str,
-) -> None:
-    """Expose one terminal outbox uncertainty without another backend delivery."""
-    await conversations.record_prompt_delivery_uncertain(
-        conversation_id,
-        text_message_content(message),
-        sender_label="Panels" if sender is None else sender_label(RequestContext(sender)),
-        mode=PromptDeliveryMode.queue,
-        sender_message_id=sender_message_id,
-        sender=sender,
-        recipient=(
-            None if sender is None else Principal(PrincipalKind.ticket, ticket_id)
-        ),
-    )
-
-
 def _prompt_mode(mode: MessageDeliveryMode | PromptDeliveryMode) -> PromptDeliveryMode:
     if isinstance(mode, PromptDeliveryMode):
         return mode
@@ -260,6 +196,9 @@ async def send_message(
         source_conversation_id = _sender_conversation_id(conn, sender)
         if source_conversation_id is not None:
             source_turn = await conversations.active_turn_reference(source_conversation_id)
+    is_reply = bool(
+        source_turn is not None and await conversations.turn_expects_reply(source_turn, recipient)
+    )
 
     if recipient.kind is PrincipalKind.owner:
         if sender.kind is PrincipalKind.owner:
@@ -313,6 +252,7 @@ async def send_message(
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
+                reply_requested=not is_reply,
                 now=clock.now_unix(),
                 required_sprint_item_id=required_sprint_item_id,
             )
@@ -342,6 +282,7 @@ async def send_message(
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
+                reply_requested=not is_reply,
             )
     elif recipient.kind is PrincipalKind.sprint_item:
         item_id = recipient.id
@@ -378,6 +319,7 @@ async def send_message(
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
+                    reply_requested=not is_reply,
                     required_sprint_item_id=item_id,
                 )
                 if sender.kind is PrincipalKind.owner and (

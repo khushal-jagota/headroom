@@ -34,7 +34,7 @@ INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
             "Question Answers",
             "question_answers",
             False,
-            StageOwnershipMode.paired,
+            StageOwnershipMode.user,
         ),
         StageDefinition(
             "needs_ticket_outlines",
@@ -62,7 +62,6 @@ INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         toolset_profile="default",
         default_backend="codex",
     ),
-    supports_prefix_reconciliation=True,
 )
 
 

@@ -7,7 +7,7 @@ export type FieldStageVisualState =
   | "completed"
   | "current-running"
   | "current-waiting"
-  | "current-paired"
+  | "current-assigned"
   | "current-awaiting-approval"
   | "errored"
   | "upcoming"

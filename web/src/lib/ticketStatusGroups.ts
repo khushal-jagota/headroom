@@ -28,7 +28,7 @@ export const TICKET_STATUS_GROUPS: readonly TicketStatusGroupDefinition[] = [
   { key: "needs-me", label: "Needs you", quiet: false },
   { key: "waiting-for-kickoff", label: "Waiting for kickoff", quiet: false },
   { key: "current-awaiting-approval", label: "Awaiting approval", quiet: false },
-  { key: "current-paired", label: "Assigned", quiet: false },
+  { key: "current-assigned", label: "Assigned", quiet: false },
   { key: "current-running", label: "Agent", quiet: false },
   { key: "current-waiting", label: "Waiting for closeout", quiet: true },
   { key: "upcoming", label: "Empty", quiet: true },

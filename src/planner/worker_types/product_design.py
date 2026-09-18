@@ -27,14 +27,14 @@ PRODUCT_DESIGN_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
             "Wireframe",
             "wireframe",
             False,
-            StageOwnershipMode.paired,
+            StageOwnershipMode.user,
         ),
         StageDefinition(
             "needs_design",
             "Design",
             "design",
             False,
-            StageOwnershipMode.paired,
+            StageOwnershipMode.user,
         ),
         StageDefinition("needs_closeout", "Closeout", "closeout", False, StageOwnershipMode.worker),
         StageDefinition("done", "Done", None, True, None),
@@ -54,7 +54,6 @@ PRODUCT_DESIGN_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         toolset_profile="default",
         default_backend="claude",
     ),
-    supports_prefix_reconciliation=True,
 )
 
 

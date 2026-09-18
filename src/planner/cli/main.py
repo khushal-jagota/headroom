@@ -9,7 +9,6 @@ The command tree mirrors the product model:
 * ticket: create, inspect, organize, and approve tickets
 * sprint: create, inspect, edit, and populate sprints and sprint items
 * worker: worker-only writes such as proposals, recaps, and notes
-* chief: import work completed outside Panels
 """
 
 from __future__ import annotations
@@ -254,8 +253,6 @@ def _ticket_record(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Reco
         "project_id",
         "sprint_item_id",
         "effective_sprint_id",
-        "default_stage_ownership_mode",
-        "effective_stage_ownership_mode",
         "ceiling",
         "at_cap",
     )
@@ -289,8 +286,6 @@ def _sprint_item_record(
         "priority",
         "deadline",
         "kind",
-        "blocked_by",
-        "blockers_cleared",
     )
     return (
         {key: data[key] for key in header_keys if key in data},
@@ -528,7 +523,7 @@ def feedback_use(ticket_id: str, feedback_ids: tuple[str, ...], as_json: bool) -
 @click.option(
     "--message",
     default=None,
-    help="Message text. If you would like a reply, ask the recipient to send a message back.",
+    help="Message text. Addressed agent turns must reply through Send Message.",
 )
 @click.option("--body-file", default=None, help="Read message text from this file, or -.")
 @json_option
@@ -544,7 +539,7 @@ def send_message(
 ) -> None:
     """Send one message to one Panels conversation owner.
 
-    To request a reply, ask the recipient to send one with `panels send-message`.
+    An addressed agent turn must send one explicit reply before it completes.
     """
     targets = sum(
         1
@@ -1365,6 +1360,30 @@ def ticket_set(
     http.emit(data, as_json, f"{data['id']} {field} set")
 
 
+@ticket.command("set-value")
+@click.argument("ticket_id")
+@click.argument("field")
+@click.option("--value", default=None, help="Set the field to this value.")
+@click.option("--body-file", default=None, help="Read field text from this file, or - for stdin.")
+@json_option
+def ticket_set_value(
+    ticket_id: str,
+    field: str,
+    value: str | None,
+    body_file: str | None,
+    as_json: bool,
+) -> None:
+    body = read_value_or_file(value, body_file, False, as_json, field)
+    data = http.send(
+        "PUT",
+        f"/api/tickets/{ticket_id}/value/{field}",
+        as_json=as_json,
+        json_body={"body": body},
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, f"{data['id']} {field} set")
+
+
 @ticket.command("place")
 @click.argument("ticket_id")
 @click.option("--project", default=None, help="Project name.")
@@ -1454,27 +1473,6 @@ def ticket_employee_configuration(
     )
 
 
-@ticket.command("ownership")
-@click.argument("ticket_id")
-@click.option("--stage", required=True, help="Stage id to override.")
-@click.option(
-    "--mode",
-    required=True,
-    type=click.Choice(["worker", "user", "paired", "default"]),
-    help="Ownership mode; default clears the override.",
-)
-@json_option
-def ticket_ownership(ticket_id: str, stage: str, mode: str, as_json: bool) -> None:
-    data = http.send(
-        "PUT",
-        f"/api/tickets/{ticket_id}/stage-ownership/{stage}",
-        as_json=as_json,
-        json_body={"ownership_mode": None if mode == "default" else mode},
-        request_actor="ordinary",
-    )
-    http.emit(data, as_json, f"{data['id']} {stage} ownership set")
-
-
 @ticket.command("approve")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option("--ceiling", default=None, help="Next ceiling stage or none.")
@@ -1561,9 +1559,12 @@ def ticket_approve(
 def ticket_block(ticket_id: str, blocker_id: str, as_json: bool) -> None:
     data = http.send(
         "POST",
-        "/api/links",
+        "/api/ticket-blocks",
         as_json=as_json,
-        json_body={"from_id": blocker_id, "to_id": ticket_id, "kind": "blocks"},
+        json_body={
+            "blocking_ticket_id": blocker_id,
+            "blocked_ticket_id": ticket_id,
+        },
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} blocked by {blocker_id}")
@@ -1576,9 +1577,12 @@ def ticket_block(ticket_id: str, blocker_id: str, as_json: bool) -> None:
 def ticket_unblock(ticket_id: str, blocker_id: str, as_json: bool) -> None:
     data = http.send(
         "DELETE",
-        "/api/links",
+        "/api/ticket-blocks",
         as_json=as_json,
-        params={"from_id": blocker_id, "to_id": ticket_id, "kind": "blocks"},
+        params={
+            "blocking_ticket_id": blocker_id,
+            "blocked_ticket_id": ticket_id,
+        },
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} unblocked from {blocker_id}")
@@ -1892,36 +1896,6 @@ def sprint_item_remove_ticket(item_id: str, ticket_id: str, as_json: bool) -> No
     http.emit(data, as_json, f"{ticket_id} removed from {item_id}")
 
 
-@sprint_item.command("block")
-@click.argument("item_id")
-@click.option("--by", "blocker_id", required=True, help="Blocking ticket id.")
-@json_option
-def sprint_item_block(item_id: str, blocker_id: str, as_json: bool) -> None:
-    data = http.send(
-        "POST",
-        "/api/links",
-        as_json=as_json,
-        json_body={"from_id": blocker_id, "to_id": item_id, "kind": "blocks"},
-        request_actor="ordinary",
-    )
-    http.emit(data, as_json, f"{item_id} blocked by {blocker_id}")
-
-
-@sprint_item.command("unblock")
-@click.argument("item_id")
-@click.option("--by", "blocker_id", required=True, help="Blocking ticket id.")
-@json_option
-def sprint_item_unblock(item_id: str, blocker_id: str, as_json: bool) -> None:
-    data = http.send(
-        "DELETE",
-        "/api/links",
-        as_json=as_json,
-        params={"from_id": blocker_id, "to_id": item_id, "kind": "blocks"},
-        request_actor="ordinary",
-    )
-    http.emit(data, as_json, f"{item_id} unblocked from {blocker_id}")
-
-
 @sprint_item.group("supervisor")
 def sprint_item_supervisor() -> None:
     """Inspect and talk to a Sprint Item supervisor."""
@@ -2188,32 +2162,62 @@ def sprint_item_supervisor_remove_from_day(
     _supervisor_day_membership("DELETE", item_id, ticket_id, date_, as_json)
 
 
-def _supervisor_block(method: str, item_id: str, from_id: str, to_id: str, as_json: bool) -> None:
+def _supervisor_ticket_block(
+    method: str,
+    item_id: str,
+    blocking_ticket_id: str,
+    blocked_ticket_id: str,
+    as_json: bool,
+) -> None:
     kwargs: dict[str, Any] = {"as_json": as_json}
     if method == "POST":
-        kwargs["json_body"] = {"from_id": from_id, "to_id": to_id}
+        kwargs["json_body"] = {
+            "blocking_ticket_id": blocking_ticket_id,
+            "blocked_ticket_id": blocked_ticket_id,
+        }
     else:
-        kwargs["params"] = {"from_id": from_id, "to_id": to_id}
-    data = http.send(method, f"/api/items/{item_id}/supervisor/blocks", **kwargs)
-    http.emit(data, as_json, f"{from_id} blocks {to_id}: {method.lower()}")
+        kwargs["params"] = {
+            "blocking_ticket_id": blocking_ticket_id,
+            "blocked_ticket_id": blocked_ticket_id,
+        }
+    data = http.send(method, f"/api/items/{item_id}/supervisor/ticket-blocks", **kwargs)
+    http.emit(
+        data,
+        as_json,
+        f"{blocking_ticket_id} blocks {blocked_ticket_id}: {method.lower()}",
+    )
 
 
 @sprint_item_supervisor.command("block")
 @click.argument("item_id")
-@click.option("--from-ticket", "from_id", required=True)
-@click.option("--to", "to_id", required=True)
+@click.option("--blocking-ticket", "blocking_ticket_id", required=True)
+@click.option("--blocked-ticket", "blocked_ticket_id", required=True)
 @json_option
-def sprint_item_supervisor_block(item_id: str, from_id: str, to_id: str, as_json: bool) -> None:
-    _supervisor_block("POST", item_id, from_id, to_id, as_json)
+def sprint_item_supervisor_block(
+    item_id: str,
+    blocking_ticket_id: str,
+    blocked_ticket_id: str,
+    as_json: bool,
+) -> None:
+    _supervisor_ticket_block(
+        "POST", item_id, blocking_ticket_id, blocked_ticket_id, as_json
+    )
 
 
 @sprint_item_supervisor.command("unblock")
 @click.argument("item_id")
-@click.option("--from-ticket", "from_id", required=True)
-@click.option("--to", "to_id", required=True)
+@click.option("--blocking-ticket", "blocking_ticket_id", required=True)
+@click.option("--blocked-ticket", "blocked_ticket_id", required=True)
 @json_option
-def sprint_item_supervisor_unblock(item_id: str, from_id: str, to_id: str, as_json: bool) -> None:
-    _supervisor_block("DELETE", item_id, from_id, to_id, as_json)
+def sprint_item_supervisor_unblock(
+    item_id: str,
+    blocking_ticket_id: str,
+    blocked_ticket_id: str,
+    as_json: bool,
+) -> None:
+    _supervisor_ticket_block(
+        "DELETE", item_id, blocking_ticket_id, blocked_ticket_id, as_json
+    )
 
 
 @sprint_item_supervisor.command("artifact-list")
@@ -2368,262 +2372,6 @@ def sprint_item_supervisor_reject(
         json_body={"message": text},
     )
     http.emit(data, as_json, f"{ticket_id} proposal rejected")
-
-
-# --- chief --------------------------------------------------------------------
-
-_EXTERNAL_WORK_RECONCILE_FIXED_KEYS = frozenset({"stage", "kickoff_note", "recap"})
-_EXTERNAL_WORK_CREATE_FIXED_KEYS = _EXTERNAL_WORK_RECONCILE_FIXED_KEYS | frozenset(
-    {
-        "title",
-        "worker_type",
-        "employee_backend",
-        "employee_launch_model",
-        "priority",
-        "deadline",
-        "project",
-        "project_id",
-        "sprint_item_id",
-        "blocked_by_ticket_ids",
-    }
-)
-
-
-def _external_work_body(
-    *,
-    stage: str,
-    kickoff_note_file: str,
-    recap_file: str | None,
-    success_file: str | None,
-    approach_file: str | None,
-    plan_file: str | None,
-    implementation_file: str | None,
-    closeout_file: str | None,
-    field_files: tuple[str, ...],
-    reserved_fixed_keys: frozenset[str],
-    as_json: bool,
-) -> dict[str, Any]:
-    field_sources: dict[str, str] = {}
-    for field, source in (
-        ("success", success_file),
-        ("approach", approach_file),
-        ("plan", plan_file),
-        ("implementation", implementation_file),
-        ("closeout", closeout_file),
-    ):
-        if source is not None:
-            field_sources[field] = source
-    for occurrence in field_files:
-        if "=" not in occurrence:
-            http.fail_validation(f"field file must be FIELD=PATH: {occurrence}", as_json)
-        field, source = occurrence.split("=", 1)
-        if not field or not source:
-            http.fail_validation(f"field file must be FIELD=PATH: {occurrence}", as_json)
-        if field in reserved_fixed_keys:
-            http.fail_validation(f"field file conflicts with fixed request key: {field}", as_json)
-        if field in field_sources:
-            http.fail_validation(f"field file provided more than once: {field}", as_json)
-        field_sources[field] = source
-
-    body: dict[str, Any] = {
-        "stage": stage,
-        "kickoff_note": read_required_option_body(kickoff_note_file, as_json, "kickoff-note"),
-    }
-    if recap_file is not None:
-        body["recap"] = _read_source(recap_file, as_json)
-    for field, source in field_sources.items():
-        body[field] = _read_source(source, as_json)
-    return body
-
-
-@main.group("chief")
-def chief() -> None:
-    """Import work already completed outside Panels."""
-
-
-@chief.command("reconcile-ticket-from-external-work")
-@click.argument("ticket_id")
-@click.option("--stage", required=True, help="Target worker stage (validated per type).")
-@click.option(
-    "--kickoff-note-file",
-    required=True,
-    help="Complete resulting ticket note file, or -.",
-)
-@click.option("--recap-file", default=None, help="Read the recap from this file, or -.")
-@click.option("--success-file", default=None, help="Read settled success from this file, or -.")
-@click.option("--approach-file", default=None, help="Read settled approach from this file, or -.")
-@click.option("--plan-file", default=None, help="Read settled plan from this file, or -.")
-@click.option(
-    "--implementation-file",
-    default=None,
-    help="Read settled implementation from this file, or -.",
-)
-@click.option("--closeout-file", default=None, help="Read settled closeout from this file, or -.")
-@click.option(
-    "--field-file",
-    "field_files",
-    multiple=True,
-    help="Read a definition-specific settled field from FIELD=PATH (repeatable).",
-)
-@json_option
-def chief_reconcile_ticket_from_external_work(
-    ticket_id: str,
-    stage: str,
-    kickoff_note_file: str,
-    recap_file: str | None,
-    success_file: str | None,
-    approach_file: str | None,
-    plan_file: str | None,
-    implementation_file: str | None,
-    closeout_file: str | None,
-    field_files: tuple[str, ...],
-    as_json: bool,
-) -> None:
-    body = _external_work_body(
-        stage=stage,
-        kickoff_note_file=kickoff_note_file,
-        recap_file=recap_file,
-        success_file=success_file,
-        approach_file=approach_file,
-        plan_file=plan_file,
-        implementation_file=implementation_file,
-        closeout_file=closeout_file,
-        field_files=field_files,
-        reserved_fixed_keys=_EXTERNAL_WORK_RECONCILE_FIXED_KEYS,
-        as_json=as_json,
-    )
-    data = http.send(
-        "POST",
-        f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
-        as_json=as_json,
-        json_body=body,
-        request_actor="chief",
-    )
-    http.emit(
-        data,
-        as_json,
-        f"{data['id']} external work reconciled {data['stage']}",
-    )
-
-
-@chief.command("create-ticket-from-external-work")
-@click.option("--title", required=True, help="Ticket title.")
-@click.option(
-    "--worker-type",
-    "worker_type",
-    required=True,
-    help="Registered Worker type id. List choices with `panels worker-type list`.",
-)
-@click.option("--employee-backend", default=None, help="Registered employee backend override.")
-@click.option(
-    "--employee-launch-model",
-    default=None,
-    help="Model for an overriding backend; required when it is not the Worker type's own.",
-)
-@click.option("--stage", required=True, help="Target worker stage (validated per type).")
-@click.option(
-    "--kickoff-note-file",
-    required=True,
-    help="Complete resulting ticket note file, or -.",
-)
-@click.option("--recap-file", default=None, help="Read the recap from this file, or -.")
-@click.option("--success-file", default=None, help="Read settled success from this file, or -.")
-@click.option("--approach-file", default=None, help="Read settled approach from this file, or -.")
-@click.option("--plan-file", default=None, help="Read settled plan from this file, or -.")
-@click.option(
-    "--implementation-file",
-    default=None,
-    help="Read settled implementation from this file, or -.",
-)
-@click.option("--closeout-file", default=None, help="Read settled closeout from this file, or -.")
-@click.option(
-    "--field-file",
-    "field_files",
-    multiple=True,
-    help="Read a definition-specific settled field from FIELD=PATH (repeatable).",
-)
-@click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label.")
-@click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
-@click.option("--project", default=None, help="Project name.")
-@click.option("--project-id", default=None, help="Project id.")
-@click.option("--sprint", "sprint_id", default=None, help="Sprint id.")
-@click.option("--sprint-item", "sprint_item", default=None, help="Parent sprint item id.")
-@click.option("--backlog", is_flag=True, default=False, help="Leave the Ticket unparented.")
-@click.option(
-    "--blocked-by",
-    "blocked_by_ticket_ids",
-    multiple=True,
-    help="Existing blocking Ticket id (repeatable).",
-)
-@json_option
-def chief_create_ticket_from_external_work(
-    title: str,
-    worker_type: str,
-    employee_backend: str | None,
-    employee_launch_model: str | None,
-    stage: str,
-    kickoff_note_file: str,
-    recap_file: str | None,
-    success_file: str | None,
-    approach_file: str | None,
-    plan_file: str | None,
-    implementation_file: str | None,
-    closeout_file: str | None,
-    field_files: tuple[str, ...],
-    priority: str | None,
-    deadline: str | None,
-    project: str | None,
-    project_id: str | None,
-    sprint_id: str | None,
-    sprint_item: str | None,
-    backlog: bool,
-    blocked_by_ticket_ids: tuple[str, ...],
-    as_json: bool,
-) -> None:
-    body = _external_work_body(
-        stage=stage,
-        kickoff_note_file=kickoff_note_file,
-        recap_file=recap_file,
-        success_file=success_file,
-        approach_file=approach_file,
-        plan_file=plan_file,
-        implementation_file=implementation_file,
-        closeout_file=closeout_file,
-        field_files=field_files,
-        reserved_fixed_keys=_EXTERNAL_WORK_CREATE_FIXED_KEYS,
-        as_json=as_json,
-    )
-    body["title"] = title
-    body["worker_type"] = worker_type
-    if employee_backend is not None:
-        body["employee_backend"] = employee_backend
-    if employee_launch_model is not None:
-        body["employee_launch_model"] = employee_launch_model
-    if priority is not None:
-        body["priority"] = priority
-    if deadline is not None:
-        body["deadline"] = deadline
-    add_project_selectors(
-        body, project=project, project_id=project_id, required=False, as_json=as_json
-    )
-    if sprint_id is not None:
-        body["sprint_id"] = sprint_value_for_write(sprint_id, as_json)
-    if backlog and sprint_id is not None:
-        http.fail_validation("--backlog cannot be combined with --sprint", as_json)
-    if sprint_item is not None:
-        body["sprint_item_id"] = sprint_item
-    if backlog:
-        body["sprint_id"] = None
-    if blocked_by_ticket_ids:
-        body["blocked_by_ticket_ids"] = list(blocked_by_ticket_ids)
-    data = http.send(
-        "POST",
-        "/api/chief/tickets/from-external-work",
-        as_json=as_json,
-        json_body=body,
-        request_actor="chief",
-    )
-    http.emit(data, as_json, f"{data['id']} external work created {data['stage']}")
 
 
 # --- worker -------------------------------------------------------------------

@@ -10,12 +10,10 @@
 
   let {
     newStage,
-    suggestedNextCeiling = null,
     lifecycle = null,
     scope = $bindable<ScopePair | null>(null)
   }: {
     newStage: string | null;
-    suggestedNextCeiling?: string | null;
     lifecycle?: Lifecycle | null;
     scope?: ScopePair | null;
   } = $props();
@@ -31,11 +29,7 @@
   $effect(() => {
     if (!lifecycle) return;
     const externalScope = scope;
-    const nextDefault = preferredScopeCeilingFor(
-      lifecycle,
-      newStage,
-      suggestedNextCeiling
-    ) || "none";
+    const nextDefault = preferredScopeCeilingFor(lifecycle, newStage) || "none";
     let nextCeiling = externalScope === null ? nextDefault : ceiling;
     let nextAtCap: AtCap | "" = externalScope === null ? "propose" : atCap;
     if (externalScope && !nextCeiling) nextCeiling = externalScope.next_ceiling;

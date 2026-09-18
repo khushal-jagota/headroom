@@ -44,37 +44,35 @@ shipped Worker type.
 Each Worker type is one immutable `WorkerTypeDefinition`. The definition contains:
 
 - its id and human label;
-- the ordered Stages, including the field and default ownership mode of each
-  non-terminal Stage (`worker`, `user`, or `paired`);
+- the ordered Stages, including the field and ownership mode of each
+  non-terminal Stage (`worker` or `user`);
 - the separate `dropped` terminal Stage;
 - the ordered fields carried by its Tickets;
 - the worker profile, including the specialist skill and the default Employee backend,
-  model, and reasoning effort copied onto a new Ticket;
-- whether work completed outside Panels may be reconciled as a settled field prefix.
+  model, and reasoning effort copied onto a new Ticket.
 
 The definition also answers the workflow questions that used to be spread across Ticket
 constants and free helper views. Its methods find a Stage or field, return Stage order and
 advance targets, identify gates and terminals, calculate the default ceiling and first
-working Stage, validate a Ticket position, and provide the field order used for
-external-work reconciliation.
+working Stage, and validate a Ticket position.
 
-The shipped `coding` and `debugging` definitions default every non-terminal Stage to
+The shipped `coding` and `debugging` definitions assign every non-terminal Stage to
 worker ownership.
 `general` does the same: its Kickoff, Execution, and Closeout are all worker-owned.
-`amend_worker` uses paired ownership for Amendment, the one Stage with a decision in it:
+`amend_worker` uses user ownership for Amendment, the one Stage with a decision in it:
 what changes, and what that does to the live Tickets of the Worker being amended. Its
 Drafting and Closeout are worker-owned.
 `new_worker` starts with worker-owned Kickoff,
-then uses paired
-ownership for Understanding before worker-owned Stages and Thinking, pairs again for
+then uses user
+ownership for Understanding before worker-owned Stages and Thinking, assigns the user again for
 Runtime Defaults, then returns to worker-owned Drafting and Closeout. `research` keeps all four of its non-terminal Stages worker-owned, because its question
 arrives already framed and it runs unattended. `exploration`
-uses paired ownership for Understanding and Answer, where the user and worker establish
-the frame and reach the decision together; its other non-terminal Stages default to worker
-ownership. `initiative_planning` uses paired ownership for Question Answers, where
+uses user ownership for Understanding and Answer, where the user and worker establish
+the frame and reach the decision together; its other non-terminal Stages use worker
+ownership. `initiative_planning` uses user ownership for Question Answers, where
 consequential cross-Ticket choices are settled with the user; its other non-terminal
-Stages default to worker ownership. `product_design` uses paired ownership for Wireframe
-and Design, while its Direction and handoff are worker-owned. `planning-day` uses paired
+Stages use worker ownership. `product_design` uses user ownership for Wireframe
+and Design, while its Direction and handoff are worker-owned. `planning-day` uses user
 ownership for Direction, where the Worker and user agree on the most important work.
 Previous Day Review, Day Changes, and Closeout are worker-owned. The Worker derives Day
 overview fields without user input. `planning-midday-check` keeps its Stages worker-owned,
@@ -86,8 +84,8 @@ user explicitly releases the conversation. Every Worker type chooses deliberatel
 each Stage; it does not inherit that choice from registry order or another definition.
 
 This makes the definition the one authority for both the data and behavior of that
-workflow. Ticket contracts still own universal Ticket facts such as status, per-Ticket
-ownership overrides, and scope, but they do not define a coding lifecycle.
+workflow. Ticket contracts still own universal Ticket facts such as status and scope,
+but they do not define a coding lifecycle.
 
 _Code paths:_ `src/planner/worker_types/contracts.py` contains the immutable declaration
 types and behavior. `src/planner/worker_types/coding.py`,
@@ -110,7 +108,7 @@ types and behavior. `src/planner/worker_types/coding.py`,
 shared structural rules: an optional Kickoff stage and field appear together first,
 `done` is the one linear terminal,
 `dropped` sits outside the line, every non-terminal Stage gates one declared field, every
-field is gated once, every non-terminal Stage declares a valid default ownership mode,
+field is gated once, every non-terminal Stage declares a valid ownership mode,
 terminal Stages declare none, worker skills and toolsets are known, and the default
 Employee backend is registered in the same application composition.
 
@@ -146,14 +144,14 @@ result = resolve_value(..., worker_type_definition=definition)
 A boundary that already knows the intended Worker type, such as Ticket creation, resolves
 that definition once and derives the initial Stage, field map, and ceiling from it. A
 boundary that processes several Tickets resolves each Ticket's stored Worker type. Ticket
-read paths also resolve the definition because current default and effective ownership are
-derived from the stored Worker type, Stage, and override map rather than persisted twice.
+read paths also resolve the definition because ownership comes directly from
+the stored Worker type and Stage rather than from duplicated Ticket state.
 
 There is no compatibility bridge or special coding seam. The application boundary,
 definition, and framework-free rule are the whole path.
 
 _Code paths:_ `src/planner/worker_types/configuration.py` supplies the configured
-registry. Ticket, sprint, external-work, runtime, and API boundaries import it where workflow
+registry. Ticket, sprint, runtime, and API boundaries import it where workflow
 behavior is needed. Rules under `src/planner/tickets/logic/` receive
 `worker_type_definition` explicitly.
 
@@ -190,9 +188,9 @@ models each offers, and which reasoning efforts each of those takes are one answ
 it comes from `GET /api/conversation/backends`. Every
 Worker-type entry contains the label, Stages, gates, advance map, fields, ceiling range,
 default ceiling, specialist skill id, and default Employee backend, model, and reasoning
-effort. Every Stage also carries its default ownership mode; terminal Stages carry none.
-The Ticket response supplies the current Stage's default and effective ownership, so
-clients do not reconstruct the rule.
+effort. Every Stage also carries its ownership mode; terminal Stages carry none.
+Clients combine the Ticket's Worker type and current Stage with this manifest to derive
+the Stage's declared ownership.
 
 `panels worker-type list` exposes this same response at the command line. Its normal
 output lists the registered identifiers in registry order, while `--json` preserves the
@@ -214,9 +212,9 @@ _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 
 ## Managed settings and the Config page
 
-The registry remains the immutable workflow definition. A managed source beside the
-database owns each Stage ownership default and each Worker's suggested Kickoff ceiling.
-It also owns every editable skill. `data/skills` is the live authority for Panels skills.
+The registry is the immutable workflow and Stage ownership authority. Managed settings
+beside the database contain launch defaults only. The managed skills home owns every
+editable skill. `data/skills` is the live authority for Panels skills.
 The packaged `src/planner/skills` tree seeds a new home only; it is never changed by
 the product and does not replace a managed edit. Native homes use symlinks to selected
 managed skills, never copied overlays. Codex and Claude select all Panels skills. Hermes
@@ -242,27 +240,20 @@ screens.
   global launch or Stage controls. Each Sprint Item owns its supervisor launch snapshot.
 - **Workers** links the configured Worker types. Each supporting line comes from that
   Worker's managed specialist skill. A Worker opens at
-  `#/config/workers/<worker-type>` with its launch defaults, suggested Kickoff ceiling,
-  Stage ownership table, and specialist skill editor. The ceiling options come from the
-  Worker's later Stages. Worker identity and lifecycle structure stay read-only.
+  `#/config/workers/<worker-type>` with its launch defaults, read-only Stage ownership
+  table, and specialist skill editor. Worker identity and lifecycle structure stay read-only.
 
 Legacy `#/workers` and `#/workers/<worker-type>` addresses redirect to `#/config` and
 `#/config/workers/<worker-type>`.
 
-A Ticket captures the managed ownership default when it enters a Stage. Later global
-changes affect only future entries; the Ticket's explicit Stage override still wins.
 Settings writes use atomic replacement and one writer lock per Worker or Chief. These
 files live beside the database rather than in it, so the writer announces the change
 itself once the new file is in place; if that fails, the canonical file is put back and
 every backend continues to see the prior revision.
 
-A settings file outlives the app version that wrote it, so a Worker type whose Stages
-change can leave a stored file the definition no longer describes. A read reconciles the
-file to the running definition: a Stage the definition no longer declares is dropped, a
-Stage the file omits takes the definition's own ownership default, and a suggested
-Kickoff ceiling that is no longer a later Stage returns to the shipped one. A corrected
-file is written back. Writes stay strict, so a request naming a Stage the Worker does not
-have is still refused.
+A settings file can outlive the app version that wrote it. A read reconciles the file to
+the current managed contract and removes legacy ownership and suggested-ceiling keys.
+The corrected file contains only the Worker identity and launch defaults.
 
 Every editable skill name is read-only. Description and Markdown body are ordinary
 direct edits that save, fail, and retry independently. Successful skill edits refresh
@@ -276,14 +267,14 @@ conversation-owned signals without turning them into managed settings.
 `GET /api/workers/{id}` composes Worker registry structure with managed settings.
 `GET /api/skills` serves the shared skills home used for role skills and specialist
 descriptions on the index. Worker and Chief endpoints edit skill description and body
-or launch defaults. A focused endpoint edits the suggested Kickoff ceiling. The generic
+or launch defaults. The generic
 `PATCH /api/skills/{skill-name}` endpoint edits the Worker and Sprint Item supervisor
 role skills. A saved change announces itself, and any Config screen on display refetches
 what it is showing.
 
-An absent suggested ceiling takes the Worker's normal Kickoff advance target. The saved
-value must be a later ceiling from that Worker's lifecycle. `No further` is not a managed
-default. It remains a choice for one approval.
+Approval derives its initial ceiling from the Worker definition's advance target for the
+new Stage. A valid terminal Stage is the fallback when no further advance exists.
+`No further` remains a choice for one approval.
 
 _Code paths:_ `src/planner/worker_settings/`, `src/planner/tickets/data.py`,
 `src/planner/environments/hermes_home.py`, and `web/src/routes/ConfigRoute.svelte`.
@@ -377,7 +368,7 @@ process is started again under it when there is a reason to.
 
 For `new_worker`, the visible lifecycle after universal Kickoff is
 Understanding, Stages, Thinking, Runtime Defaults, Drafting, Closeout, Done. Understanding
-and Runtime Defaults are paired. Runtime Defaults approves an explicit registered backend,
+and Runtime Defaults are user-owned. Runtime Defaults approves an explicit registered backend,
 advertised model, and supported reasoning effort before Drafting records them in the
 Worker profile. At Understanding, Panels sends one automatic opening turn into the Ticket's conversation. Human
 conversation continues in that same conversation, and an Understanding proposal waits for
@@ -406,8 +397,8 @@ One new Worker type needs one definition and one production registration path:
    each working Stage.
 2. Add one definition module under `src/planner/worker_types/`. Construct an immutable
    `WorkerTypeDefinition` with its ordered Stages, fields, worker profile, starting
-   Employee backend/model/reasoning values, and reconciliation support. Give every
-   non-terminal Stage a deliberate default ownership mode; `done` and `dropped` have
+   Employee backend/model/reasoning values. Give every non-terminal Stage a deliberate
+   ownership mode; `done` and `dropped` have
    none. Novel Stage and field ids are plain strings.
 3. In `src/planner/worker_types/configuration.py`, add the specialist skill to the known
    skills catalog and add the definition to `_PRODUCTION_WORKER_TYPE_DEFINITIONS`. Do not
@@ -415,8 +406,8 @@ One new Worker type needs one definition and one production registration path:
 4. Add the skill directory name to `PLANNER_SKILL_NAMES` in
    `src/planner/environments/hermes_home.py`, so startup provisions it into the
    worker's Hermes home.
-5. Describe the new type in `panels-chief-of-staff`. The base Worker discovers its
-   specialist through `panels worker my-ticket`; it has no manual specialist list.
+5. Confirm that ordinary Ticket creation lists the new type. The base Worker discovers
+   its specialist through `panels worker my-ticket`; it has no manual specialist list.
 6. Restart Panels and provision the production skill homes. Composition validates the
    registry before the Worker type becomes live.
 
@@ -424,22 +415,20 @@ The shared kickoff, completion, and drop ids are structural rules, not imported 
 constants. The new definition still declares them directly: `needs_kickoff` gating
 `kickoff`, terminal `done`, and the separate terminal `dropped`.
 
-## Work completed outside Panels
+## Ordinary field completion
 
-External-work reconciliation is definition-driven too. The Chief supplies the target
-Stage and the complete settled field prefix for that Stage. Named coding CLI options are
-conveniences; repeatable `--field-file FIELD=PATH` carries fields belonging to any Worker
-type. Panels resolves the Ticket's definition and validates the Stage, supplied fields,
-prefix, and reconciliation support before changing state.
+Worker definitions declare each Stage's ownership and gating field. The ordinary value
+writer uses those declarations to let a direct user complete only the unset gate of the
+current user-owned Stage. No definition carries separate reconciliation capability.
 
 ## Handoffs
 
 - **Tickets and gates** (`tickets-and-gates.md`) explains scope, proposals, resolution,
-  Stage ownership and per-Ticket overrides, scope, and approval.
+  Stage ownership, scope, and approval.
 - **Worker orchestration** (`worker-orchestration.md`) explains how a Ticket's next
   worker step gets started and how the worker reaches its specialist.
 - **The frontend** (`frontend.md`) explains the screens driven by the served manifest.
-- **The command-line tool** (`cli.md`) explains the worker and Chief commands.
+- **The command-line tool** (`cli.md`) explains ordinary and worker commands.
 
 ## Deferred
 

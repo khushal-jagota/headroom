@@ -9,14 +9,12 @@
     text = "",
     quiet = "(none)",
     depth = 0,
-    visited = [],
-    ticketId = null
+    visited = []
   }: {
     text?: unknown;
     quiet?: string;
     depth?: number;
     visited?: string[];
-    ticketId?: string | null;
   } = $props();
   let host = $state<HTMLDivElement | null>(null);
   let surface: ReadOnlyManagedMarkdownSurface | null = null;
@@ -24,7 +22,7 @@
   $effect(() => {
     if (!host) return;
     surface ??= createManagedMarkdownSurface(host, { mode: "read-only" });
-    surface.update({ source: text, emptyText: quiet, depth, visited, ticketId });
+    surface.update({ source: text, emptyText: quiet, depth, visited });
   });
 
   // Only in a browser. Nothing is mounted when this is rendered on a server, so there is

@@ -39,9 +39,10 @@ let ticketId = $state('t_guidance');
 import json, sys
 from playwright.sync_api import sync_playwright, expect
 
-ticket = dict(project_id='project_one', project='One', sprint_id='sp_old', sprint_item_id='outcome_kept', id='t_guidance', title='Guidance ticket', worker_type='coding', employee_backend='codex', employee_launch_model=None, employee_launch_reasoning_effort=None, employee_configuration_editable=False, stage='needs_success', ceiling='needs_success', at_cap='propose', suggested_next_ceiling='done', priority='P2', resolved_priority_anchors={'project': {'id': 'project_one', 'name': 'One', 'priority': 'P2'}, 'sprint_item': {'id': 'outcome_kept', 'title': 'Kept outcome', 'priority': 'P2'}}, ticket_status='awaiting_approval', backend_error=None, stage_ownership_overrides={}, default_stage_ownership_mode='worker', effective_stage_ownership_mode='worker', conversation_id=None, conversation_history=[], day_ids=[], blocked=False, blocker_summary={'blocked_by': [], 'is_blocked': False}, recap='Orientation', guidance='Original **constraint**', verdict=None, trouble_notes=[], field_values={'kickoff': 'Request'}, pending_proposal={'field': 'success', 'body': 'A result', 'proposed_by': 'agent', 'created_at': 1}, archived_field_content='Old **unapproved** draft')
-stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, default_ownership_mode='worker' if f else None) for s,l,f in [('needs_kickoff','Kickoff','kickoff'),('needs_success','Success','success'),('done','Done',None)]]
-manifest = {'worker_types': [dict(worker_type='coding', label='Coding', stages=stages, dropped=dict(id='dropped', label='Dropped', gating_field=None, is_terminal=True, default_ownership_mode=None), advance={'needs_kickoff': 'needs_success', 'needs_success': 'done'}, ceiling_range=['needs_kickoff','needs_success','done'], default_ceiling='needs_success', worker_profile_id='panels-worker-coding', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'kickoff','label':'Kickoff'}, {'id':'success','label':'Success'}])]}
+ticket = dict(project_id='project_one', project='One', sprint_id='sp_old', sprint_item_id='outcome_kept', id='t_guidance', title='Guidance ticket', worker_type='coding', employee_backend='codex', employee_launch_model=None, employee_launch_reasoning_effort=None, employee_configuration_editable=False, stage='needs_success', ceiling='needs_success', at_cap='propose', priority='P2', resolved_priority_anchors={'project': {'id': 'project_one', 'name': 'One', 'priority': 'P2'}, 'sprint_item': {'id': 'outcome_kept', 'title': 'Kept outcome', 'priority': 'P2'}}, ticket_status='awaiting_approval', conversation_id=None, conversation_history=[], day_ids=[], blocked=False, blocker_summary={'blocked_by': [], 'is_blocked': False}, recap='Orientation', guidance='Original **constraint**', verdict=None, trouble_notes=[], field_values={'kickoff': 'Request'}, pending_proposal={'field': 'success', 'body': 'A result', 'proposed_by': 'agent', 'created_at': 1}, archived_field_content='Old **unapproved** draft')
+stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, ownership_mode='worker' if f else None) for s,l,f in [('needs_kickoff','Kickoff','kickoff'),('needs_success','Success','success'),('done','Done',None)]]
+personal_stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, ownership_mode=o) for s,l,f,o in [('needs_kickoff','Kickoff','kickoff','user'),('needs_outcome','Outcome','outcome','user'),('needs_closeout','Closeout','closeout','worker'),('done','Done',None,None)]]
+manifest = {'worker_types': [dict(worker_type='coding', label='Coding', stages=stages, dropped=dict(id='dropped', label='Dropped', gating_field=None, is_terminal=True, ownership_mode=None), advance={'needs_kickoff': 'needs_success', 'needs_success': 'done'}, ceiling_range=['needs_kickoff','needs_success','done'], default_ceiling='needs_success', worker_profile_id='panels-worker-coding', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'kickoff','label':'Kickoff'}, {'id':'success','label':'Success'}]), dict(worker_type='personal', label='Personal', stages=personal_stages, dropped=dict(id='dropped', label='Dropped', gating_field=None, is_terminal=True, ownership_mode=None), advance={'needs_kickoff':'needs_outcome','needs_outcome':'needs_closeout','needs_closeout':'done'}, ceiling_range=['needs_kickoff','needs_outcome','needs_closeout','done'], default_ceiling='needs_kickoff', worker_profile_id='panels-worker-personal-task', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'kickoff','label':'Kickoff'},{'id':'outcome','label':'Outcome'},{'id':'closeout','label':'Closeout'}])]}
 writes=[]
 placement_writes=[]
 def respond(route):
@@ -74,6 +75,13 @@ def respond(route):
             assert not ({'project_id', 'sprint_id', 'sprint_item_id'} & set(body))
             ticket.update(body)
         result=ticket
+    elif path == 'tickets/t_personal/value/outcome':
+        assert route.request.method == 'PUT'
+        body=route.request.post_data_json
+        writes.append({'personal_outcome': body})
+        result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_closeout', 'ceiling':'needs_closeout', 'field_values':{'kickoff':'Context','outcome':body['body']}, 'pending_proposal':None, 'ticket_status':'empty'}
+    elif path == 'tickets/t_personal':
+        result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_outcome', 'ceiling':'needs_outcome', 'field_values':{'kickoff':'Context'}, 'pending_proposal':None, 'ticket_status':'empty'}
     elif path == 'tickets/t_kickoff':
         result={**ticket, 'id': 't_kickoff', 'stage': 'needs_kickoff', 'sprint_item_id': None, 'resolved_priority_anchors': {**ticket['resolved_priority_anchors'], 'sprint_item': None}, 'pending_proposal': None, 'field_values': {}}
     elif path == 'tickets/t_open':
@@ -81,7 +89,7 @@ def respond(route):
     elif path == 'tickets/t_done':
         result={**ticket, 'id': 't_done', 'stage': 'done', 'ticket_status': 'empty', 'pending_proposal': None}
     elif path == 'worker-types': result=manifest
-    elif path == 'conversations/backends': result={'backends': []}
+    elif path == 'conversation/backends': result={'backends': []}
     else: result={}
     route.fulfill(status=200, content_type='application/json', body=json.dumps(result))
 with sync_playwright() as p:
@@ -143,6 +151,15 @@ with sync_playwright() as p:
         {'proposal': {'field': 'success', 'body': 'Edited pending result'}},
         {'value': {'body': 'Edited saved kickoff'}},
     ]
+    page.evaluate("window.__showTicket('t_personal')")
+    page.locator('[data-ticket-id="t_personal"]').wait_for()
+    personal_outcome=page.locator('[data-field="outcome"] [contenteditable]')
+    expect(personal_outcome).to_have_count(1)
+    assert page.locator('[data-field="closeout"] [contenteditable]').count() == 0
+    personal_outcome.fill('Completed by user')
+    personal_outcome.press('Tab')
+    page.wait_for_function("document.body.textContent.includes('Completed by user')")
+    assert writes[-1] == {'personal_outcome': {'body': 'Completed by user'}}
     page.evaluate("window.__showTicket('t_kickoff')")
     page.locator('[data-ticket-id="t_kickoff"]').wait_for()
     expect(page.locator('[data-project-fact]')).to_have_text('One')

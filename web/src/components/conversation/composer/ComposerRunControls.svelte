@@ -1,5 +1,6 @@
 <script lang="ts">
   import UnifiedModelPicker from "../UnifiedModelPicker.svelte";
+  import DeliveryModePicker from "./DeliveryModePicker.svelte";
   import type {
     ComposerRunControlIntents,
     ComposerRunControlsView
@@ -31,20 +32,11 @@
 />
 
 <div class="chat-submit">
-  <select
-    class="chat-send-mode"
-    data-conversation-send-mode
-    aria-label="Message delivery mode"
+  <DeliveryModePicker
     value={view.deliveryMode}
     disabled={view.disabled}
-    onchange={(event) => intents.chooseDeliveryMode(
-      (event.currentTarget as HTMLSelectElement).value as import("../../../lib/conversation/wire").PromptDeliveryMode
-    )}
-  >
-    <option value="steer">Steer</option>
-    <option value="queue">Queue</option>
-    <option value="send_now">Send now</option>
-  </select>
+    onChoose={intents.chooseDeliveryMode}
+  />
   {#if view.showStop}
     <button
       type="button"
