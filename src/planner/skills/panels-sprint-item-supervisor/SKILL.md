@@ -73,7 +73,7 @@ canonical Ticket for the proposal itself rather than relying on message text.
   second is focused guidance attributed to this Sprint Item. The transaction performs no
   backend I/O. The singleton recovery loop delivers both records after the commit.
 - `add-to-day` and `remove-from-day` change Day membership.
-- `block` and `unblock` change blocker links inside the Item boundary.
+- `block` and `unblock` change Ticket blocks between current child Tickets.
 - `artifact-list`, `artifact-write`, and `artifact-delete` manage Item artifacts.
 - `message-worker` sends guidance to a Worker. See **Worker guidance**.
 - `restart-worker` starts a child Ticket's worker step again, when its Worker is dead.

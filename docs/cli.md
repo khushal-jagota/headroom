@@ -180,7 +180,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
 - **`ticket copy`** — copy one ticket's plain-text packet.
 - **`sprint create / list / show / set`** — plan sprints. `current` resolves through
   `/api/sprint/current`; `none` means the backlog where a list supports it.
-- **`sprint item create / list / show / set / add-ticket / remove-ticket / block / unblock / delete`**
+- **`sprint item create / list / show / set / add-ticket / remove-ticket / delete`**
   — manage durable Outcome context through the existing Item identity. Item records
   have no single Sprint and no derived Outcome status. Classification aligns the
   Ticket's Project and preserves its Sprint; removal preserves Project and Sprint.
@@ -228,7 +228,9 @@ record shapes. Direct `show` commands also keep their full record shapes.
   — use item-scoped canonical actions for the owning Item and its current child Tickets.
   `scope` takes the ceiling as either the stage name or the plain name of the field that
   stage needs. `--ceiling closeout` and `--ceiling needs_closeout` mean the same thing.
-  A scope change makes that Sprint Item the ceiling holder and cannot retarget a pending
+  `block` and `unblock` use `--blocking-ticket` and `--blocked-ticket`. Both Tickets
+  must be current children of the supervisor's Item. A scope change makes that Sprint
+  Item the ceiling holder and cannot retarget a pending
   proposal.
 - A supervisor creates a child Ticket with ordinary `ticket create --sprint-item`,
   the same command every other actor uses, and that Ticket is scoped like any other.
@@ -317,8 +319,8 @@ A Ticket worker runs with `PLAN_ACTOR=worker` and its own `PLAN_TICKET_ID`. The 
 forwards those as `X-Plan-Actor` and `X-Plan-Ticket-ID`, including when the worker uses
 an ordinary command. The server resolves that pair to the Ticket principal and checks
 that the Ticket exists. Any Ticket
-worker can use the existing commands that move Tickets and add or remove blocking
-links. The exact `planning-day`, `planning-midday-check`, and `planning-sprint`
+worker can use the existing commands that move Tickets and add or remove Ticket blocks.
+The exact `planning-day`, `planning-midday-check`, and `planning-sprint`
 Worker types keep their other narrow day or sprint writes.
 
 This is a truthful local process claim, not a

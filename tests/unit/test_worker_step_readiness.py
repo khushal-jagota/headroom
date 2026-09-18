@@ -10,7 +10,7 @@ import pytest
 from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 from tests.support.ticket_progress import advance_ticket
 
-from planner.core.contracts import LinkKind, Priority
+from planner.core.contracts import Priority
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
 from planner.projects import data as projects_data
@@ -109,7 +109,7 @@ def _blocker(
 
 def _block(conn: sqlite3.Connection, *, blocker_id: str, target_id: str, now: int) -> None:
     """Block a Ticket the way the API does, so its status settles to `blocked`."""
-    tickets_actions.add_link(conn, blocker_id, target_id, LinkKind.blocks, now=now)
+    tickets_actions.add_ticket_block(conn, blocker_id, target_id, now=now)
 
 
 @pytest.mark.parametrize(

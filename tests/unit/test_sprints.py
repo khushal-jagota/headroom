@@ -1,4 +1,4 @@
-"""Sprint date integrity and Outcome blocker facts."""
+"""Sprint date integrity and Outcome behavior."""
 
 from __future__ import annotations
 
@@ -8,17 +8,14 @@ from threading import Barrier, Event
 
 import pytest
 
-from planner.core import links as core_links
 from planner.core.authctx import _classify, require_planning_write
 from planner.core.clock import TestClock
-from planner.core.contracts import LinkKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.sprints.data import (
     create_idea,
     create_item,
     create_sprint,
-    read_item,
     read_sprint,
     set_sprint_dates,
     update_sprint,
@@ -97,30 +94,6 @@ def test_x06_current_sprint_selection() -> None:
     assert current_sprint_id("2026-07-14", [a, d]) == "sp_a"  # inclusive end
     assert current_sprint_id("2026-07-15", [a, d]) == "sp_d"
     assert current_sprint_id("2026-06-30", [a, d]) is None
-
-
-def test_outcome_retains_direct_blockers_and_cleared_facts(
-    tmp_db: Connection, fake_clock: TestClock
-) -> None:
-    directly_blocked = create_item(
-        tmp_db, title="directly blocked", project_id="project_vylo", clock=fake_clock
-    )
-    _insert_ticket(tmp_db, "t_done_direct", "done")
-    _insert_ticket(tmp_db, "t_dropped_direct", "dropped")
-    core_links.add_link(tmp_db, "t_done_direct", directly_blocked.id, LinkKind.blocks, 1)
-    core_links.add_link(tmp_db, "t_dropped_direct", directly_blocked.id, LinkKind.blocks, 1)
-
-    direct_read = read_item(tmp_db, directly_blocked.id)
-
-    assert direct_read.blocking_ticket_ids == ["t_done_direct", "t_dropped_direct"]
-    assert direct_read.blockers_cleared is True
-
-    child_blocked = create_item(
-        tmp_db, title="child cleared", project_id="project_vylo", clock=fake_clock
-    )
-    _insert_ticket(tmp_db, "t_child_cleared", "needs_success", sprint_item_id=child_blocked.id)
-    _insert_ticket(tmp_db, "t_done_child_blocker", "done")
-    core_links.add_link(tmp_db, "t_done_child_blocker", "t_child_cleared", LinkKind.blocks, 1)
 
 
 def test_x06_create_idea_writer_logs_event(tmp_db: Connection, fake_clock: TestClock) -> None:

@@ -14,6 +14,51 @@ from planner.cli.record_projection import project_record
 from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 
 
+def test_sprint_item_cli_has_no_direct_block_commands() -> None:
+    result = CliRunner().invoke(cli_main.main, ["sprint", "item", "--help"])
+
+    assert result.exit_code == 0, result.output
+    commands = {
+        line.split()[0]
+        for line in result.output.splitlines()
+        if line.startswith("  ") and line.strip()
+    }
+    assert "block" not in commands
+    assert "unblock" not in commands
+
+
+def test_ticket_block_cli_uses_explicit_ticket_block_resource(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs))
+        return {"ok": True}
+
+    monkeypatch.setattr(http, "send", fake_send)
+    result = CliRunner().invoke(
+        cli_main.main,
+        ["ticket", "block", "t_blocked", "--by", "t_blocker"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        (
+            "POST",
+            "/api/ticket-blocks",
+            {
+                "as_json": False,
+                "json_body": {
+                    "blocking_ticket_id": "t_blocker",
+                    "blocked_ticket_id": "t_blocked",
+                },
+                "request_actor": "ordinary",
+            },
+        )
+    ]
+
+
 def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

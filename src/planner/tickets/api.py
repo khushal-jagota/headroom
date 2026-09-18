@@ -55,7 +55,6 @@ from planner.core.config import Config
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
     JsonDict,
-    LinkKind,
     Principal,
     PrincipalKind,
     Priority,
@@ -85,7 +84,6 @@ from planner.tickets.contracts import (
     EmployeeConfigurationBody,
     EmployeeLaunchConfiguration,
     GuidanceBody,
-    LinkBody,
     PendingProposalEditBody,
     ProposeWithRecapBody,
     RecapBody,
@@ -94,6 +92,7 @@ from planner.tickets.contracts import (
     ScopeBody,
     StageOwnershipMode,
     Ticket,
+    TicketBlockBody,
     TicketEdit,
     TicketListFilters,
     TicketStatus,
@@ -1066,7 +1065,7 @@ async def delete_ticket(
         "day_ids": list(deleted.day_ids),
         "sprint_item_ids": list(deleted.sprint_item_ids),
         "sprint_ids": list(deleted.sprint_ids),
-        "linked_entity_ids": list(deleted.linked_entity_ids),
+        "linked_ticket_ids": list(deleted.linked_ticket_ids),
     }
 
 
@@ -1627,47 +1626,41 @@ async def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
     return tickets_views.copy_text(conn, ticket_id)
 
 
-@router.post("/links")
-async def add_link(
+@router.post("/ticket-blocks")
+async def add_ticket_block(
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    body = LinkBody(
-        from_id=body_str(raw, "from_id"),
-        to_id=body_str(raw, "to_id"),
-        kind=body_str(raw, "kind"),
+    body = TicketBlockBody(
+        blocking_ticket_id=body_str(raw, "blocking_ticket_id"),
+        blocked_ticket_id=body_str(raw, "blocked_ticket_id"),
     )
-    kind = parse_enum(LinkKind, body["kind"], "kind")
     now = clk.now_unix()
-    tickets_actions.add_link(
+    tickets_actions.add_ticket_block(
         conn,
-        body["from_id"],
-        body["to_id"],
-        kind,
+        body["blocking_ticket_id"],
+        body["blocked_ticket_id"],
         now=now,
         admit=lambda: require_ticket_worker_write(conn, ctx),
     )
-    return {"from_id": body["from_id"], "to_id": body["to_id"], "kind": kind.value}
+    return dict(body)
 
 
-@router.delete("/links")
-async def remove_link(
+@router.delete("/ticket-blocks")
+async def remove_ticket_block(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    from_id: str,
-    to_id: str,
-    kind: str,
+    blocking_ticket_id: str,
+    blocked_ticket_id: str,
 ) -> JsonDict:
-    kind_enum = parse_enum(LinkKind, kind, "kind")
     now = clk.now_unix()
-    tickets_actions.remove_link(
+    tickets_actions.remove_ticket_block(
         conn,
-        from_id,
-        to_id,
-        kind_enum,
+        blocking_ticket_id,
+        blocked_ticket_id,
         now=now,
         admit=lambda: require_ticket_worker_write(conn, ctx),
     )

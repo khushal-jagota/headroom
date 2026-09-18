@@ -88,8 +88,8 @@ for classification, and ordinary Ticket placement for scheduling.
 `carry <source-sprint> <outcome> --to <target-sprint> --ticket <ticket>` states the exact
 selection. `GET /api/sprints/{id}/tracking` also reads past or future Sprints directly.
 
-Outcome deletion still refuses children. Childless deletion removes its commitments,
-blocking links and managed files through the existing guarded lifecycle.
+Outcome deletion still refuses children. Childless deletion removes its commitments
+and managed files through the existing guarded lifecycle.
 
 ## Outcome supervisors
 
@@ -108,7 +108,8 @@ manager: it does not push Tickets along, and it does not resolve parked proposal
 routine work.
 
 A supervisor acts within its own Outcome. It changes Item fields, child Ticket
-fields, Day membership, blocks, scope, proposal review, and Item artifacts through one
+fields, Day membership, Ticket blocks between its children, scope, proposal review,
+and Item artifacts through one
 item-scoped service, and every write delegates to the same domain action that direct
 product routes use. A write aimed at another Item, or at a Ticket that is not a current
 child, is refused.

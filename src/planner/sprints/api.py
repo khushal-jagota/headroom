@@ -23,7 +23,7 @@ from planner.core.authctx import (
     require_sprint_item_supervisor_ticket_write,
     require_ticket_worker_write,
 )
-from planner.core.contracts import JsonDict, LinkKind, Principal, PrincipalKind, Priority
+from planner.core.contracts import JsonDict, Principal, PrincipalKind, Priority
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import actions as days_actions
@@ -560,53 +560,59 @@ async def supervisor_remove_ticket_from_day(
     return {"sprint_item_id": item_id, "ticket_id": ticket_id, "day_id": day_id}
 
 
-def _require_supervisor_block_scope(
-    conn: DbConn, ctx: Ctx, item_id: str, from_id: str, to_id: str
+def _require_supervisor_ticket_block_scope(
+    conn: DbConn,
+    ctx: Ctx,
+    item_id: str,
+    blocking_ticket_id: str,
+    blocked_ticket_id: str,
 ) -> None:
-    require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, from_id)
-    if to_id == item_id:
-        require_sprint_item_supervisor_read(conn, ctx, item_id)
-    else:
-        require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, to_id)
+    require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, blocking_ticket_id)
+    require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, blocked_ticket_id)
 
 
-@router.post("/items/{item_id}/supervisor/blocks")
-async def supervisor_add_block(
+@router.post("/items/{item_id}/supervisor/ticket-blocks")
+async def supervisor_add_ticket_block(
     item_id: str,
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    from_id = body_str(raw, "from_id")
-    to_id = body_str(raw, "to_id")
-    tickets_actions.add_link(
+    blocking_ticket_id = body_str(raw, "blocking_ticket_id")
+    blocked_ticket_id = body_str(raw, "blocked_ticket_id")
+    tickets_actions.add_ticket_block(
         conn,
-        from_id,
-        to_id,
-        LinkKind.blocks,
+        blocking_ticket_id,
+        blocked_ticket_id,
         now=clk.now_unix(),
-        admit=lambda: _require_supervisor_block_scope(conn, ctx, item_id, from_id, to_id),
+        admit=lambda: _require_supervisor_ticket_block_scope(
+            conn, ctx, item_id, blocking_ticket_id, blocked_ticket_id
+        ),
     )
-    return {"from_id": from_id, "to_id": to_id, "kind": "blocks"}
+    return {
+        "blocking_ticket_id": blocking_ticket_id,
+        "blocked_ticket_id": blocked_ticket_id,
+    }
 
 
-@router.delete("/items/{item_id}/supervisor/blocks")
-async def supervisor_remove_block(
+@router.delete("/items/{item_id}/supervisor/ticket-blocks")
+async def supervisor_remove_ticket_block(
     item_id: str,
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    from_id: str,
-    to_id: str,
+    blocking_ticket_id: str,
+    blocked_ticket_id: str,
 ) -> JsonDict:
-    tickets_actions.remove_link(
+    tickets_actions.remove_ticket_block(
         conn,
-        from_id,
-        to_id,
-        LinkKind.blocks,
+        blocking_ticket_id,
+        blocked_ticket_id,
         now=clk.now_unix(),
-        admit=lambda: _require_supervisor_block_scope(conn, ctx, item_id, from_id, to_id),
+        admit=lambda: _require_supervisor_ticket_block_scope(
+            conn, ctx, item_id, blocking_ticket_id, blocked_ticket_id
+        ),
     )
     return {"ok": True}
 
@@ -808,7 +814,6 @@ async def delete_item(
         "sprint_item_id": deleted.sprint_item_id,
         "title": deleted.title,
         "sprint_ids": list(deleted.sprint_ids),
-        "linked_entity_ids": list(deleted.linked_entity_ids),
     }
 
 

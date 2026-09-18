@@ -289,8 +289,6 @@ def _sprint_item_record(
         "priority",
         "deadline",
         "kind",
-        "blocked_by",
-        "blockers_cleared",
     )
     return (
         {key: data[key] for key in header_keys if key in data},
@@ -1561,9 +1559,12 @@ def ticket_approve(
 def ticket_block(ticket_id: str, blocker_id: str, as_json: bool) -> None:
     data = http.send(
         "POST",
-        "/api/links",
+        "/api/ticket-blocks",
         as_json=as_json,
-        json_body={"from_id": blocker_id, "to_id": ticket_id, "kind": "blocks"},
+        json_body={
+            "blocking_ticket_id": blocker_id,
+            "blocked_ticket_id": ticket_id,
+        },
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} blocked by {blocker_id}")
@@ -1576,9 +1577,12 @@ def ticket_block(ticket_id: str, blocker_id: str, as_json: bool) -> None:
 def ticket_unblock(ticket_id: str, blocker_id: str, as_json: bool) -> None:
     data = http.send(
         "DELETE",
-        "/api/links",
+        "/api/ticket-blocks",
         as_json=as_json,
-        params={"from_id": blocker_id, "to_id": ticket_id, "kind": "blocks"},
+        params={
+            "blocking_ticket_id": blocker_id,
+            "blocked_ticket_id": ticket_id,
+        },
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} unblocked from {blocker_id}")
@@ -1892,36 +1896,6 @@ def sprint_item_remove_ticket(item_id: str, ticket_id: str, as_json: bool) -> No
     http.emit(data, as_json, f"{ticket_id} removed from {item_id}")
 
 
-@sprint_item.command("block")
-@click.argument("item_id")
-@click.option("--by", "blocker_id", required=True, help="Blocking ticket id.")
-@json_option
-def sprint_item_block(item_id: str, blocker_id: str, as_json: bool) -> None:
-    data = http.send(
-        "POST",
-        "/api/links",
-        as_json=as_json,
-        json_body={"from_id": blocker_id, "to_id": item_id, "kind": "blocks"},
-        request_actor="ordinary",
-    )
-    http.emit(data, as_json, f"{item_id} blocked by {blocker_id}")
-
-
-@sprint_item.command("unblock")
-@click.argument("item_id")
-@click.option("--by", "blocker_id", required=True, help="Blocking ticket id.")
-@json_option
-def sprint_item_unblock(item_id: str, blocker_id: str, as_json: bool) -> None:
-    data = http.send(
-        "DELETE",
-        "/api/links",
-        as_json=as_json,
-        params={"from_id": blocker_id, "to_id": item_id, "kind": "blocks"},
-        request_actor="ordinary",
-    )
-    http.emit(data, as_json, f"{item_id} unblocked from {blocker_id}")
-
-
 @sprint_item.group("supervisor")
 def sprint_item_supervisor() -> None:
     """Inspect and talk to a Sprint Item supervisor."""
@@ -2188,32 +2162,62 @@ def sprint_item_supervisor_remove_from_day(
     _supervisor_day_membership("DELETE", item_id, ticket_id, date_, as_json)
 
 
-def _supervisor_block(method: str, item_id: str, from_id: str, to_id: str, as_json: bool) -> None:
+def _supervisor_ticket_block(
+    method: str,
+    item_id: str,
+    blocking_ticket_id: str,
+    blocked_ticket_id: str,
+    as_json: bool,
+) -> None:
     kwargs: dict[str, Any] = {"as_json": as_json}
     if method == "POST":
-        kwargs["json_body"] = {"from_id": from_id, "to_id": to_id}
+        kwargs["json_body"] = {
+            "blocking_ticket_id": blocking_ticket_id,
+            "blocked_ticket_id": blocked_ticket_id,
+        }
     else:
-        kwargs["params"] = {"from_id": from_id, "to_id": to_id}
-    data = http.send(method, f"/api/items/{item_id}/supervisor/blocks", **kwargs)
-    http.emit(data, as_json, f"{from_id} blocks {to_id}: {method.lower()}")
+        kwargs["params"] = {
+            "blocking_ticket_id": blocking_ticket_id,
+            "blocked_ticket_id": blocked_ticket_id,
+        }
+    data = http.send(method, f"/api/items/{item_id}/supervisor/ticket-blocks", **kwargs)
+    http.emit(
+        data,
+        as_json,
+        f"{blocking_ticket_id} blocks {blocked_ticket_id}: {method.lower()}",
+    )
 
 
 @sprint_item_supervisor.command("block")
 @click.argument("item_id")
-@click.option("--from-ticket", "from_id", required=True)
-@click.option("--to", "to_id", required=True)
+@click.option("--blocking-ticket", "blocking_ticket_id", required=True)
+@click.option("--blocked-ticket", "blocked_ticket_id", required=True)
 @json_option
-def sprint_item_supervisor_block(item_id: str, from_id: str, to_id: str, as_json: bool) -> None:
-    _supervisor_block("POST", item_id, from_id, to_id, as_json)
+def sprint_item_supervisor_block(
+    item_id: str,
+    blocking_ticket_id: str,
+    blocked_ticket_id: str,
+    as_json: bool,
+) -> None:
+    _supervisor_ticket_block(
+        "POST", item_id, blocking_ticket_id, blocked_ticket_id, as_json
+    )
 
 
 @sprint_item_supervisor.command("unblock")
 @click.argument("item_id")
-@click.option("--from-ticket", "from_id", required=True)
-@click.option("--to", "to_id", required=True)
+@click.option("--blocking-ticket", "blocking_ticket_id", required=True)
+@click.option("--blocked-ticket", "blocked_ticket_id", required=True)
 @json_option
-def sprint_item_supervisor_unblock(item_id: str, from_id: str, to_id: str, as_json: bool) -> None:
-    _supervisor_block("DELETE", item_id, from_id, to_id, as_json)
+def sprint_item_supervisor_unblock(
+    item_id: str,
+    blocking_ticket_id: str,
+    blocked_ticket_id: str,
+    as_json: bool,
+) -> None:
+    _supervisor_ticket_block(
+        "DELETE", item_id, blocking_ticket_id, blocked_ticket_id, as_json
+    )
 
 
 @sprint_item_supervisor.command("artifact-list")

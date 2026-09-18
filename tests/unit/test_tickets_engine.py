@@ -15,7 +15,7 @@ from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 from tests.support.ticket_progress import advance_ticket
 
-from planner.core.contracts import LinkKind, Principal, PrincipalKind, Priority
+from planner.core.contracts import Principal, PrincipalKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
 from planner.projects import data as projects_data
@@ -1154,21 +1154,21 @@ def test_read_ticket_by_conversation_id(
 
 
 def _block(conn: Connection, *, blocker_id: str, target_id: str, now: int) -> None:
-    """Block an entity the way the API does, so a Ticket target settles to `blocked`."""
-    actions.add_link(conn, blocker_id, target_id, LinkKind.blocks, now=now)
+    actions.add_ticket_block(conn, blocker_id, target_id, now=now)
 
 
-def _links_from(conn: Connection, ticket_id: str) -> list[tuple[str, str]]:
+def _blocked_tickets(conn: Connection, ticket_id: str) -> list[str]:
     return [
-        (str(row["to_id"]), str(row["kind"]))
+        str(row["blocked_ticket_id"])
         for row in conn.execute(
-            "SELECT to_id, kind FROM links WHERE from_id = ? ORDER BY to_id",
+            "SELECT blocked_ticket_id FROM ticket_blocks "
+            "WHERE blocking_ticket_id = ? ORDER BY blocked_ticket_id",
             (ticket_id,),
         ).fetchall()
     ]
 
 
-def test_link_admission_runs_inside_each_write_transaction(
+def test_ticket_block_admission_runs_inside_each_write_transaction(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
@@ -1184,20 +1184,18 @@ def test_link_admission_runs_inside_each_write_transaction(
         assert tmp_db.in_transaction
         admission_calls.append("remove")
 
-    actions.add_link(
+    actions.add_ticket_block(
         tmp_db,
         blocker.id,
         target.id,
-        LinkKind.blocks,
         now=now,
         admit=admit_add,
     )
     assert not tmp_db.in_transaction
-    actions.remove_link(
+    actions.remove_ticket_block(
         tmp_db,
         blocker.id,
         target.id,
-        LinkKind.blocks,
         now=now,
         admit=admit_remove,
     )
@@ -1227,14 +1225,14 @@ def test_a_second_live_blocker_holds_the_target_blocked_until_both_clear(
 
 
 @pytest.mark.parametrize("completion", ["done", "dropped"])
-def test_completing_a_blocker_releases_its_links_and_frees_the_target(
+def test_completing_a_blocker_releases_its_blocks_and_frees_the_target(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock, completion: str
 ) -> None:
     now = fake_clock.now_unix()
     blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
     target = _create(tmp_db, cfg, fake_clock, title="Target")
     _block(tmp_db, blocker_id=blocker.id, target_id=target.id, now=now)
-    assert _links_from(tmp_db, blocker.id) == [(target.id, "blocks")]
+    assert _blocked_tickets(tmp_db, blocker.id) == [target.id]
 
     if completion == "done":
         advance_ticket(tmp_db, blocker.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
@@ -1254,11 +1252,11 @@ def test_completing_a_blocker_releases_its_links_and_frees_the_target(
         assert "Unapproved proposal" in dropped.archived_field_content
         assert dropped.field_values == blocker.field_values
 
-    assert _links_from(tmp_db, blocker.id) == []
+    assert _blocked_tickets(tmp_db, blocker.id) == []
     assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
 
 
-def test_a_failed_completion_rolls_back_its_link_release_and_settlements(
+def test_a_failed_completion_rolls_back_its_block_release_and_settlements(
     tmp_db: Connection,
     cfg: Config,
     fake_clock: TestClock,
@@ -1285,13 +1283,13 @@ def test_a_failed_completion_rolls_back_its_link_release_and_settlements(
     def failing_settle(conn: Connection, target_id: str, now: int) -> None:
         raise RuntimeError("settlement failed mid-completion")
 
-    monkeypatch.setattr(data, "settle_blocked_standin_for_link_target", failing_settle)
+    monkeypatch.setattr(data, "settle_blocked_standin_for_ticket", failing_settle)
     with pytest.raises(RuntimeError, match="mid-completion"):
         data.drop_ticket(tmp_db, blocker.id, principal=OWNER_PRINCIPAL, now=now)
 
     assert data.read_ticket(tmp_db, blocker.id).stage == stage_before
     assert _ticket_row(tmp_db, blocker.id) == blocker_row_before
-    assert _links_from(tmp_db, blocker.id) == [(target.id, "blocks")]
+    assert _blocked_tickets(tmp_db, blocker.id) == [target.id]
     assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.blocked
     assert _ticket_row(tmp_db, target.id) == target_row_before
 
@@ -1346,6 +1344,27 @@ def test_delete_admission_uses_the_exact_sprint_item_principal(
         now=fake_clock.now_unix(),
     )
     assert tmp_db.execute("SELECT 1 FROM tickets WHERE id = ?", (ticket.id,)).fetchone() is None
+
+
+def test_deleting_a_blocker_reports_tickets_and_settles_the_blocked_ticket(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
+    blocked = _create(tmp_db, cfg, fake_clock, title="Blocked")
+    _block(tmp_db, blocker_id=blocker.id, target_id=blocked.id, now=now)
+    assert data.read_ticket(tmp_db, blocked.id).ticket_status is TicketStatus.blocked
+
+    deleted = data.delete_ticket(
+        tmp_db,
+        blocker.id,
+        principal=OWNER_PRINCIPAL,
+        now=now,
+    )
+
+    assert deleted.linked_ticket_ids == (blocked.id,)
+    assert data.read_ticket(tmp_db, blocked.id).ticket_status is TicketStatus.empty
+    assert tmp_db.execute("SELECT count(*) FROM ticket_blocks").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("implementation_owner", [StageOwnershipMode.user, None])
