@@ -320,10 +320,12 @@ failure, or fall back to the owner. Owner-held proposals remain on Review.
 
 The Review screen can also send an owner-addressed ticket back instead of accepting it,
 whatever field is currently gated. The owner writes short guidance in the review card.
-The Ticket transaction validates authority and route. It appends the exact revision
-comment to Ticket guidance, clears the pending proposal, and invalidates worker context.
-The ticket's stage never changes. Settled values remain, and the ticket leaves Review at
-its resting control status. The gated field can therefore be revised
+The Ticket transaction validates authority and route. It stores the exact attributed
+comment as one-use feedback for the current Stage, clears the pending proposal, and
+returns the Ticket to its resting control status. Ticket guidance is unchanged. The next
+normal worker-step prompt carries the feedback, which is consumed only after that prompt
+is accepted. The ticket's stage never changes. Settled values remain. The gated field can
+therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
 submits the revision. A holder rejection keeps that holder. If the owner uses the
 override, the owner becomes the ceiling holder for the revised proposal.

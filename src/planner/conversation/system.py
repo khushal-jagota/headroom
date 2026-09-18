@@ -650,49 +650,6 @@ class SqliteProcessConversationSystem:
             )
             self._credit_explicit_reply(state, recipient)
 
-    async def record_prompt_delivery_uncertain(
-        self,
-        conversation_id: str,
-        content: MessageContent,
-        *,
-        sender_label: str,
-        mode: PromptDeliveryMode,
-        sender_message_id: str,
-        sent_at_unix_milliseconds: int | None = None,
-        sender: Principal | None = None,
-        recipient: Principal | None = None,
-    ) -> None:
-        """Record an uncertain outcome without putting its prompt on the wire again."""
-        require_message_content(content)
-        state = await self._conversation_state(conversation_id)
-        if state is None:
-            raise ValueError("no such conversation")
-        async with state.lock:
-            outcome = await self._store.sender_message_outcome(conversation_id, sender_message_id)
-            if outcome is not None:
-                payload = outcome.payload
-                if not isinstance(payload, PromptDeliveryUncertainEventPayload) or (
-                    payload.content,
-                    payload.sender_label,
-                    payload.mode,
-                    payload.sender,
-                    payload.recipient,
-                ) != (content, sender_label, mode, sender, recipient):
-                    raise ValueError("sender_message_id already names a different message")
-                return
-            await self._append_event(
-                state,
-                PromptDeliveryUncertainEventPayload(
-                    content=content,
-                    sender_label=sender_label,
-                    mode=mode,
-                    sender_message_id=sender_message_id,
-                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                    sender=sender,
-                    recipient=recipient,
-                ),
-            )
-
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
         """Capture the active turn under the same lock that ends it."""
         state = await self._conversation_state(conversation_id)

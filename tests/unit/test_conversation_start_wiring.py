@@ -186,29 +186,6 @@ class _LinkWatchingConversationSystem:
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         )
 
-    async def record_prompt_delivery_uncertain(
-        self,
-        conversation_id: str,
-        content: MessageContent,
-        *,
-        sender_label: str,
-        mode: PromptDeliveryMode,
-        sender_message_id: str,
-        sent_at_unix_milliseconds: int | None = None,
-        sender: Principal | None = None,
-        recipient: Principal | None = None,
-    ) -> None:
-        await self._system.record_prompt_delivery_uncertain(
-            conversation_id,
-            content,
-            sender_label=sender_label,
-            mode=mode,
-            sender_message_id=sender_message_id,
-            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-            sender=sender,
-            recipient=recipient,
-        )
-
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
         return await self._system.active_turn_reference(conversation_id)
 
@@ -636,29 +613,6 @@ class _RelinkingConversationSystem:
             recipient=recipient,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-        )
-
-    async def record_prompt_delivery_uncertain(
-        self,
-        conversation_id: str,
-        content: MessageContent,
-        *,
-        sender_label: str,
-        mode: PromptDeliveryMode,
-        sender_message_id: str,
-        sent_at_unix_milliseconds: int | None = None,
-        sender: Principal | None = None,
-        recipient: Principal | None = None,
-    ) -> None:
-        await self._system.record_prompt_delivery_uncertain(
-            conversation_id,
-            content,
-            sender_label=sender_label,
-            mode=mode,
-            sender_message_id=sender_message_id,
-            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-            sender=sender,
-            recipient=recipient,
         )
 
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:

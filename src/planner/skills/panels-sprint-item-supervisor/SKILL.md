@@ -68,10 +68,10 @@ surface a delivery failure, or fall back to the owner.
 - `approve` resolves a parked proposal. Supply `--ceiling` and `--at-cap`. The next holder
   defaults to this Sprint Item. Use `--holder-kind` and `--holder-id` to address another
   principal explicitly.
-- `reject` atomically appends the exact rejection guidance to the Ticket, clears the
-  proposal, re-arms the current paired Stage when applicable, invalidates Worker context,
-  and settles the Ticket at its normal resting status. It sends no separate message; the
-  next standard Worker prompt carries the guidance.
+- `reject` atomically stores the exact attributed rejection feedback for the current
+  Stage, clears the proposal, re-arms a paired Stage when applicable, and settles the
+  Ticket at its normal resting status. It does not change Ticket guidance or send a
+  separate message. The next standard Worker prompt carries the feedback once.
 - `add-to-day` and `remove-from-day` change Day membership.
 - `block` and `unblock` change blocker links inside the Item boundary.
 - `artifact-list`, `artifact-write`, and `artifact-delete` manage Item artifacts.

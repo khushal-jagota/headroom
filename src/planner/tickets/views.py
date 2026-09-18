@@ -117,9 +117,9 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         ),
         "conversation_id": ticket.conversation_id,
         "field_values": dict(ticket.field_values),
-        "pending_proposal": (
-            asdict(ticket.pending_proposal) if ticket.pending_proposal is not None else None
-        ),
+        "pending_proposal": asdict(ticket.pending_proposal)
+        if ticket.pending_proposal is not None
+        else None,
         "archived_field_content": ticket.archived_field_content,
         "created_at": ticket.created_at,
         "updated_at": ticket.updated_at,
@@ -213,7 +213,7 @@ def _ticket_summary_json(row: sqlite3.Row) -> JsonDict:
             str(row["sprint_item_title"]) if row["sprint_item_title"] is not None else None
         ),
         "sprint_id": str(row["sprint_id"]) if row["sprint_id"] is not None else None,
-        "effective_sprint_id": (str(row["sprint_id"]) if row["sprint_id"] is not None else None),
+        "effective_sprint_id": str(row["sprint_id"]) if row["sprint_id"] is not None else None,
         "recap_preview": _recap_preview(str(row["recap"])),
     }
 

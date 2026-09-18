@@ -51,6 +51,7 @@ from planner.tickets.logic import (
     resolution,
 )
 from planner.tickets.logic.decisions import Decision
+from planner.worker_context import revision_feedback
 from planner.worker_settings.service import (
     database_parent_from_connection,
     read_stage_default_ownership_for_ticket_entry,
@@ -482,12 +483,7 @@ def _seed_kickoff(
         else None
     )
     if target is not None:
-        return (
-            target,
-            {"kickoff": kickoff_note},
-            None,
-            machine.resting_ticket_status(ownership),
-        )
+        return target, {"kickoff": kickoff_note}, None, machine.resting_ticket_status(ownership)
     return (
         stage,
         {},
@@ -693,6 +689,7 @@ def _apply_decision(
             "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ?",
             (ticket.id,),
         )
+        revision_feedback.discard(conn, ticket.id)
     if active_before != active_after:
         if active_after:
             # Reopened out of done: the links this Ticket still holds block again, so
@@ -1378,13 +1375,7 @@ def audit_ticket_registry_integrity(conn: sqlite3.Connection) -> None:
                 and ticket.pending_proposal is None
             ):
                 raise PlannerError(ErrorCode.validation, "awaiting approval without a proposal")
-        except (
-            PlannerError,
-            json.JSONDecodeError,
-            KeyError,
-            TypeError,
-            ValueError,
-        ) as exc:
+        except (PlannerError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             raise RuntimeError(
                 f"ticket integrity audit failed: id={row['id']} reason={exc}"
             ) from exc
@@ -1909,7 +1900,7 @@ def return_for_revision(
     expected_proposal: PendingTicketProposal | None = None,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
-    admission.validate_body(message, "revision guidance")
+    admission.validate_revision_guidance(message)
     with _txn(conn):
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
@@ -1928,17 +1919,19 @@ def return_for_revision(
             principal,
             worker_type_definition=worker_type_definition,
         )
-        guidance = f"{ticket.guidance}\n\n{message}" if ticket.guidance else message
-        conn.execute(
-            "UPDATE tickets SET guidance = ?, updated_at = ? WHERE id = ?",
-            (guidance, now, ticket_id),
+        revision_feedback.set_feedback(
+            conn,
+            ticket_id,
+            stage=ticket.stage,
+            sender=principal,
+            message=message,
+            now=now,
         )
         updated = _apply_decision(conn, ticket, decision, now)
         conn.execute(
             "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
             (ticket_id, ticket.stage),
         )
-        ticket_worker_context.set_ticket_revision_requested(conn, ticket_id)
         _write_resting_ticket_status(
             conn,
             updated,
@@ -2220,12 +2213,7 @@ def edit_ticket(
 
 
 def write_recap(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    body: str,
-    principal: Principal,
-    now: int,
+    conn: sqlite3.Connection, ticket_id: str, *, body: str, principal: Principal, now: int
 ) -> Ticket:
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)

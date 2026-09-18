@@ -290,6 +290,7 @@ async def get_item_supervisor_context(
         conversations,
         conversation_record,
         tickets=tickets,
+        approval_holder=Principal(PrincipalKind.sprint_item, item_id),
     )
     return response
 

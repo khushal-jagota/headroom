@@ -344,9 +344,7 @@ class ConversationStore:
         self, conversation_id: str, vendor_session_cursor: str
     ) -> None:
         await asyncio.to_thread(
-            self._update_vendor_session_cursor_sync,
-            conversation_id,
-            vendor_session_cursor,
+            self._update_vendor_session_cursor_sync, conversation_id, vendor_session_cursor
         )
 
     async def replace_composer_catalog(
@@ -553,11 +551,7 @@ class ConversationStore:
                 conn.execute(
                     "UPDATE conversations SET model = ?, reasoning_effort = ? "
                     "WHERE conversation_id = ?",
-                    (
-                        model_change.model,
-                        model_change.reasoning_effort,
-                        conversation_id,
-                    ),
+                    (model_change.model, model_change.reasoning_effort, conversation_id),
                 )
             owner_reply_sequences = [
                 event.sequence
@@ -991,16 +985,12 @@ def _identity_environment_variables_to_json(
     )
 
 
-def _identity_environment_variables_from_json(
-    stored: str,
-) -> tuple[tuple[str, str], ...]:
+def _identity_environment_variables_from_json(stored: str) -> tuple[tuple[str, str], ...]:
     pairs = json.loads(stored)
     return tuple((str(name), str(value)) for name, value in pairs)
 
 
-def _composer_catalog_to_json(
-    composer_catalog: tuple[ComposerCatalogEntry, ...],
-) -> str:
+def _composer_catalog_to_json(composer_catalog: tuple[ComposerCatalogEntry, ...]) -> str:
     return json.dumps(
         [
             {

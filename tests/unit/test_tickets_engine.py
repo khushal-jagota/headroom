@@ -31,6 +31,7 @@ from planner.tickets.contracts import (
     TicketEdit,
     TicketStatus,
 )
+from planner.worker_context import revision_feedback
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 if TYPE_CHECKING:
@@ -604,7 +605,12 @@ def test_pending_proposal_send_back_reopens_and_clears_proposal(
     assert t.ticket_status is TicketStatus.empty
     assert t.pending_proposal is None
     assert t.field_values.get("success") is None
-    assert t.guidance == "Keep this boundary\n\nplease revise"
+    assert t.guidance == "Keep this boundary"
+    feedback = revision_feedback.snapshot(tmp_db, t.id)
+    assert feedback is not None
+    assert feedback.stage == "needs_success"
+    assert feedback.items[0].sender == OWNER_PRINCIPAL
+    assert feedback.items[0].message == "please revise"
 
 
 def test_a02_gating_chain_one_state_per_accept(

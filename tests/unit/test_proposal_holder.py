@@ -30,6 +30,8 @@ from planner.sprints import data as sprints_data
 from planner.tickets import actions, data, views
 from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap, Ticket
 from planner.tickets.logic import resolution
+from planner.tickets.logic.admission import REVISION_GUIDANCE_MAX_CHARACTERS
+from planner.worker_context import revision_feedback
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
@@ -239,7 +241,7 @@ def test_review_lists_only_owner_addressed_proposals(tmp_db: Connection) -> None
     assert [item["ticket_id"] for item in review["items"]] == [owner_ticket.id]
 
 
-def test_revision_appends_exact_guidance_and_returns_worker_stage_to_rest(
+def test_revision_stores_exact_attributed_feedback_without_mutating_guidance_and_rests(
     tmp_db: Connection, fake_clock: Clock
 ) -> None:
     ticket = _park(tmp_db, OWNER_PRINCIPAL)
@@ -260,14 +262,13 @@ def test_revision_appends_exact_guidance_and_returns_worker_stage_to_rest(
     )
 
     assert revised.pending_proposal is None
-    assert revised.guidance == "Keep this.\n\n  Preserve exact spacing.  "
+    assert revised.guidance == "Keep this."
     assert revised.ticket_status.value == "empty"
-    context = tmp_db.execute(
-        "SELECT text FROM pending_worker_context WHERE worker_entity_id=?",
-        (ticket.id,),
-    ).fetchone()
-    assert context is not None
-    assert "Reread the ticket" in str(context["text"])
+    feedback = revision_feedback.snapshot(tmp_db, ticket.id)
+    assert feedback is not None
+    assert feedback.stage == ticket.stage
+    assert feedback.items[0].sender == OWNER_PRINCIPAL
+    assert feedback.items[0].message == "  Preserve exact spacing.  "
 
 
 def test_revision_rearms_same_paired_stage_and_credits_exact_source_turn(
@@ -313,6 +314,81 @@ def test_revision_rearms_same_paired_stage_and_credits_exact_source_turn(
     conversation.record_explicit_reply.assert_awaited_once_with(
         captured, Principal(PrincipalKind.ticket, ticket.id)
     )
+
+
+def test_revision_feedback_is_discarded_when_the_ticket_leaves_its_stage(
+    tmp_db: Connection,
+) -> None:
+    ticket = _park(tmp_db, OWNER_PRINCIPAL)
+    tmp_db.execute(
+        "UPDATE tickets SET conversation_id='c_stage_scope' WHERE id=?", (ticket.id,)
+    )
+    data.return_for_revision(
+        tmp_db,
+        ticket.id,
+        message="Revise only this stage.",
+        principal=OWNER_PRINCIPAL,
+        now=20,
+    )
+    data.file_current_proposal_with_recap(
+        tmp_db,
+        ticket.id,
+        body="Revised success",
+        recap="Revised",
+        principal=Principal(PrincipalKind.ticket, ticket.id),
+        now=21,
+    )
+    data.accept_proposal(
+        tmp_db,
+        ticket.id,
+        field="success",
+        principal=OWNER_PRINCIPAL,
+        now=22,
+        next_ceiling="needs_approach",
+        at_cap=AtCap.propose,
+        next_holder=OWNER_PRINCIPAL,
+    )
+
+    assert revision_feedback.snapshot(tmp_db, ticket.id) is None
+    assert (
+        tmp_db.execute(
+            "SELECT 1 FROM ticket_revision_feedback WHERE ticket_id=?", (ticket.id,)
+        ).fetchone()
+        is None
+    )
+
+
+def test_new_revision_feedback_has_an_explicit_character_limit(tmp_db: Connection) -> None:
+    accepted = _park(tmp_db, OWNER_PRINCIPAL)
+    rejected = _park(tmp_db, OWNER_PRINCIPAL, now=30)
+    tmp_db.executemany(
+        "UPDATE tickets SET conversation_id=? WHERE id=?",
+        (("c_limit_accepted", accepted.id), ("c_limit_rejected", rejected.id)),
+    )
+
+    data.return_for_revision(
+        tmp_db,
+        accepted.id,
+        message="x" * REVISION_GUIDANCE_MAX_CHARACTERS,
+        principal=OWNER_PRINCIPAL,
+        now=20,
+    )
+    stored = revision_feedback.snapshot(tmp_db, accepted.id)
+    assert stored is not None
+    assert stored.items[0].message == "x" * REVISION_GUIDANCE_MAX_CHARACTERS
+
+    with pytest.raises(PlannerError, match="at most 10000 characters"):
+        data.return_for_revision(
+            tmp_db,
+            rejected.id,
+            message="x" * (REVISION_GUIDANCE_MAX_CHARACTERS + 1),
+            principal=OWNER_PRINCIPAL,
+            now=40,
+        )
+
+    unchanged = data.read_ticket(tmp_db, rejected.id)
+    assert unchanged.pending_proposal == rejected.pending_proposal
+    assert revision_feedback.snapshot(tmp_db, rejected.id) is None
 
 
 def test_a_ticket_holder_cannot_be_deleted_while_another_ticket_uses_it(

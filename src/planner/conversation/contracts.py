@@ -551,21 +551,6 @@ class ConversationSystem(Protocol):
         """Record one addressed message that no backend receives."""
         ...
 
-    async def record_prompt_delivery_uncertain(
-        self,
-        conversation_id: str,
-        content: MessageContent,
-        *,
-        sender_label: str,
-        mode: PromptDeliveryMode,
-        sender_message_id: str,
-        sent_at_unix_milliseconds: int | None = None,
-        sender: Principal | None = None,
-        recipient: Principal | None = None,
-    ) -> None:
-        """Record one terminal uncertain outcome without another backend delivery."""
-        ...
-
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
         """Capture the exact active turn that a Send Message may answer."""
         ...

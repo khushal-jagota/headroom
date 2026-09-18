@@ -499,48 +499,6 @@ class InMemoryConversationSystem:
         if state.running_turn is not None:
             state.running_turn.explicit_reply_recipients.add(recipient)
 
-    async def record_prompt_delivery_uncertain(
-        self,
-        conversation_id: str,
-        content: MessageContent,
-        *,
-        sender_label: str,
-        mode: PromptDeliveryMode,
-        sender_message_id: str,
-        sent_at_unix_milliseconds: int | None = None,
-        sender: Principal | None = None,
-        recipient: Principal | None = None,
-    ) -> None:
-        require_message_content(content)
-        state = self._conversations.get(conversation_id)
-        if state is None:
-            raise ValueError("no such conversation")
-        for observed in state.observations:
-            if observed.sender_message_id != sender_message_id:
-                continue
-            if (
-                observed.kind is not InMemoryConversationObservationKind.prompt_delivery_uncertain
-                or observed.content != content
-                or observed.sender_label != sender_label
-                or observed.mode is not mode
-                or observed.sender != sender
-                or observed.recipient != recipient
-            ):
-                raise ValueError("sender_message_id already names a different message")
-            return
-        state.observations.append(
-            InMemoryConversationObservation(
-                kind=InMemoryConversationObservationKind.prompt_delivery_uncertain,
-                content=content,
-                sender_label=sender_label,
-                mode=mode,
-                sender_message_id=sender_message_id,
-                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                sender=sender,
-                recipient=recipient,
-            )
-        )
-
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
         state = self._conversations.get(conversation_id)
         if state is None or state.running_turn is None:

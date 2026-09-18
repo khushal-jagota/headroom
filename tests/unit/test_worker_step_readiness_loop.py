@@ -40,6 +40,7 @@ from planner.runtime.worker_step_readiness_loop import (
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
 from planner.worker_context import data as worker_context_data
+from planner.worker_context import revision_feedback
 from planner.worker_context.contracts import (
     PreparedWorkerPrompt,
     WorkerContextReceipt,
@@ -137,6 +138,22 @@ class _World:
                     (ticket_id,),
                 ).fetchall()
             ]
+
+    def add_revision_feedback(self, ticket_id: str, message: str) -> None:
+        with self.connect() as conn:
+            ticket = tickets_data.read_ticket(conn, ticket_id)
+            revision_feedback.set_feedback(
+                conn,
+                ticket_id,
+                stage=ticket.stage,
+                sender=OWNER_PRINCIPAL,
+                message=message,
+                now=1,
+            )
+
+    def pending_revision_feedback(self, ticket_id: str) -> bool:
+        with self.connect() as conn:
+            return revision_feedback.snapshot(conn, ticket_id) is not None
 
     def ticket(self, ticket_id: str) -> Ticket:
         with self.connect() as conn:
@@ -302,6 +319,35 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     # A refused delivery reached nobody, so the context is still owed.
     assert world.pending_context_keys(ticket_id) == ["ticket_changed"]
     assert world.skill_bindings() == []
+
+
+def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _World) -> None:
+    ticket_id = world.ready_ticket(conversation_id="conv-revision-feedback")
+    world.start_conversation("conv-revision-feedback")
+    world.add_revision_feedback(ticket_id, "  Preserve this exact feedback.  ")
+    with world.connect() as conn:
+        tickets_data.replace_guidance(
+            conn,
+            ticket_id,
+            body="Mutable guidance changed independently.",
+            principal=OWNER_PRINCIPAL,
+            now=2,
+        )
+    world.conversations.arm_backend_write_failure("conv-revision-feedback")
+
+    assert world.start_step(ticket_id) is False
+    assert world.pending_revision_feedback(ticket_id) is True
+    world.conversations._conversations[  # noqa: SLF001 - focused failure recovery proof
+        "conv-revision-feedback"
+    ].armed_backend_write_failure = False
+    assert world.start_step(ticket_id) is True
+
+    writes = world.conversations.backend_prompt_writes("conv-revision-feedback")
+    assert len(writes) == 1
+    assert "Revision feedback from owner owner for stage needs_success" in writes[0].text
+    assert "  Preserve this exact feedback.  " in writes[0].text
+    assert "Mutable guidance changed independently." in writes[0].text
+    assert world.pending_revision_feedback(ticket_id) is False
 
 
 def test_a_refused_paired_opener_rearms_the_stage(world: _World) -> None:

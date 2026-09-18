@@ -33,6 +33,7 @@ from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
 from planner.tickets.contracts import TicketStatus
 from planner.worker_context import data as context_data
+from planner.worker_context import revision_feedback
 
 _OWNER_HOLDER = {"kind": "owner", "id": "owner"}
 
@@ -94,6 +95,24 @@ def _supervisor_headers(item_id: str) -> dict[str, str]:
         "X-Plan-Actor": "sprint_item_supervisor",
         "X-Plan-Sprint-Item-ID": item_id,
     }
+
+
+def test_supervisor_context_marks_a_held_proposal_as_awaiting_approval(
+    tmp_path: Path,
+) -> None:
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket = _park_a_proposal(client, str(item["id"]))
+        response = client.get(
+            f"/api/items/{item['id']}/supervisor/context",
+            headers=_supervisor_headers(str(item["id"])),
+        )
+
+    assert response.status_code == 200, response.text
+    row = next(entry for entry in response.json()["tickets"] if entry["id"] == ticket["id"])
+    assert row["ticket_status"] == "awaiting_approval"
+    assert row["awaiting_approval"] is True
 
 
 def test_workspace_artifacts_include_each_file_modified_time(tmp_path: Path) -> None:
@@ -456,7 +475,7 @@ def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> Non
     assert approved.json()["field_values"].get("success") == "The result is verified."
 
 
-def test_supervisor_rejection_appends_guidance_without_backend_io(
+def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
     tmp_path: Path,
 ) -> None:
     app, db_path = _app(tmp_path)
@@ -498,11 +517,16 @@ def test_supervisor_rejection_appends_guidance_without_backend_io(
     with connect(str(db_path)) as conn:
         after = tickets_data.read_ticket(conn, str(ticket["id"]))
         pending_context = context_data.snapshot(conn, str(ticket["id"])).items
+        feedback = revision_feedback.snapshot(conn, str(ticket["id"]))
     assert rejected.status_code == 200, rejected.text
     assert after.pending_proposal is None
     assert after.ticket_status.value == "empty"
-    assert after.guidance == "State the verification evidence."
-    assert any("Reread the ticket" in item.text for item in pending_context)
+    assert after.guidance == ""
+    assert [entry.text for entry in pending_context] == ["Read exact guidance."]
+    assert feedback is not None
+    assert feedback.items[0].sender.kind.value == "sprint_item"
+    assert feedback.items[0].sender.id == str(item["id"])
+    assert feedback.items[0].message == "State the verification evidence."
     assert system.backend_prompt_writes(conversation_id) == ()
     assert system.observations(conversation_id) == ()
 

@@ -149,10 +149,11 @@ already had five minutes.
 
 When the holder returns a proposal for revision, one Ticket transaction checks every
 authorization and current-parent route. It clears the proposal, appends the exact comment
-to Ticket guidance, invalidates worker context, and returns the Ticket to its resting
-status. A same-Stage paired opener is cleared so the discussion can open again. The
-normal worker-step prompt carries the updated guidance on the next claim. Reply
-bookkeeping credits the source turn after the commit and cannot undo the rejection.
+to a separate attributed revision-feedback record, and returns the Ticket to its resting
+status. A same-Stage paired opener is cleared so the discussion can open again. The next
+normal worker-step prompt carries feedback for that Stage, and only a successful send
+consumes it. Ticket guidance remains independent. Reply bookkeeping credits the source
+turn after the commit and cannot undo the rejection.
 
 _Code path:_ `src/planner/tickets/actions.py`.
 

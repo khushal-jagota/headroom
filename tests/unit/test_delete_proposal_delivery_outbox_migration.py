@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from alembic import command
@@ -63,6 +64,41 @@ def test_upgrade_deletes_failure_events_and_drops_all_three_outbox_tables(
         "VALUES ('rejection',?,1,1,1,'Returned','pending',2,2,2)",
         (ticket.id,),
     )
+    legacy_comments = (
+        ("pending", "  Keep exact spacing.\nAnd this line.  ", "owner", "owner"),
+        ("delivering", "Second exact comment", "sprint_item", "si_exact"),
+        ("uncertain", "Third: punctuation!?", "chief", "chief"),
+        ("pending", "x" * 10_001, "owner", "owner"),
+    )
+    for generation, (state, message, sender_kind, sender_id) in enumerate(
+        legacy_comments, start=1
+    ):
+        conn.execute(
+            "INSERT INTO ticket_rejection_messages "
+            "(id,ticket_id,rejection_generation,sequence,delivery_attempt,message,"
+            "sender_kind,sender_id,state,retry_at,created_at,updated_at) "
+            "VALUES (?,?,?,?,1,?,?,?, ?,2,?,?)",
+            (
+                f"comment-{generation}",
+                ticket.id,
+                generation,
+                2,
+                message,
+                sender_kind,
+                sender_id,
+                state,
+                generation + 2,
+                generation + 2,
+            ),
+        )
+    for generation, state in ((5, "delivered"), (6, "cancelled")):
+        conn.execute(
+            "INSERT INTO ticket_rejection_messages "
+            "(id,ticket_id,rejection_generation,sequence,delivery_attempt,message,"
+            "sender_kind,sender_id,state,retry_at,created_at,updated_at,delivered_at) "
+            "VALUES (?,?,?,?,1,?,'owner','owner',?,2,9,9,9)",
+            (f"ignored-{generation}", ticket.id, generation, 2, f"ignore {state}", state),
+        )
     conn.execute(
         "INSERT INTO proposal_delivery_failures "
         "(ticket_id,proposal_generation,attempt_count,last_error,visibility_message_id,"
@@ -85,6 +121,18 @@ def test_upgrade_deletes_failure_events_and_drops_all_three_outbox_tables(
         }
         & table_names
     )
+    assert "ticket_revision_feedback" in table_names
+    feedback = upgraded.execute(
+        "SELECT stage, feedback_json, revision FROM ticket_revision_feedback WHERE ticket_id=?",
+        (ticket.id,),
+    ).fetchone()
+    assert feedback is not None
+    assert str(feedback["stage"]) == tickets_data.read_ticket(upgraded, ticket.id).stage
+    assert int(feedback["revision"]) == 1
+    assert json.loads(str(feedback["feedback_json"])) == [
+        {"sender_kind": sender_kind, "sender_id": sender_id, "message": message}
+        for _state, message, sender_kind, sender_id in legacy_comments
+    ]
     assert [
         str(row["kind"])
         for row in upgraded.execute(
