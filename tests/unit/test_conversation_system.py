@@ -766,6 +766,42 @@ def test_an_addressed_new_prompt_gets_a_runtime_only_reply_directive(
     _run(exercise)
 
 
+@pytest.mark.parametrize("rebind_before_first_write", (False, True))
+def test_first_addressed_prompt_with_empty_text_preserves_role_across_rebind(
+    harness: _Harness, rebind_before_first_write: bool
+) -> None:
+    async def exercise() -> None:
+        await _start(
+            harness,
+            "c",
+            role_materials=ConversationRoleMaterials(role_text="worker role"),
+        )
+        if rebind_before_first_write:
+            harness.backend("c").needs_rebind_once = True
+        recipient = Principal(PrincipalKind.ticket, "t_worker")
+        sender_content: MessageContent = (MessageText(""), MessageText("body"))
+
+        fate = await harness.system.send(
+            "c",
+            sender_content,
+            sender_label="owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=recipient,
+        )
+
+        assert fate == PromptDeliveryStarted()
+        write = harness.backend("c").writes[-1]
+        assert write.sender_content == sender_content
+        assert isinstance(write.content[0], MessageText)
+        assert write.content[0].text.startswith("[Authenticated Panels reply requirement]")
+        assert "worker role" in message_content_text(write.content[1:])
+        assert harness.backend("c").session_starts == (
+            2 if rebind_before_first_write else 1
+        )
+
+    _run(exercise)
+
+
 def test_an_explicit_reply_does_not_request_a_counter_reply(harness: _Harness) -> None:
     async def exercise() -> None:
         await _start(harness, "c")
@@ -797,8 +833,9 @@ def test_an_explicit_reply_does_not_request_a_counter_reply(harness: _Harness) -
     "mode",
     (PromptDeliveryMode.queue, PromptDeliveryMode.steer),
 )
-def test_an_addressed_slash_control_creates_no_reply_directive_or_debt(
-    harness: _Harness, mode: PromptDeliveryMode
+@pytest.mark.parametrize("text", ("/compact", "/tmp is full; investigate it"))
+def test_an_addressed_slash_prompt_keeps_reply_directive_and_debt_in_the_core(
+    harness: _Harness, mode: PromptDeliveryMode, text: str
 ) -> None:
     async def exercise() -> None:
         await _start(harness, "c")
@@ -810,7 +847,7 @@ def test_an_addressed_slash_control_creates_no_reply_directive_or_debt(
 
         first = await harness.system.send_with_receipt(
             "c",
-            text_message_content("/compact"),
+            text_message_content(text),
             sender_label="owner",
             mode=mode,
             sender_message_id="slash-control-1",
@@ -819,7 +856,7 @@ def test_an_addressed_slash_control_creates_no_reply_directive_or_debt(
         )
         duplicate = await harness.system.send_with_receipt(
             "c",
-            text_message_content("/compact"),
+            text_message_content(text),
             sender_label="owner",
             mode=mode,
             sender_message_id="slash-control-1",
@@ -834,22 +871,23 @@ def test_an_addressed_slash_control_creates_no_reply_directive_or_debt(
         assert len(harness.backend("c").writes) == (
             2 if mode is PromptDeliveryMode.steer else 1
         )
-        assert "Authenticated Panels reply requirement" not in (
+        assert "Authenticated Panels reply requirement" in (
             harness.backend("c").writes[-1].text
         )
         turn = await harness.system.active_turn_reference("c")
         assert turn is not None
-        assert await harness.system.turn_expects_reply(turn, OWNER_PRINCIPAL) is False
+        assert await harness.system.turn_expects_reply(turn, OWNER_PRINCIPAL) is True
         await harness.complete_turn("c")
-        assert not any(
-            isinstance(event.payload, ExplicitReplyMissingEventPayload)
+        assert [
+            event.payload.prompt_sender
             for event in await harness.events("c")
-        )
+            if isinstance(event.payload, ExplicitReplyMissingEventPayload)
+        ] == [OWNER_PRINCIPAL]
 
     _run(exercise)
 
 
-def test_a_held_addressed_slash_control_drains_without_reply_debt(
+def test_a_held_addressed_slash_prompt_drains_with_reply_debt(
     harness: _Harness,
 ) -> None:
     async def exercise() -> None:
@@ -869,12 +907,18 @@ def test_a_held_addressed_slash_control_drains_without_reply_debt(
 
         await harness.complete_turn("c")
 
-        assert "Authenticated Panels reply requirement" not in (
+        assert "Authenticated Panels reply requirement" in (
             harness.backend("c").writes[-1].text
         )
         turn = await harness.system.active_turn_reference("c")
         assert turn is not None
-        assert await harness.system.turn_expects_reply(turn, OWNER_PRINCIPAL) is False
+        assert await harness.system.turn_expects_reply(turn, OWNER_PRINCIPAL) is True
+        await harness.complete_turn("c")
+        assert [
+            event.payload.prompt_sender
+            for event in await harness.events("c")
+            if isinstance(event.payload, ExplicitReplyMissingEventPayload)
+        ] == [OWNER_PRINCIPAL]
 
     _run(exercise)
 

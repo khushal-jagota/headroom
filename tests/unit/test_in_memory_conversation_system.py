@@ -213,7 +213,8 @@ def test_in_memory_replays_report_freshness_and_silence_matches_production() -> 
     asyncio.run(exercise())
 
 
-def test_in_memory_addressed_slash_control_has_no_reply_directive_or_debt() -> None:
+@pytest.mark.parametrize("text", ("/compact", "/tmp is full; investigate it"))
+def test_in_memory_addressed_slash_prompt_keeps_reply_directive_and_debt(text: str) -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()
         await system.start_conversation(
@@ -227,7 +228,7 @@ def test_in_memory_addressed_slash_control_has_no_reply_directive_or_debt() -> N
 
         first = await system.send_with_receipt(
             "c",
-            text_message_content("/compact"),
+            text_message_content(text),
             sender_label="owner",
             sender_message_id="slash-control-1",
             sender=OWNER_PRINCIPAL,
@@ -235,7 +236,7 @@ def test_in_memory_addressed_slash_control_has_no_reply_directive_or_debt() -> N
         )
         duplicate = await system.send_with_receipt(
             "c",
-            text_message_content("/compact"),
+            text_message_content(text),
             sender_label="owner",
             sender_message_id="slash-control-1",
             sender=OWNER_PRINCIPAL,
@@ -248,15 +249,16 @@ def test_in_memory_addressed_slash_control_has_no_reply_directive_or_debt() -> N
         assert duplicate.newly_accepted is False
         assert len(system.backend_prompt_writes("c")) == 1
         write = system.backend_prompt_writes("c")[-1]
-        assert "Authenticated Panels reply requirement" not in write.text
+        assert "Authenticated Panels reply requirement" in write.text
         turn = await system.active_turn_reference("c")
         assert turn is not None
-        assert await system.turn_expects_reply(turn, OWNER_PRINCIPAL) is False
+        assert await system.turn_expects_reply(turn, OWNER_PRINCIPAL) is True
         system.complete_running_turn("c")
-        assert not any(
-            observation.kind is InMemoryConversationObservationKind.explicit_reply_missing
+        assert [
+            observation.sender
             for observation in system.observations("c")
-        )
+            if observation.kind is InMemoryConversationObservationKind.explicit_reply_missing
+        ] == [OWNER_PRINCIPAL]
 
     asyncio.run(exercise())
 

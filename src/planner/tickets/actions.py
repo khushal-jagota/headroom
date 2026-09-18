@@ -197,7 +197,7 @@ async def return_ticket_for_revision(
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
     """Commit the rejection guidance, then return without backend I/O."""
-    admission.validate_body(message, "revision guidance")
+    admission.validate_revision_guidance(message)
     principal = ctx.principal
     now = clock.now_unix()
     source_turn = await message_delivery_service.revision_source_turn(

@@ -11,7 +11,7 @@ from typing import TypedDict
 
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.storage import ConversationAttentionFacts, ConversationStore
-from planner.core.contracts import OWNER_PRINCIPAL, JsonDict
+from planner.core.contracts import OWNER_PRINCIPAL, JsonDict, Principal
 from planner.tickets.contracts import StageOwnershipMode, TicketStatus
 from planner.tickets.logic import machine
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -84,6 +84,8 @@ def _ticket_rows(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sq
 def _ticket_attention(
     row: sqlite3.Row,
     conversation: tuple[bool, bool, bool] | None,
+    *,
+    approval_holder: Principal,
 ) -> WorkAttention:
     holder = json.loads(str(row["ceiling_holder"]))
     owner_holds_ceiling = holder == {
@@ -93,7 +95,7 @@ def _ticket_attention(
     awaiting_approval = (
         str(row["ticket_status"]) == TicketStatus.awaiting_approval.value
         and row["pending_proposal"] is not None
-        and owner_holds_ceiling
+        and holder == {"kind": approval_holder.kind.value, "id": approval_holder.id}
     )
     awaiting_reply, running, last_turn_failed = conversation or (False, False, False)
     assigned = ticket_assignment_from_values(
@@ -110,11 +112,9 @@ def _ticket_attention(
     agent_state = (
         AgentState.working
         if running
-        else (
-            AgentState.errored
-            if str(row["ticket_status"]) == TicketStatus.errored.value or last_turn_failed
-            else AgentState.idle
-        )
+        else AgentState.errored
+        if str(row["ticket_status"]) == TicketStatus.errored.value or last_turn_failed
+        else AgentState.idle
     )
     return {
         "awaiting_reply": awaiting_reply,
@@ -148,11 +148,9 @@ def ticket_assignment_from_values(
     captured_default = (
         StageOwnershipMode(default_stage_ownership_mode)
         if default_stage_ownership_mode is not None
-        else (
-            None
-            if definition.is_terminal(stage)
-            else definition.stage_definition(stage).default_ownership_mode
-        )
+        else None
+        if definition.is_terminal(stage)
+        else definition.stage_definition(stage).default_ownership_mode
     )
     ownership = machine.effective_stage_ownership_mode(
         stage,
@@ -176,11 +174,9 @@ def _roll_up(children: Iterable[WorkAttention]) -> WorkAttention:
         "agent_state": (
             AgentState.working.value
             if AgentState.working.value in states
-            else (
-                AgentState.errored.value
-                if AgentState.errored.value in states
-                else AgentState.idle.value
-            )
+            else AgentState.errored.value
+            if AgentState.errored.value in states
+            else AgentState.idle.value
         ),
     }
 
@@ -192,8 +188,9 @@ async def add_work_attention(
     *,
     tickets: Iterable[JsonDict] = (),
     sprint_items: Iterable[JsonDict] = (),
+    approval_holder: Principal = OWNER_PRINCIPAL,
 ) -> None:
-    """Attach the canonical owner-attention and agent-state facts to list rows."""
+    """Attach attention for the viewing holder and shared agent-state facts."""
     ticket_rows = tuple(tickets)
     item_rows = tuple(sprint_items)
     direct_ticket_ids = {str(row["id"]) for row in ticket_rows}
@@ -235,11 +232,10 @@ async def add_work_attention(
     ticket_attention = {
         ticket_id: _ticket_attention(
             row,
-            (
-                conversations.get(str(row["conversation_id"]))
-                if row["conversation_id"] is not None
-                else None
-            ),
+            conversations.get(str(row["conversation_id"]))
+            if row["conversation_id"] is not None
+            else None,
+            approval_holder=approval_holder,
         )
         for ticket_id, row in stored_tickets.items()
     }

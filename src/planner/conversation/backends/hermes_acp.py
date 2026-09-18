@@ -124,6 +124,7 @@ from planner.conversation.events import (
     UserInputAnswer,
 )
 from planner.conversation.message_content import (
+    ComposedMessageDoesNotContainSenderContent,
     MessageContent,
     MessageFile,
     MessageImage,
@@ -439,9 +440,12 @@ class HermesAcpBackendChild:
         elif native_command:
             content = sender_content
         else:
-            content = sender_labeled_composed_message_content(
-                content, sender_content, sender_label
-            )
+            try:
+                content = sender_labeled_composed_message_content(
+                    content, sender_content, sender_label
+                )
+            except ComposedMessageDoesNotContainSenderContent as invalid_composition:
+                raise PromptWriteFailed(str(invalid_composition)) from invalid_composition
         previously = (self._session_model, self._session_reasoning_effort)
         try:
             await self._apply_values(model_change, reasoning_effort_change)
@@ -505,6 +509,18 @@ class HermesAcpBackendChild:
         connection, session_id = self._bound_session()
         self._require_a_live_wire()
         wire_token = _turn_token_wire_value(turn_token)
+        try:
+            wire_content = (
+                sender_content
+                if self._is_catalog_command(sender_content)
+                else sender_labeled_composed_message_content(
+                    content, sender_content, sender_label
+                )
+            )
+        except ComposedMessageDoesNotContainSenderContent:
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.message_cannot_be_steered
+            )
         response = await self._guarded(
             connection.ext_method(
                 PANELS_STEER_EXTENSION_METHOD,
@@ -513,13 +529,7 @@ class HermesAcpBackendChild:
                     "turnToken": wire_token,
                     "text": "\n\n".join(
                         cast(MessageText, piece).text
-                        for piece in (
-                            sender_content
-                            if self._is_catalog_command(sender_content)
-                            else sender_labeled_composed_message_content(
-                                content, sender_content, sender_label
-                            )
-                        )
+                        for piece in wire_content
                     ),
                     "senderLabel": sender_label,
                 },

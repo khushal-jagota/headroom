@@ -42,7 +42,7 @@ RESHAPE_REVISION = "ticket_status_reshape"
 HEAD_REVISION = "remove_ticket_alias_and_backend_error"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
-CURRENT_SCHEMA_OBJECT_COUNT = 59
+CURRENT_SCHEMA_OBJECT_COUNT = 60
 
 # The five statuses this build ends on, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
@@ -274,6 +274,7 @@ def test_fresh_database_is_built_and_marked_at_the_current_revision(
         "ticket_rejection_messages",
         "proposal_delivery_failures",
     } & set(_schema_objects(conn))
+    assert "ticket_revision_feedback" in _schema_objects(conn)
     # Carried so a fresh database is not distinguishable from one the old ladder built.
     # An older checkout reads this marker to decide what it still has to do.
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 37

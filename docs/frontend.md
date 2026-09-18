@@ -32,9 +32,10 @@ One screen per part of the system:
   Keyboard shortcuts drive the actions that apply to the current item when the
   cursor is not in a text field, and each item fades in as it arrives. A proposal's
   approve button sends the next ceiling, cap, and owner holder together. Send-back
-  appends the owner's exact comment to Ticket guidance while clearing the proposal and
-  returning the Ticket to its resting control status. A reply in the Ticket conversation
-  leaves the proposal in Review until a decision.
+  stores the owner's exact attributed comment for the next worker-step prompt while
+  clearing the proposal and returning the Ticket to its resting control status. Ticket
+  guidance stays independent. A reply in the Ticket conversation leaves the proposal in
+  Review until a decision.
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
   follows the same 5am planning-day boundary as the Day screen; dropped tickets never
   appear. The Chief of Staff row leads, and under it a selector chooses one of two views

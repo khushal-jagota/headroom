@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Final
 
 from planner.core.contracts import (
     ErrorCode,
@@ -14,6 +15,8 @@ from planner.core.contracts import (
 from planner.tickets.contracts import AtCap
 from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkerTypeDefinition
+
+REVISION_GUIDANCE_MAX_CHARACTERS: Final = 10_000
 
 
 def require_direct_principal(principal: Principal, action: str) -> None:
@@ -119,3 +122,13 @@ def validate_deadline(deadline: str | None) -> None:
 def validate_body(body: str, what: str) -> None:
     if not body:
         raise PlannerError(ErrorCode.validation, f"{what} must be non-empty")
+
+
+def validate_revision_guidance(message: str) -> None:
+    validate_body(message, "revision guidance")
+    if len(message) > REVISION_GUIDANCE_MAX_CHARACTERS:
+        raise PlannerError(
+            ErrorCode.validation,
+            f"revision guidance must be at most {REVISION_GUIDANCE_MAX_CHARACTERS} characters",
+            {"maximum_characters": REVISION_GUIDANCE_MAX_CHARACTERS},
+        )

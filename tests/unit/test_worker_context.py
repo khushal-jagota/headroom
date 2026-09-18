@@ -17,7 +17,7 @@ from planner.tickets.contracts import (
     TicketEdit,
 )
 from planner.tickets.worker_context import TICKET_CHANGED_CONTEXT_KEY, TICKET_CHANGED_TEXT
-from planner.worker_context import data
+from planner.worker_context import data, revision_feedback
 from planner.worker_context.contracts import PendingWorkerContext, WorkerContextReceipt
 from planner.worker_context.service import SqliteWorkerContextService
 
@@ -83,6 +83,67 @@ def test_sqlite_service_composes_prompt_and_acknowledges_only_prepared_revision(
     assert [(item.text, item.revision) for item in data.snapshot(tmp_db, "t_one").items] == [
         ("Reread the newer ticket.", 2)
     ]
+
+
+def test_revision_feedback_is_attributed_stage_scoped_bounded_and_one_use(
+    tmp_db: Connection,
+) -> None:
+    ticket = _ticket(tmp_db)
+    db_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()["file"]))
+    service = SqliteWorkerContextService(lambda: connect(str(db_path)))
+    first = revision_feedback.set_feedback(
+        tmp_db,
+        ticket.id,
+        stage=ticket.stage,
+        sender=OWNER_PRINCIPAL,
+        message="first feedback",
+        now=2,
+    )
+    second = revision_feedback.set_feedback(
+        tmp_db,
+        ticket.id,
+        stage=ticket.stage,
+        sender=TEST_TICKET_PRINCIPAL,
+        message="  exact replacement\nwith spacing  ",
+        now=3,
+    )
+    assert second.revision == first.revision + 1
+    assert (
+        tmp_db.execute(
+            "SELECT count(*) FROM ticket_revision_feedback WHERE ticket_id=?", (ticket.id,)
+        ).fetchone()[0]
+        == 1
+    )
+
+    prepared = service.prepare(ticket.id, "Continue working.")
+    assert "ticket t_test" in prepared.model_text
+    assert "first feedback" not in prepared.model_text
+    assert "  exact replacement\nwith spacing  " in prepared.model_text
+    service.acknowledge(ticket.id, prepared.receipts)
+
+    assert revision_feedback.snapshot(tmp_db, ticket.id) is None
+    assert "Revision feedback" not in service.prepare(ticket.id, "Next prompt.").model_text
+
+
+def test_revision_feedback_for_an_old_stage_does_not_enter_the_prompt(
+    tmp_db: Connection,
+) -> None:
+    ticket = _ticket(tmp_db)
+    db_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()["file"]))
+    service = SqliteWorkerContextService(lambda: connect(str(db_path)))
+    revision_feedback.set_feedback(
+        tmp_db,
+        ticket.id,
+        stage="needs_plan",
+        sender=OWNER_PRINCIPAL,
+        message="Do not leak this into success.",
+        now=2,
+    )
+
+    prepared = service.prepare(ticket.id, "Work success.")
+
+    assert "Do not leak" not in prepared.model_text
+    assert prepared.receipts == ()
 
 
 def _ticket(tmp_db: Connection) -> Ticket:

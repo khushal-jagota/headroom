@@ -553,16 +553,12 @@ type ConversationLiveTailFrame = (
 )
 
 
-def conversation_event_payload_kind(
-    payload: ConversationEventPayload,
-) -> ConversationEventKind:
+def conversation_event_payload_kind(payload: ConversationEventPayload) -> ConversationEventKind:
     """The kind this payload is written under."""
     return payload.kind
 
 
-def conversation_event_payload_to_canonical_json(
-    payload: ConversationEventPayload,
-) -> str:
+def conversation_event_payload_to_canonical_json(payload: ConversationEventPayload) -> str:
     """The payload as the one JSON text it is stored as.
 
     Canonical means one text per value: keys sorted, no incidental whitespace, and
@@ -708,10 +704,7 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 ]
             }
         case ModelChangedEventPayload():
-            return {
-                "model": payload.model,
-                "reasoning_effort": payload.reasoning_effort,
-            }
+            return {"model": payload.model, "reasoning_effort": payload.reasoning_effort}
         case TokenUsageEventPayload():
             return {
                 **_entry_if_minted("input_tokens", payload.input_tokens),
