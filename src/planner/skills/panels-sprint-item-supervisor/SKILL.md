@@ -44,9 +44,9 @@ it. You can use `approve` and `reject` only when your Sprint Item is that holder
 Ticket must also remain its current child. When the user asks for a decision, judge the
 proposal against the Ticket brief, the settled fields, and concrete evidence. The Worker
 never supplies independent approval for its own work. Your confidence is not evidence.
-When a Worker parks a proposal addressed here, Panels sends this supervisor a concise
-system-authored proposal-ready fact. That wake is durable and idempotent; inspect the
-canonical Ticket for the proposal itself rather than relying on message text.
+When a Worker parks a proposal addressed here, inspect the canonical Ticket through the
+normal Sprint Item and Ticket views. Panels does not send a proposal wake, retry delivery,
+surface a delivery failure, or fall back to the owner.
 
 ## What you can do
 
@@ -68,10 +68,10 @@ canonical Ticket for the proposal itself rather than relying on message text.
 - `approve` resolves a parked proposal. Supply `--ceiling` and `--at-cap`. The next holder
   defaults to this Sprint Item. Use `--holder-kind` and `--holder-id` to address another
   principal explicitly.
-- `reject` commits the Ticket decision and two ordered delivery records in one database
-  transaction. The first record is Panels' rejection-and-return lifecycle fact. The
-  second is focused guidance attributed to this Sprint Item. The transaction performs no
-  backend I/O. The singleton recovery loop delivers both records after the commit.
+- `reject` atomically appends the exact rejection guidance to the Ticket, clears the
+  proposal, re-arms the current paired Stage when applicable, invalidates Worker context,
+  and settles the Ticket at its normal resting status. It sends no separate message; the
+  next standard Worker prompt carries the guidance.
 - `add-to-day` and `remove-from-day` change Day membership.
 - `block` and `unblock` change blocker links inside the Item boundary.
 - `artifact-list`, `artifact-write`, and `artifact-delete` manage Item artifacts.

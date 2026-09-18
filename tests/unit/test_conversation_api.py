@@ -158,7 +158,10 @@ class _FakeBackendChild:
         self._sink = event_sink
 
     async def start(
-        self, resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
+        self,
+        resolved_start: ResolvedConversationStart,
+        *,
+        vendor_session_cursor: str | None,
     ) -> None:
         del resolved_start
         if self._backend.session_load_fails:
@@ -293,7 +296,8 @@ async def _claude_from_the_handshake(claude_executable: str) -> ClaudeModelCatal
         ),
     )
     return ClaudeModelCatalog(
-        models=models, reasoning_effort_options=("low", "medium", "high", "xhigh", "max")
+        models=models,
+        reasoning_effort_options=("low", "medium", "high", "xhigh", "max"),
     )
 
 
@@ -405,7 +409,9 @@ class _Harness:
                 detail="ls -la",
                 options=(
                     PermissionAskOption(
-                        option_id="allow-once", label="Approve once", option_kind="allow"
+                        option_id="allow-once",
+                        label="Approve once",
+                        option_kind="allow",
                     ),
                     PermissionAskOption(option_id="deny", label="Decline", option_kind="reject"),
                 ),
@@ -1020,7 +1026,9 @@ def test_a_failed_claude_recovery_refusal_remains_after_an_api_reread(
     _run(exercise)
 
 
-def test_what_a_sender_minted_reaches_the_row_its_message_becomes(harness: _Harness) -> None:
+def test_what_a_sender_minted_reaches_the_row_its_message_becomes(
+    harness: _Harness,
+) -> None:
     """A browser draws its message the moment it is sent, so it has to know its own again.
 
     A sent message becomes exactly one of three rows, and the id the sender minted is on
@@ -1103,12 +1111,20 @@ def test_what_a_sender_minted_reaches_the_row_its_message_becomes(harness: _Harn
                     "events"
                 ]
                 if row["kind"] == "prompt_discarded"
-            ] == [{"text": "never ran", "sender_label": "owner", "sender_message_id": "m-3"}]
+            ] == [
+                {
+                    "text": "never ran",
+                    "sender_label": "owner",
+                    "sender_message_id": "m-3",
+                }
+            ]
 
     _run(exercise)
 
 
-def test_owner_read_position_persists_and_refuses_employee_updates(harness: _Harness) -> None:
+def test_owner_read_position_persists_and_refuses_employee_updates(
+    harness: _Harness,
+) -> None:
     async def exercise() -> None:
         async with harness.client() as client:
             await _start(client, "c")
@@ -1355,7 +1371,9 @@ def test_the_tail_signals_that_held_prompts_changed(harness: _Harness) -> None:
     _run(exercise)
 
 
-def test_an_answer_lands_once_and_then_has_nothing_left_to_land_on(harness: _Harness) -> None:
+def test_an_answer_lands_once_and_then_has_nothing_left_to_land_on(
+    harness: _Harness,
+) -> None:
     async def exercise() -> None:
         async with harness.client() as client:
             await _start(client, "c")
@@ -1457,7 +1475,9 @@ def test_interrupting_frees_what_was_held_and_killing_throws_it_away(
 # --- reading the record ---------------------------------------------------------------------
 
 
-def test_the_rows_after_a_position_come_back_in_order_and_decoded(harness: _Harness) -> None:
+def test_the_rows_after_a_position_come_back_in_order_and_decoded(
+    harness: _Harness,
+) -> None:
     async def exercise() -> None:
         async with harness.client() as client:
             await _start(client, "c")
@@ -1483,40 +1503,15 @@ def test_the_rows_after_a_position_come_back_in_order_and_decoded(harness: _Harn
                 "sender_label": "owner",
                 "mode": "queue",
             }
-            assert everything[1]["payload"] == {"ending": "completed", "error_summary": None}
+            assert everything[1]["payload"] == {
+                "ending": "completed",
+                "error_summary": None,
+            }
 
             after_the_first = (
                 await client.get("/api/conversation/conversations/c/events", params={"after": 1})
             ).json()["events"]
             assert [event["sequence"] for event in after_the_first] == [2]
-
-    _run(exercise)
-
-
-def test_proposal_delivery_failure_is_public_without_a_backend_write(
-    harness: _Harness,
-) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "proposal-failure")
-            for _ in range(2):
-                await harness.system.record_proposal_delivery_failed(
-                    "proposal-failure",
-                    attempt_count=10,
-                    last_error="write_to_backend_failed",
-                    sender_message_id="proposal-delivery-failed:t_one:1",
-                )
-            events = (await client.get(
-                "/api/conversation/conversations/proposal-failure/events"
-            )).json()["events"]
-            assert len(events) == 1
-            assert events[0]["kind"] == "proposal_delivery_failed"
-            assert events[0]["payload"] == {
-                "attempt_count": 10,
-                "last_error": "write_to_backend_failed",
-                "sender_message_id": "proposal-delivery-failed:t_one:1",
-            }
-            assert harness.backend("proposal-failure").written_texts == []
 
     _run(exercise)
 
@@ -1892,7 +1887,8 @@ def test_the_tail_replays_then_carries_on_with_no_gap_and_no_repeat(
 
                 # Committed after the replay was read: it can only arrive live.
                 stored = await harness.store.append_event(
-                    "c", AgentMessageEventPayload(content=text_message_content("row five"))
+                    "c",
+                    AgentMessageEventPayload(content=text_message_content("row five")),
                 )
                 harness.live_tail.publish_event(stored)
                 name, payload = await stream.next_named_frame()
@@ -1951,7 +1947,10 @@ def test_the_tail_shows_text_that_has_not_finished_arriving_and_never_stores_it(
 
             # The pieces were shown and forgotten: nothing about them is in the record.
             rows = (await client.get("/api/conversation/conversations/c/events")).json()
-            assert [event["kind"] for event in rows["events"]] == ["prompt", "turn_ended"]
+            assert [event["kind"] for event in rows["events"]] == [
+                "prompt",
+                "turn_ended",
+            ]
 
     _run(exercise)
 
@@ -1986,14 +1985,25 @@ def test_the_tail_shows_a_tool_call_getting_on_with_it_and_keeps_no_row_for_it(
                 await harness.finish_tool_call("c", "t-9")
 
                 name, payload = await stream.next_named_frame()
-                assert (name, payload["kind"]) == (COMMITTED_EVENT_STREAM_NAME, "tool_call_started")
-                assert await stream.next_named_frame() == (
-                    LIVE_FRAME_STREAM_NAME,
-                    {"frame": "tool_call_progress", "tool_call_id": "t-9", "detail": "total 0\n"},
+                assert (name, payload["kind"]) == (
+                    COMMITTED_EVENT_STREAM_NAME,
+                    "tool_call_started",
                 )
                 assert await stream.next_named_frame() == (
                     LIVE_FRAME_STREAM_NAME,
-                    {"frame": "tool_call_progress", "tool_call_id": "t-9", "detail": "halfway"},
+                    {
+                        "frame": "tool_call_progress",
+                        "tool_call_id": "t-9",
+                        "detail": "total 0\n",
+                    },
+                )
+                assert await stream.next_named_frame() == (
+                    LIVE_FRAME_STREAM_NAME,
+                    {
+                        "frame": "tool_call_progress",
+                        "tool_call_id": "t-9",
+                        "detail": "halfway",
+                    },
                 )
                 name, payload = await stream.next_named_frame()
                 assert (name, payload["kind"]) == (
@@ -2424,7 +2434,11 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
 
         created = client.post(
             "/api/conversation/conversations",
-            json={"conversation_id": "wired", "model": "a-model", "backend_key": "codex"},
+            json={
+                "conversation_id": "wired",
+                "model": "a-model",
+                "backend_key": "codex",
+            },
         )
         assert created.status_code == 201
         assert created.json()["backend_key"] == "codex"
@@ -2705,7 +2719,9 @@ def test_the_raw_message_envelope_has_an_exact_boundary_and_counts_all_images(
     _run(exercise)
 
 
-def test_the_picture_reaches_the_backend_and_not_just_the_record(harness: _Harness) -> None:
+def test_the_picture_reaches_the_backend_and_not_just_the_record(
+    harness: _Harness,
+) -> None:
     """A row is not delivery. The message the agent was handed carries the picture too."""
 
     async def exercise() -> None:

@@ -42,7 +42,6 @@ from planner.conversation.events import (
     PromptDeliveryUncertainEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
-    ProposalDeliveryFailedEventPayload,
     TokenUsageEventPayload,
     ToolCallFinishedEventPayload,
     ToolCallStartedEventPayload,
@@ -97,11 +96,6 @@ EVERY_PAYLOAD: tuple[ConversationEventPayload, ...] = (
     A_PROMPT,
     A_REFUSED_DELIVERY,
     A_UNCERTAIN_DELIVERY,
-    ProposalDeliveryFailedEventPayload(
-        attempt_count=10,
-        last_error="write_to_backend_failed",
-        sender_message_id="proposal-failure-1",
-    ),
     PromptDiscardedEventPayload(content=text_message_content("never ran"), sender_label="owner"),
     MessageToOwnerEventPayload(
         content=text_message_content("status"),
@@ -157,7 +151,10 @@ EVERY_PAYLOAD: tuple[ConversationEventPayload, ...] = (
     ModelChangedEventPayload(model="second-model", reasoning_effort=None),
     # Every count a backend gave, and the money only one of them knows about.
     TokenUsageEventPayload(
-        input_tokens=41_000, output_tokens=920, cached_input_tokens=38_400, cost_usd=0.42
+        input_tokens=41_000,
+        output_tokens=920,
+        cached_input_tokens=38_400,
+        cost_usd=0.42,
     ),
     ContextCompactedEventPayload(),
     TurnEndedEventPayload(ending=ConversationTurnEnding.failed, error_summary="it fell over"),
@@ -299,12 +296,17 @@ def test_a_sent_message_carries_its_id_into_whichever_row_it_becomes() -> None:
 # --- the conversation row ----------------------------------------------------------------
 
 
-def test_a_conversation_is_read_back_as_it_was_written(store: ConversationStore) -> None:
+def test_a_conversation_is_read_back_as_it_was_written(
+    store: ConversationStore,
+) -> None:
     async def exercise() -> None:
         resolved = _resolved(
             role_materials=ConversationRoleMaterials(
                 role_text="You are the Chief of Staff.",
-                identity_environment_variables=(("PANELS_ROLE", "chief"), ("HOME_ISH", "/tmp")),
+                identity_environment_variables=(
+                    ("PANELS_ROLE", "chief"),
+                    ("HOME_ISH", "/tmp"),
+                ),
             ),
             model="first-model",
         )
@@ -396,8 +398,7 @@ def test_owner_read_position_and_attention_state_share_one_immediate_transaction
     commit = statements.index("COMMIT")
     transaction = statements[begin:commit]
     assert any(
-        statement.startswith("UPDATE CONVERSATIONS SET OWNER_READ")
-        for statement in transaction
+        statement.startswith("UPDATE CONVERSATIONS SET OWNER_READ") for statement in transaction
     )
     assert any(
         statement.startswith("INSERT INTO NOTIFICATION_ATTENTION_STATE")
@@ -541,7 +542,9 @@ SECOND_MENU = (
 )
 
 
-def test_the_commands_an_agent_offers_are_kept_and_read_back(store: ConversationStore) -> None:
+def test_the_commands_an_agent_offers_are_kept_and_read_back(
+    store: ConversationStore,
+) -> None:
     """Every command, in the order it was reported, with and without an argument hint."""
 
     async def exercise() -> None:
@@ -697,10 +700,7 @@ def test_turn_settlement_moves_the_matching_automatic_compaction_markers(
         not_compacted = await store.read_conversation("c")
         assert not_compacted is not None
         assert not_compacted.automatically_compacted_through_sequence == 0
-        assert (
-            not_compacted.automatic_compaction_attempted_through_sequence
-            == activity.sequence
-        )
+        assert not_compacted.automatic_compaction_attempted_through_sequence == activity.sequence
 
         later_activity = await store.append_event("c", AN_AGENT_MESSAGE, agent_activity=True)
         await store.append_event(
@@ -709,10 +709,7 @@ def test_turn_settlement_moves_the_matching_automatic_compaction_markers(
         compacted = await store.read_conversation("c")
         assert compacted is not None
         assert compacted.automatically_compacted_through_sequence == later_activity.sequence
-        assert (
-            compacted.automatic_compaction_attempted_through_sequence
-            == later_activity.sequence
-        )
+        assert compacted.automatic_compaction_attempted_through_sequence == later_activity.sequence
 
     asyncio.run(exercise())
 
@@ -734,7 +731,9 @@ def test_not_compacted_turn_result_round_trips_and_old_turn_endings_still_read()
     ) == TurnEndedEventPayload(ending=ConversationTurnEnding.completed)
 
 
-def test_the_record_is_read_back_in_order_from_any_position(store: ConversationStore) -> None:
+def test_the_record_is_read_back_in_order_from_any_position(
+    store: ConversationStore,
+) -> None:
     async def exercise() -> None:
         await store.create_conversation(_resolved())
         written = [await store.append_event("c", payload) for payload in EVERY_PAYLOAD]

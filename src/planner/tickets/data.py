@@ -26,8 +26,6 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.days import data as days_data
 from planner.notifications.attention import capture_ticket_attention
-from planner.proposal_holder_wakes import data as proposal_holder_wakes_data
-from planner.proposal_holder_wakes.contracts import proposal_ready_message
 from planner.tickets import worker_context as ticket_worker_context
 from planner.tickets.contracts import (
     AtCap,
@@ -486,7 +484,12 @@ def _seed_kickoff(
         else None
     )
     if target is not None:
-        return target, {"kickoff": kickoff_note}, None, machine.resting_ticket_status(ownership)
+        return (
+            target,
+            {"kickoff": kickoff_note},
+            None,
+            machine.resting_ticket_status(ownership),
+        )
     return (
         stage,
         {},
@@ -638,8 +641,6 @@ def _apply_decision(
     new_ceiling = decision.ceiling
     new_at_cap = decision.at_cap
     _validate_ceiling_holder(conn, decision.ceiling_holder, ticket_id=ticket.id)
-    if ticket.pending_proposal is not None and decision.pending_proposal is None:
-        proposal_holder_wakes_data.cancel(conn, ticket.id, now=now)
     # Pre-persist door: the prospective (stage, ceiling) must be registry-valid for
     # this ticket's type before any SQL — the enforcement the dropped DB CHECKs gave.
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
@@ -1385,7 +1386,13 @@ def audit_ticket_registry_integrity(conn: sqlite3.Connection) -> None:
                 and ticket.pending_proposal is None
             ):
                 raise PlannerError(ErrorCode.validation, "awaiting approval without a proposal")
-        except (PlannerError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        except (
+            PlannerError,
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as exc:
             raise RuntimeError(
                 f"ticket integrity audit failed: id={row['id']} reason={exc}"
             ) from exc
@@ -1596,13 +1603,6 @@ def file_current_proposal_with_recap(
             (recap, now, ticket_id),
         )
         if decision.pending_proposal is not None:
-            proposal_holder_wakes_data.record_replacement(
-                conn,
-                ticket_id,
-                holder=decision.ceiling_holder,
-                message=proposal_ready_message(ticket_id),
-                now=now,
-            )
             _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
         else:
             updated = _load_ticket_for_write(conn, ticket_id)
@@ -1913,7 +1913,6 @@ def return_for_revision(
     ticket_id: str,
     *,
     message: str,
-    lifecycle_message: str,
     principal: Principal,
     now: int,
     expected_proposal: PendingTicketProposal | None = None,
@@ -1938,16 +1937,23 @@ def return_for_revision(
             principal,
             worker_type_definition=worker_type_definition,
         )
-        proposal_holder_wakes_data.record_rejection_messages(
+        guidance = f"{ticket.guidance}\n\n{message}" if ticket.guidance else message
+        conn.execute(
+            "UPDATE tickets SET guidance = ?, updated_at = ? WHERE id = ?",
+            (guidance, now, ticket_id),
+        )
+        updated = _apply_decision(conn, ticket, decision, now)
+        conn.execute(
+            "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
+            (ticket_id, ticket.stage),
+        )
+        ticket_worker_context.set_ticket_revision_requested(conn, ticket_id)
+        _write_resting_ticket_status(
             conn,
-            ticket_id,
-            lifecycle_message=lifecycle_message,
-            comment=message,
-            sender=principal,
+            updated,
+            worker_type_definition=worker_type_definition,
             now=now,
         )
-        _apply_decision(conn, ticket, decision, now)
-        _write_ticket_status(conn, ticket_id, TicketStatus.agent, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -2223,7 +2229,12 @@ def edit_ticket(
 
 
 def write_recap(
-    conn: sqlite3.Connection, ticket_id: str, *, body: str, principal: Principal, now: int
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    body: str,
+    principal: Principal,
+    now: int,
 ) -> Ticket:
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)

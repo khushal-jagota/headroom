@@ -15,7 +15,6 @@ from planner.core.contracts import LinkKind, Principal, PrincipalKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.message_delivery import service as message_delivery_service
-from planner.runtime.logic.worker_step_prompt import proposal_returned_for_revision_prompt
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, Ticket
@@ -237,7 +236,7 @@ def file_current_proposal(
     ctx: RequestContext,
     clock: Clock,
 ) -> Ticket:
-    """Park a proposal and its wake intent; the machine-lock loop delivers it."""
+    """Park a proposal for its ceiling holder to review."""
     return tickets_data.file_current_proposal_with_recap(
         conn,
         ticket_id,
@@ -258,7 +257,7 @@ async def return_ticket_for_revision(
     clock: Clock,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
-    """Commit the rejection and two durable messages, then return without backend I/O."""
+    """Commit the rejection guidance, then return without backend I/O."""
     admission.validate_body(message, "revision guidance")
     principal = ctx.principal
     now = clock.now_unix()
@@ -275,7 +274,6 @@ async def return_ticket_for_revision(
         conn,
         ticket_id,
         message=message,
-        lifecycle_message=proposal_returned_for_revision_prompt(),
         principal=principal,
         now=now,
         expected_proposal=ticket.pending_proposal,
