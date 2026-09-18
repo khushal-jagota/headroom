@@ -120,26 +120,26 @@ def _validate_definition(
                 "non-terminal stage must gate a field",
                 {"worker_type": worker_type, "stage": stage.id},
             )
-        if not stage.is_terminal and stage.default_ownership_mode is None:
+        if not stage.is_terminal and stage.ownership_mode is None:
             raise fail(
-                "non-terminal stage must declare default ownership",
+                "non-terminal stage must declare ownership",
                 {"worker_type": worker_type, "stage": stage.id},
             )
-        if stage.is_terminal and stage.default_ownership_mode is not None:
+        if stage.is_terminal and stage.ownership_mode is not None:
             raise fail(
-                "terminal stage may not declare default ownership",
+                "terminal stage may not declare ownership",
                 {"worker_type": worker_type, "stage": stage.id},
             )
-        if stage.default_ownership_mode is not None and not isinstance(
-            stage.default_ownership_mode, StageOwnershipMode
+        if stage.ownership_mode is not None and not isinstance(
+            stage.ownership_mode, StageOwnershipMode
         ):
             raise fail(
-                "stage default ownership must be a known mode",
+                "stage ownership must be a known mode",
                 {"worker_type": worker_type, "stage": stage.id},
             )
-    if dropped.default_ownership_mode is not None:
+    if dropped.ownership_mode is not None:
         raise fail(
-            "terminal stage may not declare default ownership",
+            "terminal stage may not declare ownership",
             {"worker_type": worker_type, "stage": "dropped"},
         )
 
@@ -258,9 +258,9 @@ class WorkerTypeRegistry:
                 "label": stage.label,
                 "gating_field": stage.gating_field,
                 "is_terminal": stage.is_terminal,
-                "default_ownership_mode": (
-                    stage.default_ownership_mode.value
-                    if stage.default_ownership_mode is not None
+                "ownership_mode": (
+                    stage.ownership_mode.value
+                    if stage.ownership_mode is not None
                     else None
                 ),
             }
@@ -271,7 +271,7 @@ class WorkerTypeRegistry:
             "label": definition.dropped_stage.label,
             "gating_field": definition.dropped_stage.gating_field,
             "is_terminal": definition.dropped_stage.is_terminal,
-            "default_ownership_mode": None,
+            "ownership_mode": None,
         }
         fields: list[WorkerTypeManifestField] = [
             {"id": field.id, "label": field.label} for field in definition.fields

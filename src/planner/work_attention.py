@@ -74,7 +74,7 @@ def _ticket_rows(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sq
     placeholders = ",".join("?" for _ in ticket_ids)
     rows = conn.execute(
         "SELECT id, stage, worker_type, ticket_status, pending_proposal, ceiling_holder, "
-        "stage_ownership_overrides, default_stage_ownership_mode, conversation_id "
+        "conversation_id "
         f"FROM tickets WHERE id IN ({placeholders})",
         tuple(sorted(ticket_ids)),
     ).fetchall()
@@ -101,12 +101,6 @@ def _ticket_attention(
     assigned = ticket_assignment_from_values(
         stage=str(row["stage"]),
         worker_type=str(row["worker_type"]),
-        stage_ownership_overrides=str(row["stage_ownership_overrides"]),
-        default_stage_ownership_mode=(
-            str(row["default_stage_ownership_mode"])
-            if row["default_stage_ownership_mode"] is not None
-            else None
-        ),
         owner_holds_ceiling=owner_holds_ceiling,
     )
     agent_state = (
@@ -130,7 +124,7 @@ def ticket_is_assigned(
     owner_holds_ceiling: bool,
 ) -> bool:
     """Whether the current Ticket stage is Khushal's work."""
-    return ownership in {StageOwnershipMode.user, StageOwnershipMode.paired} or (
+    return ownership is StageOwnershipMode.user or (
         stage == "needs_kickoff" and owner_holds_ceiling
     )
 
@@ -139,27 +133,13 @@ def ticket_assignment_from_values(
     *,
     stage: str,
     worker_type: str,
-    stage_ownership_overrides: str,
-    default_stage_ownership_mode: str | None,
     owner_holds_ceiling: bool,
 ) -> bool:
-    """Derive assignment from the stored Ticket ownership facts."""
+    """Derive assignment from the Worker type's ownership declaration."""
     definition = configured_worker_type_registry().require(worker_type)
-    captured_default = (
-        StageOwnershipMode(default_stage_ownership_mode)
-        if default_stage_ownership_mode is not None
-        else None
-        if definition.is_terminal(stage)
-        else definition.stage_definition(stage).default_ownership_mode
-    )
-    ownership = machine.effective_stage_ownership_mode(
+    ownership = machine.stage_ownership_mode(
         stage,
-        {
-            key: StageOwnershipMode(value)
-            for key, value in json.loads(stage_ownership_overrides).items()
-        },
         worker_type_definition=definition,
-        default_stage_ownership_mode=captured_default,
     )
     return ticket_is_assigned(stage, ownership, owner_holds_ceiling)
 

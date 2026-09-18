@@ -69,11 +69,11 @@ surface a delivery failure, or fall back to the owner.
   defaults to this Sprint Item. Use `--holder-kind` and `--holder-id` to address another
   principal explicitly.
 - `reject` atomically stores the exact attributed rejection feedback for the current
-  Stage, clears the proposal, re-arms a paired Stage when applicable, and settles the
+  Stage, clears the proposal, re-arms a user-owned Stage when applicable, and settles the
   Ticket at its normal resting status. It does not change Ticket guidance or send a
   separate message. The next standard Worker prompt carries the feedback once.
 - `add-to-day` and `remove-from-day` change Day membership.
-- `block` and `unblock` change blocker links inside the Item boundary.
+- `block` and `unblock` change Ticket blocks between current child Tickets.
 - `artifact-list`, `artifact-write`, and `artifact-delete` manage Item artifacts.
 - `message-worker` sends guidance to a Worker. See **Worker guidance**.
 - `restart-worker` starts a child Ticket's worker step again, when its Worker is dead.
@@ -119,7 +119,7 @@ because a plain restart brings the Worker back on the same one. The named config
 what the Ticket launches on from then on, not for one turn.
 
 Three rules bound the action, and the server enforces all three. The Ticket must be a
-current child of your Item. Its Stage must be Worker-owned, because a paired conversation
+current child of your Item. Its Stage must be Worker-owned, because a user-owned conversation
 belongs to the user. The worker step must have had five minutes, so a Worker that is
 merely slow is left alone.
 

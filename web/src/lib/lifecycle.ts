@@ -16,7 +16,7 @@ export type ManifestStage = {
   label: string;
   gating_field: string | null;
   is_terminal: boolean;
-  default_ownership_mode: StageOwnershipMode | null;
+  ownership_mode: StageOwnershipMode | null;
 };
 
 export type ManifestField = {
@@ -56,17 +56,17 @@ export type Lifecycle = {
   ceilingRange: string[]; // == m.ceiling_range
   fieldLabel: Record<string, string>;
   stageLabel: Record<string, string>;
-  stageDefaultOwnershipMode: Record<string, StageOwnershipMode | null>;
+  stageOwnershipMode: Record<string, StageOwnershipMode | null>;
 };
 
 export function buildLifecycle(m: WorkerTypeManifest): Lifecycle {
   const gatingField: Record<string, string> = {};
   const gatedStage: Record<string, string> = {};
   const stageLabel: Record<string, string> = {};
-  const stageDefaultOwnershipMode: Record<string, StageOwnershipMode | null> = {};
+  const stageOwnershipMode: Record<string, StageOwnershipMode | null> = {};
   for (const stage of m.stages) {
     stageLabel[stage.id] = stage.label;
-    stageDefaultOwnershipMode[stage.id] = stage.default_ownership_mode;
+    stageOwnershipMode[stage.id] = stage.ownership_mode;
     if (!stage.is_terminal && stage.gating_field) {
       gatingField[stage.id] = stage.gating_field;
       gatedStage[stage.gating_field] = stage.id;
@@ -87,7 +87,7 @@ export function buildLifecycle(m: WorkerTypeManifest): Lifecycle {
     ceilingRange: [...m.ceiling_range],
     fieldLabel,
     stageLabel,
-    stageDefaultOwnershipMode
+    stageOwnershipMode
   };
 }
 
@@ -123,15 +123,16 @@ export function ceilingOptionsFor(
 
 export function preferredScopeCeilingFor(
   lc: Lifecycle | null,
-  newStage: string | null,
-  suggestedNextCeiling: string | null
+  newStage: string | null
 ): string | null {
   if (!lc) return null;
   const options = ceilingOptionsFor(lc, newStage || lc.ceilingRange[0] || "needs_success");
-  if (suggestedNextCeiling && options.some((option) => option.value === suggestedNextCeiling)) {
-    return suggestedNextCeiling;
-  }
-  return newStage || options[0]?.value || null;
+  const advanced = newStage ? lc.advance[newStage] : null;
+  if (advanced && options.some((option) => option.value === advanced)) return advanced;
+  const terminal = [...options].reverse().find((option) =>
+    !Object.prototype.hasOwnProperty.call(lc.advance, option.value)
+  );
+  return terminal?.value || options.at(-1)?.value || newStage || null;
 }
 
 export function fieldIsPassedFor(
@@ -160,7 +161,7 @@ export function ticketStageVisualStateFor(
   if (gatingFieldFor(lc, ticketStage) === fieldName) {
     if (ticketStatus === "agent") return "current-running";
     if (ticketStatus === "errored") return "errored";
-    if (ticketStatus === "paired") return "current-paired";
+    if (ticketStatus === "assigned") return "current-assigned";
     if (fieldHasProposal || ticketStatus === "awaiting_approval") {
       return "current-awaiting-approval";
     }
@@ -178,7 +179,7 @@ export function fieldStageVisualStateFor(
   const projectedStatus = detail.awaiting_approval
     ? "awaiting_approval"
     : detail.assigned
-      ? "paired"
+      ? "assigned"
       : detail.agent_state === "working"
         ? "agent"
         : detail.agent_state === "errored"

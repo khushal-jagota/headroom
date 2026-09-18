@@ -2,7 +2,7 @@
 
 Panels is a personal planning and work system that runs on one host. Its record contains
 **Days**, **Sprints**, **Sprint Items**, **Tickets**, **Ideas**, **Feedback**, and **Projects**. Tickets
-can carry work for an AI Worker, paired work, or user-owned personal tasks. Each Ticket
+can carry worker-owned work or user-owned work with an agent alongside. Each Ticket
 owns its Project and optional Sprint placement. An Outcome holds optional shared context across Sprints. Explicit commitments select
 Outcomes before Tickets exist; Tickets keep their own scheduling. The stored Item
 identity and its supervisor conversation remain stable.

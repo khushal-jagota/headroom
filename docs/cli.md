@@ -47,9 +47,7 @@ The command tree matches the system model:
 - `worker ...` — worker-only writes such as ticket proposals, recaps, and notes.
 
 Ordinary command groups do not expose internal runtime controls. Ticket `ticket_status`
-and run claiming remain code-owned. The direct `ticket ownership` command changes a
-declared Stage override; it is not a runtime-status setter. No command performs an
-arbitrary Stage jump.
+and run claiming remain code-owned. No command performs an arbitrary Stage jump.
 
 ## Bounded list reads
 
@@ -175,13 +173,10 @@ record shapes. Direct `show` commands also keep their full record shapes.
   belongs to the backend that named it; leave `--reasoning-effort` out for a model that
   takes none. It changes that choice only during pristine Kickoff, before a conversation
   exists.
-- **`ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** — set or
-  clear one Stage's ownership override. `default` clears the override so the Worker
-  type's Stage default applies. Terminal and unknown Stages are rejected.
 - **`ticket copy`** — copy one ticket's plain-text packet.
 - **`sprint create / list / show / set`** — plan sprints. `current` resolves through
   `/api/sprint/current`; `none` means the backlog where a list supports it.
-- **`sprint item create / list / show / set / add-ticket / remove-ticket / block / unblock / delete`**
+- **`sprint item create / list / show / set / add-ticket / remove-ticket / delete`**
   — manage durable Outcome context through the existing Item identity. Item records
   have no single Sprint and no derived Outcome status. Classification aligns the
   Ticket's Project and preserves its Sprint; removal preserves Project and Sprint.
@@ -220,13 +215,15 @@ record shapes. Direct `show` commands also keep their full record shapes.
   Ticket launches on from then on, so a Worker that died on its backend does not come
   back on the same one. Leave the options out to restart on what the Ticket already has.
   A worker step gets its first five minutes before it may be restarted, so a Worker that
-  is merely slow is left alone. Only a Worker-owned Stage can be restarted: a paired
+  is merely slow is left alone. Only a Worker-owned Stage can be restarted. A user-owned
   conversation belongs to the user.
 - **`sprint item supervisor set-item / set-ticket / scope / add-to-day / remove-from-day / block / unblock`**
   — use item-scoped canonical actions for the owning Item and its current child Tickets.
   `scope` takes the ceiling as either the stage name or the plain name of the field that
   stage needs. `--ceiling closeout` and `--ceiling needs_closeout` mean the same thing.
-  A scope change makes that Sprint Item the ceiling holder and cannot retarget a pending
+  `block` and `unblock` use `--blocking-ticket` and `--blocked-ticket`. Both Tickets
+  must be current children of the supervisor's Item. A scope change makes that Sprint
+  Item the ceiling holder and cannot retarget a pending
   proposal.
 - A supervisor creates a child Ticket with ordinary `ticket create --sprint-item`,
   the same command every other actor uses, and that Ticket is scoped like any other.
@@ -305,8 +302,8 @@ A Ticket worker runs with `PLAN_ACTOR=worker` and its own `PLAN_TICKET_ID`. The 
 forwards those as `X-Plan-Actor` and `X-Plan-Ticket-ID`, including when the worker uses
 an ordinary command. The server resolves that pair to the Ticket principal and checks
 that the Ticket exists. Any Ticket
-worker can use the existing commands that move Tickets and add or remove blocking
-links. The exact `planning-day`, `planning-midday-check`, and `planning-sprint`
+worker can use the existing commands that move Tickets and add or remove Ticket blocks.
+The exact `planning-day`, `planning-midday-check`, and `planning-sprint`
 Worker types keep their other narrow day or sprint writes.
 
 This is a truthful local process claim, not a

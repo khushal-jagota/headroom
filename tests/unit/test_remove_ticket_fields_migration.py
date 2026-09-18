@@ -9,7 +9,7 @@ from alembic import command
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.core import db as db_module
-from planner.core.db import connect, create_schema
+from planner.core.db import connect
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, TicketStatus
 
@@ -26,6 +26,15 @@ def _upgrade_to_previous_revision(path: Path) -> sqlite3.Connection:
     finally:
         engine.dispose()
     return connect(str(path))
+
+
+def _upgrade(path: Path, revision: str) -> None:
+    engine = db_module._migration_engine(str(path), 5000)
+    try:
+        with engine.begin() as connection:
+            command.upgrade(db_module._alembic_config(connection), revision)
+    finally:
+        engine.dispose()
 
 
 def _ticket_rows_without_removed_fields(conn: sqlite3.Connection) -> list[tuple[object, ...]]:
@@ -76,8 +85,8 @@ def test_migration_drops_only_the_two_fields_and_alias_index(tmp_path: Path) -> 
     rows_before = _ticket_rows_without_removed_fields(conn)
     conn.close()
 
+    _upgrade(db_path, HEAD_REVISION)
     upgraded = connect(str(db_path))
-    create_schema(upgraded)
 
     revision = upgraded.execute("SELECT version_num FROM alembic_version").fetchone()[0]
     assert revision == HEAD_REVISION

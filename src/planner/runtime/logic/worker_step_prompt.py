@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from planner.tickets.contracts import StageOwnershipMode, Ticket
+from planner.tickets.logic import machine
 from planner.tickets.revision_feedback import PendingRevisionFeedback
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -43,15 +44,15 @@ def compose_worker_step_prompt(
     gating = worker_type_definition.gating_field(ticket.stage)
     field = str(gating) if gating is not None else "the next step"
 
-    ownership_wire = (
-        ticket.effective_stage_ownership_mode.value
-        if ticket.effective_stage_ownership_mode is not None
-        else "terminal"
+    ownership_mode = machine.stage_ownership_mode(
+        ticket.stage,
+        worker_type_definition=worker_type_definition,
     )
-    if ticket.effective_stage_ownership_mode is StageOwnershipMode.paired:
+    ownership_wire = ownership_mode.value if ownership_mode is not None else "terminal"
+    if ownership_mode is StageOwnershipMode.user:
         step_instruction = (
             f"Work ticket {ticket.id} — {ticket.title}. It is at Stage '{str(ticket.stage)}'; "
-            f"open the paired discussion for the '{field}' field. "
+            f"open the collaborative discussion for the '{field}' field. "
             "Ask bounded questions or resume the Stage conversation, and do not file a "
             "proposal until the discussion has enough shared understanding. "
             f"Stage owner: {ownership_wire}."

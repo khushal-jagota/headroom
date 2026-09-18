@@ -703,6 +703,71 @@ def _child_ticket(client: TestClient, item_id: str, title: str = "Child of the I
     return str(created.json()["id"])
 
 
+def test_supervisor_ticket_blocks_stay_inside_its_child_tickets(tmp_path: Path) -> None:
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client, "Owned")
+        other_item = _create_item(client, "Other")
+        blocker_id = _child_ticket(client, str(item["id"]), "Blocker")
+        blocked_id = _child_ticket(client, str(item["id"]), "Blocked")
+        outsider_id = _child_ticket(client, str(other_item["id"]), "Outsider")
+        path = f"/api/items/{item['id']}/supervisor/ticket-blocks"
+        headers = _supervisor_headers(str(item["id"]))
+
+        added = client.post(
+            path,
+            headers=headers,
+            json={
+                "blocking_ticket_id": blocker_id,
+                "blocked_ticket_id": blocked_id,
+            },
+        )
+        cross_item = client.post(
+            path,
+            headers=headers,
+            json={
+                "blocking_ticket_id": blocker_id,
+                "blocked_ticket_id": outsider_id,
+            },
+        )
+        item_target = client.post(
+            path,
+            headers=headers,
+            json={
+                "blocking_ticket_id": blocker_id,
+                "blocked_ticket_id": str(item["id"]),
+            },
+        )
+        removed = client.delete(
+            path,
+            headers=headers,
+            params={
+                "blocking_ticket_id": blocker_id,
+                "blocked_ticket_id": blocked_id,
+            },
+        )
+
+    assert added.status_code == 200, added.text
+    assert added.json() == {
+        "blocking_ticket_id": blocker_id,
+        "blocked_ticket_id": blocked_id,
+    }
+    assert cross_item.status_code == 400
+    assert cross_item.json()["error"]["code"] == "agent_forbidden"
+    assert item_target.status_code == 400
+    assert item_target.json()["error"]["code"] == "agent_forbidden"
+    assert removed.status_code == 200, removed.text
+    with connect(str(db_path)) as conn:
+        assert conn.execute("SELECT count(*) FROM ticket_blocks").fetchone()[0] == 0
+
+
+def test_generic_link_api_does_not_exist(tmp_path: Path) -> None:
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        assert client.post("/api/links", json={}).status_code == 404
+        assert client.delete("/api/links").status_code == 404
+
+
 # --- restarting a dead Worker -------------------------------------------------
 
 
@@ -713,6 +778,7 @@ def _stranded_child(
     *,
     conversation_id: str = "conv-dead-worker",
     ticket_status_changed_at: int = 1,
+    worker_type: str = "coding",
 ) -> str:
     """A child Ticket exactly as a dead Worker leaves one: at `agent`, holding nothing.
 
@@ -722,7 +788,7 @@ def _stranded_child(
     ticket = client.post(
         "/api/tickets",
         json={
-            "worker_type": "coding",
+            "worker_type": worker_type,
             "title": "Stranded child",
             "kickoff_note": "Start here.",
             "sprint_item_id": item_id,
@@ -731,7 +797,9 @@ def _stranded_child(
     accepted = client.post(
         f"/api/tickets/{ticket['id']}/accept/kickoff",
         json={
-            "next_ceiling": "needs_success",
+            "next_ceiling": (
+                "needs_understanding" if worker_type == "new_worker" else "needs_success"
+            ),
             "at_cap": "propose",
             "next_holder": _OWNER_HOLDER,
         },
@@ -806,17 +874,16 @@ def test_restart_clears_an_explicit_error_and_starts_again(tmp_path: Path) -> No
 
 
 def test_restart_refuses_a_stage_the_worker_does_not_own(tmp_path: Path) -> None:
-    """A Paired Stage rests where it departs, so a restart there kills a live discussion."""
+    """A user-owned Stage has a collaborative discussion that restart must preserve."""
     app, db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _create_item(client)
-        ticket_id = _stranded_child(client, db_path, str(item["id"]))
-        with connect(str(db_path)) as conn:
-            conn.execute(
-                "UPDATE tickets SET stage_ownership_overrides = ? WHERE id = ?",
-                (json.dumps({"needs_success": "paired"}), ticket_id),
-            )
-            conn.commit()
+        ticket_id = _stranded_child(
+            client,
+            db_path,
+            str(item["id"]),
+            worker_type="new_worker",
+        )
         response = client.post(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
             json={},

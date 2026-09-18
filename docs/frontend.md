@@ -42,7 +42,7 @@ One screen per part of the system:
   over the same tickets: **Tickets** or **Sprint Items**.
 
   The Tickets view starts with three owner-attention groups in this order: Awaiting
-  approval, Paired, and Messages. A ticket appears in only its first applicable group.
+  approval, Assigned, and Messages. A ticket appears in only its first applicable group.
   Approval takes precedence over assignment, and assignment takes precedence over a
   reply. Empty groups are not drawn. Every ticket outside these groups follows in the
   existing status order, so no ticket becomes unreachable.
@@ -57,7 +57,7 @@ One screen per part of the system:
   newest first.
 
   The Sprint Items view is one box per Sprint Item with a ticket on today. Each Item
-  shows only its non-empty Awaiting approval, Paired, and Messages child groups. Quiet
+  shows only its non-empty Awaiting approval, Assigned, and Messages child groups. Quiet
   child tickets remain available in the Tickets view and the Item workspace. A shut
   Item shows a line of counts for its owner-attention groups. Clicking anywhere in the
   box selects the Item and opens its workspace beside the rail. That is all a click on
@@ -164,9 +164,7 @@ One screen per part of the system:
   The stages and their workflow remain the Ticket's Worker type's, derived from the
   served manifest (see below and `worker-types.md`). Guidance and the archive stay off
   this page. Review still shows Guidance with an approval. The current Stage mark speaks without a second status pill.
-  Its summary adds words only where the mark would otherwise be ambiguous:
-  **you're on it** for user-owned or taken-over work, with **Release**, and
-  **awaiting approval** for a parked proposal. Running,
+  Its summary adds **awaiting approval** for a parked proposal. Running,
   completed, and upcoming marks need no
   extra label. Stage bodies, editing and approval behavior, and the worker conversation
   in serif along the bottom remain in place. During pristine Kickoff, the approval context also shows a restrained
@@ -205,8 +203,7 @@ One screen per part of the system:
   skill at `#/config/sprint-item-supervisor`, Worker skill at `#/config/worker-skill`,
   and a Worker at
   `#/config/workers/<worker-type>`. Those detail screens provide the applicable
-  launch defaults, suggested Kickoff ceiling controls, Stage ownership controls, and
-  skill editors. Worker and skill
+  launch defaults, a read-only Stage ownership table, and skill editors. Worker and skill
   identities and lifecycle structure stay read-only. Each editable value saves
   independently; a failed save keeps the attempted value and a useful error so it can
   be corrected or retried. The former `#/agents/worker-skill` and

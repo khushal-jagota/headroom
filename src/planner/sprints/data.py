@@ -12,7 +12,6 @@ from datetime import date
 from typing import NamedTuple, cast
 
 from planner.conversation.contracts import ConversationBackendKey
-from planner.core import links as core_links
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, Priority
 from planner.core.errors import ErrorCode, PlannerError
@@ -35,8 +34,6 @@ from planner.tickets.logic import admission
 
 class ItemRead(NamedTuple):
     item: SprintItem
-    blocking_ticket_ids: list[str]
-    blockers_cleared: bool
 
 
 _ITEM_PLAIN_FIELDS: frozenset[str] = frozenset(
@@ -595,19 +592,6 @@ def _delete_item_rows(conn: sqlite3.Connection, item_id: str) -> SprintItemDelet
             "Sprint Item cannot be deleted while it holds a Ticket ceiling",
             {"sprint_item_id": item_id, "held_ticket_id": str(held_ticket["id"])},
         )
-    link_rows = conn.execute(
-        "SELECT from_id, to_id, kind FROM links "
-        "WHERE from_id = ? OR to_id = ? ORDER BY from_id, to_id, kind",
-        (item_id, item_id),
-    ).fetchall()
-    linked_entity_ids = tuple(
-        sorted(
-            {
-                str(row["to_id"] if row["from_id"] == item_id else row["from_id"])
-                for row in link_rows
-            }
-        )
-    )
     sprint_ids = tuple(
         str(row[0])
         for row in conn.execute(
@@ -616,19 +600,12 @@ def _delete_item_rows(conn: sqlite3.Connection, item_id: str) -> SprintItemDelet
         )
     )
 
-    for row in link_rows:
-        conn.execute(
-            "DELETE FROM links WHERE from_id = ? AND to_id = ? AND kind = ?",
-            (str(row["from_id"]), str(row["to_id"]), str(row["kind"])),
-        )
-
     conn.execute("DELETE FROM sprint_items WHERE id = ?", (item_id,))
     conn.execute("DELETE FROM agents WHERE agent_key = ?", (item.supervisor_agent_key,))
     return SprintItemDeletion(
         sprint_item_id=item_id,
         title=item.title,
         sprint_ids=sprint_ids,
-        linked_entity_ids=linked_entity_ids,
     )
 
 
@@ -637,14 +614,7 @@ def _delete_item_rows(conn: sqlite3.Connection, item_id: str) -> SprintItemDelet
 
 def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
     item = _load_item(conn, item_id)
-    blocker_summary = core_links.blocker_summary(conn, item_id)
-    blocking_ticket_ids = [row.ticket_id for row in blocker_summary.blocked_by]
-    blockers_cleared = bool(blocking_ticket_ids) and not blocker_summary.blocked
-    return ItemRead(
-        item=item,
-        blocking_ticket_ids=blocking_ticket_ids,
-        blockers_cleared=blockers_cleared,
-    )
+    return ItemRead(item=item)
 
 
 def read_sprint(conn: sqlite3.Connection, sprint_id: str) -> Sprint:

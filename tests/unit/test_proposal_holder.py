@@ -34,16 +34,23 @@ from planner.tickets.logic.admission import REVISION_GUIDANCE_MAX_CHARACTERS
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
-def _park(conn: Connection, holder: Principal, now: int = 10) -> Ticket:
+def _park(
+    conn: Connection,
+    holder: Principal,
+    now: int = 10,
+    *,
+    worker_type: str = "coding",
+    stated_ceiling: str = "needs_success",
+) -> Ticket:
     ticket = data.create_ticket(
         conn,
         title=f"Proposal for {holder.kind.value}",
         principal=holder,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
-        worker_type="coding",
+        worker_type=worker_type,
         kickoff_note="Agreed kickoff",
-        stated_ceiling="needs_success",
+        stated_ceiling=stated_ceiling,
         stated_at_cap=AtCap.propose,
     )
     return data.file_current_proposal_with_recap(
@@ -270,13 +277,17 @@ def test_revision_stores_exact_attributed_feedback_without_mutating_guidance_and
     assert feedback.items[0].message == "  Preserve exact spacing.  "
 
 
-def test_revision_rearms_same_paired_stage_and_credits_exact_source_turn(
+def test_revision_rearms_same_user_owned_stage_and_credits_exact_source_turn(
     tmp_db: Connection, fake_clock: Clock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ticket = _park(tmp_db, CHIEF_PRINCIPAL)
+    ticket = _park(
+        tmp_db,
+        CHIEF_PRINCIPAL,
+        worker_type="new_worker",
+        stated_ceiling="needs_understanding",
+    )
     tmp_db.execute(
-        "UPDATE tickets SET conversation_id='c_worker', "
-        'stage_ownership_overrides=\'{"needs_success":"paired"}\' WHERE id=?',
+        "UPDATE tickets SET conversation_id='c_worker' WHERE id=?",
         (ticket.id,),
     )
     tmp_db.execute(
@@ -454,9 +465,9 @@ def test_migration_backfills_owner_and_startup_audits_holder_integrity(
     before = connect(str(db_path))
     before.execute(
         "INSERT INTO tickets "
-        "(id,title,worker_type,employee_backend,stage,ceiling,default_stage_ownership_mode,"
+        "(id,title,worker_type,employee_backend,stage,ceiling,"
         "field_values,created_at,updated_at) "
-        "VALUES ('t_old','Old','coding','codex','needs_kickoff','needs_kickoff','paired','{}',1,1)"
+        "VALUES ('t_old','Old','coding','codex','needs_kickoff','needs_kickoff','{}',1,1)"
     )
     before.close()
 

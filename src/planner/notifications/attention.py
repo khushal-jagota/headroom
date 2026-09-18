@@ -99,7 +99,7 @@ def capture_ticket_attention(conn: sqlite3.Connection, ticket_id: str, occurred_
 
     row = conn.execute(
         "SELECT id, stage, worker_type, ticket_status, pending_proposal, ceiling_holder, "
-        "stage_ownership_overrides, default_stage_ownership_mode, conversation_id "
+        "conversation_id "
         "FROM tickets WHERE id=?",
         (ticket_id,),
     ).fetchone()
@@ -120,12 +120,6 @@ def capture_ticket_attention(conn: sqlite3.Connection, ticket_id: str, occurred_
         "assigned": ticket_assignment_from_values(
             stage=str(row["stage"]),
             worker_type=str(row["worker_type"]),
-            stage_ownership_overrides=str(row["stage_ownership_overrides"]),
-            default_stage_ownership_mode=(
-                str(row["default_stage_ownership_mode"])
-                if row["default_stage_ownership_mode"] is not None
-                else None
-            ),
             owner_holds_ceiling=owner_holds,
         ),
         "errored": str(row["ticket_status"]) == "errored" or conversation[1],

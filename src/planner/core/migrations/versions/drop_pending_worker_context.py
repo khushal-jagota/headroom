@@ -1,7 +1,7 @@
 """Drop generic context that no worker-step path reads.
 
 Revision ID: drop_pending_worker_context
-Revises: remove_ticket_alias_and_backend_error
+Revises: ticket_blocks
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "drop_pending_worker_context"
-down_revision = "remove_ticket_alias_and_backend_error"
+down_revision = "ticket_blocks"
 branch_labels = None
 depends_on = None
 

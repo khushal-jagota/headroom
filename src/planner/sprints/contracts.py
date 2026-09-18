@@ -72,7 +72,6 @@ class SprintItemDeletion:
     sprint_item_id: str
     title: str
     sprint_ids: tuple[str, ...]
-    linked_entity_ids: tuple[str, ...]
 
 
 # --- request bodies (§9 wire shapes) ---

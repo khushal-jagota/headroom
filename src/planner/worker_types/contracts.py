@@ -15,7 +15,7 @@ class StageDefinition:
     label: str
     gating_field: str | None
     is_terminal: bool
-    default_ownership_mode: StageOwnershipMode | None
+    ownership_mode: StageOwnershipMode | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,7 +171,7 @@ class WorkerTypeManifestStage(TypedDict):
     label: str
     gating_field: str | None
     is_terminal: bool
-    default_ownership_mode: str | None
+    ownership_mode: str | None
 
 
 class WorkerTypeManifestField(TypedDict):

@@ -320,7 +320,6 @@
             lifecycle={lc}
             ticketStage={ticketDetail.stage}
             ceiling={ticketDetail.ceiling}
-            suggestedNextCeiling={ticketDetail.suggested_next_ceiling}
             stageState={fieldStageVisualStateFor(lc, ticketDetail, acceptField)}
             approvalDisabled={acceptField === "kickoff" && priorityBusy}
             onAccept={(payload) => accept(payload)}

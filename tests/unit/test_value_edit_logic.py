@@ -11,7 +11,6 @@ from planner.tickets.contracts import (
     AtCap,
     PendingTicketProposal,
     ResolvedTicketPriorityAnchors,
-    StageOwnershipMode,
     Ticket,
     TicketStatus,
 )
@@ -43,9 +42,6 @@ def _ticket(*, stage: str = "needs_success") -> Ticket:
         ticket_status=TicketStatus.awaiting_approval,
         ticket_status_changed_at=0,
         ticket_status_revision=0,
-        stage_ownership_overrides={},
-        default_stage_ownership_mode=StageOwnershipMode.worker,
-        effective_stage_ownership_mode=StageOwnershipMode.worker,
         conversation_id=None,
         field_values={},
         pending_proposal=None,
@@ -156,8 +152,6 @@ def test_direct_user_completes_unset_current_user_owned_gate() -> None:
         field_values={"kickoff": "context"},
         ceiling="needs_outcome",
         ticket_status=TicketStatus.empty,
-        default_stage_ownership_mode=StageOwnershipMode.user,
-        effective_stage_ownership_mode=StageOwnershipMode.user,
     )
 
     decision = resolution.decide_edit_value(
@@ -182,8 +176,6 @@ def test_direct_user_cannot_complete_any_field_except_the_current_gate(field: st
         worker_type="personal",
         field_values={},
         ticket_status=TicketStatus.empty,
-        default_stage_ownership_mode=StageOwnershipMode.user,
-        effective_stage_ownership_mode=StageOwnershipMode.user,
     )
     with pytest.raises(PlannerError) as exc:
         resolution.decide_edit_value(
@@ -203,8 +195,6 @@ def test_direct_user_cannot_complete_a_gate_with_a_pending_proposal() -> None:
         field_values={"kickoff": "context"},
         pending_proposal=PendingTicketProposal("outcome", "draft", "worker", 7),
         ticket_status=TicketStatus.empty,
-        default_stage_ownership_mode=StageOwnershipMode.user,
-        effective_stage_ownership_mode=StageOwnershipMode.user,
     )
     with pytest.raises(PlannerError) as exc:
         resolution.decide_edit_value(
@@ -226,8 +216,6 @@ def test_direct_user_cannot_complete_a_gate_while_control_is_active(
         worker_type="personal",
         field_values={"kickoff": "context"},
         ticket_status=status,
-        default_stage_ownership_mode=StageOwnershipMode.user,
-        effective_stage_ownership_mode=StageOwnershipMode.user,
     )
     with pytest.raises(PlannerError) as exc:
         resolution.decide_edit_value(

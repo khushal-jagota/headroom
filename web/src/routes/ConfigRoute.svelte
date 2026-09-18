@@ -8,12 +8,11 @@
   import { queries } from "../lib/queryCatalogue";
   import { resourceStateForQueries } from "../lib/resourceStateForQueries";
   import type { WorkerTypeManifest } from "../lib/lifecycle";
-  import { errorMessage, labelize } from "../lib/ui";
+  import { labelize } from "../lib/ui";
   import type {
     ChiefManagementSettings,
     EmployeeConfigurationSnapshot,
     ManagedSkill,
-    StageOwnershipMode,
     WorkerManagementDetail,
     WorkerManagementSettings
   } from "../lib/types";
@@ -61,20 +60,6 @@
     enabled: stableRoleKind === "worker" && stableRoleId !== null
   }));
 
-  const ownerOptions: Array<{ value: StageOwnershipMode; label: string }> = [
-    { value: "worker", label: "worker" },
-    { value: "user", label: "user" },
-    { value: "paired", label: "paired" }
-  ];
-
-  let selectedOwners = $state<Record<string, StageOwnershipMode>>({});
-  let lastServerOwners = $state<Record<string, StageOwnershipMode>>({});
-  let stageSaving = $state<Record<string, boolean>>({});
-  let stageSaveErrors = $state<Record<string, unknown>>({});
-  let suggestedCeilingChoice = $state("");
-  let lastServerSuggestedCeiling = $state("");
-  let suggestedCeilingSaving = $state(false);
-  let suggestedCeilingSaveError = $state<unknown>(null);
 
   let indexedSkills = $derived(
     new Map((skillsHome.data?.skills || []).map((skill) => [skill.name, skill]))
@@ -129,45 +114,6 @@
     });
   }
 
-  async function saveStageOwner(
-    settings: WorkerManagementSettings,
-    stage: string,
-    ownershipMode: StageOwnershipMode
-  ): Promise<void> {
-    selectedOwners = { ...selectedOwners, [stage]: ownershipMode };
-    stageSaving = { ...stageSaving, [stage]: true };
-    stageSaveErrors = { ...stageSaveErrors, [stage]: null };
-    try {
-      await mutateJson<WorkerManagementSettings>(
-        `/api/workers/${encodeURIComponent(settings.worker_type)}/stages/${encodeURIComponent(stage)}/default-ownership`,
-        { method: "PUT", body: { ownership_mode: ownershipMode } }
-      );
-    } catch (err) {
-      stageSaveErrors = { ...stageSaveErrors, [stage]: err };
-    } finally {
-      stageSaving = { ...stageSaving, [stage]: false };
-    }
-  }
-
-  async function saveSuggestedNextCeiling(
-    settings: WorkerManagementSettings,
-    suggestedNextCeiling: string
-  ): Promise<void> {
-    suggestedCeilingChoice = suggestedNextCeiling;
-    suggestedCeilingSaving = true;
-    suggestedCeilingSaveError = null;
-    try {
-      await mutateJson<WorkerManagementSettings>(
-        `/api/workers/${encodeURIComponent(settings.worker_type)}/suggested-next-ceiling`,
-        { method: "PUT", body: { suggested_next_ceiling: suggestedNextCeiling } }
-      );
-    } catch (err) {
-      suggestedCeilingSaveError = err;
-    } finally {
-      suggestedCeilingSaving = false;
-    }
-  }
-
   function saveWorkerLaunchDefaults(
     settings: WorkerManagementSettings,
     next: EmployeeConfigurationSnapshot
@@ -187,55 +133,11 @@
     }).then((saved) => saved.launch_defaults);
   }
 
-  function stageOwnerValue(settings: WorkerManagementSettings, stage: string): StageOwnershipMode {
-    return selectedOwners[stage] ?? settings.stage_ownership_defaults[stage] ?? "worker";
-  }
-
-  function sameOwners(
-    left: Record<string, StageOwnershipMode>,
-    right: Record<string, StageOwnershipMode>
-  ): boolean {
-    const leftEntries = Object.entries(left);
-    if (leftEntries.length !== Object.keys(right).length) return false;
-    return leftEntries.every(([stage, mode]) => right[stage] === mode);
-  }
-
   function gatedFieldLabel(manifest: WorkerTypeManifest, fieldId: string | null): string {
     if (!fieldId) return "";
     return manifest.fields.find((field) => field.id === fieldId)?.label || labelize(fieldId);
   }
 
-  $effect(() => {
-    const settings = worker.data?.settings;
-    if (!settings) return;
-    const next = { ...selectedOwners };
-    const nextServer = { ...lastServerOwners };
-    let selectedChanged = false;
-    for (const [stage, mode] of Object.entries(settings.stage_ownership_defaults)) {
-      const previousServerMode = lastServerOwners[stage];
-      nextServer[stage] = mode;
-      if (stageSaving[stage] || stageSaveErrors[stage]) continue;
-      if (next[stage] === undefined || next[stage] === previousServerMode) {
-        next[stage] = mode;
-        selectedChanged = true;
-      }
-    }
-    if (selectedChanged && !sameOwners(selectedOwners, next)) selectedOwners = next;
-    if (!sameOwners(lastServerOwners, nextServer)) lastServerOwners = nextServer;
-  });
-
-  $effect(() => {
-    const serverValue = worker.data?.settings.suggested_next_ceiling;
-    if (!serverValue) return;
-    if (
-      !suggestedCeilingChoice ||
-      (!suggestedCeilingSaving && !suggestedCeilingSaveError &&
-        suggestedCeilingChoice === lastServerSuggestedCeiling)
-    ) {
-      suggestedCeilingChoice = serverValue;
-    }
-    lastServerSuggestedCeiling = serverValue;
-  });
 </script>
 
 <section
@@ -438,41 +340,13 @@
               onSave={(next) => saveWorkerLaunchDefaults(detail.settings, next)}
             />
 
-            <section class="worker-kickoff-default" data-worker-kickoff-default>
-              <div>
-                <h2>Kickoff ceiling</h2>
-                <p>Suggested scope when Kickoff has no owner choice.</p>
-              </div>
-              <select
-                aria-label="Suggested Kickoff ceiling"
-                data-suggested-next-ceiling
-                data-saving={suggestedCeilingSaving ? "true" : "false"}
-                value={suggestedCeilingChoice || detail.settings.suggested_next_ceiling}
-                onchange={(event) => void saveSuggestedNextCeiling(
-                  detail.settings,
-                  event.currentTarget.value
-                )}
-              >
-                {#each manifest.ceiling_range.slice(1) as ceiling}
-                  <option value={ceiling}>
-                    {manifest.stages.find((stage) => stage.id === ceiling)?.label || labelize(ceiling)}
-                  </option>
-                {/each}
-              </select>
-              {#if suggestedCeilingSaveError}
-                <div class="worker-row-error" data-suggested-next-ceiling-error>
-                  {errorMessage(suggestedCeilingSaveError)}
-                </div>
-              {/if}
-            </section>
-
             <div class="worker-stage-table-shell">
               <table class="worker-stage-table" data-worker-stage-table>
                 <thead>
                   <tr>
                     <th>Stage</th>
                     <th class="worker-stage-gated-field">Gated field</th>
-                    <th>Default owner</th>
+                    <th>Owner</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -483,25 +357,11 @@
                         <span class="worker-stage-id">{stage.id}</span>
                       </td>
                       <td class="worker-stage-gated-field" data-gated-field>{gatedFieldLabel(manifest, stage.gating_field)}</td>
-                      <td data-default-owner={stage.is_terminal ? "" : stageOwnerValue(detail.settings, stage.id)}>
+                      <td data-stage-owner={stage.ownership_mode || ""}>
                         {#if stage.is_terminal}
                           <span class="worker-readonly-owner" data-terminal-owner>terminal</span>
                         {:else}
-                          <select
-                            class="worker-owner-select"
-                            aria-label={`Default owner for ${stage.label}`}
-                            data-stage-owner-select
-                            data-saving={stageSaving[stage.id] ? "true" : "false"}
-                            value={stageOwnerValue(detail.settings, stage.id)}
-                            onchange={(event) => void saveStageOwner(detail.settings, stage.id, event.currentTarget.value as StageOwnershipMode)}
-                          >
-                            {#each ownerOptions as option}
-                              <option value={option.value}>{option.label}</option>
-                            {/each}
-                          </select>
-                          {#if stageSaveErrors[stage.id]}
-                            <div class="worker-row-error" data-stage-owner-error>{errorMessage(stageSaveErrors[stage.id])}</div>
-                          {/if}
+                          <span class="worker-readonly-owner">{stage.ownership_mode}</span>
                         {/if}
                       </td>
                     </tr>

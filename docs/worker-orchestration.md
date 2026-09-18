@@ -4,8 +4,7 @@ Each Ticket has one active conversation, and one worker on the other end of it. 
 also retains its past conversations. This system decides when the active worker receives
 the Ticket's next step, and sends that step.
 That is the whole job. It does not watch the worker, wait for it to finish, or settle
-anything afterwards — a Ticket moves again only when someone acts on it: a proposal
-filed, an approval given, a take-over.
+anything afterwards. A Ticket moves again only when someone files or decides a proposal.
 
 ```
 the readiness loop                      one Ticket's start
@@ -42,7 +41,7 @@ for this pass.
 
 If everything says yes, Panels takes the Ticket from `empty` to `agent` in one guarded
 write. That flip **is** the claim. There is no claim stamp or general run record. For a
-paired Stage, the same transaction records a tentative opener fact for that Stage entry.
+user-owned Stage, the same transaction records a tentative opener fact for that Stage entry.
 Readiness checks that fact, not the Ticket status, to prevent a second opener. A refused
 send removes the fact. An accepted send keeps it and returns the Ticket to `empty`.
 The canonical Stage writer clears the fact when the Ticket leaves that Stage. A later
@@ -151,7 +150,7 @@ already had five minutes.
 When the holder returns a proposal for revision, one Ticket transaction checks every
 authorization and current-parent route. It clears the proposal, appends the exact comment
 to a separate attributed revision-feedback record, and returns the Ticket to its resting
-status. A same-Stage paired opener is cleared so the discussion can open again. The next
+status. A same-Stage user opener is cleared so the discussion can open again. The next
 normal worker-step prompt carries feedback for that Stage, and only a successful send
 consumes it. Ticket guidance remains independent. Reply bookkeeping credits the source
 turn after the commit and cannot undo the rejection.
@@ -218,7 +217,7 @@ _Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`,
 
 ## Handoffs
 
-- **Worker types** (`worker-types.md`) declares Stages, default ownership, and the
+- **Worker types** (`worker-types.md`) declares Stages, ownership, and the
   specialist skill.
 - **Tickets & the gates** (`tickets-and-gates.md`) owns proposals, scope, approval,
   and Ticket status.

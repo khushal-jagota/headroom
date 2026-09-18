@@ -18,7 +18,6 @@
     proposedBy = "",
     note = "",
     newStage = null,
-    suggestedNextCeiling = null,
     lifecycle = null,
     layout = "default",
     disabled = false,
@@ -34,7 +33,6 @@
     proposedBy?: string;
     note?: string | null;
     newStage?: string | null;
-    suggestedNextCeiling?: string | null;
     lifecycle?: Lifecycle | null;
     layout?: "default" | "review";
     disabled?: boolean;
@@ -128,7 +126,7 @@
       >
         Approve
       </Button>
-      <ScopePairPicker {newStage} {suggestedNextCeiling} {lifecycle} bind:scope />
+      <ScopePairPicker {newStage} {lifecycle} bind:scope />
     </div>
   </div>
 {/snippet}

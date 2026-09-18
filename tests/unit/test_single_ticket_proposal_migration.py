@@ -102,6 +102,8 @@ def test_cutover_keeps_current_saved_value_and_draft_and_archives_raw_metadata(
         assert "Unapproved proposal" in archive
         assert after.pop("ceiling_holder") == '{"id":"owner","kind":"owner"}'
         before.pop("fields")
+        before.pop("stage_ownership_overrides")
+        before.pop("default_stage_ownership_mode")
         before.pop("alias")
         before.pop("backend_error")
         assert before == after

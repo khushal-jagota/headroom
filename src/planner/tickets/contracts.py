@@ -23,7 +23,6 @@ class AtCap(StrEnum):  # §4.3
 class StageOwnershipMode(StrEnum):
     worker = "worker"
     user = "user"
-    paired = "paired"
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,10 +226,9 @@ class EmployeeConfigurationBody(TypedDict):
     employee_launch_reasoning_effort: str | None
 
 
-class LinkBody(TypedDict, total=False):  # POST /links (ticket-anchored, homed here)
-    from_id: str  # required (default "" fails endpoint checks)
-    to_id: str  # required (default "" fails endpoint checks)
-    kind: str  # LinkKind value; required (default "" is rejected)
+class TicketBlockBody(TypedDict, total=False):
+    blocking_ticket_id: str
+    blocked_ticket_id: str
 
 
 @dataclass
@@ -266,9 +264,6 @@ class Ticket:  # §3.3 — column names match exactly
     # Monotonic status-transition identity used by notifications and worker claims.
     # Unlike the timestamp, it cannot collide when two transitions share a second.
     ticket_status_revision: int
-    stage_ownership_overrides: Mapping[str, StageOwnershipMode]
-    default_stage_ownership_mode: StageOwnershipMode | None
-    effective_stage_ownership_mode: StageOwnershipMode | None
     conversation_id: str | None  # the Ticket's conversation link (column name is frozen)
     field_values: TicketFieldValues
     pending_proposal: PendingTicketProposal | None
@@ -309,4 +304,4 @@ class TicketDeletion:
     day_ids: tuple[str, ...]
     sprint_item_ids: tuple[str, ...]
     sprint_ids: tuple[str, ...]
-    linked_entity_ids: tuple[str, ...]
+    linked_ticket_ids: tuple[str, ...]

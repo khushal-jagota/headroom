@@ -25,11 +25,12 @@ from planner.core.config import load_config
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.notifications import attention as notifications_attention
 from planner.notifications import data as notifications_data
 from planner.notifications.contracts import NOTIFICATION_SUBJECTS, NotificationFact
 from planner.notifications.logic.policy import decide_notification
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS, StageOwnershipMode, Ticket
+from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket
 
 
 def _ticket(conn: Connection, now: int) -> Ticket:
@@ -318,33 +319,26 @@ def test_assignment_clear_and_rise_between_projector_polls_keeps_both_edges(
     ticket = _ticket(conn, 1)
     conn.execute(
         "UPDATE tickets SET stage='needs_success', ceiling='needs_success', "
-        "default_stage_ownership_mode='worker', stage_ownership_overrides='{}', "
         "pending_proposal=NULL WHERE id=?",
         (ticket.id,),
     )
     notifications_data.project_facts(conn)
 
-    tickets_data.set_stage_ownership(
-        conn,
-        ticket.id,
-        stage="needs_success",
-        ownership_mode=StageOwnershipMode.user,
-        now=2,
+    conn.execute(
+        "UPDATE tickets SET worker_type='new_worker', stage='needs_understanding' WHERE id=?",
+        (ticket.id,),
     )
-    tickets_data.set_stage_ownership(
-        conn,
-        ticket.id,
-        stage="needs_success",
-        ownership_mode=StageOwnershipMode.worker,
-        now=3,
+    notifications_attention.capture_ticket_attention(conn, ticket.id, 2)
+    conn.execute(
+        "UPDATE tickets SET worker_type='coding', stage='needs_success' WHERE id=?",
+        (ticket.id,),
     )
-    tickets_data.set_stage_ownership(
-        conn,
-        ticket.id,
-        stage="needs_success",
-        ownership_mode=StageOwnershipMode.user,
-        now=4,
+    notifications_attention.capture_ticket_attention(conn, ticket.id, 3)
+    conn.execute(
+        "UPDATE tickets SET worker_type='new_worker', stage='needs_understanding' WHERE id=?",
+        (ticket.id,),
     )
+    notifications_attention.capture_ticket_attention(conn, ticket.id, 4)
     notifications_data.project_facts(conn)
 
     facts = conn.execute(

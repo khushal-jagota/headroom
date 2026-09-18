@@ -8,7 +8,7 @@ import json
 import sqlite3
 from dataclasses import asdict
 
-from planner.core import links as core_links
+from planner.core import ticket_blocks
 from planner.core.contracts import BlockerSummary, JsonDict
 from planner.judgments import data as judgments_data
 from planner.list_reads.configuration import TICKET_RECAP_PREVIEW_CHARS
@@ -102,19 +102,6 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         },
         "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
-        "stage_ownership_overrides": {
-            stage: mode.value for stage, mode in ticket.stage_ownership_overrides.items()
-        },
-        "default_stage_ownership_mode": (
-            ticket.default_stage_ownership_mode.value
-            if ticket.default_stage_ownership_mode is not None
-            else None
-        ),
-        "effective_stage_ownership_mode": (
-            ticket.effective_stage_ownership_mode.value
-            if ticket.effective_stage_ownership_mode is not None
-            else None
-        ),
         "conversation_id": ticket.conversation_id,
         "field_values": dict(ticket.field_values),
         "pending_proposal": asdict(ticket.pending_proposal)
@@ -317,7 +304,7 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
         "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id ASC",
         (ticket_id,),
     ).fetchall()
-    blocker_summary = core_links.blocker_summary(conn, ticket_id)
+    blocker_summary = ticket_blocks.blocker_summary(conn, ticket_id)
     conversation_rows = conn.execute(
         "SELECT ticket_conversations.conversation_id, conversations.created_at "
         "FROM ticket_conversations JOIN conversations "
@@ -366,11 +353,15 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
 def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
     ticket = tickets_data.read_ticket(conn, ticket_id)
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
+    ownership = machine.stage_ownership_mode(
+        ticket.stage,
+        worker_type_definition=worker_type_definition,
+    )
 
     def show(value: str | None) -> str:
         return value if value else "(none)"
 
-    blocker_summary = core_links.blocker_summary(conn, ticket_id)
+    blocker_summary = ticket_blocks.blocker_summary(conn, ticket_id)
     blocked_by_rows = tuple(row for row in blocker_summary.blocked_by if row.active)
     blocked_by_block = (
         "\n".join(f"- {row.title} ({row.ticket_id}, {row.stage})" for row in blocked_by_rows)
@@ -387,7 +378,7 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"priority: {ticket.priority.value}\n"
         f"employee_backend: {ticket.employee_backend}\n"
         "owner: "
-        f"{ticket.effective_stage_ownership_mode.value if ticket.effective_stage_ownership_mode is not None else '(none)'}\n"  # noqa: E501
+        f"{ownership.value if ownership is not None else '(none)'}\n"
         f"\n"
         f"{field_blocks}"
         f"pending proposal:\n"
@@ -437,7 +428,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         (day_id,),
     ).fetchall()
     registry = configured_worker_type_registry()
-    blocked_target_ids = core_links.blocked_target_ids(conn)
+    blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     coding_order = registry.require("coding").stage_ids()
     column_order: list[str] = list(coding_order)
     by_stage: dict[str, list[tuple[tuple[int, int, str, int], BoardCard]]] = {
@@ -494,7 +485,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "gating_field_label": gating_field_label,
             "is_done": stage == worker_type_definition.completed_stage(),
             "is_dropped": stage == worker_type_definition.dropped_stage.id,
-            "blocked": str(row["id"]) in blocked_target_ids,
+            "blocked": str(row["id"]) in blocked_ticket_ids,
             "conversation_id": (
                 str(row["conversation_id"]) if row["conversation_id"] is not None else None
             ),

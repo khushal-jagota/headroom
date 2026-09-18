@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from planner.core import links as core_links
+from planner.core import ticket_blocks
 from planner.core.contracts import JsonDict
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.runtime import conversation_start
@@ -34,11 +34,7 @@ def _prio_rank(priority: str) -> int:
 # --- serializers ---------------------------------------------------------------
 
 
-def item_json(
-    item: SprintItem,
-    *,
-    blocking_ticket_ids: list[str] | None = None,
-) -> JsonDict:
+def item_json(item: SprintItem) -> JsonDict:
     return {
         "id": item.id,
         "title": item.title,
@@ -58,7 +54,6 @@ def item_json(
                 ),
             },
         },
-        "blocked_by": list(blocking_ticket_ids or []),
         "created_at": item.created_at,
         "updated_at": item.updated_at,
     }
@@ -116,7 +111,7 @@ def item_tickets(
     ).fetchall()
     result: list[JsonDict] = []
     registry = configured_worker_type_registry()
-    blocked_target_ids = core_links.blocked_target_ids(conn)
+    blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     for r in rows:
         stage = str(r["stage"])
         ticket_status = str(r["ticket_status"])
@@ -148,7 +143,7 @@ def item_tickets(
                 "ticket_status": ticket_status,
                 "waiting_to_closeout": waiting_to_closeout,
                 "gating_field": gating_field,
-                "blocked": str(r["id"]) in blocked_target_ids,
+                "blocked": str(r["id"]) in blocked_ticket_ids,
                 "review_route": str(r["at_cap"]),
                 "employee_backend": str(r["employee_backend"]),
                 "worker_type": str(r["worker_type"]),
@@ -198,16 +193,6 @@ def item_ticket_overview(conn: sqlite3.Connection, item_id: str) -> list[JsonDic
     ]
 
 
-def blocked_by_titles(conn: sqlite3.Connection, blocked_by: list[str]) -> list[str]:
-    """Resolve active/read blocker ids to titles, preserving order."""
-    titles: list[str] = []
-    for ticket_id in blocked_by:
-        row = conn.execute("SELECT title FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
-        if row is not None:
-            titles.append(str(row["title"]))
-    return titles
-
-
 def _item_row_key(row: sqlite3.Row) -> tuple[int, int, str]:
     return (_prio_rank(str(row["priority"])), int(row["created_at"]), str(row["id"]))
 
@@ -224,11 +209,7 @@ def list_items(conn: sqlite3.Connection, *, project_id: str | None = None) -> li
 def item_detail(conn: sqlite3.Connection, item_id: str) -> JsonDict:
     read = sprints_data.read_item(conn, item_id)
     result = {
-        **item_json(
-            read.item,
-            blocking_ticket_ids=read.blocking_ticket_ids,
-        ),
-        "blockers_cleared": read.blockers_cleared,
+        **item_json(read.item),
         "committed_sprints": [
             dict(row)
             for row in conn.execute(

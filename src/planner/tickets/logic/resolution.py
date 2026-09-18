@@ -72,11 +72,9 @@ def decide_file_proposal(
         field,
         worker_type_definition=worker_type_definition,
     )
-    ownership = machine.effective_stage_ownership_mode(
+    ownership = machine.stage_ownership_mode(
         ticket.stage,
-        ticket.stage_ownership_overrides,
         worker_type_definition=worker_type_definition,
-        default_stage_ownership_mode=ticket.default_stage_ownership_mode,
     )
     if (
         ownership is not None
@@ -198,11 +196,9 @@ def decide_edit_value(
                 "only the current user-owned gate can be completed",
                 {"field": field, "gating_field": gating_field, "stage": ticket.stage},
             )
-        ownership = machine.effective_stage_ownership_mode(
+        ownership = machine.stage_ownership_mode(
             ticket.stage,
-            ticket.stage_ownership_overrides,
             worker_type_definition=worker_type_definition,
-            default_stage_ownership_mode=ticket.default_stage_ownership_mode,
         )
         if ownership is not StageOwnershipMode.user:
             raise PlannerError(
