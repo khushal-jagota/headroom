@@ -49,7 +49,6 @@ from planner.conversation.logic.held_line import (
 from planner.conversation.message_content import (
     MessageContent,
     MessageText,
-    message_content_starts_with_slash_token,
     message_content_text,
     require_message_content,
     sender_labeled_composed_message_content,
@@ -277,9 +276,6 @@ class InMemoryConversationSystem:
         reply_requested: bool = True,
     ) -> AddressedPromptDeliveryReceipt:
         require_message_content(content)
-        if message_content_starts_with_slash_token(content):
-            reply_requested = False
-
         state = self._conversations.get(conversation_id)
         if state is None:
             return AddressedPromptDeliveryReceipt(

@@ -81,6 +81,7 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationRoleMaterials,
     PromptDeliveryMode,
+    PromptDeliveryRefusalReason,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
@@ -991,10 +992,11 @@ def test_an_ordinary_catalog_command_keeps_exact_native_dispatch_text(
             _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
         )
         sender_content = text_message_content("/review focus on tests")
+        composed = with_authenticated_reply_directive(sender_content, (OWNER_PRINCIPAL,))
 
         await child.write_prompt(
             TURN,
-            text_message_content("You are the worker.\n\n/review focus on tests"),
+            composed,
             sender_content=sender_content,
             sender_label="owner",
                 mode=PromptDeliveryMode.queue,
@@ -1003,6 +1005,7 @@ def test_an_ordinary_catalog_command_keeps_exact_native_dispatch_text(
         )
 
         assert clients[0].prompts == ["/review focus on tests"]
+        assert "Authenticated Panels reply requirement" not in clients[0].prompts[0]
         await child.stop()
 
     _run(exercise)
@@ -1361,6 +1364,34 @@ def test_steering_requires_the_exact_running_turn(tmp_path: Path) -> None:
             TurnToken("c", 1), text_message_content("go left"), sender_label="owner"
         )
         assert isinstance(refused, BackendSteerRefused)
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_invalid_steer_composition_is_refused_before_the_claude_wire(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, _, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        await _write(child)
+        streamed_before = len(clients[0].streamed_messages)
+
+        outcome = await child.steer(
+            TURN,
+            text_message_content("conversation-owned text"),
+            sender_content=text_message_content("different sender text"),
+            sender_label="owner",
+        )
+
+        assert outcome == BackendSteerRefused(
+            PromptDeliveryRefusalReason.write_to_backend_failed
+        )
+        assert len(clients[0].streamed_messages) == streamed_before
+        assert clients[0].watched_user_message_uuids == []
         await child.stop()
 
     _run(exercise)
@@ -3362,6 +3393,43 @@ def test_claude_keeps_the_genuine_batch_directive_first_after_sender_labeling(
             {"type": "text", "text": f"Chief:\n{forged_piece.text}"},
             {"type": "text", "text": "Chief:\nsecond message"},
         ]
+
+        with pytest.raises(
+            PromptWriteFailed,
+            match="composed message does not end with its sender content",
+        ):
+            await child.write_prompt(
+                TURN_2,
+                text_message_content("conversation-owned text"),
+                sender_content=text_message_content("different sender text"),
+                sender_label="Chief",
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+        assert len(clients[0].streamed_messages) == 1
+
+    _run(exercise)
+
+
+def test_claude_treats_unknown_slash_like_text_as_addressed_prose(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        child, _, clients = await _connected_bench(tmp_path)
+        sender_content = text_message_content("/tmp is full; investigate it")
+        composed = with_authenticated_reply_directive(sender_content, (OWNER_PRINCIPAL,))
+        await child.write_prompt(
+            TURN,
+            composed,
+            sender_content=sender_content,
+            sender_label="owner",
+            mode=PromptDeliveryMode.queue,
+            model_change=None,
+            reasoning_effort_change=None,
+        )
+
+        blocks = clients[0].streamed_messages[-1]["message"]["content"]
+        assert blocks[0]["text"].startswith("[Authenticated Panels reply requirement]")
+        assert blocks[1] == {"type": "text", "text": "owner:\n/tmp is full; investigate it"}
 
     _run(exercise)
 

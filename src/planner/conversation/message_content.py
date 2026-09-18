@@ -88,6 +88,10 @@ class MessageContentNotPieces(TypeError):
     """
 
 
+class ComposedMessageDoesNotContainSenderContent(ValueError):
+    """Conversation-owned composition no longer contains the exact sender message."""
+
+
 def text_message_content(text: str) -> MessageContent:
     """A message that is only written words, which is nearly every message."""
     return (MessageText(text=text),)
@@ -183,12 +187,15 @@ def sender_labeled_composed_message_content(
     )
     if (
         isinstance(first_sender_piece, MessageText)
-        and bool(first_sender_piece.text)
         and isinstance(first_composed_piece, MessageText)
         and first_composed_piece.text.endswith(first_sender_piece.text)
         and content[first_composed_index + 1 :] == sender_content[1:]
     ):
-        conversation_prefix = first_composed_piece.text[: -len(first_sender_piece.text)]
+        conversation_prefix = (
+            first_composed_piece.text
+            if not first_sender_piece.text
+            else first_composed_piece.text[: -len(first_sender_piece.text)]
+        )
         labeled = sender_labeled_message_content(sender_content, sender_label)
         labeled_first = labeled[0]
         assert isinstance(labeled_first, MessageText)
@@ -197,7 +204,9 @@ def sender_labeled_composed_message_content(
             MessageText(f"{conversation_prefix}{labeled_first.text}"),
             *labeled[1:],
         )
-    raise ValueError("composed message does not end with its sender content")
+    raise ComposedMessageDoesNotContainSenderContent(
+        "composed message does not end with its sender content"
+    )
 
 
 def message_content_starts_with_command(

@@ -134,6 +134,7 @@ from planner.conversation.events import (
     UserInputQuestion,
 )
 from planner.conversation.message_content import (
+    ComposedMessageDoesNotContainSenderContent,
     MessageContent,
     MessageFile,
     MessageImage,
@@ -696,13 +697,16 @@ class ClaudeAgentSdkBackendChild:
         )
         client = self._connected_client()
         self._require_a_live_wire()
-        delivered_content = (
-            sender_content
-            if automatic_compaction or self._is_catalog_command(sender_content)
-            else sender_labeled_composed_message_content(
-                content, sender_content, sender_label
+        try:
+            delivered_content = (
+                sender_content
+                if automatic_compaction or self._is_catalog_command(sender_content)
+                else sender_labeled_composed_message_content(
+                    content, sender_content, sender_label
+                )
             )
-        )
+        except ComposedMessageDoesNotContainSenderContent as invalid_composition:
+            raise PromptWriteFailed(str(invalid_composition)) from invalid_composition
         asked = await self._query_argument(delivered_content)
         try:
             await client.query(asked)
@@ -827,7 +831,11 @@ class ClaudeAgentSdkBackendChild:
                 ),
                 user_message_uuid=user_message_uuid,
             )
-        except (NeedsRebind, PromptWriteFailed):
+        except (
+            ComposedMessageDoesNotContainSenderContent,
+            NeedsRebind,
+            PromptWriteFailed,
+        ):
             return BackendSteerRefused(
                 PromptDeliveryRefusalReason.write_to_backend_failed
             )

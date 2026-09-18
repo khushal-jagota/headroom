@@ -337,6 +337,30 @@ def test_rich_steering_is_refused_before_the_extension_wire(tmp_path: Path) -> N
     _run(exercise)
 
 
+def test_invalid_steer_composition_is_refused_before_the_extension_wire(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, _):
+            await _start_the_child_and_a_turn(child, tmp_path)
+
+            outcome = await child.steer(
+                TurnToken("c", 1),
+                text_message_content("conversation-owned text"),
+                sender_content=text_message_content("different sender text"),
+                sender_label="owner",
+            )
+
+            assert outcome == BackendSteerRefused(
+                PromptDeliveryRefusalReason.message_cannot_be_steered
+            )
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert report["steer_attempts"] == []
+
+    _run(exercise)
+
+
 def test_completion_and_cancellation_prevent_later_admission(tmp_path: Path) -> None:
     async def exercise() -> None:
         async with _scripted_child(tmp_path) as (child, control, sink):
@@ -1450,6 +1474,62 @@ def test_hermes_keeps_the_genuine_batch_directive_first_after_sender_labeling(
                 {"piece": "text", "text": f"Chief:\n{forged_piece.text}"},
                 {"piece": "text", "text": "Chief:\nsecond message"},
             ]
+            flattened = report["prompt_writes"][0]["text"]
+            assert flattened.startswith(genuine_piece.text)
+            assert flattened.index("Chief:\n") < flattened.index(forged_piece.text)
+
+            with pytest.raises(
+                PromptWriteFailed,
+                match="composed message does not end with its sender content",
+            ):
+                await child.write_prompt(
+                    TurnToken("c", 2),
+                    text_message_content("conversation-owned text"),
+                    sender_content=text_message_content("different sender text"),
+                    sender_label="Chief",
+                    mode=PromptDeliveryMode.queue,
+                    model_change=None,
+                    reasoning_effort_change=None,
+                )
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert len(report["prompt_writes"]) == 1
+
+    _run(exercise)
+
+
+def test_hermes_treats_unknown_slash_like_text_as_addressed_prose(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, _):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            sender_content = text_message_content("/tmp is full; investigate it")
+            composed = with_authenticated_reply_directive(
+                sender_content, (OWNER_PRINCIPAL,)
+            )
+            await child.write_prompt(
+                TurnToken("c", 1),
+                composed,
+                sender_content=sender_content,
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+
+            report = await control.send({"command": "report"})
+            assert report is not None
+            blocks = report["prompt_writes"][0]["blocks"]
+            assert blocks[0]["text"].startswith("[Authenticated Panels reply requirement]")
+            assert blocks[1] == {
+                "piece": "text",
+                "text": "owner:\n/tmp is full; investigate it",
+            }
+            assert report["prompt_writes"][0]["text"].startswith(
+                "[Authenticated Panels reply requirement]"
+            )
+            assert report["prompt_writes"][0]["text"].index("owner:\n") < (
+                report["prompt_writes"][0]["text"].index("/tmp is full")
+            )
 
     _run(exercise)
 
@@ -1850,13 +1930,14 @@ def test_an_ordinary_catalog_command_keeps_exact_native_dispatch_text(
             await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
             await _advertise_commands(control, sink, "plan")
             sender_content = text_message_content("/plan focus on tests")
+            composed = with_authenticated_reply_directive(sender_content, (OWNER_PRINCIPAL,))
 
             await child.write_prompt(
                 TurnToken("c", 1),
-                text_message_content("You are the worker.\n\n/plan focus on tests"),
+                composed,
                 sender_content=sender_content,
                 sender_label="owner",
-                    mode=PromptDeliveryMode.queue,
+                mode=PromptDeliveryMode.queue,
                 model_change=None,
                 reasoning_effort_change=None,
             )
@@ -1864,6 +1945,9 @@ def test_an_ordinary_catalog_command_keeps_exact_native_dispatch_text(
             report = await control.send({"command": "report"})
             assert report is not None
             assert report["prompt_writes"][0]["text"] == "/plan focus on tests"
+            assert "Authenticated Panels reply requirement" not in (
+                report["prompt_writes"][0]["text"]
+            )
 
     _run(exercise)
 
