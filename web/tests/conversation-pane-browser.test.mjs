@@ -46,6 +46,7 @@ try {
   let running = $state(false);
   let heldPromptRows = $state<any[]>([]);
   let supportsSteer = $state(false);
+  let composerDisabled = $state(false);
   let conversationState = $state<ConversationState>("rest");
   let lens = $state<"focus" | "full">("focus");
 
@@ -143,6 +144,9 @@ try {
       state: "held",
       queueReason: "steer_refused"
     }];
+  };
+  (window as any).__setComposerDisabled = (disabled: boolean) => {
+    composerDisabled = disabled;
   };
   (window as any).__showSettledFocusRestLine = () => {
     rows = [
@@ -265,6 +269,7 @@ try {
         effortOptions={["high"]}
         outgoingMessages={[]}
         ownSenderLabel="owner"
+        composerDisabled={composerDisabled}
         onSend={captureSend}
       />
     </div>
@@ -405,8 +410,50 @@ with sync_playwright() as playwright:
     assert page.locator(THREAD).is_visible()
     assert page.locator("[data-conversation-rest-bar]").count() == 0
     send_mode = page.locator("[data-conversation-send-mode]")
-    assert send_mode.input_value() == "steer"
-    assert send_mode.locator("option").all_text_contents() == ["Steer", "Queue", "Send now"]
+    send_mode_trigger = page.locator("[data-conversation-send-mode-trigger]")
+    assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Steer"
+    assert send_mode_trigger.get_attribute("aria-expanded") == "false"
+
+    # The delivery chooser follows the product picker contract for pointer, keyboard,
+    # focus return, outside dismissal, and disabled state.
+    send_mode_trigger.click()
+    send_mode_panel = page.locator("[data-conversation-send-mode-panel]")
+    assert send_mode_panel.get_by_role("option").count() == 3
+    assert send_mode_panel.get_by_role("option", name="Steer", exact=True).count() == 1
+    assert send_mode_panel.get_by_role("option", name="Queue", exact=True).count() == 1
+    assert send_mode_panel.get_by_role("option", name="Send now", exact=True).count() == 1
+    assert send_mode_panel.get_by_role("option", name="Steer").get_attribute("aria-selected") == "true"
+    send_mode_panel.press("Escape")
+    assert page.locator("[data-conversation-send-mode-panel]").count() == 0
+    assert send_mode_trigger.evaluate("button => document.activeElement === button") is True
+
+    send_mode_trigger.press("ArrowDown")
+    send_mode_panel.press("Tab")
+    assert page.locator("[data-conversation-send-mode-panel]").count() == 0
+    assert send_mode.evaluate("root => !root.contains(document.activeElement)") is True
+
+    send_mode_trigger.focus()
+    send_mode_trigger.press("ArrowDown")
+    send_mode_panel.press("ArrowDown")
+    send_mode_panel.press("Enter")
+    assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Queue"
+    assert send_mode_trigger.evaluate("button => document.activeElement === button") is True
+
+    send_mode_trigger.click()
+    page.locator('[data-conversation-send-mode-choice="send_now"]').click()
+    assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Send now"
+    send_mode_trigger.click()
+    page.locator(INPUT).click()
+    assert page.locator("[data-conversation-send-mode-panel]").count() == 0
+
+    send_mode_trigger.click()
+    page.evaluate("window.__setComposerDisabled(true)")
+    assert send_mode_trigger.is_disabled()
+    assert page.locator("[data-conversation-send-mode-panel]").count() == 0
+    page.evaluate("window.__setComposerDisabled(false)")
+    assert not send_mode_trigger.is_disabled()
+    send_mode_trigger.click()
+    page.locator('[data-conversation-send-mode-choice="steer"]').click()
 
     page.locator(INPUT).fill("the draft stays exactly here")
     page.locator(INPUT).evaluate("box => box.setSelectionRange(9, 9)")
@@ -530,15 +577,25 @@ with sync_playwright() as playwright:
     page.locator('[data-conversation-held-row="composer-fallback"]').wait_for()
     assert "turn did not accept steering" in page.locator("[data-conversation-held-stack]").inner_text()
 
+    # An explicit chooser selection reaches the send boundary unchanged.
+    send_mode_trigger.click()
+    page.locator('[data-conversation-send-mode-choice="queue"]').click()
+    page.locator(INPUT).fill("explicit queue")
+    page.locator(INPUT).press("Enter")
+    page.wait_for_function("window.__sentModes?.length === 2")
+    assert page.evaluate("window.__sentModes") == ["steer", "queue"]
+    send_mode_trigger.click()
+    page.locator('[data-conversation-send-mode-choice="steer"]').click()
+
     # A run change remains attached to the default steer send. The server-visible
     # fallback is a queued message that explains it is waiting to apply that change.
     page.locator("[data-conversation-picker-model] [data-conversation-picker-trigger]").click()
     page.locator('[data-conversation-picker-choice="sonnet"]').click()
     page.locator(INPUT).fill("steer with a run change")
     page.locator(INPUT).press("Enter")
-    page.wait_for_function("window.__sentModes?.length === 2")
-    assert page.evaluate("window.__sentModes") == ["steer", "steer"]
-    assert page.evaluate("window.__sentRuns[1].model") == "sonnet"
+    page.wait_for_function("window.__sentModes?.length === 3")
+    assert page.evaluate("window.__sentModes") == ["steer", "queue", "steer"]
+    assert page.evaluate("window.__sentRuns[2].model") == "sonnet"
     assert "apply the run change" in page.locator("[data-conversation-held-stack]").inner_text()
 
     # The server capability controls one provider-neutral steering action.
