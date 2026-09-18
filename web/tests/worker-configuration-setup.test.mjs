@@ -194,6 +194,7 @@ with sync_playwright() as p:
     picker = setup.locator("[data-conversation-model-picker]")
     trigger = picker.locator("[data-conversation-picker-trigger]")
     assert "codex-gone extreme" in trigger.inner_text()
+    assert trigger.get_attribute("aria-controls") is None
     trigger.click()
     choices = picker.locator("[data-conversation-picker-choice]")
     panel = picker.locator("[data-conversation-picker-panel]")
@@ -205,7 +206,7 @@ with sync_playwright() as p:
     assert picker.locator("[data-conversation-picker-chosen]").count() == 0
     assert picker.locator("[data-conversation-picker-feedback]").inner_text() == "Codex no longer offers codex-gone."
     assert panel.evaluate("el => el.scrollHeight <= el.clientHeight")
-    assert picker.locator(".model-picker-list").evaluate("el => el.scrollHeight <= el.clientHeight")
+    assert picker.get_by_role("listbox").evaluate("el => el.scrollHeight <= el.clientHeight")
     assert panel.bounding_box()["height"] < 844
     picker.locator('[data-conversation-picker-choice="codex-deep"]').hover()
     assert page.evaluate("window.__ticketSaves().length") == 0
@@ -223,6 +224,9 @@ with sync_playwright() as p:
     assert refresh.inner_text() == "Reading…"
     assert refresh.get_attribute("aria-busy") == "true"
     assert refresh.is_disabled()
+    assert not trigger.is_disabled()
+    assert picker.locator("[data-conversation-picker-panel]").count() == 1
+    assert picker.get_by_role("listbox").evaluate("el => document.activeElement === el")
     page.evaluate("payload => window.__respond(1, payload)", {
         **refreshed_machine,
         "usage_outcomes": [
@@ -237,6 +241,8 @@ with sync_playwright() as p:
 
     refresh.click()
     page.wait_for_function("window.__requestCount() === 3")
+    assert not trigger.is_disabled()
+    assert picker.get_by_role("listbox").evaluate("el => document.activeElement === el")
     page.evaluate("window.__reject(2)")
     page.wait_for_function("document.querySelector('[data-conversation-picker-feedback]').textContent.includes('server could not be reached')")
     assert picker.locator('[data-conversation-picker-choice="codex-refreshed"]').count() == 1
@@ -248,6 +254,7 @@ with sync_playwright() as p:
     assert "codex-gone extreme" in trigger.inner_text()
     assert picker.locator("[data-conversation-picker-panel]").count() == 1
     page.keyboard.press("Escape")
+    assert trigger.get_attribute("aria-controls") is None
 
     trigger.click()
     picker.locator('[data-conversation-picker-choice="codex-native"]').click()
