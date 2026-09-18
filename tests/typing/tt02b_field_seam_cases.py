@@ -10,7 +10,7 @@ from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL, tic
 
 from planner.runtime import worker_step_readiness
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, Ticket
+from planner.tickets.contracts import Ticket
 from planner.tickets.logic import admission, resolution
 from planner.tickets.logic.decisions import Decision
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -19,7 +19,6 @@ from planner.worker_types.contracts import WorkerTypeDefinition
 def _cases(
     conn: sqlite3.Connection,
     ticket: Ticket,
-    at_cap: AtCap,
     definition: WorkerTypeDefinition,
     field_values: Mapping[str, str],
 ) -> None:
@@ -63,7 +62,6 @@ def _cases(
             OWNER_PRINCIPAL,
             None,
             "none",
-            at_cap,
             OWNER_PRINCIPAL,
             worker_type_definition=definition,
         ),
@@ -81,8 +79,6 @@ def _cases(
     )
     admission.check_agent_proposal(
         ticket.stage,
-        ticket.ceiling,
-        ticket.at_cap,
         foreign_field,
         worker_type_definition=definition,
     )

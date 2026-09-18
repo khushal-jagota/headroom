@@ -4,7 +4,7 @@ from sqlite3 import Connection
 
 from planner.core.contracts import Principal, PrincipalKind
 from planner.tickets import data
-from planner.tickets.contracts import AtCap, Ticket
+from planner.tickets.contracts import Ticket
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
@@ -16,9 +16,7 @@ def advance_ticket(
     if definition.stage_index(new_stage) < definition.stage_index(ticket.stage):
         raise ValueError("fixture progression cannot rewind a Ticket")
     if ticket.pending_proposal is None:
-        ticket = data.change_scope(
-            conn, ticket_id, ceiling=new_stage, at_cap=AtCap.propose, principal=principal, now=now
-        )
+        ticket = data.set_ceiling(conn, ticket_id, ceiling=new_stage, principal=principal, now=now)
     while ticket.stage != new_stage:
         if ticket.pending_proposal is not None:
             ticket = data.accept_proposal(
@@ -28,7 +26,6 @@ def advance_ticket(
                 principal=principal,
                 now=now,
                 next_ceiling=new_stage,
-                at_cap=AtCap.propose,
                 next_holder=principal,
             )
         else:

@@ -20,7 +20,7 @@ from planner.runtime.worker_step_readiness import (
 )
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, Ticket, TicketStatus
+from planner.tickets.contracts import Ticket, TicketStatus
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -43,7 +43,6 @@ def _ticket(
     worker_type: str = "coding",
     planning_day_id: str | None = PLANNING_DAY_ID,
     ceiling: str | None = None,
-    at_cap: AtCap = AtCap.propose,
     project_id: str | None = None,
     sprint_item_id: str | None = None,
 ) -> Ticket:
@@ -65,7 +64,6 @@ def _ticket(
         principal=OWNER_PRINCIPAL,
         now=2,
         next_ceiling=ceiling or definition.first_worker_stage(),
-        at_cap=at_cap,
         next_holder=OWNER_PRINCIPAL,
     )
     if planning_day_id is not None:
@@ -191,26 +189,23 @@ _READY_UNDER_WORKER_OWNERSHIP: dict[TicketStatus, bool] = {
 
 
 @pytest.mark.parametrize(
-    ("worker_type", "ceiling", "at_cap", "expected"),
+    ("worker_type", "ceiling"),
     [
-        ("coding", "needs_approach", AtCap.stop, True),
-        ("coding", "needs_success", AtCap.propose, True),
-        ("coding", "needs_success", AtCap.stop, False),
-        ("new_worker", "needs_thinking", AtCap.stop, True),
-        ("new_worker", "needs_stages", AtCap.propose, True),
-        ("new_worker", "needs_stages", AtCap.stop, False),
+        ("coding", "needs_approach"),
+        ("coding", "needs_success"),
+        ("new_worker", "needs_thinking"),
+        ("new_worker", "needs_stages"),
     ],
 )
-def test_scope_permission_uses_the_ticket_worker_type_definition(
+def test_a_ticket_at_its_ceiling_is_still_started_to_propose(
     tmp_path: Path,
     worker_type: str,
     ceiling: str,
-    at_cap: AtCap,
-    expected: bool,
 ) -> None:
+    """A ceiling names the last thing a worker does, so it still takes that step."""
     conn = _db(tmp_path)
     try:
-        ticket = _ticket(conn, worker_type=worker_type, ceiling=ceiling, at_cap=at_cap)
+        ticket = _ticket(conn, worker_type=worker_type, ceiling=ceiling)
         if worker_type == "new_worker":
             tickets_data.file_current_proposal_with_recap(
                 conn,
@@ -227,11 +222,10 @@ def test_scope_permission_uses_the_ticket_worker_type_definition(
                 principal=OWNER_PRINCIPAL,
                 now=4,
                 next_ceiling=ceiling,
-                at_cap=at_cap,
                 next_holder=OWNER_PRINCIPAL,
             )
             assert ticket.stage == "needs_stages"
-        assert _ready(conn, ticket) is expected
+        assert _ready(conn, ticket) is True
     finally:
         conn.close()
 
@@ -275,7 +269,7 @@ _EXPECTED_BLOCKERS = {
 def test_a_ready_ticket_names_no_blocker(tmp_path: Path) -> None:
     conn = _db(tmp_path)
     try:
-        ticket = _ticket(conn, ceiling="needs_success", at_cap=AtCap.propose)
+        ticket = _ticket(conn, ceiling="needs_success")
         assert _blocker(conn, ticket) is None
         assert _ready(conn, ticket)
     finally:

@@ -16,7 +16,6 @@ from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
-    AtCap,
     BoardCard,
     BoardSprintItem,
     Ticket,
@@ -100,7 +99,6 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
             "kind": ticket.ceiling_holder.kind.value,
             "id": ticket.ceiling_holder.id,
         },
-        "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
         "conversation_id": ticket.conversation_id,
         "field_values": dict(ticket.field_values),
@@ -418,7 +416,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "tickets.employee_backend, "
         "tickets.conversation_id, "
         "tickets.ticket_status, "
-        "tickets.ceiling, tickets.at_cap, "
+        "tickets.ceiling, "
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
@@ -458,13 +456,6 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         group_project_id = parent_project_id if is_parented else ticket_project_id
         group_project_name = parent_project_name if is_parented else ticket_project_name
         ticket_status = str(row["ticket_status"])
-        stopped_at_current_stage = str(
-            row["at_cap"]
-        ) == AtCap.stop.value and machine.at_or_beyond_ceiling(
-            stage,
-            str(row["ceiling"]),
-            worker_type_definition=worker_type_definition,
-        )
         card: BoardCard = {
             "id": str(row["id"]),
             "title": str(row["title"]),
@@ -490,9 +481,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
                 str(row["conversation_id"]) if row["conversation_id"] is not None else None
             ),
             "waiting_to_closeout": (
-                gating_field_id == "closeout"
-                and ticket_status == TicketStatus.empty.value
-                and not stopped_at_current_stage
+                gating_field_id == "closeout" and ticket_status == TicketStatus.empty.value
             ),
             "sprint_item_id": (
                 str(row["sprint_item_id"]) if row["sprint_item_id"] is not None else None

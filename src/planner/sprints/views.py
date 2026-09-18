@@ -20,8 +20,7 @@ from planner.sprints.contracts import (
     SprintWireBody,
 )
 from planner.sprints.logic import DateRange, current_sprint_id
-from planner.tickets.contracts import AtCap, TicketStatus
-from planner.tickets.logic import machine
+from planner.tickets.contracts import TicketStatus
 from planner.worker_types.configuration import configured_worker_type_registry
 
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
@@ -122,17 +121,8 @@ def item_tickets(
         ticket_status = str(r["ticket_status"])
         worker_type_definition = registry.require(str(r["worker_type"]))
         gating_field = worker_type_definition.gating_field(stage)
-        stopped_at_current_stage = str(
-            r["at_cap"]
-        ) == AtCap.stop.value and machine.at_or_beyond_ceiling(
-            stage,
-            str(r["ceiling"]),
-            worker_type_definition=worker_type_definition,
-        )
         waiting_to_closeout = (
-            gating_field == "closeout"
-            and ticket_status == TicketStatus.empty.value
-            and not stopped_at_current_stage
+            gating_field == "closeout" and ticket_status == TicketStatus.empty.value
         )
         result.append(
             {
@@ -149,7 +139,6 @@ def item_tickets(
                 "waiting_to_closeout": waiting_to_closeout,
                 "gating_field": gating_field,
                 "blocked": str(r["id"]) in blocked_target_ids,
-                "review_route": str(r["at_cap"]),
                 "employee_backend": str(r["employee_backend"]),
                 "worker_type": str(r["worker_type"]),
                 "day_ids": [

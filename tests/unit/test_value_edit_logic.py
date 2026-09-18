@@ -8,7 +8,6 @@ from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
 from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.tickets.contracts import (
-    AtCap,
     PendingTicketProposal,
     ResolvedTicketPriorityAnchors,
     Ticket,
@@ -38,7 +37,6 @@ def _ticket(*, stage: str = "needs_success") -> Ticket:
         guidance="keep this guidance",
         ceiling="done",
         ceiling_holder=OWNER_PRINCIPAL,
-        at_cap=AtCap.propose,
         ticket_status=TicketStatus.awaiting_approval,
         ticket_status_changed_at=0,
         ticket_status_revision=0,
@@ -63,11 +61,7 @@ def test_edit_pending_proposal_changes_only_its_body() -> None:
     )
     assert decision.pending_proposal == replace(proposal, body="new")
     assert decision.field_values == {"kickoff": "request"}
-    assert (decision.stage, decision.ceiling, decision.at_cap) == (
-        ticket.stage,
-        ticket.ceiling,
-        ticket.at_cap,
-    )
+    assert (decision.stage, decision.ceiling) == (ticket.stage, ticket.ceiling)
     assert decision.archived_field_content == ""
 
 
@@ -166,7 +160,6 @@ def test_direct_user_completes_unset_current_user_owned_gate() -> None:
     assert decision.stage == "needs_closeout"
     assert decision.ceiling == "needs_closeout"
     assert decision.ceiling_holder == OWNER_PRINCIPAL
-    assert decision.at_cap == ticket.at_cap
 
 
 @pytest.mark.parametrize("field", ["kickoff", "closeout"])

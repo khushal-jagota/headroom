@@ -12,7 +12,6 @@ from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
-    AtCap,
     Ticket,
     TicketEdit,
 )
@@ -162,7 +161,6 @@ def _ticket(tmp_db: Connection) -> Ticket:
         principal=OWNER_PRINCIPAL,
         now=1,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
         next_holder=OWNER_PRINCIPAL,
     )
 
@@ -243,11 +241,10 @@ def test_only_edited_approval_produces_context_at_each_approval_gate(
             "approach": "needs_approach",
             "plan": "needs_plan",
         }[field]
-        tickets_data.change_scope(
+        tickets_data.set_ceiling(
             tmp_db,
             ticket.id,
             ceiling=ceiling,
-            at_cap=AtCap.propose,
             principal=OWNER_PRINCIPAL,
             now=10,
         )
@@ -277,7 +274,6 @@ def test_only_edited_approval_produces_context_at_each_approval_gate(
             now=13,
             edited_body="edited" if edited else None,
             next_ceiling=NO_FURTHER,
-            at_cap=AtCap.propose,
             next_holder=OWNER_PRINCIPAL,
         )
         return ticket.id
@@ -295,11 +291,10 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
     tmp_db: Connection,
 ) -> None:
     ticket = _ticket(tmp_db)
-    tickets_data.change_scope(
+    tickets_data.set_ceiling(
         tmp_db,
         ticket.id,
         ceiling="needs_closeout",
-        at_cap=AtCap.propose,
         principal=OWNER_PRINCIPAL,
         now=20,
     )
@@ -341,7 +336,6 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
         principal=OWNER_PRINCIPAL,
         now=24,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
         next_holder=OWNER_PRINCIPAL,
     )
     assert _pending(tmp_db, ticket.id) == ()
@@ -365,7 +359,6 @@ def test_human_recap_marks_context_but_agent_recap_does_not(tmp_db: Connection) 
         now=29,
         edited_body=None,
         next_ceiling="needs_plan",
-        at_cap=AtCap.propose,
         next_holder=OWNER_PRINCIPAL,
     )
 

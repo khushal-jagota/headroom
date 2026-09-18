@@ -106,6 +106,7 @@ def test_cutover_keeps_current_saved_value_and_draft_and_archives_raw_metadata(
         before.pop("default_stage_ownership_mode")
         before.pop("alias")
         before.pop("backend_error")
+        before.pop("at_cap")
         assert before == after
         blank = conn.execute("SELECT pending_proposal FROM tickets WHERE id='b'").fetchone()[0]
         assert json.loads(blank)["body"] == ""

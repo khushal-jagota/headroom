@@ -20,7 +20,6 @@ from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 
 from planner.core.db import connect
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap
 
 WAIT_MS = 10_000
 
@@ -98,7 +97,6 @@ def _settle_success(
                 principal=OWNER_PRINCIPAL,
                 now=2,
                 next_ceiling="none",
-                at_cap=AtCap.propose,
                 next_holder=OWNER_PRINCIPAL,
             )
         assert ticket.stage == "needs_approach"

@@ -17,7 +17,7 @@ from planner.days.logic.dates import resolve_day_id
 from planner.message_delivery import service as message_delivery_service
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, Ticket
+from planner.tickets.contracts import Ticket
 from planner.tickets.logic import admission
 
 LOGGER = logging.getLogger(__name__)
@@ -81,7 +81,6 @@ def create_ticket(
     sprint_item_id_explicit: bool = False,
     sprint_id_explicit: bool = False,
     stated_ceiling: str | None = None,
-    stated_at_cap: AtCap | None = None,
 ) -> Ticket:
     if planning_now is None:
         day_id = None
@@ -114,7 +113,6 @@ def create_ticket(
         employee_launch_model=employee_launch_model,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
         stated_ceiling=stated_ceiling,
-        stated_at_cap=stated_at_cap,
     )
 
 

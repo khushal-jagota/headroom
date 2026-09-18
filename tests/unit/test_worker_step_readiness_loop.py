@@ -38,7 +38,7 @@ from planner.runtime.worker_step_readiness_loop import (
     start_ready_worker_step,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, Ticket, TicketStatus
+from planner.tickets.contracts import Ticket, TicketStatus
 from planner.worker_context import data as worker_context_data
 from planner.worker_context import revision_feedback
 from planner.worker_context.contracts import (
@@ -96,7 +96,6 @@ class _World:
                 principal=OWNER_PRINCIPAL,
                 now=0,
                 next_ceiling="none",
-                at_cap=AtCap.propose,
                 next_holder=OWNER_PRINCIPAL,
             )
             if conversation_id is not None:

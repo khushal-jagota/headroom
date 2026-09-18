@@ -21,7 +21,6 @@ from tests.support.probe import (
     uninstall_probe_registry,
 )
 
-from planner.tickets.contracts import AtCap
 from planner.tickets.data import (
     accept_proposal,
     create_ticket,
@@ -99,7 +98,6 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
         principal=OWNER_PRINCIPAL,
         now=3,
         next_ceiling="needs_success",
-        at_cap=AtCap.propose,
         next_holder=OWNER_PRINCIPAL,
     )
     replace_guidance(tmp_db, ticket.id, body="success note", principal=OWNER_PRINCIPAL, now=4)

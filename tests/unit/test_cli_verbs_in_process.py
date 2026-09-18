@@ -652,15 +652,12 @@ def test_ticket_approval_copy_and_worker_note_shape(
         tid,
         "--ceiling",
         "none",
-        "--at-cap",
-        "propose",
         "--kickoff-note-file",
         "-",
         stdin="updated intake",
     )
     assert accepted_kickoff["stage"] == "needs_success"
     assert accepted_kickoff["ceiling"] == "needs_success"
-    assert accepted_kickoff["at_cap"] == "propose"
     assert accepted_kickoff["field_values"].get("kickoff") == "updated intake"
 
     cli(
@@ -672,7 +669,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         ticket_id=tid,
         stdin="success body",
     )
-    approved = cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose")
+    approved = cli(server, "ticket", "approve", tid, "--ceiling", "none")
     assert approved["stage"] == "needs_approach"
     assert approved["field_values"].get("success") == "success body"
 

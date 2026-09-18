@@ -13,10 +13,8 @@ from planner.core.contracts import (
     principal_legacy_actor,
 )
 from planner.tickets.contracts import (
-    AtCap,
     NextCeiling,
     PendingTicketProposal,
-    ScopePair,
     StageOwnershipMode,
     Ticket,
     TicketStatus,
@@ -30,7 +28,7 @@ def _accept_gating_proposal(
     ticket: Ticket,
     field: str,
     stored_body: str,
-    scope: ScopePair | None,
+    next_ceiling: str | None,
     next_holder: Principal | None = None,
     *,
     worker_type_definition: WorkerTypeDefinition,
@@ -39,7 +37,7 @@ def _accept_gating_proposal(
     if target is None:
         raise PlannerError(ErrorCode.validation, "stage has no advance target")
     ceiling_holder = ticket.ceiling_holder
-    if scope is not None:
+    if next_ceiling is not None:
         assert next_holder is not None
         ceiling_holder = next_holder
     return replace(
@@ -47,9 +45,8 @@ def _accept_gating_proposal(
         field_values={**ticket.field_values, field: stored_body},
         pending_proposal=None,
         stage=target,
-        ceiling=ticket.ceiling if scope is None else scope.next_ceiling,
+        ceiling=ticket.ceiling if next_ceiling is None else next_ceiling,
         ceiling_holder=ceiling_holder,
-        at_cap=ticket.at_cap if scope is None else scope.at_cap,
     )
 
 
@@ -61,14 +58,22 @@ def decide_file_proposal(
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
+    """What a worker's answer to the current Stage becomes.
+
+    Below the ceiling the answer is the Stage's value: it settles, the Stage advances, and
+    no proposal is ever recorded. At the ceiling the answer is a proposal, and the Ticket
+    parks until somebody decides it. A ceiling is the only thing that makes a proposal, so
+    every proposal in the system is one a person is going to look at.
+
+    A user-owned Stage parks whatever the ceiling says. Its worker is there to talk, not
+    to settle the Stage on its own.
+    """
     admission.validate_body(body, "proposal body")
     field = worker_type_definition.gating_field(ticket.stage)
     if field is None:
         raise PlannerError(ErrorCode.validation, "ticket stage has no proposal field")
     admission.check_agent_proposal(
         ticket.stage,
-        ticket.ceiling,
-        ticket.at_cap,
         field,
         worker_type_definition=worker_type_definition,
     )
@@ -76,17 +81,12 @@ def decide_file_proposal(
         ticket.stage,
         worker_type_definition=worker_type_definition,
     )
-    if (
-        ownership is not None
-        and ownership.value == "worker"
-        and machine.auto_accept_target(
-            ticket.stage,
-            ticket.ceiling,
-            field,
-            worker_type_definition=worker_type_definition,
-        )
-        is not None
-    ):
+    below_the_ceiling = not machine.at_or_beyond_ceiling(
+        ticket.stage,
+        ticket.ceiling,
+        worker_type_definition=worker_type_definition,
+    )
+    if ownership is StageOwnershipMode.worker and below_the_ceiling:
         return _accept_gating_proposal(
             ticket, field, body, None, worker_type_definition=worker_type_definition
         )
@@ -121,7 +121,6 @@ def decide_accept(
     principal: Principal,
     edited_body: str | None,
     next_ceiling: NextCeiling | None,
-    at_cap: AtCap | None,
     next_holder: Principal | None,
     *,
     worker_type_definition: WorkerTypeDefinition,
@@ -133,8 +132,8 @@ def decide_accept(
     target = worker_type_definition.advance_target(ticket.stage)
     if target is None:
         raise PlannerError(ErrorCode.validation, "stage has no advance target")
-    scope = machine.resolve_scope(
-        target, next_ceiling, at_cap, worker_type_definition=worker_type_definition
+    resolved_ceiling = machine.resolve_next_ceiling(
+        target, next_ceiling, worker_type_definition=worker_type_definition
     )
     if next_holder is None:
         raise PlannerError(
@@ -146,7 +145,7 @@ def decide_accept(
         ticket,
         field,
         proposal.body if edited_body is None else edited_body,
-        scope,
+        resolved_ceiling,
         next_holder,
         worker_type_definition=worker_type_definition,
     )
@@ -225,7 +224,7 @@ def decide_edit_value(
             ticket,
             field,
             new_body,
-            ScopePair(next_ceiling=target, at_cap=ticket.at_cap),
+            target,
             principal,
             worker_type_definition=worker_type_definition,
         )
@@ -299,26 +298,24 @@ def decide_drop(ticket: Ticket, principal: Principal) -> Decision:
     )
 
 
-def decide_scope_change(
+def decide_set_ceiling(
     ticket: Ticket,
     ceiling: str,
-    at_cap: AtCap,
     principal: Principal,
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
-    admission.require_direct_or_supervisor_principal(principal, "change_scope")
+    admission.require_direct_or_supervisor_principal(principal, "set_ceiling")
     if ticket.pending_proposal is not None:
         raise PlannerError(
             ErrorCode.validation,
-            "scope cannot change while a proposal is pending",
+            "the ceiling cannot change while a proposal is pending",
             {"ticket_id": ticket.id},
         )
     return replace(
         Decision.from_ticket(ticket),
         ceiling=worker_type_definition.resolve_ceiling(ceiling),
         ceiling_holder=principal,
-        at_cap=at_cap,
     )
 
 

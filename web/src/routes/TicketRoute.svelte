@@ -4,7 +4,7 @@
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import { atCapLabel, labelize, stageLabel } from "../lib/ui";
+  import { labelize, stageLabel } from "../lib/ui";
   import {
     ceilingOptionsFor,
     fieldStageVisualStateFor,
@@ -415,8 +415,7 @@
                   data-leash-face
                 >
                   approved until
-                  <span class="ticket-leash-value" data-leash-ceiling>{stageLabel(detail.ceiling)}</span>,
-                  then <span class="ticket-leash-value" data-leash-cap>{atCapLabel(detail.at_cap)}</span>
+                  <span class="ticket-leash-value" data-leash-ceiling>{stageLabel(detail.ceiling)}</span>
                   <span class="disclosure-chev" aria-hidden="true"></span>
                 </summary>
                 <div class="ticket-leash-menu" role="menu">
@@ -425,24 +424,12 @@
                     data-scope-ceiling
                     aria-label="Approved until stage"
                     value={detail.ceiling}
-                    onchange={(event) => void updateScope({ ceiling: event.currentTarget.value, at_cap: detail.at_cap })}
+                    onchange={(event) => void updateScope({ ceiling: event.currentTarget.value })}
                   >
                     {#each ceilingOptionsFor(lc, detail.stage) as option}
                       <option value={option.value}>{option.label}</option>
                     {/each}
                   </select>
-                  <div class="ticket-leash-rule"></div>
-                  <div data-scope-atcap>
-                    <select
-                      class="ticket-leash-select"
-                      aria-label="At the ceiling"
-                      value={detail.at_cap}
-                      onchange={(event) => void updateScope({ ceiling: detail.ceiling, at_cap: event.currentTarget.value })}
-                    >
-                      <option value="stop">then stop</option>
-                      <option value="propose">then propose</option>
-                    </select>
-                  </div>
                 </div>
               </details>
             {/if}

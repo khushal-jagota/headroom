@@ -39,7 +39,7 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "two_ownership_modes"
+HEAD_REVISION = "drop_ticket_at_cap"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
 CURRENT_SCHEMA_OBJECT_COUNT = 60
@@ -145,6 +145,16 @@ def _without_ticket_ownership_policy(
         column
         for column in structure["columns"]  # type: ignore[attr-defined]
         if column[0] not in {"stage_ownership_overrides", "default_stage_ownership_mode"}
+    ]
+    return {**structure, "columns": columns}
+
+
+def _without_the_cap(structure: dict[str, object]) -> dict[str, object]:
+    """The current Ticket table after a ceiling became its whole scope."""
+    columns = [
+        column
+        for column in structure["columns"]  # type: ignore[attr-defined]
+        if column[0] != "at_cap"
     ]
     return {**structure, "columns": columns}
 
@@ -315,8 +325,10 @@ def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(
     assert _revision(conn) == HEAD_REVISION
     assert _table_structure_before_status_changed_at(
         _table_structure(conn, "tickets")
-    ) == _without_ticket_ownership_policy(
-        _without_removed_ticket_fields(_with_the_conversation_link_renamed(structure_before))
+    ) == _without_the_cap(
+        _without_ticket_ownership_policy(
+            _without_removed_ticket_fields(_with_the_conversation_link_renamed(structure_before))
+        )
     )
     assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
     assert tuple(
@@ -414,8 +426,10 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
     # Every retained column, outgoing foreign key, and index survives the rebuild.
     assert _table_structure_before_status_changed_at(
         _table_structure(conn, "tickets")
-    ) == _without_ticket_ownership_policy(
-        _without_removed_ticket_fields(_with_the_conversation_link_renamed(structure_before))
+    ) == _without_the_cap(
+        _without_ticket_ownership_policy(
+            _without_removed_ticket_fields(_with_the_conversation_link_renamed(structure_before))
+        )
     )
 
     tickets_sql = conn.execute(
@@ -424,7 +438,7 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
     assert FINAL_TICKET_STATUS_CHECK in tickets_sql
     assert "length(title) <= 200" in tickets_sql
     assert "priority IN ('P0','P1','P2','P3')" in tickets_sql
-    assert "at_cap IN ('stop','propose')" in tickets_sql
+    assert "at_cap" not in tickets_sql
     assert "stage_ownership_overrides" not in tickets_sql
     assert "default_stage_ownership_mode" not in tickets_sql
     for retired in RETIRED_TICKET_STATUSES:

@@ -129,7 +129,6 @@ def test_worker_api_cannot_decide_a_corrupted_self_held_proposal(app_db: AppDb) 
             headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
             json={
                 "next_ceiling": "needs_success",
-                "at_cap": "propose",
                 "next_holder": OWNER,
             },
         )
@@ -182,7 +181,6 @@ def test_probe_proposal_parks_on_registry_selected_field(
             f"/api/tickets/{tid}/accept/kickoff",
             json={
                 "next_ceiling": "needs_alpha",
-                "at_cap": "propose",
                 "next_holder": OWNER,
             },
         )
@@ -207,7 +205,6 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(app_db: AppDb) -> Non
             f"/api/tickets/{target}/accept/kickoff",
             json={
                 "next_ceiling": "needs_success",
-                "at_cap": "propose",
                 "next_holder": {"kind": "ticket", "id": parent},
             },
         )

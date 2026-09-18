@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from planner.core.contracts import Principal
-from planner.tickets.contracts import AtCap, PendingTicketProposal, Ticket, TicketFieldValues
+from planner.tickets.contracts import PendingTicketProposal, Ticket, TicketFieldValues
 
 
 @dataclass(frozen=True)
@@ -16,7 +16,6 @@ class Decision:
     archived_field_content: str
     stage: str
     ceiling: str
-    at_cap: AtCap
     ceiling_holder: Principal
 
     @classmethod
@@ -28,5 +27,4 @@ class Decision:
             stage=ticket.stage,
             ceiling=ticket.ceiling,
             ceiling_holder=ticket.ceiling_holder,
-            at_cap=ticket.at_cap,
         )

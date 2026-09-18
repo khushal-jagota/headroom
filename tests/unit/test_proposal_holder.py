@@ -28,7 +28,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
 from planner.sprints import data as sprints_data
 from planner.tickets import actions, data, views
-from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap, Ticket
+from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket
 from planner.tickets.logic import resolution
 from planner.tickets.logic.admission import REVISION_GUIDANCE_MAX_CHARACTERS
 from planner.worker_context import revision_feedback
@@ -52,7 +52,6 @@ def _park(
         worker_type=worker_type,
         kickoff_note="Agreed kickoff",
         stated_ceiling=stated_ceiling,
-        stated_at_cap=AtCap.propose,
     )
     return data.file_current_proposal_with_recap(
         conn,
@@ -76,7 +75,6 @@ def test_creation_and_auto_accept_preserve_the_creating_principal(
         worker_type="coding",
         kickoff_note="Kickoff",
         stated_ceiling="needs_approach",
-        stated_at_cap=AtCap.propose,
     )
     assert ticket.ceiling_holder == CHIEF_PRINCIPAL
 
@@ -126,7 +124,6 @@ def test_canonical_proposal_writer_accepts_only_the_ticket_own_worker(
         worker_type="coding",
         kickoff_note="Target",
         stated_ceiling="needs_success",
-        stated_at_cap=AtCap.propose,
     )
     forbidden_principals = (
         Principal(PrincipalKind.sprint_item, item.id),
@@ -169,7 +166,6 @@ def test_only_holder_or_owner_can_decide_and_approval_requires_next_holder(
             principal=CHIEF_PRINCIPAL,
             now=12,
             next_ceiling="needs_approach",
-            at_cap=AtCap.propose,
             next_holder=CHIEF_PRINCIPAL,
         )
     assert forbidden.value.code is ErrorCode.agent_forbidden
@@ -181,7 +177,6 @@ def test_only_holder_or_owner_can_decide_and_approval_requires_next_holder(
         principal=OWNER_PRINCIPAL,
         now=12,
         next_ceiling="needs_approach",
-        at_cap=AtCap.propose,
         next_holder=CHIEF_PRINCIPAL,
     )
     assert approved.ceiling_holder == CHIEF_PRINCIPAL
@@ -198,7 +193,6 @@ def test_ticket_cannot_hold_or_decide_its_own_ceiling(tmp_db: Connection) -> Non
             principal=OWNER_PRINCIPAL,
             now=12,
             next_ceiling="needs_approach",
-            at_cap=AtCap.propose,
             next_holder=self_principal,
         )
 
@@ -210,7 +204,6 @@ def test_ticket_cannot_hold_or_decide_its_own_ceiling(tmp_db: Connection) -> Non
             self_principal,
             None,
             "needs_approach",
-            AtCap.propose,
             OWNER_PRINCIPAL,
             worker_type_definition=configured_worker_type_registry().require("coding"),
         )
@@ -224,11 +217,10 @@ def test_canonical_approval_writer_requires_an_explicit_next_holder() -> None:
 def test_scope_cannot_retarget_a_pending_proposal(tmp_db: Connection) -> None:
     ticket = _park(tmp_db, OWNER_PRINCIPAL)
     with pytest.raises(PlannerError, match="proposal is pending"):
-        data.change_scope(
+        data.set_ceiling(
             tmp_db,
             ticket.id,
             ceiling="needs_plan",
-            at_cap=AtCap.propose,
             principal=CHIEF_PRINCIPAL,
             now=12,
         )
@@ -356,7 +348,6 @@ def test_revision_feedback_is_discarded_when_the_ticket_leaves_its_stage(
         principal=OWNER_PRINCIPAL,
         now=22,
         next_ceiling="needs_approach",
-        at_cap=AtCap.propose,
         next_holder=OWNER_PRINCIPAL,
     )
 

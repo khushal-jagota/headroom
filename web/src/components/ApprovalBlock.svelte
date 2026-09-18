@@ -4,12 +4,9 @@
   import Disclosure from "./Disclosure.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import InlineEdit from "./InlineEdit.svelte";
-  import ScopePairPicker from "./ScopePairPicker.svelte";
+  import CeilingPicker from "./CeilingPicker.svelte";
   import { labelize } from "../lib/ui";
   import type { Lifecycle } from "../lib/lifecycle";
-  import type { AtCap } from "../lib/types";
-
-  type ScopePair = { next_ceiling: string; at_cap: AtCap };
 
   let {
     field = "",
@@ -45,7 +42,7 @@
 
   let draft = $state("");
   let lastProposalBody = $state<string | null>(null);
-  let scope = $state<ScopePair | null>(null);
+  let ceiling = $state<string | null>(null);
   let inFlight = $state(false);
   let resolved = $state(false);
   let error = $state<unknown>(null);
@@ -55,7 +52,7 @@
   let contentTitle = $derived(labelize(whatLabel || field.replace(/_/g, " ")));
 
   let actionDisabled = $derived(
-    disabled || inFlight || resolved || scope === null
+    disabled || inFlight || resolved || ceiling === null
   );
 
   async function saveDraft(raw: string): Promise<void> {
@@ -78,7 +75,7 @@
 
   async function approve(): Promise<void> {
     const proposalSave = pendingProposalSave;
-    const scopeForApproval = scope;
+    const ceilingForApproval = ceiling;
     inFlight = true;
     error = null;
     try {
@@ -87,9 +84,8 @@
       if (proposalSave === null && draft !== (proposalBody || "")) {
         payload.edited_body = draft;
       }
-      if (!scopeForApproval) return;
-      payload.next_ceiling = scopeForApproval.next_ceiling;
-      payload.at_cap = scopeForApproval.at_cap;
+      if (!ceilingForApproval) return;
+      payload.next_ceiling = ceilingForApproval;
       payload.next_holder = { kind: "owner", id: "owner" };
       await onApprove?.(payload);
       resolved = true;
@@ -105,7 +101,7 @@
     if (incoming !== lastProposalBody) {
       lastProposalBody = incoming;
       draft = incoming;
-      scope = null;
+      ceiling = null;
       resolved = false;
     }
   });
@@ -126,7 +122,7 @@
       >
         Approve
       </Button>
-      <ScopePairPicker {newStage} {lifecycle} bind:scope />
+      <CeilingPicker {newStage} {lifecycle} bind:ceiling />
     </div>
   </div>
 {/snippet}

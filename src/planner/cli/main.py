@@ -34,7 +34,6 @@ from planner.core.contracts import PrincipalKind
 from planner.environments.cli import environment as environment_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.message_delivery.contracts import MessageDeliveryMode
-from planner.tickets.contracts import AtCap
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
 _TICKET_ID_ENV = "PLAN_TICKET_ID"
@@ -254,7 +253,6 @@ def _ticket_record(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Reco
         "sprint_item_id",
         "effective_sprint_id",
         "ceiling",
-        "at_cap",
     )
     header = {key: data[key] for key in header_keys if key in data}
     manifest = _worker_type(str(data["worker_type"]), True)
@@ -1136,13 +1134,6 @@ def ticket() -> None:
     default=None,
     help="Initial ceiling, as a stage name or the plain field name that stage needs.",
 )
-@click.option(
-    "--at-cap",
-    "at_cap",
-    type=click.Choice([a.value for a in AtCap]),
-    default=None,
-    help="Initial behaviour at the ceiling. Omit to park the kickoff for approval.",
-)
 @json_option
 def ticket_create(
     title: str,
@@ -1160,14 +1151,11 @@ def ticket_create(
     kickoff_note: str | None,
     kickoff_note_file: str | None,
     ceiling: str | None,
-    at_cap: str | None,
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {"title": title, "worker_type": worker_type}
     if ceiling is not None:
         body["ceiling"] = ceiling
-    if at_cap is not None:
-        body["at_cap"] = at_cap
     if employee_backend is not None:
         body["employee_backend"] = employee_backend
     if employee_launch_model is not None:
@@ -1478,12 +1466,6 @@ def ticket_employee_configuration(
 @ticket.command("approve")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option("--ceiling", default=None, help="Next ceiling stage or none.")
-@click.option(
-    "--at-cap",
-    default=None,
-    type=click.Choice([a.value for a in AtCap]),
-    help="stop or propose.",
-)
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @click.option(
     "--holder-kind",
@@ -1498,7 +1480,6 @@ def ticket_employee_configuration(
 def ticket_approve(
     ticket_id: str | None,
     ceiling: str | None,
-    at_cap: str | None,
     edit_file: str | None,
     holder_kind: str,
     holder_id: str | None,
@@ -1516,8 +1497,8 @@ def ticket_approve(
     proposal = detail["pending_proposal"]
     if proposal is None or proposal["field"] != field:
         http.fail_validation(f"no pending {field} proposal", as_json)
-    if ceiling is None or at_cap is None:
-        http.fail_validation("approval requires --ceiling and --at-cap", as_json)
+    if ceiling is None:
+        http.fail_validation("approval requires --ceiling", as_json)
     if kickoff_title is not None:
         if field != "kickoff":
             http.fail_validation("--kickoff-title only applies while approving kickoff", as_json)
@@ -1531,7 +1512,6 @@ def ticket_approve(
     resolved_holder_id = holder_id or holder_kind
     field_payload: dict[str, Any] = {
         "next_ceiling": ceiling,
-        "at_cap": at_cap,
         "next_holder": {"kind": holder_kind, "id": resolved_holder_id},
     }
     if edit_file is not None:
@@ -2141,18 +2121,15 @@ def sprint_item_supervisor_set_ticket(
 @click.argument("item_id")
 @click.argument("ticket_id")
 @click.option("--ceiling", required=True)
-@click.option("--at-cap", required=True, type=click.Choice([a.value for a in AtCap]))
 @json_option
-def sprint_item_supervisor_scope(
-    item_id: str, ticket_id: str, ceiling: str, at_cap: str, as_json: bool
-) -> None:
+def sprint_item_supervisor_scope(item_id: str, ticket_id: str, ceiling: str, as_json: bool) -> None:
     data = http.send(
         "POST",
         f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/scope",
         as_json=as_json,
-        json_body={"ceiling": ceiling, "at_cap": at_cap},
+        json_body={"ceiling": ceiling},
     )
-    http.emit(data, as_json, f"{ticket_id} scope set")
+    http.emit(data, as_json, f"{ticket_id} ceiling set")
 
 
 def _supervisor_day_membership(
@@ -2299,12 +2276,6 @@ def sprint_item_supervisor_reset(item_id: str, as_json: bool) -> None:
 @click.argument("item_id")
 @click.argument("ticket_id")
 @click.option("--ceiling", required=True, help="Next ceiling Stage or none.")
-@click.option(
-    "--at-cap",
-    required=True,
-    type=click.Choice([a.value for a in AtCap]),
-    help="Behaviour at the next ceiling: stop or propose.",
-)
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @click.option(
     "--holder-kind",
@@ -2318,7 +2289,6 @@ def sprint_item_supervisor_approve(
     item_id: str,
     ticket_id: str,
     ceiling: str,
-    at_cap: str,
     edit_file: str | None,
     holder_kind: str,
     holder_id: str | None,
@@ -2327,7 +2297,6 @@ def sprint_item_supervisor_approve(
     """Approve one parked proposal for this Sprint Item."""
     body: dict[str, Any] = {
         "next_ceiling": ceiling,
-        "at_cap": at_cap,
         "next_holder": {
             "kind": holder_kind,
             "id": holder_id or (item_id if holder_kind == "sprint_item" else holder_kind),

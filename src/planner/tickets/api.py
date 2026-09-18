@@ -77,7 +77,6 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AcceptBody,
-    AtCap,
     CreateTicketBody,
     EmployeeConfigurationBody,
     EmployeeLaunchConfiguration,
@@ -347,7 +346,6 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         sprint_item_id=body_opt_str(raw, "sprint_item_id"),
         blocked_by_ticket_ids=body_str_list(raw, "blocked_by_ticket_ids"),
         ceiling=body_opt_str(raw, "ceiling"),
-        at_cap=body_opt_str(raw, "at_cap"),
     )
     if "employee_backend" in raw:
         body["employee_backend"] = body_str(raw, "employee_backend")
@@ -360,7 +358,6 @@ def _marshal_accept(raw: JsonDict) -> AcceptBody:
     return AcceptBody(
         edited_body=body_opt_str(raw, "edited_body"),
         next_ceiling=body_opt_str(raw, "next_ceiling"),
-        at_cap=body_opt_str(raw, "at_cap"),
         next_holder=raw.get("next_holder"),
     )
 
@@ -427,15 +424,6 @@ def _parse_next_ceiling(
         ) from exc
 
 
-def _parse_scope_at_cap(raw: str | None) -> AtCap | None:
-    if raw is None:
-        return None
-    try:
-        return AtCap(raw)
-    except ValueError:
-        raise PlannerError(ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": raw}) from None
-
-
 # --- ticket routes -------------------------------------------------------------
 
 
@@ -478,7 +466,6 @@ async def create_ticket(
         sprint_item_id_explicit="sprint_item_id" in raw,
         sprint_id_explicit="sprint_id" in raw,
         stated_ceiling=body["ceiling"],
-        stated_at_cap=_parse_scope_at_cap(body["at_cap"]),
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -945,7 +932,6 @@ async def accept_field(
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
     next_ceiling = _parse_next_ceiling(body["next_ceiling"], worker_type_definition)
-    at_cap = _parse_scope_at_cap(body["at_cap"])
     ticket = tickets_data.accept_proposal(
         conn,
         ticket_id,
@@ -954,7 +940,6 @@ async def accept_field(
         now=now,
         edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
-        at_cap=at_cap,
         next_holder=_parse_required_principal(body["next_holder"], "next_holder"),
     )
     return tickets_views.ticket_json(ticket, now)
@@ -1250,33 +1235,20 @@ async def scope_ticket(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    body = ScopeBody(ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap"))
+    body = ScopeBody(ceiling=body_opt_str(raw, "ceiling"))
     require_direct_write(ctx)
     now = clk.now_unix()
     ceiling_raw = body["ceiling"]
-    at_cap_raw = body["at_cap"]
-    if ceiling_raw is None or at_cap_raw is None:
-        missing = [
-            name
-            for name, value in (("ceiling", ceiling_raw), ("at_cap", at_cap_raw))
-            if value is None
-        ]
+    if ceiling_raw is None:
         raise PlannerError(
             ErrorCode.scope_missing,
-            "scope requires ceiling and at_cap",
-            {"missing": missing},
+            "setting the ceiling requires a ceiling",
+            {"missing": ["ceiling"]},
         )
-    try:
-        at_cap = AtCap(at_cap_raw)
-    except ValueError:
-        raise PlannerError(
-            ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": at_cap_raw}
-        ) from None
-    ticket = tickets_data.change_scope(
+    ticket = tickets_data.set_ceiling(
         conn,
         ticket_id,
         ceiling=ceiling_raw,
-        at_cap=at_cap,
         principal=ctx.principal,
         now=now,
     )

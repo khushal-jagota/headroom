@@ -15,11 +15,6 @@ from planner.core.contracts import Principal, Priority
 TITLE_MAX_CHARS: Final = 200
 
 
-class AtCap(StrEnum):  # §4.3
-    stop = "stop"
-    propose = "propose"
-
-
 class StageOwnershipMode(StrEnum):
     worker = "worker"
     user = "user"
@@ -129,17 +124,11 @@ class PendingTicketProposal:
     created_at: int
 
 
-# --- the scope pair (§4.4.7) ---
+# --- the ceiling (§4.4.7) ---
 NO_FURTHER: Final = "none"  # wire sentinel: ceiling = the newly entered Stage
 # A ceiling id is any member of the type's ceiling_range (a str); "none" is the wire
 # sentinel meaning "the newly entered Stage".
 NextCeiling = str | Literal["none"]
-
-
-@dataclass(frozen=True)
-class ScopePair:  # required on every direct accept/edit-accept
-    next_ceiling: str  # a resolved ceiling id (resolve_scope concretizes "none")
-    at_cap: AtCap
 
 
 # --- request bodies (§9 wire shapes) ---
@@ -167,7 +156,6 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     # states scope creates the Ticket already scoped. Omission keeps the default leash:
     # the kickoff parks for approval.
     ceiling: str | None
-    at_cap: str | None
 
 
 class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
@@ -186,8 +174,7 @@ class ProposeWithRecapBody(TypedDict, total=False):  # POST /tickets/{id}/propos
 
 class AcceptBody(TypedDict, total=False):  # POST /tickets/{id}/accept/{field}
     edited_body: str | None  # direct edit applied before resolution
-    next_ceiling: str | None  # Stage id or NO_FURTHER; scope pair (§4.4.7)
-    at_cap: str | None  # AtCap value; scope pair (§4.4.7)
+    next_ceiling: str | None  # Stage id or NO_FURTHER; the onward ceiling (§4.4.7)
     next_holder: object  # required full Principal for the next ceiling
 
 
@@ -214,7 +201,6 @@ class RevisionMessageBody(TypedDict, total=False):  # POST /tickets/{id}/return-
 
 class ScopeBody(TypedDict, total=False):  # POST /tickets/{id}/scope
     ceiling: str | None  # Stage id; route requires it (scope_missing)
-    at_cap: str | None  # AtCap value; route requires it (scope_missing)
 
 
 class EmployeeConfigurationBody(TypedDict):
@@ -258,7 +244,6 @@ class Ticket:  # §3.3 — column names match exactly
     guidance: str = field(default="", kw_only=True)  # durable instructions for the Ticket
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     ceiling_holder: Principal = field(kw_only=True)
-    at_cap: AtCap  # default propose
     ticket_status: TicketStatus  # durable state-of-control; transition functions write it
     # When ticket_status last actually changed, for display and elapsed-time facts.
     ticket_status_changed_at: int

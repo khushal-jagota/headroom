@@ -138,8 +138,6 @@ def test_ticket_approve_sends_the_explicit_next_holder(
             "t_child",
             "--ceiling",
             "needs_approach",
-            "--at-cap",
-            "propose",
             "--holder-kind",
             "sprint_item",
             "--holder-id",
@@ -151,7 +149,6 @@ def test_ticket_approve_sends_the_explicit_next_holder(
     assert calls[-1][0:2] == ("POST", "/api/tickets/t_child/accept/success")
     assert calls[-1][2]["json_body"] == {
         "next_ceiling": "needs_approach",
-        "at_cap": "propose",
         "next_holder": {"kind": "sprint_item", "id": "si_parent"},
     }
 
@@ -177,8 +174,6 @@ def test_supervisor_approve_defaults_the_next_holder_to_its_item(
             "t_child",
             "--ceiling",
             "needs_approach",
-            "--at-cap",
-            "propose",
         ],
     )
 
@@ -191,7 +186,6 @@ def test_supervisor_approve_defaults_the_next_holder_to_its_item(
                 "as_json": False,
                 "json_body": {
                     "next_ceiling": "needs_approach",
-                    "at_cap": "propose",
                     "next_holder": {"kind": "sprint_item", "id": "si_parent"},
                 },
             },

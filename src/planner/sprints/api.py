@@ -60,7 +60,6 @@ from planner.tickets.api import (
     _marshal_accept,
     _parse_next_ceiling,
     _parse_required_principal,
-    _parse_scope_at_cap,
     body_opt_str,
     body_str,
     body_str_list,
@@ -68,7 +67,7 @@ from planner.tickets.api import (
     resolve_employee_configuration,
     write_resolved_employee_configuration,
 )
-from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap, TicketEdit
+from planner.tickets.contracts import TITLE_MAX_CHARS, TicketEdit
 from planner.work_attention import add_work_attention
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -500,18 +499,10 @@ async def supervisor_change_ticket_scope(
 ) -> JsonDict:
     supervisor_service.require_current_child(conn, ctx, item_id, ticket_id)
     ceiling = body_str(raw, "ceiling")
-    at_cap_raw = body_str(raw, "at_cap")
-    try:
-        at_cap = AtCap(at_cap_raw)
-    except ValueError:
-        raise PlannerError(
-            ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": at_cap_raw}
-        ) from None
-    ticket = tickets_data.change_scope(
+    ticket = tickets_data.set_ceiling(
         conn,
         ticket_id,
         ceiling=ceiling,
-        at_cap=at_cap,
         principal=ctx.principal,
         now=clk.now_unix(),
         supervisor_sprint_item_id=item_id,
@@ -689,7 +680,6 @@ async def supervisor_approve_ticket(
         now=now,
         edited_body=body["edited_body"],
         next_ceiling=_parse_next_ceiling(body["next_ceiling"], worker_type_definition),
-        at_cap=_parse_scope_at_cap(body["at_cap"]),
         next_holder=_parse_required_principal(body["next_holder"], "next_holder"),
         supervisor_sprint_item_id=item_id,
     )

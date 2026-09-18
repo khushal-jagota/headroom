@@ -111,7 +111,6 @@ class BlockerSummary:
 
 
 class ErrorCode(StrEnum):
-    at_cap_stop = "at_cap_stop"  # §4.3 agent proposal at ceiling with stop
     scope_missing = "scope_missing"  # §4.4.7 accept without the full pair
     scope_invalid = "scope_invalid"  # next_ceiling before the new Stage / unknown
     stale_claim = "stale_claim"  # §7.6 stale/foreign claim; detail names it

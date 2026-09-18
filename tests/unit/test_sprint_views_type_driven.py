@@ -25,7 +25,6 @@ from planner.core.clock import TestClock
 from planner.core.contracts import LinkKind
 from planner.sprints.data import create_item
 from planner.sprints.views import item_tickets
-from planner.tickets.contracts import AtCap
 from planner.tickets.data import accept_proposal, create_ticket, file_current_proposal_with_recap
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -63,7 +62,6 @@ def test_item_tickets_probe_child_decodes(
         principal=OWNER_PRINCIPAL,
         now=2,
         next_ceiling=NEEDS_ALPHA,
-        at_cap=AtCap.propose,
         next_holder=OWNER_PRINCIPAL,
     )
     file_current_proposal_with_recap(
@@ -84,7 +82,6 @@ def test_item_tickets_probe_child_decodes(
     assert row["stage"] == "needs_alpha"
     assert row["has_pending_proposal"] is True
     assert row["ticket_status"] == "awaiting_approval"
-    assert row["review_route"] == "propose"
 
 
 def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
@@ -118,7 +115,6 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
         principal=OWNER_PRINCIPAL,
         now=2,
         next_ceiling="needs_success",
-        at_cap=AtCap.propose,
         next_holder=OWNER_PRINCIPAL,
     )
     file_current_proposal_with_recap(
@@ -175,13 +171,12 @@ def test_item_tickets_carries_the_two_facts_the_status_group_rule_needs(
 
 
 @pytest.mark.parametrize(
-    ("stage", "ticket_status", "ceiling", "at_cap", "expected"),
+    ("stage", "ticket_status", "ceiling", "expected"),
     [
-        ("needs_closeout", "empty", "needs_closeout", "propose", True),
-        ("needs_closeout", "empty", "needs_closeout", "stop", False),
-        ("needs_closeout", "empty", "done", "stop", True),
-        ("needs_success", "empty", "done", "stop", False),
-        ("needs_closeout", "agent", "done", "stop", False),
+        ("needs_closeout", "empty", "needs_closeout", True),
+        ("needs_closeout", "empty", "done", True),
+        ("needs_success", "empty", "done", False),
+        ("needs_closeout", "agent", "done", False),
     ],
 )
 def test_item_tickets_identifies_only_runnable_empty_closeout_tickets(
@@ -189,7 +184,6 @@ def test_item_tickets_identifies_only_runnable_empty_closeout_tickets(
     stage: str,
     ticket_status: str,
     ceiling: str,
-    at_cap: str,
     expected: bool,
 ) -> None:
     # Same classification board_view's BoardCard uses (Seam 4 target file, same fact):
@@ -206,8 +200,8 @@ def test_item_tickets_identifies_only_runnable_empty_closeout_tickets(
         sprint_item_id=item.id,
     )
     tmp_db.execute(
-        "UPDATE tickets SET stage = ?, ticket_status = ?, ceiling = ?, at_cap = ? WHERE id = ?",
-        (stage, ticket_status, ceiling, at_cap, child.id),
+        "UPDATE tickets SET stage = ?, ticket_status = ?, ceiling = ? WHERE id = ?",
+        (stage, ticket_status, ceiling, child.id),
     )
 
     rows = item_tickets(tmp_db, item.id)

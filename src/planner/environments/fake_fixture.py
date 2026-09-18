@@ -18,7 +18,7 @@ from planner.sprints import data as sprints_data
 from planner.sprints.contracts import SprintItem
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap, Ticket
+from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket
 
 FAKE_FIXTURE_VERSION = "fake-fixture-v1"
 
@@ -200,7 +200,6 @@ def _create_tickets(
         sprint_id=sprint_id,
         worker_type="coding",
         stated_ceiling="needs_approach",
-        stated_at_cap=AtCap.propose,
     )
     coding = tickets_data.file_current_proposal_with_recap(
         conn,
@@ -221,7 +220,6 @@ def _create_tickets(
         sprint_id=sprint_id,
         worker_type="new_worker",
         stated_ceiling="needs_stages",
-        stated_at_cap=AtCap.propose,
     )
     new_worker = tickets_data.file_current_proposal_with_recap(
         conn,
@@ -242,7 +240,6 @@ def _create_tickets(
         sprint_id=sprint_id,
         worker_type="exploration",
         stated_ceiling="needs_research_plan",
-        stated_at_cap=AtCap.propose,
     )
     exploration = tickets_data.file_current_proposal_with_recap(
         conn,

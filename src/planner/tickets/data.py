@@ -1,4 +1,4 @@
-"""The only module that writes Ticket rows. Stage, ceiling/at_cap, and fields
+"""The only module that writes Ticket rows. Stage, ceiling, and fields
 value mutations happen in exactly one function (_apply_decision); every public
 writer is one BEGIN IMMEDIATE transaction. An ordinary Ticket edit validates and
 writes its requested plain attributes together. Other semantic writers remain
@@ -28,7 +28,6 @@ from planner.days import data as days_data
 from planner.notifications.attention import capture_ticket_attention
 from planner.tickets import worker_context as ticket_worker_context
 from planner.tickets.contracts import (
-    AtCap,
     EmployeeLaunchConfiguration,
     NextCeiling,
     PendingTicketProposal,
@@ -351,7 +350,6 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         guidance=row["guidance"],
         ceiling=str(row["ceiling"]),
         ceiling_holder=_principal_from_json(str(row["ceiling_holder"])),
-        at_cap=AtCap(row["at_cap"]),
         ticket_status=TicketStatus(row["ticket_status"]),
         ticket_status_changed_at=int(row["ticket_status_changed_at"]),
         ticket_status_revision=int(row["ticket_status_revision"]),
@@ -439,13 +437,12 @@ def _seed_kickoff(
         return stage, {}, None, machine.resting_ticket_status(ownership)
     if kickoff_note is None:
         return stage, {}, None, TicketStatus.empty
-    target = (
-        machine.auto_accept_target(
-            stage, ceiling, "kickoff", worker_type_definition=worker_type_definition
-        )
-        if ownership is StageOwnershipMode.worker
-        else None
+    # A stated ceiling past kickoff settles the kickoff on the spot: below the ceiling a
+    # worker-owned Stage writes its field and moves on, and creation is that write.
+    below_the_ceiling = ownership is StageOwnershipMode.worker and not machine.at_or_beyond_ceiling(
+        stage, ceiling, worker_type_definition=worker_type_definition
     )
+    target = worker_type_definition.advance_target(stage) if below_the_ceiling else None
     if target is not None:
         return target, {"kickoff": kickoff_note}, None, machine.resting_ticket_status(ownership)
     return (
@@ -579,7 +576,6 @@ def _apply_decision(
 ) -> Ticket:
     new_stage = decision.stage
     new_ceiling = decision.ceiling
-    new_at_cap = decision.at_cap
     _validate_ceiling_holder(conn, decision.ceiling_holder, ticket_id=ticket.id)
     # Pre-persist door: the prospective (stage, ceiling) must be registry-valid for
     # this ticket's type before any SQL — the enforcement the dropped DB CHECKs gave.
@@ -606,7 +602,7 @@ def _apply_decision(
                     )
     conn.execute(
         "UPDATE tickets SET field_values = ?, pending_proposal = ?, archived_field_content = ?, "
-        "stage = ?, ceiling = ?, ceiling_holder = ?, at_cap = ?, updated_at = ? WHERE id = ?",
+        "stage = ?, ceiling = ?, ceiling_holder = ?, updated_at = ? WHERE id = ?",
         (
             fields_codec.values_to_json(decision.field_values),
             fields_codec.proposal_to_json(decision.pending_proposal),
@@ -614,7 +610,6 @@ def _apply_decision(
             str(new_stage),
             str(new_ceiling),
             _principal_to_json(decision.ceiling_holder),
-            new_at_cap.value,
             now,
             ticket.id,
         ),
@@ -973,7 +968,6 @@ def create_ticket(
     blocked_by_ticket_ids: list[str] | None = None,
     day_id: str | None = None,
     stated_ceiling: str | None = None,
-    stated_at_cap: AtCap | None = None,
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
@@ -1019,7 +1013,6 @@ def create_ticket(
             if stated_ceiling is None
             else worker_type_definition.resolve_ceiling(stated_ceiling)
         )
-        at_cap = stated_at_cap or AtCap.propose
         stage, initial_values, initial_proposal, initial_ticket_status = _seed_kickoff(
             kickoff_note,
             principal,
@@ -1034,10 +1027,10 @@ def create_ticket(
             "id, title, worker_type, employee_backend, employee_launch_model, "
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_id, sprint_item_id, "
-            "recap, ceiling, ceiling_holder, at_cap, "
+            "recap, ceiling, ceiling_holder, "
             "ticket_status, conversation_id, field_values, pending_proposal, "
             "created_at, updated_at, ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, NULL, "
             "?, ?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1054,7 +1047,6 @@ def create_ticket(
                 sprint_item_id,
                 ceiling,
                 _principal_to_json(principal),
-                at_cap.value,
                 initial_ticket_status.value,
                 values_json,
                 fields_codec.proposal_to_json(initial_proposal),
@@ -1320,7 +1312,6 @@ def accept_proposal(
     now: int,
     edited_body: str | None = None,
     next_ceiling: NextCeiling | None = None,
-    at_cap: AtCap | None = None,
     next_holder: Principal,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
@@ -1335,7 +1326,6 @@ def accept_proposal(
             principal,
             edited_body,
             next_ceiling,
-            at_cap,
             next_holder,
             worker_type_definition=worker_type_definition,
         )
@@ -1612,12 +1602,11 @@ def delete_ticket(
         )
 
 
-def change_scope(
+def set_ceiling(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
     ceiling: str,
-    at_cap: AtCap,
     principal: Principal,
     now: int,
     supervisor_sprint_item_id: str | None = None,
@@ -1625,7 +1614,7 @@ def change_scope(
     if principal.kind is PrincipalKind.sprint_item and supervisor_sprint_item_id is None:
         raise PlannerError(
             ErrorCode.agent_forbidden,
-            "change_scope requires the Sprint Item supervisor parent",
+            "set_ceiling requires the Sprint Item supervisor parent",
             {"actor": principal_legacy_actor(principal), "ticket_id": ticket_id},
         )
     with _txn(conn):
@@ -1633,10 +1622,9 @@ def change_scope(
             conn, ticket_id
         )
         _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id, principal)
-        decision = resolution.decide_scope_change(
+        decision = resolution.decide_set_ceiling(
             ticket,
             ceiling,
-            at_cap,
             principal,
             worker_type_definition=worker_type_definition,
         )

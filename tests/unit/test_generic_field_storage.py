@@ -20,7 +20,6 @@ from planner.tickets import data
 from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
-    AtCap,
     PendingTicketProposal,
 )
 from planner.tickets.logic import fields_codec, machine
@@ -68,20 +67,18 @@ def test_proposal_codec_round_trip_is_strict() -> None:
         fields_codec.proposal_from_json('{"field":"success"}')
 
 
-def test_resolve_scope_distinguishes_unknown_from_too_early() -> None:
+def test_resolve_next_ceiling_distinguishes_unknown_from_too_early() -> None:
     with pytest.raises(PlannerError) as unknown:
-        machine.resolve_scope(
+        machine.resolve_next_ceiling(
             "needs_approach",
             "bogus",
-            AtCap.stop,
             worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
         )
     assert unknown.value.code == ErrorCode.scope_invalid
     with pytest.raises(PlannerError) as early:
-        machine.resolve_scope(
+        machine.resolve_next_ceiling(
             "needs_plan",
             "needs_approach",
-            AtCap.stop,
             worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
         )
     assert early.value.detail == {"next_ceiling": "needs_approach", "new_stage": "needs_plan"}
@@ -110,7 +107,6 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
         principal=OWNER_PRINCIPAL,
         now=now,
         next_ceiling=B,
-        at_cap=AtCap.propose,
         next_holder=OWNER_PRINCIPAL,
     )
     assert ticket.stage == A and ticket.field_values == {"kickoff": ""}
@@ -137,7 +133,6 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
         principal=OWNER_PRINCIPAL,
         now=now,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.stop,
         next_holder=OWNER_PRINCIPAL,
     )
     assert (
@@ -159,7 +154,6 @@ def test_recap_writer_infers_probe_gate(
         principal=OWNER_PRINCIPAL,
         now=now,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
         next_holder=OWNER_PRINCIPAL,
     )
     ticket = data.file_current_proposal_with_recap(

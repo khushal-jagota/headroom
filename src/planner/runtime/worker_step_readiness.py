@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
+from planner.tickets.contracts import StageOwnershipMode, Ticket, TicketStatus
 from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -107,15 +107,6 @@ def worker_step_blocker(
         return f"the Stage {ticket.stage} has no field for a worker to fill"
     if ticket.pending_proposal is not None:
         return "a proposal is parked for the user"
-    if (
-        machine.at_or_beyond_ceiling(
-            ticket.stage,
-            ticket.ceiling,
-            worker_type_definition=worker_type_definition,
-        )
-        and ticket.at_cap is AtCap.stop
-    ):
-        return "the Ticket is at its ceiling and the cap is stop"
     if _closeout_lane_is_occupied(
         conn,
         ticket,

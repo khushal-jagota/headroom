@@ -158,6 +158,7 @@ def test_sprint_migration_preserves_all_prose_and_references(tmp_path: Path) -> 
         ticket_before.pop("default_stage_ownership_mode")
         ticket_before.pop("alias")
         ticket_before.pop("backend_error")
+        ticket_before.pop("at_cap")
         assert ticket_after.pop("ceiling_holder") == '{"id":"owner","kind":"owner"}'
         assert ticket_after == ticket_before
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []

@@ -15,12 +15,12 @@ from planner.core.contracts import LinkKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets import actions as tickets_actions
-from planner.tickets.contracts import NO_FURTHER, AtCap
+from planner.tickets.contracts import NO_FURTHER
 from planner.tickets.data import (
     accept_proposal,
-    change_scope,
     create_ticket,
     file_current_proposal_with_recap,
+    set_ceiling,
 )
 
 
@@ -63,14 +63,12 @@ def _passed_ticket(db_path: Path) -> str:
             principal=OWNER_PRINCIPAL,
             now=0,
             next_ceiling=NO_FURTHER,
-            at_cap=AtCap.propose,
             next_holder=OWNER_PRINCIPAL,
         )
-        change_scope(
+        set_ceiling(
             conn,
             ticket.id,
             ceiling="needs_plan",
-            at_cap=AtCap.propose,
             principal=OWNER_PRINCIPAL,
             now=0,
         )
@@ -251,7 +249,6 @@ def test_put_proposal_agent_edits_pending_proposal_in_place(tmp_path: Path) -> N
     assert body["guidance"] == ""
     assert body["stage"] == "needs_plan"
     assert body["ceiling"] == "needs_plan"
-    assert body["at_cap"] == "propose"
     assert body["ticket_status"] == "awaiting_approval"
 
 

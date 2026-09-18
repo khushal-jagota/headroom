@@ -155,7 +155,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   `--sprint-item <id>` or `--clear-sprint-item`. Omitted dimensions keep their current
   values, and the server rejects an incoherent final combination.
   `ticket approve` works for the addressed holder and for the owner override. It requires
-  `--ceiling` and `--at-cap`, and it sends the full next holder with every approval.
+  `--ceiling`, and it sends the full next holder with every approval.
   `--holder-kind owner|chief|sprint_item|ticket` and `--holder-id <id>` name that holder.
   The direct command defaults to the owner holder. Use an explicit ID for a Sprint Item
   or Ticket holder.
@@ -194,7 +194,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   user message, or reset its current conversation.
 - **`sprint item supervisor approve / reject`** — resolve a parked proposal on a current
   child Ticket when that exact Sprint Item is its ceiling holder. Approval requires the
-  next ceiling and cap. It also sends the full next holder. The holder defaults to the
+  next ceiling. It also sends the full next holder. The holder defaults to the
   same Sprint Item; `--holder-kind` and `--holder-id` can address the next proposal to a
   different principal. Rejection requires focused revision guidance. The Ticket appends
   that exact comment to guidance, invalidates worker context, and returns the Stage to
@@ -225,7 +225,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   proposal.
 - A supervisor creates a child Ticket with ordinary `ticket create --sprint-item`,
   the same command every other actor uses, and that Ticket is scoped like any other.
-- **`ticket create --ceiling / --at-cap`** — state the new Ticket's scope at creation.
+- **`ticket create --ceiling`** — state the new Ticket's ceiling at creation.
   The creator that was given the scope states it, so authorized work does not sit waiting
   for a second approval. That creator is also the ceiling holder. A stated ceiling past
   the kickoff settles the kickoff and starts the Ticket at the next Stage. Omit both
