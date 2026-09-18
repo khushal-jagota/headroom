@@ -41,7 +41,14 @@ def upgrade() -> None:
             "SELECT m.ticket_id, t.stage, m.sender_kind, m.sender_id, m.message, "
             "m.created_at, m.updated_at "
             "FROM ticket_rejection_messages m JOIN tickets t ON t.id=m.ticket_id "
-            "WHERE m.sequence=2 AND m.state IN ('pending','delivering','uncertain') "
+            "WHERE m.sequence=2 AND m.state IN ('pending','delivering') "
+            "AND NOT EXISTS ("
+            "SELECT 1 FROM conversation_events e "
+            "WHERE e.conversation_id=t.conversation_id "
+            "AND e.kind IN ('prompt','prompt_delivery_uncertain') "
+            "AND json_extract(e.payload,'$.sender_message_id') = "
+            "'ticket-rejection:' || m.ticket_id || ':' || m.rejection_generation || "
+            "':2:' || m.delivery_attempt) "
             "ORDER BY m.ticket_id, m.rejection_generation, m.created_at, m.id"
         )
     ).mappings()
