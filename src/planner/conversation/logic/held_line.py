@@ -14,7 +14,6 @@ from typing import Protocol
 from planner.conversation.message_content import (
     MessageContent,
     MessagePiece,
-    message_content_starts_with_slash_token,
     sender_labeled_message_content,
 )
 
@@ -46,15 +45,12 @@ def leading_run_that_can_share_a_turn[MessageT: WaitingMessage](
     """
     run: list[MessageT] = []
     for message in waiting:
-        command_shaped = message_content_starts_with_slash_token(message.content)
         carries_a_change = (
             message.model_change is not None or message.reasoning_effort_change is not None
         )
-        if run and (carries_a_change or command_shaped):
+        if run and carries_a_change:
             break
         run.append(message)
-        if command_shaped:
-            break
     return tuple(run)
 
 

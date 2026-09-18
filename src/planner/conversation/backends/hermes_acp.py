@@ -95,6 +95,7 @@ from planner import __version__
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
+    BackendPromptAccepted,
     BackendSpawnFailed,
     BackendSteerAccepted,
     BackendSteerOutcome,
@@ -124,6 +125,7 @@ from planner.conversation.events import (
     UserInputAnswer,
 )
 from planner.conversation.message_content import (
+    ComposedMessageDoesNotContainSenderContent,
     MessageContent,
     MessageFile,
     MessageImage,
@@ -420,11 +422,12 @@ class HermesAcpBackendChild:
         *,
         sender_label: str,
         sender_content: MessageContent,
+        sender_message_count: int = 1,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
-    ) -> None:
+    ) -> BackendPromptAccepted:
         """Put the session on carried values and start a prompt or native command.
 
         The two are one act. If the prompt does not reach the wire the change is put back;
@@ -433,15 +436,20 @@ class HermesAcpBackendChild:
         way to name that again — the child as it stands is no longer what the conversation
         is running on, and the honest answer is to start it again.
         """
-        native_command = self._is_catalog_command(sender_content)
+        native_command = (
+            sender_message_count == 1 and self._is_catalog_command(sender_content)
+        )
         if automatic_compaction:
             content = await self._automatic_compaction_content(sender_content)
         elif native_command:
             content = sender_content
         else:
-            content = sender_labeled_composed_message_content(
-                content, sender_content, sender_label
-            )
+            try:
+                content = sender_labeled_composed_message_content(
+                    content, sender_content, sender_label
+                )
+            except ComposedMessageDoesNotContainSenderContent as invalid_composition:
+                raise PromptWriteFailed(str(invalid_composition)) from invalid_composition
         previously = (self._session_model, self._session_reasoning_effort)
         try:
             await self._apply_values(model_change, reasoning_effort_change)
@@ -457,6 +465,9 @@ class HermesAcpBackendChild:
                 await self._put_the_values_back(previously)
             raise
         self._begin_turn(turn_token, prompt, automatic_compaction=automatic_compaction)
+        return BackendPromptAccepted(
+            composed_content_delivered=not (automatic_compaction or native_command)
+        )
 
     async def _automatic_compaction_content(
         self, sender_content: MessageContent
@@ -502,38 +513,61 @@ class HermesAcpBackendChild:
         if not content or not all(isinstance(piece, MessageText) for piece in content):
             return BackendSteerRefused(PromptDeliveryRefusalReason.message_cannot_be_steered)
 
-        connection, session_id = self._bound_session()
-        self._require_a_live_wire()
-        wire_token = _turn_token_wire_value(turn_token)
-        response = await self._guarded(
-            connection.ext_method(
-                PANELS_STEER_EXTENSION_METHOD,
-                {
-                    "sessionId": session_id,
-                    "turnToken": wire_token,
-                    "text": "\n\n".join(
-                        cast(MessageText, piece).text
-                        for piece in (
-                            sender_content
-                            if self._is_catalog_command(sender_content)
-                            else sender_labeled_composed_message_content(
-                                content, sender_content, sender_label
-                            )
-                        )
-                    ),
-                    "senderLabel": sender_label,
-                },
+        native_command = self._is_catalog_command(sender_content)
+        try:
+            connection, session_id = self._bound_session()
+            self._require_a_live_wire()
+        except PromptWriteFailed:
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.write_to_backend_failed
             )
-        )
+        wire_token = _turn_token_wire_value(turn_token)
+        try:
+            wire_content = (
+                sender_content
+                if native_command
+                else sender_labeled_composed_message_content(
+                    content, sender_content, sender_label
+                )
+            )
+        except ComposedMessageDoesNotContainSenderContent:
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.message_cannot_be_steered
+            )
+        try:
+            response = await self._guarded(
+                connection.ext_method(
+                    PANELS_STEER_EXTENSION_METHOD,
+                    {
+                        "sessionId": session_id,
+                        "turnToken": wire_token,
+                        "text": "\n\n".join(
+                            cast(MessageText, piece).text
+                            for piece in wire_content
+                        ),
+                        "senderLabel": sender_label,
+                    },
+                )
+            )
+        except PromptWriteFailed:
+            return BackendSteerUncertain(
+                composed_content_delivered=not native_command
+            )
         if not isinstance(response, dict) or response.get("turnToken") != wire_token:
-            return BackendSteerUncertain()
+            return BackendSteerUncertain(
+                composed_content_delivered=not native_command
+            )
         if response.get("accepted") is True:
-            return BackendSteerAccepted()
+            return BackendSteerAccepted(
+                composed_content_delivered=not native_command
+            )
         if response.get("accepted") is False:
             return BackendSteerRefused(PromptDeliveryRefusalReason.backend_rejected_steer)
-        return BackendSteerUncertain()
+        return BackendSteerUncertain(composed_content_delivered=not native_command)
 
     def _is_catalog_command(self, content: MessageContent) -> bool:
+        if len(content) != 1 or not isinstance(content[0], MessageText):
+            return False
         commands = self._available_commands
         return commands is not None and message_content_starts_with_command(
             content, frozenset(command.name for command in commands)

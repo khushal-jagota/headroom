@@ -1,4 +1,4 @@
-"""Ticket routes (§9), plus the ticket-anchored links and the ticket-centric
+"""Ticket routes (§9), plus Ticket blocks and the ticket-centric
 derived views (board, Review). Thin HTTP shells over the stage-3 writers and the
 pure read views: every handler is parse -> auth -> writer -> serialize. No route
 re-implements a domain rule.
@@ -21,7 +21,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
-from pathlib import Path
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -45,7 +44,6 @@ from planner.core.authctx import (
     RequestContext,
     reject_agent_fields,
     request_context,
-    require_chief,
     require_direct_write,
     require_ticket_delete,
     require_ticket_worker_write,
@@ -55,7 +53,6 @@ from planner.core.config import Config
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
     JsonDict,
-    LinkKind,
     Principal,
     PrincipalKind,
     Priority,
@@ -81,19 +78,16 @@ from planner.tickets.contracts import (
     AcceptBody,
     AtCap,
     CreateTicketBody,
-    CreateTicketFromExternalWorkBody,
     EmployeeConfigurationBody,
     EmployeeLaunchConfiguration,
     GuidanceBody,
-    LinkBody,
     PendingProposalEditBody,
     ProposeWithRecapBody,
     RecapBody,
-    ReconcileTicketFromExternalWorkBody,
     RevisionMessageBody,
     ScopeBody,
-    StageOwnershipMode,
     Ticket,
+    TicketBlockBody,
     TicketEdit,
     TicketListFilters,
     TicketStatus,
@@ -101,7 +95,6 @@ from planner.tickets.contracts import (
 )
 from planner.work_attention import add_work_attention
 from planner.worker_context.contracts import WorkerContextService
-from planner.worker_settings import service as worker_settings_service
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
     configured_worker_type_registry,
@@ -183,19 +176,12 @@ ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_recor
 WorkerContext = Annotated[WorkerContextService, Depends(get_worker_context_service)]
 
 
-def _ticket_detail_with_worker_settings(
+def _ticket_detail(
     conn: sqlite3.Connection,
     ticket_id: str,
     now: int,
-    config: Config,
 ) -> JsonDict:
-    detail = tickets_views.ticket_detail(conn, ticket_id, now)
-    detail["suggested_next_ceiling"] = worker_settings_service.read_worker_settings(
-        Path(config.db_path).expanduser().parent,
-        configured_worker_type_registry(),
-        str(detail["worker_type"]),
-    ).suggested_next_ceiling
-    return detail
+    return tickets_views.ticket_detail(conn, ticket_id, now)
 
 
 async def reject_while_the_conversation_is_running(
@@ -244,7 +230,7 @@ async def silence_the_worker_before_deleting(
 
 @contextmanager
 def txn(conn: sqlite3.Connection) -> Iterator[None]:
-    """Wrap a NON-self-transacting writer (days/dispatch/links) so a mid-sequence
+    """Wrap a NON-self-transacting writer (days/dispatch/Ticket blocks) so a mid-sequence
     PlannerError rolls back cleanly. Never wrap a ticket/sprint writer — those open
     their own BEGIN IMMEDIATE and would raise 'transaction within a transaction'."""
     conn.execute("BEGIN IMMEDIATE")
@@ -367,134 +353,6 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
     if "employee_launch_model" in raw:
         body["employee_launch_model"] = body_str(raw, "employee_launch_model")
     return body
-
-
-# The fixed external-work keys, allowed for every type. The field-value keys are
-# per-type (the type's declared field ids minus kickoff, which arrives as
-# kickoff_note), so the allowed set is computed once the type is resolved.
-_EXTERNAL_FIXED_RECONCILE_KEYS = frozenset({"stage", "kickoff_note", "recap"})
-_EXTERNAL_FIXED_CREATE_KEYS = _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(
-    {
-        "title",
-        "worker_type",
-        "employee_backend",
-        "employee_launch_model",
-        "priority",
-        "deadline",
-        "project",
-        "project_id",
-        "sprint_id",
-        "sprint_item_id",
-        "blocked_by_ticket_ids",
-    }
-)
-
-
-def _external_field_keys(
-    worker_type_definition: WorkerTypeDefinition,
-) -> tuple[str, ...]:
-    """The type's field-value body keys: its declared field ids minus kickoff (which
-    arrives as kickoff_note)."""
-    return tuple(field for field in worker_type_definition.field_ids() if field != "kickoff")
-
-
-def _reject_unknown_external_keys(raw: JsonDict, allowed: frozenset[str]) -> None:
-    unknown = [key for key in raw if key not in allowed]
-    if unknown:
-        raise PlannerError(
-            ErrorCode.validation,
-            "unknown external-work field",
-            {"field": unknown[0]},
-        )
-
-
-def _marshal_external_reconcile(
-    raw: JsonDict, worker_type_definition: WorkerTypeDefinition
-) -> ReconcileTicketFromExternalWorkBody:
-    field_keys = _external_field_keys(worker_type_definition)
-    _reject_unknown_external_keys(raw, _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(field_keys))
-    missing = [key for key in ("stage", "kickoff_note") if key not in raw]
-    if missing:
-        raise PlannerError(
-            ErrorCode.validation,
-            "external-work reconciliation requires stage and kickoff_note",
-            {"missing": missing},
-        )
-    body = ReconcileTicketFromExternalWorkBody(
-        stage=body_str(raw, "stage"),
-        kickoff_note=body_str(raw, "kickoff_note"),
-    )
-    if "recap" in raw:
-        body["recap"] = body_str(raw, "recap")
-    return body
-
-
-def _marshal_external_create(
-    raw: JsonDict, worker_type_definition: WorkerTypeDefinition
-) -> CreateTicketFromExternalWorkBody:
-    field_keys = _external_field_keys(worker_type_definition)
-    _reject_unknown_external_keys(raw, _EXTERNAL_FIXED_CREATE_KEYS | frozenset(field_keys))
-    if "title" not in raw:
-        raise PlannerError(
-            ErrorCode.validation,
-            "external-work creation requires title",
-            {"missing": ["title"]},
-        )
-    common_keys = _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(field_keys)
-    common_raw = {key: value for key, value in raw.items() if key in common_keys}
-    common = _marshal_external_reconcile(common_raw, worker_type_definition)
-    body = CreateTicketFromExternalWorkBody(
-        stage=common["stage"],
-        kickoff_note=common["kickoff_note"],
-        title=body_str(raw, "title"),
-        worker_type=body_str(raw, "worker_type"),
-    )
-    if "recap" in common:
-        body["recap"] = common["recap"]
-    if "priority" in raw:
-        body["priority"] = body_opt_str(raw, "priority")
-    if "deadline" in raw:
-        body["deadline"] = body_opt_str(raw, "deadline")
-    if "project" in raw:
-        body["project"] = body_opt_str(raw, "project")
-    if "project_id" in raw:
-        body["project_id"] = body_opt_str(raw, "project_id")
-    if "sprint_id" in raw:
-        body["sprint_id"] = body_opt_str(raw, "sprint_id")
-    if "sprint_item_id" in raw:
-        body["sprint_item_id"] = body_opt_str(raw, "sprint_item_id")
-    if "employee_backend" in raw:
-        body["employee_backend"] = body_str(raw, "employee_backend")
-    if "employee_launch_model" in raw:
-        body["employee_launch_model"] = body_str(raw, "employee_launch_model")
-    body["blocked_by_ticket_ids"] = body_str_list(raw, "blocked_by_ticket_ids")
-    return body
-
-
-def _external_values(
-    raw: JsonDict,
-    kickoff_note: str,
-    worker_type_definition: WorkerTypeDefinition,
-) -> dict[str, str]:
-    """The provided settled values keyed by field id: kickoff from kickoff_note, then
-    each declared non-kickoff field present in the raw body (validated as a str). The
-    field keys are type-declared, so this is genuinely per-type."""
-    values: dict[str, str] = {"kickoff": kickoff_note}
-    for key in _external_field_keys(worker_type_definition):
-        if key in raw:
-            values[key] = body_str(raw, key)
-    return values
-
-
-def _validate_external_stage(stage: str, worker_type_definition: WorkerTypeDefinition) -> str:
-    """An external-work target Stage validated against the Worker type's Stages.
-
-    A Stage that is neither linear nor the reserved ``dropped`` is rejected at
-    the ingress; a linear-but-out-of-range target (needs_kickoff / dropped) is left for
-    ``decide_external_work`` to reject with its exact message (coding parity)."""
-    if worker_type_definition.is_known_stage(stage):
-        return stage
-    raise PlannerError(ErrorCode.validation, "invalid stage", {"stage": stage})
 
 
 def _marshal_accept(raw: JsonDict) -> AcceptBody:
@@ -620,82 +478,6 @@ async def create_ticket(
         sprint_id_explicit="sprint_id" in raw,
         stated_ceiling=body["ceiling"],
         stated_at_cap=_parse_scope_at_cap(body["at_cap"]),
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/chief/tickets/from-external-work")
-async def create_ticket_from_external_work(
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    cfg: Cfg,
-    clk: Clk,
-) -> JsonDict:
-    require_chief(ctx)
-    worker_type = _require_create_worker_type(raw)
-    worker_type_definition = configured_worker_type_registry().require(worker_type)
-    body = _marshal_external_create(raw, worker_type_definition)
-    target_stage = _validate_external_stage(body["stage"], worker_type_definition)
-    priority_raw = body.get("priority")
-    priority = parse_enum(Priority, priority_raw, "priority") if priority_raw is not None else None
-    project = projects_data.resolve_project(
-        conn,
-        project_id=body.get("project_id"),
-        project_name=body.get("project"),
-    )
-    now = clk.now_unix()
-    ticket = tickets_actions.create_ticket_from_external_work(
-        conn,
-        title=body["title"],
-        kickoff_note=body["kickoff_note"],
-        target_stage=target_stage,
-        provided_values=_external_values(raw, body["kickoff_note"], worker_type_definition),
-        recap=body.get("recap"),
-        principal=ctx.principal,
-        now=now,
-        title_max_chars=TITLE_MAX_CHARS,
-        project_id=project.id if project is not None else None,
-        sprint_id=body.get("sprint_id"),
-        priority=priority,
-        deadline=body.get("deadline"),
-        sprint_item_id=body.get("sprint_item_id"),
-        worker_type=worker_type,
-        employee_backend=body.get("employee_backend"),
-        employee_launch_model=body.get("employee_launch_model"),
-        blocked_by_ticket_ids=body.get("blocked_by_ticket_ids", []),
-        planning_now=clk.now(),
-        boundary_hour=cfg.boundary_hour,
-        sprint_item_id_explicit="sprint_item_id" in raw,
-        sprint_id_explicit="sprint_id" in raw,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/chief/tickets/{ticket_id}/reconcile-from-external-work")
-async def reconcile_ticket_from_external_work(
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    conversations: Conversations,
-) -> JsonDict:
-    require_chief(ctx)
-    await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
-    body = _marshal_external_reconcile(raw, worker_type_definition)
-    target_stage = _validate_external_stage(body["stage"], worker_type_definition)
-    now = clk.now_unix()
-    ticket = tickets_data.reconcile_ticket_from_external_work(
-        conn,
-        ticket_id,
-        kickoff_note=body["kickoff_note"],
-        target_stage=target_stage,
-        provided_values=_external_values(raw, body["kickoff_note"], worker_type_definition),
-        recap=body.get("recap"),
-        principal=ctx.principal,
-        now=now,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -948,7 +730,6 @@ async def get_worker_self_ticket(
     ticket_id: str,
     conn: DbConn,
     clk: Clk,
-    config: Cfg,
 ) -> JsonDict:
     """A worker agent's own Ticket, resolved from `PLAN_TICKET_ID` (its spawn env, flag-on).
 
@@ -970,7 +751,7 @@ async def get_worker_self_ticket(
                     "owner_ticket_id": owner.id,
                 },
             )
-    detail = _ticket_detail_with_worker_settings(conn, ticket.id, clk.now_unix(), config)
+    detail = _ticket_detail(conn, ticket.id, clk.now_unix())
     detail["worker"] = (
         configured_worker_type_registry()
         .require(ticket.worker_type)
@@ -984,11 +765,10 @@ async def get_ticket(
     ticket_id: str,
     conn: DbConn,
     clk: Clk,
-    config: Cfg,
     conversations: Conversations,
     conversation_record: ConversationRecord,
 ) -> JsonDict:
-    detail = _ticket_detail_with_worker_settings(conn, ticket_id, clk.now_unix(), config)
+    detail = _ticket_detail(conn, ticket_id, clk.now_unix())
     await add_work_attention(conn, conversations, conversation_record, tickets=(detail,))
     return detail
 
@@ -1030,7 +810,7 @@ async def put_ticket_employee_configuration(
         employee_launch_reasoning_effort=body["employee_launch_reasoning_effort"],
     )
     ticket = write_resolved_employee_configuration(conn, ticket_id, resolved, now=clk.now_unix())
-    return _ticket_detail_with_worker_settings(conn, ticket.id, clk.now_unix(), get_config(request))
+    return _ticket_detail(conn, ticket.id, clk.now_unix())
 
 
 @router.delete("/tickets/{ticket_id}")
@@ -1066,7 +846,7 @@ async def delete_ticket(
         "day_ids": list(deleted.day_ids),
         "sprint_item_ids": list(deleted.sprint_item_ids),
         "sprint_ids": list(deleted.sprint_ids),
-        "linked_entity_ids": list(deleted.linked_entity_ids),
+        "linked_ticket_ids": list(deleted.linked_ticket_ids),
     }
 
 
@@ -1442,10 +1222,13 @@ async def put_value(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
+    conversations: Conversations,
 ) -> JsonDict:
     body = ValueEditBody(body=body_str(raw, "body"))
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
+    if field not in ticket.field_values:
+        await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
     now = clk.now_unix()
     ticket = tickets_data.edit_field_value(
         conn,
@@ -1517,40 +1300,6 @@ async def drop_ticket(
     return tickets_views.ticket_json(ticket, now)
 
 
-@router.post("/tickets/{ticket_id}/takeover")
-async def take_over_ticket(
-    ticket_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    require_direct_write(ctx)
-    now = clk.now_unix()
-    ticket = tickets_data.take_over_ticket(
-        conn,
-        ticket_id,
-        now=now,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/tickets/{ticket_id}/release")
-async def release_ticket(
-    ticket_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    require_direct_write(ctx)
-    now = clk.now_unix()
-    ticket = tickets_data.release_ticket(
-        conn,
-        ticket_id,
-        now=now,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
 @router.post("/tickets/{ticket_id}/request-help")
 async def request_help(
     ticket_id: str,
@@ -1589,85 +1338,46 @@ async def request_help(
     }
 
 
-@router.put("/tickets/{ticket_id}/stage-ownership/{stage}")
-async def put_stage_ownership(
-    ticket_id: str,
-    stage: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    require_direct_write(ctx)
-    if set(raw) != {"ownership_mode"}:
-        raise PlannerError(
-            ErrorCode.validation,
-            "stage ownership requires ownership_mode",
-            {"fields": sorted(raw)},
-        )
-    ownership_raw = body_opt_str(raw, "ownership_mode")
-    ownership_mode = (
-        parse_enum(StageOwnershipMode, ownership_raw, "ownership_mode")
-        if ownership_raw is not None
-        else None
-    )
-    now = clk.now_unix()
-    ticket = tickets_data.set_stage_ownership(
-        conn,
-        ticket_id,
-        stage=stage,
-        ownership_mode=ownership_mode,
-        now=now,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
 @router.get("/tickets/{ticket_id}/copy-text", response_class=PlainTextResponse)
 async def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
     return tickets_views.copy_text(conn, ticket_id)
 
 
-@router.post("/links")
-async def add_link(
+@router.post("/ticket-blocks")
+async def add_ticket_block(
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    body = LinkBody(
-        from_id=body_str(raw, "from_id"),
-        to_id=body_str(raw, "to_id"),
-        kind=body_str(raw, "kind"),
+    body = TicketBlockBody(
+        blocking_ticket_id=body_str(raw, "blocking_ticket_id"),
+        blocked_ticket_id=body_str(raw, "blocked_ticket_id"),
     )
-    kind = parse_enum(LinkKind, body["kind"], "kind")
     now = clk.now_unix()
-    tickets_actions.add_link(
+    tickets_actions.add_ticket_block(
         conn,
-        body["from_id"],
-        body["to_id"],
-        kind,
+        body["blocking_ticket_id"],
+        body["blocked_ticket_id"],
         now=now,
         admit=lambda: require_ticket_worker_write(conn, ctx),
     )
-    return {"from_id": body["from_id"], "to_id": body["to_id"], "kind": kind.value}
+    return dict(body)
 
 
-@router.delete("/links")
-async def remove_link(
+@router.delete("/ticket-blocks")
+async def remove_ticket_block(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    from_id: str,
-    to_id: str,
-    kind: str,
+    blocking_ticket_id: str,
+    blocked_ticket_id: str,
 ) -> JsonDict:
-    kind_enum = parse_enum(LinkKind, kind, "kind")
     now = clk.now_unix()
-    tickets_actions.remove_link(
+    tickets_actions.remove_ticket_block(
         conn,
-        from_id,
-        to_id,
-        kind_enum,
+        blocking_ticket_id,
+        blocked_ticket_id,
         now=now,
         admit=lambda: require_ticket_worker_write(conn, ctx),
     )

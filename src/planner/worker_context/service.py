@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 
-from planner.worker_context import data
+from planner.worker_context import data, revision_feedback
 from planner.worker_context.contracts import (
     PreparedWorkerPrompt,
     WorkerContextReceipt,
@@ -33,7 +33,13 @@ class SqliteWorkerContextService:
     def prepare(self, worker_entity_id: str, prompt_text: str) -> PreparedWorkerPrompt:
         conn = self._conn_factory()
         try:
-            return _prepare_prompt(prompt_text, data.snapshot(conn, worker_entity_id))
+            snapshot = data.snapshot(conn, worker_entity_id)
+            feedback = revision_feedback.snapshot(conn, worker_entity_id)
+            if feedback is not None:
+                snapshot = WorkerContextSnapshot(
+                    items=(*snapshot.items, feedback.as_worker_context())
+                )
+            return _prepare_prompt(prompt_text, snapshot)
         finally:
             conn.close()
 
@@ -43,7 +49,15 @@ class SqliteWorkerContextService:
         conn = self._conn_factory()
         try:
             conn.execute("BEGIN IMMEDIATE")
-            data.acknowledge(conn, worker_entity_id, receipts)
+            generic_receipts = tuple(
+                receipt
+                for receipt in receipts
+                if receipt.context_key != revision_feedback.REVISION_FEEDBACK_CONTEXT_KEY
+            )
+            data.acknowledge(conn, worker_entity_id, generic_receipts)
+            for receipt in receipts:
+                if receipt.context_key == revision_feedback.REVISION_FEEDBACK_CONTEXT_KEY:
+                    revision_feedback.acknowledge(conn, worker_entity_id, receipt)
             conn.commit()
         except Exception:
             conn.rollback()

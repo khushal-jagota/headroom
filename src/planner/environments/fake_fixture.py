@@ -9,15 +9,16 @@ from pathlib import Path
 
 from planner.core import db
 from planner.core.clock import Clock
-from planner.core.contracts import OWNER_PRINCIPAL, Priority
+from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind, Priority
 from planner.days import data as days_data
 from planner.files.logic.paths import ticket_files_root
 from planner.projects import data as projects_data
 from planner.projects.contracts import Project
 from planner.sprints import data as sprints_data
 from planner.sprints.contracts import SprintItem
+from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket
+from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap, Ticket
 
 FAKE_FIXTURE_VERSION = "fake-fixture-v1"
 
@@ -188,58 +189,70 @@ def _create_tickets(
     project_id: str,
     now: int,
 ) -> tuple[Ticket, Ticket, Ticket, Ticket]:
-    coding = tickets_data.create_ticket_from_external_work(
+    coding = tickets_actions.create_ticket(
         conn,
         title="Implement fake environment materialization",
-        target_stage="needs_approach",
-        provided_values={
-            "kickoff": "Build fictional state only.",
-            "success": "Staging data is isolated from live data.",
-        },
         principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         kickoff_note="Build fictional state only.",
-        recap="The fake fixture has a settled kickoff and success note.",
         sprint_item_id=sprint_item_ids[0],
         sprint_id=sprint_id,
         worker_type="coding",
+        stated_ceiling="needs_approach",
+        stated_at_cap=AtCap.propose,
     )
-    new_worker = tickets_data.create_ticket_from_external_work(
+    coding = tickets_data.file_current_proposal_with_recap(
+        conn,
+        coding.id,
+        body="Staging data is isolated from live data.",
+        recap="The fake fixture has a settled kickoff and success note.",
+        principal=Principal(PrincipalKind.ticket, coding.id),
+        now=now,
+    )
+    new_worker = tickets_actions.create_ticket(
         conn,
         title="Sketch fictional specialist onboarding",
-        target_stage="needs_stages",
-        provided_values={
-            "kickoff": "Invent a representative worker without creating registry rows.",
-            "understanding": "Use existing registered Worker types only.",
-        },
         principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         kickoff_note="Invent a representative worker without creating registry rows.",
-        recap="Onboarding is represented by a current registry type.",
         sprint_item_id=sprint_item_ids[0],
         sprint_id=sprint_id,
         worker_type="new_worker",
+        stated_ceiling="needs_stages",
+        stated_at_cap=AtCap.propose,
     )
-    exploration = tickets_data.create_ticket_from_external_work(
+    new_worker = tickets_data.file_current_proposal_with_recap(
+        conn,
+        new_worker.id,
+        body="Use existing registered Worker types only.",
+        recap="Onboarding is represented by a current registry type.",
+        principal=Principal(PrincipalKind.ticket, new_worker.id),
+        now=now,
+    )
+    exploration = tickets_actions.create_ticket(
         conn,
         title="Compare staging reset outcomes",
-        target_stage="needs_research_plan",
-        provided_values={
-            "kickoff": "Inspect reset behavior in fictional staging.",
-            "understanding": "The reset should replace data only for that instance.",
-        },
         principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         kickoff_note="Inspect reset behavior in fictional staging.",
-        recap="Exploration is ready for a research plan.",
         sprint_item_id=sprint_item_ids[1],
         sprint_id=sprint_id,
         worker_type="exploration",
+        stated_ceiling="needs_research_plan",
+        stated_at_cap=AtCap.propose,
     )
-    initiative = tickets_data.create_ticket(
+    exploration = tickets_data.file_current_proposal_with_recap(
+        conn,
+        exploration.id,
+        body="The reset should replace data only for that instance.",
+        recap="Exploration is ready for a research plan.",
+        principal=Principal(PrincipalKind.ticket, exploration.id),
+        now=now,
+    )
+    initiative = tickets_actions.create_ticket(
         conn,
         title="Draft fictional initiative outline",
         principal=OWNER_PRINCIPAL,
@@ -254,7 +267,6 @@ def _create_tickets(
     tickets_data.mark_ticket_errored(
         conn,
         exploration.id,
-        error="Fictional non-production error for inspection.",
         now=now,
     )
     return (

@@ -79,7 +79,7 @@ describe("Workspace rail", () => {
 
     expect(groups.map((group) => group.label)).toEqual([
       "Awaiting approval",
-      "Paired",
+      "Assigned",
       "Messages",
       "Errored",
       "Agent",
@@ -188,7 +188,7 @@ describe("Workspace rail", () => {
     ]);
     // Quiet child Tickets remain in the Tickets view, not under the Item heading.
     expect(rail.items[0].groups.map((group) => group.label)).toEqual([
-      "Paired"
+      "Assigned"
     ]);
   });
 

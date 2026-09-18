@@ -131,11 +131,11 @@ MANIFEST = {
   "worker_types": [{
     "worker_type": "coding", "label": "Coding",
     "stages": [
-      {"id": "needs_implementation", "label": "Implementation", "gating_field": "implementation", "is_terminal": False, "default_ownership_mode": "worker"},
-      {"id": "needs_closeout", "label": "Closeout", "gating_field": "closeout", "is_terminal": False, "default_ownership_mode": "worker"},
-      {"id": "done", "label": "Done", "gating_field": None, "is_terminal": True, "default_ownership_mode": None}
+      {"id": "needs_implementation", "label": "Implementation", "gating_field": "implementation", "is_terminal": False, "ownership_mode": "worker"},
+      {"id": "needs_closeout", "label": "Closeout", "gating_field": "closeout", "is_terminal": False, "ownership_mode": "worker"},
+      {"id": "done", "label": "Done", "gating_field": None, "is_terminal": True, "ownership_mode": None}
     ],
-    "dropped": {"id": "dropped", "label": "Dropped", "gating_field": None, "is_terminal": True, "default_ownership_mode": None},
+    "dropped": {"id": "dropped", "label": "Dropped", "gating_field": None, "is_terminal": True, "ownership_mode": None},
     "advance": {"needs_implementation": "needs_closeout", "needs_closeout": "done"},
     "fields": [{"id": "implementation", "label": "Implementation"}, {"id": "closeout", "label": "Closeout"}],
     "ceiling_range": ["needs_implementation", "needs_closeout", "done"],
@@ -148,11 +148,9 @@ TICKET = {
   "employee_backend": "codex", "employee_launch_model": None,
   "employee_launch_reasoning_effort": None, "employee_configuration_editable": True,
   "stage": "needs_implementation", "ceiling": "done", "at_cap": "propose",
-  "suggested_next_ceiling": "needs_closeout", "priority": "P2",
+  "priority": "P2",
   "resolved_priority_anchors": {"sprint_item": None, "project": None},
-  "ticket_status": "awaiting_approval", "backend_error": None,
-  "stage_ownership_overrides": {}, "default_stage_ownership_mode": "worker",
-  "effective_stage_ownership_mode": "worker", "conversation_id": None,
+  "ticket_status": "awaiting_approval", "conversation_id": None,
   "conversation_history": [], "verdict": None, "trouble_notes": [],
   "guidance": "", "field_values": {},
   "pending_proposal": {"field": "implementation", "body": "Done", "proposed_by": "worker", "created_at": 1},

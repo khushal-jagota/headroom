@@ -94,7 +94,11 @@ FLOOR_DEFAULT_WORKSPACE_FOLDER: Final[Path] = Path.home() / "projects"
 FLOOR_DEFAULT_ACCESS: Final = ConversationAccess.full
 
 BACKEND_KEYS_SUPPORTING_STEER: Final[frozenset[ConversationBackendKey]] = frozenset(
-    {ConversationBackendKey.codex, ConversationBackendKey.hermes, ConversationBackendKey.claude}
+    {
+        ConversationBackendKey.codex,
+        ConversationBackendKey.hermes,
+        ConversationBackendKey.claude,
+    }
 )
 
 
@@ -545,32 +549,6 @@ class ConversationSystem(Protocol):
         sent_at_unix_milliseconds: int | None = None,
     ) -> None:
         """Record one addressed message that no backend receives."""
-        ...
-
-    async def record_prompt_delivery_uncertain(
-        self,
-        conversation_id: str,
-        content: MessageContent,
-        *,
-        sender_label: str,
-        mode: PromptDeliveryMode,
-        sender_message_id: str,
-        sent_at_unix_milliseconds: int | None = None,
-        sender: Principal | None = None,
-        recipient: Principal | None = None,
-    ) -> None:
-        """Record one terminal uncertain outcome without another backend delivery."""
-        ...
-
-    async def record_proposal_delivery_failed(
-        self,
-        conversation_id: str,
-        *,
-        attempt_count: int,
-        last_error: str,
-        sender_message_id: str,
-    ) -> None:
-        """Record one terminal proposal-alert failure without a backend delivery."""
         ...
 
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:

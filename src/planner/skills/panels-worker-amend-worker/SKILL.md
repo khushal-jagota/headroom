@@ -22,13 +22,13 @@ The two halves of a Worker live in different places and land differently. This c
 
 Editing the repo copy of a skill changes nothing for a running worker. Editing only the managed copy means the change is missing from any fresh install. Skill-text amendments land in both.
 
-## needs_amendment — agree the change and its blast radius (paired)
+## needs_amendment — agree the change and its blast radius (user-owned)
 
 Read the current definition and skill before you say anything. Then agree with the user what changes, and report what it does to live tickets of that type.
 
 Look before you propose. `panels ticket list --json` names the live tickets and where they sit. Report three things:
 
-- Tickets sitting in a Stage that is being removed. These are stranded. `panels chief reconcile-ticket-from-external-work --stage <surviving stage>` moves them.
+- Tickets sitting in a Stage that is being removed. These are stranded. The repository change must include an explicit data migration to a surviving Stage.
 - Tickets whose ceiling names a removed Stage.
 - Everything else, which is fine — including done tickets holding content in a removed field. That content goes dark. That is accepted loss. Do not rewrite history.
 
@@ -54,9 +54,9 @@ Skill text is instruction for a capable agent, not documentation. Amending a ski
 6. Run `./verify`.
 7. Complete the repository-defined integration route without deploying: bring current `staging` into the Ticket branch, repair and verify the prospective result, advance `staging` only when it is green, push that exact revision to `origin/staging`, verify the remote ref, and ensure the single rolling `staging` → `main` pull request exists.
 8. Deployment from `main` is a later user action. Do not dispatch deployment, merge or push `main`, restart Panels, or modify the deployed application.
-9. Do not reconcile stranded live Tickets until the structural change is deployed. Record the exact post-deployment reconciliation that remains.
+9. Include the migration for stranded Tickets in the repository change. Do not rely on a later product operation.
 
-A good closeout is short and verified: what changed, which managed skill copy took effect now, which repo copy ships, the exact pushed `staging` revision, and what reconciliation waits for deployment.
+A good closeout is short and verified: what changed, which managed skill copy took effect now, which repo copy ships, the exact pushed `staging` revision, and which migration ships with it.
 
 ## Boundaries
 

@@ -118,7 +118,7 @@ async def start_ready_worker_step(
                 now=now(),
             )
             if released and paired_opener and not opener_succeeded:
-                tickets_data.forget_paired_stage_opener(
+                tickets_data.forget_user_stage_opener(
                     conn,
                     ticket_id,
                     stage=claimed.stage,

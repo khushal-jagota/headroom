@@ -224,13 +224,6 @@ def test_registry_validation_order_and_messages() -> None:
         "default_model must be a non-empty string",
         {"worker_type": "coding", "default_model": "   "},
     )
-    assert_error(
-        replace(base, supports_prefix_reconciliation=1),  # type: ignore[arg-type]
-        "supports_prefix_reconciliation must be a bool",
-        {"worker_type": "coding"},
-    )
-
-
 def test_manifests_are_complete_and_json_round_trip() -> None:
     registered = PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
     assert len(set(registered)) == len(registered)
@@ -244,49 +237,49 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
                 "label": "Kickoff",
                 "gating_field": "kickoff",
                 "is_terminal": False,
-                "default_ownership_mode": "worker",
+                "ownership_mode": "worker",
             },
             {
                 "id": "needs_success",
                 "label": "Success",
                 "gating_field": "success",
                 "is_terminal": False,
-                "default_ownership_mode": "worker",
+                "ownership_mode": "worker",
             },
             {
                 "id": "needs_approach",
                 "label": "Approach",
                 "gating_field": "approach",
                 "is_terminal": False,
-                "default_ownership_mode": "worker",
+                "ownership_mode": "worker",
             },
             {
                 "id": "needs_plan",
                 "label": "Plan",
                 "gating_field": "plan",
                 "is_terminal": False,
-                "default_ownership_mode": "worker",
+                "ownership_mode": "worker",
             },
             {
                 "id": "needs_implementation",
                 "label": "Implementation",
                 "gating_field": "implementation",
                 "is_terminal": False,
-                "default_ownership_mode": "worker",
+                "ownership_mode": "worker",
             },
             {
                 "id": "needs_closeout",
                 "label": "Closeout",
                 "gating_field": "closeout",
                 "is_terminal": False,
-                "default_ownership_mode": "worker",
+                "ownership_mode": "worker",
             },
             {
                 "id": "done",
                 "label": "Done",
                 "gating_field": None,
                 "is_terminal": True,
-                "default_ownership_mode": None,
+                "ownership_mode": None,
             },
         ],
         "dropped": {
@@ -294,7 +287,7 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
             "label": "Dropped",
             "gating_field": None,
             "is_terminal": True,
-            "default_ownership_mode": None,
+            "ownership_mode": None,
         },
         "advance": {
             "needs_kickoff": "needs_success",

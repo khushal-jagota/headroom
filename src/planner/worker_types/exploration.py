@@ -20,7 +20,7 @@ EXPLORATION_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
             "Understanding",
             "understanding",
             False,
-            StageOwnershipMode.paired,
+            StageOwnershipMode.user,
         ),
         StageDefinition(
             "needs_research_plan",
@@ -30,7 +30,7 @@ EXPLORATION_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
             StageOwnershipMode.worker,
         ),
         StageDefinition("needs_research", "Research", "research", False, StageOwnershipMode.worker),
-        StageDefinition("needs_answer", "Answer", "answer", False, StageOwnershipMode.paired),
+        StageDefinition("needs_answer", "Answer", "answer", False, StageOwnershipMode.user),
         StageDefinition(
             "needs_follow_up",
             "Follow-up",
@@ -58,7 +58,6 @@ EXPLORATION_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         toolset_profile="default",
         default_backend="codex",
     ),
-    supports_prefix_reconciliation=True,
 )
 
 

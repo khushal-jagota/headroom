@@ -213,6 +213,56 @@ def test_in_memory_replays_report_freshness_and_silence_matches_production() -> 
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("text", ("/compact", "/tmp is full; investigate it"))
+def test_in_memory_addressed_slash_prompt_keeps_reply_directive_and_debt(text: str) -> None:
+    async def exercise() -> None:
+        system = InMemoryConversationSystem()
+        await system.start_conversation(
+            ConversationStartRequest(
+                conversation_id="c",
+                model="a-model",
+                backend_key=ConversationBackendKey.hermes,
+            )
+        )
+        recipient = Principal(PrincipalKind.ticket, "t_one")
+
+        first = await system.send_with_receipt(
+            "c",
+            text_message_content(text),
+            sender_label="owner",
+            sender_message_id="slash-control-1",
+            sender=OWNER_PRINCIPAL,
+            recipient=recipient,
+        )
+        duplicate = await system.send_with_receipt(
+            "c",
+            text_message_content(text),
+            sender_label="owner",
+            sender_message_id="slash-control-1",
+            sender=OWNER_PRINCIPAL,
+            recipient=recipient,
+        )
+
+        assert isinstance(first.fate, PromptDeliveryStarted)
+        assert duplicate.fate == first.fate
+        assert first.newly_accepted is True
+        assert duplicate.newly_accepted is False
+        assert len(system.backend_prompt_writes("c")) == 1
+        write = system.backend_prompt_writes("c")[-1]
+        assert "Authenticated Panels reply requirement" in write.text
+        turn = await system.active_turn_reference("c")
+        assert turn is not None
+        assert await system.turn_expects_reply(turn, OWNER_PRINCIPAL) is True
+        system.complete_running_turn("c")
+        assert [
+            observation.sender
+            for observation in system.observations("c")
+            if observation.kind is InMemoryConversationObservationKind.explicit_reply_missing
+        ] == [OWNER_PRINCIPAL]
+
+    asyncio.run(exercise())
+
+
 def test_in_memory_steer_promotion_drops_queued_model_selections() -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()

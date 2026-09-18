@@ -55,8 +55,6 @@ export function conversationEventIsInFocus(
         );
     case "message_to_owner":
       return event.payload.recipient.kind === "owner";
-    case "proposal_delivery_failed":
-      return true;
     case "explicit_reply_missing":
       return true;
     case "permission_asked":
@@ -109,7 +107,6 @@ export function conversationRowsForLens(
     row.kind === "prompt"
     || row.kind === "prompt_refused"
     || row.kind === "prompt_uncertain"
-    || row.kind === "proposal_delivery_failed"
     || row.kind === "prompt_discarded"
     || row.kind === "agent_message"
     || row.kind === "explicit_reply_missing"

@@ -10,7 +10,7 @@ import pytest
 from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 from tests.support.ticket_progress import advance_ticket
 
-from planner.core.contracts import LinkKind, Priority
+from planner.core.contracts import Priority
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
 from planner.projects import data as projects_data
@@ -20,7 +20,7 @@ from planner.runtime.worker_step_readiness import (
 )
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
+from planner.tickets.contracts import AtCap, Ticket, TicketStatus
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -109,7 +109,7 @@ def _blocker(
 
 def _block(conn: sqlite3.Connection, *, blocker_id: str, target_id: str, now: int) -> None:
     """Block a Ticket the way the API does, so its status settles to `blocked`."""
-    tickets_actions.add_link(conn, blocker_id, target_id, LinkKind.blocks, now=now)
+    tickets_actions.add_ticket_block(conn, blocker_id, target_id, now=now)
 
 
 @pytest.mark.parametrize(
@@ -150,17 +150,10 @@ def test_membership_must_match_the_explicit_planning_day(tmp_path: Path) -> None
         conn.close()
 
 
-def test_paired_owned_ticket_is_ready_once_per_stage_entry(tmp_path: Path) -> None:
+def test_user_owned_ticket_is_ready_once_per_stage_entry(tmp_path: Path) -> None:
     conn = _db(tmp_path)
     try:
         ticket = _ticket(conn, worker_type="new_worker")
-        tickets_data.set_stage_ownership(
-            conn,
-            ticket.id,
-            stage=ticket.stage,
-            ownership_mode=StageOwnershipMode.paired,
-            now=4,
-        )
         assert _ready(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
         conn.execute(
             "INSERT INTO ticket_paired_stage_openers(ticket_id, stage, opened_at) "

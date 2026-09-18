@@ -290,17 +290,6 @@ def _reject_planning_write(
     )
 
 
-def require_chief(ctx: RequestContext) -> None:
-    """Require an explicit ``X-Plan-Actor: chief`` identity."""
-    if ctx.principal.kind is PrincipalKind.chief:
-        return
-    raise PlannerError(
-        ErrorCode.agent_forbidden,
-        "chief operation requires the chief actor",
-        {"actor": principal_legacy_actor(ctx.principal)},
-    )
-
-
 def reject_agent_fields(
     ctx: RequestContext,
     body_keys: Iterable[str],

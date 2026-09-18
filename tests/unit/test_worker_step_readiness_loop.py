@@ -28,7 +28,7 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
 )
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
-from planner.conversation.message_content import text_message_content
+from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.clock import TestClock
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
@@ -38,8 +38,9 @@ from planner.runtime.worker_step_readiness_loop import (
     start_ready_worker_step,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
+from planner.tickets.contracts import AtCap, Ticket, TicketStatus
 from planner.worker_context import data as worker_context_data
+from planner.worker_context import revision_feedback
 from planner.worker_context.contracts import (
     PreparedWorkerPrompt,
     WorkerContextReceipt,
@@ -75,14 +76,14 @@ class _World:
         self,
         *,
         title: str = "T",
-        ownership_mode: StageOwnershipMode | None = None,
+        worker_type: str = "coding",
         conversation_id: str | None = None,
         on_today: bool = True,
     ) -> str:
         with self.connect() as conn:
             ticket = tickets_data.create_ticket(
                 conn,
-                worker_type="coding",
+                worker_type=worker_type,
                 title=title,
                 principal=OWNER_PRINCIPAL,
                 now=0,
@@ -98,14 +99,6 @@ class _World:
                 at_cap=AtCap.propose,
                 next_holder=OWNER_PRINCIPAL,
             )
-            if ownership_mode is not None:
-                tickets_data.set_stage_ownership(
-                    conn,
-                    ticket.id,
-                    stage=ticket.stage,
-                    ownership_mode=ownership_mode,
-                    now=0,
-                )
             if conversation_id is not None:
                 conn.execute(
                     "UPDATE tickets SET conversation_id = ? WHERE id = ?",
@@ -137,6 +130,22 @@ class _World:
                     (ticket_id,),
                 ).fetchall()
             ]
+
+    def add_revision_feedback(self, ticket_id: str, message: str) -> None:
+        with self.connect() as conn:
+            ticket = tickets_data.read_ticket(conn, ticket_id)
+            revision_feedback.set_feedback(
+                conn,
+                ticket_id,
+                stage=ticket.stage,
+                sender=OWNER_PRINCIPAL,
+                message=message,
+                now=1,
+            )
+
+    def pending_revision_feedback(self, ticket_id: str) -> bool:
+        with self.connect() as conn:
+            return revision_feedback.snapshot(conn, ticket_id) is not None
 
     def ticket(self, ticket_id: str) -> Ticket:
         with self.connect() as conn:
@@ -304,9 +313,38 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     assert world.skill_bindings() == []
 
 
-def test_a_refused_paired_opener_rearms_the_stage(world: _World) -> None:
+def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _World) -> None:
+    ticket_id = world.ready_ticket(conversation_id="conv-revision-feedback")
+    world.start_conversation("conv-revision-feedback")
+    world.add_revision_feedback(ticket_id, "  Preserve this exact feedback.  ")
+    with world.connect() as conn:
+        tickets_data.replace_guidance(
+            conn,
+            ticket_id,
+            body="Mutable guidance changed independently.",
+            principal=OWNER_PRINCIPAL,
+            now=2,
+        )
+    world.conversations.arm_backend_write_failure("conv-revision-feedback")
+
+    assert world.start_step(ticket_id) is False
+    assert world.pending_revision_feedback(ticket_id) is True
+    world.conversations._conversations[  # noqa: SLF001 - focused failure recovery proof
+        "conv-revision-feedback"
+    ].armed_backend_write_failure = False
+    assert world.start_step(ticket_id) is True
+
+    writes = world.conversations.backend_prompt_writes("conv-revision-feedback")
+    assert len(writes) == 1
+    assert "Revision feedback from owner owner for stage needs_success" in writes[0].text
+    assert "  Preserve this exact feedback.  " in writes[0].text
+    assert "Mutable guidance changed independently." in writes[0].text
+    assert world.pending_revision_feedback(ticket_id) is False
+
+
+def test_a_refused_user_owned_opener_rearms_the_stage(world: _World) -> None:
     ticket_id = world.ready_ticket(
-        ownership_mode=StageOwnershipMode.paired,
+        worker_type="new_worker",
         conversation_id="conv-paired-refuse",
     )
     world.start_conversation("conv-paired-refuse")
@@ -326,7 +364,7 @@ def test_a_refused_paired_opener_rearms_the_stage(world: _World) -> None:
             conn,
             tickets_data.read_ticket(conn, ticket_id),
             planning_day_id=TODAY_DAY_ID,
-            worker_type_definition=configured_worker_type_registry().require("coding"),
+                worker_type_definition=configured_worker_type_registry().require("new_worker"),
         )
 
 
@@ -402,7 +440,7 @@ class _QueueingConversationSystem:
     async def send(
         self,
         conversation_id: str,
-        text: str,
+        content: MessageContent,
         *,
         sender_label: str,
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
@@ -419,7 +457,7 @@ class _QueueingConversationSystem:
             )
         return await self._system.send(
             conversation_id,
-            text_message_content(text),
+            content,
             sender_label=sender_label,
             mode=mode,
             model_change=model_change,
@@ -541,12 +579,12 @@ def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _Worl
     assert {row["sender_message_id"] for row in bindings} == {sender_message_id}
 
 
-def test_a_paired_owned_stage_rests_empty_after_its_single_paired_opener(
+def test_a_user_owned_stage_rests_empty_after_its_single_collaborative_opener(
     world: _World,
 ) -> None:
     ticket_id = world.ready_ticket(
         title="Talk it through",
-        ownership_mode=StageOwnershipMode.paired,
+        worker_type="new_worker",
         conversation_id="conv-paired",
     )
     world.start_conversation("conv-paired")
@@ -555,8 +593,8 @@ def test_a_paired_owned_stage_rests_empty_after_its_single_paired_opener(
 
     assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
     text = world.conversations.backend_prompt_writes("conv-paired")[0].text
-    assert "open the paired discussion for the 'success' field" in text
-    assert "Stage owner: paired" in text
+    assert "open the collaborative discussion for the 'understanding' field" in text
+    assert "Stage owner: user" in text
     assert world.start_step(ticket_id) is False
     assert len(world.conversations.backend_prompt_writes("conv-paired")) == 1
 

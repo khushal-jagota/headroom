@@ -461,7 +461,10 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
     page.keyboard.type("Retry me exactly.")
     page.locator(editable).blur()
     page.locator(".error-line", has_text="save failed").wait_for(state="visible", timeout=WAIT_MS)
-    page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => resolve()))")
+    page.evaluate(
+        "() => new Promise(resolve => "
+        "requestAnimationFrame(() => requestAnimationFrame(() => resolve())))"
+    )
     assert len(attempts) == 1
     attempted_source = attempts[0]
     assert attempted_source.endswith("Retry me exactly.")

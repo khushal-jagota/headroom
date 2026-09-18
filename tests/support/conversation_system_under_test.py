@@ -56,6 +56,7 @@ from tests.support.conversation_scripted_acp_agent import (
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
+    BackendPromptAccepted,
     BackendSteerOutcome,
     BackendSteerRefused,
     BackendUserInputRequest,
@@ -322,18 +323,20 @@ class _CountedChild:
         *,
         sender_label: str,
         sender_content: MessageContent,
+        sender_message_count: int = 1,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
-    ) -> None:
+    ) -> BackendPromptAccepted:
         if self._conversation.known_prewrite_failure:
             raise PromptWriteFailed("the controlled backend refused before transmission")
-        await self._child.write_prompt(
+        accepted = await self._child.write_prompt(
             turn_token,
             content,
             sender_content=sender_content,
             sender_label=sender_label,
+            sender_message_count=sender_message_count,
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
@@ -341,6 +344,7 @@ class _CountedChild:
         )
         self._conversation.prompt_turn_numbers.append(turn_token.turn_number)
         self._conversation.expected_prompt_writes += 1
+        return accepted
 
     async def steer(
         self,

@@ -11,12 +11,12 @@ from planner.tickets.contracts import (
     AtCap,
     PendingTicketProposal,
     ResolvedTicketPriorityAnchors,
-    StageOwnershipMode,
     Ticket,
     TicketStatus,
 )
 from planner.tickets.logic import resolution
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
+from planner.worker_types.personal import PERSONAL_TASK_WORKER_TYPE_DEFINITION
 
 
 def _ticket(*, stage: str = "needs_success") -> Ticket:
@@ -42,12 +42,7 @@ def _ticket(*, stage: str = "needs_success") -> Ticket:
         ticket_status=TicketStatus.awaiting_approval,
         ticket_status_changed_at=0,
         ticket_status_revision=0,
-        backend_error=None,
-        stage_ownership_overrides={},
-        default_stage_ownership_mode=StageOwnershipMode.worker,
-        effective_stage_ownership_mode=StageOwnershipMode.worker,
         conversation_id=None,
-        alias=None,
         field_values={},
         pending_proposal=None,
         archived_field_content="",
@@ -133,7 +128,8 @@ def test_edit_value_rejects_unsettled_or_unpassed_field(field: str) -> None:
             OWNER_PRINCIPAL,
             worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
         )
-    assert exc.value.code == ErrorCode.validation
+    expected = ErrorCode.agent_forbidden if field == "plan" else ErrorCode.validation
+    assert exc.value.code == expected
 
 
 def test_worker_cannot_edit_settled_value() -> None:
@@ -147,3 +143,86 @@ def test_worker_cannot_edit_settled_value() -> None:
             worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
         )
     assert exc.value.code == ErrorCode.agent_forbidden
+
+
+def test_direct_user_completes_unset_current_user_owned_gate() -> None:
+    ticket = replace(
+        _ticket(stage="needs_outcome"),
+        worker_type="personal",
+        field_values={"kickoff": "context"},
+        ceiling="needs_outcome",
+        ticket_status=TicketStatus.empty,
+    )
+
+    decision = resolution.decide_edit_value(
+        ticket,
+        "outcome",
+        "The result",
+        OWNER_PRINCIPAL,
+        worker_type_definition=PERSONAL_TASK_WORKER_TYPE_DEFINITION,
+    )
+
+    assert decision.field_values == {"kickoff": "context", "outcome": "The result"}
+    assert decision.stage == "needs_closeout"
+    assert decision.ceiling == "needs_closeout"
+    assert decision.ceiling_holder == OWNER_PRINCIPAL
+    assert decision.at_cap == ticket.at_cap
+
+
+@pytest.mark.parametrize("field", ["kickoff", "closeout"])
+def test_direct_user_cannot_complete_any_field_except_the_current_gate(field: str) -> None:
+    ticket = replace(
+        _ticket(stage="needs_outcome"),
+        worker_type="personal",
+        field_values={},
+        ticket_status=TicketStatus.empty,
+    )
+    with pytest.raises(PlannerError) as exc:
+        resolution.decide_edit_value(
+            ticket,
+            field,
+            "value",
+            OWNER_PRINCIPAL,
+            worker_type_definition=PERSONAL_TASK_WORKER_TYPE_DEFINITION,
+        )
+    assert exc.value.code == ErrorCode.validation
+
+
+def test_direct_user_cannot_complete_a_gate_with_a_pending_proposal() -> None:
+    ticket = replace(
+        _ticket(stage="needs_outcome"),
+        worker_type="personal",
+        field_values={"kickoff": "context"},
+        pending_proposal=PendingTicketProposal("outcome", "draft", "worker", 7),
+        ticket_status=TicketStatus.empty,
+    )
+    with pytest.raises(PlannerError) as exc:
+        resolution.decide_edit_value(
+            ticket,
+            "outcome",
+            "value",
+            OWNER_PRINCIPAL,
+            worker_type_definition=PERSONAL_TASK_WORKER_TYPE_DEFINITION,
+        )
+    assert exc.value.code == ErrorCode.validation
+
+
+@pytest.mark.parametrize("status", [TicketStatus.agent, TicketStatus.awaiting_approval])
+def test_direct_user_cannot_complete_a_gate_while_control_is_active(
+    status: TicketStatus,
+) -> None:
+    ticket = replace(
+        _ticket(stage="needs_outcome"),
+        worker_type="personal",
+        field_values={"kickoff": "context"},
+        ticket_status=status,
+    )
+    with pytest.raises(PlannerError) as exc:
+        resolution.decide_edit_value(
+            ticket,
+            "outcome",
+            "value",
+            OWNER_PRINCIPAL,
+            worker_type_definition=PERSONAL_TASK_WORKER_TYPE_DEFINITION,
+        )
+    assert exc.value.code == ErrorCode.already_running

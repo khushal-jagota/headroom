@@ -1,20 +1,10 @@
-"""The text Panels itself sends into a Ticket's conversation.
-
-Two lifecycle prompts live here. One asks the worker to take the Ticket's next step; the
-other records its proposal rejection before the decider's separately attributed comment
-arrives. Nothing here reads a database, a clock or a conversation.
-"""
+"""The text Panels sends into a Ticket's conversation to start a worker step."""
 
 from __future__ import annotations
 
-from typing import Final
-
 from planner.tickets.contracts import StageOwnershipMode, Ticket
+from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkerTypeDefinition
-
-PROPOSAL_RETURNED_FOR_REVISION: Final = (
-    "Your proposal was rejected and returned for revision. The decider's comment follows."
-)
 
 
 def worker_step_prompt(
@@ -33,18 +23,18 @@ def worker_step_prompt(
     gating = worker_type_definition.gating_field(ticket.stage)
     field = str(gating) if gating is not None else "the next step"
 
-    ownership_wire = (
-        ticket.effective_stage_ownership_mode.value
-        if ticket.effective_stage_ownership_mode is not None
-        else "terminal"
+    ownership_mode = machine.stage_ownership_mode(
+        ticket.stage,
+        worker_type_definition=worker_type_definition,
     )
+    ownership_wire = ownership_mode.value if ownership_mode is not None else "terminal"
     guidance = (
         f"\n\n[Ticket guidance]\n{ticket.guidance}\n[/Ticket guidance]" if ticket.guidance else ""
     )
-    if ticket.effective_stage_ownership_mode is StageOwnershipMode.paired:
+    if ownership_mode is StageOwnershipMode.user:
         return (
             f"Work ticket {ticket.id} — {ticket.title}. It is at Stage '{str(ticket.stage)}'; "
-            f"open the paired discussion for the '{field}' field. "
+            f"open the collaborative discussion for the '{field}' field. "
             "Ask bounded questions or resume the Stage conversation, and do not file a "
             "proposal until the discussion has enough shared understanding. "
             f"Stage owner: {ownership_wire}.{guidance}"
@@ -54,8 +44,3 @@ def worker_step_prompt(
         f"take the next step and propose the '{field}' field for approval. "
         f"Stage owner: {ownership_wire}.{guidance}"
     )
-
-
-def proposal_returned_for_revision_prompt() -> str:
-    """Tell the worker the lifecycle transition separately from anyone's comment."""
-    return PROPOSAL_RETURNED_FOR_REVISION

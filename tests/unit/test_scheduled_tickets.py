@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from sqlite3 import Connection
+from typing import Any
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
@@ -26,7 +27,7 @@ from planner.scheduled_tickets.runtime import ScheduledTicketLoop
 from planner.sprints.logic import DateRange
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS, TicketStatus
+from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket, TicketStatus
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
@@ -437,7 +438,7 @@ def test_failure_is_recorded_once_and_does_not_stop_another_schedule(
     assert sorted(item.outcome.value for item in results) == ["created", "failed"]
     failure = data.list_occurrences(tmp_db, failed_schedule_id)[0]
     assert failure.outcome is OccurrenceOutcome.failed
-    assert "from_id must be an existing ticket" in (failure.error or "")
+    assert "blocking_ticket_id must be an existing ticket" in (failure.error or "")
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
 
 
@@ -523,3 +524,30 @@ def test_outcome_context_is_independent_of_current_fixed_and_backlog_destination
         )
         == results
     )
+
+
+def test_current_sprint_occurrence_delegates_placement_to_creation_boundary(
+    tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _insert_current_sprint(tmp_db)
+    _schedule(tmp_db, local_time="12:00", template=_template(title="Boundary"))
+    calls: list[dict[str, object]] = []
+    original = tickets_actions.create_ticket
+
+    def recording_create_ticket(conn: Connection, **kwargs: Any) -> Ticket:
+        calls.append(dict(kwargs))
+        return original(conn, **kwargs)
+
+    monkeypatch.setattr(tickets_actions, "create_ticket", recording_create_ticket)
+    now = _now("2026-07-28T12:00:00")
+
+    results = actions.run_current_slot(
+        tmp_db, planning_now=now, now=int(now.timestamp()), boundary_hour=5
+    )
+
+    assert len(results) == 1
+    assert len(calls) == 1
+    assert calls[0]["sprint_id"] is None
+    assert calls[0]["sprint_id_explicit"] is False
+    assert calls[0]["planning_now"] == now
+    assert calls[0]["boundary_hour"] == 5

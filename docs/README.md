@@ -2,7 +2,7 @@
 
 Panels is a personal planning and work system that runs on one host. Its record contains
 **Days**, **Sprints**, **Sprint Items**, **Tickets**, **Ideas**, **Feedback**, and **Projects**. Tickets
-can carry work for an AI Worker, paired work, or user-owned personal tasks. Each Ticket
+can carry worker-owned work or user-owned work with an agent alongside. Each Ticket
 owns its Project and optional Sprint placement. An Outcome holds optional shared context across Sprints. Explicit commitments select
 Outcomes before Tickets exist; Tickets keep their own scheduling. The stored Item
 identity and its supervisor conversation remain stable.
@@ -18,19 +18,19 @@ Sprint Item supervisor ─────┴──────────► domai
                                                ▲
 Ticket Worker ──field proposal──► proposal resolver
 planning Worker ──guarded claim──► Day or Sprint writer
-Chief ──external-work intake─────► Ticket reconciliation writer
+direct user ──user-owned value───► proposal resolver
 ```
 
-The browser is the main human surface. The `panels` CLI exposes ordinary direct actions,
-Ticket Worker actions, and bounded Chief intake as separate command groups.
+The browser is the main human surface. The `panels` CLI exposes ordinary direct actions
+and Ticket Worker actions as separate command groups.
 
 Ticket gated fields still have one door: a Worker files a proposal, and the proposal
 resolver alone can settle its value or advance its Stage. Three planning Worker types
 also receive narrow authority to write their agreed Day or Sprint result at Closeout.
-The Chief can import reality established outside Panels through explicit reconciliation
-operations. Neither path is a general Ticket Stage setter. A Sprint Item supervisor has no
-private door: it writes through the same domain writers the direct surfaces use, limited
-to its own Item.
+A direct user can complete the unset gate of the current user-owned Stage. The same
+canonical transition settles the value and advances one Stage. There is no arbitrary
+Stage setter. A Sprint Item supervisor has no private door: it writes through the same
+domain writers the direct surfaces use, limited to its own Item.
 
 At its ceiling a Ticket either stops or proposes, and there is one approval gate — a
 parked proposal waits for the user. Review holds today's parked proposals and explicit

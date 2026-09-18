@@ -22,7 +22,6 @@ from planner.tickets.contracts import (
     TITLE_MAX_CHARS,
     AtCap,
     PendingTicketProposal,
-    StageOwnershipMode,
 )
 from planner.tickets.logic import fields_codec, machine
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
@@ -104,9 +103,6 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
 ) -> None:
     now = fake_clock.now_unix()
     tid = _create(tmp_db, now)
-    data.set_stage_ownership(
-        tmp_db, tid, stage=A, ownership_mode=StageOwnershipMode.worker, now=now
-    )
     ticket = data.accept_proposal(
         tmp_db,
         tid,

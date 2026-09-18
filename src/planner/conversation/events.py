@@ -51,7 +51,6 @@ class ConversationEventKind(StrEnum):
     prompt = "prompt"
     prompt_delivery_refused = "prompt_delivery_refused"
     prompt_delivery_uncertain = "prompt_delivery_uncertain"
-    proposal_delivery_failed = "proposal_delivery_failed"
     prompt_discarded = "prompt_discarded"
     agent_message = "agent_message"
     message_to_owner = "message_to_owner"
@@ -73,7 +72,6 @@ class ConversationEventKind(StrEnum):
 CONVERSATION_EVENT_KINDS_SHOWN_ONLY_BY_THE_OPEN_CONVERSATION: Final = frozenset(
     {
         ConversationEventKind.agent_message,
-        ConversationEventKind.proposal_delivery_failed,
         ConversationEventKind.tool_call_started,
         ConversationEventKind.tool_call_finished,
         ConversationEventKind.plan_updated,
@@ -262,16 +260,6 @@ class PromptDeliveryUncertainEventPayload:
     sent_at_unix_milliseconds: int | None = None
     sender: Principal | None = None
     recipient: Principal | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ProposalDeliveryFailedEventPayload:
-    """One proposal alert that stopped after its bounded refusal policy."""
-
-    kind: ClassVar[ConversationEventKind] = ConversationEventKind.proposal_delivery_failed
-    attempt_count: int
-    last_error: str
-    sender_message_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -505,7 +493,6 @@ type ConversationEventPayload = (
     PromptEventPayload
     | PromptDeliveryRefusedEventPayload
     | PromptDeliveryUncertainEventPayload
-    | ProposalDeliveryFailedEventPayload
     | PromptDiscardedEventPayload
     | MessageToOwnerEventPayload
     | AgentMessageEventPayload
@@ -624,12 +611,6 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
                 **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
                 **_principal_entries(payload.sender, payload.recipient),
-            }
-        case ProposalDeliveryFailedEventPayload():
-            return {
-                "attempt_count": payload.attempt_count,
-                "last_error": payload.last_error,
-                "sender_message_id": payload.sender_message_id,
             }
         case PromptDiscardedEventPayload():
             return {
@@ -791,15 +772,6 @@ def _payload_from_json_object(
                 ),
                 sender=_optional_principal(stored, "sender"),
                 recipient=_optional_principal(stored, "recipient"),
-            )
-        case ConversationEventKind.proposal_delivery_failed:
-            attempt_count = _optional_whole_number(stored, "attempt_count")
-            if attempt_count is None:
-                raise ValueError("attempt_count must be a whole number")
-            return ProposalDeliveryFailedEventPayload(
-                attempt_count=attempt_count,
-                last_error=_text(stored, "last_error"),
-                sender_message_id=_text(stored, "sender_message_id"),
             )
         case ConversationEventKind.prompt_discarded:
             return PromptDiscardedEventPayload(

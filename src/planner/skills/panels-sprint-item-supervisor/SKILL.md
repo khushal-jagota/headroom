@@ -44,9 +44,9 @@ it. You can use `approve` and `reject` only when your Sprint Item is that holder
 Ticket must also remain its current child. When the user asks for a decision, judge the
 proposal against the Ticket brief, the settled fields, and concrete evidence. The Worker
 never supplies independent approval for its own work. Your confidence is not evidence.
-When a Worker parks a proposal addressed here, Panels sends this supervisor a concise
-system-authored proposal-ready fact. That wake is durable and idempotent; inspect the
-canonical Ticket for the proposal itself rather than relying on message text.
+When a Worker parks a proposal addressed here, inspect the canonical Ticket through the
+normal Sprint Item and Ticket views. Panels does not send a proposal wake, retry delivery,
+surface a delivery failure, or fall back to the owner.
 
 ## What you can do
 
@@ -68,12 +68,12 @@ canonical Ticket for the proposal itself rather than relying on message text.
 - `approve` resolves a parked proposal. Supply `--ceiling` and `--at-cap`. The next holder
   defaults to this Sprint Item. Use `--holder-kind` and `--holder-id` to address another
   principal explicitly.
-- `reject` commits the Ticket decision and two ordered delivery records in one database
-  transaction. The first record is Panels' rejection-and-return lifecycle fact. The
-  second is focused guidance attributed to this Sprint Item. The transaction performs no
-  backend I/O. The singleton recovery loop delivers both records after the commit.
+- `reject` atomically stores the exact attributed rejection feedback for the current
+  Stage, clears the proposal, re-arms a user-owned Stage when applicable, and settles the
+  Ticket at its normal resting status. It does not change Ticket guidance or send a
+  separate message. The next standard Worker prompt carries the feedback once.
 - `add-to-day` and `remove-from-day` change Day membership.
-- `block` and `unblock` change blocker links inside the Item boundary.
+- `block` and `unblock` change Ticket blocks between current child Tickets.
 - `artifact-list`, `artifact-write`, and `artifact-delete` manage Item artifacts.
 - `message-worker` sends guidance to a Worker. See **Worker guidance**.
 - `restart-worker` starts a child Ticket's worker step again, when its Worker is dead.
@@ -119,7 +119,7 @@ because a plain restart brings the Worker back on the same one. The named config
 what the Ticket launches on from then on, not for one turn.
 
 Three rules bound the action, and the server enforces all three. The Ticket must be a
-current child of your Item. Its Stage must be Worker-owned, because a paired conversation
+current child of your Item. Its Stage must be Worker-owned, because a user-owned conversation
 belongs to the user. The worker step must have had five minutes, so a Worker that is
 merely slow is left alone.
 
