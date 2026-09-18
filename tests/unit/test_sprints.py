@@ -14,7 +14,6 @@ from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.sprints.data import (
     create_idea,
-    create_item,
     create_sprint,
     read_sprint,
     set_sprint_dates,

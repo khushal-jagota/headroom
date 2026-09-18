@@ -437,7 +437,7 @@ def test_failure_is_recorded_once_and_does_not_stop_another_schedule(
     assert sorted(item.outcome.value for item in results) == ["created", "failed"]
     failure = data.list_occurrences(tmp_db, failed_schedule_id)[0]
     assert failure.outcome is OccurrenceOutcome.failed
-    assert "from_id must be an existing ticket" in (failure.error or "")
+    assert "blocking_ticket_id must be an existing ticket" in (failure.error or "")
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
 
 
