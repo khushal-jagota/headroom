@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlite3 import Connection
 
 import pytest
-from tests.support.principals import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
+from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
 from tests.support.ticket_progress import advance_ticket
 
 from planner.core.authctx import _classify, require_planning_write, require_ticket_worker_write
@@ -228,20 +228,6 @@ def test_creation_validates_explicit_placement_and_blockers_without_an_outcome(
             title_max_chars=200,
             worker_type="coding",
             blocked_by_ticket_ids=["missing"],
-        )
-    with pytest.raises(PlannerError, match="invalid sprint_id"):
-        tickets.create_ticket_from_external_work(
-            tmp_db,
-            title="Invalid external Sprint",
-            kickoff_note="External context",
-            target_stage="needs_success",
-            provided_values={},
-            principal=CHIEF_PRINCIPAL,
-            now=1,
-            title_max_chars=200,
-            worker_type="coding",
-            project_id="project_vylo",
-            sprint_id="missing",
         )
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
 

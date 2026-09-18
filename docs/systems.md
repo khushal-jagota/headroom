@@ -1,8 +1,8 @@
 # Systems
 
 Panels is one canonical planning record with several narrow ways to act on it. The
-browser is the main human surface. The CLI serves direct actions, Ticket Workers, and
-the Chief. A separate conversation system runs the AI agents.
+browser is the main human surface. The CLI serves direct actions and Ticket Workers.
+A separate conversation system runs the AI agents, including the Chief conversation.
 
 ```
 human browser ───────────────┐
@@ -10,7 +10,7 @@ direct CLI ──────────────────┼──► do
                              │                                      │
 Ticket Worker ─► proposal resolver                                 │ commit
 planning Worker ─► guarded Day or Sprint writer                    ▼
-Chief ───────────► external-work reconciliation             change signal
+direct user ─────► user-owned Ticket gate                    change signal
                                                                     │
                          ┌──────────────────────────────────────────┤
                          ▼                                          ▼
@@ -23,7 +23,7 @@ Chief ───────────► external-work reconciliation         
 The proposal resolver is the only door for gated Ticket field values and Stage
 advances. It is not the only writer in Panels. Ordinary direct actions have their own
 domain writers. Three planning Worker types receive narrow Day or Sprint write authority
-for their Closeout. The Chief has explicit operations for importing external work.
+for their Closeout. A direct user can settle the current user-owned Ticket gate.
 
 ## The systems
 
@@ -182,7 +182,7 @@ _Code paths:_ `web/src/`, `assets/`, and `web/dist/`.
 
 `panels` speaks HTTP to the server. Ordinary groups manage Days, Projects, Sprints,
 Tickets, schedules, and environments. `worker` files Ticket proposals, recaps, notes,
-and help requests. `chief` performs only bounded external-work intake.
+and help requests. The Chief remains a conversation principal, not a Ticket write group.
 
 Every request resolves to one principal: the owner, Chief, a Sprint Item, or a Ticket.
 An unattributed browser request resolves to the owner. Direct-only operations reject

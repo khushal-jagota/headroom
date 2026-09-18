@@ -224,13 +224,6 @@ def test_registry_validation_order_and_messages() -> None:
         "default_model must be a non-empty string",
         {"worker_type": "coding", "default_model": "   "},
     )
-    assert_error(
-        replace(base, supports_prefix_reconciliation=1),  # type: ignore[arg-type]
-        "supports_prefix_reconciliation must be a bool",
-        {"worker_type": "coding"},
-    )
-
-
 def test_manifests_are_complete_and_json_round_trip() -> None:
     registered = PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
     assert len(set(registered)) == len(registered)

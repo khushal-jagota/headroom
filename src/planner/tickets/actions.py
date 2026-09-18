@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from datetime import datetime
 
 from planner.conversation.contracts import ConversationSystem
@@ -115,67 +115,6 @@ def create_ticket(
         blocked_by_ticket_ids=blocked_by_ticket_ids,
         stated_ceiling=stated_ceiling,
         stated_at_cap=stated_at_cap,
-    )
-
-
-def create_ticket_from_external_work(
-    conn: sqlite3.Connection,
-    *,
-    title: str,
-    target_stage: str,
-    provided_values: Mapping[str, str],
-    principal: Principal,
-    now: int,
-    title_max_chars: int,
-    worker_type: str,
-    employee_backend: str | None = None,
-    employee_launch_model: str | None = None,
-    kickoff_note: str | None = None,
-    recap: str | None = None,
-    project_id: str | None = None,
-    sprint_id: str | None = None,
-    priority: Priority | None = None,
-    deadline: str | None = None,
-    sprint_item_id: str | None = None,
-    blocked_by_ticket_ids: list[str] | None = None,
-    planning_now: datetime | None = None,
-    boundary_hour: int = 5,
-    sprint_item_id_explicit: bool = False,
-    sprint_id_explicit: bool = False,
-) -> Ticket:
-    if planning_now is None:
-        day_id = None
-    else:
-        day_id, project_id, sprint_id, sprint_item_id = resolve_creation_placement(
-            conn,
-            planning_now=planning_now,
-            boundary_hour=boundary_hour,
-            sprint_item_id=sprint_item_id,
-            project_id=project_id,
-            sprint_id=sprint_id,
-            sprint_id_explicit=sprint_id_explicit,
-            worker_type=worker_type,
-        )
-    return tickets_data.create_ticket_from_external_work(
-        conn,
-        title=title,
-        kickoff_note=kickoff_note,
-        target_stage=target_stage,
-        provided_values=provided_values,
-        principal=principal,
-        now=now,
-        title_max_chars=title_max_chars,
-        recap=recap,
-        project_id=project_id,
-        sprint_id=sprint_id,
-        priority=priority,
-        deadline=deadline,
-        sprint_item_id=sprint_item_id,
-        day_id=day_id,
-        worker_type=worker_type,
-        employee_backend=employee_backend,
-        employee_launch_model=employee_launch_model,
-        blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
 
 

@@ -26,6 +26,7 @@
     variant = "ticket",
     emptyText = "Not written yet.",
     editableValue = true,
+    editableCurrentValue = false,
     approvalDisabled = false,
     runLabel = null,
     runLabelAttention = false,
@@ -46,6 +47,7 @@
     variant?: "ticket" | "review";
     emptyText?: string;
     editableValue?: boolean;
+    editableCurrentValue?: boolean;
     approvalDisabled?: boolean;
     runLabel?: string | null;
     runLabelAttention?: boolean;
@@ -63,6 +65,7 @@
   let passed = $derived(fieldIsPassedFor(lifecycle, name, ticketStage));
   let hasProposal = $derived(pendingProposal?.field === name);
   let nextStage = $derived(advanceTargetFor(lifecycle, ticketStage, ceiling));
+  let canEditValue = $derived(passed || (isGating && editableCurrentValue && !hasProposal));
   let defaultOpen = $derived(isGating);
 
 </script>
@@ -86,7 +89,7 @@
       onProposalSave={onSaveProposal}
     />
   {:else}
-    {#if passed && editableValue && onSaveValue}
+    {#if canEditValue && editableValue && onSaveValue}
       <div class="ticket-field-value">
         <InlineEdit {value} markdown multiline placeholder="Value..." onSave={onSaveValue} />
       </div>

@@ -50,8 +50,8 @@ proposed), then **closeout** (only the applicable merge, deploy, follow-up, and
 bookkeeping happen, and a verified report is proposed), and finally it is **done**.
 Each stage has exactly one blank to fill; filling it — and having that accepted — is
 what moves the ticket one stage forward. A ticket can also be **dropped** at any
-point through a direct product operation. Stages advance through approval or the
-explicit external-work operation described below; there is no arbitrary Stage jump.
+point through a direct product operation. Stages advance through approval or direct
+completion of a current user-owned gate; there is no arbitrary Stage jump.
 
 The **Kickoff field** preserves intake context: the user's original wording, source
 context, boundaries, and advice. It stays readable beside the work so agents can
@@ -93,40 +93,20 @@ Ticket status or the latest conversation turn.
 
 ### Work completed outside Panels
 
-When work was completed elsewhere, the Chief can reconcile an existing ticket or create
-one already populated through the explicit `panels chief` external-work commands. This
-is not a worker proposal and not a general Stage bypass. The operation requires a
-complete Kickoff field value, an exact settled-field prefix for the target Stage, and a Chief
-request. It refuses backward moves, pending proposals, active ticket control, and a
-worker that is mid-turn. It moves the ceiling to the imported Stage but preserves what the
-Ticket does at that ceiling: an explicit **Stop** remains Stop; otherwise **Propose**
-remains. The target Stage's effective ownership then determines whether the Ticket rests
-ready for the worker, with the user, or paired.
+Work completed elsewhere uses the same ordinary Ticket operations as all other work.
+Create a Ticket through the canonical creation action when no aligned Ticket exists.
+Then use ordinary field-value, recap, scope, placement, and Day operations.
 
-The create or reconciliation writer commits all fields, Kickoff value, recap, Stage,
-scope, and ownership-derived resting status together. A validation or concurrency
-failure leaves the ticket exactly as it was. Committing is itself what tells the
-readiness loop to look again.
-
-Every Ticket stores its Project and optional Sprint directly. A `null` Sprint means
-backlog. A Ticket can also name one optional Sprint Item whose Project and Sprint match
-the Ticket. The compound placement writer rejects mismatched combinations and clears a
-classification that no longer matches a changed Project or Sprint.
-
-Ticket responses expose `project_id`, `sprint_id`, `sprint_item_id`, and
-`resolved_priority_anchors`. `effective_sprint_id` remains a compatibility alias for the
-direct Sprint. The resolved anchors name the optional Sprint Item and Project, with each
-anchor's priority state. The `project` display name also remains for compatibility.
-
-If creation does not supply a Ticket priority, Panels uses the Sprint Item priority
-when the Ticket has an item, otherwise the assessed Project priority, otherwise P3. An
-explicit P0–P3 always wins. This is a creation default only: anchor priorities do not
-cap, calculate, or later rewrite the Ticket's stored priority.
+A direct user can settle only the unset gate of the current user-owned Stage. That one
+transaction stores the value, advances one Stage through the canonical transition, sets
+the entered Stage as the ceiling, and keeps the direct principal as holder. Pending
+proposals, active work, future fields, and worker-owned or paired Stages reject this path.
+There is no bulk prefix import or arbitrary Stage jump.
 
 ### Blockers
 
-An ordinary Ticket create and a Chief external-work Ticket create may name any number
-of existing blocker Ticket ids. Panels creates the dependent Ticket and every directed
+An ordinary Ticket create may name any number of existing blocker Ticket ids. Panels
+creates the dependent Ticket and every directed
 `blocks` link in one transaction. A missing, invalid, or repeated blocker rejects the
 whole create with a structured error. Nothing is saved. A successful create commits
 once, so readiness is nudged once.
@@ -186,8 +166,8 @@ the stored default applies. Terminal Tickets have no current owner.
   or at `blocked` while a live blocker remains. The other readiness, proposal, and
   scope conditions must still allow it.
 - **User-owned** Stages rest at `empty` and are never dispatched automatically. The user
-  does the work, then the Chief records it through external-work reconciliation; there
-  is no direct self-settle path.
+  can write the unset current field through the ordinary value operation. Panels stores
+  the value and advances exactly one Stage through the canonical transition.
 - **Paired** Stages get one automatic opening turn when the Stage becomes ready, then
   rest at `empty`. A durable opener fact belongs to that Stage entry, and readiness
   checks it before dispatch. The human conversation carries the Stage forward in the
