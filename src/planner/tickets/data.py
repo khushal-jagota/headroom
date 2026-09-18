@@ -26,7 +26,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.days import data as days_data
 from planner.notifications.attention import capture_ticket_attention
-from planner.tickets import worker_context as ticket_worker_context
+from planner.tickets import revision_feedback
 from planner.tickets.contracts import (
     AtCap,
     EmployeeLaunchConfiguration,
@@ -50,7 +50,6 @@ from planner.tickets.logic import (
     resolution,
 )
 from planner.tickets.logic.decisions import Decision
-from planner.worker_context import revision_feedback
 from planner.worker_settings.service import (
     database_parent_from_connection,
     read_stage_default_ownership_for_ticket_entry,
@@ -1419,8 +1418,6 @@ def accept_proposal(
             worker_type_definition=worker_type_definition,
         )
         updated = _apply_decision(conn, ticket, decision, now)
-        if edited_body is not None:
-            ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         if decision.stage != ticket.stage:
             _write_entered_stage_ticket_status(
                 conn,
@@ -1620,7 +1617,6 @@ def edit_pending_proposal(
             ticket, field, new_body, principal, worker_type_definition=definition
         )
         updated = _apply_decision(conn, ticket, decision, now)
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return updated
 
 
@@ -1645,7 +1641,6 @@ def edit_field_value(
             worker_type_definition=worker_type_definition,
         )
         updated = _apply_decision(conn, ticket, decision, now)
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         if decision.stage != ticket.stage:
             _write_entered_stage_ticket_status(
                 conn,
@@ -1826,11 +1821,6 @@ def delete_ticket(
         effective_sprint_id = ticket.effective_sprint_id
         sprint_ids = (effective_sprint_id,) if effective_sprint_id is not None else ()
 
-        conn.execute(
-            "DELETE FROM pending_worker_context WHERE worker_entity_id = ?",
-            (ticket_id,),
-        )
-
         for day_id in day_ids:
             days_data.remove_day_ticket(conn, day_id, ticket_id, now)
         for row in link_rows:
@@ -1887,7 +1877,6 @@ def change_scope(
             worker_type_definition=worker_type_definition,
         )
         updated = _apply_decision(conn, ticket, decision, now)
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         if ticket.ticket_status in {
             TicketStatus.empty,
             TicketStatus.blocked,
@@ -1916,7 +1905,6 @@ def replace_guidance(
             "UPDATE tickets SET guidance = ?, updated_at = ? WHERE id = ?",
             (body, now, ticket_id),
         )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1938,7 +1926,6 @@ def append_guidance(
             "UPDATE tickets SET guidance = ?, updated_at = ? WHERE id = ?",
             (guidance, now, ticket_id),
         )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -2001,7 +1988,6 @@ def edit_ticket(
             f"UPDATE tickets SET {assignments}, updated_at = ? WHERE id = ?",
             (*params, now, ticket_id),
         )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -2014,7 +2000,6 @@ def write_recap(
             "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?",
             (body, now, ticket_id),
         )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -2046,7 +2031,6 @@ def classify_ticket(
             "UPDATE tickets SET sprint_item_id = ?, project_id = ?, updated_at = ? WHERE id = ?",
             (sprint_item_id, str(item["project_id"]), now, ticket_id),
         )
-        ticket_worker_context.set_ticket_placement_changed(conn, ticket_id)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -2083,5 +2067,4 @@ def unclassify_ticket(
             "UPDATE tickets SET sprint_item_id = NULL, updated_at = ? WHERE id = ?",
             (now, ticket_id),
         )
-        ticket_worker_context.set_ticket_placement_changed(conn, ticket_id)
         return _load_ticket_for_write(conn, ticket_id)

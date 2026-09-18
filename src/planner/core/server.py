@@ -26,7 +26,6 @@ from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddle
 from planner.core import change_signal
 from planner.core.clock import Clock
 from planner.core.config import HOST, Config
-from planner.core.db import connect
 from planner.core.dev_server_proxy import build_dev_server_proxy_router
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.path_observer import observe_path_changes
@@ -59,7 +58,6 @@ from planner.skill_versions import (
 )
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
-from planner.worker_context.service import SqliteWorkerContextService
 from planner.worker_settings.api import router as worker_settings_router
 from planner.worker_types.configuration import (
     configured_worker_runtime_definitions,
@@ -190,7 +188,6 @@ def create_app(
                 config,
                 clock,
                 conversation_system=app.state.conversation_system,
-                worker_context_service=app.state.worker_context_service,
                 asyncio_loop=asyncio.get_running_loop(),
             )
         try:
@@ -216,9 +213,6 @@ def create_app(
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory
-    app.state.worker_context_service = SqliteWorkerContextService(
-        lambda: connect(config.db_path, config.db_busy_timeout_ms)
-    )
     app.state.conversation = None
     # The conversation system is the running one, so it belongs to the lifespan that
     # starts and stops it. Outside that window there is none.

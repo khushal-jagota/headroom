@@ -21,7 +21,7 @@ from planner.days import data as days_data
 from planner.projects import data as projects_data
 from planner.runtime import worker_step_readiness
 from planner.sprints import data as sprints_data
-from planner.tickets import actions, data
+from planner.tickets import actions, data, revision_feedback
 from planner.tickets import views as ticket_views
 from planner.tickets.contracts import (
     NO_FURTHER,
@@ -31,7 +31,6 @@ from planner.tickets.contracts import (
     TicketEdit,
     TicketStatus,
 )
-from planner.worker_context import revision_feedback
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 if TYPE_CHECKING:

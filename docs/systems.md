@@ -126,9 +126,10 @@ worker is already busy.
 One guarded status flip out of `empty` is the claim. There is no claim stamp or run row.
 Paired claims also record one opener fact for the current Stage entry. An accepted
 paired opener returns the status to `empty`, while readiness uses the fact to prevent a
-repeat. Panels then starts or reuses the Ticket conversation and sends the Stage
-instruction with pending Worker context. Started and queued both count as delivered.
-Refusal releases every claim and removes any tentative opener fact.
+repeat. Panels then starts or reuses the Ticket conversation and sends one ordered list
+of Ticket inputs: Stage instruction, guidance, settled kickoff, and current-Stage
+revision feedback where present. Started and queued both count as delivered. Refusal
+releases every claim and removes any tentative opener fact.
 
 Nothing watches a turn end. A Ticket moves only when someone acts on it. A process crash
 can therefore leave a Ticket marked `agent` with no live turn. Panels leaves that
@@ -136,7 +137,7 @@ disagreement visible.
 
 Read **Worker orchestration** (`worker-orchestration.md`).
 
-_Code paths:_ `src/planner/runtime/` and `src/planner/worker_context/`.
+_Code paths:_ `src/planner/runtime/` and `src/planner/tickets/revision_feedback.py`.
 
 ### 6. The conversation system
 

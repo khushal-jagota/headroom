@@ -72,11 +72,12 @@ occurrences, and suppression.
 
 ## Sending the step
 
-The opening message is written first: a short instruction naming the Ticket, its Stage,
-and the blank to fill, plus any worker context that was waiting to be delivered. The
-worker sees that context because it is in the actual message — never because Panels
-wrote a row somewhere. It is written before anything else so that a failure here cannot
-leave a conversation behind.
+The opening message is composed first as one ordered, inspectable list of Panels inputs:
+the Stage instruction, Ticket guidance when present, the settled kickoff, and revision
+feedback for the current Stage when present. The worker sees each one because it is in
+the actual message. Worker skills and conversation history stay separate from this list.
+It is composed before anything else so that a failure here cannot leave a conversation
+behind.
 
 Then it is sent, through the one door there is. If the Ticket has a conversation the
 message goes into it. If it has none, the message is what brings one into being — and
@@ -97,8 +98,8 @@ The conversation system reports one of three fates:
 
 - **Started** — it is running now.
 - **Queued** — the worker was busy, so the message is held and will run when it is
-  free. This counts as delivered: the waiting context is ticked off and the step is
-  done being started.
+  free. This counts as delivered: the exact revision feedback batch is removed and the
+  step is done being started.
 - **Refused** — nothing was delivered. The claim is given back and one line is logged.
 
 Giving a claim back checks the status it wrote and the revision of that status change.
@@ -106,8 +107,8 @@ Every actual change advances the revision, even when two changes share a second.
 old release therefore cannot erase a newer claim that happens to use the same status.
 
 Once a send reports started or queued, it cannot be taken back, so nothing after that
-point reverts. A failure to tick off the delivered context there is logged and left
-alone; reverting would only re-arm the Ticket to send the same thing twice.
+point reverts. A failure to remove delivered revision feedback is logged and left alone;
+reverting would only re-arm the Ticket to send the same thing twice.
 
 One slow backend must not hold up every other Ticket, so each Ticket's start runs as
 its own independent piece of work rather than in a queue behind the others. On
@@ -117,7 +118,7 @@ deadline, and abandons whatever is left.
 _Code paths:_ `src/planner/runtime/conversation_start.py`,
 `src/planner/runtime/logic/conversation_start_resolution.py`,
 `src/planner/runtime/logic/worker_step_prompt.py`, and
-`src/planner/worker_context/`.
+`src/planner/tickets/revision_feedback.py`.
 
 ## Status is not liveness, and Panels says so
 

@@ -56,7 +56,6 @@ from planner.tickets.api import (
     Ctx,
     DbConn,
     MessageFiles,
-    WorkerContext,
     _marshal_accept,
     _parse_next_ceiling,
     _parse_required_principal,
@@ -365,7 +364,6 @@ async def supervisor_restart_worker(
     cfg: Cfg,
     clk: Clk,
     conversations: Conversations,
-    worker_context: WorkerContext,
 ) -> JsonDict:
     """Start this child Ticket's worker step again, optionally on a named configuration.
 
@@ -408,7 +406,6 @@ async def supervisor_restart_worker(
             ticket_id,
             connect_database=lambda: connect(cfg.db_path, cfg.db_busy_timeout_ms),
             conversation_system=conversations,
-            worker_context_service=worker_context,
             worker_type_registry=configured_worker_type_registry(),
             planning_day_id_resolver=lambda: planning_day_id,
             now=clk.now_unix,

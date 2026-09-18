@@ -15,7 +15,6 @@ from planner.notifications.runtime import NotificationLoop
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
 from planner.runtime.worker_step_readiness_loop import WorkerStepReadinessLoop
 from planner.scheduled_tickets.runtime import ScheduledTicketLoop
-from planner.worker_context.contracts import WorkerContextService
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,7 +86,6 @@ def start_background_loops(
     clock: Clock,
     *,
     conversation_system: ConversationSystem,
-    worker_context_service: WorkerContextService,
     asyncio_loop: asyncio.AbstractEventLoop,
 ) -> BackgroundLoops:
     """Own the background loops when this process holds the machine lock.
@@ -127,7 +125,6 @@ def start_background_loops(
                 config.db_path,
                 clock,
                 conversation_system=conversation_system,
-                worker_context_service=worker_context_service,
                 asyncio_loop=asyncio_loop,
                 boundary_hour=config.boundary_hour,
                 busy_timeout_ms=config.db_busy_timeout_ms,

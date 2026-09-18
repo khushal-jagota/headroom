@@ -27,11 +27,10 @@ from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
 from planner.sprints import data as sprints_data
-from planner.tickets import actions, data, views
+from planner.tickets import actions, data, revision_feedback, views
 from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap, Ticket
 from planner.tickets.logic import resolution
 from planner.tickets.logic.admission import REVISION_GUIDANCE_MAX_CHARACTERS
-from planner.worker_context import revision_feedback
 from planner.worker_types.configuration import configured_worker_type_registry
 
 

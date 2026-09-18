@@ -30,10 +30,9 @@ from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
 from planner.sprints import supervisor_service
 from planner.tickets import data as tickets_data
+from planner.tickets import revision_feedback
 from planner.tickets import views as tickets_views
 from planner.tickets.contracts import TicketStatus
-from planner.worker_context import data as context_data
-from planner.worker_context import revision_feedback
 
 _OWNER_HOLDER = {"kind": "owner", "id": "owner"}
 
@@ -489,9 +488,6 @@ def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
                 "UPDATE tickets SET conversation_id = ? WHERE id = ?",
                 (conversation_id, ticket["id"]),
             )
-            context_data.set_context(
-                conn, str(ticket["id"]), "ticket_changed", "Read exact guidance."
-            )
             conn.commit()
         asyncio.run(
             app.state.conversation_system.start_conversation(
@@ -516,13 +512,11 @@ def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
 
     with connect(str(db_path)) as conn:
         after = tickets_data.read_ticket(conn, str(ticket["id"]))
-        pending_context = context_data.snapshot(conn, str(ticket["id"])).items
         feedback = revision_feedback.snapshot(conn, str(ticket["id"]))
     assert rejected.status_code == 200, rejected.text
     assert after.pending_proposal is None
     assert after.ticket_status.value == "empty"
     assert after.guidance == ""
-    assert [entry.text for entry in pending_context] == ["Read exact guidance."]
     assert feedback is not None
     assert feedback.items[0].sender.kind.value == "sprint_item"
     assert feedback.items[0].sender.id == str(item["id"])

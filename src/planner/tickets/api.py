@@ -97,7 +97,6 @@ from planner.tickets.contracts import (
     ValueEditBody,
 )
 from planner.work_attention import add_work_attention
-from planner.worker_context.contracts import WorkerContextService
 from planner.worker_settings import service as worker_settings_service
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
@@ -166,10 +165,6 @@ def get_conversation_message_files(request: Request) -> ConversationMessageFiles
     return cast(ConversationMessageFiles, message_files)
 
 
-def get_worker_context_service(request: Request) -> WorkerContextService:
-    return cast(WorkerContextService, request.app.state.worker_context_service)
-
-
 DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
@@ -177,7 +172,6 @@ Clk = Annotated[Clock, Depends(get_clock)]
 Conversations = Annotated[ConversationSystem, Depends(get_conversation_system)]
 MessageFiles = Annotated[ConversationMessageFiles, Depends(get_conversation_message_files)]
 ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_record)]
-WorkerContext = Annotated[WorkerContextService, Depends(get_worker_context_service)]
 
 
 def _ticket_detail_with_worker_settings(

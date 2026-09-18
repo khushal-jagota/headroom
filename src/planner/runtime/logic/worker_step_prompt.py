@@ -1,23 +1,44 @@
-"""The text Panels sends into a Ticket's conversation to start a worker step."""
+"""The ordered inputs Panels sends into a Ticket's conversation for one worker step."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from planner.tickets.contracts import StageOwnershipMode, Ticket
+from planner.tickets.revision_feedback import PendingRevisionFeedback
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 
-def worker_step_prompt(
+@dataclass(frozen=True, slots=True)
+class WorkerStepInput:
+    """One named source of text for a Ticket worker step."""
+
+    name: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerStepPrompt:
+    """The complete, inspectable list of inputs for a Ticket worker step."""
+
+    inputs: tuple[WorkerStepInput, ...]
+
+    @property
+    def model_text(self) -> str:
+        return "\n\n".join(_render_worker_step_input(item) for item in self.inputs)
+
+
+def compose_worker_step_prompt(
     ticket: Ticket,
     *,
     worker_type_definition: WorkerTypeDefinition,
-) -> str:
-    """Describe what to advance; the worker role skill owns how to do the work.
+    revision_feedback: PendingRevisionFeedback | None,
+) -> WorkerStepPrompt:
+    """Compose every Panels-owned input for one Ticket worker step.
 
-    The Worker type selects the specialist skill; this prompt carries only the current
-    Stage ownership, the gated field to advance, and current Ticket guidance.
-    The gating field is resolved against the ticket's OWN type definition (not the
-    coding default), so a novel-stage type (e.g. new_worker at needs_understanding) reads
-    its real field instead of raising 'stage outside the linear order'.
+    Worker skills bind outside this value. Conversation history and authenticated reply
+    requirements also remain in the conversation system, where their own trust rules
+    apply. The gated field is resolved against the Ticket's own Worker type definition.
     """
     gating = worker_type_definition.gating_field(ticket.stage)
     field = str(gating) if gating is not None else "the next step"
@@ -27,19 +48,33 @@ def worker_step_prompt(
         if ticket.effective_stage_ownership_mode is not None
         else "terminal"
     )
-    guidance = (
-        f"\n\n[Ticket guidance]\n{ticket.guidance}\n[/Ticket guidance]" if ticket.guidance else ""
-    )
     if ticket.effective_stage_ownership_mode is StageOwnershipMode.paired:
-        return (
+        step_instruction = (
             f"Work ticket {ticket.id} — {ticket.title}. It is at Stage '{str(ticket.stage)}'; "
             f"open the paired discussion for the '{field}' field. "
             "Ask bounded questions or resume the Stage conversation, and do not file a "
             "proposal until the discussion has enough shared understanding. "
-            f"Stage owner: {ownership_wire}.{guidance}"
+            f"Stage owner: {ownership_wire}."
         )
-    return (
-        f"Work ticket {ticket.id} — {ticket.title}. It is at Stage '{str(ticket.stage)}'; "
-        f"take the next step and propose the '{field}' field for approval. "
-        f"Stage owner: {ownership_wire}.{guidance}"
-    )
+    else:
+        step_instruction = (
+            f"Work ticket {ticket.id} — {ticket.title}. It is at Stage '{str(ticket.stage)}'; "
+            f"take the next step and propose the '{field}' field for approval. "
+            f"Stage owner: {ownership_wire}."
+        )
+
+    inputs = [WorkerStepInput("stage instruction", step_instruction)]
+    if ticket.guidance:
+        inputs.append(WorkerStepInput("Ticket guidance", ticket.guidance))
+    kickoff = ticket.field_values.get("kickoff")
+    if kickoff:
+        inputs.append(WorkerStepInput("Ticket kickoff", kickoff))
+    if revision_feedback is not None:
+        inputs.append(WorkerStepInput("Ticket revision feedback", revision_feedback.text))
+    return WorkerStepPrompt(inputs=tuple(inputs))
+
+
+def _render_worker_step_input(item: WorkerStepInput) -> str:
+    if item.name == "stage instruction":
+        return item.text
+    return f"[{item.name}]\n{item.text}\n[/{item.name}]"

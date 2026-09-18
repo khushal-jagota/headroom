@@ -38,14 +38,14 @@ from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.days.logic import dates
 from planner.runtime import conversation_start, worker_step_readiness
-from planner.runtime.logic.worker_step_prompt import worker_step_prompt
+from planner.runtime.logic.worker_step_prompt import compose_worker_step_prompt
 from planner.skill_versions import (
     bind_worker_step_skills,
     delete_worker_step_skill_bindings,
     settle_worker_step_skill_bindings,
 )
 from planner.tickets import data as tickets_data
-from planner.worker_context.contracts import WorkerContextService
+from planner.tickets import revision_feedback
 from planner.worker_settings.service import database_parent_from_connection
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.registry import WorkerTypeRegistry
@@ -65,7 +65,6 @@ async def start_ready_worker_step(
     *,
     connect_database: Callable[[], sqlite3.Connection],
     conversation_system: ConversationSystem,
-    worker_context_service: WorkerContextService,
     worker_type_registry: WorkerTypeRegistry,
     planning_day_id_resolver: Callable[[], str],
     now: Callable[[], int],
@@ -138,20 +137,20 @@ async def start_ready_worker_step(
                 worker_type_definition.worker_profile.specialist_skill,
             )
             conversation_id = claimed.conversation_id
-            # Composed before anything is made: a prepare that falls over must not leave a
-            # conversation behind, and the opener is what would have brought one into being.
-            prepared = worker_context_service.prepare(
-                ticket_id,
-                worker_step_prompt(
-                    claimed,
-                    worker_type_definition=worker_type_definition,
-                ),
+            # Composed before anything is made: a failure here must not leave a conversation
+            # behind, and the opener is what would have brought one into being.
+            current_ticket = tickets_data.read_ticket(conn, ticket_id)
+            pending_revision_feedback = revision_feedback.snapshot(conn, ticket_id)
+            prompt = compose_worker_step_prompt(
+                current_ticket,
+                worker_type_definition=worker_type_definition,
+                revision_feedback=pending_revision_feedback,
             )
             delivered = await conversation_start.send_to_ticket_conversation(
                 conversation_system,
                 conn,
                 ticket_id,
-                text_message_content(prepared.model_text),
+                text_message_content(prompt.model_text),
                 conversation_id=conversation_id,
                 created_conversation_id=conversation_start.new_conversation_id(),
                 sender_label=LOOP_SENDER_LABEL,
@@ -194,15 +193,20 @@ async def start_ready_worker_step(
         if paired_opener:
             give_the_claim_back(opener_succeeded=True)
 
-        try:
-            worker_context_service.acknowledge(ticket_id, prepared.receipts)
-        except Exception:
-            # The text is delivered and cannot be taken back, so this is reported and
-            # nothing is reverted: reverting would re-arm the Ticket for a second send.
-            _log.exception(
-                "delivered worker context could not be acknowledged (ticket=%s)",
-                ticket_id,
-            )
+        if pending_revision_feedback is not None:
+            try:
+                revision_feedback.acknowledge(
+                    conn,
+                    ticket_id,
+                    pending_revision_feedback.revision,
+                )
+            except Exception:
+                # The text is delivered and cannot be taken back, so this is reported and
+                # nothing is reverted: reverting would only send the feedback twice.
+                _log.exception(
+                    "delivered revision feedback could not be acknowledged (ticket=%s)",
+                    ticket_id,
+                )
         return True
     finally:
         conn.close()
@@ -217,7 +221,6 @@ class WorkerStepReadinessLoop:
         clock: Clock,
         *,
         conversation_system: ConversationSystem,
-        worker_context_service: WorkerContextService,
         asyncio_loop: asyncio.AbstractEventLoop,
         boundary_hour: int,
         busy_timeout_ms: int = 5000,
@@ -225,7 +228,6 @@ class WorkerStepReadinessLoop:
         self._db_path = db_path
         self._clock = clock
         self._conversation_system = conversation_system
-        self._worker_context_service = worker_context_service
         self._asyncio_loop = asyncio_loop
         self._boundary_hour = boundary_hour
         self._busy_timeout_ms = busy_timeout_ms
@@ -296,7 +298,6 @@ class WorkerStepReadinessLoop:
                 ticket_id,
                 connect_database=lambda: connect(self._db_path, self._busy_timeout_ms),
                 conversation_system=self._conversation_system,
-                worker_context_service=self._worker_context_service,
                 worker_type_registry=configured_worker_type_registry(),
                 planning_day_id_resolver=self._planning_day_id,
                 now=self._clock.now_unix,
