@@ -2537,20 +2537,6 @@ button.list-row:hover .list-row-title {
   gap: var(--space-1);
   min-width: 0;
 }
-.chat-send-mode {
-  box-sizing: border-box;
-  width: calc(var(--space-7) + var(--space-5));
-  min-width: 0;
-  height: var(--space-5);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  color: var(--text-muted);
-  font: inherit;
-  font-size: var(--type-xs);
-  padding: 0 var(--space-1);
-}
-.chat-send-mode:disabled { opacity: 0.5; }
 .chat-send {
   width: var(--space-5); height: var(--space-5);
   border: none;
