@@ -120,6 +120,7 @@ class _LinkWatchingConversationSystem:
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
+        reply_requested: bool = True,
     ) -> PromptDeliveryFate:
         return await self._system.send(
             conversation_id,
@@ -132,6 +133,7 @@ class _LinkWatchingConversationSystem:
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
         )
 
     async def send_with_receipt(
@@ -147,6 +149,7 @@ class _LinkWatchingConversationSystem:
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
+        reply_requested: bool = True,
     ) -> AddressedPromptDeliveryReceipt:
         return await self._system.send_with_receipt(
             conversation_id,
@@ -159,6 +162,7 @@ class _LinkWatchingConversationSystem:
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
         )
 
     async def record_message_to_owner(
@@ -224,6 +228,11 @@ class _LinkWatchingConversationSystem:
         self, conversation_id: str
     ) -> ConversationTurnReference | None:
         return await self._system.active_turn_reference(conversation_id)
+
+    async def turn_expects_reply(
+        self, turn: ConversationTurnReference, recipient: Principal
+    ) -> bool:
+        return await self._system.turn_expects_reply(turn, recipient)
 
     async def record_explicit_reply(
         self, turn: ConversationTurnReference, recipient: Principal
@@ -571,6 +580,7 @@ class _RelinkingConversationSystem:
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
+        reply_requested: bool = True,
     ) -> PromptDeliveryFate:
         fate = await self._system.send(
             conversation_id,
@@ -583,6 +593,7 @@ class _RelinkingConversationSystem:
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
         )
         self._relink()
         return fate
@@ -600,6 +611,7 @@ class _RelinkingConversationSystem:
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
+        reply_requested: bool = True,
     ) -> AddressedPromptDeliveryReceipt:
         receipt = await self._system.send_with_receipt(
             conversation_id,
@@ -612,6 +624,7 @@ class _RelinkingConversationSystem:
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
         )
         self._relink()
         return receipt
@@ -679,6 +692,11 @@ class _RelinkingConversationSystem:
         self, conversation_id: str
     ) -> ConversationTurnReference | None:
         return await self._system.active_turn_reference(conversation_id)
+
+    async def turn_expects_reply(
+        self, turn: ConversationTurnReference, recipient: Principal
+    ) -> bool:
+        return await self._system.turn_expects_reply(turn, recipient)
 
     async def record_explicit_reply(
         self, turn: ConversationTurnReference, recipient: Principal

@@ -6,6 +6,32 @@ import type { ConversationEvent, HeldPrompt } from "./wire";
 
 export type ConversationLens = "focus" | "full";
 
+const CONVERSATION_LENS_STORAGE_KEY = "panels.conversation.lens";
+
+/** Read the browser-wide reading preference. Missing, malformed, and unavailable storage
+ * all use Focus, which is the safe first-use view. */
+export function conversationLensPreference(): ConversationLens {
+  try {
+    const stored = typeof window === "undefined"
+      ? null
+      : window.localStorage.getItem(CONVERSATION_LENS_STORAGE_KEY);
+    return stored === "full" || stored === "focus" ? stored : "focus";
+  } catch {
+    return "focus";
+  }
+}
+
+/** Keep one lens preference for this browser, independent of conversation identity. */
+export function rememberConversationLensPreference(lens: ConversationLens): void {
+  try {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(CONVERSATION_LENS_STORAGE_KEY, lens);
+    }
+  } catch {
+    // A private or restricted browser can still use the lens for this mounted pane.
+  }
+}
+
 /** Whether a durable row belongs in the owner's focused reading.
  *
  * New prompt rows carry trusted principals. Historical browser prompts do not, so their

@@ -41,16 +41,18 @@ listen for new ones. Opening a conversation, reconnecting after a dropped
 connection, and a second device are all that same fetch. Nothing re-downloads
 mid-read.
 
-Every conversation opens through the Focus lens. Focus shows the owner's prompts,
-explicit messages addressed to the owner, permission requests, agent questions, and
+A browser with no saved lens choice opens through the Focus lens. Focus shows the
+owner's prompts, explicit messages addressed to the owner, permission requests, agent questions, and
 the answers that settle those requests. Historical owner prompts without principals use
 their established owner label, so they remain readable without a record migration.
 Failed turns, stopped turns, missing explicit replies, and terminal proposal-alert
 delivery failures remain visible as compact system rows. Complete turn boundaries still
 settle the Focus thread and rest line when runtime rows are hidden. A turn with a hidden
 opening prompt has no Focus turn head.
-Full shows the complete runtime notebook. The header toggle and the unmodified `f` key
-switch the lens without replacing the conversation. Editable controls keep the key.
+Full shows the complete runtime notebook, every held prompt, all live agent text, and
+every tool call without a Focus fold. The header toggle and the unmodified `f` key switch
+the lens without replacing the conversation. Editable controls keep the key. The browser
+keeps the choice across conversation switches, new conversations, and later visits.
 
 The lens changes only what the person reads. Liveness, streaming, reconnects, and
 snapshots continue to use the complete feed. A switch to another conversation invalidates
@@ -219,6 +221,14 @@ Every employee-authored send carries canonical sender and recipient principals d
 from the authenticated request. Panels records that address on every durable outcome,
 including held, refused, uncertain, and discarded prompts. Browser-supplied display
 labels are not authority.
+
+Panels also derives an exact Send Message target from each authenticated sender. It adds
+that trusted reply requirement only to the backend wire prompt. The durable prompt keeps
+the sender's original content. A new turn, an accepted steer, and a batch from the held
+line all carry the requirement. Unaddressed loop and maintenance prompts do not. The
+agent role requires one explicit send to each addressed sender before the turn ends.
+Panels classifies that accepted send as the reply, so its recipient receives no counter-
+reply requirement and agent conversations cannot form an acknowledgement loop.
 
 Backend prose is runtime output only. Finishing a turn does not turn that prose into a
 message for the person who prompted it. Only Send Message creates an explicit addressed

@@ -110,6 +110,7 @@ from planner.conversation.events import (
     UserInputRequestedEventPayload,
 )
 from planner.conversation.live_tail import ConversationLiveTail
+from planner.conversation.logic.addressed_reply import with_authenticated_reply_directive
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
 )
@@ -231,6 +232,7 @@ class _AdmittedSenderMessage:
     sender_label: str
     sender: Principal | None = None
     recipient: Principal | None = None
+    reply_requested: bool = True
     settled: asyncio.Event = field(default_factory=asyncio.Event)
 
 
@@ -256,6 +258,7 @@ class _HeldPrompt:
     snapshot_sent_at_unix_milliseconds: int
     sender: Principal | None
     recipient: Principal | None
+    reply_requested: bool
     queue_reason: PromptQueueReason
     owner_read_through_sequence: int | None
 
@@ -377,6 +380,7 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
+        reply_requested: bool = True,
     ) -> PromptDeliveryFate:
         receipt = await self.send_with_receipt(
             conversation_id,
@@ -389,6 +393,7 @@ class SqliteProcessConversationSystem:
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
         )
         return receipt.fate
 
@@ -405,6 +410,7 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
+        reply_requested: bool = True,
     ) -> AddressedPromptDeliveryReceipt:
         """Send a message in. See the contract; the two sender-minted fields are extra.
 
@@ -448,7 +454,8 @@ class SqliteProcessConversationSystem:
                             admitted.sender_label,
                             admitted.sender,
                             admitted.recipient,
-                        ) != (content, sender_label, sender, recipient):
+                            admitted.reply_requested,
+                        ) != (content, sender_label, sender, recipient, reply_requested):
                             raise ValueError("sender_message_id already names a different message")
                         settled = admitted.settled
                     else:
@@ -460,6 +467,7 @@ class SqliteProcessConversationSystem:
                                 or held.sender_label != sender_label
                                 or held.sender != sender
                                 or held.recipient != recipient
+                                or held.reply_requested != reply_requested
                             ):
                                 raise ValueError(
                                     "sender_message_id already names a different message"
@@ -514,6 +522,7 @@ class SqliteProcessConversationSystem:
                         sender_label=sender_label,
                         sender=sender,
                         recipient=recipient,
+                        reply_requested=reply_requested,
                     )
                 break
 
@@ -529,6 +538,7 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds,
                     sender,
                     recipient,
+                    reply_requested,
                     owner_read_through_sequence,
                 )
             elif mode is PromptDeliveryMode.send_now:
@@ -542,6 +552,7 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds,
                     sender,
                     recipient,
+                    reply_requested,
                     owner_read_through_sequence,
                 )
             else:
@@ -555,6 +566,7 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds,
                     sender,
                     recipient,
+                    reply_requested,
                     owner_read_through_sequence,
                 )
             return AddressedPromptDeliveryReceipt(
@@ -722,6 +734,22 @@ class SqliteProcessConversationSystem:
             if running is None:
                 return None
             return ConversationTurnReference(conversation_id, running.token.turn_number)
+
+    async def turn_expects_reply(
+        self, turn: ConversationTurnReference, recipient: Principal
+    ) -> bool:
+        """Return whether ``recipient`` is an unanswered sender on the named turn."""
+        state = await self._conversation_state(turn.conversation_id)
+        if state is None:
+            return False
+        async with state.lock:
+            running = state.running_turn
+            return bool(
+                running is not None
+                and running.token.turn_number == turn.turn_number
+                and recipient in running.prompt_senders
+                and recipient not in running.explicit_reply_recipients
+            )
 
     async def record_explicit_reply(
         self, turn: ConversationTurnReference, recipient: Principal
@@ -912,6 +940,7 @@ class SqliteProcessConversationSystem:
                         sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
                         sender=held.sender,
                         recipient=held.recipient,
+                        reply_requested=held.reply_requested,
                         owner_read_through_sequence=held.owner_read_through_sequence,
                     )
                     self._settle_held_deliveries(state, (held,))
@@ -922,6 +951,13 @@ class SqliteProcessConversationSystem:
         if mode is HeldPromptPromotionMode.send_now:
             assert reservation is not None
             try:
+                reply_senders = (
+                    (held.sender,)
+                    if held.reply_requested
+                    and held.sender is not None
+                    and held.recipient is not None
+                    else ()
+                )
                 delivery = await self._deliver_prompt(
                     state,
                     reservation.token,
@@ -931,6 +967,7 @@ class SqliteProcessConversationSystem:
                     model_change=held.model_change,
                     reasoning_effort_change=held.reasoning_effort_change,
                     automatic_compaction=False,
+                    reply_senders=reply_senders,
                 )
             except BaseException:
                 self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
@@ -951,6 +988,7 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
                     sender=held.sender,
                     recipient=held.recipient,
+                    reply_requested=held.reply_requested,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.idle,
                     owner_read_through_sequence=(
@@ -982,8 +1020,16 @@ class SqliteProcessConversationSystem:
         assert steer_child is not None
         assert steer_turn_token is not None
         try:
+            wire_content = with_authenticated_reply_directive(
+                held.content,
+                (held.sender,)
+                if held.reply_requested
+                and held.sender is not None
+                and held.recipient is not None
+                else (),
+            )
             steer_outcome = await steer_child.steer(
-                steer_turn_token, held.content, sender_label=held.sender_label
+                steer_turn_token, wire_content, sender_label=held.sender_label
             )
         except PromptWriteFailed:
             steer_outcome = BackendSteerUncertain()
@@ -999,6 +1045,7 @@ class SqliteProcessConversationSystem:
                 sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
                 sender=held.sender,
                 recipient=held.recipient,
+                reply_requested=held.reply_requested,
                 owner_read_through_sequence=held.owner_read_through_sequence,
             )
             self._settle_held_deliveries(state, (held,))
@@ -1219,6 +1266,7 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None,
         sender: Principal | None,
         recipient: Principal | None,
+        reply_requested: bool,
         owner_read_through_sequence: int | None,
         *,
         queue_reason: PromptQueueReason = PromptQueueReason.requested,
@@ -1236,6 +1284,7 @@ class SqliteProcessConversationSystem:
                         or held.reasoning_effort_change != reasoning_effort_change
                         or held.sender != sender
                         or held.recipient != recipient
+                        or held.reply_requested != reply_requested
                     ):
                         raise ValueError("sender_message_id already names a different message")
                     return PromptDeliveryQueued(queue_position=position)
@@ -1256,6 +1305,7 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
+                    reply_requested=reply_requested,
                     queue_reason=queue_reason,
                     owner_read_through_sequence=owner_read_through_sequence,
                 )
@@ -1270,6 +1320,7 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
+                    reply_requested=reply_requested,
                     queue_reason=queue_reason,
                     owner_read_through_sequence=owner_read_through_sequence,
                 )
@@ -1293,6 +1344,7 @@ class SqliteProcessConversationSystem:
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
             owner_read_through_sequence=owner_read_through_sequence,
         )
 
@@ -1308,6 +1360,7 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None,
         sender: Principal | None,
         recipient: Principal | None,
+        reply_requested: bool,
         owner_read_through_sequence: int | None,
         queue_reason: PromptQueueReason = PromptQueueReason.requested,
     ) -> PromptDeliveryQueued:
@@ -1328,6 +1381,7 @@ class SqliteProcessConversationSystem:
                 ),
                 sender=sender,
                 recipient=recipient,
+                reply_requested=reply_requested,
                 queue_reason=queue_reason,
                 owner_read_through_sequence=owner_read_through_sequence,
             )
@@ -1391,6 +1445,7 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None,
         sender: Principal | None,
         recipient: Principal | None,
+        reply_requested: bool,
         owner_read_through_sequence: int | None,
     ) -> PromptDeliveryFate:
         automatic_reservation: _ReservedTurn | None = None
@@ -1410,6 +1465,7 @@ class SqliteProcessConversationSystem:
                         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                         sender=sender,
                         recipient=recipient,
+                        reply_requested=reply_requested,
                         owner_read_through_sequence=owner_read_through_sequence,
                     )
                 if running is not None and running.automatic_compaction:
@@ -1423,6 +1479,7 @@ class SqliteProcessConversationSystem:
                         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                         sender=sender,
                         recipient=recipient,
+                        reply_requested=reply_requested,
                         owner_read_through_sequence=owner_read_through_sequence,
                     )
                 if running is not None:
@@ -1445,6 +1502,7 @@ class SqliteProcessConversationSystem:
                         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                         sender=sender,
                         recipient=recipient,
+                        reply_requested=reply_requested,
                         owner_read_through_sequence=owner_read_through_sequence,
                     )
                     automatic_reservation = self._reserve_turn(state, automatic_compaction=True)
@@ -1478,6 +1536,7 @@ class SqliteProcessConversationSystem:
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
             owner_read_through_sequence=owner_read_through_sequence,
         )
 
@@ -1492,6 +1551,7 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None,
         sender: Principal | None,
         recipient: Principal | None,
+        reply_requested: bool,
         owner_read_through_sequence: int | None,
     ) -> PromptDeliveryFate:
         """Steer active work, or apply the shared idle and fallback rules."""
@@ -1520,6 +1580,7 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
+                    reply_requested=reply_requested,
                     queue_reason=PromptQueueReason.attachment,
                     owner_read_through_sequence=owner_read_through_sequence,
                 )
@@ -1534,6 +1595,7 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
+                    reply_requested=reply_requested,
                     queue_reason=PromptQueueReason.run_change,
                     owner_read_through_sequence=owner_read_through_sequence,
                 )
@@ -1553,6 +1615,7 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
+                    reply_requested=reply_requested,
                     queue_reason=PromptQueueReason.steer_refused,
                     owner_read_through_sequence=owner_read_through_sequence,
                 )
@@ -1574,6 +1637,7 @@ class SqliteProcessConversationSystem:
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
+                reply_requested=reply_requested,
                 owner_read_through_sequence=owner_read_through_sequence,
             )
         if queued is not None:
@@ -1581,7 +1645,17 @@ class SqliteProcessConversationSystem:
         assert child is not None
         assert running is not None
         try:
-            steer_outcome = await child.steer(running.token, content, sender_label=sender_label)
+            wire_content = with_authenticated_reply_directive(
+                content,
+                (
+                    (sender,)
+                    if reply_requested and sender is not None and recipient is not None
+                    else ()
+                ),
+            )
+            steer_outcome = await child.steer(
+                running.token, wire_content, sender_label=sender_label
+            )
         except PromptWriteFailed:
             steer_outcome = BackendSteerUncertain()
 
@@ -1599,6 +1673,7 @@ class SqliteProcessConversationSystem:
                 sent_at_unix_milliseconds,
                 sender,
                 recipient,
+                reply_requested,
                 owner_read_through_sequence,
                 queue_reason=PromptQueueReason.steer_refused,
             )
@@ -1614,6 +1689,7 @@ class SqliteProcessConversationSystem:
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
+                reply_requested=reply_requested,
                 owner_read_through_sequence=owner_read_through_sequence,
             )
 
@@ -1685,6 +1761,7 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
+        reply_requested: bool = True,
         drain_after_delivery_exception: bool = True,
         owner_read_through_sequence: int | None = None,
     ) -> PromptDeliveryFate:
@@ -1698,6 +1775,11 @@ class SqliteProcessConversationSystem:
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
                 automatic_compaction=reservation.automatic_compaction,
+                reply_senders=(
+                    (sender,)
+                    if reply_requested and sender is not None and recipient is not None
+                    else ()
+                ),
             )
         except asyncio.CancelledError:
             self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
@@ -1725,6 +1807,7 @@ class SqliteProcessConversationSystem:
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
+                reply_requested=reply_requested,
                 record_refusal=delivery.record_refusal,
                 phase_when_not_started=_ConversationPhase.idle,
                 owner_read_through_sequence=owner_read_through_sequence,
@@ -1779,6 +1862,7 @@ class SqliteProcessConversationSystem:
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool,
+        reply_senders: tuple[Principal, ...] = (),
     ) -> _PromptDeliveryAttempt:
         """Get the message onto a live child's wire, or name why that was impossible.
 
@@ -1792,7 +1876,9 @@ class SqliteProcessConversationSystem:
         except SessionLoadFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
 
-        composed = await self._compose_prompt_content(state, content)
+        composed = with_authenticated_reply_directive(
+            await self._compose_prompt_content(state, content), reply_senders
+        )
         try:
             await child.write_prompt(
                 turn_token,
@@ -1899,6 +1985,7 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None,
         sender: Principal | None,
         recipient: Principal | None,
+        reply_requested: bool,
         record_refusal: bool,
         phase_when_not_started: _ConversationPhase,
         also_delivered: tuple[_HeldPrompt, ...] = (),
@@ -2006,8 +2093,11 @@ class SqliteProcessConversationSystem:
                     prompt_senders={
                         principal: None
                         for principal in (
-                            sender,
-                            *(message.sender for message in also_delivered),
+                            sender if reply_requested else None,
+                            *(
+                                message.sender if message.reply_requested else None
+                                for message in also_delivered
+                            ),
                         )
                         if principal is not None
                     },
@@ -2065,6 +2155,15 @@ class SqliteProcessConversationSystem:
                     model_change=held.model_change,
                     reasoning_effort_change=held.reasoning_effort_change,
                     automatic_compaction=False,
+                    reply_senders=tuple(
+                        dict.fromkeys(
+                            message.sender
+                            for message in batch
+                            if message.reply_requested
+                            and message.sender is not None
+                            and message.recipient is not None
+                        )
+                    ),
                 )
             except asyncio.CancelledError:
                 self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
@@ -2110,6 +2209,7 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
                     sender=held.sender,
                     recipient=held.recipient,
+                    reply_requested=held.reply_requested,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.draining,
                     also_delivered=rest,
@@ -2168,6 +2268,7 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None,
         sender: Principal | None,
         recipient: Principal | None,
+        reply_requested: bool,
         owner_read_through_sequence: int | None,
     ) -> PromptDeliveryInjected | PromptDeliveryRefused | PromptDeliveryUncertain:
         """Record and map one steering outcome while the conversation lock is held."""
@@ -2190,7 +2291,8 @@ class SqliteProcessConversationSystem:
                 ),
             )
             if (
-                sender is not None
+                reply_requested
+                and sender is not None
                 and state.running_turn is not None
                 and state.running_turn.token == turn_token
             ):
@@ -2235,7 +2337,8 @@ class SqliteProcessConversationSystem:
             ),
         )
         if (
-            sender is not None
+            reply_requested
+            and sender is not None
             and state.running_turn is not None
             and state.running_turn.token == turn_token
         ):

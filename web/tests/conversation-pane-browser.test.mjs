@@ -178,6 +178,60 @@ try {
     running = false;
     conversationState = "rest";
   };
+  (window as any).__showSettledTurn = () => {
+    const tool = (index: number) => ({
+      key: "settled-tool-" + index,
+      kind: "tool_call",
+      sequence: 3_100 + index,
+      createdAt: 4_100 + index,
+      toolCallId: "settled-tool-" + index,
+      title: "Tool " + index,
+      toolKind: "read",
+      detail: null,
+      startedDetail: null,
+      status: "completed",
+      progress: null
+    });
+    rows = [
+      {
+        key: "full-prompt",
+        kind: "prompt",
+        sequence: 3_000,
+        createdAt: 4_000,
+        content: [{ piece: "text", text: "show everything" }],
+        senderLabel: "owner",
+        mode: "queue",
+        sentAtUnixMilliseconds: 4_000
+      },
+      {
+        key: "full-commentary",
+        kind: "agent_message",
+        sequence: 3_001,
+        createdAt: 4_001,
+        content: [{ piece: "text", text: "hidden commentary" }]
+      },
+      ...[1, 2, 3, 4].map(tool),
+      {
+        key: "full-answer",
+        kind: "agent_message",
+        sequence: 3_200,
+        createdAt: 4_200,
+        content: [{ piece: "text", text: "final answer" }]
+      },
+      {
+        key: "full-end",
+        kind: "turn_ended",
+        sequence: 3_201,
+        createdAt: 4_201,
+        ending: "completed",
+        errorSummary: null,
+        automaticCompactionResult: null
+      }
+    ];
+    visibleRows = null;
+    lens = "focus";
+    conversationState = "opened";
+  };
 </script>
 
 <main class="fixture-ticket">
@@ -503,6 +557,15 @@ with sync_playwright() as playwright:
     state(page, "rest")
     assert page.locator("[data-conversation-rest-line]").inner_text() == "settled reply"
     assert page.locator("[data-conversation-rest-bar] .c2-rest-working").count() == 0
+
+    # Focus keeps settled work folded. Full reveals all commentary and every tool call.
+    page.evaluate("window.__showSettledTurn()")
+    assert page.get_by_text("hidden commentary", exact=True).count() == 0
+    assert page.locator('[data-conversation-row="tool_call"]').count() == 0
+    lens_toggle.click()
+    assert page.get_by_text("hidden commentary", exact=True).count() == 1
+    assert page.locator('[data-conversation-row="tool_call"]').count() == 4
+    assert page.locator("[data-conversation-work-fold]").count() == 0
 
     browser.close()
 

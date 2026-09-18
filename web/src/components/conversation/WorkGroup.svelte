@@ -19,20 +19,23 @@
   let {
     entries,
     conversationId,
-    hidden = false
+    hidden = false,
+    showAll = false
   }: {
     entries: readonly ToolCallRowType[];
     /** Whose record these rows are, which is where a row's whole output is asked for. */
     conversationId: string;
     /** Its turn is settled and folded, so this run is behind the fold. */
     hidden?: boolean;
+    /** Full reads every recorded tool call without another nested disclosure. */
+    showAll?: boolean;
   } = $props();
 
   let expanded = $state(false);
 
   let hiddenCount = $derived(Math.max(0, entries.length - VISIBLE_RUNNING_WORK_ENTRIES));
   let visible = $derived(
-    expanded ? entries : entries.slice(entries.length - VISIBLE_RUNNING_WORK_ENTRIES)
+    showAll || expanded ? entries : entries.slice(entries.length - VISIBLE_RUNNING_WORK_ENTRIES)
   );
   let toggleLabel = $derived(
     expanded ? "Show fewer tool calls" : hiddenWorkSentence(hiddenCount)
@@ -50,7 +53,7 @@
         <ToolCallRow row={entry} {conversationId} />
       {/each}
     </div>
-    {#if hiddenCount > 0}
+    {#if !showAll && hiddenCount > 0}
       <button
         type="button"
         class="c2-run-toggle"

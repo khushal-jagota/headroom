@@ -260,6 +260,10 @@ async def send_message(
         source_conversation_id = _sender_conversation_id(conn, sender)
         if source_conversation_id is not None:
             source_turn = await conversations.active_turn_reference(source_conversation_id)
+    is_reply = bool(
+        source_turn is not None
+        and await conversations.turn_expects_reply(source_turn, recipient)
+    )
 
     if recipient.kind is PrincipalKind.owner:
         if sender.kind is PrincipalKind.owner:
@@ -313,6 +317,7 @@ async def send_message(
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
+                reply_requested=not is_reply,
                 now=clock.now_unix(),
                 required_sprint_item_id=required_sprint_item_id,
             )
@@ -342,6 +347,7 @@ async def send_message(
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
+                reply_requested=not is_reply,
             )
     elif recipient.kind is PrincipalKind.sprint_item:
         item_id = recipient.id
@@ -378,6 +384,7 @@ async def send_message(
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
+                    reply_requested=not is_reply,
                     required_sprint_item_id=item_id,
                 )
                 if sender.kind is PrincipalKind.owner and (

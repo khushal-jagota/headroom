@@ -354,6 +354,8 @@ def test_employee_send_credits_only_an_accepted_reply_to_the_captured_source_tur
     conversations = AsyncMock()
     turn = ConversationTurnReference("c_sender", 7)
     conversations.active_turn_reference.return_value = turn
+    conversations.turn_expects_reply.return_value = True
+    ticket_send = AsyncMock(return_value=DeliveredMessage("c_recipient", fate, credited))
     monkeypatch.setattr(
         tickets_data,
         "read_ticket",
@@ -364,7 +366,7 @@ def test_employee_send_credits_only_an_accepted_reply_to_the_captured_source_tur
     monkeypatch.setattr(
         conversation_start,
         "send_to_ticket_conversation",
-        AsyncMock(return_value=DeliveredMessage("c_recipient", fate, credited)),
+        ticket_send,
     )
 
     asyncio.run(
@@ -379,6 +381,11 @@ def test_employee_send_credits_only_an_accepted_reply_to_the_captured_source_tur
     )
 
     conversations.active_turn_reference.assert_awaited_once_with("c_sender")
+    conversations.turn_expects_reply.assert_awaited_once_with(
+        turn, Principal(PrincipalKind.ticket, "t_recipient")
+    )
+    assert ticket_send.await_args is not None
+    assert ticket_send.await_args.kwargs["reply_requested"] is False
     if credited:
         conversations.record_explicit_reply.assert_awaited_once_with(
             turn, Principal(PrincipalKind.ticket, "t_recipient")

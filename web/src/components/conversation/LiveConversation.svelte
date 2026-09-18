@@ -29,8 +29,10 @@
   import { heldPromptRows } from "../../lib/conversation/heldPrompts";
   import {
     conversationFeedForLens,
+    conversationLensPreference,
     conversationRowsForLens,
     heldPromptIsInLens,
+    rememberConversationLensPreference,
     type ConversationLens
   } from "../../lib/conversation/lens";
   import type { ConversationState } from "../../lib/conversation/conversationState";
@@ -150,7 +152,7 @@
   let askNote = $state<string | null>(null);
   let busy = $state(false);
   let opening = $state(false);
-  let lens = $state<ConversationLens>("focus");
+  let lens = $state<ConversationLens>(conversationLensPreference());
   /** The conversation this component currently has open. It follows the prop, and a start
    *  sets it directly, because the message that caused the start has to go somewhere now
    *  rather than after the parent's own state has come back round. */
@@ -166,6 +168,10 @@
   let attentionPulse = $state(0);
 
   let stream: ConversationStream | null = null;
+
+  $effect(() => {
+    rememberConversationLensPreference(lens);
+  });
 
   /** Whether there is a conversation here at all. Holding an id is not the same as one
    *  existing: a Ticket names its conversation before a person opens the page, and this
@@ -307,7 +313,6 @@
     if (wanted === null) {
       closeStream();
       openedId = null;
-      lens = "focus";
       opening = false;
       view = null;
       feed = emptyConversationFeed();
@@ -321,7 +326,6 @@
   async function adopt(id: string): Promise<void> {
     closeStream();
     openedId = id;
-    lens = "focus";
     view = null;
     feed = emptyConversationFeed();
     // A reload can happen after the first request reached the server but before its
@@ -551,7 +555,6 @@
         // what this browser is holding is the message being sent right now, which is newer
         // than anything remembered.
         openedId = delivered.conversation_id;
-        lens = "focus";
         await openConversation(delivered.conversation_id);
       }
       const terminalFate = fate.fate === "refused" || fate.fate === "uncertain";
@@ -730,7 +733,6 @@
     void holdOnTo([]);
     composerStackMessageIds = [];
     openedId = null;
-    lens = "focus";
     view = null;
     feed = emptyConversationFeed();
     fateNote = null;

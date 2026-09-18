@@ -469,6 +469,7 @@ class ConversationSystem(Protocol):
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
+        reply_requested: bool = True,
     ) -> PromptDeliveryFate:
         """Send a message into a conversation. This is the only way anything gets to an agent.
 
@@ -522,6 +523,7 @@ class ConversationSystem(Protocol):
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
+        reply_requested: bool = True,
     ) -> AddressedPromptDeliveryReceipt:
         """Run the canonical send and expose replay freshness to addressed-send wiring.
 
@@ -573,6 +575,12 @@ class ConversationSystem(Protocol):
 
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
         """Capture the exact active turn that a Send Message may answer."""
+        ...
+
+    async def turn_expects_reply(
+        self, turn: ConversationTurnReference, recipient: Principal
+    ) -> bool:
+        """Say whether an accepted send to ``recipient`` answers the named turn."""
         ...
 
     async def record_explicit_reply(

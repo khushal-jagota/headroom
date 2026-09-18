@@ -528,7 +528,7 @@ def feedback_use(ticket_id: str, feedback_ids: tuple[str, ...], as_json: bool) -
 @click.option(
     "--message",
     default=None,
-    help="Message text. If you would like a reply, ask the recipient to send a message back.",
+    help="Message text. Addressed agent turns must reply through Send Message.",
 )
 @click.option("--body-file", default=None, help="Read message text from this file, or -.")
 @json_option
@@ -544,7 +544,7 @@ def send_message(
 ) -> None:
     """Send one message to one Panels conversation owner.
 
-    To request a reply, ask the recipient to send one with `panels send-message`.
+    An addressed agent turn must send one explicit reply before it completes.
     """
     targets = sum(
         1

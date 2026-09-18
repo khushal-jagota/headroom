@@ -320,6 +320,7 @@ async def _send_with_addressed_receipt(
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
     recipient: Principal | None,
+    reply_requested: bool,
 ) -> AddressedPromptDeliveryReceipt:
     """Use the internal freshness receipt only for an addressed employee send."""
     if sender is not None and recipient is not None:
@@ -334,6 +335,7 @@ async def _send_with_addressed_receipt(
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
         )
     fate = await system.send(
         conversation_id,
@@ -366,6 +368,7 @@ async def send_to_ticket_conversation(
     sent_at_unix_milliseconds: int | None = None,
     sender: Principal | None = None,
     recipient: Principal | None = None,
+    reply_requested: bool = True,
     worker_type_registry: WorkerTypeRegistry | None = None,
     now: int,
     required_sprint_item_id: str | None = None,
@@ -435,6 +438,7 @@ async def send_to_ticket_conversation(
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
             worker_type_registry=worker_type_registry,
             now=now,
         )
@@ -461,6 +465,7 @@ async def send_to_ticket_conversation(
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
+        reply_requested=reply_requested,
         now=now,
     )
 
@@ -479,6 +484,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
     recipient: Principal | None,
+    reply_requested: bool,
     now: int,
 ) -> DeliveredMessage:
     """Deliver into a conversation that is already there, carrying what it changes.
@@ -506,6 +512,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
+        reply_requested=reply_requested,
     )
     fate = receipt.fate
     carries_a_change = runs_under.model is not None or runs_under.reasoning_effort is not None
@@ -544,6 +551,7 @@ async def _make_a_conversation_and_send_into_it(
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
     recipient: Principal | None,
+    reply_requested: bool,
     worker_type_registry: WorkerTypeRegistry | None,
     now: int,
 ) -> DeliveredMessage:
@@ -591,6 +599,7 @@ async def _make_a_conversation_and_send_into_it(
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
             now=now,
         )
     # From here the conversation is this call's own: it was made here, on the values this
@@ -606,6 +615,7 @@ async def _make_a_conversation_and_send_into_it(
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
         )
         fate = receipt.fate
     except BaseException:
@@ -787,6 +797,7 @@ async def send_to_agent_conversation(
     sent_at_unix_milliseconds: int | None = None,
     sender: Principal | None = None,
     recipient: Principal | None = None,
+    reply_requested: bool = True,
     required_sprint_item_id: str | None = None,
 ) -> DeliveredMessage:
     """Send a message into this agent's conversation, making one if there is none yet.
@@ -831,6 +842,7 @@ async def send_to_agent_conversation(
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
+                    reply_requested=reply_requested,
                 )
                 fate = receipt.fate
             except BaseException:
@@ -872,6 +884,7 @@ async def send_to_agent_conversation(
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
+        reply_requested=reply_requested,
     )
     return DeliveredMessage(
         conversation_id=sending_into,

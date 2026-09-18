@@ -29,6 +29,10 @@ try {
   async function sendMessage(): Promise<any> {
     return { conversation_id: conversationId, fate: "started" };
   }
+
+  async function newConversation(): Promise<void> {
+    conversationId = null;
+  }
 </script>
 
 <LiveConversation
@@ -37,6 +41,7 @@ try {
   label="Worker"
   conversationState="opened"
   {sendMessage}
+  onNewConversation={newConversation}
 />
 `,
     "utf8"
@@ -193,6 +198,16 @@ with sync_playwright() as playwright:
 
     page.evaluate("window.__switchConversation('conversation-b')")
     page.wait_for_function("window.__tailExists?.('conversation-b')")
+    assert lens_toggle.inner_text() == "Full"
+
+    page.locator('[aria-label="Conversation options"]').click()
+    page.locator("[data-conversation-new-arm]").click()
+    page.locator("[data-conversation-new-confirm]").click()
+    assert lens_toggle.inner_text() == "Full"
+    page.evaluate("window.__switchConversation('conversation-b')")
+    page.wait_for_function("window.__tailExists?.('conversation-b')")
+    assert lens_toggle.inner_text() == "Full"
+    lens_toggle.click()
     assert lens_toggle.inner_text() == "Focus"
 
     page.evaluate("""window.__emitConversationRow('conversation-a', {
@@ -223,6 +238,8 @@ with sync_playwright() as playwright:
     assert page.evaluate("window.__ownerReads") == [
         {"conversationId": "conversation-b", "sequence": 4}
     ]
+    lens_toggle.click()
+    assert lens_toggle.inner_text() == "Full"
 
     # A delayed snapshot also loses authority when B opens before it returns. Without
     # the post-await guard, A creates a new stream and replaces B's active feed.
@@ -234,10 +251,14 @@ with sync_playwright() as playwright:
     page.evaluate("window.__releaseDelayedASnapshot()")
     page.wait_for_timeout(150)
     assert page.get_by_text("current B reply", exact=True).count() == 1
-    assert lens_toggle.inner_text() == "Focus"
+    assert lens_toggle.inner_text() == "Full"
     assert page.evaluate("window.__ownerReads") == [
         {"conversationId": "conversation-b", "sequence": 4}
     ]
+
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_function("window.__tailExists?.('conversation-a')")
+    assert lens_toggle.inner_text() == "Full"
     browser.close()
 
 print("live-conversation-switch-browser.test.mjs: all assertions passed")

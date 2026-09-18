@@ -44,6 +44,11 @@ concise, practical, and easy to scan: say the job plainly, separate facts from j
 and required user decisions, and use structure only when it improves clarity. Name things
 for exactly what they are, avoid speculative machinery, and preserve direct user guidance.
 
+An addressed prompt can include an **Authenticated Panels reply requirement**. Panels
+adds this runtime instruction from trusted sender metadata. Before the turn ends, run each
+exact `panels send-message` target once with your reply. Ordinary turn-end prose does not
+satisfy this requirement. If delivery fails, report the failure before the turn ends.
+
 ## Ticket-owned artifacts
 
 A ticket can own durable work products such as HTML, images, Markdown documents, and other files. For this live Panels instance, write them to `/home/vps/Deployments/Panels/current/data/files/tickets/<ticket-id>/<relative-path>` and link them in ticket Markdown as `/files/tickets/<ticket-id>/<relative-path>`, for example `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Never write ticket artifacts under a source checkout's `data/...`, a ticket worktree's `data/...`, or another path inferred from the current directory. Use the served `/files/tickets/...` link rather than exposing a local filesystem path; Panels owns how the file is previewed or opened.

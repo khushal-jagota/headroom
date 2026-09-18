@@ -746,11 +746,13 @@ def test_queued_holder_wake_does_not_block_durable_rejection(
         assert prompts[0].sender is None and prompts[0].recipient is None
         assert prompts[1].sender == holder
         assert prompts[1].recipient == Principal(PrincipalKind.ticket, target_id)
-        assert harness.backend("c-worker").written_texts() == (
+        written = harness.backend("c-worker").written_texts()
+        assert written[0] == (
             "Your proposal was rejected and returned for revision. "
-            "The decider's comment follows.",
-            "Add evidence.",
+            "The decider's comment follows."
         )
+        assert written[1].startswith("Add evidence.\n\n[Authenticated Panels reply requirement]")
+        assert f"panels send-message --ticket {holder_ticket.id}" in written[1]
         conn.close()
 
     _run(exercise)
@@ -931,11 +933,15 @@ def test_uncertain_rejection_fact_settles_and_later_rejections_continue(
             "The decider's comment follows."
         )
         assert uncertain[0].sender_label == "Panels"
-        assert harness.backend("c-worker").written_texts() == (
+        first_writes = harness.backend("c-worker").written_texts()
+        assert first_writes[0] == (
             "Your proposal was rejected and returned for revision. "
-            "The decider's comment follows.",
-            "First comment.",
+            "The decider's comment follows."
         )
+        assert first_writes[1].startswith(
+            "First comment.\n\n[Authenticated Panels reply requirement]"
+        )
+        assert "panels send-message --owner" in first_writes[1]
         assert wake_data.due_ticket_ids(conn, now=clock.now_unix()) == ()
 
         await harness.complete_turn("c-worker")
@@ -977,14 +983,18 @@ def test_uncertain_rejection_fact_settles_and_later_rejections_continue(
             (2, 1, "delivered"),
             (2, 2, "delivered"),
         ]
-        assert harness.backend("c-worker").written_texts() == (
+        final_writes = harness.backend("c-worker").written_texts()
+        assert final_writes[0] == (
             "Your proposal was rejected and returned for revision. "
-            "The decider's comment follows.",
-            "First comment.",
-            "Your proposal was rejected and returned for revision. "
-            "The decider's comment follows.",
-            "Second comment.",
+            "The decider's comment follows."
         )
+        assert final_writes[1].startswith("First comment.")
+        assert final_writes[2] == (
+            "Your proposal was rejected and returned for revision. "
+            "The decider's comment follows."
+        )
+        assert final_writes[3].startswith("Second comment.")
+        assert all("panels send-message --owner" in text for text in final_writes[1::2])
         assert wake_data.due_ticket_ids(conn, now=clock.now_unix()) == ()
         conn.close()
 
@@ -1125,6 +1135,102 @@ def test_backend_prose_is_runtime_only_and_silence_is_explicit(harness: _Harness
             if isinstance(payload, ExplicitReplyMissingEventPayload)
         ] == [OWNER_PRINCIPAL]
         assert isinstance(payloads[-1], TurnEndedEventPayload)
+
+    _run(exercise)
+
+
+def test_an_addressed_new_prompt_gets_a_runtime_only_reply_directive(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        recipient = Principal(PrincipalKind.ticket, "t_worker")
+        content = text_message_content("Please report back")
+
+        await harness.system.send(
+            "c",
+            content,
+            sender_label="owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=recipient,
+        )
+
+        write = harness.backend("c").writes[0]
+        assert "Please report back" in write.text
+        assert "Authenticated Panels reply requirement" in write.text
+        assert 'panels send-message --owner --message "<reply>"' in write.text
+        assert write.sender_content == content
+        prompt = next(
+            event.payload
+            for event in await harness.events("c")
+            if isinstance(event.payload, PromptEventPayload)
+        )
+        assert prompt.content == content
+        turn = await harness.system.active_turn_reference("c")
+        assert turn is not None
+        assert await harness.system.turn_expects_reply(turn, OWNER_PRINCIPAL) is True
+        await harness.system.record_explicit_reply(turn, OWNER_PRINCIPAL)
+        assert await harness.system.turn_expects_reply(turn, OWNER_PRINCIPAL) is False
+
+    _run(exercise)
+
+
+def test_an_explicit_reply_does_not_request_a_counter_reply(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        chief = Principal(PrincipalKind.chief, "chief")
+        ticket = Principal(PrincipalKind.ticket, "t_worker")
+
+        await harness.system.send(
+            "c",
+            text_message_content("Reply delivered"),
+            sender_label="Worker",
+            sender=ticket,
+            recipient=chief,
+            reply_requested=False,
+        )
+
+        write = harness.backend("c").writes[0]
+        assert write.text == "Reply delivered"
+        assert "Authenticated Panels reply requirement" not in write.text
+        await harness.complete_turn("c")
+        assert not any(
+            isinstance(event.payload, ExplicitReplyMissingEventPayload)
+            for event in await harness.events("c")
+        )
+
+    _run(exercise)
+
+
+def test_an_accepted_addressed_steer_gets_the_reply_directive_only_on_the_wire(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="Panels")
+        recipient = Principal(PrincipalKind.ticket, "t_worker")
+        content = text_message_content("Please include this")
+
+        fate = await harness.system.send(
+            "c",
+            content,
+            sender_label="Chief",
+            mode=PromptDeliveryMode.steer,
+            sender=CHIEF_PRINCIPAL,
+            recipient=recipient,
+        )
+
+        assert fate == PromptDeliveryInjected()
+        steer_write = harness.backend("c").writes[-1]
+        assert steer_write.steered is True
+        assert "Please include this" in steer_write.text
+        assert 'panels send-message --chief --message "<reply>"' in steer_write.text
+        prompt = [
+            event.payload
+            for event in await harness.events("c")
+            if isinstance(event.payload, PromptEventPayload)
+        ][-1]
+        assert prompt.content == content
 
     _run(exercise)
 
@@ -1282,6 +1388,40 @@ def test_accepted_steer_adds_its_sender_to_the_active_turn(
             if isinstance(event.payload, ExplicitReplyMissingEventPayload)
         ]
         assert markers == [chief]
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("steer_outcome", [BackendSteerAccepted(), BackendSteerUncertain()])
+def test_a_steered_explicit_reply_does_not_request_or_mark_a_counter_reply(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    steer_outcome: BackendSteerOutcome,
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        chief = Principal(PrincipalKind.chief, "chief")
+        ticket = Principal(PrincipalKind.ticket, "t_worker")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="system")
+        harness.backend("c").steer_outcome = steer_outcome
+
+        await harness.system.send(
+            "c",
+            text_message_content("Reply delivered"),
+            sender_label="Worker",
+            mode=PromptDeliveryMode.steer,
+            sender=ticket,
+            recipient=chief,
+            reply_requested=False,
+        )
+
+        assert "Authenticated Panels reply requirement" not in harness.backend("c").writes[-1].text
+        await harness.complete_turn("c")
+        assert not any(
+            isinstance(event.payload, ExplicitReplyMissingEventPayload)
+            for event in await harness.events("c")
+        )
 
     _run(exercise)
 
@@ -2626,7 +2766,9 @@ def test_maintenance_releases_owner_and_worker_messages_in_order(
             await harness.confirm_compaction("c")
         await harness.complete_turn("c")
         released = harness.backend("c").written_texts()[-1]
-        assert released == "owner message\n\nTicket t_worker:\nworker opener"
+        assert released.startswith("owner message\n\nTicket t_worker:\nworker opener")
+        assert released.count("panels send-message --owner") == 1
+        assert released.count("panels send-message --ticket t_worker") == 1
         assert released.count("owner message") == 1
         assert released.count("worker opener") == 1
         await harness.complete_turn("c")
@@ -3601,6 +3743,7 @@ def test_promoted_send_now_keeps_the_held_owner_prompt_admission_position(
         assert await harness.system.promote_held_prompt(
             "c", selected.held_prompt_id, HeldPromptPromotionMode.send_now
         ) == PromptDeliveryStarted()
+        assert "Authenticated Panels reply requirement" in harness.backend("c").writes[-1].text
 
         record = await harness.store.read_conversation("c")
         assert record is not None
@@ -3818,6 +3961,7 @@ def test_a_promoted_steer_credits_its_sender_while_the_target_turn_remains_activ
             )
             == expected_fate
         )
+        assert "Authenticated Panels reply requirement" in harness.backend("c").writes[-1].text
         await harness.complete_turn("c")
 
         markers = [

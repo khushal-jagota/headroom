@@ -65,7 +65,7 @@
   // that paragraph is dropped from the thread until its fold is opened, and comes back in
   // the place it happened rather than gathered up at the end.
   let shown = $derived(
-    items.filter(
+    lens === "full" ? items : items.filter(
       (item) =>
         item.kind !== "row" ||
         item.behindTheFoldOf === null ||
@@ -115,14 +115,15 @@
         durationSeconds={item.durationSeconds}
         toolCallCount={item.toolCallCount}
         foldedMessageCount={item.foldedMessageCount}
-        expanded={expandedTurns[item.turnKey] === true}
+        expanded={lens === "full" || expandedTurns[item.turnKey] === true}
         {livenessPulse}
-        onToggle={() => toggleTurn(item.turnKey)}
+        onToggle={lens === "full" ? undefined : () => toggleTurn(item.turnKey)}
       />
     {:else if item.kind === "work_group"}
       <WorkGroup
         entries={item.entries}
-        hidden={item.settled && expandedTurns[item.turnKey] !== true}
+        hidden={lens !== "full" && item.settled && expandedTurns[item.turnKey] !== true}
+        showAll={lens === "full"}
         {conversationId}
       />
     {:else if item.row.kind === "prompt"}

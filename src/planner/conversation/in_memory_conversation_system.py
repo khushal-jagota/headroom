@@ -191,6 +191,7 @@ class _HeldPrompt:
     sent_at_unix_milliseconds: int | None = None
     sender: Principal | None = None
     recipient: Principal | None = None
+    reply_requested: bool = True
     snapshot_sent_at_unix_milliseconds: int = 0
     queue_reason: PromptQueueReason = PromptQueueReason.requested
 
@@ -244,6 +245,7 @@ class InMemoryConversationSystem:
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
+        reply_requested: bool = True,
     ) -> PromptDeliveryFate:
         receipt = await self.send_with_receipt(
             conversation_id,
@@ -256,6 +258,7 @@ class InMemoryConversationSystem:
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
         )
         return receipt.fate
 
@@ -272,6 +275,7 @@ class InMemoryConversationSystem:
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
+        reply_requested: bool = True,
     ) -> AddressedPromptDeliveryReceipt:
         require_message_content(content)
 
@@ -338,6 +342,7 @@ class InMemoryConversationSystem:
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
+                reply_requested=reply_requested,
             )
         elif mode is PromptDeliveryMode.queue:
             fate = self._hold_prompt(
@@ -351,6 +356,7 @@ class InMemoryConversationSystem:
                 PromptQueueReason.requested,
                 sender=sender,
                 recipient=recipient,
+                reply_requested=reply_requested,
             )
         elif mode is PromptDeliveryMode.steer:
             if any(not isinstance(piece, MessageText) for piece in content):
@@ -366,6 +372,7 @@ class InMemoryConversationSystem:
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
+                    reply_requested=reply_requested,
                 )
                 if isinstance(steer_fate, PromptDeliveryInjected):
                     fate = steer_fate
@@ -384,6 +391,7 @@ class InMemoryConversationSystem:
                     queue_reason,
                     sender=sender,
                     recipient=recipient,
+                    reply_requested=reply_requested,
                 )
         else:
             # send-now against a busy agent: the incumbent dies first, and this message runs
@@ -400,6 +408,7 @@ class InMemoryConversationSystem:
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
+                reply_requested=reply_requested,
             )
             if isinstance(fate, PromptDeliveryRefused):
                 # The incumbent is already dead and the agent is free, so the held prompts
@@ -423,6 +432,7 @@ class InMemoryConversationSystem:
         *,
         sender: Principal | None = None,
         recipient: Principal | None = None,
+        reply_requested: bool = True,
     ) -> PromptDeliveryQueued:
         state.held_prompts_created += 1
         state.held_prompts.append(
@@ -442,6 +452,7 @@ class InMemoryConversationSystem:
                 queue_reason=queue_reason,
                 sender=sender,
                 recipient=recipient,
+                reply_requested=reply_requested,
             )
         )
         return PromptDeliveryQueued(queue_position=len(state.held_prompts))
@@ -566,6 +577,18 @@ class InMemoryConversationSystem:
         if state is None or state.running_turn is None:
             return None
         return ConversationTurnReference(conversation_id, state.running_turn.turn_number)
+
+    async def turn_expects_reply(
+        self, turn: ConversationTurnReference, recipient: Principal
+    ) -> bool:
+        state = self._conversations.get(turn.conversation_id)
+        return bool(
+            state is not None
+            and state.running_turn is not None
+            and state.running_turn.turn_number == turn.turn_number
+            and recipient in state.running_turn.prompt_senders
+            and recipient not in state.running_turn.explicit_reply_recipients
+        )
 
     async def record_explicit_reply(
         self, turn: ConversationTurnReference, recipient: Principal
@@ -1033,6 +1056,7 @@ class InMemoryConversationSystem:
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
+        reply_requested: bool = True,
         recorded_messages: Sequence[_HeldPrompt] = (),
     ) -> PromptDeliveryStarted | PromptDeliveryRefused:
         written = self._write_to_backend(
@@ -1058,10 +1082,11 @@ class InMemoryConversationSystem:
                 sender_label=sender_label,
                 sender=sender,
                 recipient=recipient,
+                reply_requested=reply_requested,
             ),
         )
         for message in messages:
-            if message.sender is not None:
+            if message.reply_requested and message.sender is not None:
                 prompt_senders.setdefault(message.sender, None)
         state.running_turn = _RunningTurn(
             turn_number=state.next_turn_number,
@@ -1080,6 +1105,7 @@ class InMemoryConversationSystem:
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
+        reply_requested: bool = True,
     ) -> PromptDeliveryInjected | PromptDeliveryRefused:
         if not backend_supports_steer(state.resolved_start.backend_key):
             return PromptDeliveryRefused(
@@ -1101,7 +1127,7 @@ class InMemoryConversationSystem:
         )
         if isinstance(written, PromptDeliveryRefused):
             return written
-        if sender is not None and state.running_turn is not None:
+        if reply_requested and sender is not None and state.running_turn is not None:
             state.running_turn.prompt_senders.setdefault(sender, None)
         return PromptDeliveryInjected()
 

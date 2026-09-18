@@ -120,8 +120,9 @@ def test_all_role_texts_send_the_agent_to_the_panels_skill_first() -> None:
     assert WORKER_ROLE_TEXT.startswith("Start with the `panels` skill.")
     assert CHIEF_ROLE_TEXT.startswith("Start with the `panels` skill.")
     assert SPRINT_ITEM_SUPERVISOR_ROLE_TEXT.startswith("Start with the `panels` skill.")
-    assert WORKER_ROLE_TEXT.endswith("You are a ticket worker.")
-    assert CHIEF_ROLE_TEXT.endswith("You are a chief of staff.")
-    assert SPRINT_ITEM_SUPERVISOR_ROLE_TEXT.endswith(
-        "You are a Sprint Item supervisor."
-    )
+    assert "You are a ticket worker." in WORKER_ROLE_TEXT
+    assert "You are a chief of staff." in CHIEF_ROLE_TEXT
+    assert "You are a Sprint Item supervisor." in SPRINT_ITEM_SUPERVISOR_ROLE_TEXT
+    for role_text in (WORKER_ROLE_TEXT, CHIEF_ROLE_TEXT, SPRINT_ITEM_SUPERVISOR_ROLE_TEXT):
+        assert "Before turn completion" in role_text
+        assert "`panels send-message` target" in role_text

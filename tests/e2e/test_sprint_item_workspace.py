@@ -264,10 +264,10 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     page.get_by_text("Past supervisor marker", exact=True).wait_for(timeout=WAIT_MS)
     assert page.locator('[data-conversation-read-only-boundary="true"]').count() == 1
     history.select_option("__current__")
-    assert page.locator("[data-conversation-lens-toggle]").inner_text() == "Focus"
-    assert page.get_by_text("Current supervisor marker", exact=True).count() == 0
-    page.locator("[data-conversation-lens-toggle]").click()
+    assert page.locator("[data-conversation-lens-toggle]").inner_text() == "Full"
     page.get_by_text("Current supervisor marker", exact=True).wait_for(timeout=WAIT_MS)
+    page.locator("[data-conversation-lens-toggle]").click()
+    assert page.get_by_text("Current supervisor marker", exact=True).count() == 0
 
     api.direct_patch(
         server,

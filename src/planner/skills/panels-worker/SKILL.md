@@ -61,6 +61,11 @@ Everything runs through the `panels` command — `panels --help` for full usage.
   Your ordinary turn-end prose is runtime-only; use this command when another principal
   must receive a message.
 
+If a prompt contains an **Authenticated Panels reply requirement**, use every exact target
+in that requirement once before the turn ends. Reply even when the canonical Ticket action
+already communicates the result. A missing-reply marker remains the system fallback, not
+an acceptable substitute for the explicit send.
+
 All four write commands take their text on stdin only; there is no file-path option, since it once let two Workers sharing one `/tmp` overwrite each other's text before it reached the ticket. Pipe or redirect text in, for example `echo "…" | panels worker propose <id> --recap "…"` or a heredoc into stdin.
 - **`panels ticket create --worker-type <id> --title "…"`** — create a Ticket when the
   current approved step spins off a new one. Before creating it, load and follow

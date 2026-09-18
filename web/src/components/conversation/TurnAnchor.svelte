@@ -121,6 +121,7 @@
         class="c2-turn-fold"
         data-conversation-turn-fold
         aria-expanded={expanded}
+        disabled={!onToggle}
         onclick={() => onToggle?.()}
       >
         <span data-conversation-turn-label>{foldLabel}</span>

@@ -100,15 +100,15 @@ One screen per part of the system:
   The Chief of Staff row starts with its bundled portrait. The portrait is an agent
   identity on this row only; ticket rows and Worker types do not use it.
 
-  The Chief of Staff keeps its separate conversation mark. Every conversation opens in
-  Focus. Focus shows the owner's prompts, explicit messages to the owner, permission
-  requests, agent questions, and their settled answers. Failed turns, stopped turns,
+  The Chief of Staff keeps its separate conversation mark. A browser with no saved lens
+  choice opens in Focus. Focus shows the owner's prompts, explicit messages to the owner,
+  permission requests, agent questions, and their settled answers. Failed turns, stopped turns,
   missing explicit replies, and terminal proposal-alert delivery failures remain visible
-  as compact system rows. Full shows all runtime
-  rows. One header toggle switches the lens, and the unmodified `f` key does the same
-  when no editable control owns it. The choice belongs to the mounted conversation and
-  resets to Focus when its identity changes.
-  Notification links therefore open Focus through the ordinary conversation route.
+  as compact system rows. Full shows every notebook row, every held prompt, all live
+  agent text, and every tool call without a Focus fold. One header toggle switches the
+  lens, and the unmodified `f` key does the same when no editable control owns it. The
+  browser keeps that choice across conversation switches, new conversations, and later
+  visits. Notification links use the saved lens through the ordinary conversation route.
 
   Complete turn boundaries settle both the Focus transcript and its rest line. A turn
   with a hidden automatic prompt has no Focus turn head. Its visible owner result rows
