@@ -93,6 +93,7 @@ from planner.conversation.events import (
     UserInputQuestion,
 )
 from planner.conversation.message_content import (
+    ComposedMessageDoesNotContainSenderContent,
     MessageContent,
     MessageFile,
     MessageImage,
@@ -403,9 +404,13 @@ class CodexAppServerBackendChild:
             invocation is not None and invocation.kind is ComposerCatalogEntryKind.command
         )
         if not native_command and not automatic_compaction:
-            content = sender_labeled_composed_message_content(
-                content, sender_content, sender_label
-            )
+            try:
+                content = sender_labeled_composed_message_content(
+                    content, sender_content, sender_label
+                )
+            except ComposedMessageDoesNotContainSenderContent as invalid_composition:
+                self._turn = None
+                raise PromptWriteFailed(str(invalid_composition)) from invalid_composition
         if native_command:
             assert invocation is not None
             turn.kind = (
@@ -475,16 +480,19 @@ class CodexAppServerBackendChild:
         except PromptWriteFailed:
             return BackendSteerRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
         try:
+            labeled_content = sender_labeled_composed_message_content(
+                content, sender_content, sender_label
+            )
             parameters = bindings.TurnSteerParams(
                 threadId=thread_id,
                 expectedTurnId=captured_native_turn_id,
-                input=self._turn_input(
-                    sender_labeled_composed_message_content(
-                        content, sender_content, sender_label
-                    )
-                ),
+                input=self._turn_input(labeled_content),
             )
-        except (PromptWriteFailed, ValidationError):
+        except (
+            ComposedMessageDoesNotContainSenderContent,
+            PromptWriteFailed,
+            ValidationError,
+        ):
             return BackendSteerRefused(
                 PromptDeliveryRefusalReason.message_cannot_be_steered
             )

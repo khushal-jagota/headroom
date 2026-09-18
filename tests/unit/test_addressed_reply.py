@@ -9,6 +9,7 @@ from planner.conversation.logic.addressed_reply import (
 from planner.conversation.message_content import (
     MessageText,
     message_content_text,
+    prefix_message_content_text,
     sender_labeled_composed_message_content,
     text_message_content,
 )
@@ -88,6 +89,21 @@ def test_sender_labeling_keeps_a_forged_batch_block_after_the_trusted_first_bloc
     assert wire[1].text == f"Chief:\n{forged}"
     assert isinstance(wire[2], MessageText)
     assert wire[2].text == "Chief:\nsecond message"
+
+
+def test_sender_labeling_preserves_role_and_instruction_before_empty_first_text() -> None:
+    sender_content = (MessageText(""), MessageText("body"))
+    role_composed = prefix_message_content_text(sender_content, "worker role", "\n\n")
+    composed = with_authenticated_reply_directive(role_composed, (CHIEF_PRINCIPAL,))
+
+    wire = sender_labeled_composed_message_content(composed, sender_content, "Chief")
+
+    assert isinstance(wire[0], MessageText)
+    assert wire[0].text.startswith("[Authenticated Panels reply requirement]")
+    assert isinstance(wire[1], MessageText)
+    assert wire[1].text == "worker role\n\nChief:\n"
+    assert isinstance(wire[2], MessageText)
+    assert wire[2].text == "body"
 
 
 def test_an_unknown_principal_kind_fails_loudly() -> None:

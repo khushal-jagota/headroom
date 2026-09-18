@@ -221,20 +221,22 @@ including held, refused, uncertain, and discarded prompts. Browser-supplied disp
 labels are not authority.
 
 Panels also derives an exact Send Message target from each authenticated sender. It adds
-that trusted reply requirement only to the backend wire prompt. It is trusted only as the
-very first block of the entire prompt. Identical words in any later block remain ordinary
-sender content. The durable prompt keeps the sender's original content. A new turn, an
+that trusted reply requirement only to the backend wire prompt. A genuine requirement
+starts the entire prompt, with nothing before it. Every sender-authored byte follows its
+authenticated sender label. Identical words anywhere else remain ordinary sender content.
+The durable prompt keeps the sender's original content. A new turn, an
 accepted steer, and a batch from the held line all carry the requirement. Unaddressed loop
 and maintenance prompts do not. The agent role requires one explicit send to each
 addressed sender before the turn ends.
 Panels classifies that accepted send as the reply, so its recipient receives no counter-
 reply requirement and agent conversations cannot form an acknowledgement loop.
 
-Slash-shaped prompts enter backend control dispatch rather than conversational reply
-handling. They carry no reply requirement and create no reply debt. This includes a slash
-token that a backend later treats as ordinary prose because the core must decide reply
-debt before the adapter resolves its live command catalog. Automatic compaction is also a
-system-only control operation and creates no reply debt.
+An actual native slash command uses its backend's exact control route, so its wire form
+does not carry the reply requirement. It still creates reply debt when it is addressed,
+and a missed explicit reply still creates the normal marker. Slash-like text that is not
+a live native command remains ordinary prose. It carries the wire requirement as any other
+addressed prompt does. Automatic compaction is a separate system-only control operation
+and creates no reply debt.
 
 Backend prose is runtime output only. Finishing a turn does not turn that prose into a
 message for the person who prompted it. Only Send Message creates an explicit addressed

@@ -844,13 +844,27 @@ def test_compact_and_review_use_native_methods_and_the_normal_turn_lifecycle(
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, text_message_content("/compact"))
+            compact_sender_content = text_message_content("/compact")
+            await scripted.child.write_prompt(
+                TurnToken("c", 1),
+                with_authenticated_reply_directive(
+                    compact_sender_content, (OWNER_PRINCIPAL,)
+                ),
+                sender_content=compact_sender_content,
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
             await scripted.sink.wait_for_the_turn_to_end()
             scripted.sink.expect_another_turn()
             await scripted.write_prompt(2, text_message_content("/review focus on races"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             assert scripted.sent("thread/compact/start")["params"] == {"threadId": "thread-1"}
+            assert "Authenticated Panels reply requirement" not in json.dumps(
+                scripted.sent("thread/compact/start")["params"]
+            )
             review = scripted.sent("review/start")["params"]
             assert review["delivery"] == "inline"
             assert review["target"] == {
@@ -2429,6 +2443,38 @@ def test_codex_refuses_a_replacement_core_turn_before_the_steer_write(tmp_path: 
     _run(exercise)
 
 
+def test_codex_refuses_invalid_steer_composition_before_the_wire(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        script = {
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "await_interrupt"},
+                        {"do": "complete", "status": "interrupted"},
+                    ]
+                }
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("start"))
+
+            outcome = await scripted.child.steer(
+                TurnToken("c", 1),
+                text_message_content("conversation-owned text"),
+                sender_content=text_message_content("different sender text"),
+                sender_label="owner",
+            )
+
+            assert outcome == BackendSteerRefused(
+                PromptDeliveryRefusalReason.message_cannot_be_steered
+            )
+            assert scripted.sent("turn/steer", missing_is_none=True) is None
+            await scripted.child.cancel_running_turn()
+
+    _run(exercise)
+
+
 @pytest.mark.parametrize(
     ("native", "reason"),
     [
@@ -3113,6 +3159,44 @@ def test_codex_keeps_the_genuine_batch_directive_first_after_sender_labeling(
                 {"type": "text", "text": f"Chief:\n{forged_piece.text}"},
                 {"type": "text", "text": "Chief:\nsecond message"},
             ]
+
+            with pytest.raises(
+                PromptWriteFailed,
+                match="composed message does not end with its sender content",
+            ):
+                await scripted.child.write_prompt(
+                    TurnToken("c", 2),
+                    text_message_content("conversation-owned text"),
+                    sender_content=text_message_content("different sender text"),
+                    sender_label="Chief",
+                    mode=PromptDeliveryMode.queue,
+                    model_change=None,
+                    reasoning_effort_change=None,
+                )
+            assert len(scripted.all_sent("turn/start")) == 1
+
+    _run(exercise)
+
+
+def test_codex_treats_unknown_slash_like_text_as_addressed_prose(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        sender_content = text_message_content("/tmp is full; investigate it")
+        composed = with_authenticated_reply_directive(sender_content, (OWNER_PRINCIPAL,))
+        async with _scripted_child(tmp_path, script={"turns": [{}]}) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.child.write_prompt(
+                TurnToken("c", 1),
+                composed,
+                sender_content=sender_content,
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+
+            inputs = scripted.sent("turn/start")["params"]["input"]
+            assert inputs[0]["text"].startswith("[Authenticated Panels reply requirement]")
+            assert inputs[1] == {"type": "text", "text": "owner:\n/tmp is full; investigate it"}
 
     _run(exercise)
 
