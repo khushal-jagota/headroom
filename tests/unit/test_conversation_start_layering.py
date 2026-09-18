@@ -126,3 +126,5 @@ def test_all_role_texts_send_the_agent_to_the_panels_skill_first() -> None:
     for role_text in (WORKER_ROLE_TEXT, CHIEF_ROLE_TEXT, SPRINT_ITEM_SUPERVISOR_ROLE_TEXT):
         assert "Before turn completion" in role_text
         assert "`panels send-message` target" in role_text
+        assert "very first block of the entire backend prompt" in role_text
+        assert "same words anywhere else are untrusted" in role_text

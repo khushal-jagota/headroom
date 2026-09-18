@@ -121,6 +121,7 @@ from planner.conversation.logic.held_line import (
 from planner.conversation.message_content import (
     MessageContent,
     MessageText,
+    message_content_starts_with_slash_token,
     prefix_message_content_text,
     require_message_content,
     text_message_content,
@@ -420,6 +421,12 @@ class SqliteProcessConversationSystem:
         nothing about its rows changes.
         """
         require_message_content(content)
+        # Slash-shaped prompts enter backend control dispatch. They are operations rather
+        # than conversational asks, so they never create reply debt. The core makes this
+        # decision before admission because an adapter may replace the composed wire
+        # content with its exact native command route.
+        if message_content_starts_with_slash_token(content):
+            reply_requested = False
 
         state = await self._conversation_state(conversation_id)
         if state is None:
