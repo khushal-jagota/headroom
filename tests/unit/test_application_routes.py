@@ -16,10 +16,10 @@ def test_application_has_no_development_routes(
 ) -> None:
     app = create_app(cfg, fake_clock, lambda: tmp_db)
 
-    served_paths = {
-        route.path
-        for route in app.routes
-        if isinstance(getattr(route, "path", None), str)
-    }
+    served_paths: set[str] = set()
+    for route in app.routes:
+        path = getattr(route, "path", None)
+        if isinstance(path, str):
+            served_paths.add(path)
 
     assert not {path for path in served_paths if path.startswith("/dev/")}
