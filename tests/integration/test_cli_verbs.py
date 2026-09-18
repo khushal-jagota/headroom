@@ -89,8 +89,6 @@ def test_installed_panels_preserves_worker_identity_for_read_and_write(
             "panels",
             "worker",
             "propose",
-            "--recap",
-            "Installed CLI retained worker context.",
             "--json",
         ],
         input="Success through installed panels.",

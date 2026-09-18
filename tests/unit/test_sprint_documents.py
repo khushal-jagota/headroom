@@ -146,13 +146,10 @@ def test_sprint_migration_preserves_all_prose_and_references(tmp_path: Path) -> 
             "proposed_by": "human",
             "created_at": 56,
         }
-        assert ticket_after.pop("archived_field_content") == (
-            "## Unapproved proposal\n\n"
-            'Field: ` "success" `\n\n'
-            'Author: ` "agent" `\n\n'
-            "Created at: 78\n\n"
-            "Unapproved success"
-        )
+        # The unapproved draft this ladder once preserved does not reach head: a later
+        # revision drops the column, because a proposal is approved or rejected and
+        # neither leaves a withdrawn draft to keep.
+        assert "archived_field_content" not in ticket_after
         assert ticket_before.pop("fields") == json.dumps(old_fields)
         ticket_before.pop("stage_ownership_overrides")
         ticket_before.pop("default_stage_ownership_mode")

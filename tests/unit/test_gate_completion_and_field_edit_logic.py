@@ -1,4 +1,4 @@
-"""Pure rules for distinct pending-proposal and settled-value edits."""
+"""Pure rules for completing a user-owned gate and for editing a settled value."""
 
 from dataclasses import replace
 
@@ -43,54 +43,9 @@ def _ticket(*, stage: str = "needs_success") -> Ticket:
         conversation_id=None,
         field_values={},
         pending_proposal=None,
-        archived_field_content="",
         created_at=0,
         updated_at=0,
     )
-
-
-def test_edit_pending_proposal_changes_only_its_body() -> None:
-    proposal = PendingTicketProposal("success", "old", "worker", 7)
-    ticket = replace(_ticket(), pending_proposal=proposal, field_values={"kickoff": "request"})
-    decision = resolution.decide_edit_pending_proposal(
-        ticket,
-        "success",
-        "new",
-        OWNER_PRINCIPAL,
-        worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
-    )
-    assert decision.pending_proposal == replace(proposal, body="new")
-    assert decision.field_values == {"kickoff": "request"}
-    assert (decision.stage, decision.ceiling) == (ticket.stage, ticket.ceiling)
-    assert decision.archived_field_content == ""
-
-
-@pytest.mark.parametrize("field", ["approach", "bogus"])
-def test_edit_pending_proposal_rejects_any_field_other_than_current_gate(field: str) -> None:
-    ticket = replace(
-        _ticket(), pending_proposal=PendingTicketProposal("success", "old", "worker", 7)
-    )
-    with pytest.raises(PlannerError) as exc:
-        resolution.decide_edit_pending_proposal(
-            ticket,
-            field,
-            "new",
-            OWNER_PRINCIPAL,
-            worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
-        )
-    assert exc.value.code == ErrorCode.validation
-
-
-def test_edit_pending_proposal_requires_a_pending_proposal() -> None:
-    with pytest.raises(PlannerError) as exc:
-        resolution.decide_edit_pending_proposal(
-            _ticket(),
-            "success",
-            "new",
-            OWNER_PRINCIPAL,
-            worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
-        )
-    assert exc.value.code == ErrorCode.not_found
 
 
 def test_edit_passed_value_changes_only_saved_values() -> None:
@@ -99,7 +54,7 @@ def test_edit_passed_value_changes_only_saved_values() -> None:
         field_values={"kickoff": "request", "success": "old"},
         pending_proposal=PendingTicketProposal("plan", "draft", "worker", 9),
     )
-    decision = resolution.decide_edit_value(
+    decision = resolution.decide_edit_settled_field(
         ticket,
         "success",
         "new",
@@ -112,24 +67,24 @@ def test_edit_passed_value_changes_only_saved_values() -> None:
 
 
 @pytest.mark.parametrize("field", ["approach", "plan", "bogus"])
-def test_edit_value_rejects_unsettled_or_unpassed_field(field: str) -> None:
+def test_edit_settled_field_rejects_an_unsettled_or_unpassed_field(field: str) -> None:
+    """Editing a value is only ever a correction. It never fills a blank."""
     ticket = replace(_ticket(stage="needs_plan"), field_values={"success": "settled"})
     with pytest.raises(PlannerError) as exc:
-        resolution.decide_edit_value(
+        resolution.decide_edit_settled_field(
             ticket,
             field,
             "new",
             OWNER_PRINCIPAL,
             worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
         )
-    expected = ErrorCode.agent_forbidden if field == "plan" else ErrorCode.validation
-    assert exc.value.code == expected
+    assert exc.value.code == ErrorCode.validation
 
 
 def test_worker_cannot_edit_settled_value() -> None:
     ticket = replace(_ticket(stage="needs_plan"), field_values={"success": "settled"})
     with pytest.raises(PlannerError) as exc:
-        resolution.decide_edit_value(
+        resolution.decide_edit_settled_field(
             ticket,
             "success",
             "new",
@@ -148,7 +103,7 @@ def test_direct_user_completes_unset_current_user_owned_gate() -> None:
         ticket_status=TicketStatus.empty,
     )
 
-    decision = resolution.decide_edit_value(
+    decision = resolution.decide_complete_user_owned_gate(
         ticket,
         "outcome",
         "The result",
@@ -171,7 +126,7 @@ def test_direct_user_cannot_complete_any_field_except_the_current_gate(field: st
         ticket_status=TicketStatus.empty,
     )
     with pytest.raises(PlannerError) as exc:
-        resolution.decide_edit_value(
+        resolution.decide_complete_user_owned_gate(
             ticket,
             field,
             "value",
@@ -190,7 +145,7 @@ def test_direct_user_cannot_complete_a_gate_with_a_pending_proposal() -> None:
         ticket_status=TicketStatus.empty,
     )
     with pytest.raises(PlannerError) as exc:
-        resolution.decide_edit_value(
+        resolution.decide_complete_user_owned_gate(
             ticket,
             "outcome",
             "value",
@@ -211,7 +166,7 @@ def test_direct_user_cannot_complete_a_gate_while_control_is_active(
         ticket_status=status,
     )
     with pytest.raises(PlannerError) as exc:
-        resolution.decide_edit_value(
+        resolution.decide_complete_user_owned_gate(
             ticket,
             "outcome",
             "value",

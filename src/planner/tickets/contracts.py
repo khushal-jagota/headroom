@@ -159,17 +159,28 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
 
 
 class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
+    """Every field on a Ticket that can be changed, and the only way to change one.
+
+    An operation with a consequence of its own — propose, approve, reject, complete a
+    user-owned gate, drop, delete, ask for help, choose what the Ticket launches on — is
+    not here, and keeps its own route.
+    """
+
     title: str
     priority: Priority
     deadline: str | None
     project_id: str | None
     sprint_id: str | None
     sprint_item_id: str | None
+    recap: str
+    guidance: str  # replaces the document
+    guidance_append: str  # adds to it; naming both in one call is refused
+    field_values: Mapping[str, str]  # settled values only, by field id
+    ceiling: str
 
 
-class ProposeWithRecapBody(TypedDict, total=False):  # POST /tickets/{id}/propose
+class ProposalBody(TypedDict, total=False):  # POST /tickets/{id}/propose
     body: str  # default ""
-    recap: str  # required non-empty by the writer
 
 
 class AcceptBody(TypedDict, total=False):  # POST /tickets/{id}/accept/{field}
@@ -178,29 +189,12 @@ class AcceptBody(TypedDict, total=False):  # POST /tickets/{id}/accept/{field}
     next_holder: object  # required full Principal for the next ceiling
 
 
-class GuidanceBody(TypedDict):  # PUT /tickets/{id}/guidance; POST .../guidance/append
-    body: str  # required; empty replaces with an empty document or appends nothing
-
-
-class RecapBody(TypedDict, total=False):  # PUT /tickets/{id}/recap
+class GateCompletionBody(TypedDict, total=False):  # POST /tickets/{id}/complete/{field}
     body: str  # default ""
 
 
-class ValueEditBody(TypedDict, total=False):  # PUT /tickets/{id}/value/{field}
-    body: str  # default ""
-
-
-class PendingProposalEditBody(TypedDict):  # PUT /tickets/{id}/proposal
-    field: str  # Expected current field; rejects stale edits.
-    body: str
-
-
-class RevisionMessageBody(TypedDict, total=False):  # POST /tickets/{id}/return-for-revision
-    message: str  # required non-empty by the writer
-
-
-class ScopeBody(TypedDict, total=False):  # POST /tickets/{id}/scope
-    ceiling: str | None  # Stage id; route requires it (scope_missing)
+class RejectionBody(TypedDict, total=False):  # POST /tickets/{id}/reject
+    message: str | None  # optional guidance for the executing agent
 
 
 class EmployeeConfigurationBody(TypedDict):
@@ -253,7 +247,6 @@ class Ticket:  # §3.3 — column names match exactly
     conversation_id: str | None  # the Ticket's conversation link (column name is frozen)
     field_values: TicketFieldValues
     pending_proposal: PendingTicketProposal | None
-    archived_field_content: str
     created_at: int
     updated_at: int
 

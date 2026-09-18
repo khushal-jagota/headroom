@@ -139,7 +139,6 @@ _DETAIL_BODY: dict[str, Any] = {
     "worker": "panels-worker-coding",
     "field_values": {},
     "pending_proposal": None,
-    "archived_field_content": "",
 }
 
 

@@ -8,8 +8,7 @@ state header plus a manifest. The manifest lists every authored part in stable o
 including empty parts. It reports the Unicode character count for
 each part. Pass one optional comma-separated positional list to expand only those parts.
 Each expanded part contains `value` and `proposal`. Ticket field parts contain saved
-values; the separate `proposal` part contains the one current draft and `archive` contains
-the Historical record:
+values, and the separate `proposal` part contains the one current draft:
 
 ```sh
 panels ticket show t_example
@@ -137,7 +136,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   filter types use AND, and exclusions apply last. A terminal `--stage` also requires
   `--include-terminal`. An unknown Stage produces no matches.
   `--search` performs a case-insensitive substring match across the title, recap, field
-  values, the pending proposal, Ticket guidance, and the Historical record. Search keeps stable Ticket order and combines
+  values, the pending proposal, and Ticket guidance. Search keeps stable Ticket order and combines
   with placement filters and page controls. Results include Ticket state, placement, and
   a short recap preview. Search does not rank matches or return snippets.
   `ticket create` uses Today and the current Sprint when placement is omitted.
@@ -146,9 +145,10 @@ record shapes. Direct `show` commands also keep their full record shapes.
   The creating principal becomes the ceiling holder. A proposal that parks at that
   ceiling is addressed to that exact principal.
   `ticket set` names one field (`title`, `kickoff-note`, `priority`, or `deadline`).
-  `ticket set-value <ticket-id> <field>` writes any field declared by the Ticket's Worker
-  type. It edits settled earlier values. For an unset current user-owned gate, it stores
-  the value and advances exactly one Stage through the canonical transition.
+  Every one of those goes through `PATCH /api/tickets/{id}`, which is the only way to
+  change a field on a Ticket.
+  `ticket complete <ticket-id> <field>` is not a field edit: the user does a user-owned
+  Stage's work themselves, and the Ticket advances exactly one Stage.
   `ticket place <ticket-id>` updates Project, Sprint, and optional Sprint Item as one
   coherent change. Select a Project with `--project` or `--project-id`. Select a Sprint
   with `--sprint <id|current>` or `--backlog`. Select classification with
@@ -235,8 +235,10 @@ record shapes. Direct `show` commands also keep their full record shapes.
 - **`worker propose / recap / note / trouble / request-help / my-ticket`** — worker actions.
   `propose`, `recap`, `note`, and `trouble` take their text on stdin only; there is no
   file-path option, so no shared `/tmp` file can carry one Ticket's text onto another.
-  `worker propose` infers the current gating field from the Ticket Stage and requires a
-  short recap on `--recap TEXT` in the same request. `worker note <id>` replaces the
+  `worker propose` infers the current gating field from the Ticket Stage and carries only
+  what is being proposed. Below the ceiling it settles that field and the Ticket advances;
+  at the ceiling it parks for approval. The recap is separate: a Worker keeps it current
+  with `worker recap <id>` as it works. `worker note <id>` replaces the
   Ticket guidance document and accepts `--append` to add text with one blank line.
   Empty replacement clears guidance; empty append does nothing. No field argument
   or type lookup is needed. Ticket reads offer `recap` and `guidance` parts. `worker my-ticket`

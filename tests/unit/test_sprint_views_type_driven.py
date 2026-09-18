@@ -25,7 +25,7 @@ from planner.core.clock import TestClock
 from planner.core.contracts import LinkKind
 from planner.sprints.data import create_item
 from planner.sprints.views import item_tickets
-from planner.tickets.data import accept_proposal, create_ticket, file_current_proposal_with_recap
+from planner.tickets.data import accept_proposal, create_ticket, file_current_proposal
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 
@@ -64,13 +64,12 @@ def test_item_tickets_probe_child_decodes(
         next_ceiling=NEEDS_ALPHA,
         next_holder=OWNER_PRINCIPAL,
     )
-    file_current_proposal_with_recap(
+    file_current_proposal(
         tmp_db,
         probe.id,
         body="alpha body",
         principal=ticket_principal(probe.id),
         now=3,
-        recap="Current work",
     )
 
     rows = item_tickets(tmp_db, item.id)
@@ -100,13 +99,12 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
     )
     # Accept kickoff (default ceiling is now needs_kickoff, so kickoff parks until
     # accepted), expanding the ceiling to needs_success; a success proposal then parks.
-    file_current_proposal_with_recap(
+    file_current_proposal(
         tmp_db,
         child.id,
         body="k",
         principal=ticket_principal(child.id),
         now=2,
-        recap="Current work",
     )
     accept_proposal(
         tmp_db,
@@ -117,13 +115,12 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
         next_ceiling="needs_success",
         next_holder=OWNER_PRINCIPAL,
     )
-    file_current_proposal_with_recap(
+    file_current_proposal(
         tmp_db,
         child.id,
         body="s",
         principal=ticket_principal(child.id),
         now=3,
-        recap="Current work",
     )
 
     rows = item_tickets(tmp_db, item.id)

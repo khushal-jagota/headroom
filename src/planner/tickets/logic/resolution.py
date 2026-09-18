@@ -19,7 +19,7 @@ from planner.tickets.contracts import (
     Ticket,
     TicketStatus,
 )
-from planner.tickets.logic import admission, archive, fields_codec, machine
+from planner.tickets.logic import admission, fields_codec, machine
 from planner.tickets.logic.decisions import Decision
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -151,7 +151,7 @@ def decide_accept(
     )
 
 
-def decide_edit_pending_proposal(
+def decide_complete_user_owned_gate(
     ticket: Ticket,
     field: str,
     new_body: str,
@@ -159,74 +159,91 @@ def decide_edit_pending_proposal(
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
-    admission.validate_body(new_body, "proposal body")
-    proposal = _pending(ticket, field, worker_type_definition)
-    return replace(
-        Decision.from_ticket(ticket), pending_proposal=replace(proposal, body=new_body)
-    )
+    """The user does a user-owned Stage's work themselves, and the Stage advances.
 
-
-def decide_edit_value(
-    ticket: Ticket,
-    field: str,
-    new_body: str,
-    principal: Principal,
-    *,
-    worker_type_definition: WorkerTypeDefinition,
-) -> Decision:
+    This is not a field edit, which is why it is not one. It settles a blank the Ticket
+    is currently gated on and moves the Ticket forward, so it is an operation with the
+    same consequence an approval has, reached the only other way a Stage can be filled.
+    Correcting an already-settled value is the ordinary edit, on the ordinary path.
+    """
     admission.validate_body(new_body, "field value")
-    admission.require_direct_principal(principal, "edit_field_value")
+    admission.require_direct_principal(principal, "complete_user_owned_gate")
     if ticket.stage == "dropped":
         raise PlannerError(ErrorCode.validation, "dropped tickets cannot be edited")
+    if worker_type_definition.is_terminal(ticket.stage):
+        raise PlannerError(
+            ErrorCode.validation, "terminal tickets have no gate to complete", {"field": field}
+        )
     settled_value = fields_codec.field_value(
         ticket.field_values, field, worker_type_definition=worker_type_definition
     )
-    if settled_value is None:
-        if worker_type_definition.is_terminal(ticket.stage):
-            raise PlannerError(
-                ErrorCode.validation,
-                "field has no settled value to edit",
-                {"field": field},
-            )
-        gating_field = worker_type_definition.gating_field(ticket.stage)
-        if field != gating_field:
-            raise PlannerError(
-                ErrorCode.validation,
-                "only the current user-owned gate can be completed",
-                {"field": field, "gating_field": gating_field, "stage": ticket.stage},
-            )
-        ownership = machine.stage_ownership_mode(
-            ticket.stage,
-            worker_type_definition=worker_type_definition,
+    if settled_value is not None:
+        raise PlannerError(
+            ErrorCode.validation, "field is already settled", {"field": field}
         )
-        if ownership is not StageOwnershipMode.user:
-            raise PlannerError(
-                ErrorCode.agent_forbidden,
-                "only a user-owned stage can be completed with a direct value",
-                {"field": field, "stage": ticket.stage},
-            )
-        if ticket.pending_proposal is not None:
-            raise PlannerError(
-                ErrorCode.validation,
-                "a pending proposal must be resolved before direct completion",
-                {"field": field},
-            )
-        if ticket.ticket_status in (TicketStatus.agent, TicketStatus.awaiting_approval):
-            raise PlannerError(
-                ErrorCode.already_running,
-                "ticket control is active",
-                {"ticket_id": ticket.id, "ticket_status": ticket.ticket_status.value},
-            )
-        target = worker_type_definition.advance_target(ticket.stage)
-        if target is None:
-            raise PlannerError(ErrorCode.validation, "stage has no advance target")
-        return _accept_gating_proposal(
-            ticket,
-            field,
-            new_body,
-            target,
-            principal,
-            worker_type_definition=worker_type_definition,
+    gating_field = worker_type_definition.gating_field(ticket.stage)
+    if field != gating_field:
+        raise PlannerError(
+            ErrorCode.validation,
+            "only the current user-owned gate can be completed",
+            {"field": field, "gating_field": gating_field, "stage": ticket.stage},
+        )
+    ownership = machine.stage_ownership_mode(
+        ticket.stage,
+        worker_type_definition=worker_type_definition,
+    )
+    if ownership is not StageOwnershipMode.user:
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            "only a user-owned stage can be completed with a direct value",
+            {"field": field, "stage": ticket.stage},
+        )
+    if ticket.pending_proposal is not None:
+        raise PlannerError(
+            ErrorCode.validation,
+            "a pending proposal must be resolved before direct completion",
+            {"field": field},
+        )
+    if ticket.ticket_status in (TicketStatus.agent, TicketStatus.awaiting_approval):
+        raise PlannerError(
+            ErrorCode.already_running,
+            "ticket control is active",
+            {"ticket_id": ticket.id, "ticket_status": ticket.ticket_status.value},
+        )
+    target = worker_type_definition.advance_target(ticket.stage)
+    if target is None:
+        raise PlannerError(ErrorCode.validation, "stage has no advance target")
+    return _accept_gating_proposal(
+        ticket,
+        field,
+        new_body,
+        target,
+        principal,
+        worker_type_definition=worker_type_definition,
+    )
+
+
+def decide_edit_settled_field(
+    ticket: Ticket,
+    field: str,
+    new_body: str,
+    principal: Principal,
+    *,
+    worker_type_definition: WorkerTypeDefinition,
+) -> Decision:
+    """Correct a value the Ticket has already passed. It changes nothing else."""
+    admission.validate_body(new_body, "field value")
+    admission.require_direct_principal(principal, "edit_settled_field")
+    if ticket.stage == "dropped":
+        raise PlannerError(ErrorCode.validation, "dropped tickets cannot be edited")
+    if (
+        fields_codec.field_value(
+            ticket.field_values, field, worker_type_definition=worker_type_definition
+        )
+        is None
+    ):
+        raise PlannerError(
+            ErrorCode.validation, "field has no settled value to edit", {"field": field}
         )
     if not machine.field_is_passed(
         field, ticket.stage, worker_type_definition=worker_type_definition
@@ -240,30 +257,34 @@ def decide_edit_value(
     )
 
 
-def decide_return_for_revision(
+def decide_reject(
     ticket: Ticket,
     principal: Principal,
     *,
+    has_guidance: bool,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
-    _require_proposal_decider(ticket, principal, "return_for_revision")
+    """Send a parked proposal back. The proposal goes; the Stage does not move.
+
+    Guidance is optional, so the refusal for a Ticket with no worker conversation only
+    applies when there is guidance to deliver into one.
+    """
+    _require_proposal_decider(ticket, principal, "reject")
     if ticket.ticket_status is TicketStatus.agent:
         raise PlannerError(
             ErrorCode.already_running,
             "the ticket worker is already revising this proposal",
         )
     if worker_type_definition.is_terminal(ticket.stage):
-        raise PlannerError(
-            ErrorCode.validation, "terminal tickets cannot be returned for revision"
-        )
-    if ticket.conversation_id is None:
+        raise PlannerError(ErrorCode.validation, "terminal tickets cannot be rejected")
+    if has_guidance and ticket.conversation_id is None:
         raise PlannerError(
             ErrorCode.validation, "ticket has no existing worker session"
         )
     field = worker_type_definition.gating_field(ticket.stage)
     if field is None:
         raise PlannerError(
-            ErrorCode.validation, "ticket has no approval item to return"
+            ErrorCode.validation, "ticket has no approval item to reject"
         )
     _pending(ticket, field, worker_type_definition)
     return replace(
@@ -283,19 +304,7 @@ def decide_drop(ticket: Ticket, principal: Principal) -> Decision:
             "terminal tickets cannot be dropped",
             {"stage": ticket.stage},
         )
-    record = ticket.archived_field_content
-    if ticket.pending_proposal is not None:
-        record = "\n\n".join(
-            part
-            for part in (record, archive.archived_proposal(ticket.pending_proposal))
-            if part
-        )
-    return replace(
-        Decision.from_ticket(ticket),
-        stage="dropped",
-        pending_proposal=None,
-        archived_field_content=record,
-    )
+    return replace(Decision.from_ticket(ticket), stage="dropped", pending_proposal=None)
 
 
 def decide_set_ceiling(

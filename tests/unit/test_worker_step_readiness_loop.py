@@ -38,7 +38,7 @@ from planner.runtime.worker_step_readiness_loop import (
     start_ready_worker_step,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import Ticket, TicketStatus
+from planner.tickets.contracts import Ticket, TicketEdit, TicketStatus
 from planner.worker_context import data as worker_context_data
 from planner.worker_context import revision_feedback
 from planner.worker_context.contracts import (
@@ -317,10 +317,11 @@ def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _
     world.start_conversation("conv-revision-feedback")
     world.add_revision_feedback(ticket_id, "  Preserve this exact feedback.  ")
     with world.connect() as conn:
-        tickets_data.replace_guidance(
+        tickets_data.edit_ticket(
             conn,
             ticket_id,
-            body="Mutable guidance changed independently.",
+            edit=TicketEdit(guidance="Mutable guidance changed independently."),
+            title_max_chars=200,
             principal=OWNER_PRINCIPAL,
             now=2,
         )
@@ -554,8 +555,13 @@ def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _Worl
     world.start_conversation("conv-opener")
     guidance = "Keep the owner’s boundary.\n\n  Exact whitespace stays.  "
     with world.connect() as conn:
-        tickets_data.replace_guidance(
-            conn, ticket_id, body=guidance, principal=OWNER_PRINCIPAL, now=0
+        tickets_data.edit_ticket(
+            conn,
+            ticket_id,
+            edit=TicketEdit(guidance=guidance),
+            title_max_chars=200,
+            principal=OWNER_PRINCIPAL,
+            now=0,
         )
     world.add_pending_context(ticket_id, "ticket_changed", "The user renamed the ticket.")
 

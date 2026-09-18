@@ -169,45 +169,50 @@ def file_current_proposal(
     ticket_id: str,
     *,
     body: str,
-    recap: str,
     ctx: RequestContext,
     clock: Clock,
 ) -> Ticket:
-    """Park a proposal for its ceiling holder to review."""
-    return tickets_data.file_current_proposal_with_recap(
+    """A Worker's answer to the current Stage: settled below the ceiling, parked at it.
+
+    The recap does not come with it. The recap is the Ticket's running orientation and a
+    Worker keeps it current as it works, which is a different thing from what the Worker
+    is asking to have approved.
+    """
+    return tickets_data.file_current_proposal(
         conn,
         ticket_id,
         body=body,
-        recap=recap,
         principal=ctx.principal,
         now=clock.now_unix(),
     )
 
 
-async def return_ticket_for_revision(
+async def reject_ticket_proposal(
     conversation_system: ConversationSystem,
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    message: str,
+    message: str | None,
     ctx: RequestContext,
     clock: Clock,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
-    """Commit the rejection guidance, then return without backend I/O."""
-    admission.validate_revision_guidance(message)
+    """Send the proposal back, with guidance for the executing agent or without."""
+    if message is not None:
+        admission.validate_revision_guidance(message)
     principal = ctx.principal
     now = clock.now_unix()
     source_turn = await message_delivery_service.revision_source_turn(
         conversation_system, conn, ctx=ctx
     )
-    ticket = tickets_data.require_return_for_revision(
+    ticket = tickets_data.require_reject(
         conn,
         ticket_id,
         principal=principal,
+        has_guidance=message is not None,
         supervisor_sprint_item_id=supervisor_sprint_item_id,
     )
-    revised = tickets_data.return_for_revision(
+    revised = tickets_data.reject_proposal(
         conn,
         ticket_id,
         message=message,

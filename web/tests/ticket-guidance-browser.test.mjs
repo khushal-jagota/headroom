@@ -47,36 +47,22 @@ writes=[]
 placement_writes=[]
 def respond(route):
     path=route.request.url.split('/api/',1)[1]
-    if path == 'tickets/t_guidance/guidance':
-        assert route.request.method == 'PUT'
-        body=route.request.post_data_json
-        assert set(body) == {'body'}
-        writes.append(body)
-        ticket['guidance']=body['body']
-        result=ticket
-    elif path == 'tickets/t_guidance/proposal':
-        assert route.request.method == 'PUT'
-        body=route.request.post_data_json
-        assert set(body) == {'field', 'body'}
-        writes.append({'proposal': body})
-        ticket['pending_proposal']['body']=body['body']
-        result=ticket
-    elif path == 'tickets/t_guidance/value/kickoff':
-        assert route.request.method == 'PUT'
-        body=route.request.post_data_json
-        assert set(body) == {'body'}
-        writes.append({'value': body})
-        ticket['field_values']['kickoff']=body['body']
-        result=ticket
-    elif path == 'tickets/t_guidance':
+    if path == 'tickets/t_guidance':
         if route.request.method == 'PATCH':
             body=route.request.post_data_json
-            placement_writes.append(body)
             assert not ({'project_id', 'sprint_id', 'sprint_item_id'} & set(body))
-            ticket.update(body)
+            if 'guidance' in body:
+                writes.append({'guidance': body['guidance']})
+                ticket['guidance']=body['guidance']
+            elif 'field_values' in body:
+                writes.append({'value': body['field_values']})
+                ticket['field_values'].update(body['field_values'])
+            else:
+                placement_writes.append(body)
+                ticket.update(body)
         result=ticket
-    elif path == 'tickets/t_personal/value/outcome':
-        assert route.request.method == 'PUT'
+    elif path == 'tickets/t_personal/complete/outcome':
+        assert route.request.method == 'POST'
         body=route.request.post_data_json
         writes.append({'personal_outcome': body})
         result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_closeout', 'ceiling':'needs_closeout', 'field_values':{'kickoff':'Context','outcome':body['body']}, 'pending_proposal':None, 'ticket_status':'empty'}
@@ -147,10 +133,9 @@ with sync_playwright() as p:
     saved.press('Tab')
     page.wait_for_function("document.body.textContent.includes('kickoff')")
     assert page.locator('summary').filter(has_text='Notes').count() == 0
-    assert writes == [
-        {'proposal': {'field': 'success', 'body': 'Edited pending result'}},
-        {'value': {'body': 'Edited saved kickoff'}},
-    ]
+    # The proposal edit stays in the browser until it is approved: a proposal has two
+    # outcomes and no third door, so nothing is written back over the author's text.
+    assert writes == [{'value': {'kickoff': 'Edited saved kickoff'}}]
     page.evaluate("window.__showTicket('t_personal')")
     page.locator('[data-ticket-id="t_personal"]').wait_for()
     personal_outcome=page.locator('[data-field="outcome"] [contenteditable]')
@@ -176,7 +161,9 @@ with sync_playwright() as p:
     guidance.locator('summary').click()
     expect(guidance).to_contain_text('Original constraint')
     assert guidance.locator('[contenteditable]').count() == 0
-    expect(page.locator('[data-approval-block][data-field="success"]')).to_contain_text('Edited pending result')
+    # Review shows what the author wrote. The edit on the Ticket page was never saved
+    # over it, because an edited proposal is approved as the edit or it is nothing.
+    expect(page.locator('[data-approval-block][data-field="success"]')).to_contain_text('A result')
     assert page.locator('[data-accept]').count() == 1
     browser.close()
 `;

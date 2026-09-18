@@ -664,11 +664,12 @@ def test_ticket_approval_copy_and_worker_note_shape(
         server,
         "worker",
         "propose",
-        "--recap",
-        "Ready to approve.",
         ticket_id=tid,
         stdin="success body",
     )
+    # The recap is a separate write, so a Worker keeps it current on its own.
+    cli(server, "worker", "recap", tid, ticket_id=tid, stdin="Ready to approve.")
+    assert api.get(server, f"/api/tickets/{tid}")["recap"] == "Ready to approve."
     approved = cli(server, "ticket", "approve", tid, "--ceiling", "none")
     assert approved["stage"] == "needs_approach"
     assert approved["field_values"].get("success") == "success body"

@@ -1,17 +1,16 @@
-"""Drop the second half of a Ticket's scope.
+"""Drop the record of unapproved Ticket drafts.
 
-A ceiling names the last thing a worker is allowed to do. The worker does that thing,
-proposes it, and waits to be approved. There is no second setting deciding whether it
-may propose at all, so the column has no reader left.
+A proposal has two outcomes: it is approved, or it is sent back with guidance for the
+agent that wrote it. Neither leaves a withdrawn draft to keep, and there is no longer an
+editor that produced one, so the column has no writer and no reader left.
 
-Every Ticket that carried ``stop`` now behaves the way ``propose`` did: on reaching its
-ceiling it takes one more step, files a proposal, and parks for the user.
+Dropping a Ticket no longer keeps a copy of whatever proposal was still parked on it.
 
-The column carries a table CHECK, so SQLite refuses a plain DROP COLUMN and the table is
-rebuilt instead, exactly as the two revisions before this one rebuilt it.
+The rebuild is the same one the revision before this used, and for the same reason: the
+table declares CHECK constraints, so it is recreated rather than altered in place.
 
-Revision ID: drop_ticket_at_cap
-Revises: two_ownership_modes
+Revision ID: drop_ticket_archived_field_content
+Revises: drop_ticket_at_cap
 """
 
 from __future__ import annotations
@@ -29,8 +28,8 @@ from sqlalchemy import (
     text,
 )
 
-revision = "drop_ticket_at_cap"
-down_revision = "two_ownership_modes"
+revision = "drop_ticket_archived_field_content"
+down_revision = "drop_ticket_at_cap"
 branch_labels = None
 depends_on = None
 
@@ -39,7 +38,7 @@ _RETAINED_COLUMNS = (
     "employee_launch_reasoning_effort,stage,priority,deadline,project_id,"
     "sprint_item_id,recap,ceiling,ticket_status,conversation_id,field_values,"
     "created_at,updated_at,ticket_status_changed_at,ticket_status_revision,sprint_id,"
-    "guidance,pending_proposal,archived_field_content,ceiling_holder"
+    "guidance,pending_proposal,ceiling_holder"
 )
 
 
@@ -61,7 +60,6 @@ def _tickets_table() -> Table:
         Column("sprint_item_id", Text, ForeignKey("sprint_items.id")),
         Column("recap", Text, nullable=False, server_default=text("''")),
         Column("ceiling", Text, nullable=False),
-        Column("at_cap", Text, nullable=False, server_default=text("'propose'")),
         Column("ticket_status", Text, nullable=False, server_default=text("'empty'")),
         Column("conversation_id", Text),
         Column("field_values", Text, nullable=False),
@@ -81,8 +79,6 @@ def _tickets_table() -> Table:
         ),
         CheckConstraint("length(title) <= 200"),
         CheckConstraint("priority IN ('P0','P1','P2','P3')"),
-        # The cap's CHECK is deliberately absent: the rebuilt table is declared without
-        # it, which is how the constraint leaves with the column.
         CheckConstraint(
             "ticket_status IN ('empty','blocked','agent','awaiting_approval','errored')"
         ),
@@ -111,33 +107,35 @@ def _tickets_table() -> Table:
 def _require_retained_rows_unchanged() -> None:
     connection = op.get_bind()
     changed = connection.exec_driver_sql(
-        f"SELECT {_RETAINED_COLUMNS} FROM _tickets_before_at_cap_drop EXCEPT "
+        f"SELECT {_RETAINED_COLUMNS} FROM _tickets_before_archived_field_content_drop EXCEPT "
         f"SELECT {_RETAINED_COLUMNS} FROM tickets LIMIT 1"
     ).first()
     added = connection.exec_driver_sql(
         f"SELECT {_RETAINED_COLUMNS} FROM tickets EXCEPT "
-        f"SELECT {_RETAINED_COLUMNS} FROM _tickets_before_at_cap_drop LIMIT 1"
+        f"SELECT {_RETAINED_COLUMNS} FROM _tickets_before_archived_field_content_drop LIMIT 1"
     ).first()
     if changed is not None or added is not None:
-        raise RuntimeError("dropping at_cap changed retained Ticket data")
+        raise RuntimeError("dropping archived_field_content changed retained Ticket data")
 
 
 def upgrade() -> None:
     op.execute(
-        f"CREATE TEMP TABLE _tickets_before_at_cap_drop AS SELECT {_RETAINED_COLUMNS} FROM tickets"
+        f"CREATE TEMP TABLE _tickets_before_archived_field_content_drop AS SELECT {_RETAINED_COLUMNS} FROM tickets"
     )
     with op.batch_alter_table("tickets", copy_from=_tickets_table(), recreate="always") as batch_op:
-        batch_op.drop_column("at_cap")
+        batch_op.drop_column("archived_field_content")
     _require_retained_rows_unchanged()
-    op.execute("DROP TABLE _tickets_before_at_cap_drop")
+    op.execute("DROP TABLE _tickets_before_archived_field_content_drop")
     remaining = (
         op.get_bind()
-        .exec_driver_sql("SELECT count(*) FROM pragma_table_info('tickets') WHERE name = 'at_cap'")
+        .exec_driver_sql(
+            "SELECT count(*) FROM pragma_table_info('tickets') WHERE name = 'archived_field_content'"
+        )
         .scalar()
     )
     if remaining:
-        raise RuntimeError("the at_cap column survived the rebuild")
+        raise RuntimeError("the archived_field_content column survived the rebuild")
 
 
 def downgrade() -> None:
-    raise NotImplementedError("a cap nobody sets again cannot be recovered")
+    raise NotImplementedError("withdrawn drafts cannot be recovered once discarded")

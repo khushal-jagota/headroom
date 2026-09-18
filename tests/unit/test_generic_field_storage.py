@@ -110,20 +110,20 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
         next_holder=OWNER_PRINCIPAL,
     )
     assert ticket.stage == A and ticket.field_values == {"kickoff": ""}
-    ticket = data.file_current_proposal_with_recap(
-        tmp_db, tid, body="alpha", recap="r1", principal=ticket_principal(tid), now=now
+    ticket = data.file_current_proposal(
+        tmp_db, tid, body="alpha", principal=ticket_principal(tid), now=now
     )
     assert (
         ticket.stage == B
         and ticket.field_values[A_FIELD] == "alpha"
         and ticket.pending_proposal is None
     )
-    ticket = data.file_current_proposal_with_recap(
-        tmp_db, tid, body="beta 1", recap="r2", principal=ticket_principal(tid), now=now
+    ticket = data.file_current_proposal(
+        tmp_db, tid, body="beta 1", principal=ticket_principal(tid), now=now
     )
     assert ticket.pending_proposal == PendingTicketProposal(B_FIELD, "beta 1", "worker", now)
-    ticket = data.file_current_proposal_with_recap(
-        tmp_db, tid, body="beta 2", recap="r3", principal=ticket_principal(tid), now=now
+    ticket = data.file_current_proposal(
+        tmp_db, tid, body="beta 2", principal=ticket_principal(tid), now=now
     )
     assert ticket.pending_proposal == PendingTicketProposal(B_FIELD, "beta 2", "worker", now)
     ticket = data.accept_proposal(
@@ -142,7 +142,7 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
     )
 
 
-def test_recap_writer_infers_probe_gate(
+def test_the_proposal_writer_infers_the_probe_gate(
     tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkerTypeDefinition
 ) -> None:
     now = fake_clock.now_unix()
@@ -156,11 +156,12 @@ def test_recap_writer_infers_probe_gate(
         next_ceiling=NO_FURTHER,
         next_holder=OWNER_PRINCIPAL,
     )
-    ticket = data.file_current_proposal_with_recap(
-        tmp_db, tid, body="alpha", recap="probe recap", principal=ticket_principal(tid), now=now
+    ticket = data.file_current_proposal(
+        tmp_db, tid, body="alpha", principal=ticket_principal(tid), now=now
     )
     assert ticket.pending_proposal is not None
-    assert ticket.recap == "probe recap" and ticket.pending_proposal.field == A_FIELD
+    # The proposal carries only what is proposed; the recap is a separate write.
+    assert ticket.recap == "" and ticket.pending_proposal.field == A_FIELD
 
 
 def test_current_gate_is_enforced_by_state_validation(probe_registry: WorkerTypeDefinition) -> None:

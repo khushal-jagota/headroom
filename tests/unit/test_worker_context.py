@@ -187,13 +187,14 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(
         principal=TEST_TICKET_PRINCIPAL,
         now=2,
     )
-    tickets_data.replace_guidance(
-        tmp_db,
-        ticket.id,
-        body="agent note",
-        principal=TEST_TICKET_PRINCIPAL,
-        now=3,
-    )
+    tickets_data.edit_ticket(
+            tmp_db,
+            ticket.id,
+            edit=TicketEdit(guidance="agent note"),
+            title_max_chars=200,
+            principal=TEST_TICKET_PRINCIPAL,
+            now=3,
+        )
     assert _pending(tmp_db, ticket.id) == ()
     tickets_data.edit_ticket(
         tmp_db,
@@ -203,21 +204,22 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(
         principal=OWNER_PRINCIPAL,
         now=4,
     )
-    tickets_data.edit_field_value(
+    tickets_data.edit_ticket(
         tmp_db,
         ticket.id,
-        field="kickoff",
-        new_body="ticket guidance",
+        edit=TicketEdit(field_values={"kickoff": "ticket guidance"}),
+        title_max_chars=TITLE_MAX_CHARS,
         principal=OWNER_PRINCIPAL,
         now=5,
     )
-    tickets_data.replace_guidance(
-        tmp_db,
-        ticket.id,
-        body="field guidance",
-        principal=OWNER_PRINCIPAL,
-        now=6,
-    )
+    tickets_data.edit_ticket(
+            tmp_db,
+            ticket.id,
+            edit=TicketEdit(guidance="field guidance"),
+            title_max_chars=200,
+            principal=OWNER_PRINCIPAL,
+            now=6,
+        )
 
     pending = [(item.context_key, item.text, item.revision) for item in _pending(tmp_db, ticket.id)]
     assert pending == [(TICKET_CHANGED_CONTEXT_KEY, TICKET_CHANGED_TEXT, 3)]
@@ -241,29 +243,28 @@ def test_only_edited_approval_produces_context_at_each_approval_gate(
             "approach": "needs_approach",
             "plan": "needs_plan",
         }[field]
-        tickets_data.set_ceiling(
+        tickets_data.edit_ticket(
             tmp_db,
             ticket.id,
-            ceiling=ceiling,
+            edit=TicketEdit(ceiling=ceiling),
+            title_max_chars=200,
             principal=OWNER_PRINCIPAL,
             now=10,
         )
         for prior in prior_fields:
-            tickets_data.file_current_proposal_with_recap(
+            tickets_data.file_current_proposal(
                 tmp_db,
                 ticket.id,
                 body=prior,
                 principal=ticket_principal(ticket.id),
                 now=11,
-                recap="Current work",
             )
-        tickets_data.file_current_proposal_with_recap(
+        tickets_data.file_current_proposal(
             tmp_db,
             ticket.id,
             body="draft",
             principal=ticket_principal(ticket.id),
             now=12,
-            recap="Current work",
         )
         _clear(tmp_db, ticket.id)
         tickets_data.accept_proposal(
@@ -291,42 +292,41 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
     tmp_db: Connection,
 ) -> None:
     ticket = _ticket(tmp_db)
-    tickets_data.set_ceiling(
-        tmp_db,
-        ticket.id,
-        ceiling="needs_closeout",
-        principal=OWNER_PRINCIPAL,
-        now=20,
-    )
+    tickets_data.edit_ticket(
+            tmp_db,
+            ticket.id,
+            edit=TicketEdit(ceiling="needs_closeout"),
+            title_max_chars=200,
+            principal=OWNER_PRINCIPAL,
+            now=20,
+        )
     for field in ("success", "approach", "plan", "implementation"):
-        tickets_data.file_current_proposal_with_recap(
+        tickets_data.file_current_proposal(
             tmp_db,
             ticket.id,
             body=field,
             principal=ticket_principal(ticket.id),
             now=21,
-            recap="Current work",
         )
     _clear(tmp_db, ticket.id)
 
-    tickets_data.edit_field_value(
+    tickets_data.edit_ticket(
         tmp_db,
         ticket.id,
-        field="success",
-        new_body="edited success",
+        edit=TicketEdit(field_values={"success": "edited success"}),
+        title_max_chars=TITLE_MAX_CHARS,
         principal=OWNER_PRINCIPAL,
         now=22,
     )
     assert len(_pending(tmp_db, ticket.id)) == 1
     _clear(tmp_db, ticket.id)
 
-    tickets_data.file_current_proposal_with_recap(
+    tickets_data.file_current_proposal(
         tmp_db,
         ticket.id,
         body="closeout draft",
         principal=ticket_principal(ticket.id),
         now=23,
-        recap="Current work",
     )
     _clear(tmp_db, ticket.id)
     tickets_data.accept_proposal(
@@ -343,13 +343,12 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
 
 def test_human_recap_marks_context_but_agent_recap_does_not(tmp_db: Connection) -> None:
     ticket = _ticket(tmp_db)
-    tickets_data.file_current_proposal_with_recap(
+    tickets_data.file_current_proposal(
         tmp_db,
         ticket.id,
         body="success",
         principal=ticket_principal(ticket.id),
         now=28,
-        recap="Current work",
     )
     tickets_data.accept_proposal(
         tmp_db,
@@ -362,14 +361,24 @@ def test_human_recap_marks_context_but_agent_recap_does_not(tmp_db: Connection) 
         next_holder=OWNER_PRINCIPAL,
     )
 
-    tickets_data.write_recap(
-        tmp_db, ticket.id, body="agent recap", principal=TEST_TICKET_PRINCIPAL, now=30
-    )
+    tickets_data.edit_ticket(
+            tmp_db,
+            ticket.id,
+            edit=TicketEdit(recap="agent recap"),
+            title_max_chars=200,
+            principal=TEST_TICKET_PRINCIPAL,
+            now=30,
+        )
     assert _pending(tmp_db, ticket.id) == ()
 
-    tickets_data.write_recap(
-        tmp_db, ticket.id, body="human recap", principal=OWNER_PRINCIPAL, now=31
-    )
+    tickets_data.edit_ticket(
+            tmp_db,
+            ticket.id,
+            edit=TicketEdit(recap="human recap"),
+            title_max_chars=200,
+            principal=OWNER_PRINCIPAL,
+            now=31,
+        )
     assert [(item.context_key, item.revision) for item in _pending(tmp_db, ticket.id)] == [
         (TICKET_CHANGED_CONTEXT_KEY, 1)
     ]

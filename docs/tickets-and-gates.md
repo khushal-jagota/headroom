@@ -187,15 +187,13 @@ advance the Stage. A Ticket has at most one pending proposal, always for its cur
 Stage. Filing another proposal replaces that pending draft. Saved field values remain
 separate, including a saved value beside a pending revision of the same field.
 
-The pending proposal has its own editor. Any authorized actor can replace its text.
-The proposal stays pending and addressed to the same ceiling holder. The edit keeps its
-author, creation time, settled value, Ticket status, Stage, and scope. Direct edits
-of saved values use a separate editor and remain limited to passed fields and direct callers.
+A parked proposal has exactly two outcomes: it is approved, or it is rejected. There is
+no third way to change it while it waits. A reader who wants different text approves the
+proposal with their own text in place of the author's, which is part of approving it, or
+rejects it and says what is wrong.
 
-The archive keeps earlier unapproved drafts and text from retired fields. Dropping a
-Ticket moves its pending draft here without approval. Historical text cannot be approved
-or resumed. The Ticket page does not show the archive. The CLI exposes it as `archive`,
-and copy text and search include it.
+Nothing keeps a withdrawn draft. A rejected proposal is gone, and dropping a Ticket
+discards whatever was parked on it.
 
 Each Ticket has one **guidance** document for durable user corrections and constraints.
 It is separate from settled field values and is never approved as a proposal. Review
@@ -206,7 +204,7 @@ context include it too.
 
 The next automatic Worker step includes current guidance in its actual prompt. A direct
 edit keeps the existing generic Ticket-changed notice. Saving guidance is not an
-immediate conversation intervention: ordinary chat and return-for-revision keep their
+immediate conversation intervention: ordinary chat and rejection keep their
 existing send behavior. A Worker continuing those conversations can read current
 guidance from the Ticket.
 

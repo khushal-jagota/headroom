@@ -474,6 +474,8 @@ async def supervisor_update_ticket(
         edit["priority"] = parse_enum(Priority, body_str(raw, field), field)
     elif field == "deadline":
         edit["deadline"] = body_opt_str(raw, field)
+    elif field == "ceiling":
+        edit["ceiling"] = body_str(raw, field)
     else:
         raise PlannerError(ErrorCode.validation, "unknown Ticket field", {"field": field})
     ticket = tickets_data.edit_ticket(
@@ -481,28 +483,6 @@ async def supervisor_update_ticket(
         ticket_id,
         edit=edit,
         title_max_chars=TITLE_MAX_CHARS,
-        principal=ctx.principal,
-        now=clk.now_unix(),
-        supervisor_sprint_item_id=item_id,
-    )
-    return tickets_views.ticket_json(ticket, clk.now_unix())
-
-
-@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/scope")
-async def supervisor_change_ticket_scope(
-    item_id: str,
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    supervisor_service.require_current_child(conn, ctx, item_id, ticket_id)
-    ceiling = body_str(raw, "ceiling")
-    ticket = tickets_data.set_ceiling(
-        conn,
-        ticket_id,
-        ceiling=ceiling,
         principal=ctx.principal,
         now=clk.now_unix(),
         supervisor_sprint_item_id=item_id,
@@ -697,9 +677,9 @@ async def supervisor_reject_ticket(
     conversations: Conversations,
 ) -> JsonDict:
     require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, ticket_id)
-    message = body_str(raw, "message")
+    message = body_opt_str(raw, "message")
     now = clk.now_unix()
-    ticket = await tickets_actions.return_ticket_for_revision(
+    ticket = await tickets_actions.reject_ticket_proposal(
         conversations,
         conn,
         ticket_id,

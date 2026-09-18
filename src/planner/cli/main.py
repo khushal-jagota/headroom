@@ -175,16 +175,6 @@ def read_value_or_file(
     return value
 
 
-def read_recap(recap: str | None, recap_file: str | None, as_json: bool) -> str:
-    if recap_file is not None:
-        http.fail_validation("--recap-file is no longer supported: pass --recap TEXT", as_json)
-    if recap is None:
-        http.fail_validation("recap required: pass --recap TEXT", as_json)
-    if not recap.strip():
-        http.fail_validation("empty recap", as_json)
-    return recap
-
-
 def resolve_ticket_id(positional: str | None, as_json: bool) -> str:
     if positional is not None and positional != "-":
         return positional
@@ -260,7 +250,6 @@ def _ticket_record(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Reco
         field["id"]: part(data["field_values"].get(field["id"])) for field in manifest["fields"]
     }
     parts["proposal"] = part(data.get("pending_proposal"))
-    parts["archive"] = part(data.get("archived_field_content", ""))
     parts["recap"] = part(data.get("recap", ""))
     parts["guidance"] = part(data.get("guidance", ""))
     return header, parts
@@ -1331,47 +1320,44 @@ def ticket_set(
         http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
     if field == "kickoff-note" and new_value is None:
         new_value = ""
-    if field == "kickoff-note":
-        data = http.send(
-            "PUT",
-            f"/api/tickets/{ticket_id}/value/kickoff",
-            as_json=as_json,
-            json_body={"body": new_value},
-            request_actor="ordinary",
-        )
-    else:
-        data = http.send(
-            "PATCH",
-            f"/api/tickets/{ticket_id}",
-            as_json=as_json,
-            json_body={api_field: new_value},
-            request_actor="ordinary",
-        )
+    body: dict[str, Any] = (
+        {"field_values": {"kickoff": new_value}}
+        if field == "kickoff-note"
+        else {api_field: new_value}
+    )
+    data = http.send(
+        "PATCH",
+        f"/api/tickets/{ticket_id}",
+        as_json=as_json,
+        json_body=body,
+        request_actor="ordinary",
+    )
     http.emit(data, as_json, f"{data['id']} {field} set")
 
 
-@ticket.command("set-value")
+@ticket.command("complete")
 @click.argument("ticket_id")
 @click.argument("field")
-@click.option("--value", default=None, help="Set the field to this value.")
-@click.option("--body-file", default=None, help="Read field text from this file, or - for stdin.")
+@click.option("--value", default=None, help="Complete the gate with this value.")
+@click.option("--body-file", default=None, help="Read the value from this file, or - for stdin.")
 @json_option
-def ticket_set_value(
+def ticket_complete(
     ticket_id: str,
     field: str,
     value: str | None,
     body_file: str | None,
     as_json: bool,
 ) -> None:
+    """Do a user-owned Stage's work yourself. The Stage then advances."""
     body = read_value_or_file(value, body_file, False, as_json, field)
     data = http.send(
-        "PUT",
-        f"/api/tickets/{ticket_id}/value/{field}",
+        "POST",
+        f"/api/tickets/{ticket_id}/complete/{field}",
         as_json=as_json,
         json_body={"body": body},
         request_actor="ordinary",
     )
-    http.emit(data, as_json, f"{data['id']} {field} set")
+    http.emit(data, as_json, f"{data['id']} {field} completed")
 
 
 @ticket.command("place")
@@ -2124,8 +2110,8 @@ def sprint_item_supervisor_set_ticket(
 @json_option
 def sprint_item_supervisor_scope(item_id: str, ticket_id: str, ceiling: str, as_json: bool) -> None:
     data = http.send(
-        "POST",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/scope",
+        "PATCH",
+        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}",
         as_json=as_json,
         json_body={"ceiling": ceiling},
     )
@@ -2371,8 +2357,8 @@ def worker_my_ticket(part_names: str | None, as_json: bool) -> None:
 @worker.command("propose")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option("--body-file", default=None, help="Removed: pipe proposal text on stdin instead.")
-@click.option("--recap", default=None, help="Short recap for the proposal.")
-@click.option("--recap-file", default=None, help="Removed: pass --recap TEXT instead.")
+@click.option("--recap", default=None, help="Removed: use `worker recap` instead.")
+@click.option("--recap-file", default=None, help="Removed: use `worker recap` instead.")
 @json_option
 def worker_propose(
     ticket_id: str | None,
@@ -2383,13 +2369,16 @@ def worker_propose(
 ) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     refuse_worker_body_file(body_file, as_json, "pipe proposal text on stdin instead")
+    if recap is not None or recap_file is not None:
+        http.fail_validation(
+            "a proposal no longer carries the recap: use `panels worker recap` instead", as_json
+        )
     body = read_worker_stdin_body(as_json, "proposal body")
-    recap_text = read_recap(recap, recap_file, as_json)
     data = http.send(
         "POST",
         f"/api/tickets/{tid}/propose",
         as_json=as_json,
-        json_body={"body": body, "recap": recap_text},
+        json_body={"body": body},
     )
     http.emit(data, as_json, f"proposed on {data['id']}")
 
@@ -2473,7 +2462,9 @@ def worker_recap(ticket_id: str | None, body_file: str | None, as_json: bool) ->
     refuse_worker_body_file(body_file, as_json, "pipe recap text on stdin instead")
     body = read_worker_stdin_body(as_json, "recap")
     tid = resolve_ticket_id(ticket_id, as_json)
-    data = http.send("PUT", f"/api/tickets/{tid}/recap", as_json=as_json, json_body={"body": body})
+    data = http.send(
+        "PATCH", f"/api/tickets/{tid}", as_json=as_json, json_body={"recap": body}
+    )
     http.emit(data, as_json, f"recap written on {data['id']}")
 
 
@@ -2485,13 +2476,12 @@ def worker_note(ticket_id: str | None, append_note: bool, as_json: bool) -> None
     """Write Ticket guidance from stdin; no field selection is needed."""
     tid = resolve_ticket_id(ticket_id, as_json)
     body = sys.stdin.read()
-    method = "POST" if append_note else "PUT"
-    suffix = "/append" if append_note else ""
+    key = "guidance_append" if append_note else "guidance"
     data = http.send(
-        method,
-        f"/api/tickets/{tid}/guidance{suffix}",
+        "PATCH",
+        f"/api/tickets/{tid}",
         as_json=as_json,
-        json_body={"body": body},
+        json_body={key: body},
     )
     http.emit(data, as_json, f"guidance written on {data['id']}")
 

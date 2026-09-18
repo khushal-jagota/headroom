@@ -194,7 +194,6 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     trouble_notes: [],
     field_values: {},
     pending_proposal: null,
-    archived_field_content: "",
     guidance: "",
     ...overrides
   };

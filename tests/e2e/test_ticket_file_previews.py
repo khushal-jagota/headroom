@@ -81,11 +81,10 @@ def _settle_success(
 ) -> None:
     """Seed saved Markdown through the same proposal/accept writers as ordinary work."""
     with closing(connect(str(server.db_path))) as conn:
-        ticket = tickets_data.file_current_proposal_with_recap(
+        ticket = tickets_data.file_current_proposal(
             conn,
             ticket_id,
             body=body,
-            recap="Preview content ready.",
             principal=ticket_principal(ticket_id),
             now=2,
         )
@@ -432,7 +431,7 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
     def fail_first_save(route: Route) -> None:
         post_data_json = route.request.post_data_json
         assert post_data_json is not None
-        attempts.append(post_data_json["body"])
+        attempts.append(post_data_json["field_values"]["success"])
         if len(attempts) == 1:
             route.fulfill(
                 status=500,
@@ -442,7 +441,7 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
             return
         route.continue_()
 
-    page.route(f"**/api/tickets/{ticket_id}/value/success", fail_first_save)
+    page.route(f"**/api/tickets/{ticket_id}", fail_first_save)
     page.locator(editable).focus()
     page.locator(f"{editable} [data-markdown-caret-guard='after']").last.evaluate(
         """guard => {
@@ -512,8 +511,6 @@ def test_loaded_preview_proposal_approves_without_edited_body(
         server,
         "worker",
         "propose",
-        "--recap",
-        "Preview proposal ready.",
         ticket_id=ticket_id,
         stdin=body,
     )

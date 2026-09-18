@@ -18,7 +18,7 @@ from planner.sprints import data as sprints_data
 from planner.sprints.contracts import SprintItem
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket
+from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket, TicketEdit
 
 FAKE_FIXTURE_VERSION = "fake-fixture-v1"
 
@@ -201,11 +201,18 @@ def _create_tickets(
         worker_type="coding",
         stated_ceiling="needs_approach",
     )
-    coding = tickets_data.file_current_proposal_with_recap(
+    coding = tickets_data.file_current_proposal(
         conn,
         coding.id,
         body="Staging data is isolated from live data.",
-        recap="The fake fixture has a settled kickoff and success note.",
+        principal=Principal(PrincipalKind.ticket, coding.id),
+        now=now,
+    )
+    coding = tickets_data.edit_ticket(
+        conn,
+        coding.id,
+        edit=TicketEdit(recap="The fake fixture has a settled kickoff and success note."),
+        title_max_chars=TITLE_MAX_CHARS,
         principal=Principal(PrincipalKind.ticket, coding.id),
         now=now,
     )
@@ -221,11 +228,18 @@ def _create_tickets(
         worker_type="new_worker",
         stated_ceiling="needs_stages",
     )
-    new_worker = tickets_data.file_current_proposal_with_recap(
+    new_worker = tickets_data.file_current_proposal(
         conn,
         new_worker.id,
         body="Use existing registered Worker types only.",
-        recap="Onboarding is represented by a current registry type.",
+        principal=Principal(PrincipalKind.ticket, new_worker.id),
+        now=now,
+    )
+    new_worker = tickets_data.edit_ticket(
+        conn,
+        new_worker.id,
+        edit=TicketEdit(recap="Onboarding is represented by a current registry type."),
+        title_max_chars=TITLE_MAX_CHARS,
         principal=Principal(PrincipalKind.ticket, new_worker.id),
         now=now,
     )
@@ -241,11 +255,18 @@ def _create_tickets(
         worker_type="exploration",
         stated_ceiling="needs_research_plan",
     )
-    exploration = tickets_data.file_current_proposal_with_recap(
+    exploration = tickets_data.file_current_proposal(
         conn,
         exploration.id,
         body="The reset should replace data only for that instance.",
-        recap="Exploration is ready for a research plan.",
+        principal=Principal(PrincipalKind.ticket, exploration.id),
+        now=now,
+    )
+    exploration = tickets_data.edit_ticket(
+        conn,
+        exploration.id,
+        edit=TicketEdit(recap="Exploration is ready for a research plan."),
+        title_max_chars=TITLE_MAX_CHARS,
         principal=Principal(PrincipalKind.ticket, exploration.id),
         now=now,
     )

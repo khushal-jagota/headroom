@@ -105,7 +105,6 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "pending_proposal": asdict(ticket.pending_proposal)
         if ticket.pending_proposal is not None
         else None,
-        "archived_field_content": ticket.archived_field_content,
         "created_at": ticket.created_at,
         "updated_at": ticket.updated_at,
     }
@@ -165,7 +164,6 @@ def _ticket_search_text(row: sqlite3.Row) -> str:
             str(row["title"]),
             str(row["recap"]),
             str(row["guidance"]),
-            str(row["archived_field_content"]),
             *values.values(),
             proposal.body if proposal is not None else "",
         )
@@ -241,7 +239,6 @@ def list_ticket_summaries(
     )
     searchable_fields = "tickets.field_values" if filters.search else "NULL"
     searchable_proposal = "tickets.pending_proposal" if filters.search else "NULL"
-    searchable_archive = "tickets.archived_field_content" if filters.search else "NULL"
     searchable_guidance = "tickets.guidance" if filters.search else "NULL"
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.worker_type, tickets.stage, "
@@ -252,8 +249,6 @@ def list_ticket_summaries(
         + " AS field_values, "
         + searchable_proposal
         + " AS pending_proposal, "
-        + searchable_archive
-        + " AS archived_field_content, "
         "tickets.project_id AS effective_project_id, "
         "projects.name AS project_name, tickets.sprint_item_id, "
         "sprint_items.title AS sprint_item_title, tickets.sprint_id "
@@ -381,7 +376,6 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"{field_blocks}"
         f"pending proposal:\n"
         f"{show(ticket.pending_proposal.body if ticket.pending_proposal else None)}\n"
-        f"\nhistorical record:\n{show(ticket.archived_field_content)}\n"
         f"recap:\n{show(ticket.recap)}\n"
         f"\nguidance:\n{show(ticket.guidance)}\n"
         f"\n"

@@ -207,13 +207,12 @@ def test_a_ticket_at_its_ceiling_is_still_started_to_propose(
     try:
         ticket = _ticket(conn, worker_type=worker_type, ceiling=ceiling)
         if worker_type == "new_worker":
-            tickets_data.file_current_proposal_with_recap(
+            tickets_data.file_current_proposal(
                 conn,
                 ticket.id,
                 body="understanding",
                 principal=ticket_principal(ticket.id),
                 now=3,
-                recap="Current work",
             )
             ticket = tickets_data.accept_proposal(
                 conn,

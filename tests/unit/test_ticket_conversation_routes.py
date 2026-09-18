@@ -320,13 +320,12 @@ def _park_on_a_proposal(db_path: Path, ticket_id: str) -> None:
     _past_kickoff(db_path, ticket_id)
     conn: Connection = connect(str(db_path))
     try:
-        tickets_data.file_current_proposal_with_recap(
+        tickets_data.file_current_proposal(
             conn,
             ticket_id,
             body="how we will know",
             principal=ticket_principal(ticket_id),
             now=1,
-            recap="Current work",
         )
         conn.commit()
     finally:

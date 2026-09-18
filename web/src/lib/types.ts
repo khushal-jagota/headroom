@@ -299,7 +299,6 @@ export type TicketDetail = {
   trouble_notes: TicketTroubleNote[];
   field_values: TicketFieldValues;
   pending_proposal: PendingTicketProposal | null;
-  archived_field_content: string;
   awaiting_reply?: boolean;
   awaiting_approval?: boolean;
   assigned?: boolean;

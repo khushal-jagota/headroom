@@ -176,14 +176,6 @@
     });
   }
 
-  function saveProposal(raw: string): Promise<unknown> {
-    if (!acceptField) throw new Error("Review decision is not a Ticket field");
-    return mutateJson(`/api/tickets/${ticketId}/proposal`, {
-      method: "PUT",
-      body: { field: acceptField, body: raw }
-    });
-  }
-
   async function savePriority(
     priority: string,
     select: HTMLSelectElement,
@@ -210,7 +202,7 @@
     revisionError = null;
     revisionBusy = true;
     try {
-      await mutateJson(`/api/tickets/${ticketId}/return-for-revision`, {
+      await mutateJson(`/api/tickets/${ticketId}/reject`, {
         method: "POST",
         body: { message }
       });
@@ -323,7 +315,6 @@
             stageState={fieldStageVisualStateFor(lc, ticketDetail, acceptField)}
             approvalDisabled={acceptField === "kickoff" && priorityBusy}
             onAccept={(payload) => accept(payload)}
-            onSaveProposal={saveProposal}
           />
         {/if}
       </div>

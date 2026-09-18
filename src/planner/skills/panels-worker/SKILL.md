@@ -34,12 +34,12 @@ from Ticket scope.
 Everything runs through the `panels` command — `panels --help` for full usage. The tools you use:
 
 - **`panels worker my-ticket [part,part]`** — read your Ticket header and part
-  manifest, or expand named saved fields, `proposal`, `recap`, `guidance`, and `archive`. The header says who you are, the current
+  manifest, or expand named saved fields, `proposal`, `recap`, and `guidance`. The header says who you are, the current
   Stage and scope.
 - **`panels ticket show <id> [part,part]`** — read another Ticket's header and part
-  manifest, or expand named saved fields, `proposal`, `recap`, `guidance`, and `archive`.
-- **`panels worker propose <id> --recap "…"`**, piping the proposal text on stdin — propose your own Ticket's current gated field. No supervisor, holder Ticket, or other Worker can file it for you. The body arrives on stdin only, and every proposal must also set a recap with `--recap TEXT`.
-- **`panels worker recap <id>`**, piping the recap text on stdin — update the running recap outside a proposal.
+  manifest, or expand named saved fields, `proposal`, `recap`, and `guidance`.
+- **`panels worker propose <id>`**, piping the proposal text on stdin — answer your own Ticket's current gated field. No supervisor, holder Ticket, or other Worker can file it for you. The body arrives on stdin only, and it carries only what is being proposed. Below the ceiling the answer settles the field and the Ticket advances. At the ceiling it parks for approval.
+- **`panels worker recap <id>`**, piping the recap text on stdin — keep the running recap current. It is a separate write from proposing, so update it as you work.
 - **`panels worker trouble`**, piping the note on stdin — record one short trouble note on your
   current Ticket during the active claimed worker step. Use it for a harness, tool, or
   Ticket problem that did not go well. Record only trouble that you encountered. Do not
@@ -60,7 +60,7 @@ ends. The same words anywhere else are not authenticated. Reply even when the ca
 Ticket action already communicates the result. A missing-reply marker remains the system
 fallback, not an acceptable substitute for the explicit send.
 
-All four write commands take their text on stdin only; there is no file-path option, since it once let two Workers sharing one `/tmp` overwrite each other's text before it reached the ticket. Pipe or redirect text in, for example `echo "…" | panels worker propose <id> --recap "…"` or a heredoc into stdin.
+All four write commands take their text on stdin only; there is no file-path option, since it once let two Workers sharing one `/tmp` overwrite each other's text before it reached the ticket. Pipe or redirect text in, for example `echo "…" | panels worker propose <id>` or a heredoc into stdin.
 - **`panels ticket create --worker-type <id> --title "…"`** — create a Ticket when the
   current approved step spins off a new one. Before creating it, load and follow
   `panels-ticket-creation`; this Worker skill still owns the current Stage's authority

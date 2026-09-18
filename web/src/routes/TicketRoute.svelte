@@ -230,7 +230,7 @@
   }
 
   function saveScope(body: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/scope`, { method: "POST", body });
+    return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body });
   }
 
   function closeLeash(): void {
@@ -248,16 +248,16 @@
   }
 
   function saveValue(field: string, body: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/value/${field}`, {
-      method: "PUT",
-      body: { body }
+    return mutateJson(`/api/tickets/${stableId}`, {
+      method: "PATCH",
+      body: { field_values: { [field]: body } }
     });
   }
 
-  function saveProposal(field: string, body: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/proposal`, {
-      method: "PUT",
-      body: { field, body }
+  function completeGate(field: string, body: string): Promise<unknown> {
+    return mutateJson(`/api/tickets/${stableId}/complete/${field}`, {
+      method: "POST",
+      body: { body }
     });
   }
 
@@ -400,9 +400,9 @@
                 multiline
                 placeholder="+ add orientation"
                 onSave={(raw) =>
-                  mutateJson(`/api/tickets/${stableId}/recap`, {
-                    method: "PUT",
-                    body: { body: raw }
+                  mutateJson(`/api/tickets/${stableId}`, {
+                    method: "PATCH",
+                    body: { recap: raw }
                   })}
               />
             </ClampedText>
@@ -502,8 +502,8 @@
                           ? kickoffContextRow
                           : undefined}
                         onAccept={(payload) => acceptField(name, payload)}
-                        onSaveProposal={(raw) => saveProposal(name, raw)}
                         onSaveValue={(raw) => saveValue(name, raw)}
+                        onCompleteGate={(raw) => completeGate(name, raw)}
                       />
                     {/each}
                     <button
@@ -536,8 +536,8 @@
                     ? kickoffContextRow
                     : undefined}
                   onAccept={(payload) => acceptField(name, payload)}
-                  onSaveProposal={(raw) => saveProposal(name, raw)}
                   onSaveValue={(raw) => saveValue(name, raw)}
+                  onCompleteGate={(raw) => completeGate(name, raw)}
                 />
               {/each}
             {/if}

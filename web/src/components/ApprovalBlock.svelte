@@ -19,7 +19,6 @@
     layout = "default",
     disabled = false,
     onApprove,
-    onProposalSave,
     onNoteSave,
     actions,
     contextRow
@@ -34,7 +33,6 @@
     layout?: "default" | "review";
     disabled?: boolean;
     onApprove?: (payload: Record<string, unknown>) => Promise<unknown>;
-    onProposalSave?: (raw: string) => Promise<unknown>;
     onNoteSave?: (raw: string) => Promise<unknown>;
     actions?: Snippet;
     contextRow?: Snippet;
@@ -46,7 +44,6 @@
   let inFlight = $state(false);
   let resolved = $state(false);
   let error = $state<unknown>(null);
-  let pendingProposalSave = $state<Promise<void> | null>(null);
   let reviewLayout = $derived(layout === "review");
   let hasNote = $derived(Boolean(onNoteSave) || Boolean((note || "").trim()));
   let contentTitle = $derived(labelize(whatLabel || field.replace(/_/g, " ")));
@@ -55,17 +52,11 @@
     disabled || inFlight || resolved || ceiling === null
   );
 
+  // The edit stays here until it is approved. A proposal has two outcomes, approve or
+  // reject, so an edited proposal is approved as the edit — it is not saved back over the
+  // author's text and left pending.
   async function saveDraft(raw: string): Promise<void> {
-    const save = (async () => {
-      await onProposalSave?.(raw);
-      draft = raw;
-    })();
-    pendingProposalSave = save;
-    try {
-      await save;
-    } finally {
-      if (pendingProposalSave === save) pendingProposalSave = null;
-    }
+    draft = raw;
   }
 
   function resetDraft(): string {
@@ -74,14 +65,12 @@
   }
 
   async function approve(): Promise<void> {
-    const proposalSave = pendingProposalSave;
     const ceilingForApproval = ceiling;
     inFlight = true;
     error = null;
     try {
-      await proposalSave;
       const payload: Record<string, unknown> = {};
-      if (proposalSave === null && draft !== (proposalBody || "")) {
+      if (draft !== (proposalBody || "")) {
         payload.edited_body = draft;
       }
       if (!ceilingForApproval) return;

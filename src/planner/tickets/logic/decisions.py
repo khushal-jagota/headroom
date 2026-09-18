@@ -13,7 +13,6 @@ from planner.tickets.contracts import PendingTicketProposal, Ticket, TicketField
 class Decision:
     field_values: TicketFieldValues
     pending_proposal: PendingTicketProposal | None
-    archived_field_content: str
     stage: str
     ceiling: str
     ceiling_holder: Principal
@@ -23,7 +22,6 @@ class Decision:
         return cls(
             field_values=MappingProxyType(dict(ticket.field_values)),
             pending_proposal=ticket.pending_proposal,
-            archived_field_content=ticket.archived_field_content,
             stage=ticket.stage,
             ceiling=ticket.ceiling,
             ceiling_holder=ticket.ceiling_holder,

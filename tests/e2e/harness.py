@@ -74,7 +74,7 @@ class ApiHelper:
 
     def direct_post(self, server: ServerHandle, path: str, json_body: JsonObject) -> JsonObject:
         # No X-Plan-* headers: authctx classifies this request as unattributed,
-        # which direct-only /scope and /accept permit.
+        # which the direct-only /accept and the direct-only PATCH fields permit.
         resp = httpx.post(server.base + path, json=json_body, timeout=10.0)
         assert resp.status_code < 300, f"POST {path} -> {resp.status_code}: {resp.text}"
         answer: JsonObject = resp.json()
