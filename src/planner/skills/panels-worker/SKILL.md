@@ -90,7 +90,7 @@ All four write commands take their text on stdin only; there is no file-path opt
 
 ### Ticket-owned planning artifacts
 
-Ticket-owned artifacts are durable work products that make the work easier to understand; they are not a reason to bloat a gated field. Store them in the live managed tree at `/home/vps/Deployments/Panels/current/data/files/tickets/<ticket-id>/<relative-path>` and link them from the relevant proposal, note, implementation, or closeout as `/files/tickets/<ticket-id>/<relative-path>`. For example, write `/home/vps/Deployments/Panels/current/data/files/tickets/<ticket-id>/artifacts/ui-plan.html` and link it as `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Never use a source checkout's `data/...`, a ticket worktree's `data/...`, or another path inferred from the current directory.
+Ticket-owned artifacts are durable work products that make the work easier to understand; they are not a reason to bloat a gated field. Prefer a self-contained HTML artifact over Markdown when either format can present the work. Use Markdown when the artifact is primarily plain text or HTML would not improve understanding. Store artifacts in the live managed tree at `/home/vps/Deployments/Panels/current/data/files/tickets/<ticket-id>/<relative-path>` and link them from the relevant proposal, note, implementation, or closeout as `/files/tickets/<ticket-id>/<relative-path>`. For example, write `/home/vps/Deployments/Panels/current/data/files/tickets/<ticket-id>/artifacts/ui-plan.html` and link it as `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Never use a source checkout's `data/...`, a ticket worktree's `data/...`, or another path inferred from the current directory.
 
 ### Preview servers you leave running
 
