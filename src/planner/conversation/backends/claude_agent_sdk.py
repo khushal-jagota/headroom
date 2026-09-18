@@ -102,6 +102,7 @@ from claude_agent_sdk.types import SystemPromptPreset, _configure_can_use_tool
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
+    BackendPromptAccepted,
     BackendSpawnFailed,
     BackendSteerAccepted,
     BackendSteerOutcome,
@@ -134,12 +135,13 @@ from planner.conversation.events import (
     UserInputQuestion,
 )
 from planner.conversation.message_content import (
+    ComposedMessageDoesNotContainSenderContent,
     MessageContent,
     MessageFile,
     MessageImage,
     MessageText,
     message_content_starts_with_command,
-    sender_labeled_message_content,
+    sender_labeled_composed_message_content,
     text_message_content,
 )
 from planner.conversation.message_files import (
@@ -673,13 +675,14 @@ class ClaudeAgentSdkBackendChild:
         turn_token: TurnToken,
         content: MessageContent,
         *,
-        sender_content: MessageContent,
         sender_label: str,
+        sender_content: MessageContent,
+        sender_message_count: int = 1,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
-    ) -> None:
+    ) -> BackendPromptAccepted:
         """Start a turn with this message, on values this child is already running.
 
         The sender label goes at the start of ordinary wire content. The delivery mode has
@@ -696,11 +699,19 @@ class ClaudeAgentSdkBackendChild:
         )
         client = self._connected_client()
         self._require_a_live_wire()
-        delivered_content = (
-            sender_content
-            if automatic_compaction or self._is_catalog_command(sender_content)
-            else sender_labeled_message_content(content, sender_label)
+        native_command = (
+            sender_message_count == 1 and self._is_catalog_command(sender_content)
         )
+        try:
+            delivered_content = (
+                sender_content
+                if automatic_compaction or native_command
+                else sender_labeled_composed_message_content(
+                    content, sender_content, sender_label
+                )
+            )
+        except ComposedMessageDoesNotContainSenderContent as invalid_composition:
+            raise PromptWriteFailed(str(invalid_composition)) from invalid_composition
         asked = await self._query_argument(delivered_content)
         try:
             await client.query(asked)
@@ -708,6 +719,9 @@ class ClaudeAgentSdkBackendChild:
             self._wire_broken = True
             raise PromptWriteFailed(str(did_not_reach)) from did_not_reach
         self._turn = _TurnInFlight(token=turn_token)
+        return BackendPromptAccepted(
+            composed_content_delivered=not (automatic_compaction or native_command)
+        )
 
     async def _query_argument(
         self, content: MessageContent, *, user_message_uuid: str | None = None
@@ -791,7 +805,12 @@ class ClaudeAgentSdkBackendChild:
         return b64encode(kept).decode("ascii")
 
     async def steer(
-        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+        self,
+        turn_token: TurnToken,
+        content: MessageContent,
+        *,
+        sender_content: MessageContent | None = None,
+        sender_label: str,
     ) -> BackendSteerOutcome:
         """Admit one UUID-named command to work owned by the captured Panels turn.
 
@@ -800,6 +819,7 @@ class ClaudeAgentSdkBackendChild:
         that Claude owns the command. A correlated result settles it. Neither signal is
         used to classify which native path Claude chose.
         """
+        sender_content = content if sender_content is None else sender_content
         turn = self._turn
         if turn is None or turn.token != turn_token:
             return BackendSteerRefused(
@@ -807,17 +827,24 @@ class ClaudeAgentSdkBackendChild:
             )
         user_message_uuid = str(uuid.uuid4())
         client = self._connected_client()
+        native_command = self._is_catalog_command(sender_content)
         try:
             self._require_a_live_wire()
             asked = await self._query_argument(
                 (
-                    content
-                    if self._is_catalog_command(content)
-                    else sender_labeled_message_content(content, sender_label)
+                    sender_content
+                    if native_command
+                    else sender_labeled_composed_message_content(
+                        content, sender_content, sender_label
+                    )
                 ),
                 user_message_uuid=user_message_uuid,
             )
-        except (NeedsRebind, PromptWriteFailed):
+        except (
+            ComposedMessageDoesNotContainSenderContent,
+            NeedsRebind,
+            PromptWriteFailed,
+        ):
             return BackendSteerRefused(
                 PromptDeliveryRefusalReason.write_to_backend_failed
             )
@@ -839,18 +866,24 @@ class ClaudeAgentSdkBackendChild:
             # The command can have crossed the process boundary before this failure. Keep
             # its ownership on the turn so a later correlated result remains captured. A
             # stream failure, if there was one, closes the wire through the reader path.
-            return BackendSteerUncertain()
+            return BackendSteerUncertain(
+                composed_content_delivered=not native_command
+            )
         admission = await client.wait_for_user_message_admission(user_message_uuid)
         if admission is True:
-            return BackendSteerAccepted()
+            return BackendSteerAccepted(
+                composed_content_delivered=not native_command
+            )
         if admission is False:
             turn.owned_steer_uuids.discard(user_message_uuid)
             return BackendSteerRefused(
                 PromptDeliveryRefusalReason.write_to_backend_failed
             )
-        return BackendSteerUncertain()
+        return BackendSteerUncertain(composed_content_delivered=not native_command)
 
     def _is_catalog_command(self, content: MessageContent) -> bool:
+        if len(content) != 1 or not isinstance(content[0], MessageText):
+            return False
         return message_content_starts_with_command(
             content, self._available_command_names
         )

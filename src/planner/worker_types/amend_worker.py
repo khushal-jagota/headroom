@@ -20,7 +20,7 @@ AMEND_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
             "Amendment",
             "amendment",
             False,
-            StageOwnershipMode.paired,
+            StageOwnershipMode.user,
         ),
         StageDefinition("needs_drafting", "Drafting", "drafting", False, StageOwnershipMode.worker),
         StageDefinition("needs_closeout", "Closeout", "closeout", False, StageOwnershipMode.worker),
@@ -40,7 +40,6 @@ AMEND_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         toolset_profile="default",
         default_backend="codex",
     ),
-    supports_prefix_reconciliation=True,
 )
 
 

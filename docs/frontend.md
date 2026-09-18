@@ -24,24 +24,25 @@ One screen per part of the system:
   and watchout with one progress mark per Ticket. Action tiles lead to work that needs
   Khushal, needs review, is working, is assigned, or is done. Day fields are written by
   the planning Workers, not edited on this page.
-- **Review** — the human chamber for owner-addressed Ticket proposals and proposals whose
-  non-owner alert failed persistently: one oldest-first
+- **Review** — the human chamber for owner-addressed Ticket proposals: one oldest-first
   walk with a centred item, its Ticket title, and Skip and Open Ticket top-right.
   Proposal items add their labelled recap, ask, approval, and send-back controls.
-  Proposals addressed to another holder appear only after their alert fails persistently.
+  Non-owner holders inspect canonical Ticket state through the normal Chief, Sprint Item,
+  and Ticket views; no proposal wake, retry, failure surfacing, or owner fallback remains.
   Keyboard shortcuts drive the actions that apply to the current item when the
   cursor is not in a text field, and each item fades in as it arrives. A proposal's
   approve button sends the next ceiling, cap, and owner holder together. Send-back
-  delivers the owner's comment to the exact Ticket worker conversation before it clears
-  the proposal. A refused delivery leaves the proposal in place. A reply in the Ticket
-  conversation leaves the proposal in Review until a decision.
+  stores the owner's exact attributed comment for the next worker-step prompt while
+  clearing the proposal and returning the Ticket to its resting control status. Ticket
+  guidance stays independent. A reply in the Ticket conversation leaves the proposal in
+  Review until a decision.
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
   follows the same 5am planning-day boundary as the Day screen; dropped tickets never
   appear. The Chief of Staff row leads, and under it a selector chooses one of two views
   over the same tickets: **Tickets** or **Sprint Items**.
 
   The Tickets view starts with three owner-attention groups in this order: Awaiting
-  approval, Paired, and Messages. A ticket appears in only its first applicable group.
+  approval, Assigned, and Messages. A ticket appears in only its first applicable group.
   Approval takes precedence over assignment, and assignment takes precedence over a
   reply. Empty groups are not drawn. Every ticket outside these groups follows in the
   existing status order, so no ticket becomes unreachable.
@@ -56,7 +57,7 @@ One screen per part of the system:
   newest first.
 
   The Sprint Items view is one box per Sprint Item with a ticket on today. Each Item
-  shows only its non-empty Awaiting approval, Paired, and Messages child groups. Quiet
+  shows only its non-empty Awaiting approval, Assigned, and Messages child groups. Quiet
   child tickets remain available in the Tickets view and the Item workspace. A shut
   Item shows a line of counts for its owner-attention groups. Clicking anywhere in the
   box selects the Item and opens its workspace beside the rail. That is all a click on
@@ -103,8 +104,8 @@ One screen per part of the system:
   The Chief of Staff keeps its separate conversation mark. A browser with no saved lens
   choice opens in Focus. Focus shows the owner's prompts, explicit messages to the owner,
   permission requests, agent questions, and their settled answers. Failed turns, stopped turns,
-  missing explicit replies, and terminal proposal-alert delivery failures remain visible
-  as compact system rows. Full shows every notebook row, every held prompt, all live
+  and missing explicit replies remain visible as compact system rows. Full shows every
+  notebook row, every held prompt, all live
   agent text, and every tool call without a Focus fold. One header toggle switches the
   lens, and the unmodified `f` key does the same when no editable control owns it. The
   browser keeps that choice across conversation switches, new conversations, and later
@@ -114,7 +115,7 @@ One screen per part of the system:
   with a hidden automatic prompt has no Focus turn head. Its visible owner result rows
   still appear.
 
-  The client advances the read position only while Focus is selected, the conversation
+  The client advances the read position while either lens is selected, the conversation
   pane is open, the document is visible, and the window has focus. It advances through
   the newest delivered row that this browser received, even when a newer conversation
   snapshot arrived first. The client checks document focus again for each advance, so a
@@ -163,9 +164,7 @@ One screen per part of the system:
   The stages and their workflow remain the Ticket's Worker type's, derived from the
   served manifest (see below and `worker-types.md`). Guidance and the archive stay off
   this page. Review still shows Guidance with an approval. The current Stage mark speaks without a second status pill.
-  Its summary adds words only where the mark would otherwise be ambiguous:
-  **you're on it** for user-owned or taken-over work, with **Release**, and
-  **awaiting approval** for a parked proposal. Running,
+  Its summary adds **awaiting approval** for a parked proposal. Running,
   completed, and upcoming marks need no
   extra label. Stage bodies, editing and approval behavior, and the worker conversation
   in serif along the bottom remain in place. During pristine Kickoff, the approval context also shows a restrained
@@ -204,8 +203,7 @@ One screen per part of the system:
   skill at `#/config/sprint-item-supervisor`, Worker skill at `#/config/worker-skill`,
   and a Worker at
   `#/config/workers/<worker-type>`. Those detail screens provide the applicable
-  launch defaults, suggested Kickoff ceiling controls, Stage ownership controls, and
-  skill editors. Worker and skill
+  launch defaults, a read-only Stage ownership table, and skill editors. Worker and skill
   identities and lifecycle structure stay read-only. Each editable value saves
   independently; a failed save keeps the attempted value and a useful error so it can
   be corrected or retried. The former `#/agents/worker-skill` and

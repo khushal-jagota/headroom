@@ -22,7 +22,6 @@ import {
   turnEndingSentence,
   workingSentence,
   PROMPT_DISCARDED_SENTENCE,
-  PROPOSAL_DELIVERY_FAILED_SENTENCE,
   TURN_STOPPED_SENTENCE
 } from "./transcript";
 import type { ToolCallRow, TranscriptRow } from "./transcript";
@@ -188,11 +187,6 @@ function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Happened |
       return {
         who: senderOf(row.senderLabel, ownSenderLabel),
         text: "delivery uncertain · do not resend"
-      };
-    case "proposal_delivery_failed":
-      return {
-        who: null,
-        text: `${PROPOSAL_DELIVERY_FAILED_SENTENCE} after ${row.attemptCount} attempts`
       };
     case "prompt_discarded":
       return { who: senderOf(row.senderLabel, ownSenderLabel), text: PROMPT_DISCARDED_SENTENCE };

@@ -4,5 +4,5 @@ import type { ConversationState } from "./conversationState";
 export function initialTicketConversationState(
   effectiveOwnership: string | null | undefined
 ): ConversationState {
-  return effectiveOwnership === "paired" ? "opened" : "rest";
+  return effectiveOwnership === "user" ? "opened" : "rest";
 }

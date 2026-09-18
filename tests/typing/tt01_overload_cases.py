@@ -54,11 +54,9 @@ def _cases(
     )
     assert_type(ticket.pending_proposal is not None, bool)
     assert_type(
-        machine.effective_stage_ownership_mode(
+        machine.stage_ownership_mode(
             stage,
-            ticket.stage_ownership_overrides,
             worker_type_definition=definition,
-            default_stage_ownership_mode=ticket.default_stage_ownership_mode,
         ),
         StageOwnershipMode | None,
     )

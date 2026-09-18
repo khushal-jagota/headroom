@@ -117,8 +117,22 @@ class TurnToken:
 
 
 @dataclass(frozen=True, slots=True)
+class BackendPromptAccepted:
+    """The backend started the turn and reports which core composition reached it.
+
+    A native control route sends the sender's exact command instead of ``content``. The
+    core uses this fact to avoid reply debt for a requirement that did not reach the
+    agent.
+    """
+
+    composed_content_delivered: bool
+
+
+@dataclass(frozen=True, slots=True)
 class BackendSteerAccepted:
     """The provider admitted the message to the exact turn that the token names."""
+
+    composed_content_delivered: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +145,8 @@ class BackendSteerRefused:
 @dataclass(frozen=True, slots=True)
 class BackendSteerUncertain:
     """The adapter cannot prove admission or non-admission after the attempt."""
+
+    composed_content_delivered: bool = True
 
 
 type BackendSteerOutcome = BackendSteerAccepted | BackendSteerRefused | BackendSteerUncertain
@@ -355,19 +371,21 @@ class BackendChild(Protocol):
         turn_token: TurnToken,
         content: MessageContent,
         *,
-        sender_content: MessageContent,
         sender_label: str,
+        sender_content: MessageContent,
+        sender_message_count: int = 1,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
-    ) -> None:
+    ) -> BackendPromptAccepted:
         """Start a turn with this message, on these values.
 
         ``content`` is the complete message after the core adds conversation-owned
         material such as the first-prompt role envelope. ``sender_content`` is the exact
-        message the sender wrote. An adapter uses sender content to resolve a catalog
-        command and sends that exact command through the backend's command route.
+        content for this delivery. ``sender_message_count`` says how many separately
+        authored messages it contains. An adapter uses these facts to resolve a catalog
+        command and sends an exact single-message command through the backend's route.
 
         **Every piece goes over the wire, or none of it does.** The core has already
         refused a message carrying a piece this backend cannot be handed, so an adapter
@@ -383,6 +401,9 @@ class BackendChild(Protocol):
         wire content. ``mode`` travels through backend metadata where that channel exists.
         A catalog command keeps its exact leading slash token instead of becoming a model
         prompt, and automatic maintenance keeps its exact backend command.
+
+        Return whether the complete core-composed ``content`` reached the backend. A
+        native control route returns false because it sends exact ``sender_content``.
 
         The change and the prompt are one operation because they are one act: the message
         carries the change, so **a change must not stand if the write does not**. How that
@@ -404,7 +425,12 @@ class BackendChild(Protocol):
         """
 
     async def steer(
-        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+        self,
+        turn_token: TurnToken,
+        content: MessageContent,
+        *,
+        sender_content: MessageContent | None = None,
+        sender_label: str,
     ) -> BackendSteerOutcome:
         """Try to admit a message to the exact turn named by ``turn_token``.
 

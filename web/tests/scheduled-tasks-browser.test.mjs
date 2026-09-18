@@ -41,7 +41,7 @@ try {
       worker_type: "coding",
       label: "Coding",
       stages: [],
-      dropped: { id: "dropped", label: "Dropped", gating_field: null, is_terminal: true, default_ownership_mode: null },
+      dropped: { id: "dropped", label: "Dropped", gating_field: null, is_terminal: true, ownership_mode: null },
       advance: {},
       fields: [],
       ceiling_range: [],

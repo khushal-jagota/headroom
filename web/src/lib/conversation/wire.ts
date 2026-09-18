@@ -248,10 +248,6 @@ export type ConversationEvent =
       } & AddressedMessageFields
     >
   | Row<
-      "proposal_delivery_failed",
-      { attempt_count: number; last_error: string; sender_message_id: string }
-    >
-  | Row<
       "prompt_discarded",
       StoredMessageContent & { sender_label: string; sender_message_id?: string }
         & AddressedMessageFields

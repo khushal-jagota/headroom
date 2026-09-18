@@ -52,7 +52,7 @@ describe("Sprint ticket conditions", () => {
     [ticket({ stage: "done", ticket_status: "errored" }), "completed", "done"],
     [ticket({ ticket_status: "blocked" }), "errored", "blocked"],
     [ticket({ ticket_status: "errored", agent_state: "errored" }), "errored", "errored"],
-    [ticket({ assigned: true }), "current-paired", "assigned"],
+    [ticket({ assigned: true }), "current-assigned", "assigned"],
     [ticket({ ticket_status: "awaiting_approval", awaiting_approval: true }), "current-awaiting-approval", "to review"],
     [ticket({ awaiting_reply: true }), "needs-me", "need you"],
     [ticket({ ticket_status: "agent", agent_state: "working" }), "current-running", "working"],

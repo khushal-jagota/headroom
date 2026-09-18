@@ -1,7 +1,7 @@
 """Replace generic links with the explicit Ticket-blocks-Ticket relationship.
 
 Revision ID: ticket_blocks
-Revises: proposal_delivery_failures
+Revises: two_ownership_modes
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "ticket_blocks"
-down_revision = "proposal_delivery_failures"
+down_revision = "two_ownership_modes"
 branch_labels = None
 depends_on = None
 

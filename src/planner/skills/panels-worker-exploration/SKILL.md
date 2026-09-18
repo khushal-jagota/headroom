@@ -14,10 +14,10 @@ Adjust the depth of Understanding, Research, and Answer to the ticket. Keep disc
 The sequence is **Kickoff → Understanding → Research Plan → Research → Answer → Follow-up → Closeout → Done**.
 
 - **needs_kickoff** — preserve the premise and intake context without inventing the solution.
-- **needs_understanding** — establish the shared frame and purpose through paired discussion.
+- **needs_understanding** — establish the shared frame and purpose through collaborative discussion.
 - **needs_research_plan** — decide what evidence will answer the real questions and when research is sufficient.
 - **needs_research** — discover, vet, and synthesize the evidence.
-- **needs_answer** — reach and record the answer through paired discussion.
+- **needs_answer** — reach and record the answer through collaborative discussion.
 - **needs_follow_up** — propose only consequences supported by the approved answer.
 - **needs_closeout** — perform and verify exactly the approved follow-up.
 - **done** — finished.
@@ -29,7 +29,7 @@ A good **kickoff** keeps the user's wording, source context, boundaries, and unc
 
 ### needs_understanding — establish the shared frame
 
-This is paired work. Use a small, purposeful set of questions to establish:
+This is user-owned collaborative work. Use a small, purposeful set of questions to establish:
 
 - the root problem and the user's actual intent;
 - relevant constraints and what is already known;
@@ -61,7 +61,7 @@ Use sketches, prototypes, or tests only when the plan calls for them as evidence
 
 ### needs_answer — reach the durable answer
 
-This is paired work. Use the research to facilitate the user's judgment: explain tradeoffs, test interpretations, and keep unresolved choices visible. Do not choose for the user or turn the first recommendation into a foregone conclusion. Continue the discussion until the shared answer is ready to preserve formally.
+This is user-owned collaborative work. Use the research to facilitate the user's judgment: explain tradeoffs, test interpretations, and keep unresolved choices visible. Do not choose for the user or turn the first recommendation into a foregone conclusion. Continue the discussion until the shared answer is ready to preserve formally.
 
 A good **answer** states:
 

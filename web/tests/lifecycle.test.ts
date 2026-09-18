@@ -24,49 +24,49 @@ const codingManifest = {
       label: "Kickoff",
       gating_field: "kickoff",
       is_terminal: false,
-      default_ownership_mode: "worker"
+      ownership_mode: "worker"
     },
     {
       id: "needs_success",
       label: "Success",
       gating_field: "success",
       is_terminal: false,
-      default_ownership_mode: "worker"
+      ownership_mode: "worker"
     },
     {
       id: "needs_approach",
       label: "Approach",
       gating_field: "approach",
       is_terminal: false,
-      default_ownership_mode: "user"
+      ownership_mode: "user"
     },
     {
       id: "needs_plan",
       label: "Plan",
       gating_field: "plan",
       is_terminal: false,
-      default_ownership_mode: "paired"
+      ownership_mode: "user"
     },
     {
       id: "needs_implementation",
       label: "Implementation",
       gating_field: "implementation",
       is_terminal: false,
-      default_ownership_mode: "worker"
+      ownership_mode: "worker"
     },
     {
       id: "needs_closeout",
       label: "Closeout",
       gating_field: "closeout",
       is_terminal: false,
-      default_ownership_mode: "worker"
+      ownership_mode: "worker"
     },
     {
       id: "done",
       label: "Done",
       gating_field: null,
       is_terminal: true,
-      default_ownership_mode: null
+      ownership_mode: null
     }
   ],
   dropped: {
@@ -74,7 +74,7 @@ const codingManifest = {
     label: "Dropped",
     gating_field: null,
     is_terminal: true,
-    default_ownership_mode: null
+    ownership_mode: null
   },
   advance: {
     needs_kickoff: "needs_success",
@@ -116,28 +116,28 @@ const researchManifest = {
       label: "Brief",
       gating_field: "brief",
       is_terminal: false,
-      default_ownership_mode: "user"
+      ownership_mode: "user"
     },
     {
       id: "needs_findings",
       label: "Findings",
       gating_field: "findings",
       is_terminal: false,
-      default_ownership_mode: "paired"
+      ownership_mode: "user"
     },
     {
       id: "needs_writeup",
       label: "Writeup",
       gating_field: "writeup",
       is_terminal: false,
-      default_ownership_mode: "worker"
+      ownership_mode: "worker"
     },
     {
       id: "done",
       label: "Done",
       gating_field: null,
       is_terminal: true,
-      default_ownership_mode: null
+      ownership_mode: null
     }
   ],
   dropped: {
@@ -145,7 +145,7 @@ const researchManifest = {
     label: "Dropped",
     gating_field: null,
     is_terminal: true,
-    default_ownership_mode: null
+    ownership_mode: null
   },
   advance: {
     needs_brief: "needs_findings",
@@ -184,16 +184,11 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     ceiling: "done",
     ceiling_holder: { kind: "owner", id: "owner" },
     at_cap: "propose",
-    suggested_next_ceiling: "needs_success",
     priority: "P1",
     resolved_priority_anchors: {
       sprint_item: null,
       project: null
     },
-    backend_error: null,
-    stage_ownership_overrides: {},
-    default_stage_ownership_mode: "worker",
-    effective_stage_ownership_mode: "worker",
     conversation_id: null,
     conversation_history: [],
     verdict: null,
@@ -251,11 +246,11 @@ describe("coding lifecycle", () => {
       needs_implementation: "needs_closeout",
       needs_closeout: "done"
     });
-    expect(codingLifecycle.stageDefaultOwnershipMode).toEqual({
+    expect(codingLifecycle.stageOwnershipMode).toEqual({
       needs_kickoff: "worker",
       needs_success: "worker",
       needs_approach: "user",
-      needs_plan: "paired",
+      needs_plan: "user",
       needs_implementation: "worker",
       needs_closeout: "worker",
       done: null
@@ -279,6 +274,11 @@ describe("coding lifecycle", () => {
     ]);
   });
 
+  it("derives the approval ceiling from the stage after the newly entered Stage", () => {
+    expect(preferredScopeCeilingFor(codingLifecycle, "needs_success")).toBe("needs_approach");
+    expect(preferredScopeCeilingFor(codingLifecycle, "done")).toBe("done");
+  });
+
   it("reads the Ticket's one pending proposal", () => {
     expect(
       fieldStageVisualStateFor(
@@ -297,7 +297,6 @@ describe("coding lifecycle", () => {
   });
 
   it("formats Ticket status text", () => {
-    expect(ticketStatusText("paired")).toBe("paired");
     expect(ticketStatusText("awaiting_approval")).toBe("awaiting approval");
   });
 
@@ -352,9 +351,9 @@ describe("manifest-driven Worker types", () => {
       needs_findings: "needs_writeup",
       needs_writeup: "done"
     });
-    expect(lifecycle.stageDefaultOwnershipMode).toEqual({
+    expect(lifecycle.stageOwnershipMode).toEqual({
       needs_brief: "user",
-      needs_findings: "paired",
+      needs_findings: "user",
       needs_writeup: "worker",
       done: null
     });

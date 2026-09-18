@@ -23,7 +23,6 @@ from planner.conversation.contracts import require_conversation_backend_key
 from planner.core.contracts import ErrorCode, JsonDict, PlannerError
 from planner.skill_sources import ensure_managed_panels_skills, panels_skill_root
 from planner.skill_versions import capture_skill_version
-from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_settings.contracts import (
     ManagedChiefSettings,
     ManagedSkill,
@@ -110,10 +109,6 @@ def _last_good_worker_dir(root: Path, worker_type: str) -> Path:
 
 def _candidate_skill_path(root: Path, worker_type: str) -> Path:
     return root / CANDIDATES_DIR_NAME / worker_type / SKILL_FILE_NAME
-
-
-def _candidate_settings_path(root: Path, worker_type: str) -> Path:
-    return root / CANDIDATES_DIR_NAME / worker_type / SETTINGS_FILE_NAME
 
 
 def _worker_settings_lock(root: Path, worker_type: str) -> threading.RLock:
@@ -264,16 +259,8 @@ def save_skill(
 
 
 def _bootstrap_settings_payload(definition: WorkerTypeDefinition) -> JsonDict:
-    suggested_next_ceiling = definition.advance_target(definition.default_ceiling())
-    assert suggested_next_ceiling is not None
     return {
         "worker_type": definition.worker_type,
-        "suggested_next_ceiling": suggested_next_ceiling,
-        "stage_ownership_defaults": {
-            stage.id: stage.default_ownership_mode.value
-            for stage in definition.stages
-            if not stage.is_terminal and stage.default_ownership_mode is not None
-        },
         "launch_defaults": _launch_defaults_payload(
             ManagedWorkerLaunchDefaults(
                 employee_backend=definition.worker_profile.default_backend,
@@ -395,43 +382,6 @@ def _settings_launch_defaults(
     return launch_defaults
 
 
-def _validate_suggested_next_ceiling(
-    raw: object, definition: WorkerTypeDefinition
-) -> str:
-    if not isinstance(raw, str):
-        raise PlannerError(
-            ErrorCode.validation,
-            "suggested next ceiling must be a string",
-            {"worker_type": definition.worker_type},
-        )
-    valid_later_ceilings = definition.ceiling_range()[1:]
-    if raw not in valid_later_ceilings:
-        raise PlannerError(
-            ErrorCode.validation,
-            "suggested next ceiling must be a later Worker stage",
-            {
-                "worker_type": definition.worker_type,
-                "suggested_next_ceiling": raw,
-            },
-        )
-    return raw
-
-
-def _settings_suggested_next_ceiling(
-    settings_path: Path,
-    settings_payload: JsonDict,
-    definition: WorkerTypeDefinition,
-) -> str:
-    if "suggested_next_ceiling" not in settings_payload:
-        stored = definition.advance_target(definition.default_ceiling())
-        assert stored is not None
-        settings_payload["suggested_next_ceiling"] = stored
-        _atomic_replace_json(settings_path, settings_payload)
-    else:
-        stored = settings_payload["suggested_next_ceiling"]
-    return _validate_suggested_next_ceiling(stored, definition)
-
-
 def _ensure_bootstrapped(root: Path, definition: WorkerTypeDefinition) -> None:
     worker_type = definition.worker_type
     worker_dir = root / worker_type
@@ -465,64 +415,13 @@ def _load_json_object(path: Path) -> JsonDict:
     return payload
 
 
-def _validate_settings_payload(
-    payload: JsonDict, definition: WorkerTypeDefinition
-) -> dict[str, StageOwnershipMode]:
+def _validate_settings_payload(payload: JsonDict, definition: WorkerTypeDefinition) -> None:
     if payload.get("worker_type") != definition.worker_type:
         raise PlannerError(
             ErrorCode.validation,
             "managed worker settings have the wrong worker type",
             {"worker_type": payload.get("worker_type"), "expected": definition.worker_type},
         )
-    raw_defaults = payload.get("stage_ownership_defaults")
-    if not isinstance(raw_defaults, dict):
-        raise PlannerError(
-            ErrorCode.validation,
-            "stage ownership defaults must be an object",
-            {"worker_type": definition.worker_type},
-        )
-    editable_stage_ids = {stage.id for stage in definition.stages if not stage.is_terminal}
-    terminal_stage_ids = {
-        stage.id for stage in (*definition.stages, definition.dropped_stage) if stage.is_terminal
-    }
-    defaults: dict[str, StageOwnershipMode] = {}
-    for stage_id, raw_mode in raw_defaults.items():
-        if not isinstance(stage_id, str):
-            raise PlannerError(ErrorCode.validation, "stage id must be a string", {})
-        if stage_id in terminal_stage_ids:
-            raise PlannerError(
-                ErrorCode.validation,
-                "terminal stage cannot have ownership",
-                {"stage": stage_id},
-            )
-        if stage_id not in editable_stage_ids:
-            raise PlannerError(
-                ErrorCode.validation,
-                "unknown worker stage",
-                {"worker_type": definition.worker_type, "stage": stage_id},
-            )
-        if not isinstance(raw_mode, str):
-            raise PlannerError(
-                ErrorCode.validation,
-                "stage ownership mode must be a string",
-                {"stage": stage_id},
-            )
-        try:
-            defaults[stage_id] = StageOwnershipMode(raw_mode)
-        except ValueError:
-            raise PlannerError(
-                ErrorCode.validation,
-                "invalid stage ownership mode",
-                {"stage": stage_id, "ownership_mode": raw_mode},
-            ) from None
-    missing = sorted(editable_stage_ids - set(defaults))
-    if missing:
-        raise PlannerError(
-            ErrorCode.validation,
-            "managed worker settings are missing stage defaults",
-            {"worker_type": definition.worker_type, "stages": missing},
-        )
-    return defaults
 
 
 def _reconcile_settings_payload(
@@ -532,29 +431,15 @@ def _reconcile_settings_payload(
 ) -> JsonDict:
     """Bring a stored settings revision back in line with the running definition.
 
-    Stored settings outlive the app version that wrote them, so a stage rename,
-    removal, or addition can leave a file the definition no longer describes.
-    Undeclared stage keys are dropped, omitted stages are filled from the
-    definition, and a stale suggested next ceiling is clamped. An unreadable
-    ownership mode is left alone for validation to report.
+    Managed settings contain only the Worker identity and launch defaults. Older
+    revisions can contain ownership and ceiling policy. Reconciliation removes
+    those legacy keys before validation, recovery, or a later write preserves them.
     """
     if payload.get("worker_type") != definition.worker_type:
         return payload
-    raw_defaults = payload.get("stage_ownership_defaults")
-    if not isinstance(raw_defaults, dict):
-        return payload
-    reconciled_defaults: JsonDict = {
-        stage.id: raw_defaults.get(stage.id, stage.default_ownership_mode.value)
-        for stage in definition.stages
-        if not stage.is_terminal and stage.default_ownership_mode is not None
-    }
-    reconciled = dict(payload)
-    reconciled["stage_ownership_defaults"] = reconciled_defaults
-    stored_ceiling = payload.get("suggested_next_ceiling")
-    if not isinstance(stored_ceiling, str) or stored_ceiling not in definition.ceiling_range()[1:]:
-        bootstrap_ceiling = definition.advance_target(definition.default_ceiling())
-        assert bootstrap_ceiling is not None
-        reconciled["suggested_next_ceiling"] = bootstrap_ceiling
+    reconciled: JsonDict = {"worker_type": definition.worker_type}
+    if "launch_defaults" in payload:
+        reconciled["launch_defaults"] = payload["launch_defaults"]
     if reconciled == payload:
         return payload
     _atomic_replace_json(path, reconciled)
@@ -708,12 +593,9 @@ def _read_settings_with_recovery(
             _load_json_object(settings_path),
             definition,
         )
-        defaults = _validate_settings_payload(settings_payload, definition)
+        _validate_settings_payload(settings_payload, definition)
         launch_defaults = _settings_launch_defaults(
             settings_path, settings_payload, definition.worker_profile
-        )
-        suggested_next_ceiling = _settings_suggested_next_ceiling(
-            settings_path, settings_payload, definition
         )
         skill_path = _managed_skill_path(root.parent, definition.worker_profile.specialist_skill)
         if not skill_path.is_file():
@@ -729,12 +611,9 @@ def _read_settings_with_recovery(
             _load_json_object(settings_path),
             definition,
         )
-        defaults = _validate_settings_payload(settings_payload, definition)
+        _validate_settings_payload(settings_payload, definition)
         launch_defaults = _settings_launch_defaults(
             settings_path, settings_payload, definition.worker_profile
-        )
-        suggested_next_ceiling = _settings_suggested_next_ceiling(
-            settings_path, settings_payload, definition
         )
         skill_path = _managed_skill_path(root.parent, definition.worker_profile.specialist_skill)
         skill_text = skill_path.read_text(encoding="utf-8")
@@ -743,8 +622,6 @@ def _read_settings_with_recovery(
 
     return ManagedWorkerSettings(
         worker_type=definition.worker_type,
-        suggested_next_ceiling=suggested_next_ceiling,
-        stage_ownership_defaults=defaults,
         specialist_skill=skill,
         launch_defaults=launch_defaults,
         candidate_specialist_skill=None,
@@ -764,19 +641,6 @@ def read_worker_settings(
         return settings
 
 
-def read_stage_default_ownership_for_ticket_entry(
-    configured_database_parent: Path | str,
-    registry: WorkerTypeRegistry,
-    worker_type: str,
-    stage: str,
-) -> StageOwnershipMode | None:
-    definition = registry.require(worker_type)
-    if definition.is_terminal(stage):
-        return None
-    settings = read_worker_settings(configured_database_parent, registry, worker_type)
-    return settings.stage_ownership_defaults[stage]
-
-
 def read_worker_management_index(
     configured_database_parent: Path | str,
     registry: WorkerTypeRegistry,
@@ -790,8 +654,6 @@ def read_worker_management_index(
                 worker_type=worker_type,
                 label=definition.label,
                 specialist_skill_name=definition.worker_profile.specialist_skill,
-                suggested_next_ceiling=settings.suggested_next_ceiling,
-                stage_ownership_defaults=settings.stage_ownership_defaults,
                 launch_defaults=settings.launch_defaults,
             )
         )
@@ -874,14 +736,10 @@ def update_worker_launch_defaults(
     definition = registry.require(worker_type)
     root = managed_worker_settings_root(configured_database_parent)
     with _worker_settings_lock(root, worker_type):
-        current = _read_settings_with_recovery(root, definition)
+        _read_settings_with_recovery(root, definition)
         launch_defaults = _validate_launch_defaults(payload)
         settings_payload: JsonDict = {
             "worker_type": worker_type,
-            "suggested_next_ceiling": current.suggested_next_ceiling,
-            "stage_ownership_defaults": {
-                key: mode.value for key, mode in sorted(current.stage_ownership_defaults.items())
-            },
             "launch_defaults": _launch_defaults_payload(launch_defaults),
         }
         snapshot = _PathSnapshot(_settings_path(root, worker_type))
@@ -925,39 +783,6 @@ def update_chief_launch_defaults(
             CHIEF_SKILL_NAME,
         )
         return ManagedChiefSettings(CHIEF_SETTINGS_KEY, CHIEF_LABEL, skill, launch_defaults)
-
-
-def update_suggested_next_ceiling(
-    configured_database_parent: Path | str,
-    registry: WorkerTypeRegistry,
-    worker_type: str,
-    suggested_next_ceiling: object,
-    *,
-    after_publish: Callable[[], None] | None = None,
-) -> ManagedWorkerSettings:
-    definition = registry.require(worker_type)
-    root = managed_worker_settings_root(configured_database_parent)
-    with _worker_settings_lock(root, worker_type):
-        current = _read_settings_with_recovery(root, definition)
-        validated = _validate_suggested_next_ceiling(suggested_next_ceiling, definition)
-        payload: JsonDict = {
-            "worker_type": worker_type,
-            "suggested_next_ceiling": validated,
-            "stage_ownership_defaults": {
-                key: mode.value
-                for key, mode in sorted(current.stage_ownership_defaults.items())
-            },
-            "launch_defaults": _launch_defaults_payload(current.launch_defaults),
-        }
-        snapshot = _PathSnapshot(_settings_path(root, worker_type))
-        try:
-            _atomic_replace_json(_settings_path(root, worker_type), payload)
-            if after_publish is not None:
-                after_publish()
-        except Exception:
-            snapshot.restore()
-            raise
-        return _read_settings_with_recovery(root, definition)
 
 
 def save_chief_skill(
@@ -1023,53 +848,6 @@ def read_worker_launch_defaults_for_ticket_creation(
             profile.default_reasoning_effort,
         )
     return read_worker_settings(parent, registry, worker_type).launch_defaults
-
-
-def update_stage_default_ownership(
-    configured_database_parent: Path | str,
-    registry: WorkerTypeRegistry,
-    worker_type: str,
-    stage: str,
-    ownership_mode: StageOwnershipMode,
-    *,
-    after_publish: Callable[[], None] | None = None,
-) -> ManagedWorkerSettings:
-    definition = registry.require(worker_type)
-    if not definition.is_known_stage(stage):
-        raise PlannerError(
-            ErrorCode.not_found,
-            "worker stage not found",
-            {"worker_type": worker_type, "stage": stage},
-        )
-    if definition.is_terminal(stage):
-        raise PlannerError(
-            ErrorCode.validation,
-            "terminal stage cannot have ownership",
-            {"worker_type": worker_type, "stage": stage},
-        )
-    root = managed_worker_settings_root(configured_database_parent)
-    with _worker_settings_lock(root, worker_type):
-        current = _read_settings_with_recovery(root, definition)
-        defaults = dict(current.stage_ownership_defaults)
-        defaults[stage] = ownership_mode
-        payload: JsonDict = {
-            "worker_type": worker_type,
-            "suggested_next_ceiling": current.suggested_next_ceiling,
-            "stage_ownership_defaults": {key: mode.value for key, mode in sorted(defaults.items())},
-            "launch_defaults": _launch_defaults_payload(current.launch_defaults),
-        }
-        _validate_settings_payload(payload, definition)
-        _atomic_replace_json(_candidate_settings_path(root, worker_type), payload)
-        _backup_last_known_good(root, worker_type)
-        settings_snapshot = _PathSnapshot(_settings_path(root, worker_type))
-        try:
-            _atomic_replace_json(_settings_path(root, worker_type), payload)
-            if after_publish is not None:
-                after_publish()
-        except Exception:
-            settings_snapshot.restore()
-            raise
-        return _read_settings_with_recovery(root, definition)
 
 
 def save_specialist_skill(

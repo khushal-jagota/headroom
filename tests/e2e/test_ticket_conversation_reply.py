@@ -1,9 +1,10 @@
 """A person answering a Ticket's worker, in the browser where they answer it.
 
 A Ticket parked on a filed proposal is waiting for its owner. Replying to the worker is
-an answer of a kind — the proposal is being discussed rather than approved — so the
-Ticket moves to paired. The ticket screen is the one place that knows both halves, and it
-says a reply happened only once the conversation has taken the message.
+an answer of a kind — the proposal is being discussed rather than approved. The Ticket
+remains awaiting approval while its reply attention records the discussion. The ticket
+screen is the one place that knows both halves, and it says a reply happened only once
+the conversation has taken the message.
 
 No agent is involved and none is needed. The send is held inside the page and answered
 with whatever fate this test chooses, so nothing is ever spawned. Everything else is real
@@ -25,7 +26,11 @@ from tests.e2e.harness import REPO_ROOT, WAIT_MS, ApiHelper, JsonObject, ServerH
 from tests.e2e.test_dev_conversation_pane import HOLD_THE_SEND
 from tests.support.principals import OWNER_PRINCIPAL
 
-from planner.conversation.backends.contracts import BackendSteerAccepted, BackendSteerOutcome
+from planner.conversation.backends.contracts import (
+    BackendPromptAccepted,
+    BackendSteerAccepted,
+    BackendSteerOutcome,
+)
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core import server as server_module
 from planner.core.clock import build_clock
@@ -47,8 +52,10 @@ class _AcceptingBackendChild:
     async def start(self, _resolved_start: object, *, vendor_session_cursor: str | None) -> None:
         del vendor_session_cursor
 
-    async def write_prompt(self, *_args: object, **_kwargs: object) -> None:
-        return None
+    async def write_prompt(
+        self, *_args: object, **_kwargs: object
+    ) -> BackendPromptAccepted:
+        return BackendPromptAccepted(composed_content_delivered=True)
 
     async def steer(self, *_args: object, **_kwargs: object) -> BackendSteerOutcome:
         return BackendSteerAccepted()

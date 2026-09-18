@@ -206,7 +206,7 @@ export type BlockerSummary = {
   blocked_by: BlockedByTicket[];
 };
 
-export type StageOwnershipMode = "worker" | "user" | "paired";
+export type StageOwnershipMode = "worker" | "user";
 
 export type ManagedSkill = {
   name: string;
@@ -219,8 +219,6 @@ export type WorkerManagementSummary = {
   worker_type: string;
   label: string;
   specialist_skill_name: string;
-  suggested_next_ceiling: string;
-  stage_ownership_defaults: Record<string, StageOwnershipMode>;
   launch_defaults: EmployeeConfigurationSnapshot;
 };
 
@@ -243,8 +241,6 @@ export type ChiefManagementSettings = {
 
 export type WorkerManagementSettings = {
   worker_type: string;
-  suggested_next_ceiling: string;
-  stage_ownership_defaults: Record<string, StageOwnershipMode>;
   specialist_skill: ManagedSkill;
   launch_defaults: EmployeeConfigurationSnapshot;
   candidate_specialist_skill?: ManagedSkill;
@@ -285,7 +281,6 @@ export type TicketDetail = {
   ceiling: string;
   ceiling_holder: Principal;
   at_cap: AtCap;
-  suggested_next_ceiling: string;
   priority: string;
   deadline?: string | null;
   project_id?: string | null;
@@ -295,10 +290,6 @@ export type TicketDetail = {
   sprint_item_id?: string | null;
   resolved_priority_anchors: ResolvedTicketPriorityAnchors;
   ticket_status?: string;
-  backend_error: string | null;
-  stage_ownership_overrides: Record<string, StageOwnershipMode>;
-  default_stage_ownership_mode: StageOwnershipMode | null;
-  effective_stage_ownership_mode: StageOwnershipMode | null;
   conversation_id: string | null;
   conversation_history: TicketConversationHistoryEntry[];
   day_ids?: string[];
@@ -483,7 +474,6 @@ export type BoardCard = WorkAttention & {
   activity_at: number;
   has_pending_proposal: boolean;
   ticket_status: string;
-  backend_error: string | null;
   worker_type: string;
   employee_backend: string;
   stage: string;

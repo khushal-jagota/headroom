@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { initialTicketConversationState } from "../src/lib/conversation/ticketConversationState";
 
 describe("Ticket conversation state", () => {
-  it("opens a paired Ticket conversation", () => {
-    expect(initialTicketConversationState("paired")).toBe("opened");
+  it("opens a user-owned Ticket conversation", () => {
+    expect(initialTicketConversationState("user")).toBe("opened");
   });
 
   it.each(["empty", "agent", "awaiting_approval", "needs_user", "blocked", "done"])(

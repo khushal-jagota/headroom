@@ -47,64 +47,13 @@ verification.
 
 ## Work completed outside Panels
 
-Use `panels chief` only when the user reports that real work was already completed outside Panels and the record now needs to match that reality.
+Record completed external work through ordinary Ticket operations. Search current Tickets first, and update an aligned Ticket instead of creating a duplicate.
 
-Before creating a new external-work Ticket, load and follow
-`panels-ticket-creation`. The creation model applies, while this section remains
-authoritative for whether external-work import is allowed and for its settled prefix,
-provenance, and follow-through.
+If no aligned Ticket exists, load and follow `panels-ticket-creation`. Create the Ticket with `panels ticket create`, then use ordinary field, recap, placement, scope, and Day operations. Use `panels ticket set-value <ticket-id> <field>` only for the unset gate of the current user-owned Stage or a settled earlier value. Panels does not support bulk field prefixes or arbitrary Stage jumps.
 
-Before running a `panels chief` command, export `PLAN_ACTOR=chief` so the CLI sends the required Chief identity. Without it, the server rejects the request as an unattributed actor.
+Preserve the user's report in Kickoff and recap text. If an existing Worker type no longer contains a live Ticket's Stage, use an explicit repository migration with that Worker change. Do not repair it through the product API.
 
-1. Search the current tickets first. Reconcile an existing aligned ticket rather than creating a duplicate.
-2. Use `panels chief reconcile-ticket-from-external-work <ticket-id> --stage <id>` for
-   an existing Ticket, or `panels chief create-ticket-from-external-work --worker-type
-   <id> --stage <id>` when no aligned Ticket exists.
-3. Preserve the user's report and your reconciliation reasoning in the complete Kickoff field value passed with `--kickoff-note-file`. When reconciling, include any existing Kickoff value that must remain.
-4. Supply the exact settled field prefix required by the target Stage. Valid Stages
-   depend on the Ticket's Worker type — for `coding`: `needs_success`,
-   `needs_approach`, `needs_plan`, `needs_implementation`, `needs_closeout`, `done`.
-   Use repeatable `--field-file FIELD=PATH` for definition-specific fields, including
-   fields belonging to non-coding Worker types. The named `--success-file`,
-   `--approach-file`, `--plan-file`, `--implementation-file`, and `--closeout-file`
-   options remain conveniences for coding fields. Never supply the same field more than
-   once, whether through two `--field-file` options or through both forms. For example,
-   external `new_worker` work settled through Runtime Defaults can be created at Drafting
-   with the complete `understanding → stages → thinking → runtime_defaults` prefix:
-
-   ```sh
-   panels chief create-ticket-from-external-work \
-     --title "Add a research worker" \
-     --worker-type new_worker \
-     --stage needs_drafting \
-     --kickoff-note-file /tmp/kickoff.md \
-     --field-file understanding=/tmp/understanding.md \
-     --field-file stages=/tmp/stages.md \
-     --field-file thinking=/tmp/thinking.md \
-     --field-file runtime_defaults=/tmp/runtime-defaults.md \
-     --json
-   ```
-
-   Always provide the complete settled prefix for the requested Stage. Do not infer that
-   a field belongs to a Worker type or that a prefix is valid from these examples; Panels'
-   API response is authoritative.
-   External intake moves the ceiling to that Stage and preserves an explicit Stop;
-   otherwise Propose remains. The entered Stage's effective ownership determines where
-   the Ticket rests. The intake does not create proposals or imitate worker progress.
-5. Ordinary creation atomically puts a new external-work Ticket on today. For a
-   reconciled existing Ticket, add it to today unless the user explicitly wants it off
-   the roster. If a newly created Ticket should be off today, remove it from the Day as
-   a separate follow-up; backlog placement is an independent choice.
-6. Read the resulting Ticket header with `panels ticket show <id> --json`. Use
-   `panels day list-tickets --json` for today placement. Report the Ticket id,
-   resulting Stage, and today placement.
-
-Do not use these commands for ordinary Ticket edits, convenient Stage jumps, or work a
-Ticket worker is doing inside Panels. Clear ambiguity with the user instead of
-importing a claim you cannot reconcile confidently.
-
-When creating a Ticket that relies on existing Tickets being complete, pass each
-prerequisite Ticket id with repeatable `--blocked-by <ticket-id>`.
+When a Ticket relies on existing Tickets being complete, pass each prerequisite Ticket id with repeatable `--blocked-by <ticket-id>`.
 
 ## Authority boundary
 
@@ -183,7 +132,7 @@ committed work, capture an idea instead of over-structuring it.
 
 Use the `research` Worker type when the user wants a bounded question answered with
 evidence. The question must already be framed, because this worker plans its evidence
-path, researches, and hands back a sourced synthesis without a paired conversation. It
+path, researches, and hands back a sourced synthesis without a collaborative conversation. It
 does not decide or implement. When the question itself is still undefined, use
 `exploration` instead.
 

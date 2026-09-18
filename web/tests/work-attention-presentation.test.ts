@@ -84,14 +84,14 @@ describe("shared work-attention precedence", () => {
       agent_state: "idle"
     };
 
-    expect(sprintTicketCondition(facts).mark).toBe("current-paired");
-    expect(ticketStatusGroupKey(facts)).toBe("current-paired");
+    expect(sprintTicketCondition(facts).mark).toBe("current-assigned");
+    expect(ticketStatusGroupKey(facts)).toBe("current-assigned");
     expect(workspaceCardGroupKey(boardCard("t_attention", assignedAndReply))).toBe("assigned");
     expect(dayVisualTicket(dayTicket)).toMatchObject({
       group: "assigned",
       state: "needs-me"
     });
-    expect(feedbackTicketStageState(feedbackTicket)).toBe("current-paired");
+    expect(feedbackTicketStageState(feedbackTicket)).toBe("current-assigned");
     expect(feedbackTicketStateLabel(feedbackTicket)).toBe("Assigned");
   });
 

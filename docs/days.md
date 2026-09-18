@@ -31,7 +31,7 @@ literal summaries of the Tickets on the Day:
 
 The Home page combines the morning orientation with live Ticket progress. It shows one
 mark per Ticket and action tiles for work that needs the user, needs review, is working,
-is paired, or is done. The tiles lead to Review or Workspace. The page does not edit the
+is assigned to the user, or is done. The tiles lead to Review or Workspace. The page does not edit the
 Day fields or show the Midday reconciliation.
 
 The four morning fields and Midday reconciliation remain canonical Day data. Their

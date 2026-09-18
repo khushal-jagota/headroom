@@ -23,7 +23,6 @@ class AtCap(StrEnum):  # §4.3
 class StageOwnershipMode(StrEnum):
     worker = "worker"
     user = "user"
-    paired = "paired"
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +69,6 @@ class BoardCard(TypedDict):
     activity_at: int
     has_pending_proposal: bool
     ticket_status: str
-    backend_error: str | None
     worker_type: str
     employee_backend: str
     stage: str
@@ -146,8 +144,7 @@ class ScopePair:  # required on every direct accept/edit-accept
 
 # --- request bodies (§9 wire shapes) ---
 # Most legacy bodies below are partial wire shapes: an absent key takes its documented
-# default and unknown keys are ignored. External-work bodies are intentionally strict:
-# required keys are encoded here and their API marshal rejects unknown keys.
+# default and unknown keys are ignored.
 
 
 class CreateTicketBody(TypedDict, total=False):  # POST /tickets
@@ -180,26 +177,6 @@ class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     project_id: str | None
     sprint_id: str | None
     sprint_item_id: str | None
-
-
-class ReconcileTicketFromExternalWorkBody(TypedDict):
-    stage: str
-    kickoff_note: str
-    recap: NotRequired[str]
-
-
-class CreateTicketFromExternalWorkBody(ReconcileTicketFromExternalWorkBody):
-    title: str
-    worker_type: str
-    employee_backend: NotRequired[str]
-    employee_launch_model: NotRequired[str]
-    priority: NotRequired[str | None]
-    deadline: NotRequired[str | None]
-    project: NotRequired[str | None]
-    project_id: NotRequired[str | None]
-    sprint_id: NotRequired[str | None]
-    sprint_item_id: NotRequired[str | None]
-    blocked_by_ticket_ids: NotRequired[list[str]]
 
 
 class ProposeWithRecapBody(TypedDict, total=False):  # POST /tickets/{id}/propose
@@ -287,12 +264,7 @@ class Ticket:  # §3.3 — column names match exactly
     # Monotonic status-transition identity used by notifications and worker claims.
     # Unlike the timestamp, it cannot collide when two transitions share a second.
     ticket_status_revision: int
-    backend_error: str | None  # concrete confirmed backend Worker failure, else NULL
-    stage_ownership_overrides: Mapping[str, StageOwnershipMode]
-    default_stage_ownership_mode: StageOwnershipMode | None
-    effective_stage_ownership_mode: StageOwnershipMode | None
     conversation_id: str | None  # the Ticket's conversation link (column name is frozen)
-    alias: str | None  # migration "Ticket ID:" (§12), unique when present
     field_values: TicketFieldValues
     pending_proposal: PendingTicketProposal | None
     archived_field_content: str

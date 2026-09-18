@@ -1,8 +1,8 @@
 # Systems
 
 Panels is one canonical planning record with several narrow ways to act on it. The
-browser is the main human surface. The CLI serves direct actions, Ticket Workers, and
-the Chief. A separate conversation system runs the AI agents.
+browser is the main human surface. The CLI serves direct actions and Ticket Workers.
+A separate conversation system runs the AI agents, including the Chief conversation.
 
 ```
 human browser ───────────────┐
@@ -10,7 +10,7 @@ direct CLI ──────────────────┼──► do
                              │                                      │
 Ticket Worker ─► proposal resolver                                 │ commit
 planning Worker ─► guarded Day or Sprint writer                    ▼
-Chief ───────────► external-work reconciliation             change signal
+direct user ─────► user-owned Ticket gate                    change signal
                                                                     │
                          ┌──────────────────────────────────────────┤
                          ▼                                          ▼
@@ -23,7 +23,7 @@ Chief ───────────► external-work reconciliation         
 The proposal resolver is the only door for gated Ticket field values and Stage
 advances. It is not the only writer in Panels. Ordinary direct actions have their own
 domain writers. Three planning Worker types receive narrow Day or Sprint write authority
-for their Closeout. The Chief has explicit operations for importing external work.
+for their Closeout. A direct user can settle the current user-owned Ticket gate.
 
 ## The systems
 
@@ -76,21 +76,22 @@ _Code paths:_ `src/planner/days/`, `src/planner/sprints/`,
 
 ### 3. Tickets, gates, and Worker types
 
-A Ticket's Worker type declares its ordered Stages, gated fields, default Stage
+A Ticket's Worker type declares its ordered Stages, gated fields, Stage
 ownership, specialist skill, and launch defaults. Eleven Worker types ship, including
 coding, planning, design, debugging, general, and user-owned personal work. The browser
 gets the same registry manifest that the server uses.
 
 Workers propose gated Ticket fields. The proposal resolver alone settles one of those
 values and advances the Stage. Scope controls how far worker-owned Stages can advance.
-Ownership says whether the worker, user, or both drive the current Stage. A paired Stage
-gets one automatic opening turn and then continues in the same Ticket conversation.
+Ownership says whether the worker or user drives the current Stage. A user-owned Stage
+gets one automatic opening turn, then continues collaboratively in the same conversation.
 
 Ticket status is separate control state: `empty`, `blocked`, `agent`,
 `awaiting_approval`, or `errored`. One shared list projection derives whether work
 awaits Khushal's reply, awaits approval, is assigned to Khushal, and whether the agent
-is working, idle, or errored. Review contains today's owner-addressed proposals and
-non-owner proposals whose alerts reached the terminal refusal limit.
+is working, idle, or errored. Review contains today's owner-addressed proposals. Non-owner
+holders inspect canonical Ticket state through the normal Chief, Sprint Item, and Ticket
+views; no proposal wake, retry, failure surfacing, or owner fallback remains.
 Addressed help messages stay in conversation and appear through the same attention facts.
 
 Read **Tickets & the gates** (`tickets-and-gates.md`) and **Worker types**
@@ -117,14 +118,14 @@ _Code paths:_ `src/planner/scheduled_tickets/` and `src/planner/core/loops.py`.
 ### 5. Worker orchestration
 
 The readiness loop examines today's Tickets and applies one complete, read-only
-decision. A Ticket must be on today, non-terminal, worker or paired owned, `empty`,
+decision. A Ticket must be on today, non-terminal, and ready for its declared ownership,
 within scope, free of a parked proposal, and clear for its Closeout lane. The
 conversation system supplies the one fact the record cannot: whether that Ticket's
 worker is already busy.
 
 One guarded status flip out of `empty` is the claim. There is no claim stamp or run row.
-Paired claims also record one opener fact for the current Stage entry. An accepted
-paired opener returns the status to `empty`, while readiness uses the fact to prevent a
+User-owned claims also record one opener fact for the current Stage entry. An accepted
+opening turn returns the status to `empty`, while readiness uses the fact to prevent a
 repeat. Panels then starts or reuses the Ticket conversation and sends the Stage
 instruction with pending Worker context. Started and queued both count as delivered.
 Refusal releases every claim and removes any tentative opener fact.
@@ -181,7 +182,7 @@ _Code paths:_ `web/src/`, `assets/`, and `web/dist/`.
 
 `panels` speaks HTTP to the server. Ordinary groups manage Days, Projects, Sprints,
 Tickets, schedules, and environments. `worker` files Ticket proposals, recaps, notes,
-and help requests. `chief` performs only bounded external-work intake.
+and help requests. The Chief remains a conversation principal, not a Ticket write group.
 
 Every request resolves to one principal: the owner, Chief, a Sprint Item, or a Ticket.
 An unattributed browser request resolves to the owner. Direct-only operations reject
