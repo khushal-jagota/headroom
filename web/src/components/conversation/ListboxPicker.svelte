@@ -16,6 +16,7 @@
     items,
     selectedValue,
     disabled = false,
+    selectionDisabled = disabled,
     keepOpenWhenDisabled = false,
     label,
     listLabel = label,
@@ -38,6 +39,7 @@
     items: readonly ListboxPickerItem[];
     selectedValue: string | null;
     disabled?: boolean;
+    selectionDisabled?: boolean;
     keepOpenWhenDisabled?: boolean;
     label: string;
     listLabel?: string;
@@ -93,11 +95,6 @@
 
   controller = { close, focusList, setActiveValue };
 
-  $effect(() => {
-    if (!open) return;
-    list?.focus();
-  });
-
   // Hold focus on the picker until its disabled trigger can receive it again.
   $effect.pre(() => {
     if (disabled && open && !keepOpenWhenDisabled) {
@@ -109,8 +106,9 @@
 
   $effect(() => {
     if (disabled || !returnFocusWhenEnabled) return;
+    const focusRemainsInside = root?.contains(document.activeElement) ?? false;
     returnFocusWhenEnabled = false;
-    trigger?.focus();
+    if (focusRemainsInside) trigger?.focus();
   });
 
   $effect(() => {
@@ -130,14 +128,15 @@
   async function openPanel(): Promise<void> {
     if (disabled) return;
     onOpen?.();
-    open = true;
     await tick();
     activeIndex = Math.max(0, items.findIndex((item) => item.value === selectedValue));
+    open = true;
+    await tick();
     list?.focus();
   }
 
   function choose(value: string): void {
-    if (disabled) return;
+    if (disabled || selectionDisabled) return;
     onChoose(value);
   }
 
@@ -243,7 +242,7 @@
     bind:this={trigger}
     aria-haspopup="listbox"
     aria-expanded={open}
-    aria-controls={listId}
+    aria-controls={open ? listId : undefined}
     aria-label={label}
     {disabled}
     onkeydown={onTriggerKeydown}
@@ -272,7 +271,6 @@
       {#if beforeList}{@render beforeList()}{/if}
       <div
         class="listbox-picker-list"
-        class:model-picker-list={kind === "model"}
         bind:this={list}
         id={listId}
         role="listbox"
@@ -291,7 +289,7 @@
             role="option"
             tabindex="-1"
             aria-selected={item.value === selectedValue}
-            disabled={disabled}
+            disabled={selectionDisabled}
             data-listbox-picker-value={item.value}
             data-listbox-picker-active={index === active ? "true" : undefined}
             onmouseenter={() => (activeIndex = index)}

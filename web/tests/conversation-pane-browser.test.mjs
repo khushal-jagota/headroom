@@ -27,6 +27,7 @@ try {
   await writeFile(
     hostPath,
     String.raw`<script lang="ts">
+  import { tick } from "svelte";
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
   import type { ConversationState } from "../src/lib/conversation/conversationState";
 
@@ -147,6 +148,10 @@ try {
   };
   (window as any).__setComposerDisabled = (disabled: boolean) => {
     composerDisabled = disabled;
+  };
+  (window as any).__settle = async () => {
+    await tick();
+    await tick();
   };
   (window as any).__showSettledFocusRestLine = () => {
     rows = [
@@ -413,11 +418,13 @@ with sync_playwright() as playwright:
     send_mode_trigger = page.locator("[data-conversation-send-mode-trigger]")
     assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Steer"
     assert send_mode_trigger.get_attribute("aria-expanded") == "false"
+    assert send_mode_trigger.get_attribute("aria-controls") is None
 
     # The model chooser uses the same one-tab-stop shell and focus contract.
     model_picker = page.locator("[data-conversation-model-picker]")
     model_trigger = model_picker.locator("[data-conversation-picker-trigger]")
     model_label = model_trigger.get_attribute("aria-label")
+    assert model_trigger.get_attribute("aria-controls") is None
     model_trigger.press("ArrowDown")
     page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
     model_controlled = model_trigger.get_attribute("aria-controls")
@@ -433,12 +440,14 @@ with sync_playwright() as playwright:
     model_trigger.press("ArrowDown")
     page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
     model_picker.get_by_role("listbox").press("Home")
+    page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=opus]')?.getAttribute('data-conversation-picker-active') === 'true'")
     model_picker.get_by_role("listbox").press(" ")
     page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('opus')")
     assert "opus" in model_trigger.get_attribute("aria-label").lower()
     model_trigger.press("ArrowDown")
     page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
     model_picker.get_by_role("listbox").press("End")
+    page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=sonnet]')?.getAttribute('data-conversation-picker-active') === 'true'")
     model_picker.get_by_role("listbox").press("Enter")
     page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('sonnet')")
     assert "sonnet" in model_trigger.get_attribute("aria-label").lower()
@@ -473,6 +482,7 @@ with sync_playwright() as playwright:
     assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Steer"
     send_mode_panel.press("Escape")
     assert page.locator("[data-conversation-send-mode-panel]").count() == 0
+    assert send_mode_trigger.get_attribute("aria-controls") is None
     assert send_mode_trigger.evaluate("button => document.activeElement === button") is True
 
     send_mode_trigger.press("ArrowDown")
@@ -494,7 +504,9 @@ with sync_playwright() as playwright:
     send_mode_trigger.click()
     page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
     send_mode.get_by_role("listbox").press("Home")
+    page.wait_for_function("document.querySelector('[data-conversation-send-mode] [data-conversation-send-mode-choice=steer]')?.getAttribute('data-listbox-picker-active') === 'true'")
     send_mode.get_by_role("listbox").press("ArrowDown")
+    page.wait_for_function("document.querySelector('[data-conversation-send-mode] [data-conversation-send-mode-choice=queue]')?.getAttribute('data-listbox-picker-active') === 'true'")
     send_mode.get_by_role("listbox").press(" ")
     page.wait_for_function("document.querySelector('[data-conversation-send-mode-trigger]')?.getAttribute('aria-label') === 'Message delivery mode: Queue'")
     assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Queue"
@@ -516,6 +528,19 @@ with sync_playwright() as playwright:
     page.evaluate("window.__setComposerDisabled(false)")
     assert not send_mode_trigger.is_disabled()
     page.wait_for_function("document.activeElement?.hasAttribute('data-conversation-send-mode-trigger')")
+
+    # Re-enabling returns focus only while focus remains within the disabled picker.
+    send_mode_trigger.click()
+    page.evaluate("window.__setComposerDisabled(true)")
+    page.wait_for_function("document.querySelector('[data-conversation-send-mode]') === document.activeElement")
+    unrelated_control = page.locator("[data-ticket-behind]")
+    unrelated_control.focus()
+    assert unrelated_control.evaluate("control => document.activeElement === control") is True
+    page.evaluate("window.__setComposerDisabled(false)")
+    page.wait_for_function("!document.querySelector('[data-conversation-send-mode-trigger]').disabled")
+    page.evaluate("window.__settle()")
+    active_after_enable = page.evaluate("document.activeElement?.outerHTML")
+    assert unrelated_control.evaluate("control => document.activeElement === control") is True, active_after_enable
     send_mode_trigger.click()
     page.locator('[data-conversation-send-mode-choice="queue"]').click()
 

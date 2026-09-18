@@ -63,7 +63,7 @@
   let rows = $derived((showing === "models" ? view.models : view.efforts) as readonly ListboxPickerItem[]);
   let chosenValue = $derived(showing === "models" ? view.modelValue : view.reasoningEffort);
   let foot = $derived(feedback ?? view.staleModelReason);
-  let pickerDisabled = $derived(disabled || refreshing);
+  let pickerBusy = $derived(disabled || refreshing);
   let refreshControl = $derived(backendRefreshControl(refreshing));
 
   function snapshotFor(key: ConversationBackendKey): BackendSnapshot | null {
@@ -157,14 +157,15 @@
 <ListboxPicker
   items={rows}
   selectedValue={chosenValue}
-  disabled={pickerDisabled}
+  {disabled}
+  selectionDisabled={pickerBusy}
   {keepOpenWhenDisabled}
   label={`${label}: ${view.backendName} ${view.face}`.trim()}
   listLabel={showing === "models" ? "Models" : "Reasoning efforts"}
   kind="model"
   {below}
   attributes={{ "data-conversation-model-picker": "", ...attributes }}
-  panelBusy={pickerDisabled}
+  panelBusy={pickerBusy}
   bind:controller={picker}
   triggerAttributes={{ "data-conversation-picker-trigger": "" }}
   panelAttributes={{ "data-conversation-picker-panel": "" }}
@@ -196,7 +197,7 @@
             data-conversation-backend-showing={backend.selected ? "true" : undefined}
             aria-pressed={backend.selected && showing === "models"}
             aria-disabled={backend.unavailableReason !== null}
-            disabled={pickerDisabled}
+            disabled={pickerBusy}
             tabindex="-1"
             data-listbox-picker-action
             onmousedown={(event) => event.preventDefault()}
@@ -215,7 +216,7 @@
             class="model-picker-rail-row"
             data-conversation-picker-refresh
             aria-busy={refreshControl.busy}
-            disabled={pickerDisabled}
+            disabled={pickerBusy}
             tabindex="-1"
             data-listbox-picker-action
             onmousedown={(event) => event.preventDefault()}
@@ -232,7 +233,7 @@
             data-conversation-picker-reasoning
             aria-pressed={showing === "efforts"}
             aria-disabled={view.reasoningUnavailableReason !== null}
-            disabled={pickerDisabled}
+            disabled={pickerBusy}
             tabindex="-1"
             data-listbox-picker-action
             onmousedown={(event) => event.preventDefault()}
