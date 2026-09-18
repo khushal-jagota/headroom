@@ -393,12 +393,10 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         ticket_status=TicketStatus(row["ticket_status"]),
         ticket_status_changed_at=int(row["ticket_status_changed_at"]),
         ticket_status_revision=int(row["ticket_status_revision"]),
-        backend_error=(str(row["backend_error"]) if row["backend_error"] is not None else None),
         stage_ownership_overrides=overrides,
         default_stage_ownership_mode=default_ownership,
         effective_stage_ownership_mode=effective_ownership,
         conversation_id=row["conversation_id"],
-        alias=row["alias"],
         field_values=fields_codec.values_from_json(
             row["field_values"], worker_type_definition.field_ids()
         ),
@@ -713,27 +711,21 @@ def _write_ticket_status(
     ticket_id: str,
     ticket_status: TicketStatus,
     now: int,
-    *,
-    error: str | None = None,
 ) -> None:
     # The one write door also carries the stand-in: a caller asking for `empty` on a
     # Ticket with a live blocker durably lands on `blocked`.
     ticket_status = _blocked_standin(conn, ticket_id, ticket_status)
-    backend_error = error if ticket_status is TicketStatus.errored else None
-    if ticket_status is TicketStatus.errored and not backend_error:
-        raise ValueError("errored Ticket status requires a concrete backend error")
     # ticket_status_changed_at answers "how long has this Ticket been where it is",
     # so it moves only when the value really moves — rewriting the same status is not a
     # change. The CASE keeps that comparison against the stored row, in the one write.
     conn.execute(
-        "UPDATE tickets SET ticket_status = ?, backend_error = ?, updated_at = ?, "
+        "UPDATE tickets SET ticket_status = ?, updated_at = ?, "
         "ticket_status_changed_at = CASE WHEN ticket_status = ? "
         "THEN ticket_status_changed_at ELSE ? END, "
         "ticket_status_revision = CASE WHEN ticket_status = ? "
         "THEN ticket_status_revision ELSE ticket_status_revision + 1 END WHERE id = ?",
         (
             ticket_status.value,
-            backend_error,
             now,
             ticket_status.value,
             now,
@@ -1117,9 +1109,9 @@ def create_ticket(
             "project_id, sprint_id, sprint_item_id, "
             "recap, ceiling, ceiling_holder, at_cap, "
             "ticket_status, stage_ownership_overrides, default_stage_ownership_mode, "
-            "conversation_id, alias, field_values, pending_proposal, created_at, updated_at, "
+            "conversation_id, field_values, pending_proposal, created_at, updated_at, "
             "ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, NULL, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, NULL, "
             "?, ?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1241,9 +1233,9 @@ def create_ticket_from_external_work(
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_id, sprint_item_id, "
             "recap, ceiling, ceiling_holder, at_cap, ticket_status, stage_ownership_overrides, "
-            "default_stage_ownership_mode, conversation_id, alias, field_values, "
+            "default_stage_ownership_mode, conversation_id, field_values, "
             "created_at, updated_at, ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, NULL, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, NULL, "
             "?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1548,12 +1540,11 @@ def mark_ticket_errored(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    error: str,
     now: int,
 ) -> Ticket:
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
-        _write_ticket_status(conn, ticket_id, TicketStatus.errored, now, error=error)
+        _write_ticket_status(conn, ticket_id, TicketStatus.errored, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 

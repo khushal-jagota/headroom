@@ -190,7 +190,6 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
       sprint_item: null,
       project: null
     },
-    backend_error: null,
     stage_ownership_overrides: {},
     default_stage_ownership_mode: "worker",
     effective_stage_ownership_mode: "worker",

@@ -102,7 +102,6 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         },
         "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
-        "backend_error": ticket.backend_error,
         "stage_ownership_overrides": {
             stage: mode.value for stage, mode in ticket.stage_ownership_overrides.items()
         },
@@ -117,7 +116,6 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
             else None
         ),
         "conversation_id": ticket.conversation_id,
-        "alias": ticket.alias,
         "field_values": dict(ticket.field_values),
         "pending_proposal": asdict(ticket.pending_proposal)
         if ticket.pending_proposal is not None
@@ -430,7 +428,6 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "tickets.conversation_id, "
         "tickets.ticket_status, "
         "tickets.ceiling, tickets.at_cap, "
-        "tickets.backend_error, "
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
@@ -489,9 +486,6 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "activity_at": int(row["updated_at"]),
             "has_pending_proposal": row["pending_proposal"] is not None,
             "ticket_status": ticket_status,
-            "backend_error": (
-                str(row["backend_error"]) if row["backend_error"] is not None else None
-            ),
             "worker_type": worker_type,
             "employee_backend": str(row["employee_backend"]),
             "stage": stage,

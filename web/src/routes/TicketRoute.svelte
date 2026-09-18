@@ -506,11 +506,6 @@
               {/each}
             </div>
           {/if}
-          {#if detail.backend_error}
-            <div class="ticket-backend-error" data-backend-error role="alert">
-              {detail.backend_error}
-            </div>
-          {/if}
           {#if headerError}<ErrorLine error={headerError} />{/if}
         </header>
 

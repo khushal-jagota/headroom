@@ -30,6 +30,7 @@ from planner.sprints import service as sprints_service
 from planner.sprints import supervisor_service
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
+from planner.tickets.contracts import TicketStatus
 from planner.worker_context import data as context_data
 
 _OWNER_HOLDER = {"kind": "owner", "id": "owner"}
@@ -826,7 +827,6 @@ def test_restart_clears_an_explicit_error_and_starts_again(tmp_path: Path) -> No
             tickets_data.mark_ticket_errored(
                 conn,
                 ticket_id,
-                error="The previous start failed.",
                 now=1,
             )
         response = client.post(
@@ -842,7 +842,7 @@ def test_restart_clears_an_explicit_error_and_starts_again(tmp_path: Path) -> No
     assert body["killed_conversation_id"] == "conv-dead-worker"
     with connect(str(db_path)) as conn:
         restarted = tickets_data.read_ticket(conn, ticket_id)
-    assert restarted.backend_error is None
+    assert restarted.ticket_status is TicketStatus.agent
 
 
 def test_restart_refuses_a_stage_the_worker_does_not_own(tmp_path: Path) -> None:

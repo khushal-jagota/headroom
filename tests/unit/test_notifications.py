@@ -107,7 +107,7 @@ def test_status_projection_policy_and_delivery_are_exact_once(tmp_path: Path) ->
         now=1,
     )
 
-    tickets_data.mark_ticket_errored(conn, ticket.id, error="backend stopped", now=2)
+    tickets_data.mark_ticket_errored(conn, ticket.id, now=2)
     notifications_data.project_facts(conn)
     assert notifications_data.apply_policy(conn, 2) == 1
     assert notifications_data.apply_policy(conn, 2) == 0
@@ -364,9 +364,9 @@ def test_error_fact_repeats_only_after_explicit_restart_clears_it(tmp_path: Path
     ticket = _ticket(conn, 1)
     notifications_data.project_facts(conn)
 
-    tickets_data.mark_ticket_errored(conn, ticket.id, error="first", now=2)
+    tickets_data.mark_ticket_errored(conn, ticket.id, now=2)
     tickets_data.clear_ticket_error_for_restart(conn, ticket.id, now=3)
-    tickets_data.mark_ticket_errored(conn, ticket.id, error="second", now=4)
+    tickets_data.mark_ticket_errored(conn, ticket.id, now=4)
     notifications_data.project_facts(conn)
 
     assert [
@@ -577,7 +577,7 @@ def test_policy_resolves_the_same_type_independently_by_subject(tmp_path: Path) 
     create_schema(conn)
     ticket = _ticket(conn, 1)
     notifications_data.project_facts(conn)
-    tickets_data.mark_ticket_errored(conn, ticket.id, error="stopped", now=2)
+    tickets_data.mark_ticket_errored(conn, ticket.id, now=2)
     conn.execute(
         "INSERT INTO conversations"
         "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
@@ -615,7 +615,7 @@ def test_policy_suppresses_a_legacy_arbitrary_agent_fact_and_continues(
     create_schema(conn)
     ticket = _ticket(conn, 1)
     notifications_data.project_facts(conn)
-    tickets_data.mark_ticket_errored(conn, ticket.id, error="stopped", now=2)
+    tickets_data.mark_ticket_errored(conn, ticket.id, now=2)
     notifications_data.project_facts(conn)
     conn.execute("INSERT INTO agents(agent_key) VALUES ('reviewer')")
     conn.execute(
@@ -656,7 +656,7 @@ def test_typed_subject_foreign_keys_reject_invalid_rows_and_cascade_full_graph(
         auth="auth-value",
         now=1,
     )
-    tickets_data.mark_ticket_errored(conn, ticket.id, error="stopped", now=2)
+    tickets_data.mark_ticket_errored(conn, ticket.id, now=2)
     conn.execute(
         "INSERT INTO conversations"
         "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "

@@ -389,7 +389,6 @@ def test_tenth_refusal_visibility_is_retried_after_later_ticket_changes(
     ticket = tickets_data.read_ticket(tmp_db, ticket_id)
     assert _wake_state(tmp_db, ticket_id) == "failed"
     assert ticket.ticket_status is TicketStatus.awaiting_approval
-    assert ticket.backend_error is None
     assert ticket.ceiling_holder == CHIEF_PRINCIPAL
     assert len(wake_data.unrecorded_proposal_delivery_failures(tmp_db, ticket_id=ticket_id)) == 1
 
@@ -499,7 +498,6 @@ def test_owner_acceptance_clears_surfacing_without_leaving_an_error(
     assert accepted.stage == "needs_approach"
     assert accepted.pending_proposal is None
     assert accepted.ticket_status is TicketStatus.empty
-    assert accepted.backend_error is None
     assert not wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
     attention = tmp_db.execute(
         "SELECT active FROM notification_attention_state "
@@ -567,7 +565,6 @@ def test_owner_acceptance_after_failed_alert_can_enter_user_owned_stage(
 
     assert accepted.stage == "needs_approach"
     assert accepted.ticket_status is TicketStatus.empty
-    assert accepted.backend_error is None
 
 
 def test_owner_acceptance_after_failed_alert_can_finish_the_ticket(
@@ -602,7 +599,6 @@ def test_owner_acceptance_after_failed_alert_can_finish_the_ticket(
 
     assert accepted.stage == "done"
     assert accepted.ticket_status is TicketStatus.empty
-    assert accepted.backend_error is None
 
 
 def test_queued_wake_stays_claimed_until_durable_replay_settles_it(
@@ -834,7 +830,6 @@ def test_owner_rejection_of_surfaced_proposal_sends_only_canonical_messages(
 
     ticket = tickets_data.read_ticket(tmp_db, ticket_id)
     assert ticket.ticket_status is TicketStatus.agent
-    assert ticket.backend_error is None
     assert not wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
     assert (
         tmp_db.execute(
