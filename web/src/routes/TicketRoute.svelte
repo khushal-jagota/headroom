@@ -314,12 +314,11 @@
 
   async function removeBlocker(blockerTicketId: string): Promise<void> {
     headerError = null;
-    const query = new URLSearchParams({
-      blocking_ticket_id: blockerTicketId,
-      blocked_ticket_id: stableId
-    });
     try {
-      await mutateJson(`/api/ticket-blocks?${query.toString()}`, { method: "DELETE" });
+      await mutateJson(
+        `/api/collections/blockers/${encodeURIComponent(stableId)}/${encodeURIComponent(blockerTicketId)}`,
+        { method: "DELETE" }
+      );
     } catch (err) {
       headerError = err;
     }

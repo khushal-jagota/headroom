@@ -226,11 +226,6 @@ class EmployeeConfigurationBody(TypedDict):
     employee_launch_reasoning_effort: str | None
 
 
-class TicketBlockBody(TypedDict, total=False):
-    blocking_ticket_id: str
-    blocked_ticket_id: str
-
-
 @dataclass
 class Ticket:  # §3.3 — column names match exactly
     id: str

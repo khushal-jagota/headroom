@@ -104,13 +104,7 @@ def test_ticket_block_api_validates_endpoints_duplicates_and_active_cycles(
     fifth = _create_ticket(db_path, title="Fifth")
 
     def add(client: TestClient, blocking: str, blocked: str) -> Any:
-        return client.post(
-            "/api/ticket-blocks",
-            json={
-                "blocking_ticket_id": blocking,
-                "blocked_ticket_id": blocked,
-            },
-        )
+        return client.put(f"/api/collections/blockers/{blocked}/{blocking}")
 
     with TestClient(app) as client:
         missing_blocker = add(client, "t_missing", first)
@@ -138,8 +132,10 @@ def test_ticket_block_api_validates_endpoints_duplicates_and_active_cycles(
     assert self_block.status_code == 400
     assert self_block.json()["error"]["code"] == "ticket_block_invalid"
     assert created.json() == {
-        "blocking_ticket_id": first,
-        "blocked_ticket_id": second,
+        "collection": "blockers",
+        "container_id": second,
+        "member_id": first,
+        "ok": True,
     }
     assert duplicate.status_code == 400
     assert duplicate.json()["error"]["code"] == "ticket_block_invalid"
