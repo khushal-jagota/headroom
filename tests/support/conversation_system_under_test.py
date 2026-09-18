@@ -320,8 +320,8 @@ class _CountedChild:
         turn_token: TurnToken,
         content: MessageContent,
         *,
-        sender_content: MessageContent,
         sender_label: str,
+        sender_content: MessageContent,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
@@ -343,13 +343,23 @@ class _CountedChild:
         self._conversation.expected_prompt_writes += 1
 
     async def steer(
-        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+        self,
+        turn_token: TurnToken,
+        content: MessageContent,
+        *,
+        sender_content: MessageContent | None = None,
+        sender_label: str,
     ) -> BackendSteerOutcome:
         if self._conversation.known_prewrite_failure:
             return BackendSteerRefused(
                 PromptDeliveryRefusalReason.write_to_backend_failed
             )
-        return await self._child.steer(turn_token, content, sender_label=sender_label)
+        return await self._child.steer(
+            turn_token,
+            content,
+            sender_label=sender_label,
+            sender_content=sender_content,
+        )
 
     async def cancel_running_turn(self) -> None:
         await self._child.cancel_running_turn()

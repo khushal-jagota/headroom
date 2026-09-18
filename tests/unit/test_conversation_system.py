@@ -241,8 +241,8 @@ class _FakeBackendChild:
         turn_token: TurnToken,
         content: MessageContent,
         *,
-        sender_content: MessageContent,
         sender_label: str,
+        sender_content: MessageContent,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
@@ -293,8 +293,14 @@ class _FakeBackendChild:
                 await asyncio.sleep(0)
 
     async def steer(
-        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+        self,
+        turn_token: TurnToken,
+        content: MessageContent,
+        *,
+        sender_content: MessageContent | None = None,
+        sender_label: str,
     ) -> BackendSteerOutcome:
+        del sender_content
         del sender_label
         if self._backend.steer_has_begun is not None:
             self._backend.steer_has_begun.set()
@@ -751,7 +757,8 @@ def test_queued_holder_wake_does_not_block_durable_rejection(
             "Your proposal was rejected and returned for revision. "
             "The decider's comment follows."
         )
-        assert written[1].startswith("Add evidence.\n\n[Authenticated Panels reply requirement]")
+        assert written[1].startswith("[Authenticated Panels reply requirement]")
+        assert written[1].endswith("Add evidence.")
         assert f"panels send-message --ticket {holder_ticket.id}" in written[1]
         conn.close()
 
@@ -938,9 +945,8 @@ def test_uncertain_rejection_fact_settles_and_later_rejections_continue(
             "Your proposal was rejected and returned for revision. "
             "The decider's comment follows."
         )
-        assert first_writes[1].startswith(
-            "First comment.\n\n[Authenticated Panels reply requirement]"
-        )
+        assert first_writes[1].startswith("[Authenticated Panels reply requirement]")
+        assert first_writes[1].endswith("First comment.")
         assert "panels send-message --owner" in first_writes[1]
         assert wake_data.due_ticket_ids(conn, now=clock.now_unix()) == ()
 
@@ -988,12 +994,12 @@ def test_uncertain_rejection_fact_settles_and_later_rejections_continue(
             "Your proposal was rejected and returned for revision. "
             "The decider's comment follows."
         )
-        assert final_writes[1].startswith("First comment.")
+        assert final_writes[1].endswith("First comment.")
         assert final_writes[2] == (
             "Your proposal was rejected and returned for revision. "
             "The decider's comment follows."
         )
-        assert final_writes[3].startswith("Second comment.")
+        assert final_writes[3].endswith("Second comment.")
         assert all("panels send-message --owner" in text for text in final_writes[1::2])
         assert wake_data.due_ticket_ids(conn, now=clock.now_unix()) == ()
         conn.close()
@@ -1170,6 +1176,15 @@ def test_an_addressed_new_prompt_gets_a_runtime_only_reply_directive(
         assert turn is not None
         assert await harness.system.turn_expects_reply(turn, OWNER_PRINCIPAL) is True
         await harness.system.record_explicit_reply(turn, OWNER_PRINCIPAL)
+        assert await harness.system.turn_expects_reply(turn, OWNER_PRINCIPAL) is False
+        await harness.complete_turn("c")
+        await harness.system.send(
+            "c",
+            text_message_content("new turn"),
+            sender_label="owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=recipient,
+        )
         assert await harness.system.turn_expects_reply(turn, OWNER_PRINCIPAL) is False
 
     _run(exercise)
@@ -1628,6 +1643,7 @@ def test_a_provider_refused_steer_falls_back_to_one_queued_message(
             PromptDeliveryRefusalReason.backend_rejected_steer
         )
         content = text_message_content("refused steer")
+        recipient = Principal(PrincipalKind.ticket, "t_worker")
 
         first = await harness.system.send_with_receipt(
             "c",
@@ -1635,6 +1651,8 @@ def test_a_provider_refused_steer_falls_back_to_one_queued_message(
             sender_label="owner",
             mode=PromptDeliveryMode.steer,
             sender_message_id="refused-id",
+            sender=OWNER_PRINCIPAL,
+            recipient=recipient,
         )
         duplicate = await harness.system.send_with_receipt(
             "c",
@@ -1642,6 +1660,9 @@ def test_a_provider_refused_steer_falls_back_to_one_queued_message(
             sender_label="owner",
             mode=PromptDeliveryMode.steer,
             sender_message_id="refused-id",
+            sender=OWNER_PRINCIPAL,
+            recipient=recipient,
+            reply_requested=False,
         )
 
         assert first.fate == PromptDeliveryQueued(queue_position=1)
@@ -2766,7 +2787,7 @@ def test_maintenance_releases_owner_and_worker_messages_in_order(
             await harness.confirm_compaction("c")
         await harness.complete_turn("c")
         released = harness.backend("c").written_texts()[-1]
-        assert released.startswith("owner message\n\nTicket t_worker:\nworker opener")
+        assert released.endswith("owner message\n\nTicket t_worker:\nworker opener")
         assert released.count("panels send-message --owner") == 1
         assert released.count("panels send-message --ticket t_worker") == 1
         assert released.count("owner message") == 1

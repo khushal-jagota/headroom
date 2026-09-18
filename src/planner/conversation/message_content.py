@@ -156,6 +156,49 @@ def sender_labeled_message_content(
     return prefix_message_content_text(content, f"{sender_label}:", "\n")
 
 
+def sender_labeled_composed_message_content(
+    content: MessageContent,
+    sender_content: MessageContent,
+    sender_label: str,
+) -> MessageContent:
+    """Label only the sender-authored suffix of core-composed wire content.
+
+    Conversation-owned role and delivery instructions stay before the authenticated
+    sender label. The agent's standing role contract can therefore distinguish them
+    from identical words inside the sender's content.
+    """
+    sender_piece_count = len(sender_content)
+    if sender_piece_count and content[-sender_piece_count:] == sender_content:
+        return (
+            *content[:-sender_piece_count],
+            *sender_labeled_message_content(sender_content, sender_label),
+        )
+    first_sender_piece = sender_content[0] if sender_content else None
+    first_composed_index = len(content) - sender_piece_count
+    first_composed_piece = (
+        content[first_composed_index]
+        if sender_piece_count and first_composed_index >= 0
+        else None
+    )
+    if (
+        isinstance(first_sender_piece, MessageText)
+        and bool(first_sender_piece.text)
+        and isinstance(first_composed_piece, MessageText)
+        and first_composed_piece.text.endswith(first_sender_piece.text)
+        and content[first_composed_index + 1 :] == sender_content[1:]
+    ):
+        conversation_prefix = first_composed_piece.text[: -len(first_sender_piece.text)]
+        labeled = sender_labeled_message_content(sender_content, sender_label)
+        labeled_first = labeled[0]
+        assert isinstance(labeled_first, MessageText)
+        return (
+            *content[:first_composed_index],
+            MessageText(f"{conversation_prefix}{labeled_first.text}"),
+            *labeled[1:],
+        )
+    raise ValueError("composed message does not end with its sender content")
+
+
 def message_content_starts_with_command(
     content: MessageContent, command_names: set[str] | frozenset[str]
 ) -> bool:

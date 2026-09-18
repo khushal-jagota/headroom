@@ -172,7 +172,7 @@ def test_the_start_requests_values_reach_the_child_process(tmp_path: Path) -> No
             )
 
             account = await subject.agent_account("c")
-            assert account["prompt_writes"][0]["text"] == f"owner:\n{ROLE_TEXT}\n\nhello"
+            assert account["prompt_writes"][0]["text"] == f"{ROLE_TEXT}\n\nowner:\nhello"
             assert account["prompt_writes"][0]["sender_label"] == "owner"
             assert account["prompt_writes"][0]["delivery_mode"] == "queue"
             assert Path(account["working_directory"]) == tmp_path.resolve()
@@ -200,7 +200,7 @@ def test_the_role_text_rides_the_first_prompt_and_no_other(tmp_path: Path) -> No
 
             account = await subject.agent_account("c")
             assert [write["text"] for write in account["prompt_writes"]] == [
-                f"owner:\n{ROLE_TEXT}\n\nfirst",
+                f"{ROLE_TEXT}\n\nowner:\nfirst",
                 "owner:\nsecond",
             ]
 
