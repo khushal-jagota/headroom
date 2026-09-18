@@ -74,10 +74,7 @@ def _ticket_rows(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sq
     placeholders = ",".join("?" for _ in ticket_ids)
     rows = conn.execute(
         "SELECT id, stage, worker_type, ticket_status, pending_proposal, ceiling_holder, "
-        "stage_ownership_overrides, default_stage_ownership_mode, conversation_id, "
-        "EXISTS (SELECT 1 FROM proposal_delivery_failures failure "
-        "WHERE failure.ticket_id=tickets.id AND failure.resolved_at IS NULL) "
-        "AS proposal_surfaced_to_owner "
+        "stage_ownership_overrides, default_stage_ownership_mode, conversation_id "
         f"FROM tickets WHERE id IN ({placeholders})",
         tuple(sorted(ticket_ids)),
     ).fetchall()
@@ -96,7 +93,7 @@ def _ticket_attention(
     awaiting_approval = (
         str(row["ticket_status"]) == TicketStatus.awaiting_approval.value
         and row["pending_proposal"] is not None
-        and (owner_holds_ceiling or bool(row["proposal_surfaced_to_owner"]))
+        and owner_holds_ceiling
     )
     awaiting_reply, running, last_turn_failed = conversation or (False, False, False)
     assigned = ticket_assignment_from_values(
@@ -113,9 +110,11 @@ def _ticket_attention(
     agent_state = (
         AgentState.working
         if running
-        else AgentState.errored
-        if str(row["ticket_status"]) == TicketStatus.errored.value or last_turn_failed
-        else AgentState.idle
+        else (
+            AgentState.errored
+            if str(row["ticket_status"]) == TicketStatus.errored.value or last_turn_failed
+            else AgentState.idle
+        )
     )
     return {
         "awaiting_reply": awaiting_reply,
@@ -149,9 +148,11 @@ def ticket_assignment_from_values(
     captured_default = (
         StageOwnershipMode(default_stage_ownership_mode)
         if default_stage_ownership_mode is not None
-        else None
-        if definition.is_terminal(stage)
-        else definition.stage_definition(stage).default_ownership_mode
+        else (
+            None
+            if definition.is_terminal(stage)
+            else definition.stage_definition(stage).default_ownership_mode
+        )
     )
     ownership = machine.effective_stage_ownership_mode(
         stage,
@@ -175,9 +176,11 @@ def _roll_up(children: Iterable[WorkAttention]) -> WorkAttention:
         "agent_state": (
             AgentState.working.value
             if AgentState.working.value in states
-            else AgentState.errored.value
-            if AgentState.errored.value in states
-            else AgentState.idle.value
+            else (
+                AgentState.errored.value
+                if AgentState.errored.value in states
+                else AgentState.idle.value
+            )
         ),
     }
 
@@ -232,9 +235,11 @@ async def add_work_attention(
     ticket_attention = {
         ticket_id: _ticket_attention(
             row,
-            conversations.get(str(row["conversation_id"]))
-            if row["conversation_id"] is not None
-            else None,
+            (
+                conversations.get(str(row["conversation_id"]))
+                if row["conversation_id"] is not None
+                else None
+            ),
         )
         for ticket_id, row in stored_tickets.items()
     }

@@ -89,8 +89,9 @@ gets one automatic opening turn and then continues in the same Ticket conversati
 Ticket status is separate control state: `empty`, `blocked`, `agent`,
 `awaiting_approval`, or `errored`. One shared list projection derives whether work
 awaits Khushal's reply, awaits approval, is assigned to Khushal, and whether the agent
-is working, idle, or errored. Review contains today's owner-addressed proposals and
-non-owner proposals whose alerts reached the terminal refusal limit.
+is working, idle, or errored. Review contains today's owner-addressed proposals. Non-owner
+holders inspect canonical Ticket state through the normal Chief, Sprint Item, and Ticket
+views; no proposal wake, retry, failure surfacing, or owner fallback remains.
 Addressed help messages stay in conversation and appear through the same attention facts.
 
 Read **Tickets & the gates** (`tickets-and-gates.md`) and **Worker types**

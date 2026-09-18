@@ -209,24 +209,7 @@ class _LinkWatchingConversationSystem:
             recipient=recipient,
         )
 
-    async def record_proposal_delivery_failed(
-        self,
-        conversation_id: str,
-        *,
-        attempt_count: int,
-        last_error: str,
-        sender_message_id: str,
-    ) -> None:
-        await self._system.record_proposal_delivery_failed(
-            conversation_id,
-            attempt_count=attempt_count,
-            last_error=last_error,
-            sender_message_id=sender_message_id,
-        )
-
-    async def active_turn_reference(
-        self, conversation_id: str
-    ) -> ConversationTurnReference | None:
+    async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
         return await self._system.active_turn_reference(conversation_id)
 
     async def turn_expects_reply(
@@ -295,7 +278,12 @@ class _KillWatchingConversationSystem(InMemoryConversationSystem):
 
 
 async def _started(
-    system: object, conn: Connection, ticket: Ticket, values: ConversationStartValues, *, now: int
+    system: object,
+    conn: Connection,
+    ticket: Ticket,
+    values: ConversationStartValues,
+    *,
+    now: int,
 ) -> str:
     """The conversation a Ticket is in after one is started for it."""
     conversation_id = new_conversation_id()
@@ -673,24 +661,7 @@ class _RelinkingConversationSystem:
             recipient=recipient,
         )
 
-    async def record_proposal_delivery_failed(
-        self,
-        conversation_id: str,
-        *,
-        attempt_count: int,
-        last_error: str,
-        sender_message_id: str,
-    ) -> None:
-        await self._system.record_proposal_delivery_failed(
-            conversation_id,
-            attempt_count=attempt_count,
-            last_error=last_error,
-            sender_message_id=sender_message_id,
-        )
-
-    async def active_turn_reference(
-        self, conversation_id: str
-    ) -> ConversationTurnReference | None:
+    async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
         return await self._system.active_turn_reference(conversation_id)
 
     async def turn_expects_reply(
