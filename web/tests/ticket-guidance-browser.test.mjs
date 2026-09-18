@@ -81,7 +81,7 @@ def respond(route):
     elif path == 'tickets/t_done':
         result={**ticket, 'id': 't_done', 'stage': 'done', 'ticket_status': 'empty', 'pending_proposal': None}
     elif path == 'worker-types': result=manifest
-    elif path == 'conversations/backends': result={'backends': []}
+    elif path == 'conversation/backends': result={'backends': []}
     else: result={}
     route.fulfill(status=200, content_type='application/json', body=json.dumps(result))
 with sync_playwright() as p:
