@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   conversationFileTarget,
   boundedConversationTextPreview,
-  isTicketDevServerHref,
   markdownExpansionFor,
   prepareManagedHtmlPreviewDocument,
   previewHashHref,

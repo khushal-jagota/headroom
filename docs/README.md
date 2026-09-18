@@ -65,7 +65,7 @@ when they ask.
 - **The conversation system** (`conversation-system.md`) — the one way Panels talks to an
   agent, behind a fixed contract: one agent process per conversation, an append-only
   notebook of events, honest send fates, and backend cards. It serves every screen that
-  shows a conversation — a Ticket's, the Chief of Staff's, and the development pane.
+  shows a conversation — a Ticket's and the Chief of Staff's.
 - **Runtime environments** (`environments.md`) — prepared live and staging runtime
   layouts, Ticket worktree servers, scrubbed launch, and user-service inputs.
 - **Database backups** (`backups.md`) — verified SQLite snapshots and the safe operator restore.

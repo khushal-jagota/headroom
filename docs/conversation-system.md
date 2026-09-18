@@ -6,9 +6,8 @@ of everything that happened in it. The rest of Panels can start it, send a messa
 interrupt or kill activity, manage held messages, and ask about live work that needs
 the user. Those operations form the whole boundary.
 
-It serves every screen that shows a conversation: a Ticket's, the Chief of
-Staff's, and the development pane at `#/dev/conversation`. Worker orchestration
-uses the same system. There is no second path.
+It serves every screen that shows a conversation: a Ticket's and the Chief of
+Staff's. Worker orchestration uses the same system. There is no second path.
 
 ```
   caller (pane, loop)                the conversation system                agent CLIs
