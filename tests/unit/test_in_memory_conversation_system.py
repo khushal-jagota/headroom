@@ -176,6 +176,7 @@ def test_in_memory_replays_report_freshness_and_silence_matches_production() -> 
             sender_message_id="m-1",
             sender=OWNER_PRINCIPAL,
             recipient=recipient,
+            reply_requested=False,
         )
         assert isinstance(first.fate, PromptDeliveryStarted) and first.newly_accepted
         assert isinstance(replay.fate, PromptDeliveryStarted) and not replay.newly_accepted
@@ -195,6 +196,7 @@ def test_in_memory_replays_report_freshness_and_silence_matches_production() -> 
             sender_message_id="m-2",
             sender=OWNER_PRINCIPAL,
             recipient=recipient,
+            reply_requested=False,
         )
         assert isinstance(queued.fate, PromptDeliveryQueued) and queued.newly_accepted
         assert isinstance(queued_replay.fate, PromptDeliveryQueued)

@@ -73,7 +73,7 @@ try {
 let delayNextASnapshot = false;
 let delayedASnapshotRequested = false;
 let releaseDelayedASnapshot: (() => void) | null = null;
-let recordedBRow: unknown = null;
+const recordedBRows: unknown[] = [];
 (globalThis as any).__delayNextASnapshot = () => (delayNextASnapshot = true);
 (globalThis as any).__delayedASnapshotRequested = () => delayedASnapshotRequested;
 (globalThis as any).__releaseDelayedASnapshot = () => releaseDelayedASnapshot?.();
@@ -91,8 +91,8 @@ let recordedBRow: unknown = null;
   const eventsMatch = url.match(/conversations\/(conversation-[ab])\/events\?after=\d+$/);
   if (eventsMatch) {
     return Response.json({
-      events: eventsMatch[1] === "conversation-b" && recordedBRow !== null
-        ? [recordedBRow]
+      events: eventsMatch[1] === "conversation-b"
+        ? recordedBRows
         : []
     });
   }
@@ -135,7 +135,7 @@ class FakeEventSource {
 (globalThis as any).EventSource = FakeEventSource;
 (globalThis as any).__tailExists = (id: string) => FakeEventSource.sources.has(id);
 (globalThis as any).__emitConversationRow = (id: string, row: unknown) => {
-  if (id === "conversation-b") recordedBRow = row;
+  if (id === "conversation-b") recordedBRows.push(row);
   FakeEventSource.sources.get(id)?.emit("conversation-event", row);
 };
 
@@ -240,6 +240,24 @@ with sync_playwright() as playwright:
     ]
     lens_toggle.click()
     assert lens_toggle.inner_text() == "Full"
+    page.evaluate("""window.__emitConversationRow('conversation-b', {
+      conversation_id: 'conversation-b',
+      sequence: 5,
+      kind: 'message_to_owner',
+      payload: {
+        text: 'current B full reply',
+        sender_label: 'Ticket B',
+        sender: { kind: 'ticket', id: 'b' },
+        recipient: { kind: 'owner', id: 'owner' }
+      },
+      created_at: 11
+    })""")
+    page.get_by_text("current B full reply", exact=True).wait_for()
+    page.wait_for_function("window.__ownerReads.length === 2")
+    assert page.evaluate("window.__ownerReads") == [
+        {"conversationId": "conversation-b", "sequence": 4},
+        {"conversationId": "conversation-b", "sequence": 5}
+    ]
 
     # A delayed snapshot also loses authority when B opens before it returns. Without
     # the post-await guard, A creates a new stream and replaces B's active feed.
@@ -253,7 +271,8 @@ with sync_playwright() as playwright:
     assert page.get_by_text("current B reply", exact=True).count() == 1
     assert lens_toggle.inner_text() == "Full"
     assert page.evaluate("window.__ownerReads") == [
-        {"conversationId": "conversation-b", "sequence": 4}
+        {"conversationId": "conversation-b", "sequence": 4},
+        {"conversationId": "conversation-b", "sequence": 5}
     ]
 
     page.reload(wait_until="domcontentloaded")

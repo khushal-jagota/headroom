@@ -230,10 +230,6 @@ with sync_playwright() as playwright:
     page.get_by_text("automatic loop prompt", exact=True).wait_for()
     page.get_by_text("runtime-only result", exact=True).wait_for()
     page.locator("[data-conversation-task-progress]").wait_for()
-    lens_toggle.click()
-    assert page.get_by_text("automatic loop prompt", exact=True).count() == 0
-    assert page.get_by_text("runtime-only result", exact=True).count() == 0
-    assert page.locator("[data-conversation-task-progress]").count() == 0
     page.evaluate("""window.__emitConversationRow({
       conversation_id: "focus-fixture",
       sequence: 5,
@@ -242,29 +238,43 @@ with sync_playwright() as playwright:
       created_at: 5
     })""")
     page.wait_for_timeout(100)
+    # Full follows the same attention and delivery rule as Focus.
     assert owner_reads[-1] == 5, owner_reads
-    assert page.locator("[data-conversation-turn]").count() == 0
-
+    lens_toggle.click()
+    assert page.get_by_text("automatic loop prompt", exact=True).count() == 0
+    assert page.get_by_text("runtime-only result", exact=True).count() == 0
+    assert page.locator("[data-conversation-task-progress]").count() == 0
     page.evaluate("""window.__emitConversationRow({
       conversation_id: "focus-fixture",
       sequence: 6,
       kind: "turn_ended",
-      payload: { ending: "failed", error_summary: "backend exited" },
+      payload: { ending: "completed", error_summary: null },
       created_at: 6
+    })""")
+    page.wait_for_timeout(100)
+    assert owner_reads[-1] == 6, owner_reads
+    assert page.locator("[data-conversation-turn]").count() == 0
+
+    page.evaluate("""window.__emitConversationRow({
+      conversation_id: "focus-fixture",
+      sequence: 7,
+      kind: "turn_ended",
+      payload: { ending: "failed", error_summary: "backend exited" },
+      created_at: 7
     })""")
     page.get_by_text("turn failed · backend exited", exact=True).wait_for()
     page.evaluate("""window.__emitConversationRow({
       conversation_id: "focus-fixture",
-      sequence: 7,
+      sequence: 8,
       kind: "explicit_reply_missing",
       payload: { prompt_sender: { kind: "owner", id: "owner" } },
-      created_at: 7
+      created_at: 8
     })""")
     page.locator('[data-conversation-row="explicit_reply_missing"]').wait_for()
 
     page.evaluate("""window.__emitConversationRow({
       conversation_id: "focus-fixture",
-      sequence: 8,
+      sequence: 9,
       kind: "prompt",
       payload: {
         text: "turn that loses its ending",
@@ -273,9 +283,9 @@ with sync_playwright() as playwright:
         sender: { kind: "owner", id: "owner" },
         recipient: { kind: "ticket", id: "fixture" }
       },
-      created_at: 8
+      created_at: 9
     })""")
-    SNAPSHOT["latest_sequence"] = 8
+    SNAPSHOT["latest_sequence"] = 9
     SNAPSHOT["is_running"] = False
     page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
     page.get_by_text("turn stopped without an ending", exact=True).wait_for()

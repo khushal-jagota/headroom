@@ -566,6 +566,9 @@ with sync_playwright() as playwright:
     assert page.get_by_text("hidden commentary", exact=True).count() == 1
     assert page.locator('[data-conversation-row="tool_call"]').count() == 4
     assert page.locator("[data-conversation-work-fold]").count() == 0
+    assert page.locator("[data-conversation-turn-fold]").count() == 0
+    assert page.locator("[data-conversation-turn-count]").count() == 0
+    assert page.locator("[data-conversation-turn-settled-head]").count() == 1
 
     browser.close()
 

@@ -131,7 +131,7 @@ from planner.conversation.message_content import (
     MessageText,
     joined_runs_of_text,
     message_content_starts_with_command,
-    sender_labeled_message_content,
+    sender_labeled_composed_message_content,
     text_message_content,
 )
 from planner.conversation.message_files import (
@@ -418,8 +418,8 @@ class HermesAcpBackendChild:
         turn_token: TurnToken,
         content: MessageContent,
         *,
-        sender_content: MessageContent,
         sender_label: str,
+        sender_content: MessageContent,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
@@ -439,7 +439,9 @@ class HermesAcpBackendChild:
         elif native_command:
             content = sender_content
         else:
-            content = sender_labeled_message_content(content, sender_label)
+            content = sender_labeled_composed_message_content(
+                content, sender_content, sender_label
+            )
         previously = (self._session_model, self._session_reasoning_effort)
         try:
             await self._apply_values(model_change, reasoning_effort_change)
@@ -483,9 +485,15 @@ class HermesAcpBackendChild:
         return text_message_content(HERMES_COMPACTION_PROMPT)
 
     async def steer(
-        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+        self,
+        turn_token: TurnToken,
+        content: MessageContent,
+        *,
+        sender_content: MessageContent | None = None,
+        sender_label: str,
     ) -> BackendSteerOutcome:
         """Ask the Panels extension to admit text to this exact Hermes turn."""
+        sender_content = content if sender_content is None else sender_content
         turn = self._turn
         if turn is None or turn.token != turn_token:
             return BackendSteerRefused(
@@ -506,9 +514,11 @@ class HermesAcpBackendChild:
                     "text": "\n\n".join(
                         cast(MessageText, piece).text
                         for piece in (
-                            content
-                            if self._is_catalog_command(content)
-                            else sender_labeled_message_content(content, sender_label)
+                            sender_content
+                            if self._is_catalog_command(sender_content)
+                            else sender_labeled_composed_message_content(
+                                content, sender_content, sender_label
+                            )
                         )
                     ),
                     "senderLabel": sender_label,

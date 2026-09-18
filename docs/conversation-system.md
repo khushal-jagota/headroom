@@ -59,8 +59,8 @@ snapshots continue to use the complete feed. A switch to another conversation in
 the old read and tail. A late snapshot, row, frame, or refresh from the old conversation
 cannot change the newly opened conversation.
 
-While active Focus is open, the owner read position advances through the newest delivered
-row. Runtime-only rows can clear an unread mark because Focus displays every result that
+While an active lens is open, the owner read position advances through the newest delivered
+row. Runtime-only rows can clear an unread mark because each lens displays every result that
 needs the owner's attention.
 
 An open conversation is handed each new row directly, so it never has to be told to
