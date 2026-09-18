@@ -598,14 +598,13 @@ def test_pending_proposal_send_back_reopens_and_clears_proposal(
         tmp_db,
         t.id,
         message="please revise",
-        lifecycle_message="Proposal rejected.",
         principal=OWNER_PRINCIPAL,
         now=now,
     )
-    assert t.ticket_status is TicketStatus.agent
+    assert t.ticket_status is TicketStatus.empty
     assert t.pending_proposal is None
     assert t.field_values.get("success") is None
-    assert t.guidance == "Keep this boundary"
+    assert t.guidance == "Keep this boundary\n\nplease revise"
 
 
 def test_a02_gating_chain_one_state_per_accept(

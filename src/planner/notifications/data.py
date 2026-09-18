@@ -12,7 +12,12 @@ from contextlib import contextmanager
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.core.contracts import (
+    CHIEF_PRINCIPAL,
+    OWNER_PRINCIPAL,
+    Principal,
+    PrincipalKind,
+)
 from planner.notifications import attention as attention_data
 from planner.notifications.contracts import (
     NOTIFICATION_SUBJECTS,
@@ -295,10 +300,7 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
     ticket_rows = conn.execute(
         "SELECT id, title, stage, worker_type, ticket_status, pending_proposal, "
         "ceiling_holder, stage_ownership_overrides, default_stage_ownership_mode, "
-        "conversation_id, updated_at, ticket_status_changed_at, "
-        "EXISTS (SELECT 1 FROM proposal_delivery_failures failure "
-        "WHERE failure.ticket_id=tickets.id AND failure.resolved_at IS NULL) "
-        "AS proposal_surfaced_to_owner FROM tickets"
+        "conversation_id, updated_at, ticket_status_changed_at FROM tickets"
     ).fetchall()
     for row in ticket_rows:
         ticket_id = str(row["id"])
@@ -311,7 +313,7 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
             "awaiting_approval": (
                 str(row["ticket_status"]) == "awaiting_approval"
                 and row["pending_proposal"] is not None
-                and (owner_holds or bool(row["proposal_surfaced_to_owner"]))
+                and owner_holds
             ),
             "assigned": ticket_assignment_from_values(
                 stage=str(row["stage"]),
@@ -330,9 +332,11 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
             occurred_at = (
                 conversation[3]
                 if notification_type in {"awaiting_reply", "errored"} and conversation[3]
-                else int(row["ticket_status_changed_at"])
-                if notification_type == "awaiting_approval"
-                else int(row["updated_at"])
+                else (
+                    int(row["ticket_status_changed_at"])
+                    if notification_type == "awaiting_approval"
+                    else int(row["updated_at"])
+                )
             )
             desired[("ticket", ticket_id, notification_type)] = (
                 active,
@@ -391,7 +395,7 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
             notification_type=key[2],
             subject=subject,
             subject_label=label,
-            source_kind="ticket" if subject.kind is PrincipalKind.ticket else "conversation",
+            source_kind=("ticket" if subject.kind is PrincipalKind.ticket else "conversation"),
             source_id=f"{key[0]}:{key[1]}:{key[2]}",
             source_sequence=generation,
             occurred_at=int(row["occurred_at"]),

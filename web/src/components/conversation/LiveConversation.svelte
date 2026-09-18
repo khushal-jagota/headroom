@@ -206,7 +206,7 @@
         // Focus can leave the top document through a preview iframe without a window
         // blur event. Ask the document again when a new row is about to be credited.
         windowIsFocused: windowIsFocused && document.hasFocus(),
-        deliveredLatestSequence: lens === "focus" ? feed.latestSequence : 0,
+        deliveredLatestSequence: feed.latestSequence,
         snapshot: {
           latestSequence: view.latest_sequence,
           ownerReadThroughSequence: view.owner_read_through_sequence

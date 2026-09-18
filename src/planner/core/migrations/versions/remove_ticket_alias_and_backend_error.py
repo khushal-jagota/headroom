@@ -1,7 +1,7 @@
 """Remove the unused Ticket alias and backend error payload.
 
 Revision ID: remove_ticket_alias_and_backend_error
-Revises: proposal_delivery_failures
+Revises: delete_proposal_delivery_outbox
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from sqlalchemy import (
 )
 
 revision = "remove_ticket_alias_and_backend_error"
-down_revision = "proposal_delivery_failures"
+down_revision = "delete_proposal_delivery_outbox"
 branch_labels = None
 depends_on = None
 

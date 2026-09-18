@@ -88,9 +88,8 @@ latest failed turn until a later start succeeds or an explicit restart resets it
 During the attention-state upgrade, Panels acknowledges failures older than 24 hours.
 Newer failures and all later failures keep the normal persistent error behavior.
 
-A refused Worker step gives its claim back. A failed proposal alert does not change the
-Ticket status because the Worker did not fail. Workspace derives a failed Worker from
-the Ticket status or the latest conversation turn.
+A refused Worker step gives its claim back. Workspace derives a failed Worker from the
+Ticket status or the latest conversation turn.
 
 ### Work completed outside Panels
 
@@ -306,34 +305,25 @@ and the approval screen, so the two cannot disagree.
 While a proposal is pending, the Ticket page hides the leash because scope cannot change
 without silently changing the proposal's stable address.
 
-Review's single, oldest-first walk shows today's owner-addressed proposals. It also shows
-a non-owner proposal when its alert reaches the terminal refusal limit.
+Review's single, oldest-first walk shows today's owner-addressed proposals. Non-owner
+holders inspect canonical Ticket state through their normal Chief, Sprint Item, and Ticket
+views; no proposal wake, retry, failure surfacing, or owner fallback remains.
 A parked proposal keeps its approval and revision controls. A Worker help request is an
 addressed conversation message. Its unread state feeds the shared attention projection,
 and the answer belongs in that conversation.
 
 Replying to the worker does not decide its proposal. The proposal stays pending and
 addressed to its holder until a decision or a replacement proposal arrives. A non-owner
-holder receives a concise Panels-authored proposal-ready fact through its exact Chief,
-Sprint Item, or Ticket conversation. The proposal write also writes a durable delivery
-intent. Startup reconciliation recovers both interrupted delivery and proposals that
-predate that intent, while a generation-and-attempt message identity prevents duplicate
-transcript rows. Owner-held proposals remain on Review and use the owner-only push path.
+holder inspects the canonical Ticket through the normal Chief, Sprint Item, and Ticket
+views. Panels does not wake the holder, retry proposal delivery, surface a delivery
+failure, or fall back to the owner. Owner-held proposals remain on Review.
 
 The Review screen can also send an owner-addressed ticket back instead of accepting it,
 whatever field is currently gated. The owner writes short guidance in the review card.
-The Ticket transaction validates authority and route, then commits the decision plus two
-ordered delivery records. The first is a concise Panels lifecycle fact. The second is
-the comment from the deciding principal. The transaction performs no backend I/O. The
-same machine-lock-owned recovery loop sends both records after the commit and preserves
-their separate attribution. Durable sender identities make retries idempotent. A
-post-wire record failure stays terminal and visible as `uncertain`, but it is settled
-for ordering. The messages after it continue without a retry of the uncertain message.
-If its conversation row also fails, the recovery loop writes that row later without
-another backend send.
-The ticket's stage never changes: a pending
-gated proposal is cleared, settled values remain, and the ticket leaves Review while
-its control status is `agent`. The gated field can therefore be revised
+The Ticket transaction validates authority and route. It appends the exact revision
+comment to Ticket guidance, clears the pending proposal, and invalidates worker context.
+The ticket's stage never changes. Settled values remain, and the ticket leaves Review at
+its resting control status. The gated field can therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
 submits the revision. A holder rejection keeps that holder. If the owner uses the
 override, the owner becomes the ceiling holder for the revised proposal.
@@ -341,23 +331,12 @@ override, the owner becomes the ceiling holder for the revised proposal.
 There is one approval gate. Every parked proposal waits on `awaiting_approval` for its
 holder. The holder or owner approves it or rejects it with focused revision guidance,
 and either way the canonical proposal resolver does the work. Review contains
-owner-addressed proposals and persistently undeliverable non-owner proposals. Other
-holders use their scoped controls until that fallback applies.
+owner-addressed proposals. Other holders use their scoped controls.
 Scope cannot change while a proposal waits, so its address stays stable.
 
-A parked proposal normally reaches only its holder. Owner-held proposals appear in Review and
-produce the owner's needs-approval notification. For a Chief, Sprint Item, or other
-Ticket holder, Panels sends a concise system-authored wake-up to that holder's exact
-conversation; the holder then reads the proposal from canonical Ticket state. Ten
-definite refusals surface the same proposal to the owner without changing its holder.
-An owner decision or replacement proposal removes that extra surface. Filing
-commits the parked proposal and its durable intent without contacting the holder. Only
-the machine-lock-owned recovery loop claims and delivers that intent. It wakes on the
-database change signal and retries definite refusals. Approval, rejection, replacement,
-and deletion cancel or supersede undelivered wakes without waiting for delivery. A wake
-already on the wire is only a notice to inspect current Ticket state. A
-post-wire record failure becomes terminal `uncertain` state and is never retried
-automatically.
+Owner-held proposals appear in Review and produce the owner's needs-approval notification.
+Other holders read proposals from canonical Ticket state through their normal Ticket and
+supervisor views. Filing a proposal does not send a separate alert.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`

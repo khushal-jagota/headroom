@@ -434,7 +434,7 @@ def test_the_systems_composed_role_does_not_hide_a_first_prompt_catalog_invocati
             ][0]
             if expected_method == "turn/start":
                 assert received["params"]["input"] == [
-                    {"type": "text", "text": f"owner:\n{ROLE_TEXT}\n\n{prompt_text}"},
+                    {"type": "text", "text": f"{ROLE_TEXT}\n\nowner:\n{prompt_text}"},
                     {
                         "type": "skill",
                         "name": "ship-it",
@@ -616,7 +616,7 @@ def test_a_persisted_cursor_without_a_delivered_prompt_keeps_first_prompt_dispat
                 }
                 assert received["params"]["input"][0] == {
                     "type": "text",
-                    "text": f"owner:\n{ROLE_TEXT}\n\n{prompt_text}",
+                    "text": f"{ROLE_TEXT}\n\nowner:\n{prompt_text}",
                 }
             else:
                 assert received["params"] == {"threadId": "thread-1"}

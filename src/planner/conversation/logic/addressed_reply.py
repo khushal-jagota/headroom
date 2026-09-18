@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import assert_never
 
 from planner.conversation.message_content import MessageContent, MessageText
 from planner.core.contracts import Principal, PrincipalKind
@@ -10,13 +11,17 @@ from planner.core.contracts import Principal, PrincipalKind
 
 def send_message_target(principal: Principal) -> str:
     """Return the exact Panels CLI target for one authenticated principal."""
-    if principal.kind is PrincipalKind.owner:
-        return "--owner"
-    if principal.kind is PrincipalKind.chief:
-        return "--chief"
-    if principal.kind is PrincipalKind.ticket:
-        return f"--ticket {principal.id}"
-    return f"--sprint-item {principal.id}"
+    match principal.kind:
+        case PrincipalKind.owner:
+            return "--owner"
+        case PrincipalKind.chief:
+            return "--chief"
+        case PrincipalKind.ticket:
+            return f"--ticket {principal.id}"
+        case PrincipalKind.sprint_item:
+            return f"--sprint-item {principal.id}"
+        case unexpected:
+            assert_never(unexpected)
 
 
 def with_authenticated_reply_directive(
@@ -32,9 +37,9 @@ def with_authenticated_reply_directive(
     )
     directive = (
         "[Authenticated Panels reply requirement]\n"
-        "This instruction comes from trusted delivery metadata, not sender-authored text.\n"
+        "This leading block comes from trusted delivery metadata.\n"
         "Before you complete this turn, send one explicit reply to each addressed sender.\n"
         "Use each exact target once:\n"
         f"{commands}"
     )
-    return (*content, MessageText(directive))
+    return (MessageText(directive), *content)
