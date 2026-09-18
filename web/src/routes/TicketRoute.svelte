@@ -551,6 +551,7 @@
                         ceiling={detail.ceiling}
                         suggestedNextCeiling={detail.suggested_next_ceiling}
                         emptyText={emptyTicketFieldText}
+                        editableCurrentValue={userOwnsCurrentStage(detail)}
                         runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                         runLabelAttention={stageState === "current-awaiting-approval"}
                         onRelease={currentStageRunLabel(detail) === "you're on it"
@@ -588,6 +589,7 @@
                   ceiling={detail.ceiling}
                   suggestedNextCeiling={detail.suggested_next_ceiling}
                   emptyText={emptyTicketFieldText}
+                  editableCurrentValue={userOwnsCurrentStage(detail)}
                   runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                   runLabelAttention={stageState === "current-awaiting-approval"}
                   onRelease={currentStageRunLabel(detail) === "you're on it"

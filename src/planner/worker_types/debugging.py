@@ -54,7 +54,6 @@ DEBUGGING_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         toolset_profile="default",
         default_backend="codex",
     ),
-    supports_prefix_reconciliation=True,
 )
 
 

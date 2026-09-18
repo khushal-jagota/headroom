@@ -46,7 +46,6 @@ CODING_PROBE_WORKER_TYPE_DEFINITION: WorkerTypeDefinition = WorkerTypeDefinition
     dropped_stage=CODING_WORKER_TYPE_DEFINITION.dropped_stage,
     fields=CODING_WORKER_TYPE_DEFINITION.fields,
     worker_profile=CODING_WORKER_TYPE_DEFINITION.worker_profile,
-    supports_prefix_reconciliation=CODING_WORKER_TYPE_DEFINITION.supports_prefix_reconciliation,
 )
 
 
@@ -227,12 +226,10 @@ def test_guidance_is_independent_of_the_worker_type_fields(
     tmp_db: Connection, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
-    ticket = tickets_data.create_ticket_from_external_work(
+    ticket = tickets_data.create_ticket(
         tmp_db,
         worker_type="coding",
         title="Note target",
-        target_stage="needs_approach",
-        provided_values={"success": "success value"},
         principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,

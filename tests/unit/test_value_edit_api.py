@@ -11,14 +11,17 @@ from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 
 from planner.core.clock import build_clock
 from planner.core.config import load_config
+from planner.core.contracts import LinkKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.tickets.contracts import NO_FURTHER, AtCap
+from planner.tickets import actions as tickets_actions
+from planner.tickets.contracts import NO_FURTHER, AtCap, StageOwnershipMode
 from planner.tickets.data import (
     accept_proposal,
     change_scope,
     create_ticket,
     file_current_proposal_with_recap,
+    set_stage_ownership,
 )
 
 
@@ -97,12 +100,185 @@ def test_put_value_human_edits_settled_field(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _passed_ticket(db_path)
     with TestClient(app) as client:
-        response = client.put(f"/api/tickets/{tid}/value/success", json={"body": "edited success"})
+        response = client.put(
+            f"/api/tickets/{tid}/value/success", json={"body": "edited success"}
+        )
     assert response.status_code == 200, response.json()
     body = response.json()
     assert body["field_values"]["success"] == "edited success"
     assert body["stage"] == "needs_plan"  # value edit leaves state untouched
     assert body["ceiling"] == "needs_plan"
+
+
+def test_put_value_completes_current_user_owned_gate_and_advances(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    conn = connect(str(db_path))
+    try:
+        ticket = create_ticket(
+            conn,
+            worker_type="personal",
+            title="Personal task",
+            principal=OWNER_PRINCIPAL,
+            now=0,
+            title_max_chars=200,
+            kickoff_note=None,
+        )
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/api/tickets/{ticket.id}/value/kickoff",
+            json={"body": "User context"},
+        )
+
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert body["field_values"] == {"kickoff": "User context"}
+    assert body["stage"] == "needs_outcome"
+    assert body["ceiling"] == "needs_outcome"
+    assert body["ceiling_holder"] == {"kind": "owner", "id": "owner"}
+    assert body["ticket_status"] == "empty"
+    assert body["pending_proposal"] is None
+
+
+def test_put_value_rejects_unset_worker_owned_gate_without_changing_ticket(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    conn = connect(str(db_path))
+    try:
+        ticket = create_ticket(
+            conn,
+            worker_type="coding",
+            title="Worker task",
+            principal=OWNER_PRINCIPAL,
+            now=0,
+            title_max_chars=200,
+            kickoff_note=None,
+        )
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/api/tickets/{ticket.id}/value/kickoff",
+            json={"body": "Not allowed"},
+        )
+        after = client.get(f"/api/tickets/{ticket.id}").json()
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "agent_forbidden"
+    assert after["stage"] == ticket.stage
+    assert after["field_values"] == {}
+
+
+def test_user_completion_enters_blocked_when_a_live_blocker_exists(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    conn = connect(str(db_path))
+    try:
+        blocker = create_ticket(
+            conn,
+            worker_type="coding",
+            title="Blocker",
+            principal=OWNER_PRINCIPAL,
+            now=0,
+            title_max_chars=200,
+            kickoff_note=None,
+        )
+        ticket = create_ticket(
+            conn,
+            worker_type="personal",
+            title="Blocked task",
+            principal=OWNER_PRINCIPAL,
+            now=0,
+            title_max_chars=200,
+            kickoff_note=None,
+        )
+        tickets_actions.add_link(conn, blocker.id, ticket.id, LinkKind.blocks, now=1)
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/api/tickets/{ticket.id}/value/kickoff",
+            json={"body": "User context"},
+        )
+
+    assert response.status_code == 200, response.json()
+    assert response.json()["stage"] == "needs_outcome"
+    assert response.json()["ticket_status"] == "blocked"
+
+
+def test_user_completion_can_enter_done_and_release_outgoing_block(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    conn = connect(str(db_path))
+    try:
+        source = create_ticket(
+            conn,
+            worker_type="personal",
+            title="Source",
+            principal=OWNER_PRINCIPAL,
+            now=0,
+            title_max_chars=200,
+            kickoff_note=None,
+        )
+        target = create_ticket(
+            conn,
+            worker_type="personal",
+            title="Target",
+            principal=OWNER_PRINCIPAL,
+            now=0,
+            title_max_chars=200,
+            kickoff_note=None,
+        )
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        assert (
+            client.put(
+                f"/api/tickets/{source.id}/value/kickoff", json={"body": "Context"}
+            ).status_code
+            == 200
+        )
+        assert (
+            client.put(
+                f"/api/tickets/{source.id}/value/outcome", json={"body": "Result"}
+            ).status_code
+            == 200
+        )
+
+    conn = connect(str(db_path))
+    try:
+        set_stage_ownership(
+            conn,
+            source.id,
+            stage="needs_closeout",
+            ownership_mode=StageOwnershipMode.user,
+            now=2,
+        )
+        tickets_actions.add_link(conn, source.id, target.id, LinkKind.blocks, now=3)
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/api/tickets/{source.id}/value/closeout", json={"body": "Closed"}
+        )
+        target_after = client.get(f"/api/tickets/{target.id}").json()
+
+    assert response.status_code == 200, response.json()
+    assert response.json()["stage"] == "done"
+    assert response.json()["ceiling"] == "done"
+    assert response.json()["ticket_status"] == "empty"
+    assert target_after["ticket_status"] == "empty"
 
 
 def test_put_proposal_agent_edits_pending_proposal_in_place(tmp_path: Path) -> None:
@@ -111,7 +287,12 @@ def test_put_proposal_agent_edits_pending_proposal_in_place(tmp_path: Path) -> N
     conn = connect(str(db_path))
     try:
         ticket = file_current_proposal_with_recap(
-            conn, tid, body="plan draft", recap="r", principal=ticket_principal(tid), now=23
+            conn,
+            tid,
+            body="plan draft",
+            recap="r",
+            principal=ticket_principal(tid),
+            now=23,
         )
         original = ticket.pending_proposal
         assert original is not None

@@ -14,6 +14,35 @@ from planner.cli.record_projection import project_record
 from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 
 
+def test_ticket_set_value_uses_the_generic_field_value_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs))
+        return {"id": "t_personal"}
+
+    monkeypatch.setattr(http, "send", fake_send)
+    result = CliRunner().invoke(
+        cli_main.main,
+        ["ticket", "set-value", "t_personal", "outcome", "--value", "Done"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        (
+            "PUT",
+            "/api/tickets/t_personal/value/outcome",
+            {
+                "as_json": False,
+                "json_body": {"body": "Done"},
+                "request_actor": "ordinary",
+            },
+        )
+    ]
+
+
 def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -145,8 +145,7 @@ class ScopePair:  # required on every direct accept/edit-accept
 
 # --- request bodies (§9 wire shapes) ---
 # Most legacy bodies below are partial wire shapes: an absent key takes its documented
-# default and unknown keys are ignored. External-work bodies are intentionally strict:
-# required keys are encoded here and their API marshal rejects unknown keys.
+# default and unknown keys are ignored.
 
 
 class CreateTicketBody(TypedDict, total=False):  # POST /tickets
@@ -179,26 +178,6 @@ class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     project_id: str | None
     sprint_id: str | None
     sprint_item_id: str | None
-
-
-class ReconcileTicketFromExternalWorkBody(TypedDict):
-    stage: str
-    kickoff_note: str
-    recap: NotRequired[str]
-
-
-class CreateTicketFromExternalWorkBody(ReconcileTicketFromExternalWorkBody):
-    title: str
-    worker_type: str
-    employee_backend: NotRequired[str]
-    employee_launch_model: NotRequired[str]
-    priority: NotRequired[str | None]
-    deadline: NotRequired[str | None]
-    project: NotRequired[str | None]
-    project_id: NotRequired[str | None]
-    sprint_id: NotRequired[str | None]
-    sprint_item_id: NotRequired[str | None]
-    blocked_by_ticket_ids: NotRequired[list[str]]
 
 
 class ProposeWithRecapBody(TypedDict, total=False):  # POST /tickets/{id}/propose

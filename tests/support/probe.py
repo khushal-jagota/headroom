@@ -60,7 +60,6 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         # the probe exists to prove a Worker type may run on a backend of its own.
         default_backend="hermes",
     ),
-    supports_prefix_reconciliation=True,
 )
 
 PROBE_KNOWN_SKILLS: frozenset[str] = frozenset(

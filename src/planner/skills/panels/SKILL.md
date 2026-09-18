@@ -89,7 +89,7 @@ The command groups describe both the object being changed and the operation's au
 - `panels ticket ...` for ordinary, actor-neutral ticket creation, inspection, organization, and approval.
 - `panels sprint ...` and `panels sprint item ...` for planning and populating sprints.
 - `panels worker ...` for the gated worker flow: proposals, recaps, and notes.
-- `panels chief ...` only for importing reality established outside Panels. Its two explicit operations reconcile an existing ticket or create a populated ticket from external work; it is not a general ticket-editing surface.
+- `panels send-message --chief ...` addresses the Chief conversation. Ticket creation and edits stay under `panels ticket ...`.
 
 The main list reads are bounded summaries. `ticket list`, `sprint list`, `sprint item
 list`, `day list-tickets`, and `project list` return 30 rows by default. Their text and

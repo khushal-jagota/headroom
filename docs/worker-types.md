@@ -49,14 +49,12 @@ Each Worker type is one immutable `WorkerTypeDefinition`. The definition contain
 - the separate `dropped` terminal Stage;
 - the ordered fields carried by its Tickets;
 - the worker profile, including the specialist skill and the default Employee backend,
-  model, and reasoning effort copied onto a new Ticket;
-- whether work completed outside Panels may be reconciled as a settled field prefix.
+  model, and reasoning effort copied onto a new Ticket.
 
 The definition also answers the workflow questions that used to be spread across Ticket
 constants and free helper views. Its methods find a Stage or field, return Stage order and
 advance targets, identify gates and terminals, calculate the default ceiling and first
-working Stage, validate a Ticket position, and provide the field order used for
-external-work reconciliation.
+working Stage, and validate a Ticket position.
 
 The shipped `coding` and `debugging` definitions default every non-terminal Stage to
 worker ownership.
@@ -153,7 +151,7 @@ There is no compatibility bridge or special coding seam. The application boundar
 definition, and framework-free rule are the whole path.
 
 _Code paths:_ `src/planner/worker_types/configuration.py` supplies the configured
-registry. Ticket, sprint, external-work, runtime, and API boundaries import it where workflow
+registry. Ticket, sprint, runtime, and API boundaries import it where workflow
 behavior is needed. Rules under `src/planner/tickets/logic/` receive
 `worker_type_definition` explicitly.
 
@@ -406,7 +404,7 @@ One new Worker type needs one definition and one production registration path:
    each working Stage.
 2. Add one definition module under `src/planner/worker_types/`. Construct an immutable
    `WorkerTypeDefinition` with its ordered Stages, fields, worker profile, starting
-   Employee backend/model/reasoning values, and reconciliation support. Give every
+   Employee backend/model/reasoning values. Give every
    non-terminal Stage a deliberate default ownership mode; `done` and `dropped` have
    none. Novel Stage and field ids are plain strings.
 3. In `src/planner/worker_types/configuration.py`, add the specialist skill to the known
@@ -415,8 +413,8 @@ One new Worker type needs one definition and one production registration path:
 4. Add the skill directory name to `PLANNER_SKILL_NAMES` in
    `src/planner/environments/hermes_home.py`, so startup provisions it into the
    worker's Hermes home.
-5. Describe the new type in `panels-chief-of-staff`. The base Worker discovers its
-   specialist through `panels worker my-ticket`; it has no manual specialist list.
+5. Confirm that ordinary Ticket creation lists the new type. The base Worker discovers
+   its specialist through `panels worker my-ticket`; it has no manual specialist list.
 6. Restart Panels and provision the production skill homes. Composition validates the
    registry before the Worker type becomes live.
 
@@ -424,13 +422,11 @@ The shared kickoff, completion, and drop ids are structural rules, not imported 
 constants. The new definition still declares them directly: `needs_kickoff` gating
 `kickoff`, terminal `done`, and the separate terminal `dropped`.
 
-## Work completed outside Panels
+## Ordinary field completion
 
-External-work reconciliation is definition-driven too. The Chief supplies the target
-Stage and the complete settled field prefix for that Stage. Named coding CLI options are
-conveniences; repeatable `--field-file FIELD=PATH` carries fields belonging to any Worker
-type. Panels resolves the Ticket's definition and validates the Stage, supplied fields,
-prefix, and reconciliation support before changing state.
+Worker definitions declare each Stage's ownership and gating field. The ordinary value
+writer uses those declarations to let a direct user complete only the unset gate of the
+current user-owned Stage. No definition carries separate reconciliation capability.
 
 ## Handoffs
 
@@ -439,7 +435,7 @@ prefix, and reconciliation support before changing state.
 - **Worker orchestration** (`worker-orchestration.md`) explains how a Ticket's next
   worker step gets started and how the worker reaches its specialist.
 - **The frontend** (`frontend.md`) explains the screens driven by the served manifest.
-- **The command-line tool** (`cli.md`) explains the worker and Chief commands.
+- **The command-line tool** (`cli.md`) explains ordinary and worker commands.
 
 ## Deferred
 
