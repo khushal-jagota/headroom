@@ -25,8 +25,8 @@ branch_labels = None
 depends_on = None
 
 
-# This is a migration input, not a live registry lookup. It freezes every shipped Worker
-# type and Stage at the cutover. Stages formerly declared as paired are user-owned here.
+# This is a migration input, not a live registry lookup. It freezes the managed Worker
+# settings that were active at the cutover. Stages formerly set to paired are user-owned here.
 _SHIPPED_STAGE_OWNERSHIP = (
     ("coding", "needs_kickoff", "worker"),
     ("coding", "needs_success", "worker"),
@@ -37,7 +37,7 @@ _SHIPPED_STAGE_OWNERSHIP = (
     ("coding", "done", "worker"),
     ("coding", "dropped", "worker"),
     ("general", "needs_kickoff", "worker"),
-    ("general", "needs_execution", "worker"),
+    ("general", "needs_execution", "user"),
     ("general", "needs_closeout", "worker"),
     ("general", "done", "worker"),
     ("general", "dropped", "worker"),
@@ -52,7 +52,7 @@ _SHIPPED_STAGE_OWNERSHIP = (
     ("new_worker", "needs_understanding", "user"),
     ("new_worker", "needs_stages", "worker"),
     ("new_worker", "needs_thinking", "worker"),
-    ("new_worker", "needs_runtime_defaults", "user"),
+    ("new_worker", "needs_runtime_defaults", "worker"),
     ("new_worker", "needs_drafting", "worker"),
     ("new_worker", "needs_closeout", "worker"),
     ("new_worker", "done", "worker"),
@@ -89,8 +89,8 @@ _SHIPPED_STAGE_OWNERSHIP = (
     ("initiative_review", "dropped", "worker"),
     ("product_design", "needs_kickoff", "worker"),
     ("product_design", "needs_direction", "worker"),
-    ("product_design", "needs_wireframe", "user"),
-    ("product_design", "needs_design", "user"),
+    ("product_design", "needs_wireframe", "worker"),
+    ("product_design", "needs_design", "worker"),
     ("product_design", "needs_closeout", "worker"),
     ("product_design", "done", "worker"),
     ("product_design", "dropped", "worker"),

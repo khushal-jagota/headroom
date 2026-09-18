@@ -10,10 +10,32 @@ import pytest
 from alembic import command
 
 from planner.core import db
+from planner.core.migrations.versions import two_ownership_modes
 
 SOURCE_REVISION = "remove_ticket_alias_and_backend_error"
 TARGET_REVISION = "two_ownership_modes"
 REMOVED_COLUMNS = {"stage_ownership_overrides", "default_stage_ownership_mode"}
+
+
+def test_frozen_map_matches_user_owned_stages_in_managed_settings_at_cutover() -> None:
+    user_owned_stages = {
+        (worker_type, stage)
+        for worker_type, stage, owner in two_ownership_modes._SHIPPED_STAGE_OWNERSHIP
+        if owner == "user"
+    }
+
+    assert user_owned_stages == {
+        ("amend_worker", "needs_amendment"),
+        ("exploration", "needs_answer"),
+        ("exploration", "needs_understanding"),
+        ("general", "needs_execution"),
+        ("initiative_planning", "needs_question_answers"),
+        ("initiative_review", "needs_feedback"),
+        ("new_worker", "needs_understanding"),
+        ("personal", "needs_kickoff"),
+        ("personal", "needs_outcome"),
+        ("planning-day", "needs_direction"),
+    }
 
 
 def _upgrade(path: Path, revision: str) -> None:
@@ -202,7 +224,7 @@ def test_cutover_removes_ticket_policy_and_reconciles_declared_ownership(
     }
     assert assigned == {
         "t_override_to_user": (0, 3),
-        "t_override_to_worker": (1, 3),
+        "t_override_to_worker": (0, 3),
         "t_user_declared": (1, 3),
         "t_blocked": (0, 3),
         "t_errored": (1, 3),
