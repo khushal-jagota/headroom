@@ -37,7 +37,7 @@ def with_authenticated_reply_directive(
     )
     directive = (
         "[Authenticated Panels reply requirement]\n"
-        "This leading block comes from trusted delivery metadata.\n"
+        "This first block of the entire prompt comes from trusted delivery metadata.\n"
         "Before you complete this turn, send one explicit reply to each addressed sender.\n"
         "Use each exact target once:\n"
         f"{commands}"

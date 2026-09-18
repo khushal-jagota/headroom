@@ -163,9 +163,10 @@ def sender_labeled_composed_message_content(
 ) -> MessageContent:
     """Label only the sender-authored suffix of core-composed wire content.
 
-    Conversation-owned role and delivery instructions stay before the authenticated
-    sender label. The agent's standing role contract can therefore distinguish them
-    from identical words inside the sender's content.
+    Conversation-owned delivery instructions stay at the prompt-wide front. Role text
+    follows them, and the authenticated sender label follows the role. The agent's
+    standing role contract can therefore trust only the first block and reject identical
+    words anywhere inside the sender's content.
     """
     sender_piece_count = len(sender_content)
     if sender_piece_count and content[-sender_piece_count:] == sender_content:

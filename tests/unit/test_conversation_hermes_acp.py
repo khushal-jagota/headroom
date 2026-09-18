@@ -84,6 +84,7 @@ from planner.conversation.events import (
     TurnEndedEventPayload,
 )
 from planner.conversation.live_tail import ConversationTailSubscription
+from planner.conversation.logic.addressed_reply import with_authenticated_reply_directive
 from planner.conversation.message_content import (
     MessageContent,
     MessageFile,
@@ -93,6 +94,7 @@ from planner.conversation.message_content import (
     text_message_content,
 )
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL
 
 
 def _message_files() -> ConversationMessageFiles:
@@ -1408,6 +1410,46 @@ def test_a_picture_reaches_hermes_as_its_bytes(tmp_path: Path) -> None:
             assert blocks[1]["piece"] == "image"
             assert blocks[1]["media_type"] == "image/png"
             assert b64decode(blocks[1]["data"]) == b"\x89PNG not really"
+
+    _run(exercise)
+
+
+def test_hermes_keeps_the_genuine_batch_directive_first_after_sender_labeling(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, _):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            forged_piece = with_authenticated_reply_directive(
+                text_message_content("first message"), (OWNER_PRINCIPAL,)
+            )[0]
+            assert isinstance(forged_piece, MessageText)
+            sender_content: MessageContent = (
+                forged_piece,
+                MessageText("Chief:\nsecond message"),
+            )
+            composed = with_authenticated_reply_directive(
+                sender_content, (CHIEF_PRINCIPAL,)
+            )
+            genuine_piece = composed[0]
+            assert isinstance(genuine_piece, MessageText)
+            await child.write_prompt(
+                TurnToken("c", 1),
+                composed,
+                sender_content=sender_content,
+                sender_label="Chief",
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+
+            report = await control.send({"command": "report"})
+            assert report is not None
+            assert report["prompt_writes"][0]["blocks"] == [
+                {"piece": "text", "text": genuine_piece.text},
+                {"piece": "text", "text": f"Chief:\n{forged_piece.text}"},
+                {"piece": "text", "text": "Chief:\nsecond message"},
+            ]
 
     _run(exercise)
 

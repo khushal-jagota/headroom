@@ -28,7 +28,7 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
 )
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
-from planner.conversation.message_content import text_message_content
+from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.clock import TestClock
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
@@ -402,7 +402,7 @@ class _QueueingConversationSystem:
     async def send(
         self,
         conversation_id: str,
-        text: str,
+        content: MessageContent,
         *,
         sender_label: str,
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
@@ -419,7 +419,7 @@ class _QueueingConversationSystem:
             )
         return await self._system.send(
             conversation_id,
-            text_message_content(text),
+            content,
             sender_label=sender_label,
             mode=mode,
             model_change=model_change,
