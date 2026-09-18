@@ -39,7 +39,7 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "proposal_delivery_failures"
+HEAD_REVISION = "two_ownership_modes"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
 CURRENT_SCHEMA_OBJECT_COUNT = 66
@@ -131,6 +131,18 @@ def _with_the_conversation_link_renamed(
         if name == "employee_session_id":
             name = "conversation_id"
         columns.append((name, kind, not_null, default, primary_key))
+    return {**structure, "columns": columns}
+
+
+def _without_ticket_ownership_policy(
+    structure: dict[str, object],
+) -> dict[str, object]:
+    """The current Ticket table after Worker types became the only ownership source."""
+    columns = [
+        column
+        for column in structure["columns"]  # type: ignore[attr-defined]
+        if column[0] not in {"stage_ownership_overrides", "default_stage_ownership_mode"}
+    ]
     return {**structure, "columns": columns}
 
 
@@ -279,7 +291,9 @@ def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(
     assert _revision(conn) == HEAD_REVISION
     assert _table_structure_before_status_changed_at(
         _table_structure(conn, "tickets")
-    ) == _with_the_conversation_link_renamed(structure_before)
+    ) == _without_ticket_ownership_policy(
+        _with_the_conversation_link_renamed(structure_before)
+    )
     assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
     assert tuple(
         conn.execute("SELECT title, ticket_status FROM tickets WHERE id = 't_old'").fetchone()
@@ -377,7 +391,9 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
     # rebuild recreates only what it was handed, and drops the rest without a trace.
     assert _table_structure_before_status_changed_at(
         _table_structure(conn, "tickets")
-    ) == _with_the_conversation_link_renamed(structure_before)
+    ) == _without_ticket_ownership_policy(
+        _with_the_conversation_link_renamed(structure_before)
+    )
 
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
@@ -386,7 +402,8 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
     assert "length(title) <= 200" in tickets_sql
     assert "priority IN ('P0','P1','P2','P3')" in tickets_sql
     assert "at_cap IN ('stop','propose')" in tickets_sql
-    assert "default_stage_ownership_mode IN ('worker','user','paired')" in tickets_sql
+    assert "stage_ownership_overrides" not in tickets_sql
+    assert "default_stage_ownership_mode" not in tickets_sql
     for retired in RETIRED_TICKET_STATUSES:
         assert retired not in tickets_sql
     with pytest.raises(sqlite3.IntegrityError):

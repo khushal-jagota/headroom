@@ -54,8 +54,6 @@ from planner.tickets.logic import (
 )
 from planner.tickets.logic.decisions import Decision
 from planner.worker_settings.service import (
-    database_parent_from_connection,
-    read_stage_default_ownership_for_ticket_entry,
     read_worker_launch_defaults_for_ticket_creation,
 )
 from planner.worker_types.configuration import (
@@ -311,45 +309,11 @@ def validate_ticket_creation_context(
     )
 
 
-def _stage_ownership_overrides_from_json(raw: object) -> dict[str, StageOwnershipMode]:
-    if raw is None:
-        return {}
-    try:
-        payload = json.loads(str(raw))
-    except ValueError as exc:
-        raise RuntimeError("ticket stage_ownership_overrides is corrupt") from exc
-    if not isinstance(payload, dict):
-        raise RuntimeError("ticket stage_ownership_overrides is not an object")
-    overrides: dict[str, StageOwnershipMode] = {}
-    for stage, mode in payload.items():
-        if not isinstance(stage, str) or not isinstance(mode, str):
-            raise RuntimeError("ticket stage_ownership_overrides has invalid entries")
-        overrides[stage] = StageOwnershipMode(mode)
-    return overrides
-
-
-def _stage_ownership_overrides_to_json(
-    overrides: Mapping[str, StageOwnershipMode],
-) -> str:
-    return json.dumps({stage: mode.value for stage, mode in sorted(overrides.items())})
-
-
 def _row_to_ticket(row: sqlite3.Row) -> Ticket:
     worker_type = str(row["worker_type"])
     worker_type_definition = configured_worker_type_registry().require(worker_type)
     stage = str(row["stage"])
-    overrides = _stage_ownership_overrides_from_json(row["stage_ownership_overrides"])
-    default_ownership = (
-        None
-        if row["default_stage_ownership_mode"] is None
-        else StageOwnershipMode(str(row["default_stage_ownership_mode"]))
-    )
-    effective_ownership = machine.effective_stage_ownership_mode(
-        stage,
-        overrides,
-        worker_type_definition=worker_type_definition,
-        default_stage_ownership_mode=default_ownership,
-    )
+    worker_type_definition.validate_ticket_position(stage, str(row["ceiling"]))
     return Ticket(
         id=row["id"],
         title=row["title"],
@@ -394,9 +358,6 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         ticket_status_changed_at=int(row["ticket_status_changed_at"]),
         ticket_status_revision=int(row["ticket_status_revision"]),
         backend_error=(str(row["backend_error"]) if row["backend_error"] is not None else None),
-        stage_ownership_overrides=overrides,
-        default_stage_ownership_mode=default_ownership,
-        effective_stage_ownership_mode=effective_ownership,
         conversation_id=row["conversation_id"],
         alias=row["alias"],
         field_values=fields_codec.values_from_json(
@@ -470,10 +431,14 @@ def _seed_kickoff(
     *,
     stage: str,
     ceiling: str,
-    ownership_mode: StageOwnershipMode | None,
     worker_type_definition: WorkerTypeDefinition,
 ) -> tuple[str, TicketFieldValues, PendingTicketProposal | None, TicketStatus]:
-    ownership = ownership_mode or StageOwnershipMode.worker
+    ownership = machine.stage_ownership_mode(
+        stage,
+        worker_type_definition=worker_type_definition,
+    )
+    if ownership is None:
+        raise PlannerError(ErrorCode.validation, "kickoff stage cannot be terminal")
     if not worker_type_definition.has_field("kickoff"):
         return stage, {}, None, machine.resting_ticket_status(ownership)
     if kickoff_note is None:
@@ -534,24 +499,6 @@ def _require_current_supervisor_parent(
 
 def _active_blocker_stage(stage: str) -> bool:
     return stage not in {"done", "dropped"}
-
-
-def _default_stage_ownership_for_entry(
-    conn: sqlite3.Connection,
-    worker_type_definition: WorkerTypeDefinition,
-    stage: str,
-) -> StageOwnershipMode | None:
-    if worker_type_definition.is_terminal(stage):
-        return None
-    database_parent = database_parent_from_connection(conn)
-    if database_parent is None:
-        return worker_type_definition.stage_definition(stage).default_ownership_mode
-    return read_stage_default_ownership_for_ticket_entry(
-        database_parent,
-        configured_worker_type_registry(),
-        worker_type_definition.worker_type,
-        stage,
-    )
 
 
 def _outgoing_block_target_ids(conn: sqlite3.Connection, ticket_id: str) -> tuple[str, ...]:
@@ -650,11 +597,6 @@ def _apply_decision(
         new_stage,
         worker_type_definition=worker_type_definition,
     )
-    new_default_stage_ownership_mode = (
-        _default_stage_ownership_for_entry(conn, worker_type_definition, str(new_stage))
-        if str(new_stage) != ticket.stage
-        else ticket.default_stage_ownership_mode
-    )
     active_before = _active_blocker_stage(ticket.stage)
     active_after = _active_blocker_stage(new_stage)
     affected_blocked_target_ids: tuple[str, ...] = ()
@@ -670,18 +612,12 @@ def _apply_decision(
                     )
     conn.execute(
         "UPDATE tickets SET field_values = ?, pending_proposal = ?, archived_field_content = ?, "
-        "stage = ?, default_stage_ownership_mode = ?, "
-        "ceiling = ?, ceiling_holder = ?, at_cap = ?, updated_at = ? WHERE id = ?",
+        "stage = ?, ceiling = ?, ceiling_holder = ?, at_cap = ?, updated_at = ? WHERE id = ?",
         (
             fields_codec.values_to_json(decision.field_values),
             fields_codec.proposal_to_json(decision.pending_proposal),
             decision.archived_field_content,
             str(new_stage),
-            (
-                new_default_stage_ownership_mode.value
-                if new_default_stage_ownership_mode is not None
-                else None
-            ),
             str(new_ceiling),
             _principal_to_json(decision.ceiling_holder),
             new_at_cap.value,
@@ -750,11 +686,9 @@ def _resting_status_for_ticket(
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> TicketStatus:
-    ownership_mode = machine.effective_stage_ownership_mode(
+    ownership_mode = machine.stage_ownership_mode(
         ticket.stage,
-        ticket.stage_ownership_overrides,
         worker_type_definition=worker_type_definition,
-        default_stage_ownership_mode=ticket.default_stage_ownership_mode,
     )
     resting = (
         TicketStatus.empty
@@ -1070,9 +1004,6 @@ def create_ticket(
     )
     initial_stage = worker_type_definition.default_ceiling()
     default_ceiling = worker_type_definition.default_ceiling()
-    default_stage_ownership_mode = _default_stage_ownership_for_entry(
-        conn, worker_type_definition, initial_stage
-    )
     ticket_id = new_id(ID_PREFIXES["ticket"])
     with _txn(conn):
         _validate_ceiling_holder(conn, principal, ticket_id=ticket_id)
@@ -1106,7 +1037,6 @@ def create_ticket(
             now,
             stage=initial_stage,
             ceiling=ceiling,
-            ownership_mode=default_stage_ownership_mode,
             worker_type_definition=worker_type_definition,
         )
         values_json = fields_codec.values_to_json(initial_values)
@@ -1116,10 +1046,10 @@ def create_ticket(
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_id, sprint_item_id, "
             "recap, ceiling, ceiling_holder, at_cap, "
-            "ticket_status, stage_ownership_overrides, default_stage_ownership_mode, "
-            "conversation_id, alias, field_values, pending_proposal, created_at, updated_at, "
+            "ticket_status, conversation_id, alias, field_values, pending_proposal, "
+            "created_at, updated_at, "
             "ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, NULL, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, "
             "?, ?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1138,12 +1068,6 @@ def create_ticket(
                 _principal_to_json(principal),
                 at_cap.value,
                 initial_ticket_status.value,
-                "{}",
-                (
-                    default_stage_ownership_mode.value
-                    if default_stage_ownership_mode is not None
-                    else None
-                ),
                 values_json,
                 fields_codec.proposal_to_json(initial_proposal),
                 now,
@@ -1207,9 +1131,6 @@ def create_ticket_from_external_work(
     # applied decision then jumps it to target_stage. first_worker_stage is the concept
     # here; default_ceiling is now needs_kickoff and would wrongly re-park kickoff.
     first_worker = worker_type_definition.first_worker_stage()
-    default_stage_ownership_mode = _default_stage_ownership_for_entry(
-        conn, worker_type_definition, first_worker
-    )
     ticket_id = new_id(ID_PREFIXES["ticket"])
     initial_values = (
         {"kickoff": kickoff_note} if worker_type_definition.has_field("kickoff") else {}
@@ -1240,10 +1161,10 @@ def create_ticket_from_external_work(
             "id, title, worker_type, employee_backend, employee_launch_model, "
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_id, sprint_item_id, "
-            "recap, ceiling, ceiling_holder, at_cap, ticket_status, stage_ownership_overrides, "
-            "default_stage_ownership_mode, conversation_id, alias, field_values, "
+            "recap, ceiling, ceiling_holder, at_cap, ticket_status, "
+            "conversation_id, alias, field_values, "
             "created_at, updated_at, ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, NULL, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, "
             "?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1267,12 +1188,6 @@ def create_ticket_from_external_work(
                 _principal_to_json(principal),
                 AtCap.propose.value,
                 TicketStatus.empty.value,
-                "{}",
-                (
-                    default_stage_ownership_mode.value
-                    if default_stage_ownership_mode is not None
-                    else None
-                ),
                 fields_codec.values_to_json(initial_values),
                 now,
                 now,
@@ -1460,11 +1375,9 @@ def claim_ticket_for_worker_step(
             worker_type_definition=worker_type_definition,
         ):
             return None
-        ownership_mode = machine.effective_stage_ownership_mode(
+        ownership_mode = machine.stage_ownership_mode(
             ticket.stage,
-            ticket.stage_ownership_overrides,
             worker_type_definition=worker_type_definition,
-            default_stage_ownership_mode=ticket.default_stage_ownership_mode,
         )
         if ownership_mode is None:
             raise PlannerError(
@@ -1472,7 +1385,7 @@ def claim_ticket_for_worker_step(
                 "a terminal stage has no worker step to claim",
                 {"ticket_id": ticket_id, "stage": ticket.stage},
             )
-        if ownership_mode is StageOwnershipMode.paired:
+        if ownership_mode is StageOwnershipMode.user:
             conn.execute(
                 "INSERT INTO ticket_paired_stage_openers(ticket_id, stage, opened_at) "
                 "VALUES (?, ?, ?)",
@@ -1487,13 +1400,13 @@ def claim_ticket_for_worker_step(
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def forget_paired_stage_opener(
+def forget_user_stage_opener(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
     stage: str,
 ) -> None:
-    """Re-arm a paired Stage when its tentative opener reached nobody."""
+    """Re-arm a user-owned Stage when its tentative opener reached nobody."""
     with _txn(conn):
         conn.execute(
             "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
@@ -1669,173 +1582,6 @@ def accept_proposal(
                 now=now,
             )
         return _load_ticket_for_write(conn, ticket_id)
-
-
-def set_stage_ownership(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    stage: str,
-    ownership_mode: StageOwnershipMode | None,
-    now: int,
-) -> Ticket:
-    with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
-        )
-        if not worker_type_definition.is_known_stage(stage):
-            raise PlannerError(ErrorCode.validation, "invalid stage", {"stage": stage})
-        if worker_type_definition.is_terminal(stage):
-            raise PlannerError(
-                ErrorCode.validation,
-                "terminal stage cannot have ownership",
-                {"stage": stage},
-            )
-        effective_before = machine.effective_stage_ownership_mode(
-            stage,
-            ticket.stage_ownership_overrides,
-            worker_type_definition=worker_type_definition,
-            default_stage_ownership_mode=(
-                ticket.default_stage_ownership_mode
-                if stage == ticket.stage
-                else _default_stage_ownership_for_entry(conn, worker_type_definition, stage)
-            ),
-        )
-        assert effective_before is not None
-        overrides = dict(ticket.stage_ownership_overrides)
-        if ownership_mode is None:
-            overrides.pop(stage, None)
-        else:
-            overrides[stage] = ownership_mode
-        effective_after = machine.effective_stage_ownership_mode(
-            stage,
-            overrides,
-            worker_type_definition=worker_type_definition,
-            default_stage_ownership_mode=(
-                ticket.default_stage_ownership_mode
-                if stage == ticket.stage
-                else _default_stage_ownership_for_entry(conn, worker_type_definition, stage)
-            ),
-        )
-        if overrides == ticket.stage_ownership_overrides:
-            return ticket
-        conn.execute(
-            "UPDATE tickets SET stage_ownership_overrides = ?, updated_at = ? WHERE id = ?",
-            (_stage_ownership_overrides_to_json(overrides), now, ticket_id),
-        )
-        capture_ticket_attention(conn, ticket_id, now)
-        updated = _load_ticket_for_write(conn, ticket_id)
-        assert effective_after is not None
-        if (
-            stage == ticket.stage
-            and effective_before is not effective_after
-            and updated.ticket_status
-            not in (
-                TicketStatus.agent,
-                TicketStatus.awaiting_approval,
-                TicketStatus.errored,
-            )
-        ):
-            _write_entered_stage_ticket_status(
-                conn,
-                updated,
-                worker_type_definition=worker_type_definition,
-                now=now,
-            )
-            updated = _load_ticket_for_write(conn, ticket_id)
-        return updated
-
-
-def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
-    with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
-        )
-        if ticket.stage in ("done", "dropped"):
-            raise PlannerError(
-                ErrorCode.validation,
-                "terminal tickets cannot be taken over",
-                {"ticket_id": ticket_id, "stage": ticket.stage},
-            )
-        if ticket.stage == "needs_kickoff":
-            raise PlannerError(
-                ErrorCode.validation,
-                "kickoff must be settled before takeover",
-                {"ticket_id": ticket_id},
-            )
-        if ticket.stage_ownership_overrides.get(ticket.stage) is StageOwnershipMode.user:
-            return ticket
-        effective_before = ticket.effective_stage_ownership_mode
-        overrides = dict(ticket.stage_ownership_overrides)
-        overrides[ticket.stage] = StageOwnershipMode.user
-        conn.execute(
-            "UPDATE tickets SET stage_ownership_overrides = ?, updated_at = ? WHERE id = ?",
-            (_stage_ownership_overrides_to_json(overrides), now, ticket_id),
-        )
-        capture_ticket_attention(conn, ticket_id, now)
-        updated = _load_ticket_for_write(conn, ticket_id)
-        if effective_before is not StageOwnershipMode.user and updated.ticket_status not in (
-            TicketStatus.agent,
-            TicketStatus.awaiting_approval,
-            TicketStatus.errored,
-        ):
-            _write_entered_stage_ticket_status(
-                conn,
-                updated,
-                worker_type_definition=worker_type_definition,
-                now=now,
-            )
-            updated = _load_ticket_for_write(conn, ticket_id)
-        return updated
-
-
-def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
-    with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
-        )
-        if ticket.stage in ("done", "dropped"):
-            raise PlannerError(
-                ErrorCode.validation,
-                "terminal tickets cannot be released",
-                {"ticket_id": ticket_id, "stage": ticket.stage},
-            )
-        if ticket.stage == "needs_kickoff":
-            raise PlannerError(
-                ErrorCode.validation,
-                "kickoff must be settled before release",
-                {"ticket_id": ticket_id},
-            )
-        if ticket.stage not in ticket.stage_ownership_overrides:
-            return ticket
-        effective_before = ticket.effective_stage_ownership_mode
-        overrides = dict(ticket.stage_ownership_overrides)
-        overrides.pop(ticket.stage, None)
-        effective_after = machine.effective_stage_ownership_mode(
-            ticket.stage,
-            overrides,
-            worker_type_definition=worker_type_definition,
-            default_stage_ownership_mode=ticket.default_stage_ownership_mode,
-        )
-        conn.execute(
-            "UPDATE tickets SET stage_ownership_overrides = ?, updated_at = ? WHERE id = ?",
-            (_stage_ownership_overrides_to_json(overrides), now, ticket_id),
-        )
-        capture_ticket_attention(conn, ticket_id, now)
-        updated = _load_ticket_for_write(conn, ticket_id)
-        if effective_before is not effective_after and updated.ticket_status not in (
-            TicketStatus.agent,
-            TicketStatus.awaiting_approval,
-            TicketStatus.errored,
-        ):
-            _write_entered_stage_ticket_status(
-                conn,
-                updated,
-                worker_type_definition=worker_type_definition,
-                now=now,
-            )
-            updated = _load_ticket_for_write(conn, ticket_id)
-        return updated
 
 
 def edit_pending_proposal(

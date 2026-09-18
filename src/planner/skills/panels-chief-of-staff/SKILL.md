@@ -183,7 +183,7 @@ committed work, capture an idea instead of over-structuring it.
 
 Use the `research` Worker type when the user wants a bounded question answered with
 evidence. The question must already be framed, because this worker plans its evidence
-path, researches, and hands back a sourced synthesis without a paired conversation. It
+path, researches, and hands back a sourced synthesis without a collaborative conversation. It
 does not decide or implement. When the question itself is still undefined, use
 `exploration` instead.
 

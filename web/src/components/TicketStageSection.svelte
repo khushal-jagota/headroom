@@ -20,7 +20,6 @@
     pendingProposal = null,
     ticketStage,
     ceiling,
-    suggestedNextCeiling = null,
     lifecycle = null,
     stageState = "upcoming",
     variant = "ticket",
@@ -29,7 +28,6 @@
     approvalDisabled = false,
     runLabel = null,
     runLabelAttention = false,
-    onRelease,
     contextRow,
     onAccept,
     onSaveProposal,
@@ -40,7 +38,6 @@
     pendingProposal?: PendingTicketProposal | null;
     ticketStage: string;
     ceiling: string;
-    suggestedNextCeiling?: string | null;
     lifecycle?: Lifecycle | null;
     stageState?: FieldStageVisualState;
     variant?: "ticket" | "review";
@@ -49,7 +46,6 @@
     approvalDisabled?: boolean;
     runLabel?: string | null;
     runLabelAttention?: boolean;
-    onRelease?: () => void;
     contextRow?: Snippet;
     onAccept: (payload: Record<string, unknown>) => Promise<unknown>;
     onSaveProposal?: (raw: string) => Promise<unknown>;
@@ -78,7 +74,6 @@
       proposalBody={pendingProposal?.body || ""}
       proposedBy={pendingProposal?.proposed_by || ""}
       newStage={nextStage}
-      suggestedNextCeiling={name === "kickoff" ? suggestedNextCeiling : null}
       {lifecycle}
       {contextRow}
       disabled={approvalDisabled}
@@ -119,18 +114,6 @@
           data-stage-run-label={runLabel}
         >
           {runLabel}
-          {#if onRelease}
-            <button
-              type="button"
-              class="ticket-stage-run-action"
-              data-stage-release
-              onclick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onRelease?.();
-              }}
-            >Release</button>
-          {/if}
         </span>
       {/if}
     {/snippet}

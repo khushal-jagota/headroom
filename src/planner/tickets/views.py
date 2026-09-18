@@ -103,19 +103,6 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
         "backend_error": ticket.backend_error,
-        "stage_ownership_overrides": {
-            stage: mode.value for stage, mode in ticket.stage_ownership_overrides.items()
-        },
-        "default_stage_ownership_mode": (
-            ticket.default_stage_ownership_mode.value
-            if ticket.default_stage_ownership_mode is not None
-            else None
-        ),
-        "effective_stage_ownership_mode": (
-            ticket.effective_stage_ownership_mode.value
-            if ticket.effective_stage_ownership_mode is not None
-            else None
-        ),
         "conversation_id": ticket.conversation_id,
         "alias": ticket.alias,
         "field_values": dict(ticket.field_values),
@@ -368,6 +355,10 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
 def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
     ticket = tickets_data.read_ticket(conn, ticket_id)
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
+    ownership = machine.stage_ownership_mode(
+        ticket.stage,
+        worker_type_definition=worker_type_definition,
+    )
 
     def show(value: str | None) -> str:
         return value if value else "(none)"
@@ -389,7 +380,7 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"priority: {ticket.priority.value}\n"
         f"employee_backend: {ticket.employee_backend}\n"
         "owner: "
-        f"{ticket.effective_stage_ownership_mode.value if ticket.effective_stage_ownership_mode is not None else '(none)'}\n"  # noqa: E501
+        f"{ownership.value if ownership is not None else '(none)'}\n"
         f"\n"
         f"{field_blocks}"
         f"pending proposal:\n"

@@ -100,12 +100,11 @@ def _raw_insert_ticket(
 ) -> None:
     # Direct SQL bypasses the create/write doors (the enumerating CHECKs are gone), so
     # a deliberately corrupt row can be planted for the boot-audit tests.
-    captured_default = None if stage in {"done", "dropped"} else "worker"
     conn.execute(
         "INSERT INTO tickets (id, title, worker_type, employee_backend, stage, ceiling, "
-        "default_stage_ownership_mode, field_values, created_at, updated_at) "
-        "VALUES (?, 'T', ?, 'hermes', ?, ?, ?, ?, 1, 1)",
-        (ticket_id, worker_type, stage, ceiling, captured_default, fields),
+        "field_values, created_at, updated_at) "
+        "VALUES (?, 'T', ?, 'hermes', ?, ?, ?, 1, 1)",
+        (ticket_id, worker_type, stage, ceiling, fields),
     )
 
 

@@ -62,9 +62,9 @@ describe("Ticket status groups", () => {
     expect(ticketStatusGroupKey(ticket({ awaiting_approval: true }))).toBe(
       "current-awaiting-approval"
     );
-    expect(ticketStatusGroupKey(ticket({ assigned: true }))).toBe("current-paired");
+    expect(ticketStatusGroupKey(ticket({ assigned: true }))).toBe("current-assigned");
     expect(ticketStatusGroupKey(ticketWithFiledProposal({ assigned: true }))).toBe(
-      "current-paired"
+      "current-assigned"
     );
     expect(ticketStatusGroupKey(ticket({ agent_state: "working" }))).toBe("current-running");
     // Errored and blocked are two states, and each names its own group.
@@ -87,7 +87,7 @@ describe("Ticket status groups", () => {
       ticketStatusGroupKey(
         ticketWithFiledProposal({ assigned: true, gating_field: "kickoff" })
       )
-    ).toBe("current-paired");
+    ).toBe("current-assigned");
   });
 
   it("reads a group from facts a screen may not carry", () => {
@@ -100,7 +100,7 @@ describe("Ticket status groups", () => {
     );
   });
 
-  it("uses the Workspace's owner-facing Paired label for an assigned Ticket", () => {
+  it("uses the Workspace's owner-facing Assigned label for an assigned Ticket", () => {
     const railGroups = workspaceGroups([
       boardCard("t_assigned", { assigned: true, has_pending_proposal: true })
     ]);
@@ -108,7 +108,7 @@ describe("Ticket status groups", () => {
       ticketWithFiledProposal({ assigned: true })
     );
     const pageLabel = TICKET_STATUS_GROUPS.find((group) => group.key === pageKey)?.label;
-    expect(railGroups.map((group) => group.label)).toEqual(["Paired"]);
+    expect(railGroups.map((group) => group.label)).toEqual(["Assigned"]);
     expect(pageLabel).toBe("Assigned");
   });
 });

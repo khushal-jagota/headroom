@@ -22,7 +22,7 @@ The two halves of a Worker live in different places and land differently. This c
 
 Editing the repo copy of a skill changes nothing for a running worker. Editing only the managed copy means the change is missing from any fresh install. Skill-text amendments land in both.
 
-## needs_amendment — agree the change and its blast radius (paired)
+## needs_amendment — agree the change and its blast radius (user-owned)
 
 Read the current definition and skill before you say anything. Then agree with the user what changes, and report what it does to live tickets of that type.
 

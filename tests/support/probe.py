@@ -41,8 +41,8 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     label="Probe",
     stages=(
         StageDefinition("needs_kickoff", "Kickoff", "kickoff", False, StageOwnershipMode.worker),
-        StageDefinition(NEEDS_ALPHA, "Alpha", FIELD_ALPHA, False, StageOwnershipMode.user),
-        StageDefinition(NEEDS_BETA, "Beta", FIELD_BETA, False, StageOwnershipMode.paired),
+        StageDefinition(NEEDS_ALPHA, "Alpha", FIELD_ALPHA, False, StageOwnershipMode.worker),
+        StageDefinition(NEEDS_BETA, "Beta", FIELD_BETA, False, StageOwnershipMode.user),
         StageDefinition("done", "Done", None, True, None),
     ),
     dropped_stage=StageDefinition("dropped", "Dropped", None, True, None),

@@ -14,8 +14,7 @@
     "frozen",
     "agent",
     "errored",
-    "user",
-    "paired"
+    "user"
   ]);
 
   let classes = $derived.by(() => {

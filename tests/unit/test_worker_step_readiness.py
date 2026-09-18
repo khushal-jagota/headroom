@@ -20,7 +20,7 @@ from planner.runtime.worker_step_readiness import (
 )
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
+from planner.tickets.contracts import AtCap, Ticket, TicketStatus
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -150,17 +150,10 @@ def test_membership_must_match_the_explicit_planning_day(tmp_path: Path) -> None
         conn.close()
 
 
-def test_paired_owned_ticket_is_ready_once_per_stage_entry(tmp_path: Path) -> None:
+def test_user_owned_ticket_is_ready_once_per_stage_entry(tmp_path: Path) -> None:
     conn = _db(tmp_path)
     try:
         ticket = _ticket(conn, worker_type="new_worker")
-        tickets_data.set_stage_ownership(
-            conn,
-            ticket.id,
-            stage=ticket.stage,
-            ownership_mode=StageOwnershipMode.paired,
-            now=4,
-        )
         assert _ready(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
         conn.execute(
             "INSERT INTO ticket_paired_stage_openers(ticket_id, stage, opened_at) "

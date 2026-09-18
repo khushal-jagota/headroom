@@ -21,7 +21,7 @@ INITIATIVE_REVIEW_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
             "Feedback",
             "feedback",
             False,
-            StageOwnershipMode.paired,
+            StageOwnershipMode.user,
         ),
         StageDefinition(
             "needs_followups",

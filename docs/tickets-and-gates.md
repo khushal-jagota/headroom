@@ -101,8 +101,8 @@ complete Kickoff field value, an exact settled-field prefix for the target Stage
 request. It refuses backward moves, pending proposals, active ticket control, and a
 worker that is mid-turn. It moves the ceiling to the imported Stage but preserves what the
 Ticket does at that ceiling: an explicit **Stop** remains Stop; otherwise **Propose**
-remains. The target Stage's effective ownership then determines whether the Ticket rests
-ready for the worker, with the user, or paired.
+remains. The target Stage's declared ownership then determines whether the Ticket rests
+ready for the worker or in collaborative work with the user.
 
 The create or reconciliation writer commits all fields, Kickoff value, recap, Stage,
 scope, and ownership-derived resting status together. A validation or concurrency
@@ -176,37 +176,24 @@ unchanged.
 
 ### Who owns the current Stage
 
-Every non-terminal Stage has a default owner: **worker**, **user**, or **paired**. The
-Worker type supplies the starting value, and the Workers screen can change that value for
-future Stage entries. When a Ticket enters a Stage, Panels stores the default in that Ticket.
-Later changes therefore do not move work already resting there. A Ticket may also override
-the stored default for a particular Stage. The current Stage's override wins; without one,
-the stored default applies. Terminal Tickets have no current owner.
+Every non-terminal Stage has one declared owner: **worker** or **user**. The immutable
+Worker type definition is the sole authority. Terminal Tickets have no current owner.
 
 - **Worker-owned** Stages rest at `empty`, ready for Panels to start the next step —
   or at `blocked` while a live blocker remains. The other readiness, proposal, and
   scope conditions must still allow it.
-- **User-owned** Stages rest at `empty` and are never dispatched automatically. The user
-  does the work, then the Chief records it through external-work reconciliation; there
-  is no direct self-settle path.
-- **Paired** Stages get one automatic opening turn when the Stage becomes ready, then
+- **User-owned** Stages get one automatic opening turn when the Stage becomes ready, then
   rest at `empty`. A durable opener fact belongs to that Stage entry, and readiness
-  checks it before dispatch. The human conversation carries the Stage forward in the
-  same Ticket conversation. A real proposal always parks for approval, regardless of
-  scope. Leaving the Stage clears the opener fact.
-
-**Take over** sets a `user` override for the current Stage, even while a worker step is
-out. Nothing that step does afterwards can undo the takeover. **Release** clears the current
-Stage override and reapplies the default captured when the Ticket entered that Stage; there
-is no stack of older overrides. Moving to another Stage captures that Stage's current global
-default, then applies any explicit Ticket override.
+  checks it before dispatch. The user and worker carry the Stage forward in the same
+  Ticket conversation. A real proposal always parks for approval, regardless of scope.
+  Leaving the Stage clears the opener fact.
 
 Ownership and scope answer different questions. Ownership says who drives the current
 Stage. Scope says how far a worker may advance autonomously and what it may do at the
 ceiling. The Worker type chooses the specialist skill used for that work.
 
 _Code paths:_ `src/planner/tickets/logic/machine.py`, `src/planner/tickets/data.py`,
-`src/planner/worker_settings/`, and `src/planner/tickets/api.py`.
+and `src/planner/tickets/api.py`.
 
 ## The one rule: proposals and the single door
 
@@ -267,8 +254,7 @@ reviewer. Holder Tickets and Sprint Items must exist when the scope is written.
 Below the ceiling, a worker-owned Stage's proposal is accepted automatically and the
 ticket advances. At the ceiling, the cap decides whether a worker-owned Stage can propose
 at all. The cap says nothing about who owns a Stage: user-owned Stages still do not
-dispatch automatically. Paired Stages still get one opening turn before they rest at
-`empty` with their opener fact.
+dispatch automatically after their opening turn. They rest at `empty` with their opener fact.
 New tickets start leashed right at
 **Kickoff**: the ceiling is `needs_kickoff` for every Worker type, so nothing advances past
 the human-approved intake until the human grants scope onward — review before agents
@@ -398,7 +384,7 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 ## Handoffs
 
 - **Worker types** (`worker-types.md`) — the registry that declares this Ticket's Stage
-  set, its gates, fields, default ownership, and worker. The six Stages above are the
+  set, its gates, fields, ownership, and worker. The six Stages above are the
   `coding` Worker type's.
 - **Worker orchestration** (`worker-orchestration.md`) — how the worker that files
   these proposals gets asked to take the next step; committing a write is what tells the

@@ -48,8 +48,7 @@ The command tree matches the system model:
 - `chief ...` — explicit intake of work completed outside Panels.
 
 Ordinary command groups do not expose internal runtime controls. Ticket `ticket_status`
-and run claiming remain code-owned. The direct `ticket ownership` command changes a
-declared Stage override; it is not a runtime-status setter. The exceptional `chief` group
+and run claiming remain code-owned. The exceptional `chief` group
 can establish a coherent Ticket Stage from externally completed work; it is not a
 generic Stage setter.
 
@@ -174,9 +173,6 @@ record shapes. Direct `show` commands also keep their full record shapes.
   belongs to the backend that named it; leave `--reasoning-effort` out for a model that
   takes none. It changes that choice only during pristine Kickoff, before a conversation
   exists.
-- **`ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** — set or
-  clear one Stage's ownership override. `default` clears the override so the Worker
-  type's Stage default applies. Terminal and unknown Stages are rejected.
 - **`ticket copy`** — copy one ticket's plain-text packet.
 - **`sprint create / list / show / set`** — plan sprints. `current` resolves through
   `/api/sprint/current`; `none` means the backlog where a list supports it.
@@ -222,7 +218,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   Ticket launches on from then on, so a Worker that died on its backend does not come
   back on the same one. Leave the options out to restart on what the Ticket already has.
   A worker step gets its first five minutes before it may be restarted, so a Worker that
-  is merely slow is left alone. Only a Worker-owned Stage can be restarted: a paired
+  is merely slow is left alone. Only a Worker-owned Stage can be restarted. A user-owned
   conversation belongs to the user.
 - **`sprint item supervisor set-item / set-ticket / scope / add-to-day / remove-from-day / block / unblock`**
   — use item-scoped canonical actions for the owning Item and its current child Tickets.
@@ -263,7 +259,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   new Ticket, and a different backend needs `--employee-launch-model` with it.
   Reconciliation refuses pending or active Ticket work; both
   operations move the ceiling to the imported Stage, preserve an explicit Stop
-  (otherwise Propose remains), and apply that Stage's effective ownership.
+  (otherwise Propose remains), and apply that Stage's declared ownership.
 - **`serve`** — run the server and background worker runtime in the foreground.
   It keeps ownership while Panels restarts, so the same terminal continues to show the
   server logs.

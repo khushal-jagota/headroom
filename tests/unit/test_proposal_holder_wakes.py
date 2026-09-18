@@ -52,7 +52,6 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
-    StageOwnershipMode,
     TicketStatus,
 )
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -540,17 +539,10 @@ def test_delivered_replacement_is_not_surfaced_to_the_owner(
     assert not wake_data.has_unresolved_proposal_delivery_failure(tmp_db, ticket_id)
 
 
-def test_owner_acceptance_after_failed_alert_can_enter_user_owned_stage(
+def test_owner_acceptance_after_failed_alert_can_enter_next_stage(
     tmp_db: Connection,
 ) -> None:
     ticket_id = _target(tmp_db, CHIEF_PRINCIPAL)
-    tickets_data.set_stage_ownership(
-        tmp_db,
-        ticket_id,
-        stage="needs_approach",
-        ownership_mode=StageOwnershipMode.user,
-        now=1,
-    )
     _file(tmp_db, ticket_id, body="Ready", now=2)
     _fail_current_wake(tmp_db, ticket_id)
 

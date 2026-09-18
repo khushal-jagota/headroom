@@ -113,7 +113,7 @@ export function feedbackTicketStageState(ticket: FeedbackTicket): FieldStageVisu
   if (ticket.ticket_status === "errored" || ticket.ticket_status === "blocked") return "errored";
   const attention = primaryWorkAttention(ticket);
   if (attention === "awaiting_approval") return "current-awaiting-approval";
-  if (attention === "assigned") return "current-paired";
+  if (attention === "assigned") return "current-assigned";
   if (attention === "awaiting_reply") return "needs-me";
   if (ticket.agent_state === "working") return "current-running";
   if (ticket.agent_state === "errored") return "errored";

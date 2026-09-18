@@ -103,7 +103,7 @@ export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicke
   if (attention === "awaiting_approval") {
     return { mark: "current-awaiting-approval", word: "to review" };
   }
-  if (attention === "assigned") return { mark: "current-paired", word: "assigned" };
+  if (attention === "assigned") return { mark: "current-assigned", word: "assigned" };
   if (attention === "awaiting_reply") return { mark: "needs-me", word: "need you" };
   if (ticket.agent_state === "working") return { mark: "current-running", word: "working" };
   if (ticket.waiting_to_closeout) return { mark: "current-waiting", word: "waiting for closeout" };

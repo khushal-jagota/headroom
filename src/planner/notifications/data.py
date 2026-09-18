@@ -294,7 +294,7 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
     desired: dict[tuple[str, str, str], tuple[bool, Principal, str, int]] = {}
     ticket_rows = conn.execute(
         "SELECT id, title, stage, worker_type, ticket_status, pending_proposal, "
-        "ceiling_holder, stage_ownership_overrides, default_stage_ownership_mode, "
+        "ceiling_holder, "
         "conversation_id, updated_at, ticket_status_changed_at, "
         "EXISTS (SELECT 1 FROM proposal_delivery_failures failure "
         "WHERE failure.ticket_id=tickets.id AND failure.resolved_at IS NULL) "
@@ -316,12 +316,6 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
             "assigned": ticket_assignment_from_values(
                 stage=str(row["stage"]),
                 worker_type=str(row["worker_type"]),
-                stage_ownership_overrides=str(row["stage_ownership_overrides"]),
-                default_stage_ownership_mode=(
-                    str(row["default_stage_ownership_mode"])
-                    if row["default_stage_ownership_mode"] is not None
-                    else None
-                ),
                 owner_holds_ceiling=owner_holds,
             ),
             "errored": str(row["ticket_status"]) == "errored" or conversation[1],

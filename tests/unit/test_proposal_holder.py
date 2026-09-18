@@ -695,9 +695,9 @@ def test_migration_backfills_owner_and_startup_audits_holder_integrity(tmp_path:
     before = connect(str(db_path))
     before.execute(
         "INSERT INTO tickets "
-        "(id,title,worker_type,employee_backend,stage,ceiling,default_stage_ownership_mode,"
+        "(id,title,worker_type,employee_backend,stage,ceiling,"
         "field_values,created_at,updated_at) "
-        "VALUES ('t_old','Old','coding','codex','needs_kickoff','needs_kickoff','paired','{}',1,1)"
+        "VALUES ('t_old','Old','coding','codex','needs_kickoff','needs_kickoff','{}',1,1)"
     )
     before.close()
 

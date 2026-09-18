@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypedDict
 
-from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.contracts import WorkerTypeManifest
 
 
@@ -50,8 +49,6 @@ class ManagedWorkerLaunchDefaults:
 @dataclass(frozen=True, slots=True)
 class ManagedWorkerSettings:
     worker_type: str
-    suggested_next_ceiling: str
-    stage_ownership_defaults: dict[str, StageOwnershipMode]
     specialist_skill: ManagedSkill
     launch_defaults: ManagedWorkerLaunchDefaults
     candidate_specialist_skill: ManagedSkill | None = None
@@ -70,8 +67,6 @@ class WorkerManagementSummary:
     worker_type: str
     label: str
     specialist_skill_name: str
-    suggested_next_ceiling: str
-    stage_ownership_defaults: dict[str, StageOwnershipMode]
     launch_defaults: ManagedWorkerLaunchDefaults
 
 

@@ -21,7 +21,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
-from pathlib import Path
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -92,7 +91,6 @@ from planner.tickets.contracts import (
     ReconcileTicketFromExternalWorkBody,
     RevisionMessageBody,
     ScopeBody,
-    StageOwnershipMode,
     Ticket,
     TicketEdit,
     TicketListFilters,
@@ -101,7 +99,6 @@ from planner.tickets.contracts import (
 )
 from planner.work_attention import add_work_attention
 from planner.worker_context.contracts import WorkerContextService
-from planner.worker_settings import service as worker_settings_service
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
     configured_worker_type_registry,
@@ -183,19 +180,12 @@ ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_recor
 WorkerContext = Annotated[WorkerContextService, Depends(get_worker_context_service)]
 
 
-def _ticket_detail_with_worker_settings(
+def _ticket_detail(
     conn: sqlite3.Connection,
     ticket_id: str,
     now: int,
-    config: Config,
 ) -> JsonDict:
-    detail = tickets_views.ticket_detail(conn, ticket_id, now)
-    detail["suggested_next_ceiling"] = worker_settings_service.read_worker_settings(
-        Path(config.db_path).expanduser().parent,
-        configured_worker_type_registry(),
-        str(detail["worker_type"]),
-    ).suggested_next_ceiling
-    return detail
+    return tickets_views.ticket_detail(conn, ticket_id, now)
 
 
 async def reject_while_the_conversation_is_running(
@@ -948,7 +938,6 @@ async def get_worker_self_ticket(
     ticket_id: str,
     conn: DbConn,
     clk: Clk,
-    config: Cfg,
 ) -> JsonDict:
     """A worker agent's own Ticket, resolved from `PLAN_TICKET_ID` (its spawn env, flag-on).
 
@@ -970,7 +959,7 @@ async def get_worker_self_ticket(
                     "owner_ticket_id": owner.id,
                 },
             )
-    detail = _ticket_detail_with_worker_settings(conn, ticket.id, clk.now_unix(), config)
+    detail = _ticket_detail(conn, ticket.id, clk.now_unix())
     detail["worker"] = (
         configured_worker_type_registry()
         .require(ticket.worker_type)
@@ -984,11 +973,10 @@ async def get_ticket(
     ticket_id: str,
     conn: DbConn,
     clk: Clk,
-    config: Cfg,
     conversations: Conversations,
     conversation_record: ConversationRecord,
 ) -> JsonDict:
-    detail = _ticket_detail_with_worker_settings(conn, ticket_id, clk.now_unix(), config)
+    detail = _ticket_detail(conn, ticket_id, clk.now_unix())
     await add_work_attention(conn, conversations, conversation_record, tickets=(detail,))
     return detail
 
@@ -1030,7 +1018,7 @@ async def put_ticket_employee_configuration(
         employee_launch_reasoning_effort=body["employee_launch_reasoning_effort"],
     )
     ticket = write_resolved_employee_configuration(conn, ticket_id, resolved, now=clk.now_unix())
-    return _ticket_detail_with_worker_settings(conn, ticket.id, clk.now_unix(), get_config(request))
+    return _ticket_detail(conn, ticket.id, clk.now_unix())
 
 
 @router.delete("/tickets/{ticket_id}")
@@ -1517,40 +1505,6 @@ async def drop_ticket(
     return tickets_views.ticket_json(ticket, now)
 
 
-@router.post("/tickets/{ticket_id}/takeover")
-async def take_over_ticket(
-    ticket_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    require_direct_write(ctx)
-    now = clk.now_unix()
-    ticket = tickets_data.take_over_ticket(
-        conn,
-        ticket_id,
-        now=now,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/tickets/{ticket_id}/release")
-async def release_ticket(
-    ticket_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    require_direct_write(ctx)
-    now = clk.now_unix()
-    ticket = tickets_data.release_ticket(
-        conn,
-        ticket_id,
-        now=now,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
 @router.post("/tickets/{ticket_id}/request-help")
 async def request_help(
     ticket_id: str,
@@ -1587,39 +1541,6 @@ async def request_help(
         "conversation_id": delivered.conversation_id,
         **fate,
     }
-
-
-@router.put("/tickets/{ticket_id}/stage-ownership/{stage}")
-async def put_stage_ownership(
-    ticket_id: str,
-    stage: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    require_direct_write(ctx)
-    if set(raw) != {"ownership_mode"}:
-        raise PlannerError(
-            ErrorCode.validation,
-            "stage ownership requires ownership_mode",
-            {"fields": sorted(raw)},
-        )
-    ownership_raw = body_opt_str(raw, "ownership_mode")
-    ownership_mode = (
-        parse_enum(StageOwnershipMode, ownership_raw, "ownership_mode")
-        if ownership_raw is not None
-        else None
-    )
-    now = clk.now_unix()
-    ticket = tickets_data.set_stage_ownership(
-        conn,
-        ticket_id,
-        stage=stage,
-        ownership_mode=ownership_mode,
-        now=now,
-    )
-    return tickets_views.ticket_json(ticket, now)
 
 
 @router.get("/tickets/{ticket_id}/copy-text", response_class=PlainTextResponse)

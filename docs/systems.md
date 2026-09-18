@@ -76,15 +76,15 @@ _Code paths:_ `src/planner/days/`, `src/planner/sprints/`,
 
 ### 3. Tickets, gates, and Worker types
 
-A Ticket's Worker type declares its ordered Stages, gated fields, default Stage
+A Ticket's Worker type declares its ordered Stages, gated fields, Stage
 ownership, specialist skill, and launch defaults. Eleven Worker types ship, including
 coding, planning, design, debugging, general, and user-owned personal work. The browser
 gets the same registry manifest that the server uses.
 
 Workers propose gated Ticket fields. The proposal resolver alone settles one of those
 values and advances the Stage. Scope controls how far worker-owned Stages can advance.
-Ownership says whether the worker, user, or both drive the current Stage. A paired Stage
-gets one automatic opening turn and then continues in the same Ticket conversation.
+Ownership says whether the worker or user drives the current Stage. A user-owned Stage
+gets one automatic opening turn, then continues collaboratively in the same conversation.
 
 Ticket status is separate control state: `empty`, `blocked`, `agent`,
 `awaiting_approval`, or `errored`. One shared list projection derives whether work
@@ -117,14 +117,14 @@ _Code paths:_ `src/planner/scheduled_tickets/` and `src/planner/core/loops.py`.
 ### 5. Worker orchestration
 
 The readiness loop examines today's Tickets and applies one complete, read-only
-decision. A Ticket must be on today, non-terminal, worker or paired owned, `empty`,
+decision. A Ticket must be on today, non-terminal, and ready for its declared ownership,
 within scope, free of a parked proposal, and clear for its Closeout lane. The
 conversation system supplies the one fact the record cannot: whether that Ticket's
 worker is already busy.
 
 One guarded status flip out of `empty` is the claim. There is no claim stamp or run row.
-Paired claims also record one opener fact for the current Stage entry. An accepted
-paired opener returns the status to `empty`, while readiness uses the fact to prevent a
+User-owned claims also record one opener fact for the current Stage entry. An accepted
+opening turn returns the status to `empty`, while readiness uses the fact to prevent a
 repeat. Panels then starts or reuses the Ticket conversation and sends the Stage
 instruction with pending Worker context. Started and queued both count as delivered.
 Refusal releases every claim and removes any tentative opener fact.

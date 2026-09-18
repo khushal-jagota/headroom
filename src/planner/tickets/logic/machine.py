@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING
-
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import (
     NO_FURTHER,
@@ -15,9 +12,6 @@ from planner.tickets.contracts import (
     TicketStatus,
 )
 from planner.worker_types.contracts import WorkerTypeDefinition
-
-if TYPE_CHECKING:
-    pass
 
 
 def field_is_passed(
@@ -99,24 +93,21 @@ def resolve_scope(
     return ScopePair(next_ceiling=ceiling_id, at_cap=at_cap)
 
 
-def effective_stage_ownership_mode(
+def stage_ownership_mode(
     stage: str,
-    stage_ownership_overrides: Mapping[str, StageOwnershipMode],
     *,
     worker_type_definition: WorkerTypeDefinition,
-    default_stage_ownership_mode: StageOwnershipMode | None,
 ) -> StageOwnershipMode | None:
     if worker_type_definition.is_terminal(stage):
         return None
-    if stage in stage_ownership_overrides:
-        return stage_ownership_overrides[stage]
-    if default_stage_ownership_mode is None:
+    ownership_mode = worker_type_definition.stage_definition(stage).ownership_mode
+    if ownership_mode is None:
         raise PlannerError(
             ErrorCode.validation,
-            "non-terminal ticket has no captured stage ownership default",
+            "non-terminal stage has no ownership mode",
             {"stage": stage},
         )
-    return default_stage_ownership_mode
+    return ownership_mode
 
 
 def resting_ticket_status(ownership_mode: StageOwnershipMode) -> TicketStatus:
@@ -127,18 +118,9 @@ def resting_ticket_status(ownership_mode: StageOwnershipMode) -> TicketStatus:
 def worker_step_departure_status(ownership_mode: StageOwnershipMode) -> TicketStatus:
     """The status a Ticket occupies while its worker step is out.
 
-    This is not ``resting_ticket_status``: that answers where a Ticket comes to rest once
-    the step is over, and for a Worker-owned Stage the two are opposites — a Ticket rests
-    at ``empty`` and departs at ``agent``. A Paired-owned Stage departs at ``paired``,
-    which is also where it rests, because the discussion is the step.
-
-    A user-owned Stage never has a worker step to depart on: readiness rejects it before
-    a claim is attempted, so reaching here is a bug rather than a case to map.
+    Every Stage rests at ``empty``. Worker-owned steps and the one collaborative opener
+    for a user-owned Stage both occupy the ordinary ``agent`` control state.
     """
-    if ownership_mode in {StageOwnershipMode.worker, StageOwnershipMode.paired}:
+    if ownership_mode in {StageOwnershipMode.worker, StageOwnershipMode.user}:
         return TicketStatus.agent
-    raise PlannerError(
-        ErrorCode.validation,
-        "a user-owned stage has no worker step to depart on",
-        {"ownership_mode": ownership_mode.value},
-    )
+    raise AssertionError(f"unknown ownership mode: {ownership_mode}")

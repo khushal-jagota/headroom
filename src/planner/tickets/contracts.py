@@ -23,7 +23,6 @@ class AtCap(StrEnum):  # §4.3
 class StageOwnershipMode(StrEnum):
     worker = "worker"
     user = "user"
-    paired = "paired"
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,9 +288,6 @@ class Ticket:  # §3.3 — column names match exactly
     # Unlike the timestamp, it cannot collide when two transitions share a second.
     ticket_status_revision: int
     backend_error: str | None  # concrete confirmed backend Worker failure, else NULL
-    stage_ownership_overrides: Mapping[str, StageOwnershipMode]
-    default_stage_ownership_mode: StageOwnershipMode | None
-    effective_stage_ownership_mode: StageOwnershipMode | None
     conversation_id: str | None  # the Ticket's conversation link (column name is frozen)
     alias: str | None  # migration "Ticket ID:" (§12), unique when present
     field_values: TicketFieldValues

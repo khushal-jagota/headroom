@@ -94,7 +94,7 @@ branch at a time.
 
 ### needs_question_answers — settle the shared approach
 
-This is paired work. Begin from the approved tree and choose a bounded branch or small
+This is user-owned collaborative work. Begin from the approved tree and choose a bounded branch or small
 related group. Treat it as one continuous conversation: acknowledge the user's answer,
 briefly orient any branch change, then ask the next bounded question. Ground factual
 questions with available sources and tools. For judgment questions, explain the practical
@@ -110,7 +110,7 @@ As the conversation proceeds:
 - move newly discovered local questions to the future Ticket that owns them.
 
 If a living question-tree artifact exists, update it as branches change. Otherwise keep
-the working state in the paired conversation and make the final field the durable
+the working state in the collaborative conversation and make the final field the durable
 result. The formal **question answers** field is a synthesis, not a transcript: group the
 settled answers by the Rough Shape, preserve the implications that downstream Tickets
 need, and list only unresolved questions that can safely be deferred with a clear owner.

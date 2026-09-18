@@ -119,7 +119,7 @@ because a plain restart brings the Worker back on the same one. The named config
 what the Ticket launches on from then on, not for one turn.
 
 Three rules bound the action, and the server enforces all three. The Ticket must be a
-current child of your Item. Its Stage must be Worker-owned, because a paired conversation
+current child of your Item. Its Stage must be Worker-owned, because a user-owned conversation
 belongs to the user. The worker step must have had five minutes, so a Worker that is
 merely slow is left alone.
 

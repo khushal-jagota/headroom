@@ -27,7 +27,6 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
-    StageOwnershipMode,
     TicketEdit,
     TicketStatus,
 )
@@ -57,7 +56,7 @@ def _create(conn: Connection, cfg: Config, clock: TestClock, **kw: Any) -> Ticke
     settle_kickoff = kw.pop("settle_kickoff", True)
     ticket = data.create_ticket(
         conn,
-        worker_type="coding",
+        worker_type=kw.pop("worker_type", "coding"),
         title=kw.pop("title", "Test ticket"),
         principal=OWNER_PRINCIPAL,
         now=clock.now_unix(),
@@ -445,21 +444,6 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
     )
     assert t.ticket_status is TicketStatus.empty
 
-    t = data.take_over_ticket(tmp_db, t.id, now=now)
-    assert t.ticket_status is TicketStatus.empty
-    skipped = data.claim_ticket_for_worker_step(
-        tmp_db,
-        t.id,
-        planning_day_id_resolver=planning_day_id_resolver,
-        readiness_check=readiness_check,
-        now=now,
-    )
-    assert skipped is None
-    assert resolver_calls == 3
-    assert readiness_calls == 3
-
-    t = data.release_ticket(tmp_db, t.id, now=now)
-    assert t.ticket_status is TicketStatus.empty
     t = data.mark_ticket_errored(tmp_db, t.id, error="boom", now=now)
     assert t.ticket_status is TicketStatus.errored
     assert t.backend_error == "boom"
@@ -510,18 +494,11 @@ def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(
     assert data.read_ticket(tmp_db, t.id).ticket_status is TicketStatus.agent
 
 
-def test_a_paired_owned_stage_records_its_opener_and_returns_to_empty(
+def test_a_user_owned_stage_records_its_opener_and_returns_to_empty(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
-    t = _create(tmp_db, cfg, fake_clock)
-    data.set_stage_ownership(
-        tmp_db,
-        t.id,
-        stage=t.stage,
-        ownership_mode=StageOwnershipMode.paired,
-        now=now,
-    )
+    t = _create(tmp_db, cfg, fake_clock, worker_type="new_worker")
     days_data.add_day_ticket(tmp_db, _AUTOMATIC_PLANNING_DAY_ID, t.id, now)
 
     claimed = _claim_ready_worker_step(tmp_db, t.id, now=now)
@@ -1348,22 +1325,13 @@ def test_delete_admission_uses_the_exact_sprint_item_principal(
     assert tmp_db.execute("SELECT 1 FROM tickets WHERE id = ?", (ticket.id,)).fetchone() is None
 
 
-@pytest.mark.parametrize("implementation_owner", [StageOwnershipMode.user, None])
-def test_direct_plan_accept_derives_implementation_ownership_status(
+def test_direct_plan_accept_enters_implementation_unclaimed(
     tmp_db: Connection,
     cfg: Config,
     fake_clock: TestClock,
-    implementation_owner: StageOwnershipMode | None,
 ) -> None:
     now = fake_clock.now_unix()
     ticket = _create(tmp_db, cfg, fake_clock)
-    data.set_stage_ownership(
-        tmp_db,
-        ticket.id,
-        stage="needs_implementation",
-        ownership_mode=implementation_owner,
-        now=now,
-    )
     _scope(tmp_db, ticket, "needs_plan", AtCap.propose, fake_clock)
     for field in ("success", "approach", "plan"):
         ticket = data.file_current_proposal_with_recap(
@@ -1392,22 +1360,13 @@ def test_direct_plan_accept_derives_implementation_ownership_status(
     assert ticket.ticket_status is TicketStatus.empty
 
 
-@pytest.mark.parametrize("implementation_owner", [StageOwnershipMode.user, None])
-def test_auto_accepted_plan_derives_implementation_ownership_status(
+def test_auto_accepted_plan_enters_implementation_unclaimed(
     tmp_db: Connection,
     cfg: Config,
     fake_clock: TestClock,
-    implementation_owner: StageOwnershipMode | None,
 ) -> None:
     now = fake_clock.now_unix()
     ticket = _create(tmp_db, cfg, fake_clock)
-    data.set_stage_ownership(
-        tmp_db,
-        ticket.id,
-        stage="needs_implementation",
-        ownership_mode=implementation_owner,
-        now=now,
-    )
     _scope(tmp_db, ticket, "needs_implementation", AtCap.propose, fake_clock)
     for field in ("success", "approach"):
         ticket = data.file_current_proposal_with_recap(

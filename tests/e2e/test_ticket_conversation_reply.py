@@ -1,9 +1,10 @@
 """A person answering a Ticket's worker, in the browser where they answer it.
 
 A Ticket parked on a filed proposal is waiting for its owner. Replying to the worker is
-an answer of a kind — the proposal is being discussed rather than approved — so the
-Ticket moves to paired. The ticket screen is the one place that knows both halves, and it
-says a reply happened only once the conversation has taken the message.
+an answer of a kind — the proposal is being discussed rather than approved. The Ticket
+remains awaiting approval while its reply attention records the discussion. The ticket
+screen is the one place that knows both halves, and it says a reply happened only once
+the conversation has taken the message.
 
 No agent is involved and none is needed. The send is held inside the page and answered
 with whatever fate this test chooses, so nothing is ever spawned. Everything else is real

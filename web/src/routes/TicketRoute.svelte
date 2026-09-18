@@ -11,11 +11,7 @@
     gatingFieldFor,
     lifecycleFor
   } from "../lib/lifecycle";
-  import type {
-    EmployeeConfigurationSnapshot,
-    StageOwnershipMode,
-    TicketDetail
-  } from "../lib/types";
+  import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
   import { initialTicketConversationState } from "../lib/conversation/ticketConversationState";
@@ -88,7 +84,7 @@
 
   /** How far open this page's conversation is.
    *
-   * The state a conversation opens in belongs to the page that shows it. A paired Ticket
+   * The state a conversation opens in belongs to the page that shows it. A user-owned Ticket
    * opens full, and every other Ticket opens at rest. The person moves it from there and
    * the conversation writes back here when they do.
    */
@@ -101,7 +97,7 @@
    */
   let seededConversationStateFromStatus = false;
   $effect(() => {
-    const ownership = ticket.data?.effective_stage_ownership_mode;
+    const ownership = ticket.data && lc ? lc.stageOwnershipMode[ticket.data.stage] : undefined;
     if (
       !ticket.isFetchedAfterMount ||
       !ticket.isSuccess ||
@@ -251,28 +247,6 @@
     }
   }
 
-  function currentStageOwnershipOverride(detail: TicketDetail): StageOwnershipMode | null {
-    return detail.stage_ownership_overrides?.[detail.stage] ?? null;
-  }
-
-  function hasExplicitCurrentStageUserOverride(detail: TicketDetail): boolean {
-    return currentStageOwnershipOverride(detail) === "user";
-  }
-
-  function userOwnsCurrentStage(detail: TicketDetail): boolean {
-    return (
-      detail.effective_stage_ownership_mode === "user" ||
-      hasExplicitCurrentStageUserOverride(detail)
-    );
-  }
-
-  function saveStageOwner(detail: TicketDetail, ownershipMode: StageOwnershipMode): Promise<unknown> {
-    return mutateJson(
-      `/api/tickets/${stableId}/stage-ownership/${encodeURIComponent(detail.stage)}`,
-      { method: "PUT", body: { ownership_mode: ownershipMode } }
-    );
-  }
-
   function saveValue(field: string, body: string): Promise<unknown> {
     return mutateJson(`/api/tickets/${stableId}/value/${field}`, {
       method: "PUT",
@@ -305,22 +279,6 @@
 
   function acceptField(field: string, body: Record<string, unknown>): Promise<unknown> {
     return mutateJson(`/api/tickets/${stableId}/accept/${field}`, { method: "POST", body });
-  }
-
-  async function takeover(detail: TicketDetail): Promise<void> {
-    try {
-      if (
-        userOwnsCurrentStage(detail) &&
-        !hasExplicitCurrentStageUserOverride(detail)
-      ) {
-        await saveStageOwner(detail, "worker");
-      } else {
-        const action = userOwnsCurrentStage(detail) ? "release" : "takeover";
-        await mutateJson(`/api/tickets/${stableId}/${action}`, { method: "POST" });
-      }
-    } catch (err) {
-      headerError = err;
-    }
   }
 
   function currentStageRunLabel(detail: TicketDetail): string | null {
@@ -450,12 +408,8 @@
               <details class="ticket-leash" bind:this={leashMenu} data-leash>
                 <summary
                   class="ticket-leash-face"
-                  class:ticket-leash-face--held={userOwnsCurrentStage(detail)}
                   data-leash-face
                 >
-                  {#if userOwnsCurrentStage(detail)}
-                    <span class="ticket-leash-value">you hold {stageLabel(detail.stage)}</span>,
-                  {/if}
                   approved until
                   <span class="ticket-leash-value" data-leash-ceiling>{stageLabel(detail.ceiling)}</span>,
                   then <span class="ticket-leash-value" data-leash-cap>{atCapLabel(detail.at_cap)}</span>
@@ -554,13 +508,9 @@
                         lifecycle={lc}
                         ticketStage={detail.stage}
                         ceiling={detail.ceiling}
-                        suggestedNextCeiling={detail.suggested_next_ceiling}
                         emptyText={emptyTicketFieldText}
                         runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                         runLabelAttention={stageState === "current-awaiting-approval"}
-                        onRelease={currentStageRunLabel(detail) === "you're on it"
-                          ? () => takeover(detail)
-                          : undefined}
                         contextRow={name === "kickoff" && kickoffCardShowsContextRow
                           ? kickoffContextRow
                           : undefined}
@@ -591,13 +541,9 @@
                   lifecycle={lc}
                   ticketStage={detail.stage}
                   ceiling={detail.ceiling}
-                  suggestedNextCeiling={detail.suggested_next_ceiling}
                   emptyText={emptyTicketFieldText}
                   runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                   runLabelAttention={stageState === "current-awaiting-approval"}
-                  onRelease={currentStageRunLabel(detail) === "you're on it"
-                    ? () => takeover(detail)
-                    : undefined}
                   contextRow={name === "kickoff" && kickoffCardShowsContextRow
                     ? kickoffContextRow
                     : undefined}
