@@ -49,7 +49,6 @@ class WorkerTypeDefinition:
     dropped_stage: StageDefinition
     fields: tuple[FieldDefinition, ...]
     worker_profile: WorkerProfile
-    supports_prefix_reconciliation: bool
 
     def stage_ids(self) -> tuple[str, ...]:
         return tuple(stage.id for stage in self.stages)
@@ -166,14 +165,6 @@ class WorkerTypeDefinition:
                 "ceiling outside the type's range",
                 {"worker_type": self.worker_type, "ceiling": ceiling},
             )
-
-    def reconciliation_field_order(self) -> tuple[str, ...]:
-        return tuple(
-            stage.gating_field
-            for stage in self.stages
-            if not stage.is_terminal and stage.gating_field is not None
-        )
-
 
 class WorkerTypeManifestStage(TypedDict):
     id: str

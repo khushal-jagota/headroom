@@ -48,9 +48,11 @@ durable occurrence identity makes repeated polls and restarts safe. A matching
 specialist Ticket already on the target Day suppresses creation. Personal schedules
 also require an exact title match. A failed occurrence does not stop later schedules.
 
-Creation uses the ordinary Ticket writer, so Worker registration, launch defaults,
-priority, blockers, lifecycle initialization, placement, and Day membership follow the
-same rules as manual creation. The resulting commit emits the ordinary change signal.
+Creation uses the canonical Ticket action. The schedule passes backlog, fixed Sprint,
+or current-Sprint intent, and that action resolves placement at occurrence time. Worker
+registration, launch defaults, priority, blockers, lifecycle initialization, placement,
+and Day membership follow the same rules as manual creation. The resulting commit emits
+the ordinary change signal.
 Worker readiness then decides whether work can start.
 
 _Code paths:_ `src/planner/scheduled_tickets/actions.py`,

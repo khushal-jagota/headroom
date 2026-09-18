@@ -70,17 +70,20 @@ from planner.conversation.events import (
     TurnEndedEventPayload,
     UserInputAnswer,
 )
+from planner.conversation.logic.addressed_reply import with_authenticated_reply_directive
 from planner.conversation.message_content import (
     MessageContent,
     MessageFile,
     MessageImage,
     MessageText,
     message_content_text,
+    prefix_message_content_text,
     text_message_content,
 )
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
+from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL
 from planner.core.db import connect, create_schema
 
 
@@ -434,7 +437,7 @@ def test_the_systems_composed_role_does_not_hide_a_first_prompt_catalog_invocati
             ][0]
             if expected_method == "turn/start":
                 assert received["params"]["input"] == [
-                    {"type": "text", "text": f"owner:\n{ROLE_TEXT}\n\n{prompt_text}"},
+                    {"type": "text", "text": f"{ROLE_TEXT}\n\nowner:\n{prompt_text}"},
                     {
                         "type": "skill",
                         "name": "ship-it",
@@ -616,7 +619,7 @@ def test_a_persisted_cursor_without_a_delivered_prompt_keeps_first_prompt_dispat
                 }
                 assert received["params"]["input"][0] == {
                     "type": "text",
-                    "text": f"owner:\n{ROLE_TEXT}\n\n{prompt_text}",
+                    "text": f"{ROLE_TEXT}\n\nowner:\n{prompt_text}",
                 }
             else:
                 assert received["params"] == {"threadId": "thread-1"}
@@ -842,13 +845,28 @@ def test_compact_and_review_use_native_methods_and_the_normal_turn_lifecycle(
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, text_message_content("/compact"))
+            compact_sender_content = text_message_content("/compact")
+            compact_outcome = await scripted.child.write_prompt(
+                TurnToken("c", 1),
+                with_authenticated_reply_directive(
+                    compact_sender_content, (OWNER_PRINCIPAL,)
+                ),
+                sender_content=compact_sender_content,
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
             await scripted.sink.wait_for_the_turn_to_end()
             scripted.sink.expect_another_turn()
             await scripted.write_prompt(2, text_message_content("/review focus on races"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             assert scripted.sent("thread/compact/start")["params"] == {"threadId": "thread-1"}
+            assert compact_outcome.composed_content_delivered is False
+            assert "Authenticated Panels reply requirement" not in json.dumps(
+                scripted.sent("thread/compact/start")["params"]
+            )
             review = scripted.sent("review/start")["params"]
             assert review["delivery"] == "inline"
             assert review["target"] == {
@@ -859,6 +877,48 @@ def test_compact_and_review_use_native_methods_and_the_normal_turn_lifecycle(
             assert scripted.sink.endings == [
                 ConversationTurnEnding.completed,
                 ConversationTurnEnding.completed,
+            ]
+
+    _run(exercise)
+
+
+def test_a_live_command_at_the_front_of_a_held_batch_keeps_every_message(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={"turns": [{}]}) as scripted:
+            await scripted.start(cursor=None)
+            kept = await scripted.message_files.keep(
+                "c", b"image", media_type="image/png"
+            )
+            sender_content: MessageContent = (
+                MessageText("/compact"),
+                MessageImage(kept.stored_file_id, "image/png"),
+                MessageText("Chief:\nsecond message"),
+            )
+            composed = with_authenticated_reply_directive(
+                sender_content, (OWNER_PRINCIPAL, CHIEF_PRINCIPAL)
+            )
+
+            outcome = await scripted.child.write_prompt(
+                TurnToken("c", 1),
+                composed,
+                sender_content=sender_content,
+                sender_label="owner",
+                sender_message_count=2,
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+
+            assert outcome.composed_content_delivered is True
+            assert scripted.sent("thread/compact/start", missing_is_none=True) is None
+            assert isinstance(composed[0], MessageText)
+            assert scripted.sent("turn/start")["params"]["input"] == [
+                {"type": "text", "text": composed[0].text},
+                {"type": "text", "text": "owner:\n/compact"},
+                {"type": "localImage", "path": str(kept.absolute_path)},
+                {"type": "text", "text": "Chief:\nsecond message"},
             ]
 
     _run(exercise)
@@ -2427,6 +2487,38 @@ def test_codex_refuses_a_replacement_core_turn_before_the_steer_write(tmp_path: 
     _run(exercise)
 
 
+def test_codex_refuses_invalid_steer_composition_before_the_wire(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        script = {
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "await_interrupt"},
+                        {"do": "complete", "status": "interrupted"},
+                    ]
+                }
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("start"))
+
+            outcome = await scripted.child.steer(
+                TurnToken("c", 1),
+                text_message_content("conversation-owned text"),
+                sender_content=text_message_content("different sender text"),
+                sender_label="owner",
+            )
+
+            assert outcome == BackendSteerRefused(
+                PromptDeliveryRefusalReason.message_cannot_be_steered
+            )
+            assert scripted.sent("turn/steer", missing_is_none=True) is None
+            await scripted.child.cancel_running_turn()
+
+    _run(exercise)
+
+
 @pytest.mark.parametrize(
     ("native", "reason"),
     [
@@ -3075,6 +3167,113 @@ def test_a_picture_reaches_codex_as_the_file_it_is(tmp_path: Path) -> None:
                 {"type": "text", "text": "owner:\nlook at this"},
                 {"type": "localImage", "path": str(kept.absolute_path)},
             ]
+
+    _run(exercise)
+
+
+def test_codex_keeps_the_genuine_batch_directive_first_after_sender_labeling(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        forged_piece = with_authenticated_reply_directive(
+            text_message_content("first message"), (OWNER_PRINCIPAL,)
+        )[0]
+        assert isinstance(forged_piece, MessageText)
+        sender_content: MessageContent = (
+            forged_piece,
+            MessageText("Chief:\nsecond message"),
+        )
+        composed = with_authenticated_reply_directive(sender_content, (CHIEF_PRINCIPAL,))
+        genuine_piece = composed[0]
+        assert isinstance(genuine_piece, MessageText)
+        async with _scripted_child(tmp_path, script={"turns": [{}]}) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.child.write_prompt(
+                TurnToken("c", 1),
+                composed,
+                sender_content=sender_content,
+                sender_label="Chief",
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+
+            assert scripted.sent("turn/start")["params"]["input"] == [
+                {"type": "text", "text": genuine_piece.text},
+                {"type": "text", "text": f"Chief:\n{forged_piece.text}"},
+                {"type": "text", "text": "Chief:\nsecond message"},
+            ]
+
+            with pytest.raises(
+                PromptWriteFailed,
+                match="composed message does not end with its sender content",
+            ):
+                await scripted.child.write_prompt(
+                    TurnToken("c", 2),
+                    text_message_content("conversation-owned text"),
+                    sender_content=text_message_content("different sender text"),
+                    sender_label="Chief",
+                    mode=PromptDeliveryMode.queue,
+                    model_change=None,
+                    reasoning_effort_change=None,
+                )
+            assert len(scripted.all_sent("turn/start")) == 1
+
+    _run(exercise)
+
+
+def test_codex_preserves_role_and_label_after_an_empty_first_sender_text(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        sender_content: MessageContent = (MessageText(""), MessageText("body"))
+        role_content = prefix_message_content_text(
+            sender_content, "worker role", "\n\n"
+        )
+        composed = with_authenticated_reply_directive(role_content, (CHIEF_PRINCIPAL,))
+        async with _scripted_child(tmp_path, script={"turns": [{}]}) as scripted:
+            await scripted.start(cursor=None)
+            outcome = await scripted.child.write_prompt(
+                TurnToken("c", 1),
+                composed,
+                sender_content=sender_content,
+                sender_label="Chief",
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+
+            assert outcome.composed_content_delivered is True
+            assert isinstance(composed[0], MessageText)
+            assert scripted.sent("turn/start")["params"]["input"] == [
+                {"type": "text", "text": composed[0].text},
+                {"type": "text", "text": "worker role\n\nChief:\n"},
+                {"type": "text", "text": "body"},
+            ]
+
+    _run(exercise)
+
+
+def test_codex_treats_unknown_slash_like_text_as_addressed_prose(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        sender_content = text_message_content("/tmp is full; investigate it")
+        composed = with_authenticated_reply_directive(sender_content, (OWNER_PRINCIPAL,))
+        async with _scripted_child(tmp_path, script={"turns": [{}]}) as scripted:
+            await scripted.start(cursor=None)
+            outcome = await scripted.child.write_prompt(
+                TurnToken("c", 1),
+                composed,
+                sender_content=sender_content,
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+
+            inputs = scripted.sent("turn/start")["params"]["input"]
+            assert outcome.composed_content_delivered is True
+            assert inputs[0]["text"].startswith("[Authenticated Panels reply requirement]")
+            assert inputs[1] == {"type": "text", "text": "owner:\n/tmp is full; investigate it"}
 
     _run(exercise)
 

@@ -81,6 +81,7 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationRoleMaterials,
     PromptDeliveryMode,
+    PromptDeliveryRefusalReason,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
@@ -88,15 +89,18 @@ from planner.conversation.events import (
     ToolCallStatus,
     UserInputAnswer,
 )
+from planner.conversation.logic.addressed_reply import with_authenticated_reply_directive
 from planner.conversation.message_content import (
     MessageContent,
     MessageFile,
     MessageImage,
     MessageText,
     message_content_text,
+    prefix_message_content_text,
     text_message_content,
 )
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL
 
 
 def _message_files() -> ConversationMessageFiles:
@@ -989,10 +993,11 @@ def test_an_ordinary_catalog_command_keeps_exact_native_dispatch_text(
             _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
         )
         sender_content = text_message_content("/review focus on tests")
+        composed = with_authenticated_reply_directive(sender_content, (OWNER_PRINCIPAL,))
 
-        await child.write_prompt(
+        outcome = await child.write_prompt(
             TURN,
-            text_message_content("You are the worker.\n\n/review focus on tests"),
+            composed,
             sender_content=sender_content,
             sender_label="owner",
                 mode=PromptDeliveryMode.queue,
@@ -1001,6 +1006,119 @@ def test_an_ordinary_catalog_command_keeps_exact_native_dispatch_text(
         )
 
         assert clients[0].prompts == ["/review focus on tests"]
+        assert outcome.composed_content_delivered is False
+        assert "Authenticated Panels reply requirement" not in clients[0].prompts[0]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_live_command_at_the_front_of_a_batch_keeps_every_claude_message(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, _, clients = _bench(
+            _start_request(workspace_folder=tmp_path),
+            handshake={
+                "commands": [
+                    {"name": "review", "description": "Review the working tree"}
+                ]
+            },
+        )
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        kept = await _bench_message_files(child).keep(
+            CONVERSATION_ID, b"image", media_type="image/png"
+        )
+        sender_content: MessageContent = (
+            MessageText("/review focus on tests"),
+            MessageImage(kept.stored_file_id, "image/png"),
+            MessageText("Chief:\nsecond message"),
+        )
+        composed = with_authenticated_reply_directive(
+            sender_content, (OWNER_PRINCIPAL, CHIEF_PRINCIPAL)
+        )
+
+        outcome = await child.write_prompt(
+            TURN,
+            composed,
+            sender_content=sender_content,
+            sender_label="owner",
+            sender_message_count=2,
+            mode=PromptDeliveryMode.queue,
+            model_change=None,
+            reasoning_effort_change=None,
+        )
+
+        assert outcome.composed_content_delivered is True
+        assert clients[0].prompts == []
+        assert isinstance(composed[0], MessageText)
+        assert clients[0].streamed_messages[-1]["message"]["content"] == [
+            {"type": "text", "text": composed[0].text},
+            {"type": "text", "text": "owner:\n/review focus on tests"},
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": b64encode(b"image").decode("ascii"),
+                },
+            },
+            {"type": "text", "text": "Chief:\nsecond message"},
+        ]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_one_sender_rich_command_shaped_content_is_an_ordinary_claude_prompt(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, _, clients = _bench(
+            _start_request(workspace_folder=tmp_path),
+            handshake={
+                "commands": [
+                    {"name": "review", "description": "Review the working tree"}
+                ]
+            },
+        )
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        kept = await _bench_message_files(child).keep(
+            CONVERSATION_ID, b"image", media_type="image/png"
+        )
+        sender_content: MessageContent = (
+            MessageText("/review focus on tests"),
+            MessageImage(kept.stored_file_id, "image/png"),
+        )
+        composed = with_authenticated_reply_directive(
+            sender_content, (OWNER_PRINCIPAL,)
+        )
+
+        outcome = await child.write_prompt(
+            TURN,
+            composed,
+            sender_content=sender_content,
+            sender_label="owner",
+            sender_message_count=1,
+            mode=PromptDeliveryMode.queue,
+            model_change=None,
+            reasoning_effort_change=None,
+        )
+
+        assert outcome.composed_content_delivered is True
+        assert clients[0].prompts == []
+        blocks = clients[0].streamed_messages[-1]["message"]["content"]
+        assert isinstance(composed[0], MessageText)
+        assert blocks[0] == {"type": "text", "text": composed[0].text}
+        assert blocks[1] == {
+            "type": "text",
+            "text": "owner:\n/review focus on tests",
+        }
+        assert blocks[2]["type"] == "image"
         await child.stop()
 
     _run(exercise)
@@ -1030,6 +1148,7 @@ def test_a_steered_catalog_command_keeps_exact_native_dispatch_text(
         )
 
         assert isinstance(outcome, BackendSteerAccepted)
+        assert outcome.composed_content_delivered is False
         assert clients[0].streamed_messages[-1]["message"]["content"] == [
             {"type": "text", "text": "/review focus on tests"}
         ]
@@ -1306,17 +1425,29 @@ def test_the_rebound_child_takes_the_prompt_that_asked_for_it(tmp_path: Path) ->
         )
         child, _, clients = _bench(resolved_start)
         await child.start(resolved_start, vendor_session_cursor=SESSION_ID)
-        content = text_message_content("on the other model please")
-        await child.write_prompt(
+        sender_content: MessageContent = (MessageText(""), MessageText("body"))
+        role_content = prefix_message_content_text(
+            sender_content, "worker role", "\n\n"
+        )
+        content = with_authenticated_reply_directive(
+            role_content, (CHIEF_PRINCIPAL,)
+        )
+        outcome = await child.write_prompt(
             TURN,
             content,
-            sender_content=content,
-            sender_label="owner",
+            sender_content=sender_content,
+            sender_label="Chief",
             mode=PromptDeliveryMode.queue,
             model_change="claude-sonnet-4-5",
             reasoning_effort_change="high",
         )
-        assert clients[0].prompts == ["owner:\non the other model please"]
+        assert outcome.composed_content_delivered is True
+        assert isinstance(content[0], MessageText)
+        assert clients[0].streamed_messages[-1]["message"]["content"] == [
+            {"type": "text", "text": content[0].text},
+            {"type": "text", "text": "worker role\n\nChief:\n"},
+            {"type": "text", "text": "body"},
+        ]
         await child.stop()
 
     _run(exercise)
@@ -1359,6 +1490,34 @@ def test_steering_requires_the_exact_running_turn(tmp_path: Path) -> None:
             TurnToken("c", 1), text_message_content("go left"), sender_label="owner"
         )
         assert isinstance(refused, BackendSteerRefused)
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_invalid_steer_composition_is_refused_before_the_claude_wire(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, _, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        await _write(child)
+        streamed_before = len(clients[0].streamed_messages)
+
+        outcome = await child.steer(
+            TURN,
+            text_message_content("conversation-owned text"),
+            sender_content=text_message_content("different sender text"),
+            sender_label="owner",
+        )
+
+        assert outcome == BackendSteerRefused(
+            PromptDeliveryRefusalReason.write_to_backend_failed
+        )
+        assert len(clients[0].streamed_messages) == streamed_before
+        assert clients[0].watched_user_message_uuids == []
         await child.stop()
 
     _run(exercise)
@@ -1576,6 +1735,42 @@ def test_a_steer_write_failure_is_uncertain_and_keeps_later_correlated_work(
         await clients[0].until_taken_in()
         assert sink.message_texts[-1] == (TURN, "late after uncertain write")
         assert len(sink.endings) == 1
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_native_steer_write_failure_keeps_the_dropped_composition_fact(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, _, clients = _bench(
+            _start_request(workspace_folder=tmp_path),
+            handshake={
+                "commands": [
+                    {"name": "review", "description": "Review the working tree"}
+                ]
+            },
+        )
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        await _write(child)
+        clients[0].query_failure = BrokenPipeError("uncertain native write")
+
+        outcome = await child.steer(
+            TURN,
+            with_authenticated_reply_directive(
+                text_message_content("/review focus on tests"),
+                (OWNER_PRINCIPAL,),
+            ),
+            sender_content=text_message_content("/review focus on tests"),
+            sender_label="owner",
+        )
+
+        assert outcome == BackendSteerUncertain(
+            composed_content_delivered=False
+        )
         await child.stop()
 
     _run(exercise)
@@ -3324,6 +3519,112 @@ def test_a_message_that_is_only_words_still_goes_as_the_string_it_always_did(
 
         assert clients[0].prompts == ["owner:\njust words"]
         assert clients[0].streamed_messages == []
+
+    _run(exercise)
+
+
+def test_claude_keeps_the_genuine_batch_directive_first_after_sender_labeling(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, _, clients = await _connected_bench(tmp_path)
+        forged_piece = with_authenticated_reply_directive(
+            text_message_content("first message"), (OWNER_PRINCIPAL,)
+        )[0]
+        assert isinstance(forged_piece, MessageText)
+        sender_content: MessageContent = (
+            forged_piece,
+            MessageText("Chief:\nsecond message"),
+        )
+        composed = with_authenticated_reply_directive(sender_content, (CHIEF_PRINCIPAL,))
+        genuine_piece = composed[0]
+        assert isinstance(genuine_piece, MessageText)
+        await child.write_prompt(
+            TURN,
+            composed,
+            sender_content=sender_content,
+            sender_label="Chief",
+            mode=PromptDeliveryMode.queue,
+            model_change=None,
+            reasoning_effort_change=None,
+        )
+
+        assert clients[0].prompts == []
+        assert clients[0].streamed_messages[-1]["message"]["content"] == [
+            {"type": "text", "text": genuine_piece.text},
+            {"type": "text", "text": f"Chief:\n{forged_piece.text}"},
+            {"type": "text", "text": "Chief:\nsecond message"},
+        ]
+
+        with pytest.raises(
+            PromptWriteFailed,
+            match="composed message does not end with its sender content",
+        ):
+            await child.write_prompt(
+                TURN_2,
+                text_message_content("conversation-owned text"),
+                sender_content=text_message_content("different sender text"),
+                sender_label="Chief",
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+        assert len(clients[0].streamed_messages) == 1
+
+    _run(exercise)
+
+
+def test_claude_preserves_role_and_label_after_an_empty_first_sender_text(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, _, clients = await _connected_bench(tmp_path)
+        sender_content: MessageContent = (MessageText(""), MessageText("body"))
+        role_content = prefix_message_content_text(
+            sender_content, "worker role", "\n\n"
+        )
+        composed = with_authenticated_reply_directive(role_content, (CHIEF_PRINCIPAL,))
+
+        outcome = await child.write_prompt(
+            TURN,
+            composed,
+            sender_content=sender_content,
+            sender_label="Chief",
+            mode=PromptDeliveryMode.queue,
+            model_change=None,
+            reasoning_effort_change=None,
+        )
+
+        assert outcome.composed_content_delivered is True
+        assert isinstance(composed[0], MessageText)
+        assert clients[0].streamed_messages[-1]["message"]["content"] == [
+            {"type": "text", "text": composed[0].text},
+            {"type": "text", "text": "worker role\n\nChief:\n"},
+            {"type": "text", "text": "body"},
+        ]
+
+    _run(exercise)
+
+
+def test_claude_treats_unknown_slash_like_text_as_addressed_prose(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        child, _, clients = await _connected_bench(tmp_path)
+        sender_content = text_message_content("/tmp is full; investigate it")
+        composed = with_authenticated_reply_directive(sender_content, (OWNER_PRINCIPAL,))
+        outcome = await child.write_prompt(
+            TURN,
+            composed,
+            sender_content=sender_content,
+            sender_label="owner",
+            mode=PromptDeliveryMode.queue,
+            model_change=None,
+            reasoning_effort_change=None,
+        )
+
+        blocks = clients[0].streamed_messages[-1]["message"]["content"]
+        assert outcome.composed_content_delivered is True
+        assert blocks[0]["text"].startswith("[Authenticated Panels reply requirement]")
+        assert blocks[1] == {"type": "text", "text": "owner:\n/tmp is full; investigate it"}
 
     _run(exercise)
 

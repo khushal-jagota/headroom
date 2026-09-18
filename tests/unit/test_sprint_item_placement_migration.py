@@ -230,11 +230,11 @@ def test_migration_moves_direct_placements_to_shared_other_items_and_preserves_s
         str(row["name"]) for row in upgraded.execute("PRAGMA index_list(tickets)")
     }
     assert {
-        "idx_tickets_alias",
         "idx_tickets_project_id",
         "idx_tickets_stage",
         "idx_tickets_worker_type_stage",
     }.issubset(ticket_indexes)
+    assert "idx_tickets_alias" not in ticket_indexes
     schedule_indexes = {
         str(row["name"])
         for row in upgraded.execute("PRAGMA index_list(scheduled_ticket_schedules)")

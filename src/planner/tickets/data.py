@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Protocol
 
@@ -26,8 +26,6 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.days import data as days_data
 from planner.notifications.attention import capture_ticket_attention
-from planner.proposal_holder_wakes import data as proposal_holder_wakes_data
-from planner.proposal_holder_wakes.contracts import proposal_ready_message
 from planner.tickets import worker_context as ticket_worker_context
 from planner.tickets.contracts import (
     AtCap,
@@ -47,12 +45,12 @@ from planner.tickets.contracts import (
 from planner.tickets.logic import (
     admission,
     employee_configuration,
-    external_work,
     fields_codec,
     machine,
     resolution,
 )
 from planner.tickets.logic.decisions import Decision
+from planner.worker_context import revision_feedback
 from planner.worker_settings.service import (
     read_worker_launch_defaults_for_ticket_creation,
 )
@@ -357,9 +355,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         ticket_status=TicketStatus(row["ticket_status"]),
         ticket_status_changed_at=int(row["ticket_status_changed_at"]),
         ticket_status_revision=int(row["ticket_status_revision"]),
-        backend_error=(str(row["backend_error"]) if row["backend_error"] is not None else None),
         conversation_id=row["conversation_id"],
-        alias=row["alias"],
         field_values=fields_codec.values_from_json(
             row["field_values"], worker_type_definition.field_ids()
         ),
@@ -585,8 +581,6 @@ def _apply_decision(
     new_ceiling = decision.ceiling
     new_at_cap = decision.at_cap
     _validate_ceiling_holder(conn, decision.ceiling_holder, ticket_id=ticket.id)
-    if ticket.pending_proposal is not None and decision.pending_proposal is None:
-        proposal_holder_wakes_data.cancel(conn, ticket.id, now=now)
     # Pre-persist door: the prospective (stage, ceiling) must be registry-valid for
     # this ticket's type before any SQL — the enforcement the dropped DB CHECKs gave.
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
@@ -630,6 +624,7 @@ def _apply_decision(
             "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ?",
             (ticket.id,),
         )
+        revision_feedback.discard(conn, ticket.id)
     if active_before != active_after:
         if active_after:
             # Reopened out of done: the links this Ticket still holds block again, so
@@ -649,27 +644,21 @@ def _write_ticket_status(
     ticket_id: str,
     ticket_status: TicketStatus,
     now: int,
-    *,
-    error: str | None = None,
 ) -> None:
     # The one write door also carries the stand-in: a caller asking for `empty` on a
     # Ticket with a live blocker durably lands on `blocked`.
     ticket_status = _blocked_standin(conn, ticket_id, ticket_status)
-    backend_error = error if ticket_status is TicketStatus.errored else None
-    if ticket_status is TicketStatus.errored and not backend_error:
-        raise ValueError("errored Ticket status requires a concrete backend error")
     # ticket_status_changed_at answers "how long has this Ticket been where it is",
     # so it moves only when the value really moves — rewriting the same status is not a
     # change. The CASE keeps that comparison against the stored row, in the one write.
     conn.execute(
-        "UPDATE tickets SET ticket_status = ?, backend_error = ?, updated_at = ?, "
+        "UPDATE tickets SET ticket_status = ?, updated_at = ?, "
         "ticket_status_changed_at = CASE WHEN ticket_status = ? "
         "THEN ticket_status_changed_at ELSE ? END, "
         "ticket_status_revision = CASE WHEN ticket_status = ? "
         "THEN ticket_status_revision ELSE ticket_status_revision + 1 END WHERE id = ?",
         (
             ticket_status.value,
-            backend_error,
             now,
             ticket_status.value,
             now,
@@ -1046,10 +1035,9 @@ def create_ticket(
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_id, sprint_item_id, "
             "recap, ceiling, ceiling_holder, at_cap, "
-            "ticket_status, conversation_id, alias, field_values, pending_proposal, "
-            "created_at, updated_at, "
-            "ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, "
+            "ticket_status, conversation_id, field_values, pending_proposal, "
+            "created_at, updated_at, ticket_status_changed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, "
             "?, ?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1079,211 +1067,6 @@ def create_ticket(
             days_data.add_day_ticket(conn, day_id, ticket_id, now)
         for blocker_ticket_id in blocked_by_ticket_ids or []:
             core_links.add_link(conn, blocker_ticket_id, ticket_id, LinkKind.blocks, now)
-        return _load_ticket_for_write(conn, ticket_id)
-
-
-def create_ticket_from_external_work(
-    conn: sqlite3.Connection,
-    *,
-    title: str,
-    target_stage: str,
-    provided_values: Mapping[str, str],
-    principal: Principal,
-    now: int,
-    title_max_chars: int,
-    kickoff_note: str | None = None,
-    recap: str | None = None,
-    project_id: str | None = None,
-    sprint_id: str | None = None,
-    priority: Priority | None = None,
-    deadline: str | None = None,
-    sprint_item_id: str | None = None,
-    worker_type: str,
-    employee_backend: str | None = None,
-    employee_launch_model: str | None = None,
-    worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
-    blocked_by_ticket_ids: list[str] | None = None,
-    day_id: str | None = None,
-) -> Ticket:
-    if kickoff_note is None:
-        kickoff_note = ""
-    admission.validate_title(title, title_max_chars)
-    admission.validate_body(kickoff_note, "kickoff note")
-    admission.validate_deadline(deadline)
-    if recap is not None:
-        admission.validate_body(recap, "recap")
-    runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
-    worker_type_definition = runtime_definitions.worker_type_registry.require(worker_type)
-    launch_defaults = read_worker_launch_defaults_for_ticket_creation(
-        conn, runtime_definitions.worker_type_registry, worker_type
-    )
-    launch_configuration = employee_configuration.launch_configuration_for_a_new_ticket(
-        default_backend=launch_defaults.employee_backend,
-        default_model=launch_defaults.employee_launch_model,
-        default_reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
-        employee_backend=require_conversation_backend_key(
-            employee_backend if employee_backend is not None else launch_defaults.employee_backend
-        ),
-        employee_launch_model=employee_launch_model,
-    )
-    # External work is "already done elsewhere": start at the type's FIRST WORKER stage
-    # (needs_success / needs_understanding / needs_alpha), NOT the leading needs_kickoff — the
-    # applied decision then jumps it to target_stage. first_worker_stage is the concept
-    # here; default_ceiling is now needs_kickoff and would wrongly re-park kickoff.
-    first_worker = worker_type_definition.first_worker_stage()
-    ticket_id = new_id(ID_PREFIXES["ticket"])
-    initial_values = (
-        {"kickoff": kickoff_note} if worker_type_definition.has_field("kickoff") else {}
-    )
-    with _txn(conn):
-        _validate_ceiling_holder(conn, principal, ticket_id=ticket_id)
-        if sprint_item_id is not None and project_id is None:
-            item = conn.execute(
-                "SELECT project_id FROM sprint_items WHERE id = ?",
-                (sprint_item_id,),
-            ).fetchone()
-            if item is not None:
-                project_id = str(item["project_id"])
-        _validate_ticket_creation_placement(
-            conn,
-            project_id=project_id,
-            sprint_id=sprint_id,
-            sprint_item_id=sprint_item_id,
-            blocked_by_ticket_ids=blocked_by_ticket_ids,
-        )
-        priority_anchors = _resolve_priority_anchors(
-            conn, project_id=project_id, sprint_item_id=sprint_item_id
-        )
-        stored_priority = _created_ticket_priority(priority, priority_anchors)
-
-        conn.execute(
-            "INSERT INTO tickets ("
-            "id, title, worker_type, employee_backend, employee_launch_model, "
-            "employee_launch_reasoning_effort, stage, priority, deadline, "
-            "project_id, sprint_id, sprint_item_id, "
-            "recap, ceiling, ceiling_holder, at_cap, ticket_status, "
-            "conversation_id, alias, field_values, "
-            "created_at, updated_at, ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, "
-            "?, ?, ?, ?)",
-            (
-                ticket_id,
-                title,
-                worker_type,
-                launch_configuration.employee_backend,
-                launch_configuration.employee_launch_model,
-                launch_configuration.employee_launch_reasoning_effort,
-                # Start at the type's FIRST WORKER stage. The applied external-work
-                # decision then moves it to target_stage; this initial position only needs to be a
-                # valid non-terminal worker stage so the pre-persist guard passes
-                # (coding: needs_success; probe: needs_alpha). This is NOT default_ceiling,
-                # which is now the leading needs_kickoff.
-                first_worker,
-                stored_priority.value,
-                deadline,
-                project_id,
-                sprint_id,
-                sprint_item_id,
-                first_worker,
-                _principal_to_json(principal),
-                AtCap.propose.value,
-                TicketStatus.empty.value,
-                fields_codec.values_to_json(initial_values),
-                now,
-                now,
-                now,
-            ),
-        )
-        if day_id is not None:
-            days_data.add_day_ticket(conn, day_id, ticket_id, now)
-        for blocker_ticket_id in blocked_by_ticket_ids or []:
-            core_links.add_link(conn, blocker_ticket_id, ticket_id, LinkKind.blocks, now)
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
-        )
-        decision = external_work.decide_external_work(
-            ticket,
-            target_stage,
-            provided_values,
-            principal,
-            worker_type_definition=worker_type_definition,
-        )
-        ticket = _apply_decision(conn, ticket, decision, now)
-        if recap is not None:
-            conn.execute(
-                "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?",
-                (recap, now, ticket_id),
-            )
-            ticket = _load_ticket_for_write(conn, ticket_id)
-        _write_entered_stage_ticket_status(
-            conn,
-            ticket,
-            worker_type_definition=worker_type_definition,
-            now=now,
-        )
-        return _load_ticket_for_write(conn, ticket_id)
-
-
-def reconcile_ticket_from_external_work(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    target_stage: str,
-    provided_values: Mapping[str, str],
-    principal: Principal,
-    now: int,
-    kickoff_note: str | None = None,
-    recap: str | None = None,
-) -> Ticket:
-    if kickoff_note is None:
-        kickoff_note = ""
-    admission.validate_body(kickoff_note, "kickoff note")
-    if recap is not None:
-        admission.validate_body(recap, "recap")
-    with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
-        )
-        if ticket.ticket_status not in (
-            TicketStatus.empty,
-            TicketStatus.blocked,
-            TicketStatus.errored,
-        ):
-            raise PlannerError(
-                ErrorCode.already_running,
-                "ticket control is active",
-                {"ticket_id": ticket_id, "ticket_status": ticket.ticket_status.value},
-            )
-
-        decision = external_work.decide_external_work(
-            ticket,
-            target_stage,
-            provided_values,
-            principal,
-            worker_type_definition=worker_type_definition,
-        )
-        stage_before_position = ticket.stage
-        ticket = _apply_decision(conn, ticket, decision, now)
-        if recap is not None and recap != ticket.recap:
-            conn.execute(
-                "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?",
-                (recap, now, ticket_id),
-            )
-            ticket = _load_ticket_for_write(conn, ticket_id)
-        if ticket.stage != stage_before_position:
-            _write_entered_stage_ticket_status(
-                conn,
-                ticket,
-                worker_type_definition=worker_type_definition,
-                now=now,
-            )
-        else:
-            _write_resting_ticket_status(
-                conn,
-                ticket,
-                worker_type_definition=worker_type_definition,
-                now=now,
-            )
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1461,12 +1244,11 @@ def mark_ticket_errored(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    error: str,
     now: int,
 ) -> Ticket:
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
-        _write_ticket_status(conn, ticket_id, TicketStatus.errored, now, error=error)
+        _write_ticket_status(conn, ticket_id, TicketStatus.errored, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1509,13 +1291,6 @@ def file_current_proposal_with_recap(
             (recap, now, ticket_id),
         )
         if decision.pending_proposal is not None:
-            proposal_holder_wakes_data.record_replacement(
-                conn,
-                ticket_id,
-                holder=decision.ceiling_holder,
-                message=proposal_ready_message(ticket_id),
-                now=now,
-            )
             _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
         else:
             updated = _load_ticket_for_write(conn, ticket_id)
@@ -1625,6 +1400,14 @@ def edit_field_value(
         )
         updated = _apply_decision(conn, ticket, decision, now)
         ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
+        if decision.stage != ticket.stage:
+            _write_entered_stage_ticket_status(
+                conn,
+                updated,
+                worker_type_definition=worker_type_definition,
+                now=now,
+            )
+            return _load_ticket_for_write(conn, ticket_id)
         return updated
 
 
@@ -1659,13 +1442,12 @@ def return_for_revision(
     ticket_id: str,
     *,
     message: str,
-    lifecycle_message: str,
     principal: Principal,
     now: int,
     expected_proposal: PendingTicketProposal | None = None,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
-    admission.validate_body(message, "revision guidance")
+    admission.validate_revision_guidance(message)
     with _txn(conn):
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
@@ -1684,16 +1466,25 @@ def return_for_revision(
             principal,
             worker_type_definition=worker_type_definition,
         )
-        proposal_holder_wakes_data.record_rejection_messages(
+        revision_feedback.set_feedback(
             conn,
             ticket_id,
-            lifecycle_message=lifecycle_message,
-            comment=message,
+            stage=ticket.stage,
             sender=principal,
+            message=message,
             now=now,
         )
-        _apply_decision(conn, ticket, decision, now)
-        _write_ticket_status(conn, ticket_id, TicketStatus.agent, now)
+        updated = _apply_decision(conn, ticket, decision, now)
+        conn.execute(
+            "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
+            (ticket_id, ticket.stage),
+        )
+        _write_resting_ticket_status(
+            conn,
+            updated,
+            worker_type_definition=worker_type_definition,
+            now=now,
+        )
         return _load_ticket_for_write(conn, ticket_id)
 
 

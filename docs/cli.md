@@ -45,12 +45,9 @@ The command tree matches the system model:
 - `ticket ...` — create, inspect, organize, and approve tickets.
 - `sprint ...` — create, inspect, edit, and populate sprints and sprint items.
 - `worker ...` — worker-only writes such as ticket proposals, recaps, and notes.
-- `chief ...` — explicit intake of work completed outside Panels.
 
 Ordinary command groups do not expose internal runtime controls. Ticket `ticket_status`
-and run claiming remain code-owned. The exceptional `chief` group
-can establish a coherent Ticket Stage from externally completed work; it is not a
-generic Stage setter.
+and run claiming remain code-owned. No command performs an arbitrary Stage jump.
 
 ## Bounded list reads
 
@@ -149,6 +146,9 @@ record shapes. Direct `show` commands also keep their full record shapes.
   The creating principal becomes the ceiling holder. A proposal that parks at that
   ceiling is addressed to that exact principal.
   `ticket set` names one field (`title`, `kickoff-note`, `priority`, or `deadline`).
+  `ticket set-value <ticket-id> <field>` writes any field declared by the Ticket's Worker
+  type. It edits settled earlier values. For an unset current user-owned gate, it stores
+  the value and advances exactly one Stage through the canonical transition.
   `ticket place <ticket-id>` updates Project, Sprint, and optional Sprint Item as one
   coherent change. Select a Project with `--project` or `--project-id`. Select a Sprint
   with `--sprint <id|current>` or `--backlog`. Select classification with
@@ -196,12 +196,9 @@ record shapes. Direct `show` commands also keep their full record shapes.
   child Ticket when that exact Sprint Item is its ceiling holder. Approval requires the
   next ceiling and cap. It also sends the full next holder. The holder defaults to the
   same Sprint Item; `--holder-kind` and `--holder-id` can address the next proposal to a
-  different principal. Rejection requires focused revision guidance. One backend prompt
-  carries Panels' lifecycle fact followed by the supervisor-attributed comment. The
-  Ticket decision and both durable prompt rows share one SQLite commit; a definite
-  refusal leaves no conversation or Ticket residue. A post-wire commit failure is
-  uncertain and must not be retried automatically. The holder stays the same for the
-  revised proposal.
+  different principal. Rejection requires focused revision guidance. The Ticket appends
+  that exact comment to guidance, invalidates worker context, and returns the Stage to
+  rest in one SQLite commit. The holder stays the same for the revised proposal.
 - **`sprint item supervisor ticket-context / history / message-worker`** — read one
   current child Ticket, page through its current Worker conversation, or send attributed
   guidance to that Ticket's current conversation. `message-worker` resolves the current
@@ -250,16 +247,6 @@ record shapes. Direct `show` commands also keep their full record shapes.
   `request-help` reads a message from stdin and sends one canonical addressed message.
   It defaults to the Ticket's current ceiling holder. Exactly one of `--owner`, `--chief`,
   `--ticket`, or `--sprint-item` can select another recipient.
-- **`chief reconcile-ticket-from-external-work / create-ticket-from-external-work`** —
-  record reality established outside Panels. Both require an explicit Chief request,
-  a complete Kickoff field value through `--kickoff-note-file`, preserving the report and
-  reconciliation reasoning, and the
-  exact settled field prefix for the target `--stage`. Creation also requires
-  `--worker-type`; `--employee-backend` may override that type's registered default for the
-  new Ticket, and a different backend needs `--employee-launch-model` with it.
-  Reconciliation refuses pending or active Ticket work; both
-  operations move the ceiling to the imported Stage, preserve an explicit Stop
-  (otherwise Propose remains), and apply that Stage's declared ownership.
 - **`serve`** — run the server and background worker runtime in the foreground.
   It keeps ownership while Panels restarts, so the same terminal continues to show the
   server logs.

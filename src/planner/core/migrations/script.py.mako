@@ -23,12 +23,11 @@ depends_on = ${repr(depends_on)}
 #
 # 2. So pass copy_from= with the table declared in full. But a rebuild then recreates
 #    exactly the table you declared and nothing else. Whatever you leave out is gone: the
-#    ForeignKey on a column, and every Index — for `tickets` that includes the unique
-#    index on alias, which is correctness, not speed. Nothing detects either loss
-#    afterwards, because a constraint that no longer exists leaves nothing dangling to
+#    ForeignKey on a column, and every Index. Nothing detects either loss afterwards,
+#    because a constraint that no longer exists leaves nothing dangling to
 #    find. Declare the columns, their ForeignKeys, the CheckConstraints, and the Index
-#    objects, then assert the table's shape survived. tests/unit/test_db.py has a worked
-#    example of the whole thing.
+#    objects, then assert the table's shape survived. The Ticket field-removal revision
+#    and tests/unit/test_db.py have worked examples of the whole thing.
 #
 # 3. Foreign-key enforcement is off while migrations run, because a rebuild drops the
 #    table it is rebuilding and, with enforcement on, that DROP fires ON DELETE CASCADE

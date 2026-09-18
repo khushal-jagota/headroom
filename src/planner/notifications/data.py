@@ -294,11 +294,7 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
     desired: dict[tuple[str, str, str], tuple[bool, Principal, str, int]] = {}
     ticket_rows = conn.execute(
         "SELECT id, title, stage, worker_type, ticket_status, pending_proposal, "
-        "ceiling_holder, "
-        "conversation_id, updated_at, ticket_status_changed_at, "
-        "EXISTS (SELECT 1 FROM proposal_delivery_failures failure "
-        "WHERE failure.ticket_id=tickets.id AND failure.resolved_at IS NULL) "
-        "AS proposal_surfaced_to_owner FROM tickets"
+        "ceiling_holder, conversation_id, updated_at, ticket_status_changed_at FROM tickets"
     ).fetchall()
     for row in ticket_rows:
         ticket_id = str(row["id"])
@@ -311,7 +307,7 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
             "awaiting_approval": (
                 str(row["ticket_status"]) == "awaiting_approval"
                 and row["pending_proposal"] is not None
-                and (owner_holds or bool(row["proposal_surfaced_to_owner"]))
+                and owner_holds
             ),
             "assigned": ticket_assignment_from_values(
                 stage=str(row["stage"]),

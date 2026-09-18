@@ -281,6 +281,10 @@
     return mutateJson(`/api/tickets/${stableId}/accept/${field}`, { method: "POST", body });
   }
 
+  function userOwnsCurrentStage(detail: TicketDetail): boolean {
+    return lc?.stageOwnershipMode[detail.stage] === "user";
+  }
+
   function currentStageRunLabel(detail: TicketDetail): string | null {
     if (detail.blocked || detail.ticket_status === "blocked") return null;
     if (detail.awaiting_approval) return "awaiting approval";
@@ -460,11 +464,6 @@
               {/each}
             </div>
           {/if}
-          {#if detail.backend_error}
-            <div class="ticket-backend-error" data-backend-error role="alert">
-              {detail.backend_error}
-            </div>
-          {/if}
           {#if headerError}<ErrorLine error={headerError} />{/if}
         </header>
 
@@ -509,6 +508,7 @@
                         ticketStage={detail.stage}
                         ceiling={detail.ceiling}
                         emptyText={emptyTicketFieldText}
+                        editableCurrentValue={userOwnsCurrentStage(detail)}
                         runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                         runLabelAttention={stageState === "current-awaiting-approval"}
                         contextRow={name === "kickoff" && kickoffCardShowsContextRow
@@ -542,6 +542,7 @@
                   ticketStage={detail.stage}
                   ceiling={detail.ceiling}
                   emptyText={emptyTicketFieldText}
+                  editableCurrentValue={userOwnsCurrentStage(detail)}
                   runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                   runLabelAttention={stageState === "current-awaiting-approval"}
                   contextRow={name === "kickoff" && kickoffCardShowsContextRow

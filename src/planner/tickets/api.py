@@ -44,7 +44,6 @@ from planner.core.authctx import (
     RequestContext,
     reject_agent_fields,
     request_context,
-    require_chief,
     require_direct_write,
     require_ticket_delete,
     require_ticket_worker_write,
@@ -80,7 +79,6 @@ from planner.tickets.contracts import (
     AcceptBody,
     AtCap,
     CreateTicketBody,
-    CreateTicketFromExternalWorkBody,
     EmployeeConfigurationBody,
     EmployeeLaunchConfiguration,
     GuidanceBody,
@@ -88,7 +86,6 @@ from planner.tickets.contracts import (
     PendingProposalEditBody,
     ProposeWithRecapBody,
     RecapBody,
-    ReconcileTicketFromExternalWorkBody,
     RevisionMessageBody,
     ScopeBody,
     Ticket,
@@ -359,134 +356,6 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
     return body
 
 
-# The fixed external-work keys, allowed for every type. The field-value keys are
-# per-type (the type's declared field ids minus kickoff, which arrives as
-# kickoff_note), so the allowed set is computed once the type is resolved.
-_EXTERNAL_FIXED_RECONCILE_KEYS = frozenset({"stage", "kickoff_note", "recap"})
-_EXTERNAL_FIXED_CREATE_KEYS = _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(
-    {
-        "title",
-        "worker_type",
-        "employee_backend",
-        "employee_launch_model",
-        "priority",
-        "deadline",
-        "project",
-        "project_id",
-        "sprint_id",
-        "sprint_item_id",
-        "blocked_by_ticket_ids",
-    }
-)
-
-
-def _external_field_keys(
-    worker_type_definition: WorkerTypeDefinition,
-) -> tuple[str, ...]:
-    """The type's field-value body keys: its declared field ids minus kickoff (which
-    arrives as kickoff_note)."""
-    return tuple(field for field in worker_type_definition.field_ids() if field != "kickoff")
-
-
-def _reject_unknown_external_keys(raw: JsonDict, allowed: frozenset[str]) -> None:
-    unknown = [key for key in raw if key not in allowed]
-    if unknown:
-        raise PlannerError(
-            ErrorCode.validation,
-            "unknown external-work field",
-            {"field": unknown[0]},
-        )
-
-
-def _marshal_external_reconcile(
-    raw: JsonDict, worker_type_definition: WorkerTypeDefinition
-) -> ReconcileTicketFromExternalWorkBody:
-    field_keys = _external_field_keys(worker_type_definition)
-    _reject_unknown_external_keys(raw, _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(field_keys))
-    missing = [key for key in ("stage", "kickoff_note") if key not in raw]
-    if missing:
-        raise PlannerError(
-            ErrorCode.validation,
-            "external-work reconciliation requires stage and kickoff_note",
-            {"missing": missing},
-        )
-    body = ReconcileTicketFromExternalWorkBody(
-        stage=body_str(raw, "stage"),
-        kickoff_note=body_str(raw, "kickoff_note"),
-    )
-    if "recap" in raw:
-        body["recap"] = body_str(raw, "recap")
-    return body
-
-
-def _marshal_external_create(
-    raw: JsonDict, worker_type_definition: WorkerTypeDefinition
-) -> CreateTicketFromExternalWorkBody:
-    field_keys = _external_field_keys(worker_type_definition)
-    _reject_unknown_external_keys(raw, _EXTERNAL_FIXED_CREATE_KEYS | frozenset(field_keys))
-    if "title" not in raw:
-        raise PlannerError(
-            ErrorCode.validation,
-            "external-work creation requires title",
-            {"missing": ["title"]},
-        )
-    common_keys = _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(field_keys)
-    common_raw = {key: value for key, value in raw.items() if key in common_keys}
-    common = _marshal_external_reconcile(common_raw, worker_type_definition)
-    body = CreateTicketFromExternalWorkBody(
-        stage=common["stage"],
-        kickoff_note=common["kickoff_note"],
-        title=body_str(raw, "title"),
-        worker_type=body_str(raw, "worker_type"),
-    )
-    if "recap" in common:
-        body["recap"] = common["recap"]
-    if "priority" in raw:
-        body["priority"] = body_opt_str(raw, "priority")
-    if "deadline" in raw:
-        body["deadline"] = body_opt_str(raw, "deadline")
-    if "project" in raw:
-        body["project"] = body_opt_str(raw, "project")
-    if "project_id" in raw:
-        body["project_id"] = body_opt_str(raw, "project_id")
-    if "sprint_id" in raw:
-        body["sprint_id"] = body_opt_str(raw, "sprint_id")
-    if "sprint_item_id" in raw:
-        body["sprint_item_id"] = body_opt_str(raw, "sprint_item_id")
-    if "employee_backend" in raw:
-        body["employee_backend"] = body_str(raw, "employee_backend")
-    if "employee_launch_model" in raw:
-        body["employee_launch_model"] = body_str(raw, "employee_launch_model")
-    body["blocked_by_ticket_ids"] = body_str_list(raw, "blocked_by_ticket_ids")
-    return body
-
-
-def _external_values(
-    raw: JsonDict,
-    kickoff_note: str,
-    worker_type_definition: WorkerTypeDefinition,
-) -> dict[str, str]:
-    """The provided settled values keyed by field id: kickoff from kickoff_note, then
-    each declared non-kickoff field present in the raw body (validated as a str). The
-    field keys are type-declared, so this is genuinely per-type."""
-    values: dict[str, str] = {"kickoff": kickoff_note}
-    for key in _external_field_keys(worker_type_definition):
-        if key in raw:
-            values[key] = body_str(raw, key)
-    return values
-
-
-def _validate_external_stage(stage: str, worker_type_definition: WorkerTypeDefinition) -> str:
-    """An external-work target Stage validated against the Worker type's Stages.
-
-    A Stage that is neither linear nor the reserved ``dropped`` is rejected at
-    the ingress; a linear-but-out-of-range target (needs_kickoff / dropped) is left for
-    ``decide_external_work`` to reject with its exact message (coding parity)."""
-    if worker_type_definition.is_known_stage(stage):
-        return stage
-    raise PlannerError(ErrorCode.validation, "invalid stage", {"stage": stage})
-
-
 def _marshal_accept(raw: JsonDict) -> AcceptBody:
     return AcceptBody(
         edited_body=body_opt_str(raw, "edited_body"),
@@ -610,82 +479,6 @@ async def create_ticket(
         sprint_id_explicit="sprint_id" in raw,
         stated_ceiling=body["ceiling"],
         stated_at_cap=_parse_scope_at_cap(body["at_cap"]),
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/chief/tickets/from-external-work")
-async def create_ticket_from_external_work(
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    cfg: Cfg,
-    clk: Clk,
-) -> JsonDict:
-    require_chief(ctx)
-    worker_type = _require_create_worker_type(raw)
-    worker_type_definition = configured_worker_type_registry().require(worker_type)
-    body = _marshal_external_create(raw, worker_type_definition)
-    target_stage = _validate_external_stage(body["stage"], worker_type_definition)
-    priority_raw = body.get("priority")
-    priority = parse_enum(Priority, priority_raw, "priority") if priority_raw is not None else None
-    project = projects_data.resolve_project(
-        conn,
-        project_id=body.get("project_id"),
-        project_name=body.get("project"),
-    )
-    now = clk.now_unix()
-    ticket = tickets_actions.create_ticket_from_external_work(
-        conn,
-        title=body["title"],
-        kickoff_note=body["kickoff_note"],
-        target_stage=target_stage,
-        provided_values=_external_values(raw, body["kickoff_note"], worker_type_definition),
-        recap=body.get("recap"),
-        principal=ctx.principal,
-        now=now,
-        title_max_chars=TITLE_MAX_CHARS,
-        project_id=project.id if project is not None else None,
-        sprint_id=body.get("sprint_id"),
-        priority=priority,
-        deadline=body.get("deadline"),
-        sprint_item_id=body.get("sprint_item_id"),
-        worker_type=worker_type,
-        employee_backend=body.get("employee_backend"),
-        employee_launch_model=body.get("employee_launch_model"),
-        blocked_by_ticket_ids=body.get("blocked_by_ticket_ids", []),
-        planning_now=clk.now(),
-        boundary_hour=cfg.boundary_hour,
-        sprint_item_id_explicit="sprint_item_id" in raw,
-        sprint_id_explicit="sprint_id" in raw,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/chief/tickets/{ticket_id}/reconcile-from-external-work")
-async def reconcile_ticket_from_external_work(
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    conversations: Conversations,
-) -> JsonDict:
-    require_chief(ctx)
-    await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
-    body = _marshal_external_reconcile(raw, worker_type_definition)
-    target_stage = _validate_external_stage(body["stage"], worker_type_definition)
-    now = clk.now_unix()
-    ticket = tickets_data.reconcile_ticket_from_external_work(
-        conn,
-        ticket_id,
-        kickoff_note=body["kickoff_note"],
-        target_stage=target_stage,
-        provided_values=_external_values(raw, body["kickoff_note"], worker_type_definition),
-        recap=body.get("recap"),
-        principal=ctx.principal,
-        now=now,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1430,10 +1223,13 @@ async def put_value(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
+    conversations: Conversations,
 ) -> JsonDict:
     body = ValueEditBody(body=body_str(raw, "body"))
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
+    if field not in ticket.field_values:
+        await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
     now = clk.now_unix()
     ticket = tickets_data.edit_field_value(
         conn,

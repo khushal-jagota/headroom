@@ -189,7 +189,6 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
       sprint_item: null,
       project: null
     },
-    backend_error: null,
     conversation_id: null,
     conversation_history: [],
     verdict: null,

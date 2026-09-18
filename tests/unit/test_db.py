@@ -42,7 +42,7 @@ RESHAPE_REVISION = "ticket_status_reshape"
 HEAD_REVISION = "two_ownership_modes"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
-CURRENT_SCHEMA_OBJECT_COUNT = 66
+CURRENT_SCHEMA_OBJECT_COUNT = 60
 
 # The five statuses this build ends on, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
@@ -100,7 +100,10 @@ def _table_structure_before_status_changed_at(
     columns = list(structure["columns"])  # type: ignore[call-overload]
     holder_column = columns.pop()
     assert holder_column[:3] == ("ceiling_holder", "TEXT", 1)
-    assert json.loads(str(holder_column[3]).strip("'")) == {"kind": "owner", "id": "owner"}
+    assert json.loads(str(holder_column[3]).strip("'")) == {
+        "kind": "owner",
+        "id": "owner",
+    }
     assert columns.pop() == ("archived_field_content", "TEXT", 1, "''", 0)
     assert columns.pop() == ("pending_proposal", "TEXT", 0, None, 0)
     columns = [
@@ -161,6 +164,21 @@ def _without_direct_sprint_placement(structure: dict[str, object]) -> dict[str, 
     return {**structure, "columns": columns, "foreign_keys": foreign_keys}
 
 
+def _without_removed_ticket_fields(structure: dict[str, object]) -> dict[str, object]:
+    """The adopted Ticket table after unused payload columns leave the schema."""
+    columns = [
+        column
+        for column in structure["columns"]  # type: ignore[attr-defined]
+        if column[0] not in {"alias", "backend_error"}
+    ]
+    indexes = [
+        index
+        for index in structure["indexes"]  # type: ignore[attr-defined]
+        if index[0] != "idx_tickets_alias"
+    ]
+    return {**structure, "columns": columns, "indexes": indexes}
+
+
 def _revision(conn: sqlite3.Connection) -> str:
     return str(conn.execute("SELECT version_num FROM alembic_version").fetchone()[0])
 
@@ -185,7 +203,11 @@ def _insert_ticket(
     column = "fields" if legacy else "field_values"
     field_content = json.loads(_EMPTY_CODING_FIELDS)
     if ticket_status == "awaiting_approval":
-        field_content["kickoff"]["proposal"] = {"body": "", "proposed_by": "human", "created_at": 1}
+        field_content["kickoff"]["proposal"] = {
+            "body": "",
+            "proposed_by": "human",
+            "created_at": 1,
+        }
     conn.execute(
         f"INSERT INTO tickets (id, title, worker_type, employee_backend, ceiling, {column}, "
         "alias, ticket_status, stage, created_at, updated_at) VALUES (?, ?, 'coding', 'hermes', "
@@ -253,16 +275,18 @@ def test_fresh_database_is_built_and_marked_at_the_current_revision(
     }
     assert day_columns["midday_reconciliation"] == "''"
     assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
-    wake_sql = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='proposal_holder_wakes'"
-    ).fetchone()[0]
-    assert "'pending','delivering','delivered','uncertain','cancelled'" in wake_sql
-    rejection_sql = conn.execute(
-        "SELECT sql FROM sqlite_master "
-        "WHERE type='table' AND name='ticket_rejection_messages'"
-    ).fetchone()[0]
-    assert "UNIQUE(ticket_id,rejection_generation,sequence)" in rejection_sql
-    assert "sequence=1 AND sender_kind IS NULL AND sender_id IS NULL" in rejection_sql
+    ticket_columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")}
+    assert "alias" not in ticket_columns
+    assert "backend_error" not in ticket_columns
+    assert "idx_tickets_alias" not in {
+        str(row["name"]) for row in conn.execute("PRAGMA index_list(tickets)")
+    }
+    assert not {
+        "proposal_holder_wakes",
+        "ticket_rejection_messages",
+        "proposal_delivery_failures",
+    } & set(_schema_objects(conn))
+    assert "ticket_revision_feedback" in _schema_objects(conn)
     # Carried so a fresh database is not distinguishable from one the old ladder built.
     # An older checkout reads this marker to decide what it still has to do.
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 37
@@ -292,7 +316,7 @@ def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(
     assert _table_structure_before_status_changed_at(
         _table_structure(conn, "tickets")
     ) == _without_ticket_ownership_policy(
-        _with_the_conversation_link_renamed(structure_before)
+        _without_removed_ticket_fields(_with_the_conversation_link_renamed(structure_before))
     )
     assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
     assert tuple(
@@ -387,12 +411,11 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
     )
     assert conn.execute("SELECT count(*) FROM links").fetchone()[0] == 4
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-    # Columns, outgoing foreign keys and indexes, including the unique one on alias: a
-    # rebuild recreates only what it was handed, and drops the rest without a trace.
+    # Every retained column, outgoing foreign key, and index survives the rebuild.
     assert _table_structure_before_status_changed_at(
         _table_structure(conn, "tickets")
     ) == _without_ticket_ownership_policy(
-        _with_the_conversation_link_renamed(structure_before)
+        _without_removed_ticket_fields(_with_the_conversation_link_renamed(structure_before))
     )
 
     tickets_sql = conn.execute(

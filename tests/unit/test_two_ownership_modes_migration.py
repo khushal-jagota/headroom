@@ -11,7 +11,7 @@ from alembic import command
 
 from planner.core import db
 
-SOURCE_REVISION = "proposal_delivery_failures"
+SOURCE_REVISION = "remove_ticket_alias_and_backend_error"
 TARGET_REVISION = "two_ownership_modes"
 REMOVED_COLUMNS = {"stage_ownership_overrides", "default_stage_ownership_mode"}
 

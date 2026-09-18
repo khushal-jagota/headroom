@@ -40,7 +40,6 @@ RESEARCH_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         toolset_profile="default",
         default_backend="claude",
     ),
-    supports_prefix_reconciliation=True,
 )
 
 

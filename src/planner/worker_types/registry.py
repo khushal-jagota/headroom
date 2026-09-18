@@ -211,13 +211,6 @@ def _validate_definition(
             {"worker_type": worker_type, "default_reasoning_effort": default_reasoning_effort},
         )
 
-    if type(definition.supports_prefix_reconciliation) is not bool:
-        raise fail(
-            "supports_prefix_reconciliation must be a bool",
-            {"worker_type": worker_type},
-        )
-
-
 class WorkerTypeRegistry:
     __slots__ = ("_definitions",)
 

@@ -208,9 +208,9 @@ def test_a_new_ticket_and_a_status_change_keep_the_column_current(
     assert settled.ticket_status is not created.ticket_status
     assert _status_changed_at(upgraded, created.id) == 11_000
 
-    tickets_data.mark_ticket_errored(upgraded, created.id, error="boom", now=12_000)
+    tickets_data.mark_ticket_errored(upgraded, created.id, now=12_000)
     assert _status_changed_at(upgraded, created.id) == 12_000
 
     # Recording the same status again changes no status, so the time stays where it was.
-    tickets_data.mark_ticket_errored(upgraded, created.id, error="still boom", now=13_000)
+    tickets_data.mark_ticket_errored(upgraded, created.id, now=13_000)
     assert _status_changed_at(upgraded, created.id) == 12_000

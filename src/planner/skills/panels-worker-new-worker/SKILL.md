@@ -66,7 +66,7 @@ Recommend one explicit runtime tuple from the approved design and runtime catalo
 From the approved thinking, write the two files as artifacts:
 
 - The new worker's **`SKILL.md`** — front matter plus one guidance section per stage, mirroring this skill and `panels-worker-coding`.
-- Its **Worker type definition** — the `WorkerTypeDefinition`: Stages with an ownership mode on every non-terminal Stage, ordered fields, ceiling range, worker profile, and reconciliation support. Novel ids are plain strings; reuse the shared `needs_kickoff`/`kickoff`, `needs_closeout`/`closeout`, `done`, `dropped`.
+- Its **Worker type definition** — the `WorkerTypeDefinition`: Stages with an ownership mode on every non-terminal Stage, ordered fields, ceiling range, and worker profile. Novel ids are plain strings; reuse the shared `needs_kickoff`/`kickoff`, `needs_closeout`/`closeout`, `done`, `dropped`.
 
 Copy the approved Runtime Defaults values into the definition's `WorkerProfile`.
 
@@ -83,7 +83,7 @@ change there, normally in an isolated worktree. Never land a worker by editing
 3. Register it once in `src/planner/worker_types/configuration.py`: add its skill to the known-skills catalog and its definition to the production configuration tuple.
 4. Provision it: add the skill dir to the planner skill list. On restart this **symlinks the skill into the worker's Hermes home — the step that lets a worker `skill_view` it**. The file must exist before the restart, or startup fails.
 5. Confirm it validates at build and the skill is shipped + provisioned.
-6. Describe the Worker type in `panels-chief-of-staff` so it can create and reconcile it. The base Worker discovers its specialist from `panels worker my-ticket`; there is no second list to update.
+6. Confirm that ordinary Ticket creation lists the Worker type. The base Worker discovers its specialist from `panels worker my-ticket`; there is no second list to update.
 
 Before activation, confirm the managed settings bootstrap contains the same backend, model, and reasoning effort approved in Runtime Defaults.
 

@@ -727,7 +727,7 @@ class ConversationStore:
                 "WHERE conversation_id=? AND json_extract(payload,'$.sender_message_id')=? "
                 "AND kind IN "
                 "('prompt','prompt_delivery_refused','prompt_delivery_uncertain',"
-                "'prompt_discarded','message_to_owner','proposal_delivery_failed') LIMIT 1",
+                "'prompt_discarded','message_to_owner') LIMIT 1",
                 (conversation_id, sender_message_id),
             ).fetchone()
         finally:

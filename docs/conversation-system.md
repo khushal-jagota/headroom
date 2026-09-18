@@ -45,8 +45,8 @@ A browser with no saved lens choice opens through the Focus lens. Focus shows th
 owner's prompts, explicit messages addressed to the owner, permission requests, agent questions, and
 the answers that settle those requests. Historical owner prompts without principals use
 their established owner label, so they remain readable without a record migration.
-Failed turns, stopped turns, missing explicit replies, and terminal proposal-alert
-delivery failures remain visible as compact system rows. Complete turn boundaries still
+Failed turns, stopped turns, and missing explicit replies remain visible as compact
+system rows. Complete turn boundaries still
 settle the Focus thread and rest line when runtime rows are hidden. A turn with a hidden
 opening prompt has no Focus turn head.
 Full shows the complete runtime notebook, every held prompt, all live agent text, and
@@ -59,17 +59,15 @@ snapshots continue to use the complete feed. A switch to another conversation in
 the old read and tail. A late snapshot, row, frame, or refresh from the old conversation
 cannot change the newly opened conversation.
 
-While active Focus is open, the owner read position advances through the newest delivered
-row. Runtime-only rows can clear an unread mark because Focus displays every result that
+While an active lens is open, the owner read position advances through the newest delivered
+row. Runtime-only rows can clear an unread mark because each lens displays every result that
 needs the owner's attention.
 
 An open conversation is handed each new row directly, so it never has to be told to
 come and look. That is why most rows are written quietly: a historical agent-message row, a tool
 call starting or finishing, a plan, a token count, and a compaction are shown only
-inside the conversation. The compact runtime row for a terminal proposal-alert failure
-is also conversation-only. Its separate durable failure record surfaces the pending
-proposal in owner attention and Review. Writing the runtime row does not send every other open screen back
-for a fresh copy of itself. A working agent writes dozens of those rows a minute, and
+inside the conversation. Writing a runtime-only row does not send every other open screen
+back for a fresh copy of itself. A working agent writes dozens of those rows a minute, and
 announcing each one sends every open tab back for everything it is showing.
 
 The rows anything else reads still announce themselves the ordinary way: a delivered,
@@ -223,12 +221,23 @@ including held, refused, uncertain, and discarded prompts. Browser-supplied disp
 labels are not authority.
 
 Panels also derives an exact Send Message target from each authenticated sender. It adds
-that trusted reply requirement only to the backend wire prompt. The durable prompt keeps
-the sender's original content. A new turn, an accepted steer, and a batch from the held
-line all carry the requirement. Unaddressed loop and maintenance prompts do not. The
-agent role requires one explicit send to each addressed sender before the turn ends.
+that trusted reply requirement only to the backend wire prompt. When a genuine
+requirement exists, it starts the entire prompt with nothing before it. Every
+sender-authored byte follows its authenticated sender label. Identical words anywhere
+else remain ordinary sender content.
+The durable prompt keeps the sender's original content. An ordinary new turn, an
+ordinary accepted steer, and a batch from the held line carry the requirement.
+Unaddressed loop and maintenance prompts do not. The agent role requires one explicit
+send to each addressed sender before the turn ends.
 Panels classifies that accepted send as the reply, so its recipient receives no counter-
 reply requirement and agent conversations cannot form an acknowledgement loop.
+
+An actual native slash command uses its backend's exact control route, so its wire form
+does not carry the reply requirement. The adapter reports that fact with its delivery
+result, so Panels creates no reply debt or missing-reply marker for that command.
+Slash-like text that is not a live native command remains ordinary prose. It carries the
+wire requirement as any other addressed prompt does. Automatic compaction is a separate
+system-only control operation and creates no reply debt.
 
 Backend prose is runtime output only. Finishing a turn does not turn that prose into a
 message for the person who prompted it. Only Send Message creates an explicit addressed
@@ -270,9 +279,10 @@ not collapsed with the prompt: each message still gets its own row with its orig
 content, because a row names one sender's message id and that id is how a sender
 recognises its own message when the record hands it back. A message that asks to run
 on a different model starts the next turn instead of joining this one, because a turn
-runs on one model and the messages in front of it never named that one. A message that
-starts with a slash token also gets its own turn. This keeps a possible native command at
-the absolute start and prevents a later command from becoming part of an earlier prompt.
+runs on one model and the messages in front of it never named that one. Slash-like prose
+can join the same batch. Only a live adapter decides whether delivered content uses a
+native command route. If a live command is first in a multi-message batch, the adapter
+delivers the complete batch as an ordinary prompt. It does not discard later messages.
 
 A waiting message that cannot be delivered at all is written down as discarded, and
 the line carries on to the next one. One message nobody can deliver does not take the

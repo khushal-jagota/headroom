@@ -290,7 +290,6 @@ export type TicketDetail = {
   sprint_item_id?: string | null;
   resolved_priority_anchors: ResolvedTicketPriorityAnchors;
   ticket_status?: string;
-  backend_error: string | null;
   conversation_id: string | null;
   conversation_history: TicketConversationHistoryEntry[];
   day_ids?: string[];
@@ -475,7 +474,6 @@ export type BoardCard = WorkAttention & {
   activity_at: number;
   has_pending_proposal: boolean;
   ticket_status: string;
-  backend_error: string | null;
   worker_type: string;
   employee_backend: string;
   stage: string;

@@ -1,7 +1,7 @@
 """Make Worker type definitions the only source of Stage ownership.
 
 Revision ID: two_ownership_modes
-Revises: proposal_delivery_failures
+Revises: remove_ticket_alias_and_backend_error
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from sqlalchemy import (
 )
 
 revision = "two_ownership_modes"
-down_revision = "proposal_delivery_failures"
+down_revision = "remove_ticket_alias_and_backend_error"
 branch_labels = None
 depends_on = None
 
@@ -144,9 +144,7 @@ def _tickets_table() -> Table:
         Column("ceiling", Text, nullable=False),
         Column("at_cap", Text, nullable=False, server_default=text("'propose'")),
         Column("ticket_status", Text, nullable=False, server_default=text("'empty'")),
-        Column("backend_error", Text),
         Column("conversation_id", Text),
-        Column("alias", Text),
         Column("field_values", Text, nullable=False),
         Column("created_at", Integer, nullable=False),
         Column("updated_at", Integer, nullable=False),
@@ -184,7 +182,6 @@ def _tickets_table() -> Table:
             "OR json_extract(ceiling_holder, '$.id') = 'chief'), 0)"
         ),
     )
-    Index("idx_tickets_alias", table.c.alias, unique=True, sqlite_where=text("alias IS NOT NULL"))
     Index("idx_tickets_stage", table.c.stage)
     Index("idx_tickets_worker_type_stage", table.c.worker_type, table.c.stage)
     Index("idx_tickets_project_id", table.c.project_id)

@@ -15,7 +15,9 @@ from fastapi.testclient import TestClient
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.contracts import ConversationStartRequest
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.in_memory_conversation_system import (
+    InMemoryConversationSystem,
+)
 from planner.conversation.message_content import text_message_content
 from planner.core import change_signal
 from planner.core.clock import RealClock, build_clock
@@ -24,21 +26,16 @@ from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.core.server import create_app
 from planner.runtime import conversation_start
-from planner.runtime.logic.worker_step_prompt import proposal_returned_for_revision_prompt
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
 from planner.sprints import supervisor_service
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
+from planner.tickets.contracts import TicketStatus
 from planner.worker_context import data as context_data
+from planner.worker_context import revision_feedback
 
 _OWNER_HOLDER = {"kind": "owner", "id": "owner"}
-
-
-def test_return_for_revision_lifecycle_copy_states_the_rejection() -> None:
-    assert proposal_returned_for_revision_prompt() == (
-        "Your proposal was rejected and returned for revision. The decider's comment follows."
-    )
 
 
 def _app(tmp_path: Path, *, fake_now: str | None = None) -> tuple[FastAPI, Path]:
@@ -98,6 +95,24 @@ def _supervisor_headers(item_id: str) -> dict[str, str]:
         "X-Plan-Actor": "sprint_item_supervisor",
         "X-Plan-Sprint-Item-ID": item_id,
     }
+
+
+def test_supervisor_context_marks_a_held_proposal_as_awaiting_approval(
+    tmp_path: Path,
+) -> None:
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket = _park_a_proposal(client, str(item["id"]))
+        response = client.get(
+            f"/api/items/{item['id']}/supervisor/context",
+            headers=_supervisor_headers(str(item["id"])),
+        )
+
+    assert response.status_code == 200, response.text
+    row = next(entry for entry in response.json()["tickets"] if entry["id"] == ticket["id"])
+    assert row["ticket_status"] == "awaiting_approval"
+    assert row["awaiting_approval"] is True
 
 
 def test_workspace_artifacts_include_each_file_modified_time(tmp_path: Path) -> None:
@@ -422,7 +437,9 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
         conversation_id
     )[0]
     assert write.sender_label == f"Sprint Item {item['id']}"
-    assert write.text == f"Sprint Item {item['id']}:\nCheck the acceptance evidence."
+    assert write.text.startswith("[Authenticated Panels reply requirement]")
+    assert f"panels send-message --sprint-item {item['id']}" in write.text
+    assert write.text.endswith(f"Sprint Item {item['id']}:\nCheck the acceptance evidence.")
 
 
 def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> None:
@@ -458,7 +475,9 @@ def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> Non
     assert approved.json()["field_values"].get("success") == "The result is verified."
 
 
-def test_supervisor_rejection_commits_messages_without_backend_io(tmp_path: Path) -> None:
+def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
+    tmp_path: Path,
+) -> None:
     app, db_path = _app(tmp_path)
     conversation_id = "conv-supervisor-reject"
     with TestClient(app) as client:
@@ -498,73 +517,18 @@ def test_supervisor_rejection_commits_messages_without_backend_io(tmp_path: Path
     with connect(str(db_path)) as conn:
         after = tickets_data.read_ticket(conn, str(ticket["id"]))
         pending_context = context_data.snapshot(conn, str(ticket["id"])).items
-        rows = conn.execute(
-            "SELECT sequence,message,sender_kind,sender_id,state "
-            "FROM ticket_rejection_messages WHERE ticket_id=? ORDER BY sequence",
-            (ticket["id"],),
-        ).fetchall()
+        feedback = revision_feedback.snapshot(conn, str(ticket["id"]))
     assert rejected.status_code == 200, rejected.text
     assert after.pending_proposal is None
-    assert after.ticket_status.value == "agent"
-    assert any(item.text == "Read exact guidance." for item in pending_context)
-    assert [tuple(row) for row in rows] == [
-        (1, proposal_returned_for_revision_prompt(), None, None, "pending"),
-        (2, "State the verification evidence.", "sprint_item", item["id"], "pending"),
-    ]
+    assert after.ticket_status.value == "empty"
+    assert after.guidance == ""
+    assert [entry.text for entry in pending_context] == ["Read exact guidance."]
+    assert feedback is not None
+    assert feedback.items[0].sender.kind.value == "sprint_item"
+    assert feedback.items[0].sender.id == str(item["id"])
+    assert feedback.items[0].message == "State the verification evidence."
     assert system.backend_prompt_writes(conversation_id) == ()
     assert system.observations(conversation_id) == ()
-
-
-def test_rejection_mutation_failure_leaves_no_worker_visible_residue(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    app, db_path = _app(tmp_path)
-    conversation_id = "conv-reject-mutation-failure"
-    with TestClient(app, raise_server_exceptions=False) as client:
-        item = _create_item(client)
-        ticket = _park_a_proposal(client, str(item["id"]))
-        with connect(str(db_path)) as conn:
-            conn.execute(
-                "UPDATE tickets SET conversation_id=? WHERE id=?",
-                (conversation_id, ticket["id"]),
-            )
-            conn.commit()
-        asyncio.run(
-            app.state.conversation_system.start_conversation(
-                ConversationStartRequest(conversation_id=conversation_id, model="test-model")
-            )
-        )
-        system = cast(InMemoryConversationSystem, app.state.conversation_system)
-
-        from planner.proposal_holder_wakes import data as wake_data
-
-        original_insert = wake_data._insert_rejection_message  # noqa: SLF001
-
-        def fail_comment(*args: Any, **kwargs: Any) -> None:
-            if kwargs["sequence"] == 2:
-                raise RuntimeError("injected comment record failure")
-            original_insert(*args, **kwargs)
-
-        monkeypatch.setattr(wake_data, "_insert_rejection_message", fail_comment)
-        response = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/reject",
-            json={"message": "Revise."},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-
-    assert response.status_code == 500
-    with connect(str(db_path)) as conn:
-        unchanged = tickets_data.read_ticket(conn, str(ticket["id"]))
-        message_count = conn.execute(
-            "SELECT COUNT(*) FROM ticket_rejection_messages WHERE ticket_id=?",
-            (ticket["id"],),
-        ).fetchone()[0]
-    assert unchanged.pending_proposal is not None
-    assert unchanged.ticket_status.value == "awaiting_approval"
-    assert message_count == 0
-    assert system.backend_prompt_writes(conversation_id) == ()
-    assert system.observations(conversation_id) == ()
-    assert not asyncio.run(system.is_running(conversation_id))
 
 
 def test_first_message_creates_the_conversation_and_reset_preserves_history(
@@ -616,7 +580,8 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
     with connect(str(db_path)) as conn:
         assert (
             conn.execute(
-                "SELECT 1 FROM conversations WHERE conversation_id=?", (conversation_id,)
+                "SELECT 1 FROM conversations WHERE conversation_id=?",
+                (conversation_id,),
             ).fetchone()
             is not None
         )
@@ -689,7 +654,9 @@ def test_delete_between_backend_start_and_link_cannot_recreate_the_agent(
     asyncio.run(scenario())
 
 
-def test_supervisor_creates_and_approves_a_ticket_under_its_own_item(tmp_path: Path) -> None:
+def test_supervisor_creates_and_approves_a_ticket_under_its_own_item(
+    tmp_path: Path,
+) -> None:
     """A supervisor-created Ticket gets the same scope as anyone else's.
 
     Its kickoff parks for approval like every other kickoff, and the supervisor may
@@ -829,7 +796,6 @@ def test_restart_clears_an_explicit_error_and_starts_again(tmp_path: Path) -> No
             tickets_data.mark_ticket_errored(
                 conn,
                 ticket_id,
-                error="The previous start failed.",
                 now=1,
             )
         response = client.post(
@@ -845,7 +811,7 @@ def test_restart_clears_an_explicit_error_and_starts_again(tmp_path: Path) -> No
     assert body["killed_conversation_id"] == "conv-dead-worker"
     with connect(str(db_path)) as conn:
         restarted = tickets_data.read_ticket(conn, ticket_id)
-    assert restarted.backend_error is None
+    assert restarted.ticket_status is TicketStatus.agent
 
 
 def test_restart_refuses_a_stage_the_worker_does_not_own(tmp_path: Path) -> None:

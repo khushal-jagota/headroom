@@ -506,7 +506,7 @@ class ConversationContractConformanceSuite:
 
         self._run(exercise)
 
-    def test_a_command_shaped_first_held_message_gets_its_own_turn(self) -> None:
+    def test_command_shaped_prose_at_the_front_stays_in_the_held_batch(self) -> None:
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
             await subject.system.send(
@@ -522,7 +522,7 @@ class ConversationContractConformanceSuite:
             await subject.complete_running_turn("c")
             assert _written_texts(await subject.backend_writes("c")) == (
                 "owner:\nincumbent",
-                "captain:\n/review focus",
+                "captain:\n/review focus\n\nloop:\nafter command",
             )
             delivered = _facts_of_kind(
                 await subject.recorded_facts("c"), RecordedFactKind.prompt_delivered
@@ -530,16 +530,14 @@ class ConversationContractConformanceSuite:
             assert tuple(fact.sender_label for fact in delivered) == (
                 "owner",
                 "captain",
+                "loop",
             )
 
             await subject.complete_running_turn("c")
-            assert _written_texts(await subject.backend_writes("c"))[-1] == (
-                "loop:\nafter command"
-            )
 
         self._run(exercise)
 
-    def test_a_command_shaped_later_held_message_starts_after_the_earlier_prompt(
+    def test_command_shaped_prose_later_in_the_line_stays_in_the_held_batch(
         self,
     ) -> None:
         async def exercise(subject: ConversationSystemUnderTest) -> None:
@@ -559,16 +557,8 @@ class ConversationContractConformanceSuite:
 
             await subject.complete_running_turn("c")
             assert _written_texts(await subject.backend_writes("c"))[-1] == (
-                "loop:\nbefore command"
-            )
-
-            await subject.complete_running_turn("c")
-            assert _written_texts(await subject.backend_writes("c"))[-1] == (
-                "captain:\n/review focus"
-            )
-
-            await subject.complete_running_turn("c")
-            assert _written_texts(await subject.backend_writes("c"))[-1] == (
+                "loop:\nbefore command\n\n"
+                "captain:\n/review focus\n\n"
                 "owner:\nafter command"
             )
             delivered = _facts_of_kind(
@@ -580,6 +570,7 @@ class ConversationContractConformanceSuite:
                 "captain",
                 "owner",
             )
+            await subject.complete_running_turn("c")
 
         self._run(exercise)
 

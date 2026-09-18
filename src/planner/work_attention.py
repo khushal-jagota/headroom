@@ -11,7 +11,7 @@ from typing import TypedDict
 
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.storage import ConversationAttentionFacts, ConversationStore
-from planner.core.contracts import OWNER_PRINCIPAL, JsonDict
+from planner.core.contracts import OWNER_PRINCIPAL, JsonDict, Principal
 from planner.tickets.contracts import StageOwnershipMode, TicketStatus
 from planner.tickets.logic import machine
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -74,10 +74,7 @@ def _ticket_rows(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sq
     placeholders = ",".join("?" for _ in ticket_ids)
     rows = conn.execute(
         "SELECT id, stage, worker_type, ticket_status, pending_proposal, ceiling_holder, "
-        "conversation_id, "
-        "EXISTS (SELECT 1 FROM proposal_delivery_failures failure "
-        "WHERE failure.ticket_id=tickets.id AND failure.resolved_at IS NULL) "
-        "AS proposal_surfaced_to_owner "
+        "conversation_id "
         f"FROM tickets WHERE id IN ({placeholders})",
         tuple(sorted(ticket_ids)),
     ).fetchall()
@@ -87,6 +84,8 @@ def _ticket_rows(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sq
 def _ticket_attention(
     row: sqlite3.Row,
     conversation: tuple[bool, bool, bool] | None,
+    *,
+    approval_holder: Principal,
 ) -> WorkAttention:
     holder = json.loads(str(row["ceiling_holder"]))
     owner_holds_ceiling = holder == {
@@ -96,7 +95,7 @@ def _ticket_attention(
     awaiting_approval = (
         str(row["ticket_status"]) == TicketStatus.awaiting_approval.value
         and row["pending_proposal"] is not None
-        and (owner_holds_ceiling or bool(row["proposal_surfaced_to_owner"]))
+        and holder == {"kind": approval_holder.kind.value, "id": approval_holder.id}
     )
     awaiting_reply, running, last_turn_failed = conversation or (False, False, False)
     assigned = ticket_assignment_from_values(
@@ -169,8 +168,9 @@ async def add_work_attention(
     *,
     tickets: Iterable[JsonDict] = (),
     sprint_items: Iterable[JsonDict] = (),
+    approval_holder: Principal = OWNER_PRINCIPAL,
 ) -> None:
-    """Attach the canonical owner-attention and agent-state facts to list rows."""
+    """Attach attention for the viewing holder and shared agent-state facts."""
     ticket_rows = tuple(tickets)
     item_rows = tuple(sprint_items)
     direct_ticket_ids = {str(row["id"]) for row in ticket_rows}
@@ -215,6 +215,7 @@ async def add_work_attention(
             conversations.get(str(row["conversation_id"]))
             if row["conversation_id"] is not None
             else None,
+            approval_holder=approval_holder,
         )
         for ticket_id, row in stored_tickets.items()
     }

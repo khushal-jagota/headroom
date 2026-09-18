@@ -99,10 +99,7 @@ def capture_ticket_attention(conn: sqlite3.Connection, ticket_id: str, occurred_
 
     row = conn.execute(
         "SELECT id, stage, worker_type, ticket_status, pending_proposal, ceiling_holder, "
-        "conversation_id, "
-        "EXISTS (SELECT 1 FROM proposal_delivery_failures failure "
-        "WHERE failure.ticket_id=tickets.id AND failure.resolved_at IS NULL) "
-        "AS proposal_surfaced_to_owner "
+        "conversation_id "
         "FROM tickets WHERE id=?",
         (ticket_id,),
     ).fetchone()
@@ -118,7 +115,7 @@ def capture_ticket_attention(conn: sqlite3.Connection, ticket_id: str, occurred_
         "awaiting_approval": (
             str(row["ticket_status"]) == "awaiting_approval"
             and row["pending_proposal"] is not None
-            and (owner_holds or bool(row["proposal_surfaced_to_owner"]))
+            and owner_holds
         ),
         "assigned": ticket_assignment_from_values(
             stage=str(row["stage"]),
@@ -166,7 +163,11 @@ def reconcile_attention(
 ) -> None:
     """Fallback for imports and maintenance writes outside canonical runtime doors."""
     prior = {
-        (str(row["subject_kind"]), str(row["subject_id"]), str(row["notification_type"])): (
+        (
+            str(row["subject_kind"]),
+            str(row["subject_id"]),
+            str(row["notification_type"]),
+        ): (
             bool(row["active"]),
             int(row["generation"]),
         )
@@ -175,7 +176,10 @@ def reconcile_attention(
             "FROM notification_attention_state"
         )
     }
-    for (subject_kind, subject_id, notification_type), (active, occurred_at) in desired.items():
+    for (subject_kind, subject_id, notification_type), (
+        active,
+        occurred_at,
+    ) in desired.items():
         key = (subject_kind, subject_id, notification_type)
         prior_value = prior.get(key)
         prior_active, generation = prior_value or (False, 0)

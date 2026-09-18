@@ -29,7 +29,6 @@ from planner.notifications import attention as notifications_attention
 from planner.notifications import data as notifications_data
 from planner.notifications.contracts import NOTIFICATION_SUBJECTS, NotificationFact
 from planner.notifications.logic.policy import decide_notification
-from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket
 
@@ -108,7 +107,7 @@ def test_status_projection_policy_and_delivery_are_exact_once(tmp_path: Path) ->
         now=1,
     )
 
-    tickets_data.mark_ticket_errored(conn, ticket.id, error="backend stopped", now=2)
+    tickets_data.mark_ticket_errored(conn, ticket.id, now=2)
     notifications_data.project_facts(conn)
     assert notifications_data.apply_policy(conn, 2) == 1
     assert notifications_data.apply_policy(conn, 2) == 0
@@ -131,79 +130,6 @@ def test_status_projection_policy_and_delivery_are_exact_once(tmp_path: Path) ->
     assert notifications_data.apply_policy(restarted, 3) == 0
     assert len(notifications_data.pending_deliveries(restarted, 3)) == 1
     restarted.close()
-
-
-def test_needs_approval_fact_includes_failed_holder_alerts_until_resolved(
-    tmp_path: Path,
-) -> None:
-    conn = connect(str(tmp_path / "holder-notifications.db"))
-    create_schema(conn)
-    holder_ticket = _ticket(conn, 1)
-    holder_item = sprints_data.create_item(
-        conn,
-        title="Proposal holder",
-        project_id="project_vylo",
-        clock=MutableClock(parse_fake_now("2026-09-15T12:00:00+02:00")),
-    )
-    holders = (
-        OWNER_PRINCIPAL,
-        Principal(PrincipalKind.chief, "chief"),
-        Principal(PrincipalKind.sprint_item, holder_item.id),
-        Principal(PrincipalKind.ticket, holder_ticket.id),
-    )
-    tickets = [_ticket(conn, index + 2) for index in range(len(holders))]
-    for index, (ticket, holder) in enumerate(zip(tickets, holders, strict=True), start=1):
-        conn.execute(
-            "UPDATE tickets SET ceiling_holder = ?, ticket_status = 'awaiting_approval', "
-            "ticket_status_revision = 1, ticket_status_changed_at = ? WHERE id = ?",
-            (
-                json.dumps({"kind": holder.kind.value, "id": holder.id}),
-                index,
-                ticket.id,
-            ),
-        )
-
-    surfaced = tickets[1]
-    conn.execute(
-        "INSERT INTO proposal_delivery_failures "
-        "(ticket_id,proposal_generation,conversation_id,attempt_count,last_error,"
-        "visibility_message_id,created_at,resolved_at) "
-        "VALUES (?,1,NULL,10,'write_to_backend_failed',?,20,NULL)",
-        (surfaced.id, f"proposal-delivery-failed:{surfaced.id}:1"),
-    )
-
-    notifications_data.project_facts(conn)
-
-    rows = conn.execute(
-        "SELECT source_id, notification_type FROM notification_facts "
-        "WHERE notification_type = 'awaiting_approval' ORDER BY source_id"
-    ).fetchall()
-    assert {(row["source_id"], row["notification_type"]) for row in rows} == {
-        (f"ticket:{holder_ticket.id}:awaiting_approval", "awaiting_approval"),
-        (f"ticket:{tickets[0].id}:awaiting_approval", "awaiting_approval"),
-        (f"ticket:{surfaced.id}:awaiting_approval", "awaiting_approval"),
-    }
-    states = conn.execute(
-        "SELECT subject_id, active FROM notification_attention_state "
-        "WHERE notification_type = 'awaiting_approval' AND subject_id IN (?, ?, ?, ?)",
-        tuple(ticket.id for ticket in tickets),
-    ).fetchall()
-    assert {str(row["subject_id"]): bool(row["active"]) for row in states} == {
-        ticket.id: ticket.id in {tickets[0].id, surfaced.id} for ticket in tickets
-    }
-
-    conn.execute(
-        "UPDATE proposal_delivery_failures SET resolved_at=21 WHERE ticket_id=?",
-        (surfaced.id,),
-    )
-    notifications_data.project_facts(conn)
-    state = conn.execute(
-        "SELECT active FROM notification_attention_state "
-        "WHERE subject_id=? AND notification_type='awaiting_approval'",
-        (surfaced.id,),
-    ).fetchone()
-    assert state is not None and not bool(state["active"])
-    conn.close()
 
 
 def test_conversation_events_project_to_the_catalogue_once(tmp_path: Path) -> None:
@@ -359,15 +285,17 @@ def test_reply_clear_and_rise_between_projector_polls_keeps_both_edges(
     conn.close()
 
 
-def test_error_fact_repeats_only_after_explicit_restart_clears_it(tmp_path: Path) -> None:
+def test_error_fact_repeats_only_after_explicit_restart_clears_it(
+    tmp_path: Path,
+) -> None:
     conn = connect(str(tmp_path / "error-edges.db"))
     create_schema(conn)
     ticket = _ticket(conn, 1)
     notifications_data.project_facts(conn)
 
-    tickets_data.mark_ticket_errored(conn, ticket.id, error="first", now=2)
+    tickets_data.mark_ticket_errored(conn, ticket.id, now=2)
     tickets_data.clear_ticket_error_for_restart(conn, ticket.id, now=3)
-    tickets_data.mark_ticket_errored(conn, ticket.id, error="second", now=4)
+    tickets_data.mark_ticket_errored(conn, ticket.id, now=4)
     notifications_data.project_facts(conn)
 
     assert [
@@ -571,7 +499,7 @@ def test_policy_resolves_the_same_type_independently_by_subject(tmp_path: Path) 
     create_schema(conn)
     ticket = _ticket(conn, 1)
     notifications_data.project_facts(conn)
-    tickets_data.mark_ticket_errored(conn, ticket.id, error="stopped", now=2)
+    tickets_data.mark_ticket_errored(conn, ticket.id, now=2)
     conn.execute(
         "INSERT INTO conversations"
         "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
@@ -609,7 +537,7 @@ def test_policy_suppresses_a_legacy_arbitrary_agent_fact_and_continues(
     create_schema(conn)
     ticket = _ticket(conn, 1)
     notifications_data.project_facts(conn)
-    tickets_data.mark_ticket_errored(conn, ticket.id, error="stopped", now=2)
+    tickets_data.mark_ticket_errored(conn, ticket.id, now=2)
     notifications_data.project_facts(conn)
     conn.execute("INSERT INTO agents(agent_key) VALUES ('reviewer')")
     conn.execute(
@@ -650,7 +578,7 @@ def test_typed_subject_foreign_keys_reject_invalid_rows_and_cascade_full_graph(
         auth="auth-value",
         now=1,
     )
-    tickets_data.mark_ticket_errored(conn, ticket.id, error="stopped", now=2)
+    tickets_data.mark_ticket_errored(conn, ticket.id, now=2)
     conn.execute(
         "INSERT INTO conversations"
         "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
@@ -763,7 +691,10 @@ def test_notification_settings_api_serves_catalogue_and_persists_choice(
             "awaiting_reply",
             "errored",
         }
-        assert types_by_subject["sprint_item_supervisors"] == {"awaiting_reply", "errored"}
+        assert types_by_subject["sprint_item_supervisors"] == {
+            "awaiting_reply",
+            "errored",
+        }
         enabled_by_subject = {
             subject["key"]: {item["id"]: item["enabled"] for item in subject["types"]}
             for subject in payload["subjects"]
