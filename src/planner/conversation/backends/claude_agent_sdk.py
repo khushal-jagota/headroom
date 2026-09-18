@@ -139,7 +139,7 @@ from planner.conversation.message_content import (
     MessageImage,
     MessageText,
     message_content_starts_with_command,
-    sender_labeled_message_content,
+    sender_labeled_composed_message_content,
     text_message_content,
 )
 from planner.conversation.message_files import (
@@ -673,8 +673,8 @@ class ClaudeAgentSdkBackendChild:
         turn_token: TurnToken,
         content: MessageContent,
         *,
-        sender_content: MessageContent,
         sender_label: str,
+        sender_content: MessageContent,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
@@ -699,7 +699,9 @@ class ClaudeAgentSdkBackendChild:
         delivered_content = (
             sender_content
             if automatic_compaction or self._is_catalog_command(sender_content)
-            else sender_labeled_message_content(content, sender_label)
+            else sender_labeled_composed_message_content(
+                content, sender_content, sender_label
+            )
         )
         asked = await self._query_argument(delivered_content)
         try:
@@ -791,7 +793,12 @@ class ClaudeAgentSdkBackendChild:
         return b64encode(kept).decode("ascii")
 
     async def steer(
-        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+        self,
+        turn_token: TurnToken,
+        content: MessageContent,
+        *,
+        sender_content: MessageContent | None = None,
+        sender_label: str,
     ) -> BackendSteerOutcome:
         """Admit one UUID-named command to work owned by the captured Panels turn.
 
@@ -800,6 +807,7 @@ class ClaudeAgentSdkBackendChild:
         that Claude owns the command. A correlated result settles it. Neither signal is
         used to classify which native path Claude chose.
         """
+        sender_content = content if sender_content is None else sender_content
         turn = self._turn
         if turn is None or turn.token != turn_token:
             return BackendSteerRefused(
@@ -811,9 +819,11 @@ class ClaudeAgentSdkBackendChild:
             self._require_a_live_wire()
             asked = await self._query_argument(
                 (
-                    content
-                    if self._is_catalog_command(content)
-                    else sender_labeled_message_content(content, sender_label)
+                    sender_content
+                    if self._is_catalog_command(sender_content)
+                    else sender_labeled_composed_message_content(
+                        content, sender_content, sender_label
+                    )
                 ),
                 user_message_uuid=user_message_uuid,
             )

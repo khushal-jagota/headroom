@@ -175,8 +175,8 @@ class _FakeBackendChild:
         turn_token: TurnToken,
         content: MessageContent,
         *,
-        sender_content: MessageContent,
         sender_label: str,
+        sender_content: MessageContent,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
@@ -199,9 +199,15 @@ class _FakeBackendChild:
         self._backend.live_turn_token = turn_token
 
     async def steer(
-        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+        self,
+        turn_token: TurnToken,
+        content: MessageContent,
+        *,
+        sender_content: MessageContent | None = None,
+        sender_label: str,
     ) -> BackendSteerOutcome:
         del turn_token
+        del sender_content
         del sender_label
         self._backend.steered_contents.append(content)
         return self._backend.steer_outcome

@@ -38,6 +38,7 @@ from planner.conversation.contracts import (
     backend_supports_steer,
 )
 from planner.conversation.events import UserInputAnswer, UserInputQuestion
+from planner.conversation.logic.addressed_reply import with_authenticated_reply_directive
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
 )
@@ -50,7 +51,7 @@ from planner.conversation.message_content import (
     MessageText,
     message_content_text,
     require_message_content,
-    sender_labeled_message_content,
+    sender_labeled_composed_message_content,
 )
 from planner.core.contracts import Principal
 
@@ -945,6 +946,7 @@ class InMemoryConversationSystem:
         sent_at_unix_milliseconds: int | None = None,
         sender: Principal | None = None,
         recipient: Principal | None = None,
+        reply_requested: bool = True,
         recorded_messages: Sequence[_HeldPrompt] = (),
     ) -> _InMemoryBackendSession | PromptDeliveryRefused:
         established = self._establish_backend_session(state)
@@ -970,9 +972,29 @@ class InMemoryConversationSystem:
                     reasoning_effort=state.current_reasoning_effort,
                 )
             )
+        reply_senders = (
+            tuple(
+                dict.fromkeys(
+                    message.sender
+                    for message in recorded_messages
+                    if message.reply_requested
+                    and message.sender is not None
+                    and message.recipient is not None
+                )
+            )
+            if recorded_messages
+            else (
+                (sender,)
+                if reply_requested and sender is not None and recipient is not None
+                else ()
+            )
+        )
+        wire_content = with_authenticated_reply_directive(content, reply_senders)
         established.prompt_writes.append(
             InMemoryBackendPromptWrite(
-                content=sender_labeled_message_content(content, sender_label),
+                content=sender_labeled_composed_message_content(
+                    wire_content, content, sender_label
+                ),
                 sender_label=sender_label,
                 mode=mode,
             )
@@ -1036,6 +1058,7 @@ class InMemoryConversationSystem:
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
             recorded_messages=recorded_messages,
         )
         if isinstance(written, PromptDeliveryRefused):
@@ -1090,6 +1113,7 @@ class InMemoryConversationSystem:
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
         )
         if isinstance(written, PromptDeliveryRefused):
             return written

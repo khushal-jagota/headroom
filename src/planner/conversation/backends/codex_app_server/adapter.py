@@ -97,7 +97,7 @@ from planner.conversation.message_content import (
     MessageFile,
     MessageImage,
     MessageText,
-    sender_labeled_message_content,
+    sender_labeled_composed_message_content,
     text_message_content,
 )
 from planner.conversation.message_files import (
@@ -365,8 +365,8 @@ class CodexAppServerBackendChild:
         turn_token: TurnToken,
         content: MessageContent,
         *,
-        sender_content: MessageContent,
         sender_label: str,
+        sender_content: MessageContent,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
@@ -403,7 +403,9 @@ class CodexAppServerBackendChild:
             invocation is not None and invocation.kind is ComposerCatalogEntryKind.command
         )
         if not native_command and not automatic_compaction:
-            content = sender_labeled_message_content(content, sender_label)
+            content = sender_labeled_composed_message_content(
+                content, sender_content, sender_label
+            )
         if native_command:
             assert invocation is not None
             turn.kind = (
@@ -440,9 +442,15 @@ class CodexAppServerBackendChild:
             self._reasoning_effort = reasoning_effort
 
     async def steer(
-        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+        self,
+        turn_token: TurnToken,
+        content: MessageContent,
+        *,
+        sender_content: MessageContent | None = None,
+        sender_label: str,
     ) -> BackendSteerOutcome:
         """Ask Codex to admit this content to the exact captured ordinary turn."""
+        sender_content = content if sender_content is None else sender_content
         turn = self._turn
         if turn is None:
             return BackendSteerRefused(
@@ -471,7 +479,9 @@ class CodexAppServerBackendChild:
                 threadId=thread_id,
                 expectedTurnId=captured_native_turn_id,
                 input=self._turn_input(
-                    sender_labeled_message_content(content, sender_label)
+                    sender_labeled_composed_message_content(
+                        content, sender_content, sender_label
+                    )
                 ),
             )
         except (PromptWriteFailed, ValidationError):

@@ -114,7 +114,7 @@ One screen per part of the system:
   with a hidden automatic prompt has no Focus turn head. Its visible owner result rows
   still appear.
 
-  The client advances the read position only while Focus is selected, the conversation
+  The client advances the read position while either lens is selected, the conversation
   pane is open, the document is visible, and the window has focus. It advances through
   the newest delivered row that this browser received, even when a newer conversation
   snapshot arrived first. The client checks document focus again for each advance, so a

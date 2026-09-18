@@ -455,14 +455,7 @@ class SqliteProcessConversationSystem:
                             admitted.sender_label,
                             admitted.sender,
                             admitted.recipient,
-                            admitted.reply_requested,
-                        ) != (
-                            content,
-                            sender_label,
-                            sender,
-                            recipient,
-                            reply_requested,
-                        ):
+                        ) != (content, sender_label, sender, recipient):
                             raise ValueError("sender_message_id already names a different message")
                         settled = admitted.settled
                     else:
@@ -474,7 +467,6 @@ class SqliteProcessConversationSystem:
                                 or held.sender_label != sender_label
                                 or held.sender != sender
                                 or held.recipient != recipient
-                                or held.reply_requested != reply_requested
                             ):
                                 raise ValueError(
                                     "sender_message_id already names a different message"
@@ -1000,7 +992,10 @@ class SqliteProcessConversationSystem:
                 ),
             )
             steer_outcome = await steer_child.steer(
-                steer_turn_token, wire_content, sender_label=held.sender_label
+                steer_turn_token,
+                wire_content,
+                sender_content=held.content,
+                sender_label=held.sender_label,
             )
         except PromptWriteFailed:
             steer_outcome = BackendSteerUncertain()
@@ -1256,7 +1251,6 @@ class SqliteProcessConversationSystem:
                         or held.reasoning_effort_change != reasoning_effort_change
                         or held.sender != sender
                         or held.recipient != recipient
-                        or held.reply_requested != reply_requested
                     ):
                         raise ValueError("sender_message_id already names a different message")
                     return PromptDeliveryQueued(queue_position=position)
@@ -1626,7 +1620,10 @@ class SqliteProcessConversationSystem:
                 ),
             )
             steer_outcome = await child.steer(
-                running.token, wire_content, sender_label=sender_label
+                running.token,
+                wire_content,
+                sender_content=content,
+                sender_label=sender_label,
             )
         except PromptWriteFailed:
             steer_outcome = BackendSteerUncertain()
