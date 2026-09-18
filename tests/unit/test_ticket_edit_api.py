@@ -93,6 +93,62 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
         conn.close()
 
 
+def test_ticket_block_api_validates_endpoints_duplicates_and_active_cycles(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    first = _create_ticket(db_path, title="First")
+    second = _create_ticket(db_path, title="Second")
+    third = _create_ticket(db_path, title="Third")
+    fourth = _create_ticket(db_path, title="Fourth")
+    fifth = _create_ticket(db_path, title="Fifth")
+
+    def add(client: TestClient, blocking: str, blocked: str) -> Any:
+        return client.post(
+            "/api/ticket-blocks",
+            json={
+                "blocking_ticket_id": blocking,
+                "blocked_ticket_id": blocked,
+            },
+        )
+
+    with TestClient(app) as client:
+        missing_blocker = add(client, "t_missing", first)
+        missing_blocked = add(client, first, "t_missing")
+        self_block = add(client, first, first)
+        created = add(client, first, second)
+        duplicate = add(client, first, second)
+        direct_cycle = add(client, second, first)
+        assert add(client, third, fourth).status_code == 200
+        assert add(client, fourth, fifth).status_code == 200
+        longer_cycle = add(client, fifth, third)
+
+    assert missing_blocker.status_code == 400
+    assert missing_blocker.json()["error"] == {
+        "code": "ticket_block_invalid",
+        "message": "blocking_ticket_id must be an existing ticket",
+        "detail": {"blocking_ticket_id": "t_missing"},
+    }
+    assert missing_blocked.status_code == 400
+    assert missing_blocked.json()["error"] == {
+        "code": "ticket_block_invalid",
+        "message": "blocked_ticket_id must be an existing ticket",
+        "detail": {"blocked_ticket_id": "t_missing"},
+    }
+    assert self_block.status_code == 400
+    assert self_block.json()["error"]["code"] == "ticket_block_invalid"
+    assert created.json() == {
+        "blocking_ticket_id": first,
+        "blocked_ticket_id": second,
+    }
+    assert duplicate.status_code == 400
+    assert duplicate.json()["error"]["code"] == "ticket_block_invalid"
+    assert direct_cycle.status_code == 400
+    assert direct_cycle.json()["error"]["code"] == "ticket_block_cycle"
+    assert longer_cycle.status_code == 400
+    assert longer_cycle.json()["error"]["code"] == "ticket_block_cycle"
+
+
 def _create_pristine_ticket(db_path: Path, *, worker_type: str = "probe") -> str:
     conn = connect(str(db_path))
     try:

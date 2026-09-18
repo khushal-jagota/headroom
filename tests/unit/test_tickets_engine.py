@@ -8,6 +8,7 @@ payloads, event order, and error codes from the T04 plan.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -31,6 +32,7 @@ from planner.tickets.contracts import (
     TicketEdit,
     TicketStatus,
 )
+from planner.tickets.logic.decisions import Decision
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 if TYPE_CHECKING:
@@ -1202,6 +1204,40 @@ def test_ticket_block_admission_runs_inside_each_write_transaction(
 
     assert not tmp_db.in_transaction
     assert admission_calls == ["add", "remove"]
+
+
+def test_dormant_ticket_block_is_allowed_but_reactivation_rejects_its_cycle(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    dormant_blocker = _create(tmp_db, cfg, fake_clock, title="Dormant blocker")
+    other = _create(tmp_db, cfg, fake_clock, title="Other Ticket")
+    dormant_blocker = advance_ticket(
+        tmp_db,
+        dormant_blocker.id,
+        new_stage="done",
+        principal=OWNER_PRINCIPAL,
+        now=now,
+    )
+
+    actions.add_ticket_block(tmp_db, dormant_blocker.id, other.id, now=now)
+    assert data.read_ticket(tmp_db, other.id).ticket_status is TicketStatus.empty
+    actions.add_ticket_block(tmp_db, other.id, dormant_blocker.id, now=now)
+
+    reactivated_values = dict(dormant_blocker.field_values)
+    reactivated_values.pop("closeout")
+    reactivation = replace(
+        Decision.from_ticket(dormant_blocker),
+        stage="needs_closeout",
+        field_values=reactivated_values,
+    )
+    with pytest.raises(PlannerError) as exc:
+        data._apply_decision(tmp_db, dormant_blocker, reactivation, now)
+
+    assert exc.value.code is ErrorCode.ticket_block_cycle
+    assert data.read_ticket(tmp_db, dormant_blocker.id).stage == "done"
+    assert _blocked_tickets(tmp_db, dormant_blocker.id) == [other.id]
+    assert _blocked_tickets(tmp_db, other.id) == [dormant_blocker.id]
 
 
 def test_a_second_live_blocker_holds_the_target_blocked_until_both_clear(

@@ -1,4 +1,4 @@
-"""Ticket routes (§9), plus the ticket-anchored links and the ticket-centric
+"""Ticket routes (§9), plus Ticket blocks and the ticket-centric
 derived views (board, Review). Thin HTTP shells over the stage-3 writers and the
 pure read views: every handler is parse -> auth -> writer -> serialize. No route
 re-implements a domain rule.
@@ -243,7 +243,7 @@ async def silence_the_worker_before_deleting(
 
 @contextmanager
 def txn(conn: sqlite3.Connection) -> Iterator[None]:
-    """Wrap a NON-self-transacting writer (days/dispatch/links) so a mid-sequence
+    """Wrap a NON-self-transacting writer (days/dispatch/Ticket blocks) so a mid-sequence
     PlannerError rolls back cleanly. Never wrap a ticket/sprint writer — those open
     their own BEGIN IMMEDIATE and would raise 'transaction within a transaction'."""
     conn.execute("BEGIN IMMEDIATE")
