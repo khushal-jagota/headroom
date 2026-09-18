@@ -96,7 +96,6 @@ from planner.conversation.events import (
     PromptDeliveryUncertainEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
-    ProposalDeliveryFailedEventPayload,
     TokenUsageEventPayload,
     ToolCallFinishedEventPayload,
     ToolCallProgressFrame,
@@ -110,7 +109,9 @@ from planner.conversation.events import (
     UserInputRequestedEventPayload,
 )
 from planner.conversation.live_tail import ConversationLiveTail
-from planner.conversation.logic.addressed_reply import with_authenticated_reply_directive
+from planner.conversation.logic.addressed_reply import (
+    with_authenticated_reply_directive,
+)
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
 )
@@ -660,9 +661,7 @@ class SqliteProcessConversationSystem:
         if state is None:
             raise ValueError("no such conversation")
         async with state.lock:
-            outcome = await self._store.sender_message_outcome(
-                conversation_id, sender_message_id
-            )
+            outcome = await self._store.sender_message_outcome(conversation_id, sender_message_id)
             if outcome is not None:
                 payload = outcome.payload
                 if not isinstance(payload, PromptDeliveryUncertainEventPayload) or (
@@ -684,41 +683,6 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
-                ),
-            )
-
-    async def record_proposal_delivery_failed(
-        self,
-        conversation_id: str,
-        *,
-        attempt_count: int,
-        last_error: str,
-        sender_message_id: str,
-    ) -> None:
-        """Append one exact-once runtime failure row without touching the backend."""
-        if attempt_count < 1 or not last_error.strip() or not sender_message_id.strip():
-            raise ValueError("proposal delivery failure fields must be non-empty")
-        state = await self._conversation_state(conversation_id)
-        if state is None:
-            raise ValueError("no such conversation")
-        async with state.lock:
-            outcome = await self._store.sender_message_outcome(
-                conversation_id, sender_message_id
-            )
-            if outcome is not None:
-                payload = outcome.payload
-                if not isinstance(payload, ProposalDeliveryFailedEventPayload) or (
-                    payload.attempt_count,
-                    payload.last_error,
-                ) != (attempt_count, last_error):
-                    raise ValueError("sender_message_id already names a different message")
-                return
-            await self._append_event(
-                state,
-                ProposalDeliveryFailedEventPayload(
-                    attempt_count=attempt_count,
-                    last_error=last_error,
-                    sender_message_id=sender_message_id,
                 ),
             )
 
@@ -991,8 +955,7 @@ class SqliteProcessConversationSystem:
                     phase_when_not_started=_ConversationPhase.idle,
                     owner_read_through_sequence=(
                         held.owner_read_through_sequence
-                        if held.sender is not None
-                        and held.sender.kind is PrincipalKind.owner
+                        if held.sender is not None and held.sender.kind is PrincipalKind.owner
                         else None
                     ),
                 )
@@ -1020,11 +983,13 @@ class SqliteProcessConversationSystem:
         try:
             wire_content = with_authenticated_reply_directive(
                 held.content,
-                (held.sender,)
-                if held.reply_requested
-                and held.sender is not None
-                and held.recipient is not None
-                else (),
+                (
+                    (held.sender,)
+                    if held.reply_requested
+                    and held.sender is not None
+                    and held.recipient is not None
+                    else ()
+                ),
             )
             steer_outcome = await steer_child.steer(
                 steer_turn_token,
@@ -1140,7 +1105,8 @@ class SqliteProcessConversationSystem:
                 running.pending_permission_ask_ids.add(ask_id)
                 return False
             await self._append_event(
-                state, PermissionAnsweredEventPayload(ask_id=ask_id, option_id=option_id)
+                state,
+                PermissionAnsweredEventPayload(ask_id=ask_id, option_id=option_id),
             )
             return True
 
@@ -2714,7 +2680,10 @@ class SqliteProcessConversationSystem:
                 state,
                 turn_token,
                 ToolCallStartedEventPayload(
-                    tool_call_id=tool_call_id, title=title, tool_kind=tool_kind, detail=detail
+                    tool_call_id=tool_call_id,
+                    title=title,
+                    tool_kind=tool_kind,
+                    detail=detail,
                 ),
             )
         finally:
@@ -2735,7 +2704,9 @@ class SqliteProcessConversationSystem:
                 state,
                 turn_token,
                 ToolCallFinishedEventPayload(
-                    tool_call_id=tool_call_id, tool_call_status=tool_call_status, detail=detail
+                    tool_call_id=tool_call_id,
+                    tool_call_status=tool_call_status,
+                    detail=detail,
                 ),
             )
         finally:
@@ -2757,7 +2728,10 @@ class SqliteProcessConversationSystem:
             state.lock.release()
 
     async def _on_permission_ask_raised(
-        self, state: _ConversationState, turn_token: TurnToken, ask: BackendPermissionAsk
+        self,
+        state: _ConversationState,
+        turn_token: TurnToken,
+        ask: BackendPermissionAsk,
     ) -> None:
         running = await self._hold_for_the_live_turn(state, turn_token)
         if running is None:
@@ -2767,7 +2741,10 @@ class SqliteProcessConversationSystem:
                 state,
                 turn_token,
                 PermissionAskedEventPayload(
-                    ask_id=ask.ask_id, title=ask.title, detail=ask.detail, options=ask.options
+                    ask_id=ask.ask_id,
+                    title=ask.title,
+                    detail=ask.detail,
+                    options=ask.options,
                 ),
             )
             running.pending_permission_ask_ids.add(ask.ask_id)
@@ -2868,7 +2845,9 @@ class SqliteProcessConversationSystem:
         state.record = replace(state.record, vendor_session_cursor=vendor_session_cursor)
 
     async def _on_composer_catalog_reported(
-        self, state: _ConversationState, composer_catalog: tuple[ComposerCatalogEntry, ...]
+        self,
+        state: _ConversationState,
+        composer_catalog: tuple[ComposerCatalogEntry, ...],
     ) -> None:
         """The whole menu, as the backend has it now, put where the last one was.
 
@@ -3135,7 +3114,7 @@ class SqliteProcessConversationSystem:
         """
         self._set_phase(
             state,
-            _ConversationPhase.idle if state.running_turn is None else _ConversationPhase.running,
+            (_ConversationPhase.idle if state.running_turn is None else _ConversationPhase.running),
         )
 
     def _set_phase(self, state: _ConversationState, phase: _ConversationPhase) -> None:
@@ -3196,7 +3175,12 @@ class _CoreBackendEventSink:
 
     async def agent_message_completed(self, turn_token: TurnToken, content: MessageContent) -> None:
         self._enqueue(
-            partial(self._system._on_agent_message_completed, self._state, turn_token, content)
+            partial(
+                self._system._on_agent_message_completed,
+                self._state,
+                turn_token,
+                content,
+            )
         )
 
     async def token_usage_reported(

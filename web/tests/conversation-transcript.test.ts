@@ -284,25 +284,6 @@ describe("Conversation transcript", () => {
     });
   });
 
-  it("projects a bounded proposal delivery failure as one compact runtime row", () => {
-    const failure = {
-      conversation_id: "c1",
-      sequence: 1,
-      kind: "proposal_delivery_failed",
-      payload: {
-        attempt_count: 10,
-        last_error: "write_to_backend_failed",
-        sender_message_id: "proposal-delivery-failed:t_one:1"
-      },
-      created_at: 1_700_000_000
-    } satisfies ConversationEvent;
-
-    expect(rowOfKind(rowsFrom([failure]), "proposal_delivery_failed")).toMatchObject({
-      attemptCount: 10,
-      lastError: "write_to_backend_failed"
-    });
-  });
-
   it("preserves image pieces on both sides and normalizes legacy text", () => {
     const content = [
       { piece: "text" as const, text: "look at this" },

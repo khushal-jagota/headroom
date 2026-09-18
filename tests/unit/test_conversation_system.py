@@ -15,7 +15,6 @@ import logging
 import sqlite3
 from collections.abc import Callable, Coroutine, Iterator
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -94,16 +93,13 @@ from planner.conversation.system import (
     MODEL_THINKING_PULSE_INTERVAL_SECONDS,
     SqliteProcessConversationSystem,
 )
-from planner.core.authctx import RequestContext
-from planner.core.clock import TestClock as MutableClock
-from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.core.contracts import (
+    CHIEF_PRINCIPAL,
+    OWNER_PRINCIPAL,
+    Principal,
+    PrincipalKind,
+)
 from planner.core.db import connect, create_schema
-from planner.proposal_holder_wakes.runtime import _deliver_pending_wakes as deliver_pending_wakes
-from planner.runtime import conversation_start
-from planner.tickets import actions as ticket_actions
-from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap
-from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 
 VENDOR_SESSION_CURSOR = "vendor-session-1"
 
@@ -458,7 +454,10 @@ class _Harness:
         standard_error_tail: str | None = None,
     ) -> None:
         await self._end_turn(
-            conversation_id, ConversationTurnEnding.failed, error_summary, standard_error_tail
+            conversation_id,
+            ConversationTurnEnding.failed,
+            error_summary,
+            standard_error_tail,
         )
 
     async def raise_permission_ask(self, conversation_id: str) -> str:
@@ -475,7 +474,9 @@ class _Harness:
                 detail="ls",
                 options=(
                     PermissionAskOption(
-                        option_id="allow-once", label="Approve once", option_kind="allow"
+                        option_id="allow-once",
+                        label="Approve once",
+                        option_kind="allow",
                     ),
                     PermissionAskOption(option_id="deny", label="Decline", option_kind="reject"),
                 ),
@@ -575,436 +576,6 @@ def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
     is a system that has stopped rather than one that is slow.
     """
     asyncio.run(asyncio.wait_for(exercise(), 20.0))
-
-
-def test_system_wake_record_failure_is_terminal_uncertain_without_resend(
-    harness: _Harness, tmp_path: Path
-) -> None:
-    async def exercise() -> None:
-        conn = connect(str(tmp_path / "conversations.db"))
-        ticket = tickets_data.create_ticket(
-            conn,
-            title="Uncertain wake",
-            principal=CHIEF_PRINCIPAL,
-            now=1,
-            title_max_chars=TITLE_MAX_CHARS,
-            worker_type="coding",
-            kickoff_note="Work",
-            stated_ceiling="needs_success",
-            stated_at_cap=AtCap.propose,
-        )
-        tickets_data.file_current_proposal_with_recap(
-            conn,
-            ticket.id,
-            body="Ready",
-            recap="Ready",
-            principal=Principal(PrincipalKind.ticket, ticket.id),
-            now=2,
-        )
-        clock = MutableClock(datetime.now().astimezone())
-
-        async def fail_prompt_record(*_args: Any, **_kwargs: Any) -> Any:
-            raise sqlite3.OperationalError("injected prompt record failure")
-
-        harness.store.append_delivered_prompt = fail_prompt_record  # type: ignore[method-assign]
-        assert await deliver_pending_wakes(harness.system, conn, clock) == 0
-        conversation_id = conversation_start.read_agent_conversation(
-            conn, CHIEF_SETTINGS_KEY
-        )
-        assert conversation_id is not None
-        backend = harness.backend(conversation_id)
-        assert len(backend.writes) == 1
-        assert backend.stops == 1
-        row = conn.execute(
-            "SELECT state,last_error FROM proposal_holder_wakes WHERE ticket_id=?",
-            (ticket.id,),
-        ).fetchone()
-        assert row is not None
-        assert row["state"] == "uncertain"
-        assert "automatic retry disabled" in row["last_error"]
-
-        assert await deliver_pending_wakes(harness.system, conn, clock) == 0
-        assert len(backend.writes) == 1
-        conn.close()
-
-    _run(exercise)
-
-
-def _ticket_with_proposal(
-    conn: sqlite3.Connection,
-    *,
-    holder: Principal,
-    title: str,
-    now: int,
-) -> str:
-    ticket = tickets_data.create_ticket(
-        conn,
-        title=title,
-        principal=holder,
-        now=now,
-        title_max_chars=TITLE_MAX_CHARS,
-        worker_type="coding",
-        kickoff_note="Work",
-        stated_ceiling="needs_success",
-        stated_at_cap=AtCap.propose,
-    )
-    tickets_data.file_current_proposal_with_recap(
-        conn,
-        ticket.id,
-        body="Ready",
-        recap="Ready",
-        principal=Principal(PrincipalKind.ticket, ticket.id),
-        now=now + 1,
-    )
-    return ticket.id
-
-
-def _link_ticket_conversation(
-    conn: sqlite3.Connection, ticket_id: str, conversation_id: str, *, now: int
-) -> None:
-    tickets_data.write_ticket_conversation_start(
-        conn,
-        ticket_id,
-        conversation_id=conversation_id,
-        backend="hermes",
-        model="a-model",
-        reasoning_effort=None,
-        now=now,
-    )
-
-
-def test_queued_holder_wake_does_not_block_durable_rejection(
-    harness: _Harness, tmp_path: Path
-) -> None:
-    async def exercise() -> None:
-        conn = connect(str(tmp_path / "conversations.db"))
-        holder_ticket = tickets_data.create_ticket(
-            conn,
-            title="Decider",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=TITLE_MAX_CHARS,
-            worker_type="coding",
-            kickoff_note="Decide",
-        )
-        holder = Principal(PrincipalKind.ticket, holder_ticket.id)
-        target_id = _ticket_with_proposal(
-            conn, holder=holder, title="Reject me", now=2
-        )
-        await _start(harness, "c-holder")
-        await _start(harness, "c-worker")
-        _link_ticket_conversation(conn, holder_ticket.id, "c-holder", now=4)
-        _link_ticket_conversation(conn, target_id, "c-worker", now=4)
-        await harness.system.send(
-            "c-holder", text_message_content("incumbent"), sender_label="owner"
-        )
-        clock = MutableClock(datetime.now().astimezone())
-
-        assert await deliver_pending_wakes(
-            harness.system, conn, clock, ticket_id=target_id
-        ) == 0
-        assert conn.execute(
-            "SELECT state FROM proposal_holder_wakes WHERE ticket_id=?", (target_id,)
-        ).fetchone()["state"] == "delivering"
-
-        revised = await ticket_actions.return_ticket_for_revision(
-            harness.system,
-            conn,
-            target_id,
-            message="Add evidence.",
-            ctx=RequestContext(holder),
-            clock=clock,
-        )
-
-        assert revised.pending_proposal is None
-        assert harness.backend("c-worker").writes == []
-        rows = conn.execute(
-            "SELECT sequence,state FROM ticket_rejection_messages "
-            "WHERE ticket_id=? ORDER BY sequence",
-            (target_id,),
-        ).fetchall()
-        assert [tuple(row) for row in rows] == [(1, "pending"), (2, "pending")]
-        assert conn.execute(
-            "SELECT state FROM proposal_holder_wakes WHERE ticket_id=?", (target_id,)
-        ).fetchone()["state"] == "cancelled"
-
-        assert await deliver_pending_wakes(
-            harness.system, conn, clock, ticket_id=target_id
-        ) == 1
-        await harness.complete_turn("c-worker")
-        assert await deliver_pending_wakes(
-            harness.system, conn, clock, ticket_id=target_id
-        ) == 1
-        prompts = [
-            event.payload
-            for event in await harness.events("c-worker")
-            if isinstance(event.payload, PromptEventPayload)
-        ]
-        assert [message_content_text(prompt.content) for prompt in prompts] == [
-            "Your proposal was rejected and returned for revision. "
-            "The decider's comment follows.",
-            "Add evidence.",
-        ]
-        assert [prompt.sender_label for prompt in prompts] == [
-            "Panels",
-            f"Ticket {holder_ticket.id}",
-        ]
-        assert prompts[0].sender is None and prompts[0].recipient is None
-        assert prompts[1].sender == holder
-        assert prompts[1].recipient == Principal(PrincipalKind.ticket, target_id)
-        written = harness.backend("c-worker").written_texts()
-        assert written[0] == (
-            "Your proposal was rejected and returned for revision. "
-            "The decider's comment follows."
-        )
-        assert written[1].startswith("[Authenticated Panels reply requirement]")
-        assert written[1].endswith("Add evidence.")
-        assert f"panels send-message --ticket {holder_ticket.id}" in written[1]
-        conn.close()
-
-    _run(exercise)
-
-
-def test_slow_rejection_delivery_does_not_hold_the_ticket_database_transaction(
-    harness: _Harness, tmp_path: Path
-) -> None:
-    async def exercise() -> None:
-        db_path = tmp_path / "conversations.db"
-        conn = connect(str(db_path))
-        target_id = _ticket_with_proposal(
-            conn, holder=OWNER_PRINCIPAL, title="Slow delivery", now=1
-        )
-        await _start(harness, "c-worker")
-        _link_ticket_conversation(conn, target_id, "c-worker", now=3)
-        clock = MutableClock(datetime.now().astimezone())
-        await ticket_actions.return_ticket_for_revision(
-            harness.system,
-            conn,
-            target_id,
-            message="Revise.",
-            ctx=RequestContext(OWNER_PRINCIPAL),
-            clock=clock,
-        )
-        backend = harness.backend("c-worker")
-        backend.write_has_begun = asyncio.Event()
-        backend.writes_wait_for_release = asyncio.Event()
-        delivery = asyncio.create_task(
-            deliver_pending_wakes(harness.system, conn, clock, ticket_id=target_id)
-        )
-        await asyncio.wait_for(backend.write_has_begun.wait(), timeout=2)
-
-        other = connect(str(db_path))
-        unrelated = tickets_data.create_ticket(
-            other,
-            title="Unrelated writer",
-            principal=OWNER_PRINCIPAL,
-            now=4,
-            title_max_chars=TITLE_MAX_CHARS,
-            worker_type="coding",
-            kickoff_note="Independent",
-        )
-        assert tickets_data.read_ticket(other, unrelated.id).title == "Unrelated writer"
-        other.close()
-
-        backend.writes_wait_for_release.set()
-        assert await delivery == 1
-        conn.close()
-
-    _run(exercise)
-
-
-def test_comment_record_failure_rolls_back_before_real_backend_io(
-    harness: _Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def exercise() -> None:
-        conn = connect(str(tmp_path / "conversations.db"))
-        target_id = _ticket_with_proposal(
-            conn, holder=OWNER_PRINCIPAL, title="Atomic records", now=1
-        )
-        await _start(harness, "c-worker")
-        _link_ticket_conversation(conn, target_id, "c-worker", now=3)
-        from planner.proposal_holder_wakes import data as wake_data
-
-        original_insert = wake_data._insert_rejection_message  # noqa: SLF001
-
-        def fail_comment(*args: Any, **kwargs: Any) -> None:
-            if kwargs["sequence"] == 2:
-                raise ValueError("comment record refused")
-            original_insert(*args, **kwargs)
-
-        monkeypatch.setattr(wake_data, "_insert_rejection_message", fail_comment)
-        with pytest.raises(ValueError, match="comment record refused"):
-            await ticket_actions.return_ticket_for_revision(
-                harness.system,
-                conn,
-                target_id,
-                message="Revise.",
-                ctx=RequestContext(OWNER_PRINCIPAL),
-                clock=MutableClock(datetime.now().astimezone()),
-            )
-
-        ticket = tickets_data.read_ticket(conn, target_id)
-        assert ticket.pending_proposal is not None
-        assert conn.execute(
-            "SELECT COUNT(*) FROM ticket_rejection_messages WHERE ticket_id=?",
-            (target_id,),
-        ).fetchone()[0] == 0
-        assert harness.backend("c-worker").writes == []
-        conn.close()
-
-    _run(exercise)
-
-
-def test_uncertain_rejection_fact_settles_and_later_rejections_continue(
-    harness: _Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def exercise() -> None:
-        conn = connect(str(tmp_path / "conversations.db"))
-        target_id = _ticket_with_proposal(
-            conn, holder=OWNER_PRINCIPAL, title="Uncertain rejection", now=1
-        )
-        await _start(harness, "c-worker")
-        _link_ticket_conversation(conn, target_id, "c-worker", now=3)
-        clock = MutableClock(datetime.now().astimezone())
-        await ticket_actions.return_ticket_for_revision(
-            harness.system,
-            conn,
-            target_id,
-            message="First comment.",
-            ctx=RequestContext(OWNER_PRINCIPAL),
-            clock=clock,
-        )
-
-        append_delivered_prompt = harness.store.append_delivered_prompt
-        append_event = harness.store.append_event
-        fail_next_prompt_record = True
-        uncertainty_record_failures_remaining = 2
-
-        async def fail_first_prompt_record(*args: Any, **kwargs: Any) -> Any:
-            nonlocal fail_next_prompt_record
-            if fail_next_prompt_record:
-                fail_next_prompt_record = False
-                raise sqlite3.OperationalError("injected prompt record failure")
-            return await append_delivered_prompt(*args, **kwargs)
-
-        async def fail_first_uncertainty_records(
-            conversation_id: str, payload: Any, **kwargs: Any
-        ) -> Any:
-            nonlocal uncertainty_record_failures_remaining
-            if (
-                isinstance(payload, PromptDeliveryUncertainEventPayload)
-                and uncertainty_record_failures_remaining
-            ):
-                uncertainty_record_failures_remaining -= 1
-                raise sqlite3.OperationalError("injected uncertainty record failure")
-            return await append_event(conversation_id, payload, **kwargs)
-
-        monkeypatch.setattr(
-            harness.store, "append_delivered_prompt", fail_first_prompt_record
-        )
-        monkeypatch.setattr(harness.store, "append_event", fail_first_uncertainty_records)
-
-        assert await deliver_pending_wakes(
-            harness.system, conn, clock, ticket_id=target_id
-        ) == 1
-        first_rows = conn.execute(
-            "SELECT rejection_generation,sequence,state "
-            "FROM ticket_rejection_messages WHERE ticket_id=? "
-            "ORDER BY rejection_generation,sequence",
-            (target_id,),
-        ).fetchall()
-        assert [tuple(row) for row in first_rows] == [
-            (1, 1, "uncertain"),
-            (1, 2, "delivered"),
-        ]
-        first_events = [event.payload for event in await harness.events("c-worker")]
-        assert not any(
-            isinstance(payload, PromptDeliveryUncertainEventPayload)
-            for payload in first_events
-        )
-        from planner.proposal_holder_wakes import data as wake_data
-
-        assert wake_data.due_ticket_ids(conn, now=clock.now_unix()) == (target_id,)
-        assert await deliver_pending_wakes(
-            harness.system, conn, clock, ticket_id=target_id
-        ) == 0
-        recovered_events = [event.payload for event in await harness.events("c-worker")]
-        uncertain = [
-            payload
-            for payload in recovered_events
-            if isinstance(payload, PromptDeliveryUncertainEventPayload)
-        ]
-        assert len(uncertain) == 1
-        assert message_content_text(uncertain[0].content) == (
-            "Your proposal was rejected and returned for revision. "
-            "The decider's comment follows."
-        )
-        assert uncertain[0].sender_label == "Panels"
-        first_writes = harness.backend("c-worker").written_texts()
-        assert first_writes[0] == (
-            "Your proposal was rejected and returned for revision. "
-            "The decider's comment follows."
-        )
-        assert first_writes[1].startswith("[Authenticated Panels reply requirement]")
-        assert first_writes[1].endswith("First comment.")
-        assert "panels send-message --owner" in first_writes[1]
-        assert wake_data.due_ticket_ids(conn, now=clock.now_unix()) == ()
-
-        await harness.complete_turn("c-worker")
-        tickets_data.file_current_proposal_with_recap(
-            conn,
-            target_id,
-            body="Try again",
-            recap="Try again",
-            principal=Principal(PrincipalKind.ticket, target_id),
-            now=clock.now_unix() + 1,
-        )
-        await ticket_actions.return_ticket_for_revision(
-            harness.system,
-            conn,
-            target_id,
-            message="Second comment.",
-            ctx=RequestContext(OWNER_PRINCIPAL),
-            clock=clock,
-        )
-
-        assert await deliver_pending_wakes(
-            harness.system, conn, clock, ticket_id=target_id
-        ) == 1
-        await harness.complete_turn("c-worker")
-        assert await deliver_pending_wakes(
-            harness.system, conn, clock, ticket_id=target_id
-        ) == 1
-        await harness.complete_turn("c-worker")
-
-        rows = conn.execute(
-            "SELECT rejection_generation,sequence,state "
-            "FROM ticket_rejection_messages WHERE ticket_id=? "
-            "ORDER BY rejection_generation,sequence",
-            (target_id,),
-        ).fetchall()
-        assert [tuple(row) for row in rows] == [
-            (1, 1, "uncertain"),
-            (1, 2, "delivered"),
-            (2, 1, "delivered"),
-            (2, 2, "delivered"),
-        ]
-        final_writes = harness.backend("c-worker").written_texts()
-        assert final_writes[0] == (
-            "Your proposal was rejected and returned for revision. "
-            "The decider's comment follows."
-        )
-        assert final_writes[1].endswith("First comment.")
-        assert final_writes[2] == (
-            "Your proposal was rejected and returned for revision. "
-            "The decider's comment follows."
-        )
-        assert final_writes[3].endswith("Second comment.")
-        assert all("panels send-message --owner" in text for text in final_writes[1::2])
-        assert wake_data.due_ticket_ids(conn, now=clock.now_unix()) == ()
-        conn.close()
-
-    _run(exercise)
 
 
 async def _start(
@@ -1119,7 +690,9 @@ def test_message_to_owner_is_one_ordered_idempotent_row(harness: _Harness) -> No
     _run(exercise)
 
 
-def test_backend_prose_is_runtime_only_and_silence_is_explicit(harness: _Harness) -> None:
+def test_backend_prose_is_runtime_only_and_silence_is_explicit(
+    harness: _Harness,
+) -> None:
     async def exercise() -> None:
         await _start(harness, "c")
         ticket = Principal(PrincipalKind.ticket, "t_worker")
@@ -1310,7 +883,11 @@ def test_held_prompt_batch_marks_each_distinct_sender_in_first_seen_order(
         recipient = Principal(PrincipalKind.ticket, "t_worker")
         chief = Principal(PrincipalKind.chief, "chief")
         await harness.system.send("c", text_message_content("runtime"), sender_label="Panels")
-        for text, sender in (("one", OWNER_PRINCIPAL), ("two", chief), ("three", OWNER_PRINCIPAL)):
+        for text, sender in (
+            ("one", OWNER_PRINCIPAL),
+            ("two", chief),
+            ("three", OWNER_PRINCIPAL),
+        ):
             fate = await harness.system.send(
                 "c",
                 text_message_content(text),
@@ -1566,7 +1143,11 @@ def test_an_accepted_steer_receipt_can_follow_its_turn_and_a_replacement(
     ("steer_outcome", "expected_fate", "recorded_payload_type"),
     [
         (BackendSteerAccepted(), PromptDeliveryInjected(), PromptEventPayload),
-        (BackendSteerUncertain(), PromptDeliveryUncertain(), PromptDeliveryUncertainEventPayload),
+        (
+            BackendSteerUncertain(),
+            PromptDeliveryUncertain(),
+            PromptDeliveryUncertainEventPayload,
+        ),
     ],
 )
 def test_a_delayed_direct_steer_receipt_does_not_credit_its_sender_to_the_replacement_turn(
@@ -1574,7 +1155,7 @@ def test_a_delayed_direct_steer_receipt_does_not_credit_its_sender_to_the_replac
     monkeypatch: pytest.MonkeyPatch,
     steer_outcome: BackendSteerOutcome,
     expected_fate: PromptDeliveryInjected | PromptDeliveryUncertain,
-    recorded_payload_type: type[PromptEventPayload] | type[PromptDeliveryUncertainEventPayload],
+    recorded_payload_type: (type[PromptEventPayload] | type[PromptDeliveryUncertainEventPayload]),
 ) -> None:
     async def exercise() -> None:
         monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
@@ -1816,9 +1397,7 @@ def test_a_queued_owner_prompt_does_not_mark_later_replies_as_read(
 ) -> None:
     async def exercise() -> None:
         await _start(harness, "c")
-        await harness.system.send(
-            "c", text_message_content("incumbent"), sender_label="system"
-        )
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="system")
         assert await harness.system.send(
             "c",
             text_message_content("queued before the reply"),
@@ -2105,7 +1684,10 @@ def test_a_rebind_whose_write_still_fails_changes_nothing(harness: _Harness) -> 
         backend.write_fails = True
 
         fate = await harness.system.send(
-            "c", text_message_content("doomed"), sender_label="owner", model_change="second-model"
+            "c",
+            text_message_content("doomed"),
+            sender_label="owner",
+            model_change="second-model",
         )
 
         assert fate == PromptDeliveryRefused(
@@ -2292,7 +1874,9 @@ async def _thinking_pulses_now(watching: ConversationTailSubscription) -> int:
 # --- the role text ------------------------------------------------------------------------
 
 
-def test_the_role_text_rides_the_very_first_prompt_and_only_that_one(harness: _Harness) -> None:
+def test_the_role_text_rides_the_very_first_prompt_and_only_that_one(
+    harness: _Harness,
+) -> None:
     """Composed by the core, so every backend is told what it is the same way."""
 
     async def exercise() -> None:
@@ -2484,7 +2068,9 @@ def test_a_child_that_sat_idle_is_stopped_and_the_next_message_resumes_it(
     _run(exercise)
 
 
-def test_a_child_that_is_working_or_freshly_used_is_left_alone(harness: _Harness) -> None:
+def test_a_child_that_is_working_or_freshly_used_is_left_alone(
+    harness: _Harness,
+) -> None:
     async def exercise() -> None:
         await _start(harness, "busy")
         await harness.system.send("busy", text_message_content("work"), sender_label="owner")
@@ -2606,7 +2192,9 @@ def test_confirmed_claude_compaction_waits_for_new_agent_activity_before_repeati
     _run(exercise)
 
 
-def test_boundary_duplicate_waits_for_compaction_and_runs_once(harness: _Harness) -> None:
+def test_boundary_duplicate_waits_for_compaction_and_runs_once(
+    harness: _Harness,
+) -> None:
     async def exercise() -> None:
         await _start(harness, "c")
         await harness.system.send("c", text_message_content("first"), sender_label="owner")
@@ -2653,7 +2241,9 @@ def test_send_now_does_not_cancel_automatic_compaction(harness: _Harness) -> Non
     _run(exercise)
 
 
-def test_compaction_failure_releases_the_boundary_message_once(harness: _Harness) -> None:
+def test_compaction_failure_releases_the_boundary_message_once(
+    harness: _Harness,
+) -> None:
     async def exercise() -> None:
         await _start(harness, "c")
         await harness.system.send("c", text_message_content("first"), sender_label="owner")
@@ -2808,7 +2398,9 @@ def test_maintenance_releases_owner_and_worker_messages_in_order(
     _run(exercise)
 
 
-def test_restart_keeps_a_completed_compaction_attempt_from_repeating(tmp_path: Path) -> None:
+def test_restart_keeps_a_completed_compaction_attempt_from_repeating(
+    tmp_path: Path,
+) -> None:
     async def exercise() -> None:
         db_path = tmp_path / "restart-after-attempt.db"
         conn = connect(str(db_path))
@@ -3018,7 +2610,9 @@ def test_promoted_pre_wire_exception_releases_sender_identity_for_safe_retry(
     _run(exercise)
 
 
-def test_promoted_send_now_stays_held_behind_automatic_compaction(harness: _Harness) -> None:
+def test_promoted_send_now_stays_held_behind_automatic_compaction(
+    harness: _Harness,
+) -> None:
     async def exercise() -> None:
         await _start(harness, "c")
         await harness.system.send("c", text_message_content("first"), sender_label="owner")
@@ -3315,7 +2909,10 @@ def test_everything_waiting_goes_in_as_one_turn_with_a_row_for_each_sender(
             "waiting-1\n\nloop:\nwaiting-2\n\nowner:\nwaiting-3",
         )
         prompts = [
-            (event.payload.sender_message_id, message_content_text(event.payload.content))
+            (
+                event.payload.sender_message_id,
+                message_content_text(event.payload.content),
+            )
             for event in await harness.events("c")
             if isinstance(event.payload, PromptEventPayload)
         ]
@@ -3597,7 +3194,9 @@ def test_a_failed_turn_whose_ending_cannot_be_written_still_says_so_in_the_log(
 
         with caplog.at_level(logging.ERROR, logger="planner.conversation"):
             await harness.fail_turn(
-                "c", error_summary="the model refused", standard_error_tail="stderr tail"
+                "c",
+                error_summary="the model refused",
+                standard_error_tail="stderr tail",
             )
 
         lines = [
@@ -3697,7 +3296,9 @@ def test_one_waiting_message_can_be_taken_back_and_the_rest_still_run(
     _run(exercise)
 
 
-def test_promoted_send_now_claims_one_message_and_preserves_fifo(harness: _Harness) -> None:
+def test_promoted_send_now_claims_one_message_and_preserves_fifo(
+    harness: _Harness,
+) -> None:
     async def exercise() -> None:
         await _start(harness, "c")
         await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
@@ -3719,7 +3320,10 @@ def test_promoted_send_now_claims_one_message_and_preserves_fifo(harness: _Harne
         assert harness.backend("c").written_texts() == ("incumbent", "selected")
         assert harness.backend("c").model == "selected-model"
         waiting = await harness.system.held_prompts("c")
-        assert [message_content_text(item.content) for item in waiting] == ["first", "last"]
+        assert [message_content_text(item.content) for item in waiting] == [
+            "first",
+            "last",
+        ]
         assert (
             await harness.system.promote_held_prompt(
                 "c", held[1].held_prompt_id, HeldPromptPromotionMode.send_now
@@ -3761,9 +3365,12 @@ def test_promoted_send_now_keeps_the_held_owner_prompt_admission_position(
             recipient=OWNER_PRINCIPAL,
         )
 
-        assert await harness.system.promote_held_prompt(
-            "c", selected.held_prompt_id, HeldPromptPromotionMode.send_now
-        ) == PromptDeliveryStarted()
+        assert (
+            await harness.system.promote_held_prompt(
+                "c", selected.held_prompt_id, HeldPromptPromotionMode.send_now
+            )
+            == PromptDeliveryStarted()
+        )
         assert "Authenticated Panels reply requirement" in harness.backend("c").writes[-1].text
 
         record = await harness.store.read_conversation("c")
@@ -3813,7 +3420,9 @@ def test_refused_promoted_send_now_is_recorded_and_drains_the_fifo(
     _run(exercise)
 
 
-def test_two_promotions_of_one_held_id_have_exactly_one_winner(harness: _Harness) -> None:
+def test_two_promotions_of_one_held_id_have_exactly_one_winner(
+    harness: _Harness,
+) -> None:
     async def exercise() -> None:
         await _start(harness, "c")
         await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
@@ -3935,9 +3544,12 @@ def test_an_owner_prompt_promoted_to_steer_credits_only_its_queue_admission_posi
         await harness.agent_message("c", text_message_content("later unseen reply"))
         harness.backend("c").steer_outcome = steer_outcome
 
-        assert await harness.system.promote_held_prompt(
-            "c", selected.held_prompt_id, HeldPromptPromotionMode.steer
-        ) == expected_fate
+        assert (
+            await harness.system.promote_held_prompt(
+                "c", selected.held_prompt_id, HeldPromptPromotionMode.steer
+            )
+            == expected_fate
+        )
 
         record = await harness.store.read_conversation("c")
         assert record is not None
@@ -3999,7 +3611,11 @@ def test_a_promoted_steer_credits_its_sender_while_the_target_turn_remains_activ
     ("steer_outcome", "expected_fate", "recorded_payload_type"),
     [
         (BackendSteerAccepted(), PromptDeliveryInjected(), PromptEventPayload),
-        (BackendSteerUncertain(), PromptDeliveryUncertain(), PromptDeliveryUncertainEventPayload),
+        (
+            BackendSteerUncertain(),
+            PromptDeliveryUncertain(),
+            PromptDeliveryUncertainEventPayload,
+        ),
     ],
 )
 def test_a_delayed_promoted_steer_receipt_does_not_credit_its_sender_to_the_replacement_turn(
@@ -4007,7 +3623,7 @@ def test_a_delayed_promoted_steer_receipt_does_not_credit_its_sender_to_the_repl
     monkeypatch: pytest.MonkeyPatch,
     steer_outcome: BackendSteerOutcome,
     expected_fate: PromptDeliveryInjected | PromptDeliveryUncertain,
-    recorded_payload_type: type[PromptEventPayload] | type[PromptDeliveryUncertainEventPayload],
+    recorded_payload_type: (type[PromptEventPayload] | type[PromptDeliveryUncertainEventPayload]),
 ) -> None:
     async def exercise() -> None:
         monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
@@ -4067,7 +3683,9 @@ def test_a_delayed_promoted_steer_receipt_does_not_credit_its_sender_to_the_repl
     _run(exercise)
 
 
-def test_each_held_queue_mutation_publishes_an_empty_live_frame(harness: _Harness) -> None:
+def test_each_held_queue_mutation_publishes_an_empty_live_frame(
+    harness: _Harness,
+) -> None:
     async def exercise() -> None:
         await _start(harness, "c")
         await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")

@@ -1,20 +1,9 @@
-"""The text Panels itself sends into a Ticket's conversation.
-
-Two lifecycle prompts live here. One asks the worker to take the Ticket's next step; the
-other records its proposal rejection before the decider's separately attributed comment
-arrives. Nothing here reads a database, a clock or a conversation.
-"""
+"""The text Panels sends into a Ticket's conversation to start a worker step."""
 
 from __future__ import annotations
 
-from typing import Final
-
 from planner.tickets.contracts import StageOwnershipMode, Ticket
 from planner.worker_types.contracts import WorkerTypeDefinition
-
-PROPOSAL_RETURNED_FOR_REVISION: Final = (
-    "Your proposal was rejected and returned for revision. The decider's comment follows."
-)
 
 
 def worker_step_prompt(
@@ -54,8 +43,3 @@ def worker_step_prompt(
         f"take the next step and propose the '{field}' field for approval. "
         f"Stage owner: {ownership_wire}.{guidance}"
     )
-
-
-def proposal_returned_for_revision_prompt() -> str:
-    """Tell the worker the lifecycle transition separately from anyone's comment."""
-    return PROPOSAL_RETURNED_FOR_REVISION

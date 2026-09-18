@@ -15,9 +15,16 @@ TICKET_CHANGED_TEXT: Final = (
 
 
 def set_ticket_changed(conn: sqlite3.Connection, ticket_id: str, principal: Principal) -> None:
-    """Coalesce a notice for direct edits, never worker-owned writes."""
+    """Coalesce a notice for human edits made outside the worker turn."""
     if principal.kind not in {PrincipalKind.owner, PrincipalKind.chief}:
         return
+    worker_context_data.set_context(
+        conn, ticket_id, TICKET_CHANGED_CONTEXT_KEY, TICKET_CHANGED_TEXT
+    )
+
+
+def set_ticket_revision_requested(conn: sqlite3.Connection, ticket_id: str) -> None:
+    """Coalesce context whenever a proposal is returned for revision."""
     worker_context_data.set_context(
         conn, ticket_id, TICKET_CHANGED_CONTEXT_KEY, TICKET_CHANGED_TEXT
     )
