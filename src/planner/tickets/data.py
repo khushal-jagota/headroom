@@ -1947,7 +1947,7 @@ def return_for_revision(
             "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
             (ticket_id, ticket.stage),
         )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
+        ticket_worker_context.set_ticket_revision_requested(conn, ticket_id)
         _write_resting_ticket_status(
             conn,
             updated,
