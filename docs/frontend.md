@@ -331,18 +331,9 @@ provider or transport failure in its existing feedback line.
   code, block quotes, thematic breaks, and nested mixed lists. Raw HTML stays visible
   as text. A strict sanitizer removes scripts, event handlers, unsafe URLs, ids,
   styles, and DOM-clobbering attributes before any DOM node is created.
-- **Ticket conversations expose loopback dev servers through Panels.** A Markdown link
-  in a Ticket conversation whose address is `http://localhost:<port>/...` or
-  `http://127.0.0.1:<port>/...` is rendered as
-  `/dev/tickets/<ticket-id>/<port>/...`. The link keeps its path, query, and fragment;
-  the port stays in the link rather than becoming Ticket state. The rewritten address is
-  a preview like any other one written that way. This context belongs
-  only to the Ticket conversation, so the same Markdown on another surface remains an
-  ordinary loopback link. The first proxy contract carries pages and relative resource
-  or navigation paths under that prefix. Applications that hard-code root-origin URLs
-  must be configured with a compatible base path. Panels credentials and cookies do not
-  cross into the dev server, and dev-server cookies or authentication challenges do not
-  become state on the Panels origin.
+- **Loopback links stay ordinary links.** Markdown does not rewrite `localhost` or
+  `127.0.0.1` addresses. Panels does not expose development servers through its origin.
+  Workers use durable Ticket-owned files for reviewable work.
 - **Shared scroll areas keep their place.** Panels reserves stable scrollbar space on
   its shared vertical and horizontal scroll areas, so content does not move when a
   scrollbar appears. On a mouse or trackpad the thumb stays quiet until hover, focus,
@@ -362,10 +353,8 @@ provider or transport failure in its existing feedback line.
   applies the same safe-path, symlink, media-type, and `nosniff` response policy.
 - **File previews use one contract.** Markdown turns a link that names a managed file,
   such as `/files/tickets/t_123/notes/plan.md`, into the shared file preview component,
-  and every image into that same component wherever the image is hosted. A link to a
-  Ticket's dev server, `/dev/tickets/t_123/8791/`, joins them: it is a Panels address the
-  user can open, so it gets the same treatment and reads as "Open" plus the link's own
-  text. Any other link stays an ordinary link: a same-page anchor is still an anchor, one
+  and every image into that same component wherever the image is hosted. Any other link
+  stays an ordinary link: a same-page anchor is still an anchor, one
   of this app's own routes still navigates inside the app, and an off-site address still
   goes off-site. An image sitting inside such a link is left alone with it.
   A preview shows the thing itself, softly rounded, with nothing drawn around it. An image
@@ -406,9 +395,8 @@ provider or transport failure in its existing feedback line.
   of the page — the artifact and the worker are on screen together, which is the point.
   An opened conversation is the whole page, so opening a file steps it back to peeked.
   Escape closes the file. This is the same on every screen width. A click asking for a
-  new tab or window is left alone, and so is a link to a Ticket's dev server, which is a
-  page rather than a file. On the Workspace the open file rides in the address beside
-  the Ticket, so a reload, Back, and a shared link all show it. The
+  new tab or window is left alone. On the Workspace the open file rides in the address
+  beside the Ticket, so a reload, Back, and a shared link all show it. The
   `#/preview` address remains the way in from anywhere else — a shared link, a
   notification, or another screen — and it draws the same document.
 - **Artifact strips use one component.** Sprint Items list their files newest first.
@@ -478,8 +466,7 @@ hand-rolling the same shapes per screen. Each does one job:
 - **LiveConversation** — what makes a conversation live, and the only thing that does:
   it opens one by id, replays the rows after the one it holds and keeps going, keeps the
   messages this browser has sent that the record has not caught up with, and turns send,
-  stop, answer and New into calls. The Ticket screen, the Chief of Staff and the
-  development pane all mount it.
+  stop, answer and New into calls. The Ticket screen and the Chief of Staff both mount it.
 - **ConversationPane / ConversationTranscript / ConversationComposer** — what a
   conversation looks like: the rows, the one raised ask, the status line, and the
   composer with its model, effort and skill choices. The composer also owns pending
@@ -507,8 +494,8 @@ hand-rolling the same shapes per screen. Each does one job:
   place in the transcript and keeps whatever they had half-typed.
 
   Which state it opens in is the page's to choose, and the page can change it later. A
-  page that says nothing gets no layer at all: the Chief of Staff, the Workspace desk and
-  the development pane each keep a conversation that simply fills the space it is given.
+  page that says nothing gets no layer at all: the Chief of Staff and the Workspace desk
+  each keep a conversation that fills the space it is given.
 - **ComposerCatalogMenu** — the typed list that opens when a composer line starts with
   `/`, `$`, or `@`. Slash offers commands, dollar offers skills, and at offers apps and
   plugins. The list narrows as text is typed. A choice inserts its exact catalog text

@@ -575,7 +575,6 @@
             bind:conversationState
             conversationId={detail.conversation_id}
             persistenceKey={`owner:ticket:${detail.id}`}
-            ticketId={detail.id}
             label={conversationWorkerTypeLabel(detail)}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
             bind:backends={conversationBackends}
