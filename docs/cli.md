@@ -144,9 +144,12 @@ record shapes. Direct `show` commands also keep their full record shapes.
   `--sprint-item <id>` adds coherent Item classification.
   The creating principal becomes the ceiling holder. A proposal that parks at that
   ceiling is addressed to that exact principal.
-  `ticket set` names one field (`title`, `kickoff-note`, `priority`, or `deadline`).
-  Every one of those goes through `PATCH /api/tickets/{id}`, which is the only way to
-  change a field on a Ticket.
+  `ticket set` names one field (`ceiling`, `title`, `kickoff-note`, `priority`, or
+  `deadline`). Every one of those goes through `PATCH /api/tickets/{id}`, which is the
+  only way to change a field on a Ticket. `ceiling` takes either the stage name or the
+  plain name of the field that stage needs, so `closeout` and `needs_closeout` mean the
+  same thing. Setting it makes the setting principal the ceiling holder, and it is
+  refused while a proposal is pending.
   `ticket complete <ticket-id> <field>` is not a field edit: the user does a user-owned
   Stage's work themselves, and the Ticket advances exactly one Stage.
   `ticket place <ticket-id>` updates Project, Sprint, and optional Sprint Item as one
@@ -217,12 +220,10 @@ record shapes. Direct `show` commands also keep their full record shapes.
   A worker step gets its first five minutes before it may be restarted, so a Worker that
   is merely slow is left alone. Only a Worker-owned Stage can be restarted. A user-owned
   conversation belongs to the user.
-- **`sprint item supervisor set-item / set-ticket / scope / add-to-day / remove-from-day / block / unblock`**
+- **`sprint item supervisor set-item / set-ticket / add-to-day / remove-from-day / block / unblock`**
   — use item-scoped canonical actions for the owning Item and its current child Tickets.
-  `scope` takes the ceiling as either the stage name or the plain name of the field that
-  stage needs. `--ceiling closeout` and `--ceiling needs_closeout` mean the same thing.
-  A scope change makes that Sprint Item the ceiling holder and cannot retarget a pending
-  proposal.
+  `set-ticket` names one field, and `ceiling` is one of them. Setting the ceiling makes
+  that Sprint Item the ceiling holder and cannot retarget a pending proposal.
 - A supervisor creates a child Ticket with ordinary `ticket create --sprint-item`,
   the same command every other actor uses, and that Ticket is scoped like any other.
 - **`ticket create --ceiling`** — state the new Ticket's ceiling at creation.

@@ -260,7 +260,6 @@ _EXPECTED_BLOCKERS = {
     # Filing a proposal parks it and writes `awaiting_approval` in the same breath, and
     # the status is asked about first. The Ticket is refused either way.
     "proposal": "the Ticket is at awaiting_approval, so no worker step is due",
-    "scope": "the Ticket is at its ceiling and the cap is stop",
     "blocker": "the Ticket is at blocked, so no worker step is due",
 }
 

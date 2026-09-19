@@ -49,6 +49,7 @@ _DAY_FIELDS = {
 
 
 _TICKET_SET_FIELDS = {
+    "ceiling": "ceiling",
     "title": "title",
     "kickoff-note": "kickoff",
     "priority": "priority",
@@ -84,6 +85,7 @@ _SUPERVISOR_ITEM_FIELDS = {
 }
 
 _SUPERVISOR_TICKET_FIELDS = {
+    "ceiling": "ceiling",
     "title": "title",
     "priority": "priority",
     "deadline": "deadline",
@@ -1314,7 +1316,7 @@ def ticket_set(
 ) -> None:
     api_field = _TICKET_SET_FIELDS[field]
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field in {"title", "priority"} and new_value is None:
+    if field in {"title", "priority", "ceiling"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
     if field == "priority" and new_value not in _PRIORITIES:
         http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
@@ -2092,7 +2094,7 @@ def sprint_item_supervisor_set_ticket(
     as_json: bool,
 ) -> None:
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field in {"title", "priority"} and new_value is None:
+    if field in {"title", "priority", "ceiling"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
     data = http.send(
         "PATCH",
@@ -2101,21 +2103,6 @@ def sprint_item_supervisor_set_ticket(
         json_body={_SUPERVISOR_TICKET_FIELDS[field]: new_value},
     )
     http.emit(data, as_json, f"{ticket_id} {field} set")
-
-
-@sprint_item_supervisor.command("scope")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@click.option("--ceiling", required=True)
-@json_option
-def sprint_item_supervisor_scope(item_id: str, ticket_id: str, ceiling: str, as_json: bool) -> None:
-    data = http.send(
-        "PATCH",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}",
-        as_json=as_json,
-        json_body={"ceiling": ceiling},
-    )
-    http.emit(data, as_json, f"{ticket_id} ceiling set")
 
 
 def _supervisor_day_membership(
