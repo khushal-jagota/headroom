@@ -94,7 +94,6 @@ from planner.tickets.contracts import (
     ValueEditBody,
 )
 from planner.work_attention import add_work_attention
-from planner.worker_settings import service as worker_settings_service
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
     configured_worker_type_registry,
