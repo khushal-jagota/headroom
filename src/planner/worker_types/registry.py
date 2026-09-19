@@ -20,7 +20,7 @@ KNOWN_TOOLSET_PROFILES = frozenset({"default"})
 # Every Worker type ends by landing what it produced, so every Worker type declares
 # this field. The rules below make a declared field gate exactly one Stage, so
 # requiring the name is enough to require the Closeout Stage.
-REQUIRED_FIELD_ID = "closeout"
+CLOSEOUT_FIELD_ID = "closeout"
 
 
 def validate_definition(
@@ -184,10 +184,10 @@ def validate_definition(
                 {"worker_type": worker_type, "field": field.id},
             )
 
-    if REQUIRED_FIELD_ID not in declared_field_ids:
+    if CLOSEOUT_FIELD_ID not in declared_field_ids:
         raise fail(
-            "every worker type must declare a closeout field",
-            {"worker_type": worker_type, "field": REQUIRED_FIELD_ID},
+            f"every worker type must declare a {CLOSEOUT_FIELD_ID} field",
+            {"worker_type": worker_type, "field": CLOSEOUT_FIELD_ID},
         )
 
     if definition.worker_profile.specialist_skill not in known_skills:

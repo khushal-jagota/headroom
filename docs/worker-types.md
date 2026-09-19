@@ -37,10 +37,11 @@ Fourteen Worker types are seeded into a new database:
   boundary, with canonical writes deferred until Closeout.
 - **`personal`** represents user-owned work, with optional explicit agent support.
 
-Tests also declare **`probe`**. Apart from its Kickoff and its Closeout, which every
-Worker type carries, it has deliberately unfamiliar Stage and field names, so the test
-suite catches code that still assumes every Ticket is coding-shaped. It is not a shipped
-Worker type.
+Tests also declare **`probe`**. Its Stage and field names are deliberately unfamiliar,
+apart from the two the rules fix: the `kickoff` field it opens with and the `closeout`
+field every Worker type declares. Even the Stage that gates its Closeout carries a name
+of its own. So the test suite catches code that still assumes every Ticket is
+coding-shaped. It is not a shipped Worker type.
 
 ## Where a Worker type is declared
 
@@ -143,14 +144,17 @@ says which requirement it missed.
 
 The rule is one line: the declared fields must include `closeout`. The rules above finish
 it, because a declared field must be gated, and gated only once. So `closeout` gates
-exactly one Stage. Where that Stage sits in the order is the type's own choice, and the
-seeded types all put it last.
+exactly one Stage. Which Stage, and what that Stage is called, are the type's own
+choice. The seeded types all put it last before `done` and all call it
+`needs_closeout`, but neither is required.
 
-The other names the runtime requires are the `done` terminal, the separate `dropped`
-Stage, and a `kickoff` field paired with a first `needs_kickoff` Stage. They are in the
-rules above. Nothing else is a well-known name. The probe Worker type in the test suite
-gives its other Stages and fields deliberately unfamiliar ones, and that is what keeps the
-rest of Panels from assuming coding's shape.
+The other names the runtime fixes are the `done` terminal, the separate `dropped`
+Stage, and, for a type that opens with a Kickoff, a `kickoff` field paired with a first
+`needs_kickoff` Stage. They are in the rules above. Nothing else is a well-known name.
+The probe Worker type in the test suite names its other Stages and fields unfamiliarly,
+and that is what keeps the rest of Panels from assuming coding's shape.
+
+### What the registry does with them
 
 The registry has only three jobs:
 

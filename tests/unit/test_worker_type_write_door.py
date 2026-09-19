@@ -95,7 +95,7 @@ def test_a_worker_type_naming_a_skill_that_does_not_exist_is_refused(
 def test_a_type_that_declares_no_closeout_is_refused_at_the_door(
     client: tuple[TestClient, Path],
 ) -> None:
-    """A Worker type with no Closeout never reaches the database.
+    """A Worker type with no Closeout is not stored and does not become runnable.
 
     The gap used to surface only when a Ticket ran out of Stages with nothing to land
     its work. Now it surfaces here, when somebody saves the type.

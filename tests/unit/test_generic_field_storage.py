@@ -11,7 +11,7 @@ from tests.support.probe import FIELD_ALPHA as A_FIELD
 from tests.support.probe import FIELD_BETA as B_FIELD
 from tests.support.probe import NEEDS_ALPHA as A
 from tests.support.probe import NEEDS_BETA as B
-from tests.support.probe import NEEDS_CLOSEOUT as CLOSEOUT_STAGE
+from tests.support.probe import NEEDS_LANDING as CLOSEOUT_STAGE
 from tests.support.probe import install_probe_registry, shipped_definition, uninstall_probe_registry
 
 from planner.core.clock import TestClock

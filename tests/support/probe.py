@@ -26,10 +26,11 @@ NEEDS_BETA = "".join(("needs_", "beta"))
 FIELD_ALPHA = "".join(("al", "pha"))
 FIELD_BETA = "".join(("be", "ta"))
 
-NEEDS_CLOSEOUT = "needs_closeout"
+# The rule requires the field named ``closeout``. It says nothing about the Stage id,
+# so the probe gives its Closeout Stage a name of its own, like every other Stage here.
+NEEDS_LANDING = "".join(("needs_", "landing"))
 
 PROBE_SPECIALIST_SKILL = "probe-worker"
-PROBE_FIELD_IDS: tuple[str, ...] = ("kickoff", FIELD_ALPHA, FIELD_BETA, "closeout")
 
 PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     worker_type="probe",
@@ -38,7 +39,7 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         StageDefinition("needs_kickoff", "Kickoff", "kickoff", False, StageOwnershipMode.worker),
         StageDefinition(NEEDS_ALPHA, "Alpha", FIELD_ALPHA, False, StageOwnershipMode.worker),
         StageDefinition(NEEDS_BETA, "Beta", FIELD_BETA, False, StageOwnershipMode.user),
-        StageDefinition(NEEDS_CLOSEOUT, "Closeout", "closeout", False, StageOwnershipMode.worker),
+        StageDefinition(NEEDS_LANDING, "Landing", "closeout", False, StageOwnershipMode.worker),
         StageDefinition("done", "Done", None, True, None),
     ),
     dropped_stage=StageDefinition("dropped", "Dropped", None, True, None),

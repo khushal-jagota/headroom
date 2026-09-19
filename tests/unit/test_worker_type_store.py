@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.probe import (
+    NEEDS_LANDING,
     PROBE_WORKER_TYPE_DEFINITION,
     seed_probe_worker_type,
     shipped_definition,
@@ -259,7 +260,7 @@ def test_a_worker_type_that_declares_no_closeout_is_refused(
     without_closeout = replace(
         PROBE_WORKER_TYPE_DEFINITION,
         stages=tuple(
-            stage for stage in PROBE_WORKER_TYPE_DEFINITION.stages if stage.id != "needs_closeout"
+            stage for stage in PROBE_WORKER_TYPE_DEFINITION.stages if stage.id != NEEDS_LANDING
         ),
         fields=tuple(
             field for field in PROBE_WORKER_TYPE_DEFINITION.fields if field.id != "closeout"
@@ -278,7 +279,7 @@ def test_a_worker_type_that_declares_no_closeout_is_refused(
 def test_every_seeded_type_declares_a_closeout(database: sqlite3.Connection) -> None:
     for definition in read_definitions(database):
         assert definition.has_field("closeout")
-        assert definition.stage_gated_by("closeout") == "needs_closeout"
+        assert definition.stage_gated_by("closeout") in definition.stage_ids()
 
 
 def test_a_skill_can_be_added_and_a_type_declared_against_it(
