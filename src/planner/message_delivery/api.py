@@ -59,7 +59,7 @@ def _message_text(raw: object) -> str:
 
 def _message_delivery_mode(raw: object = _MISSING) -> MessageDeliveryMode:
     if raw is _MISSING:
-        return MessageDeliveryMode.queue
+        return MessageDeliveryMode.steer
     if isinstance(raw, str):
         try:
             return MessageDeliveryMode(raw)
