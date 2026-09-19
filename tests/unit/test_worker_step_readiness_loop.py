@@ -42,6 +42,7 @@ from planner.tickets import revision_feedback
 from planner.tickets.contracts import AtCap, Ticket, TicketStatus
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.registry import WorkerTypeRegistry
 
 FIXED_NOW = datetime(2026, 7, 6, 12, 0, 0).astimezone()
 BOUNDARY_HOUR = 5
@@ -460,7 +461,7 @@ def test_a_failure_before_send_removes_bindings_and_releases_the_claim(
             ticket_id,
             connect_database=world.connect,
             conversation_system=cast(ConversationSystem, world.conversations),
-            worker_type_registry=_WorkerTypeLookupFailure(),
+            worker_type_registry=cast(WorkerTypeRegistry, _WorkerTypeLookupFailure()),
             planning_day_id_resolver=lambda: TODAY_DAY_ID,
             now=world.clock.now_unix,
         )
