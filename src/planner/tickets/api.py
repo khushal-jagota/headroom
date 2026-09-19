@@ -87,7 +87,6 @@ from planner.tickets.contracts import (
     RevisionMessageBody,
     ScopeBody,
     Ticket,
-    TicketBlockBody,
     TicketEdit,
     TicketListFilters,
     TicketStatus,
@@ -1335,47 +1334,6 @@ async def request_help(
 @router.get("/tickets/{ticket_id}/copy-text", response_class=PlainTextResponse)
 async def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
     return tickets_views.copy_text(conn, ticket_id)
-
-
-@router.post("/ticket-blocks")
-async def add_ticket_block(
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    body = TicketBlockBody(
-        blocking_ticket_id=body_str(raw, "blocking_ticket_id"),
-        blocked_ticket_id=body_str(raw, "blocked_ticket_id"),
-    )
-    now = clk.now_unix()
-    tickets_actions.add_ticket_block(
-        conn,
-        body["blocking_ticket_id"],
-        body["blocked_ticket_id"],
-        now=now,
-        admit=lambda: require_ticket_worker_write(conn, ctx),
-    )
-    return dict(body)
-
-
-@router.delete("/ticket-blocks")
-async def remove_ticket_block(
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    blocking_ticket_id: str,
-    blocked_ticket_id: str,
-) -> JsonDict:
-    now = clk.now_unix()
-    tickets_actions.remove_ticket_block(
-        conn,
-        blocking_ticket_id,
-        blocked_ticket_id,
-        now=now,
-        admit=lambda: require_ticket_worker_write(conn, ctx),
-    )
-    return {"ok": True}
 
 
 async def add_conversation_row_signals(

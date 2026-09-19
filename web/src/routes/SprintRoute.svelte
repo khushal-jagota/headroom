@@ -88,7 +88,7 @@
   let addOutcomeOpen = $state(false);
 
   async function commitOutcome(sprintId: string, outcome: OutcomeSummary): Promise<void> {
-    await mutateJson(`/api/sprints/${encodeURIComponent(sprintId)}/outcomes/${encodeURIComponent(outcome.id)}`, { method: "PUT" });
+    await mutateJson(`/api/collections/sprint_outcomes/${encodeURIComponent(sprintId)}/${encodeURIComponent(outcome.id)}`, { method: "PUT" });
     addOutcomeOpen = false;
   }
   function sprintDate(iso: string): string {

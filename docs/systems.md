@@ -63,6 +63,26 @@ Each domain owns its contracts, rules, writers, views, and HTTP routes. Cross-do
 actions use those owners. The planning date changes at 05:00 local time. Stored Sprint
 date ranges remain canonical.
 
+Putting a thing in a collection is one operation, not one per collection. Four
+collections exist: the Tickets on a Day, the Tickets under an Outcome, the Outcomes
+committed to a Sprint, and the Tickets that block a Ticket. One call adds a member and
+one call removes it, and the collection is a parameter of the call:
+
+```
+PUT    /api/collections/{collection}/{container_id}/{member_id}
+DELETE /api/collections/{collection}/{container_id}/{member_id}
+```
+
+Each collection keeps its own membership rules and its own authority rule, and both stay
+in the domain that owns them. The single entry point looks the collection up and calls
+that owner. Authority follows the caller, not the address: a Sprint Item supervisor uses
+the same call as everyone else and is held to its own current child Tickets.
+
+Carrying an Outcome forward to another Sprint is not membership. It stays its own
+operation on the Sprint domain.
+
+_Code path:_ `src/planner/membership/`.
+
 Read the focused pages for the product surfaces:
 
 - **Days** (`days.md`)

@@ -45,16 +45,9 @@ def test_ticket_block_cli_uses_explicit_ticket_block_resource(
     assert result.exit_code == 0, result.output
     assert calls == [
         (
-            "POST",
-            "/api/ticket-blocks",
-            {
-                "as_json": False,
-                "json_body": {
-                    "blocking_ticket_id": "t_blocker",
-                    "blocked_ticket_id": "t_blocked",
-                },
-                "request_actor": "ordinary",
-            },
+            "PUT",
+            "/api/collections/blockers/t_blocked/t_blocker",
+            {"as_json": False, "request_actor": "ordinary"},
         )
     ]
 

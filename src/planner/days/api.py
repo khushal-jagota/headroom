@@ -14,9 +14,7 @@ from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days import actions as days_actions
 from planner.days import data as days_data
-from planner.days.contracts import AddDayTicketBody
 from planner.days.logic import dates
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
@@ -29,7 +27,6 @@ from planner.tickets.api import (
     DbConn,
     add_conversation_row_signals,
     body_opt_str,
-    body_str,
     txn,
 )
 from planner.tickets.contracts import TicketListFilters
@@ -169,45 +166,3 @@ async def get_day_ticket_summaries(
     response["id"] = did
     return response
 
-
-@router.post("/day/{date}/tickets")
-async def add_day_ticket(
-    date: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    cfg: Cfg,
-    clk: Clk,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
-) -> JsonDict:
-    body = AddDayTicketBody(ticket_id=body_str(raw, "ticket_id"))
-    did = resolve_day_id(date, clk, cfg)
-    now = clk.now_unix()
-    days_actions.add_ticket_to_day(
-        conn,
-        did,
-        body["ticket_id"],
-        now=now,
-    )
-    return await _day_view(conn, did, now, conversations, conversation_record)
-
-
-@router.delete("/day/{date}/tickets/{ticket_id}")
-async def remove_day_ticket(
-    date: str,
-    ticket_id: str,
-    conn: DbConn,
-    cfg: Cfg,
-    clk: Clk,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
-) -> JsonDict:
-    did = resolve_day_id(date, clk, cfg)
-    now = clk.now_unix()
-    days_actions.remove_ticket_from_day(
-        conn,
-        did,
-        ticket_id,
-        now=now,
-    )
-    return await _day_view(conn, did, now, conversations, conversation_record)

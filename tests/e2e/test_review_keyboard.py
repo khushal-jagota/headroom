@@ -11,7 +11,7 @@ from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 def _add_to_today(api: ApiHelper, server: ServerHandle, *ticket_ids: str) -> None:
     for ticket_id in ticket_ids:
-        api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
+        api.direct_put(server, f"/api/collections/day_tickets/today/{ticket_id}", {})
 
 
 def _wait_enabled(page: Page, selector: str) -> None:
