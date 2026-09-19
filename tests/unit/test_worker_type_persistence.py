@@ -19,6 +19,7 @@ from sqlite3 import Connection
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
+from tests.support.probe import shipped_definition
 
 from planner.core.clock import TestClock
 from planner.core.contracts import ErrorCode, PlannerError
@@ -28,7 +29,6 @@ from planner.tickets.contracts import (
     TITLE_MAX_CHARS,
     TicketEdit,
 )
-from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
     ConfiguredWorkerRuntimeDefinitions,
     configured_worker_type_registry,
@@ -37,6 +37,8 @@ from planner.worker_types.configuration import (
 )
 from planner.worker_types.contracts import WorkerTypeDefinition
 from planner.worker_types.registry import WorkerTypeRegistry
+
+CODING_WORKER_TYPE_DEFINITION = shipped_definition("coding")
 
 # A coding-shaped second type with the same Stage and field declarations but a
 # different Worker-type id.

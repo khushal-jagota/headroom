@@ -4,19 +4,18 @@ import json
 from dataclasses import replace
 
 import pytest
+from tests.support.probe import build_shipped_registry, shipped_definition
 
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core.contracts import ErrorCode, PlannerError
-from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
-from planner.worker_types.configuration import (
-    PRODUCTION_WORKER_RUNTIME_DEFINITIONS,
-    PRODUCTION_WORKER_TYPE_REGISTRY,
-)
 from planner.worker_types.contracts import (
     FieldDefinition,
     WorkerTypeDefinition,
 )
 from planner.worker_types.registry import WorkerTypeRegistry
+
+SHIPPED_REGISTRY = build_shipped_registry()
+CODING_WORKER_TYPE_DEFINITION = shipped_definition("coding")
 
 KNOWN_SKILLS = frozenset({"panels-worker", "panels-worker-coding", "panels-worker-new-worker"})
 KNOWN_TOOLSETS = frozenset({"default"})
@@ -31,15 +30,15 @@ def registry(*definitions: WorkerTypeDefinition) -> WorkerTypeRegistry:
 
 
 def test_the_agent_backends_are_a_closed_set_of_three() -> None:
-    runtime_definitions = PRODUCTION_WORKER_RUNTIME_DEFINITIONS
+    shipped_registry = SHIPPED_REGISTRY
     assert tuple(str(key) for key in ConversationBackendKey) == (
         "hermes",
         "codex",
         "claude",
     )
     assert {
-        runtime_definitions.worker_type_registry.require(worker_type).worker_profile.default_backend
-        for worker_type in runtime_definitions.worker_type_registry.registered_worker_types()
+        shipped_registry.require(worker_type).worker_profile.default_backend
+        for worker_type in shipped_registry.registered_worker_types()
     } == {"codex", "claude"}
 
 
@@ -47,8 +46,8 @@ def test_worker_profiles_declare_complete_employee_defaults() -> None:
     """Every shipped type names a real backend and a model. The values themselves
     belong to that type's own definition and its own test, not to a list here."""
     backends = {str(key) for key in ConversationBackendKey}
-    for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types():
-        profile = PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile
+    for worker_type in SHIPPED_REGISTRY.registered_worker_types():
+        profile = SHIPPED_REGISTRY.require(worker_type).worker_profile
         assert profile.default_backend in backends, worker_type
         assert profile.default_model.strip(), worker_type
         assert profile.default_reasoning_effort is None or (
@@ -225,9 +224,9 @@ def test_registry_validation_order_and_messages() -> None:
         {"worker_type": "coding", "default_model": "   "},
     )
 def test_manifests_are_complete_and_json_round_trip() -> None:
-    registered = PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
+    registered = SHIPPED_REGISTRY.registered_worker_types()
     assert len(set(registered)) == len(registered)
-    coding = PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")
+    coding = SHIPPED_REGISTRY.manifest("coding")
     assert coding == {
         "worker_type": "coding",
         "label": "Coding",
@@ -322,7 +321,7 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
     }
     assert json.loads(json.dumps(coding)) == coding
     assert (
-        json.loads(json.dumps(PRODUCTION_WORKER_TYPE_REGISTRY.manifest("new_worker")))[
+        json.loads(json.dumps(SHIPPED_REGISTRY.manifest("new_worker")))[
             "worker_type"
         ]
         == "new_worker"

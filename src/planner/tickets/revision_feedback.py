@@ -5,12 +5,8 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from typing import Final
 
 from planner.core.contracts import Principal, PrincipalKind
-from planner.worker_context.contracts import PendingWorkerContext, WorkerContextReceipt
-
-REVISION_FEEDBACK_CONTEXT_KEY: Final = "ticket_revision_feedback"
 
 
 @dataclass(frozen=True)
@@ -26,17 +22,14 @@ class PendingRevisionFeedback:
     items: tuple[RevisionFeedbackItem, ...]
     revision: int
 
-    def as_worker_context(self) -> PendingWorkerContext:
+    @property
+    def text(self) -> str:
         blocks = [
             f"Revision feedback from {item.sender.kind.value} {item.sender.id} "
             f"for stage {self.stage}:\n{item.message}"
             for item in self.items
         ]
-        return PendingWorkerContext(
-            context_key=REVISION_FEEDBACK_CONTEXT_KEY,
-            text="\n\n".join(blocks),
-            revision=self.revision,
-        )
+        return "\n\n".join(blocks)
 
 
 def _items_to_json(items: tuple[RevisionFeedbackItem, ...]) -> str:
@@ -116,12 +109,10 @@ def snapshot(conn: sqlite3.Connection, ticket_id: str) -> PendingRevisionFeedbac
     )
 
 
-def acknowledge(
-    conn: sqlite3.Connection, ticket_id: str, receipt: WorkerContextReceipt
-) -> None:
+def acknowledge(conn: sqlite3.Connection, ticket_id: str, expected_revision: int) -> None:
     conn.execute(
         "DELETE FROM ticket_revision_feedback WHERE ticket_id=? AND revision=?",
-        (ticket_id, receipt.revision),
+        (ticket_id, expected_revision),
     )
 
 

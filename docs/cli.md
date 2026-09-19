@@ -72,8 +72,8 @@ record shapes. Direct `show` commands also keep their full record shapes.
   Select exactly one destination with `--owner`, `--chief`, `--ticket <id>`, or
   `--sprint-item <id>`.
   Supply the text with `--message` or `--body-file`; `--body-file -` reads stdin. Use
-  `--mode queue`, `--mode steer`, or `--mode send_now`. Queue holds a busy message. Steer
-  injects into current work. Send now interrupts current work. The default is `queue`.
+  `--mode steer`, `--mode queue`, or `--mode send_now`. Steer injects into current work.
+  Queue holds a busy message. Send now interrupts current work. The default is `steer`.
   An employee's `--owner` send records the addressed message in that employee's current
   conversation and reports `recorded`; it does not invoke a backend and fails if the
   sender has no current conversation. Every mode starts a turn when an employee recipient
@@ -100,6 +100,12 @@ record shapes. Direct `show` commands also keep their full record shapes.
   more notes as used in a Ticket. The use operation is atomic. A Ticket Worker can use
   notes only in its own Ticket. A Sprint Item supervisor can use notes only in a current
   child Ticket.
+- **`worker-type show <type>`** — print one Worker type's stored record, in the shape
+  `worker-type save` takes back.
+- **`worker-type save`** — declare a Worker type, or replace the one with that id, from a
+  record on stdin. An optional `skill` block declares the specialist skill with it.
+- **`worker-type skill <type> --description "..."`** — replace that Worker type's skill
+  text, with the markdown body on stdin.
 - **`worker-type list`** — list the registered Worker type identifiers in registry
   order. Its normal output is one identifier per line; `--json` returns the complete
   served Worker-type manifest for automation. Commands that require `--worker-type`
@@ -179,7 +185,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
 - **`ticket copy`** — copy one ticket's plain-text packet.
 - **`sprint create / list / show / set`** — plan sprints. `current` resolves through
   `/api/sprint/current`; `none` means the backlog where a list supports it.
-- **`sprint item create / list / show / set / add-ticket / remove-ticket / block / unblock / delete`**
+- **`sprint item create / list / show / set / add-ticket / remove-ticket / delete`**
   — manage durable Outcome context through the existing Item identity. Item records
   have no single Sprint and no derived Outcome status. Classification aligns the
   Ticket's Project and preserves its Sprint; removal preserves Project and Sprint.
@@ -221,10 +227,13 @@ record shapes. Direct `show` commands also keep their full record shapes.
   A worker step gets its first five minutes before it may be restarted, so a Worker that
   is merely slow is left alone. Only a Worker-owned Stage can be restarted. A user-owned
   conversation belongs to the user.
-- **`sprint item supervisor set-item / set-ticket / add-to-day / remove-from-day / block / unblock`**
+- **`sprint item supervisor set-item / set-ticket`**
   — use item-scoped canonical actions for the owning Item and its current child Tickets.
   `set-ticket` names one field, and `ceiling` is one of them. Setting the ceiling makes
   that Sprint Item the ceiling holder and cannot retarget a pending proposal.
+- A supervisor changes Day membership and Ticket blocks with the ordinary `day add-ticket`,
+  `day remove-ticket`, `ticket block`, and `ticket unblock`. The supervisor identity
+  carries the authority, so the server still holds it to its own current child Tickets.
 - A supervisor creates a child Ticket with ordinary `ticket create --sprint-item`,
   the same command every other actor uses, and that Ticket is scoped like any other.
 - **`ticket create --ceiling`** — state the new Ticket's ceiling at creation.
@@ -304,8 +313,8 @@ A Ticket worker runs with `PLAN_ACTOR=worker` and its own `PLAN_TICKET_ID`. The 
 forwards those as `X-Plan-Actor` and `X-Plan-Ticket-ID`, including when the worker uses
 an ordinary command. The server resolves that pair to the Ticket principal and checks
 that the Ticket exists. Any Ticket
-worker can use the existing commands that move Tickets and add or remove blocking
-links. The exact `planning-day`, `planning-midday-check`, and `planning-sprint`
+worker can use the existing commands that move Tickets and add or remove Ticket blocks.
+The exact `planning-day`, `planning-midday-check`, and `planning-sprint`
 Worker types keep their other narrow day or sprint writes.
 
 This is a truthful local process claim, not a

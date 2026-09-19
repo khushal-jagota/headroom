@@ -9,7 +9,7 @@ from alembic import command
 
 from planner.core import db
 
-SOURCE_REVISION = "two_ownership_modes"
+SOURCE_REVISION = "worker_types_in_database"
 TARGET_REVISION = "drop_ticket_at_cap"
 
 

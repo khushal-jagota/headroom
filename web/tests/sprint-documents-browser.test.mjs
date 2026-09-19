@@ -59,7 +59,7 @@ try {
     if (path === "/api/sprints") return json({ sprints: [sprint, { ...sprint, id: "sp_next", name: "Next" }] });
     if (path.startsWith("/api/sprint-item-summaries?")) return json({ items: [outcome], page: { match_count: 1, return_count: 1, limit: 30, offset: 0, omitted_before: 0, omitted_after: 0, complete: true, next_offset: null } });
     if (path === "/api/items" && method === "POST") return json({ ...outcome, id: "outcome_created", title: body.title });
-    if (path.includes("/outcomes/outcome_created") && method === "PUT") { commitmentAttempts += 1; if (commitmentAttempts === 1) return new Response(JSON.stringify({ error: { code: "failed", message: "Try again" } }), { status: 500, headers: { "Content-Type": "application/json" } }); return json({ sprint_id: "sp_test", outcome_id: "outcome_created" }); }
+    if (path.includes("/collections/sprint_outcomes/") && path.endsWith("/outcome_created") && method === "PUT") { commitmentAttempts += 1; if (commitmentAttempts === 1) return new Response(JSON.stringify({ error: { code: "failed", message: "Try again" } }), { status: 500, headers: { "Content-Type": "application/json" } }); return json({ sprint_id: "sp_test", outcome_id: "outcome_created" }); }
     if (path.endsWith("/outcomes/outcome_existing/carry") && method === "POST") return json(body);
     throw new Error("Unexpected request: " + path);
   }) as typeof fetch;
@@ -172,7 +172,7 @@ with sync_playwright() as playwright:
         post_count = page.evaluate("window.saved().requests.filter(request => request.path === '/api/items' && request.method === 'POST').length")
         assert post_count == 1
         picker.locator('[data-retry-created-outcome]').click()
-        page.wait_for_function("() => window.saved().requests.filter(request => request.path.includes('/outcomes/outcome_created') && request.method === 'PUT').length === 2")
+        page.wait_for_function("() => window.saved().requests.filter(request => request.path.includes('/collections/sprint_outcomes/') && request.method === 'PUT').length === 2")
         assert page.evaluate("window.saved().requests.filter(request => request.path === '/api/items' && request.method === 'POST').length") == 1
         page.get_by_role("button", name="Switch view").click()
         # Remount reads the persisted document through the real query path.

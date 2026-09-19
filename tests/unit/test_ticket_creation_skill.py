@@ -4,13 +4,11 @@ from pathlib import Path
 
 import yaml
 
-from planner.environments.hermes_home import (
-    PLANNER_SKILL_NAMES,
-    provision_planner_home_skills,
-)
+from planner.core.db import connect, create_schema
+from planner.environments.hermes_home import provision_planner_home_skills
+from planner.managed_skills import managed_skills_home, skill_names
 from planner.skill_sources import (
     RETIRED_PANELS_SKILL_NAMES,
-    ensure_managed_panels_skills,
     panels_skill_root,
     provision_native_backend_skills,
 )
@@ -38,7 +36,6 @@ def test_ticket_creation_skill_is_active_and_core_routing_is_mandatory() -> None
         "description": "The shared Panels model for creating a coherent Ticket.",
     }
     assert "# Creating a Ticket" in body
-    assert "panels-ticket-creation" in PLANNER_SKILL_NAMES
     assert "panels-ticket-creation" not in RETIRED_PANELS_SKILL_NAMES
     assert "panels-ticket-management" in RETIRED_PANELS_SKILL_NAMES
 
@@ -57,18 +54,27 @@ def test_every_ticket_creator_delegates_and_retains_its_authority() -> None:
 def test_fresh_managed_hermes_and_native_homes_expose_creation_skill(
     tmp_path: Path,
 ) -> None:
-    managed = ensure_managed_panels_skills(tmp_path / "data")
+    database_parent = tmp_path / "data"
+    database_parent.mkdir()
+    conn = connect(str(database_parent / "planner.db"))
+    try:
+        create_schema(conn)
+        # The skill is one of the rows a database is seeded with, so opening one writes it.
+        assert "panels-ticket-creation" in skill_names(conn)
+    finally:
+        conn.close()
+    managed = managed_skills_home(database_parent)
     assert (managed / "panels-ticket-creation" / "SKILL.md").is_file()
 
     provision_planner_home_skills(
         tmp_path / "hermes",
-        configured_database_parent=tmp_path / "data",
+        configured_database_parent=database_parent,
     )
     hermes_skill = tmp_path / "hermes" / "skills" / "panels-ticket-creation"
     assert hermes_skill.is_symlink()
     assert hermes_skill.resolve() == (managed / "panels-ticket-creation").resolve()
 
-    provision_native_backend_skills(tmp_path / "native", tmp_path / "data")
+    provision_native_backend_skills(tmp_path / "native", database_parent)
     native_skill = tmp_path / "native" / "skills" / "panels-ticket-creation"
     assert native_skill.is_dir()
     assert native_skill.resolve() == (managed / "panels-ticket-creation").resolve()

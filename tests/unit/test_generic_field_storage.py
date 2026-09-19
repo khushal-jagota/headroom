@@ -11,7 +11,7 @@ from tests.support.probe import FIELD_ALPHA as A_FIELD
 from tests.support.probe import FIELD_BETA as B_FIELD
 from tests.support.probe import NEEDS_ALPHA as A
 from tests.support.probe import NEEDS_BETA as B
-from tests.support.probe import install_probe_registry, uninstall_probe_registry
+from tests.support.probe import install_probe_registry, shipped_definition, uninstall_probe_registry
 
 from planner.core.clock import TestClock
 from planner.core.contracts import ErrorCode, PlannerError
@@ -23,9 +23,9 @@ from planner.tickets.contracts import (
     PendingTicketProposal,
 )
 from planner.tickets.logic import fields_codec, machine
-from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.contracts import WorkerTypeDefinition
 
+CODING_WORKER_TYPE_DEFINITION = shipped_definition("coding")
 
 @pytest.fixture
 def probe_registry() -> Iterator[WorkerTypeDefinition]:

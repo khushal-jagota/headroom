@@ -15,8 +15,10 @@ from planner.worker_types.contracts import (
     WorkerTypeManifestStage,
 )
 
+KNOWN_TOOLSET_PROFILES = frozenset({"default"})
 
-def _validate_definition(
+
+def validate_definition(
     definition: WorkerTypeDefinition,
     *,
     known_skills: frozenset[str],
@@ -229,7 +231,7 @@ class WorkerTypeRegistry:
                     "duplicate worker type id",
                     {"worker_type": definition.worker_type},
                 )
-            _validate_definition(
+            validate_definition(
                 definition,
                 known_skills=known_skills,
                 known_toolset_profiles=known_toolset_profiles,

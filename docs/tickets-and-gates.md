@@ -106,9 +106,8 @@ There is no bulk prefix import or arbitrary Stage jump.
 ### Blockers
 
 An ordinary Ticket create may name any number of existing blocker Ticket ids. Panels
-creates the dependent Ticket and every directed
-`blocks` link in one transaction. A missing, invalid, or repeated blocker rejects the
-whole create with a structured error. Nothing is saved. A successful create commits
+creates the dependent Ticket and every Ticket block in one transaction. A missing,
+invalid, or repeated blocker rejects the whole create with a structured error. Nothing is saved. A successful create commits
 once, so readiness is nudged once.
 
 A blocker is **live** while the Ticket doing the blocking is neither done nor dropped.
@@ -122,12 +121,11 @@ automatic work from starting, because the runtime starts `empty` Tickets and not
 else.
 
 Clearing happens inside the action that removes the cause. When a blocking Ticket is
-finished, dropped, or deleted, or a blocking link is removed, that same write deletes
-the links it held and rewrites every Ticket it was blocking in the same transaction —
+finished, dropped, or deleted, or a Ticket block is removed, that same write deletes
+the blocks it held and rewrites every Ticket it was blocking in the same transaction —
 back to `empty`, or left on `blocked` when another live blocker remains. A Ticket that
 stays blocked is not rewritten at all, so nothing is announced for a change that did
-not happen. A Ticket may also block a Sprint item; a Sprint item carries no Ticket
-status, so only Ticket targets are rewritten.
+not happen.
 
 A newly created dependent Ticket parks its Kickoff proposal first, so it waits for
 approval before it can rest anywhere. It becomes `blocked` the first time it comes to
@@ -135,14 +133,12 @@ rest with its blockers still live. On the Workspace screen a blocked Ticket then
 in the **Blocked** group, which starts collapsed.
 
 Ticket detail shows only direct blockers that are active now. Each row links to the
-blocker and can remove that one link, during Kickoff or later. The section is absent
-when no active blocker remains. Panels does not show reverse, cleared, transitive, or
-graph views. A Ticket may still block a Sprint item through the same existing directed
-link engine.
+blocker and can remove that Ticket block, during Kickoff or later. The section is
+absent when no active blocker remains. Panels does not show reverse, cleared, transitive, or
+graph views.
 
-Any Ticket worker can add or remove these supported blocking links. The worker must
-send its own existing Ticket id with its worker identity. Direct callers keep the same
-access. The link writer still validates every endpoint, rejects active cycles, updates
+Any Ticket worker can add or remove Ticket blocks. The worker must send its own
+existing Ticket id with its worker identity. Direct callers keep the same access. The Ticket block writer validates both Tickets, rejects active cycles, updates
 blocked Ticket status, and commits the complete change once.
 
 ### Ordinary Ticket edits
@@ -325,17 +321,17 @@ that goes ahead over a running worker kills that worker's turn first, so nothing
 talking into a conversation whose ticket is gone.
 
 One transaction removes the ticket
-from days, sprint views, links, Review, Workspace, and pending worker context. Other
-tickets and day ordering stay intact.
+from days, sprint views, Ticket blocks, Review, Workspace, and pending worker
+context. Other tickets and day ordering stay intact.
 
-Blocker links are removed in the same transaction, and the delete response lists the
-surviving Ticket and Sprint-item endpoints those links pointed at.
+Ticket blocks are removed in the same transaction. The delete response lists the
+surviving Tickets from those relationships.
 
 The conversations live outside the Ticket record and are not erased. Deletion removes
 their Ticket associations, so Panels no longer assigns those transcripts to that Ticket.
 
 The whole deletion is one transaction, so it announces one change — not one per removed
-day or link.
+day or Ticket block.
 
 _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 `src/planner/cli/main.py`.

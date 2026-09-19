@@ -23,7 +23,6 @@ from pathlib import Path
 import uvicorn
 from playwright.sync_api import BrowserContext, Page, Request
 from tests.e2e.harness import REPO_ROOT, WAIT_MS, ApiHelper, JsonObject, ServerHandle
-from tests.e2e.test_dev_conversation_pane import HOLD_THE_SEND
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.backends.contracts import (
@@ -44,6 +43,31 @@ SEND = f"{TICKET_SCREEN} [data-conversation-send]"
 FATE = f"{TICKET_SCREEN} [data-conversation-fate]"
 PROPOSAL = "# Success criteria\n\nThe suite goes green.\n"
 REFUSED_TEXT = "did this reach anything"
+
+HOLD_THE_SEND = """
+window.__heldSends = [];
+const realFetch = window.fetch.bind(window);
+window.fetch = (input, init) => {
+  const url = typeof input === 'string' ? input : input.url;
+  if (typeof url === 'string' && url.includes('/send')) {
+    return new Promise((resolve, reject) => {
+      window.__heldSends.push({
+        body: init && init.body ? JSON.parse(init.body) : null,
+        answer: (fate) => resolve(new Response(JSON.stringify(fate), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })),
+        turnAway: (detail) => resolve(new Response(JSON.stringify({ detail }), {
+          status: 422,
+          headers: { 'Content-Type': 'application/json' }
+        })),
+        fail: () => reject(new TypeError('the send got nowhere'))
+      });
+    });
+  }
+  return realFetch(input, init);
+};
+"""
 
 
 class _AcceptingBackendChild:

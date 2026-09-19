@@ -7,11 +7,50 @@ from typing import Any
 
 import pytest
 from click.testing import CliRunner
+from tests.support.probe import build_shipped_registry
 
 from planner.cli import http
 from planner.cli import main as cli_main
 from planner.cli.record_projection import project_record
-from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
+
+SHIPPED_REGISTRY = build_shipped_registry()
+
+def test_sprint_item_cli_has_no_direct_block_commands() -> None:
+    result = CliRunner().invoke(cli_main.main, ["sprint", "item", "--help"])
+
+    assert result.exit_code == 0, result.output
+    commands = {
+        line.split()[0]
+        for line in result.output.splitlines()
+        if line.startswith("  ") and line.strip()
+    }
+    assert "block" not in commands
+    assert "unblock" not in commands
+
+
+def test_ticket_block_cli_uses_explicit_ticket_block_resource(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs))
+        return {"ok": True}
+
+    monkeypatch.setattr(http, "send", fake_send)
+    result = CliRunner().invoke(
+        cli_main.main,
+        ["ticket", "block", "t_blocked", "--by", "t_blocker"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        (
+            "PUT",
+            "/api/collections/blockers/t_blocked/t_blocker",
+            {"as_json": False, "request_actor": "ordinary"},
+        )
+    ]
 
 
 def test_ticket_complete_uses_the_gate_completion_route(
@@ -52,7 +91,7 @@ def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
         requested_paths.append(path)
         if path == "/api/worker-types":
             return {
-                "worker_types": [PRODUCTION_WORKER_TYPE_REGISTRY.manifest("exploration")]
+                "worker_types": [SHIPPED_REGISTRY.manifest("exploration")]
             }
         return {
             "id": "t_correct",
@@ -125,7 +164,7 @@ def test_ticket_approve_sends_the_explicit_next_holder(
                 "pending_proposal": {"field": "success", "body": "Ready"},
             }
         if path == "/api/worker-types":
-            return {"worker_types": [PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")]}
+            return {"worker_types": [SHIPPED_REGISTRY.manifest("coding")]}
         return {"id": "t_child"}
 
     monkeypatch.setattr(http, "send", fake_send)
@@ -381,7 +420,7 @@ def test_ticket_parts_expose_guidance_and_recap_without_expanding_default_manife
 ) -> None:
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         assert (method, path) == ("GET", "/api/worker-types")
-        return {"worker_types": [PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")]}
+        return {"worker_types": [SHIPPED_REGISTRY.manifest("coding")]}
 
     monkeypatch.setattr(http, "send", fake_send)
     data = {

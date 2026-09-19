@@ -13,6 +13,7 @@ The command tree mirrors the product model:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from collections.abc import Callable
@@ -275,8 +276,6 @@ def _sprint_item_record(
         "priority",
         "deadline",
         "kind",
-        "blocked_by",
-        "blockers_cleared",
     )
     return (
         {key: data[key] for key in header_keys if key in data},
@@ -507,9 +506,9 @@ def feedback_use(ticket_id: str, feedback_ids: tuple[str, ...], as_json: bool) -
 @click.option(
     "--mode",
     type=click.Choice([mode.value for mode in MessageDeliveryMode]),
-    default=MessageDeliveryMode.queue.value,
+    default=MessageDeliveryMode.steer.value,
     show_default=True,
-    help="Queue, steer into the running turn, or interrupt it and send now.",
+    help="Steer into the running turn, queue behind it, or interrupt it and send now.",
 )
 @click.option(
     "--message",
@@ -837,7 +836,7 @@ def schedule_set(
 
 @main.group("worker-type")
 def worker_type_group() -> None:
-    """Discover the configured Worker types."""
+    """Inspect and declare the Worker types."""
 
 
 @worker_type_group.command("list")
@@ -849,6 +848,58 @@ def worker_type_list(as_json: bool) -> None:
         as_json,
         _lines(data["worker_types"], lambda item: str(item["worker_type"])),
     )
+
+
+@worker_type_group.command("show")
+@click.argument("worker_type")
+@json_option
+def worker_type_show(worker_type: str, as_json: bool) -> None:
+    """Print one Worker type's stored record, in the shape `save` takes back."""
+    data = http.send(
+        "GET",
+        f"/api/worker-types/{worker_type}",
+        as_json=as_json,
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, json.dumps(data, indent=2, ensure_ascii=False))
+
+
+@worker_type_group.command("save")
+@json_option
+def worker_type_save(as_json: bool) -> None:
+    """Declare a Worker type, or replace the one with this id. Record on stdin."""
+    body = read_worker_stdin_body(as_json, "worker type record")
+    try:
+        record = json.loads(body)
+    except ValueError:
+        http.fail_validation("worker type record must be JSON", as_json)
+    if not isinstance(record, dict):
+        http.fail_validation("worker type record must be a JSON object", as_json)
+    data = http.send(
+        "POST",
+        "/api/worker-types",
+        json_body=record,
+        as_json=as_json,
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, f"{data['worker_type']} saved")
+
+
+@worker_type_group.command("skill")
+@click.argument("worker_type")
+@click.option("--description", required=True, help="The one-line description in the frontmatter.")
+@json_option
+def worker_type_skill(worker_type: str, description: str, as_json: bool) -> None:
+    """Replace this Worker type's skill. Markdown body on stdin."""
+    body = read_worker_stdin_body(as_json, "skill body")
+    data = http.send(
+        "PUT",
+        f"/api/workers/{worker_type}/skill",
+        json_body={"description": description, "markdown_body": body},
+        as_json=as_json,
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, f"{data['specialist_skill']['name']} saved")
 
 
 # --- project ------------------------------------------------------------------
@@ -1056,13 +1107,12 @@ def day_set(
 @json_option
 def day_add_ticket(ticket_id: str, date_: str, as_json: bool) -> None:
     data = http.send(
-        "POST",
-        f"/api/day/{date_}/tickets",
+        "PUT",
+        f"/api/collections/day_tickets/{date_}/{ticket_id}",
         as_json=as_json,
-        json_body={"ticket_id": ticket_id},
         request_actor="ordinary",
     )
-    http.emit(data, as_json, f"day {data['id']}: {len(data['tickets'])} ticket(s)")
+    http.emit(data, as_json, f"{ticket_id} added to {data['container_id']}")
 
 
 @day.command("remove-ticket")
@@ -1072,11 +1122,11 @@ def day_add_ticket(ticket_id: str, date_: str, as_json: bool) -> None:
 def day_remove_ticket(ticket_id: str, date_: str, as_json: bool) -> None:
     data = http.send(
         "DELETE",
-        f"/api/day/{date_}/tickets/{ticket_id}",
+        f"/api/collections/day_tickets/{date_}/{ticket_id}",
         as_json=as_json,
         request_actor="ordinary",
     )
-    http.emit(data, as_json, f"day {data['id']}: {len(data['tickets'])} ticket(s)")
+    http.emit(data, as_json, f"{ticket_id} removed from {data['container_id']}")
 
 
 # --- ticket -------------------------------------------------------------------
@@ -1553,10 +1603,9 @@ def ticket_approve(
 @json_option
 def ticket_block(ticket_id: str, blocker_id: str, as_json: bool) -> None:
     data = http.send(
-        "POST",
-        "/api/links",
+        "PUT",
+        f"/api/collections/blockers/{ticket_id}/{blocker_id}",
         as_json=as_json,
-        json_body={"from_id": blocker_id, "to_id": ticket_id, "kind": "blocks"},
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} blocked by {blocker_id}")
@@ -1569,9 +1618,8 @@ def ticket_block(ticket_id: str, blocker_id: str, as_json: bool) -> None:
 def ticket_unblock(ticket_id: str, blocker_id: str, as_json: bool) -> None:
     data = http.send(
         "DELETE",
-        "/api/links",
+        f"/api/collections/blockers/{ticket_id}/{blocker_id}",
         as_json=as_json,
-        params={"from_id": blocker_id, "to_id": ticket_id, "kind": "blocks"},
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} unblocked from {blocker_id}")
@@ -1864,7 +1912,7 @@ def sprint_item_set(
 def sprint_item_add_ticket(item_id: str, ticket_id: str, as_json: bool) -> None:
     data = http.send(
         "PUT",
-        f"/api/items/{item_id}/tickets/{ticket_id}",
+        f"/api/collections/outcome_tickets/{item_id}/{ticket_id}",
         as_json=as_json,
         request_actor="ordinary",
     )
@@ -1878,41 +1926,11 @@ def sprint_item_add_ticket(item_id: str, ticket_id: str, as_json: bool) -> None:
 def sprint_item_remove_ticket(item_id: str, ticket_id: str, as_json: bool) -> None:
     data = http.send(
         "DELETE",
-        f"/api/items/{item_id}/tickets/{ticket_id}",
+        f"/api/collections/outcome_tickets/{item_id}/{ticket_id}",
         as_json=as_json,
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} removed from {item_id}")
-
-
-@sprint_item.command("block")
-@click.argument("item_id")
-@click.option("--by", "blocker_id", required=True, help="Blocking ticket id.")
-@json_option
-def sprint_item_block(item_id: str, blocker_id: str, as_json: bool) -> None:
-    data = http.send(
-        "POST",
-        "/api/links",
-        as_json=as_json,
-        json_body={"from_id": blocker_id, "to_id": item_id, "kind": "blocks"},
-        request_actor="ordinary",
-    )
-    http.emit(data, as_json, f"{item_id} blocked by {blocker_id}")
-
-
-@sprint_item.command("unblock")
-@click.argument("item_id")
-@click.option("--by", "blocker_id", required=True, help="Blocking ticket id.")
-@json_option
-def sprint_item_unblock(item_id: str, blocker_id: str, as_json: bool) -> None:
-    data = http.send(
-        "DELETE",
-        "/api/links",
-        as_json=as_json,
-        params={"from_id": blocker_id, "to_id": item_id, "kind": "blocks"},
-        request_actor="ordinary",
-    )
-    http.emit(data, as_json, f"{item_id} unblocked from {blocker_id}")
 
 
 @sprint_item.group("supervisor")
@@ -2128,67 +2146,6 @@ def sprint_item_supervisor_set_ticket(
         json_body={_SUPERVISOR_TICKET_FIELDS[field]: new_value},
     )
     http.emit(data, as_json, f"{ticket_id} {field} set")
-
-
-def _supervisor_day_membership(
-    method: str, item_id: str, ticket_id: str, date_: str, as_json: bool
-) -> None:
-    data = http.send(
-        method,
-        f"/api/items/{item_id}/supervisor/days/{date_}/tickets/{ticket_id}",
-        as_json=as_json,
-    )
-    http.emit(data, as_json, f"{ticket_id} Day membership changed")
-
-
-@sprint_item_supervisor.command("add-to-day")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@click.option("--date", "date_", default="today")
-@json_option
-def sprint_item_supervisor_add_to_day(
-    item_id: str, ticket_id: str, date_: str, as_json: bool
-) -> None:
-    _supervisor_day_membership("POST", item_id, ticket_id, date_, as_json)
-
-
-@sprint_item_supervisor.command("remove-from-day")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@click.option("--date", "date_", default="today")
-@json_option
-def sprint_item_supervisor_remove_from_day(
-    item_id: str, ticket_id: str, date_: str, as_json: bool
-) -> None:
-    _supervisor_day_membership("DELETE", item_id, ticket_id, date_, as_json)
-
-
-def _supervisor_block(method: str, item_id: str, from_id: str, to_id: str, as_json: bool) -> None:
-    kwargs: dict[str, Any] = {"as_json": as_json}
-    if method == "POST":
-        kwargs["json_body"] = {"from_id": from_id, "to_id": to_id}
-    else:
-        kwargs["params"] = {"from_id": from_id, "to_id": to_id}
-    data = http.send(method, f"/api/items/{item_id}/supervisor/blocks", **kwargs)
-    http.emit(data, as_json, f"{from_id} blocks {to_id}: {method.lower()}")
-
-
-@sprint_item_supervisor.command("block")
-@click.argument("item_id")
-@click.option("--from-ticket", "from_id", required=True)
-@click.option("--to", "to_id", required=True)
-@json_option
-def sprint_item_supervisor_block(item_id: str, from_id: str, to_id: str, as_json: bool) -> None:
-    _supervisor_block("POST", item_id, from_id, to_id, as_json)
-
-
-@sprint_item_supervisor.command("unblock")
-@click.argument("item_id")
-@click.option("--from-ticket", "from_id", required=True)
-@click.option("--to", "to_id", required=True)
-@json_option
-def sprint_item_supervisor_unblock(item_id: str, from_id: str, to_id: str, as_json: bool) -> None:
-    _supervisor_block("DELETE", item_id, from_id, to_id, as_json)
 
 
 @sprint_item_supervisor.command("artifact-list")
@@ -2509,7 +2466,7 @@ def _commit_outcome(method: str, sprint_id: str, outcome_id: str, as_json: bool)
         http.fail_validation("a commitment requires a Sprint", as_json)
     result = http.send(
         method,
-        f"/api/sprints/{sid}/outcomes/{outcome_id}",
+        f"/api/collections/sprint_outcomes/{sid}/{outcome_id}",
         as_json=as_json,
         request_actor="ordinary",
     )

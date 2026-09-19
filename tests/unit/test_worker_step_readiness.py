@@ -8,9 +8,10 @@ from pathlib import Path
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
+from tests.support.probe import shipped_definition
 from tests.support.ticket_progress import advance_ticket
 
-from planner.core.contracts import LinkKind, Priority
+from planner.core.contracts import Priority
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
 from planner.projects import data as projects_data
@@ -21,10 +22,11 @@ from planner.runtime.worker_step_readiness import (
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import Ticket, TicketStatus
-from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
-from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
+
+CODING_WORKER_TYPE_DEFINITION = shipped_definition("coding")
+NEW_WORKER_TYPE_DEFINITION = shipped_definition("new_worker")
 
 _FIXED_NOW = datetime(2026, 7, 14, 12, 0, 0).astimezone()
 PLANNING_DAY_ID = "day_2026-07-14"
@@ -107,7 +109,7 @@ def _blocker(
 
 def _block(conn: sqlite3.Connection, *, blocker_id: str, target_id: str, now: int) -> None:
     """Block a Ticket the way the API does, so its status settles to `blocked`."""
-    tickets_actions.add_link(conn, blocker_id, target_id, LinkKind.blocks, now=now)
+    tickets_actions.add_ticket_block(conn, blocker_id, target_id, now=now)
 
 
 @pytest.mark.parametrize(

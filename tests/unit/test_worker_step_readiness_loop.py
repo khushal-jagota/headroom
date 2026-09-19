@@ -38,17 +38,11 @@ from planner.runtime.worker_step_readiness_loop import (
     start_ready_worker_step,
 )
 from planner.tickets import data as tickets_data
+from planner.tickets import revision_feedback
 from planner.tickets.contracts import Ticket, TicketEdit, TicketStatus
-from planner.worker_context import data as worker_context_data
-from planner.worker_context import revision_feedback
-from planner.worker_context.contracts import (
-    PreparedWorkerPrompt,
-    WorkerContextReceipt,
-    WorkerContextService,
-)
-from planner.worker_context.service import SqliteWorkerContextService
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.registry import WorkerTypeRegistry
 
 FIXED_NOW = datetime(2026, 7, 6, 12, 0, 0).astimezone()
 BOUNDARY_HOUR = 5
@@ -67,7 +61,6 @@ class _World:
             create_schema(conn)
         self.clock = TestClock(FIXED_NOW)
         self.conversations = InMemoryConversationSystem()
-        self.context = SqliteWorkerContextService(lambda: connect(self.db_path))
 
     def connect(self) -> sqlite3.Connection:
         return connect(self.db_path)
@@ -76,6 +69,7 @@ class _World:
         self,
         *,
         title: str = "T",
+        kickoff_note: str = "",
         worker_type: str = "coding",
         conversation_id: str | None = None,
         on_today: bool = True,
@@ -85,6 +79,7 @@ class _World:
                 conn,
                 worker_type=worker_type,
                 title=title,
+                kickoff_note=kickoff_note,
                 principal=OWNER_PRINCIPAL,
                 now=0,
                 title_max_chars=200,
@@ -113,22 +108,6 @@ class _World:
                 ConversationStartRequest(conversation_id=conversation_id, model="a-model")
             )
         )
-
-    def add_pending_context(self, ticket_id: str, key: str, text: str) -> None:
-        with self.connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            worker_context_data.set_context(conn, ticket_id, key, text)
-
-    def pending_context_keys(self, ticket_id: str) -> list[str]:
-        with self.connect() as conn:
-            return [
-                str(row["context_key"])
-                for row in conn.execute(
-                    "SELECT context_key FROM pending_worker_context "
-                    "WHERE worker_entity_id = ? ORDER BY context_key",
-                    (ticket_id,),
-                ).fetchall()
-            ]
 
     def add_revision_feedback(self, ticket_id: str, message: str) -> None:
         with self.connect() as conn:
@@ -163,7 +142,6 @@ class _World:
                 ticket_id,
                 connect_database=self.connect,
                 conversation_system=cast(ConversationSystem, self.conversations),
-                worker_context_service=cast(WorkerContextService, self.context),
                 worker_type_registry=configured_worker_type_registry(),
                 planning_day_id_resolver=lambda: TODAY_DAY_ID,
                 now=self.clock.now_unix,
@@ -295,7 +273,6 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     ticket_id = world.ready_ticket(conversation_id="conv-refuse")
     world.start_conversation("conv-refuse")
     world.conversations.arm_backend_write_failure("conv-refuse")
-    world.add_pending_context(ticket_id, "ticket_changed", "The user renamed the ticket.")
 
     with caplog.at_level(logging.ERROR, logger="planner.runtime.worker_step_readiness_loop"):
         assert world.start_step(ticket_id) is False
@@ -307,8 +284,6 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     assert ticket_id in message
     assert "conv-refuse" in message
     assert "write_to_backend_failed" in message
-    # A refused delivery reached nobody, so the context is still owed.
-    assert world.pending_context_keys(ticket_id) == ["ticket_changed"]
     assert world.skill_bindings() == []
 
 
@@ -373,7 +348,7 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
     # and a held message is delivered work, not a failure.
     ticket_id = world.ready_ticket(conversation_id="conv-queue")
     world.start_conversation("conv-queue")
-    world.add_pending_context(ticket_id, "ticket_changed", "The user renamed the ticket.")
+    world.add_revision_feedback(ticket_id, "Queueing still delivers this feedback.")
 
     conn = world.connect()
     try:
@@ -407,7 +382,6 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
             ticket_id,
             connect_database=world.connect,
             conversation_system=cast(ConversationSystem, queueing),
-            worker_context_service=cast(WorkerContextService, world.context),
             worker_type_registry=configured_worker_type_registry(),
             planning_day_id_resolver=lambda: TODAY_DAY_ID,
             now=world.clock.now_unix,
@@ -420,7 +394,7 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
     writes = world.conversations.backend_prompt_writes("conv-queue")
     assert [write.sender_label for write in writes] == ["browser"]
     assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
-    assert world.pending_context_keys(ticket_id) == []
+    assert world.pending_revision_feedback(ticket_id) is False
     assert {row["binding_status"] for row in world.skill_bindings()} == {"provisional"}
 
 
@@ -476,41 +450,18 @@ class _QueueingConversationSystem:
         return await self._system.has_pending_permission_ask(conversation_id)
 
 
-def test_pending_context_is_acknowledged_only_after_the_send_lands(world: _World) -> None:
-    ticket_id = world.ready_ticket(conversation_id="conv-context")
-    world.start_conversation("conv-context")
-    world.add_pending_context(ticket_id, "ticket_changed", "The user renamed the ticket.")
-    world.add_pending_context(ticket_id, "day_changed", "The ticket moved to today.")
-    assert world.pending_context_keys(ticket_id) == ["day_changed", "ticket_changed"]
-
-    assert world.start_step(ticket_id) is True
-    assert world.pending_context_keys(ticket_id) == []
-    assert {row["binding_status"] for row in world.skill_bindings()} == {"final"}
-
-
-class _PreparationFailure:
-    def prepare(self, worker_entity_id: str, prompt_text: str) -> PreparedWorkerPrompt:
-        raise RuntimeError("prompt preparation failed")
-
-    def acknowledge(
-        self, worker_entity_id: str, receipts: tuple[WorkerContextReceipt, ...]
-    ) -> None:
-        raise AssertionError("nothing was prepared")
-
-
 def test_a_failure_before_send_removes_bindings_and_releases_the_claim(
     world: _World,
 ) -> None:
-    ticket_id = world.ready_ticket(conversation_id="conv-prepare-failure")
-    world.start_conversation("conv-prepare-failure")
+    ticket_id = world.ready_ticket(conversation_id="conv-worker-type-failure")
+    world.start_conversation("conv-worker-type-failure")
 
     started = asyncio.run(
         start_ready_worker_step(
             ticket_id,
             connect_database=world.connect,
             conversation_system=cast(ConversationSystem, world.conversations),
-            worker_context_service=cast(WorkerContextService, _PreparationFailure()),
-            worker_type_registry=configured_worker_type_registry(),
+            worker_type_registry=cast(WorkerTypeRegistry, _WorkerTypeLookupFailure()),
             planning_day_id_resolver=lambda: TODAY_DAY_ID,
             now=world.clock.now_unix,
         )
@@ -528,21 +479,6 @@ class _WorkerTypeLookupFailure:
         raise RuntimeError("the worker type could not be looked up")
 
 
-class _AcknowledgementRefusingContext:
-    """Prepares as usual, then cannot tick the context off."""
-
-    def __init__(self, service: WorkerContextService) -> None:
-        self._service = service
-
-    def prepare(self, worker_entity_id: str, prompt_text: str) -> PreparedWorkerPrompt:
-        return self._service.prepare(worker_entity_id, prompt_text)
-
-    def acknowledge(
-        self, worker_entity_id: str, receipts: tuple[WorkerContextReceipt, ...]
-    ) -> None:
-        raise RuntimeError("the context store is unreachable")
-
-
 class _UnreadableConversationSystem(InMemoryConversationSystem):
     """A conversation system whose liveness read fails outright."""
 
@@ -550,8 +486,12 @@ class _UnreadableConversationSystem(InMemoryConversationSystem):
         raise RuntimeError("the conversation system is unreachable")
 
 
-def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _World) -> None:
-    ticket_id = world.ready_ticket(title="Ship it", conversation_id="conv-opener")
+def test_the_opener_carries_the_ordered_worker_inputs(world: _World) -> None:
+    ticket_id = world.ready_ticket(
+        title="Ship it",
+        kickoff_note="Use this agreed starting point.",
+        conversation_id="conv-opener",
+    )
     world.start_conversation("conv-opener")
     guidance = "Keep the owner’s boundary.\n\n  Exact whitespace stays.  "
     with world.connect() as conn:
@@ -563,8 +503,6 @@ def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _Worl
             principal=OWNER_PRINCIPAL,
             now=0,
         )
-    world.add_pending_context(ticket_id, "ticket_changed", "The user renamed the ticket.")
-
     assert world.start_step(ticket_id) is True
 
     writes = world.conversations.backend_prompt_writes("conv-opener")
@@ -577,8 +515,10 @@ def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _Worl
     assert "propose the 'success' field for approval" in writes[0].text
     assert "Stage owner: worker" in writes[0].text
     assert f"[Ticket guidance]\n{guidance}\n[/Ticket guidance]" in writes[0].text
-    assert world.pending_context_keys(ticket_id) == []
-    assert "The user renamed the ticket." in writes[0].text
+    assert (
+        "[Ticket kickoff]\nUse this agreed starting point.\n[/Ticket kickoff]" in writes[0].text
+    )
+    assert "[Pending worker context]" not in writes[0].text
     bindings = world.skill_bindings()
     assert len(bindings) == 3
     assert {row["sender_message_id"] for row in bindings} == {sender_message_id}
@@ -646,7 +586,7 @@ class _HeldAtTheOccupancyCheck:
     async def send(
         self,
         conversation_id: str,
-        text: str,
+        content: MessageContent,
         *,
         sender_label: str,
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
@@ -657,7 +597,7 @@ class _HeldAtTheOccupancyCheck:
     ) -> PromptDeliveryFate:
         return await self._system.send(
             conversation_id,
-            text_message_content(text),
+            content,
             sender_label=sender_label,
             mode=mode,
             model_change=model_change,
@@ -693,7 +633,6 @@ def _loop_in_a_thread(
                 if conversation_system is None
                 else conversation_system
             ),
-            worker_context_service=cast(WorkerContextService, world.context),
             asyncio_loop=asyncio_loop,
             boundary_hour=BOUNDARY_HOUR,
         ),

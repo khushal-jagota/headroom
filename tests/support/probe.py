@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
+
+from planner.core.migrations.versions.worker_types_in_database import SHIPPED_WORKER_TYPES
 from planner.tickets.contracts import StageOwnershipMode
-from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
     ConfiguredWorkerRuntimeDefinitions,
     install_worker_runtime_definitions_for_test,
@@ -15,18 +18,8 @@ from planner.worker_types.contracts import (
     WorkerProfile,
     WorkerTypeDefinition,
 )
-from planner.worker_types.debugging import DEBUGGING_WORKER_TYPE_DEFINITION
-from planner.worker_types.exploration import EXPLORATION_WORKER_TYPE_DEFINITION
-from planner.worker_types.general import GENERAL_WORKER_TYPE_DEFINITION
-from planner.worker_types.initiative_planning import INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION
-from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
-from planner.worker_types.planning_day import PLANNING_DAY_WORKER_TYPE_DEFINITION
-from planner.worker_types.planning_midday_check import (
-    PLANNING_MIDDAY_CHECK_WORKER_TYPE_DEFINITION,
-)
-from planner.worker_types.planning_sprint import PLANNING_SPRINT_WORKER_TYPE_DEFINITION
-from planner.worker_types.product_design import PRODUCT_DESIGN_WORKER_TYPE_DEFINITION
 from planner.worker_types.registry import WorkerTypeRegistry
+from planner.worker_types.store import definition_from_json, write_definition
 
 NEEDS_ALPHA = "".join(("needs_", "alpha"))
 NEEDS_BETA = "".join(("needs_", "beta"))
@@ -62,43 +55,47 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     ),
 )
 
+SHIPPED_DEFINITIONS: tuple[WorkerTypeDefinition, ...] = tuple(
+    definition_from_json(json.dumps(shipped)) for shipped in SHIPPED_WORKER_TYPES
+)
 PROBE_KNOWN_SKILLS: frozenset[str] = frozenset(
-    {
-        "panels-worker",
-        "panels-worker-coding",
-        "panels-worker-general",
-        "panels-worker-debugging",
-        "panels-worker-new-worker",
-        "panels-worker-exploration",
-        "panels-worker-initiative-planning",
-        "panels-worker-product-design",
-        "panels-worker-planning-day",
-        "panels-worker-planning-midday-check",
-        "panels-worker-planning-sprint",
-        PROBE_SPECIALIST_SKILL,
-    }
+    {definition.worker_profile.specialist_skill for definition in SHIPPED_DEFINITIONS}
+    | {"panels-worker", PROBE_SPECIALIST_SKILL}
 )
 PROBE_KNOWN_TOOLSET_PROFILES: frozenset[str] = frozenset({"default"})
 
 
 def build_probe_registry() -> WorkerTypeRegistry:
+    """The Worker types a database is seeded with, plus the probe."""
     return WorkerTypeRegistry(
-        (
-            CODING_WORKER_TYPE_DEFINITION,
-            GENERAL_WORKER_TYPE_DEFINITION,
-            DEBUGGING_WORKER_TYPE_DEFINITION,
-            NEW_WORKER_TYPE_DEFINITION,
-            EXPLORATION_WORKER_TYPE_DEFINITION,
-            INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION,
-            PRODUCT_DESIGN_WORKER_TYPE_DEFINITION,
-            PLANNING_DAY_WORKER_TYPE_DEFINITION,
-            PLANNING_MIDDAY_CHECK_WORKER_TYPE_DEFINITION,
-            PLANNING_SPRINT_WORKER_TYPE_DEFINITION,
-            PROBE_WORKER_TYPE_DEFINITION,
-        ),
+        SHIPPED_DEFINITIONS + (PROBE_WORKER_TYPE_DEFINITION,),
         known_skills=PROBE_KNOWN_SKILLS,
         known_toolset_profiles=PROBE_KNOWN_TOOLSET_PROFILES,
     )
+
+
+def build_shipped_registry() -> WorkerTypeRegistry:
+    """The Worker types a database is seeded with, exactly as it is seeded with them."""
+    return WorkerTypeRegistry(
+        SHIPPED_DEFINITIONS,
+        known_skills=PROBE_KNOWN_SKILLS,
+        known_toolset_profiles=PROBE_KNOWN_TOOLSET_PROFILES,
+    )
+
+
+def seed_probe_worker_type(conn: sqlite3.Connection, *, now: int = 0) -> WorkerTypeDefinition:
+    """Store the probe Worker type through the door production writes through."""
+    conn.execute(
+        "INSERT OR IGNORE INTO managed_skills (skill_name, source_text, updated_at) "
+        "VALUES (?, ?, ?)",
+        (
+            PROBE_SPECIALIST_SKILL,
+            f"---\nname: {PROBE_SPECIALIST_SKILL}\ndescription: The probe worker.\n---\n\nBody.\n",
+            now,
+        ),
+    )
+    write_definition(conn, PROBE_WORKER_TYPE_DEFINITION, now=now)
+    return PROBE_WORKER_TYPE_DEFINITION
 
 
 _installed_definitions: ConfiguredWorkerRuntimeDefinitions | None = None
@@ -119,3 +116,11 @@ def uninstall_probe_registry() -> None:
         raise RuntimeError("probe runtime definitions were not installed")
     restore_worker_runtime_definitions_for_test(_installed_definitions)
     _installed_definitions = None
+
+
+def shipped_definition(worker_type: str) -> WorkerTypeDefinition:
+    """One of the Worker types a database is seeded with, by id."""
+    for definition in SHIPPED_DEFINITIONS:
+        if definition.worker_type == worker_type:
+            return definition
+    raise KeyError(worker_type)

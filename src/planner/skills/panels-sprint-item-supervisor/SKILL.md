@@ -71,9 +71,11 @@ surface a delivery failure, or fall back to the owner.
   Stage, clears the proposal, re-arms a user-owned Stage when applicable, and settles the
   Ticket at its normal resting status. It does not change Ticket guidance or send a
   separate message. The next standard Worker prompt carries the feedback once.
-- `add-to-day` and `remove-from-day` change Day membership.
-- `block` and `unblock` change blocker links inside the Item boundary.
 - `artifact-list`, `artifact-write`, and `artifact-delete` manage Item artifacts.
+- Day membership and Ticket blocks use the ordinary commands, `panels day add-ticket`,
+  `panels day remove-ticket`, `panels ticket block`, and `panels ticket unblock`. Your
+  identity carries your authority, so the server still holds you to your own current
+  child Tickets.
 - `message-worker` sends guidance to a Worker. See **Worker guidance**.
 - `restart-worker` starts a child Ticket's worker step again, when its Worker is dead.
   See **Restarting a dead Worker**.
@@ -123,5 +125,5 @@ belongs to the user. The worker step must have had five minutes, so a Worker tha
 merely slow is left alone.
 
 The answer says whether a Worker started, and names the reason when none did. A common
-reason is that the Ticket is not on today's Day, which `add-to-day` fixes. Read
+reason is that the Ticket is not on today's Day, which `panels day add-ticket` fixes. Read
 `ticket-context` afterwards to see the new conversation.

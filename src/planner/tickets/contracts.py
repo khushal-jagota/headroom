@@ -206,12 +206,6 @@ class EmployeeConfigurationBody(TypedDict):
     employee_launch_reasoning_effort: str | None
 
 
-class LinkBody(TypedDict, total=False):  # POST /links (ticket-anchored, homed here)
-    from_id: str  # required (default "" fails endpoint checks)
-    to_id: str  # required (default "" fails endpoint checks)
-    kind: str  # LinkKind value; required (default "" is rejected)
-
-
 @dataclass
 class Ticket:  # §3.3 — column names match exactly
     id: str
@@ -283,4 +277,4 @@ class TicketDeletion:
     day_ids: tuple[str, ...]
     sprint_item_ids: tuple[str, ...]
     sprint_ids: tuple[str, ...]
-    linked_entity_ids: tuple[str, ...]
+    linked_ticket_ids: tuple[str, ...]

@@ -1,15 +1,16 @@
 import concurrent.futures
-import shutil
+import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 from planner.core.contracts import PlannerError
+from planner.core.db import connect, create_schema
 from planner.environments.hermes_home import provision_planner_home_skills
+from planner.managed_skills import managed_skills_home
 from planner.skill_sources import (
     RETIRED_PANELS_SKILL_NAMES,
-    ensure_managed_panels_skills,
-    panels_skill_root,
     provision_native_backend_skills,
 )
 from planner.worker_settings import service
@@ -17,52 +18,59 @@ from planner.worker_types.configuration import configured_worker_type_registry
 
 
 @pytest.fixture
-def canonical_skills_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    source = panels_skill_root()
-    target = tmp_path / "canonical-skills"
-    shutil.copytree(source, target)
-    monkeypatch.setattr(service, "panels_skill_root", lambda: target)
-    return target
+def database(tmp_path: Path) -> Iterator[sqlite3.Connection]:
+    """A database beside ``tmp_path``, so the managed skills home is ``tmp_path/skills``."""
+    conn = connect(str(tmp_path / "planner.db"))
+    create_schema(conn)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def test_worker_skill_edit_writes_managed_canonical_file(
-    tmp_path: Path, canonical_skills_root: Path
+    tmp_path: Path, database: sqlite3.Connection
 ) -> None:
     registry = configured_worker_type_registry()
-    source = tmp_path / "skills" / "panels-worker-coding" / "SKILL.md"
+    source = managed_skills_home(tmp_path) / "panels-worker-coding" / "SKILL.md"
     saved = service.save_specialist_skill(
-        tmp_path,
+        database,
         registry,
         "coding",
         {"description": "canonical test", "markdown_body": "# canonical\n"},
+        now=1,
+        database_parent=tmp_path,
     )
     assert saved.specialist_skill.description == "canonical test"
     assert source.read_text(encoding="utf-8").startswith('---\nname: "panels-worker-coding"')
-    assert not (service.managed_worker_settings_root(tmp_path) / "coding" / "SKILL.md").exists()
+    # The row is the authority and the file is its copy: both carry the same edit.
+    assert service.read_skill(database, "panels-worker-coding").source_text == source.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_supervisor_edit_reaches_every_backend_home_from_one_managed_source(
-    tmp_path: Path,
+    tmp_path: Path, database: sqlite3.Connection
 ) -> None:
-    managed = ensure_managed_panels_skills(tmp_path)
+    managed = managed_skills_home(tmp_path)
     homes = {
         "hermes": tmp_path / "hermes-home",
         "codex": tmp_path / "codex-home",
         "claude": tmp_path / "claude-home",
     }
-    provision_planner_home_skills(
-        homes["hermes"], configured_database_parent=tmp_path
-    )
+    provision_planner_home_skills(homes["hermes"], configured_database_parent=tmp_path)
     provision_native_backend_skills(homes["codex"], tmp_path)
     provision_native_backend_skills(homes["claude"], tmp_path)
 
     service.save_skill(
-        tmp_path,
+        database,
         "panels-sprint-item-supervisor",
         {
             "description": "Future conversations read this revision",
             "markdown_body": "# Supervisor\n\nUse canonical context.\n",
         },
+        now=1,
+        database_parent=tmp_path,
     )
 
     canonical = managed / "panels-sprint-item-supervisor"
@@ -74,28 +82,11 @@ def test_supervisor_edit_reaches_every_backend_home_from_one_managed_source(
         ).read_text(encoding="utf-8")
 
 
-def test_seed_prefers_legacy_live_edit_and_never_clobbers_managed_file(tmp_path: Path) -> None:
-    legacy = tmp_path / "worker-settings" / "coding" / "SKILL.md"
-    legacy.parent.mkdir(parents=True)
-    legacy.write_text(
-        '---\nname: "panels-worker-coding"\ndescription: "legacy edit"\n---\n# legacy\n',
-        encoding="utf-8",
-    )
-    root = ensure_managed_panels_skills(tmp_path)
-    managed = root / "panels-worker-coding" / "SKILL.md"
-    assert 'description: "legacy edit"' in managed.read_text(encoding="utf-8")
-    managed.write_text(
-        '---\nname: "panels-worker-coding"\ndescription: "managed edit"\n---\n# managed\n',
-        encoding="utf-8",
-    )
-    ensure_managed_panels_skills(tmp_path)
-    assert 'description: "managed edit"' in managed.read_text(encoding="utf-8")
-
-
 def test_native_skills_directory_preserves_custom_entries_and_replaces_panels_collision(
-    tmp_path: Path,
+    tmp_path: Path, database: sqlite3.Connection
 ) -> None:
-    managed = ensure_managed_panels_skills(tmp_path)
+    del database
+    managed = managed_skills_home(tmp_path)
     native_skills = tmp_path / "provider" / "skills"
     (native_skills / "custom").mkdir(parents=True)
     (native_skills / "custom" / "SKILL.md").write_text("custom", encoding="utf-8")
@@ -116,47 +107,50 @@ def test_native_skills_directory_preserves_custom_entries_and_replaces_panels_co
 
 
 def test_chief_skill_uses_same_canonical_source(
-    tmp_path: Path, canonical_skills_root: Path
+    tmp_path: Path, database: sqlite3.Connection
 ) -> None:
     saved = service.save_chief_skill(
-        tmp_path,
+        database,
         {"description": "chief canonical test", "body": "# chief\n"},
+        now=1,
+        database_parent=tmp_path,
     )
     assert saved.skill.description == "chief canonical test"
     assert saved.skill.name == "panels-chief-of-staff"
 
 
-def test_skill_edit_rejects_path_traversal(canonical_skills_root: Path) -> None:
+def test_skill_edit_rejects_an_unknown_skill_name(
+    tmp_path: Path, database: sqlite3.Connection
+) -> None:
     with pytest.raises(PlannerError):
-        service.save_skill(canonical_skills_root.parent, "..", {"description": "bad"})
+        service.save_skill(database, "..", {"description": "bad"}, now=1, database_parent=tmp_path)
 
 
-def test_concurrent_skill_field_edits_preserve_both_fields(canonical_skills_root: Path) -> None:
+def test_concurrent_skill_field_edits_preserve_both_fields(
+    tmp_path: Path, database: sqlite3.Connection
+) -> None:
     current = next(
-        skill
-        for skill in service.read_skills_home(canonical_skills_root.parent).skills
-        if skill.name == "panels"
+        skill for skill in service.read_skills_home(database).skills if skill.name == "panels"
     )
+    database_path = str(tmp_path / "planner.db")
+
+    def edit(payload: dict[str, object]) -> None:
+        # Each thread needs its own connection: one connection cannot carry two writers.
+        conn = connect(database_path)
+        try:
+            service.save_skill(conn, "panels", payload, now=1, database_parent=tmp_path)
+        finally:
+            conn.close()
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         futures = [
-            executor.submit(
-                service.save_skill,
-                canonical_skills_root.parent,
-                "panels",
-                {"description": "parallel"},
-            ),
-            executor.submit(
-                service.save_skill,
-                canonical_skills_root.parent,
-                "panels",
-                {"markdown_body": current.markdown_body + "\nparallel\n"},
-            ),
+            executor.submit(edit, {"description": "parallel"}),
+            executor.submit(edit, {"markdown_body": current.markdown_body + "\nparallel\n"}),
         ]
         [future.result() for future in futures]
+
     final = next(
-        skill
-        for skill in service.read_skills_home(canonical_skills_root.parent).skills
-        if skill.name == "panels"
+        skill for skill in service.read_skills_home(database).skills if skill.name == "panels"
     )
     assert final.description == "parallel"
     assert final.markdown_body.endswith("parallel\n")

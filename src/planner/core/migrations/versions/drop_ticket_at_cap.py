@@ -8,10 +8,10 @@ Every Ticket that carried ``stop`` now behaves the way ``propose`` did: on reach
 ceiling it takes one more step, files a proposal, and parks for the user.
 
 The column carries a table CHECK, so SQLite refuses a plain DROP COLUMN and the table is
-rebuilt instead, exactly as the two revisions before this one rebuilt it.
+rebuilt instead, the same way earlier revisions rebuilt it.
 
 Revision ID: drop_ticket_at_cap
-Revises: two_ownership_modes
+Revises: worker_types_in_database
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from sqlalchemy import (
 )
 
 revision = "drop_ticket_at_cap"
-down_revision = "two_ownership_modes"
+down_revision = "worker_types_in_database"
 branch_labels = None
 depends_on = None
 

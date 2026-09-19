@@ -46,7 +46,7 @@ def test_each_selector_posts_one_general_send(
         "method": "POST",
         "path": "/api/messages/send",
         "as_json": True,
-        "json_body": {"target": recipient, "message": "Hello", "mode": "queue"},
+        "json_body": {"target": recipient, "message": "Hello", "mode": "steer"},
         "request_actor": "ordinary",
     }
 

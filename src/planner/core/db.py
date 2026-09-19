@@ -183,8 +183,11 @@ def create_schema(conn: sqlite3.Connection) -> None:
     # Seeding is the only thing here that knows a domain, and domains open connections
     # through this module — so these are imported where they are used, leaving this module
     # importable on its own.
+    from planner.managed_skills import write_skill_home
     from planner.notifications import data as notifications_data
     from planner.projects import data as projects_data
+    from planner.worker_types.configuration import load_worker_runtime_definitions
+    from planner.worker_types.store import worker_types_table_exists
 
     if conn.in_transaction:
         raise RuntimeError(
@@ -201,6 +204,11 @@ def create_schema(conn: sqlite3.Connection) -> None:
     ).fetchone()
     if notification_schema_exists is not None:
         notifications_data.get_or_create_web_push_identity(conn, 0)
+    # The Worker types this process runs on, and the skill files agents read, both come
+    # from this database. Loading them here is what makes opening a database enough.
+    if worker_types_table_exists(conn):
+        write_skill_home(conn, Path(_main_database_path(conn)).parent)
+        load_worker_runtime_definitions(conn)
 
 
 def _main_database_path(conn: sqlite3.Connection) -> str:

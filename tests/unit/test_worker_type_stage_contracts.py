@@ -9,14 +9,17 @@ from typing import get_type_hints
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.probe import build_shipped_registry, shipped_definition
 
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets.contracts import Ticket
-from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
-from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
+
+SHIPPED_REGISTRY = build_shipped_registry()
+
+CODING_WORKER_TYPE_DEFINITION = shipped_definition("coding")
 
 _EMPTY_FIELDS_DEFAULT = (
     '{"kickoff":{"value":null,"proposal":null},'
@@ -112,7 +115,7 @@ def test_http_contract_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
         manifest = client.get("/api/worker-types")
         assert manifest.status_code == 200
         assert [item["worker_type"] for item in manifest.json()["worker_types"]] == list(
-            PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
+            SHIPPED_REGISTRY.registered_worker_types()
         )
         assert client.get("/api/ticket-types").status_code == 404
 
