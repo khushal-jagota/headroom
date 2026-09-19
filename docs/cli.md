@@ -73,8 +73,8 @@ record shapes. Direct `show` commands also keep their full record shapes.
   Select exactly one destination with `--owner`, `--chief`, `--ticket <id>`, or
   `--sprint-item <id>`.
   Supply the text with `--message` or `--body-file`; `--body-file -` reads stdin. Use
-  `--mode queue`, `--mode steer`, or `--mode send_now`. Queue holds a busy message. Steer
-  injects into current work. Send now interrupts current work. The default is `queue`.
+  `--mode steer`, `--mode queue`, or `--mode send_now`. Steer injects into current work.
+  Queue holds a busy message. Send now interrupts current work. The default is `steer`.
   An employee's `--owner` send records the addressed message in that employee's current
   conversation and reports `recorded`; it does not invoke a backend and fails if the
   sender has no current conversation. Every mode starts a turn when an employee recipient
