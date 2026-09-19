@@ -238,8 +238,7 @@ def test_scope_permission_uses_the_ticket_worker_type_definition(
         conn.close()
 
 
-@pytest.mark.parametrize("settled_stage", ["done", "dropped"])
-def test_a_completing_blocker_frees_its_target(tmp_path: Path, settled_stage: str) -> None:
+def test_a_completing_blocker_frees_its_target(tmp_path: Path) -> None:
     # Readiness itself does not look at links: the completing blocker rewrites the
     # target's status back to empty, and that is what makes it startable again.
     conn = _db(tmp_path)
@@ -250,10 +249,7 @@ def test_a_completing_blocker_frees_its_target(tmp_path: Path, settled_stage: st
         assert tickets_data.read_ticket(conn, target.id).ticket_status is TicketStatus.blocked
         assert not _ready(conn, target)
 
-        if settled_stage == "done":
-            advance_ticket(conn, blocker.id, new_stage="done", principal=OWNER_PRINCIPAL, now=5)
-        else:
-            tickets_data.drop_ticket(conn, blocker.id, principal=OWNER_PRINCIPAL, now=5)
+        advance_ticket(conn, blocker.id, new_stage="done", principal=OWNER_PRINCIPAL, now=5)
 
         assert tickets_data.read_ticket(conn, target.id).ticket_status is TicketStatus.empty
         assert _ready(conn, target)

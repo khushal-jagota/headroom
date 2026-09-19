@@ -241,8 +241,8 @@ record shapes. Direct `show` commands also keep their full record shapes.
   options to keep the default: the kickoff parks for its creator's approval.
 - **`sprint item supervisor artifact-list / artifact-write / artifact-delete`** — manage
   files under the owning Item's `artifacts/` directory.
-- **`worker propose / recap / note / trouble / request-help / my-ticket`** — worker actions.
-  `propose`, `recap`, `note`, and `trouble` take their text on stdin only; there is no
+- **`worker propose / recap / note / request-help / my-ticket`** — worker actions.
+  `propose`, `recap`, and `note` take their text on stdin only; there is no
   file-path option, so no shared `/tmp` file can carry one Ticket's text onto another.
   `worker propose` infers the current gating field from the Ticket Stage and requires a
   short recap on `--recap TEXT` in the same request. `worker note <id>` replaces the
@@ -251,8 +251,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   or type lookup is needed. Ticket reads offer `recap` and `guidance` parts. `worker my-ticket`
   reports the current Ticket, and names the **specialist skill** for its Worker type —
   the one the base worker loads to learn that Worker type's Stages (see
-  `worker-types.md`). `worker trouble` appends one short trouble note, read from stdin,
-  to the current worker's Ticket during its active claimed worker step.
+  `worker-types.md`).
   `request-help` reads a message from stdin and sends one canonical addressed message.
   It defaults to the Ticket's current ceiling holder. Exactly one of `--owner`, `--chief`,
   `--ticket`, or `--sprint-item` can select another recipient.

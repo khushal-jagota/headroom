@@ -143,8 +143,10 @@ def test_registry_validation_order_and_messages() -> None:
         {"worker_type": "coding", "last": "finished"},
     )
     assert_error(
-        replace(base, dropped_stage=replace(base.dropped_stage, id="discarded")),
-        "dropped may not be a linear stage",
+        replace(
+            base, stages=(base.stages[0], replace(base.stages[1], id="dropped"), *base.stages[2:])
+        ),
+        "dropped is not a stage",
         {"worker_type": "coding", "stage": "dropped"},
     )
     assert_error(
@@ -223,6 +225,8 @@ def test_registry_validation_order_and_messages() -> None:
         "default_model must be a non-empty string",
         {"worker_type": "coding", "default_model": "   "},
     )
+
+
 def test_manifests_are_complete_and_json_round_trip() -> None:
     registered = SHIPPED_REGISTRY.registered_worker_types()
     assert len(set(registered)) == len(registered)
@@ -281,13 +285,6 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
                 "ownership_mode": None,
             },
         ],
-        "dropped": {
-            "id": "dropped",
-            "label": "Dropped",
-            "gating_field": None,
-            "is_terminal": True,
-            "ownership_mode": None,
-        },
         "advance": {
             "needs_kickoff": "needs_success",
             "needs_success": "needs_approach",
@@ -321,8 +318,6 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
     }
     assert json.loads(json.dumps(coding)) == coding
     assert (
-        json.loads(json.dumps(SHIPPED_REGISTRY.manifest("new_worker")))[
-            "worker_type"
-        ]
+        json.loads(json.dumps(SHIPPED_REGISTRY.manifest("new_worker")))["worker_type"]
         == "new_worker"
     )

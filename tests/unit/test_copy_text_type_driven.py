@@ -25,7 +25,6 @@ from planner.tickets.contracts import AtCap
 from planner.tickets.data import (
     accept_proposal,
     create_ticket,
-    drop_ticket,
     file_current_proposal_with_recap,
     replace_guidance,
 )
@@ -117,10 +116,7 @@ def test_copy_text_probe_renders_own_fields(
         title_max_chars=200,
         worker_type="probe",
     )
-    dropped = drop_ticket(tmp_db, ticket.id, principal=OWNER_PRINCIPAL, now=2)
     text = copy_text(tmp_db, ticket.id)
-    assert dropped.archived_field_content in text
-    assert "Unapproved proposal" in text
 
     # Probe renders its own field blocks plus one separate guidance document.
     assert "kickoff:\n" in text

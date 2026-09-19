@@ -492,7 +492,7 @@ def _require_current_supervisor_parent(
 
 
 def _active_blocker_stage(stage: str) -> bool:
-    return stage not in {"done", "dropped"}
+    return stage != "done"
 
 
 def _blocked_ticket_ids(conn: sqlite3.Connection, ticket_id: str) -> tuple[str, ...]:
@@ -511,7 +511,7 @@ def _has_live_blocker(conn: sqlite3.Connection, ticket_id: str) -> bool:
             "SELECT 1 FROM ticket_blocks "
             "JOIN tickets blocker ON blocker.id = ticket_blocks.blocking_ticket_id "
             "WHERE ticket_blocks.blocked_ticket_id = ? "
-            "AND blocker.stage NOT IN ('done', 'dropped') LIMIT 1",
+            "AND blocker.stage != 'done' LIMIT 1",
             (ticket_id,),
         ).fetchone()
         is not None
@@ -578,7 +578,7 @@ def _apply_decision(
     new_at_cap = decision.at_cap
     _validate_ceiling_holder(conn, decision.ceiling_holder, ticket_id=ticket.id)
     # Pre-persist door: the prospective (stage, ceiling) must be registry-valid for
-    # this ticket's type before any SQL — the enforcement the dropped DB CHECKs gave.
+    # this ticket's type before any SQL — the enforcement the removed DB CHECKs gave.
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
     worker_type_definition.validate_ticket_position(str(new_stage), str(new_ceiling))
     fields_codec.validate_state(
@@ -1472,24 +1472,6 @@ def return_for_revision(
             "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
             (ticket_id, ticket.stage),
         )
-        _write_resting_ticket_status(
-            conn,
-            updated,
-            worker_type_definition=worker_type_definition,
-            now=now,
-        )
-        return _load_ticket_for_write(conn, ticket_id)
-
-
-def drop_ticket(
-    conn: sqlite3.Connection, ticket_id: str, *, principal: Principal, now: int
-) -> Ticket:
-    with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
-        )
-        decision = resolution.decide_drop(ticket, principal)
-        updated = _apply_decision(conn, ticket, decision, now)
         _write_resting_ticket_status(
             conn,
             updated,

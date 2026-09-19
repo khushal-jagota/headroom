@@ -21,7 +21,7 @@ from planner.tickets.contracts import (
     Ticket,
     TicketStatus,
 )
-from planner.tickets.logic import admission, archive, fields_codec, machine
+from planner.tickets.logic import admission, fields_codec, machine
 from planner.tickets.logic.decisions import Decision
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -177,8 +177,6 @@ def decide_edit_value(
 ) -> Decision:
     admission.validate_body(new_body, "field value")
     admission.require_direct_principal(principal, "edit_field_value")
-    if ticket.stage == "dropped":
-        raise PlannerError(ErrorCode.validation, "dropped tickets cannot be edited")
     settled_value = fields_codec.field_value(
         ticket.field_values, field, worker_type_definition=worker_type_definition
     )
@@ -273,29 +271,6 @@ def decide_return_for_revision(
         ceiling_holder=(
             OWNER_PRINCIPAL if principal == OWNER_PRINCIPAL else ticket.ceiling_holder
         ),
-    )
-
-
-def decide_drop(ticket: Ticket, principal: Principal) -> Decision:
-    admission.require_direct_principal(principal, "drop_ticket")
-    if ticket.stage in ("done", "dropped"):
-        raise PlannerError(
-            ErrorCode.validation,
-            "terminal tickets cannot be dropped",
-            {"stage": ticket.stage},
-        )
-    record = ticket.archived_field_content
-    if ticket.pending_proposal is not None:
-        record = "\n\n".join(
-            part
-            for part in (record, archive.archived_proposal(ticket.pending_proposal))
-            if part
-        )
-    return replace(
-        Decision.from_ticket(ticket),
-        stage="dropped",
-        pending_proposal=None,
-        archived_field_content=record,
     )
 
 

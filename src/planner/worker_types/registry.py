@@ -89,7 +89,7 @@ def validate_definition(
     for stage in definition.stages:
         if stage.id == "dropped":
             raise fail(
-                "dropped may not be a linear stage",
+                "dropped is not a stage",
                 {"worker_type": worker_type, "stage": "dropped"},
             )
     for stage in definition.stages[:-1]:
@@ -98,22 +98,10 @@ def validate_definition(
                 "done may not be a mid stage",
                 {"worker_type": worker_type, "stage": "done"},
             )
-    dropped = definition.dropped_stage
-    if dropped.id != "dropped" or dropped.is_terminal is not True:
-        raise fail(
-            "dropped may not be a linear stage",
-            {"worker_type": worker_type, "stage": "dropped"},
-        )
-
     if last.gating_field is not None:
         raise fail(
             "terminal stage may not gate a field",
             {"worker_type": worker_type, "stage": "done"},
-        )
-    if dropped.gating_field is not None:
-        raise fail(
-            "terminal stage may not gate a field",
-            {"worker_type": worker_type, "stage": "dropped"},
         )
 
     for stage in definition.stages:
@@ -139,11 +127,6 @@ def validate_definition(
                 "stage ownership must be a known mode",
                 {"worker_type": worker_type, "stage": stage.id},
             )
-    if dropped.ownership_mode is not None:
-        raise fail(
-            "terminal stage may not declare ownership",
-            {"worker_type": worker_type, "stage": "dropped"},
-        )
 
     declared_field_ids = {field.id for field in definition.fields}
     for stage in definition.stages:
@@ -268,13 +251,6 @@ class WorkerTypeRegistry:
             }
             for stage in definition.stages
         ]
-        dropped: WorkerTypeManifestStage = {
-            "id": definition.dropped_stage.id,
-            "label": definition.dropped_stage.label,
-            "gating_field": definition.dropped_stage.gating_field,
-            "is_terminal": definition.dropped_stage.is_terminal,
-            "ownership_mode": None,
-        }
         fields: list[WorkerTypeManifestField] = [
             {"id": field.id, "label": field.label} for field in definition.fields
         ]
@@ -287,7 +263,6 @@ class WorkerTypeRegistry:
             "worker_type": definition.worker_type,
             "label": definition.label,
             "stages": stages,
-            "dropped": dropped,
             "advance": advance,
             "fields": fields,
             "ceiling_range": list(definition.ceiling_range()),

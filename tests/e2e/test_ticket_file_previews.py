@@ -78,7 +78,7 @@ def _links(ticket_id: str) -> str:
 
 
 def _settle_success(
-    server: ServerHandle, ticket_id: str, body: str, *, dropped: bool = False
+    server: ServerHandle, ticket_id: str, body: str
 ) -> None:
     """Seed saved Markdown through the same proposal/accept writers as ordinary work."""
     with closing(connect(str(server.db_path))) as conn:
@@ -104,8 +104,6 @@ def _settle_success(
         assert ticket.stage == "needs_approach"
         assert ticket.field_values["success"] == body
         assert ticket.pending_proposal is None
-        if dropped:
-            tickets_data.drop_ticket(conn, ticket_id, principal=OWNER_PRINCIPAL, now=2)
 
 
 def _open_ticket_field(page: Page, field: str) -> None:
@@ -169,7 +167,6 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
         server,
         ticket_id,
         f"[HTML](/files/tickets/{ticket_id}/previews/index.html)",
-        dropped=True,
     )
     ticket_selector = f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]'
     page = open_page(context_factory(), server, f"#/workspace/{ticket_id}", ticket_selector)

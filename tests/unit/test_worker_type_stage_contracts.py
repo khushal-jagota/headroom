@@ -57,9 +57,7 @@ def test_ticket_contract_requires_worker_type_and_stored_stage() -> None:
     type_hints = get_type_hints(Ticket)
     assert type_hints["worker_type"] is str
     assert type_hints["stage"] is str
-    assert list(CODING_WORKER_TYPE_DEFINITION.stage_ids()) + [
-        CODING_WORKER_TYPE_DEFINITION.dropped_stage.id
-    ] == [
+    assert list(CODING_WORKER_TYPE_DEFINITION.stage_ids()) == [
         "needs_kickoff",
         "needs_success",
         "needs_approach",
@@ -67,7 +65,6 @@ def test_ticket_contract_requires_worker_type_and_stored_stage() -> None:
         "needs_implementation",
         "needs_closeout",
         "done",
-        "dropped",
     ]
 
 

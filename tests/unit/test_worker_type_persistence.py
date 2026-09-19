@@ -45,7 +45,6 @@ CODING_PROBE_WORKER_TYPE_DEFINITION: WorkerTypeDefinition = WorkerTypeDefinition
     worker_type="coding_probe",
     label="Coding Probe",
     stages=CODING_WORKER_TYPE_DEFINITION.stages,
-    dropped_stage=CODING_WORKER_TYPE_DEFINITION.dropped_stage,
     fields=CODING_WORKER_TYPE_DEFINITION.fields,
     worker_profile=CODING_WORKER_TYPE_DEFINITION.worker_profile,
 )

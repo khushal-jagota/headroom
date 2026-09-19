@@ -152,15 +152,6 @@ One screen per part of the system:
   reason remains visible when one exists. The inline-editable recap is always open on a
   recessed surface, without another label.
 
-  A done Ticket offers an optional verdict above its Stage history. The user can choose
-  one of five ratings, add text, use both, or clear the verdict. A saved verdict remains
-  visible without edit controls if the Ticket returns to an earlier Stage. See
-  `judgments.md`.
-
-  When a worker records trouble during its claimed step, a read-only section appears
-  next to the verdict. It shows each short note and its recorded time in creation order.
-  The section stays absent when no trouble was recorded.
-
   The stages and their workflow remain the Ticket's Worker type's, derived from the
   served manifest (see below and `worker-types.md`). Guidance and the archive stay off
   this page. Review still shows Guidance with an approval. The current Stage mark speaks without a second status pill.

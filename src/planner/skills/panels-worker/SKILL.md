@@ -40,10 +40,6 @@ Everything runs through the `panels` command — `panels --help` for full usage.
   manifest, or expand named saved fields, `proposal`, `recap`, `guidance`, and `archive`.
 - **`panels worker propose <id> --recap "…"`**, piping the proposal text on stdin — propose your own Ticket's current gated field. No supervisor, holder Ticket, or other Worker can file it for you. The body arrives on stdin only, and every proposal must also set a recap with `--recap TEXT`.
 - **`panels worker recap <id>`**, piping the recap text on stdin — update the running recap outside a proposal.
-- **`panels worker trouble`**, piping the note on stdin — record one short trouble note on your
-  current Ticket during the active claimed worker step. Use it for a harness, tool, or
-  Ticket problem that did not go well. Record only trouble that you encountered. Do not
-  grade yourself or record what went well.
 - **`panels worker request-help [ticket-id]`**, piping the help message on stdin — send one canonical addressed message when you cannot responsibly continue without important input. The current ceiling holder is the default recipient. Use exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--sprint-item <id>` only when another principal must answer. The message drives the shared unread-reply attention fact. Do not use this for ordinary discussion, proposals, approvals, permission prompts, Stop, or confirmed Worker errors.
 - **`panels worker note <id>`**, piping the guidance text on stdin — replace the Ticket’s durable guidance document. Add `--append` to preserve the existing guidance and add new text.
 - **`panels send-message --owner --message "…"`** — send one addressed chat message to

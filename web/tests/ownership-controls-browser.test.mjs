@@ -32,7 +32,6 @@ const manifest: WorkerTypeManifest = {
     { id: "needs_plan", label: "Plan", gating_field: "plan", is_terminal: false, ownership_mode: "worker" },
     { id: "done", label: "Done", gating_field: null, is_terminal: true, ownership_mode: null }
   ],
-  dropped: { id: "dropped", label: "Dropped", gating_field: null, is_terminal: true, ownership_mode: null },
   advance: { needs_success: "needs_approach", needs_approach: "needs_plan", needs_plan: "done" },
   fields: [
     { id: "success", label: "Success" },
@@ -91,7 +90,6 @@ manifest = {
         {"id": "needs_plan", "label": "Plan", "gating_field": "plan", "is_terminal": False, "ownership_mode": "worker"},
         {"id": "done", "label": "Done", "gating_field": None, "is_terminal": True, "ownership_mode": None},
     ],
-    "dropped": {"id": "dropped", "label": "Dropped", "gating_field": None, "is_terminal": True, "ownership_mode": None},
     "advance": {"needs_success": "needs_approach", "needs_approach": "needs_plan", "needs_plan": "done"},
     "fields": [{"id": "success", "label": "Success"}, {"id": "approach", "label": "Approach"}, {"id": "plan", "label": "Plan"}],
     "ceiling_range": ["needs_success", "needs_approach", "needs_plan", "done"],
