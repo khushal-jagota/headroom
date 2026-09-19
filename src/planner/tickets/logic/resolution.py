@@ -243,7 +243,10 @@ def decide_edit_settled_field(
         is None
     ):
         raise PlannerError(
-            ErrorCode.validation, "field has no settled value to edit", {"field": field}
+            ErrorCode.validation,
+            "field has no settled value to edit; a Stage still waiting for its answer is "
+            "completed, not edited",
+            {"field": field},
         )
     if not machine.field_is_passed(
         field, ticket.stage, worker_type_definition=worker_type_definition

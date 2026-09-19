@@ -199,7 +199,8 @@ record shapes. Direct `show` commands also keep their full record shapes.
   child Ticket when that exact Sprint Item is its ceiling holder. Approval requires the
   next ceiling. It also sends the full next holder. The holder defaults to the
   same Sprint Item; `--holder-kind` and `--holder-id` can address the next proposal to a
-  different principal. Rejection requires focused revision guidance. The Ticket appends
+  different principal. Rejection can carry focused revision guidance. When it does, the
+  Ticket appends
   that exact comment to guidance, invalidates worker context, and returns the Stage to
   rest in one SQLite commit. The holder stays the same for the revised proposal.
 - **`sprint item supervisor ticket-context / history / message-worker`** — read one

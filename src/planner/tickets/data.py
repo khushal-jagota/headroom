@@ -1,7 +1,8 @@
-"""The only module that writes Ticket rows. Stage, ceiling, and fields
-value mutations happen in exactly one function (_apply_decision); every public
-writer is one BEGIN IMMEDIATE transaction. An ordinary Ticket edit validates and
-writes its requested plain attributes together. Other semantic writers remain
+"""The only module that writes Ticket rows. Every Stage move happens in exactly one
+function (_apply_decision), and every public writer is one BEGIN IMMEDIATE transaction.
+An ordinary Ticket edit validates and writes its requested attributes together, the
+ceiling and a settled field value among them: it decides each one through the same pure
+rules but moves no Stage, so it writes its own row. Other semantic writers remain
 separate. sqlite3 and ids live here only; the clock arrives as now (unix
 seconds) and the title limit as an argument."""
 
@@ -1718,6 +1719,11 @@ def edit_ticket(
                 worker_type_definition=worker_type_definition,
                 now=now,
             )
+        # Who holds the ceiling decides whether the user is waiting on this Ticket, so a
+        # new holder re-derives its attention. The resting rewrite above does it only when
+        # the status really moves, which a ceiling change usually does not.
+        if "ceiling" in edit:
+            capture_ticket_attention(conn, ticket_id, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 

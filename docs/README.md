@@ -32,7 +32,7 @@ canonical transition settles the value and advances one Stage. There is no arbit
 Stage setter. A Sprint Item supervisor has no private door: it writes through the same
 domain writers the direct surfaces use, limited to its own Item.
 
-At its ceiling a Ticket either stops or proposes, and there is one approval gate — a
+At its ceiling a Ticket proposes and waits, and there is one approval gate — a
 parked proposal waits for the user. Review holds today's parked proposals and explicit
 Worker help requests. A Sprint Item conversation takes no part in that: nothing starts it
 except a message from the user, and it reads the current state of its Item and Tickets

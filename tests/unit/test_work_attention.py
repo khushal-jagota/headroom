@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from pathlib import Path
 from typing import cast
 
@@ -9,10 +10,10 @@ from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.storage import ConversationStore
-from planner.core.contracts import JsonDict
+from planner.core.contracts import CHIEF_PRINCIPAL, JsonDict
 from planner.core.db import connect, create_schema
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS
+from planner.tickets.contracts import TITLE_MAX_CHARS, TicketEdit
 from planner.work_attention import add_work_attention
 
 
@@ -143,4 +144,70 @@ def test_ticket_attention_combines_ownership_proposal_and_conversation_facts(
         )
     )
     assert non_owner_row["awaiting_approval"] is False
+    conn.close()
+
+
+def _attention(conn: sqlite3.Connection, ticket_id: str, notification_type: str) -> bool:
+    row = conn.execute(
+        "SELECT active FROM notification_attention_state "
+        "WHERE subject_kind='ticket' AND subject_id=? AND notification_type=?",
+        (ticket_id, notification_type),
+    ).fetchone()
+    return row is not None and bool(row["active"])
+
+
+def test_setting_the_ceiling_re_derives_who_the_ticket_is_waiting_on(tmp_path: Path) -> None:
+    """Attention reads the ceiling holder, so an edit that moves it must recapture.
+
+    The ceiling used to have its own operation, which ended at the attention capture. It
+    is a field edit now, so the edit carries that capture itself.
+    """
+    conn = connect(str(tmp_path / "ceiling-attention.db"))
+    create_schema(conn)
+    ticket = tickets_data.create_ticket(
+        conn,
+        worker_type="coding",
+        title="Ceiling attention",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+    )
+    tickets_data.accept_proposal(
+        conn,
+        ticket.id,
+        field="kickoff",
+        principal=OWNER_PRINCIPAL,
+        now=2,
+        edited_body=None,
+        next_ceiling="needs_success",
+        next_holder=CHIEF_PRINCIPAL,
+    )
+    # Forget what the Ticket projected, so only this edit can write it back.
+    conn.execute(
+        "DELETE FROM notification_attention_state WHERE subject_kind='ticket' AND subject_id=?",
+        (ticket.id,),
+    )
+
+    edit: TicketEdit = {"ceiling": "needs_approach"}
+    edited = tickets_data.edit_ticket(
+        conn,
+        ticket.id,
+        edit=edit,
+        title_max_chars=TITLE_MAX_CHARS,
+        principal=OWNER_PRINCIPAL,
+        now=3,
+    )
+    assert edited.ceiling == "needs_approach"
+    assert edited.ceiling_holder == OWNER_PRINCIPAL
+    # The holder moved from the Chief to Khushal, and the projection says so again.
+    assert _attention(conn, ticket.id, "assigned") is False
+    assert _attention(conn, ticket.id, "awaiting_approval") is False
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) AS rows FROM notification_attention_state "
+            "WHERE subject_kind='ticket' AND subject_id=?",
+            (ticket.id,),
+        ).fetchone()["rows"]
+        > 0
+    )
     conn.close()

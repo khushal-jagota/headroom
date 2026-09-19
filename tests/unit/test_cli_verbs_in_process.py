@@ -846,3 +846,36 @@ def test_ticket_place_sends_one_coherent_placement_patch(
     assert backlog["project_id"] == "project_vylo"
     assert backlog["sprint_id"] is None
     assert backlog["sprint_item_id"] is None
+
+
+def test_the_ceiling_and_a_settled_value_are_set_like_every_other_field(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
+) -> None:
+    """One route changes a field, and the CLI reaches it the ordinary way."""
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Set the ceiling",
+        "--kickoff-note",
+        "intake",
+    )["id"]
+    cli(server, "ticket", "approve", tid, "--ceiling", "needs_success")
+
+    raised = cli(server, "ticket", "set", tid, "ceiling", "--value", "closeout")
+    assert raised["ceiling"] == "needs_closeout"
+
+    corrected = cli(
+        server,
+        "ticket",
+        "set-value",
+        tid,
+        "kickoff",
+        "--value",
+        "corrected intake",
+    )
+    assert corrected["field_values"]["kickoff"] == "corrected intake"
+    assert api.get(server, f"/api/tickets/{tid}")["stage"] == "needs_success"

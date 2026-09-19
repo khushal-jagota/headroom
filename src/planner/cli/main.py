@@ -1362,6 +1362,31 @@ def ticket_complete(
     http.emit(data, as_json, f"{data['id']} {field} completed")
 
 
+@ticket.command("set-value")
+@click.argument("ticket_id")
+@click.argument("field")
+@click.option("--value", default=None, help="Set the field to this value.")
+@click.option("--body-file", default=None, help="Read field text from this file, or - for stdin.")
+@json_option
+def ticket_set_value(
+    ticket_id: str,
+    field: str,
+    value: str | None,
+    body_file: str | None,
+    as_json: bool,
+) -> None:
+    """Correct a value the Ticket has already passed."""
+    body = read_value_or_file(value, body_file, False, as_json, field)
+    data = http.send(
+        "PATCH",
+        f"/api/tickets/{ticket_id}",
+        as_json=as_json,
+        json_body={"field_values": {field: body}},
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, f"{data['id']} {field} set")
+
+
 @ticket.command("place")
 @click.argument("ticket_id")
 @click.option("--project", default=None, help="Project name.")

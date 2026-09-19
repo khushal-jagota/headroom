@@ -153,8 +153,7 @@ TICKET = {
   "ticket_status": "awaiting_approval", "conversation_id": None,
   "conversation_history": [], "verdict": None, "trouble_notes": [],
   "guidance": "", "field_values": {},
-  "pending_proposal": {"field": "implementation", "body": "Done", "proposed_by": "worker", "created_at": 1},
-  "archived_field_content": ""
+  "pending_proposal": {"field": "implementation", "body": "Done", "proposed_by": "worker", "created_at": 1}
 }
 
 with sync_playwright() as playwright:

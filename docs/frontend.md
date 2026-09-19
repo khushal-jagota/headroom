@@ -162,8 +162,7 @@ One screen per part of the system:
   The section stays absent when no trouble was recorded.
 
   The stages and their workflow remain the Ticket's Worker type's, derived from the
-  served manifest (see below and `worker-types.md`). Guidance and the archive stay off
-  this page. Review still shows Guidance with an approval. The current Stage mark speaks without a second status pill.
+  served manifest (see below and `worker-types.md`). Guidance stays off this page. Review still shows Guidance with an approval. The current Stage mark speaks without a second status pill.
   Its summary adds **awaiting approval** for a parked proposal. Running,
   completed, and upcoming marks need no
   extra label. Stage bodies, editing and approval behavior, and the worker conversation
