@@ -30,7 +30,7 @@ from planner.message_delivery.contracts import (
 @pytest.mark.parametrize(
     ("body_mode", "expected"),
     [
-        (None, MessageDeliveryMode.queue),
+        (None, MessageDeliveryMode.steer),
         ("queue", MessageDeliveryMode.queue),
         ("steer", MessageDeliveryMode.steer),
         ("send_now", MessageDeliveryMode.send_now),
