@@ -14,9 +14,8 @@ from contextlib import contextmanager
 from typing import Protocol
 
 from planner.conversation.contracts import require_conversation_backend_key
-from planner.core import links as core_links
+from planner.core import ticket_blocks
 from planner.core.contracts import (
-    LinkKind,
     Principal,
     PrincipalKind,
     Priority,
@@ -26,7 +25,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.days import data as days_data
 from planner.notifications.attention import capture_ticket_attention
-from planner.tickets import worker_context as ticket_worker_context
+from planner.tickets import revision_feedback
 from planner.tickets.contracts import (
     AtCap,
     EmployeeLaunchConfiguration,
@@ -50,7 +49,6 @@ from planner.tickets.logic import (
     resolution,
 )
 from planner.tickets.logic.decisions import Decision
-from planner.worker_context import revision_feedback
 from planner.worker_settings.service import (
     read_worker_launch_defaults_for_ticket_creation,
 )
@@ -181,9 +179,9 @@ def _validate_ticket_creation_placement(
             is None
         ):
             raise PlannerError(
-                ErrorCode.link_invalid,
-                "from_id must be an existing ticket",
-                {"from_id": blocker_ticket_id},
+                ErrorCode.ticket_block_invalid,
+                "blocking_ticket_id must be an existing ticket",
+                {"blocking_ticket_id": blocker_ticket_id},
             )
 
 
@@ -497,22 +495,23 @@ def _active_blocker_stage(stage: str) -> bool:
     return stage not in {"done", "dropped"}
 
 
-def _outgoing_block_target_ids(conn: sqlite3.Connection, ticket_id: str) -> tuple[str, ...]:
+def _blocked_ticket_ids(conn: sqlite3.Connection, ticket_id: str) -> tuple[str, ...]:
     rows = conn.execute(
-        "SELECT to_id FROM links WHERE from_id = ? AND kind = 'blocks' ORDER BY to_id",
+        "SELECT blocked_ticket_id FROM ticket_blocks "
+        "WHERE blocking_ticket_id = ? ORDER BY blocked_ticket_id",
         (ticket_id,),
     ).fetchall()
-    return tuple(str(row["to_id"]) for row in rows)
+    return tuple(str(row["blocked_ticket_id"]) for row in rows)
 
 
 def _has_live_blocker(conn: sqlite3.Connection, ticket_id: str) -> bool:
-    """Whether a blocks link into this Ticket has a source that is not done or dropped."""
+    """Return whether an active Ticket blocks this Ticket."""
     return (
         conn.execute(
-            "SELECT 1 FROM links "
-            "JOIN tickets source ON source.id = links.from_id "
-            "WHERE links.kind = 'blocks' AND links.to_id = ? "
-            "AND source.stage NOT IN ('done', 'dropped') LIMIT 1",
+            "SELECT 1 FROM ticket_blocks "
+            "JOIN tickets blocker ON blocker.id = ticket_blocks.blocking_ticket_id "
+            "WHERE ticket_blocks.blocked_ticket_id = ? "
+            "AND blocker.stage NOT IN ('done', 'dropped') LIMIT 1",
             (ticket_id,),
         ).fetchone()
         is not None
@@ -534,7 +533,7 @@ def _blocked_standin(
 def settle_blocked_standin(conn: sqlite3.Connection, ticket_id: str, now: int) -> None:
     """Re-derive one resting Ticket's empty/blocked stand-in after its blockers changed.
 
-    The single transition writer for the link-driven pair. A no-op unless the Ticket is
+    The single transition writer for the blocker-driven pair. A no-op unless the Ticket is
     currently resting at `empty` or `blocked` — every other status owns itself — and it
     writes only when the value actually changes, so a Ticket that stays blocked because
     another live blocker remains writes nothing.
@@ -551,27 +550,24 @@ def settle_blocked_standin(conn: sqlite3.Connection, ticket_id: str, now: int) -
     _write_ticket_status(conn, ticket_id, target, now)
 
 
-def settle_blocked_standin_for_link_target(
-    conn: sqlite3.Connection, target_id: str, now: int
+def settle_blocked_standin_for_ticket(
+    conn: sqlite3.Connection, blocked_ticket_id: str, now: int
 ) -> None:
-    """Settle a blocks-link target. Targets may be Tickets or sprint items; only a
-    Ticket carries a ticket status, so a sprint-item target is skipped."""
-    if target_id.split("_", 1)[0] != ID_PREFIXES["ticket"]:
-        return
-    settle_blocked_standin(conn, target_id, now)
+    settle_blocked_standin(conn, blocked_ticket_id, now)
 
 
-def _release_outgoing_blocks_links(
-    conn: sqlite3.Connection, ticket_id: str, target_ids: tuple[str, ...], now: int
+def _release_ticket_blocks(
+    conn: sqlite3.Connection, ticket_id: str, blocked_ticket_ids: tuple[str, ...], now: int
 ) -> None:
-    """A completing Ticket drops the blocks links it holds and frees each named target."""
-    for target_id in target_ids:
+    """Remove a completed Ticket's blocks and settle each blocked Ticket."""
+    for blocked_ticket_id in blocked_ticket_ids:
         conn.execute(
-            "DELETE FROM links WHERE from_id = ? AND to_id = ? AND kind = ?",
-            (ticket_id, target_id, LinkKind.blocks.value),
+            "DELETE FROM ticket_blocks "
+            "WHERE blocking_ticket_id = ? AND blocked_ticket_id = ?",
+            (ticket_id, blocked_ticket_id),
         )
-    for target_id in target_ids:
-        settle_blocked_standin_for_link_target(conn, target_id, now)
+    for blocked_ticket_id in blocked_ticket_ids:
+        settle_blocked_standin_for_ticket(conn, blocked_ticket_id, now)
 
 
 def _apply_decision(
@@ -593,16 +589,21 @@ def _apply_decision(
     )
     active_before = _active_blocker_stage(ticket.stage)
     active_after = _active_blocker_stage(new_stage)
-    affected_blocked_target_ids: tuple[str, ...] = ()
+    affected_blocked_ticket_ids: tuple[str, ...] = ()
     if active_before != active_after:
-        affected_blocked_target_ids = _outgoing_block_target_ids(conn, ticket.id)
+        affected_blocked_ticket_ids = _blocked_ticket_ids(conn, ticket.id)
         if active_after:
-            for target_id in affected_blocked_target_ids:
-                if core_links.would_create_active_blocks_cycle(conn, ticket.id, target_id):
+            for blocked_ticket_id in affected_blocked_ticket_ids:
+                if ticket_blocks.would_create_active_ticket_block_cycle(
+                    conn, ticket.id, blocked_ticket_id
+                ):
                     raise PlannerError(
-                        ErrorCode.link_cycle,
-                        "ticket stage change would activate a blocks cycle",
-                        {"ticket_id": ticket.id, "to_id": target_id},
+                        ErrorCode.ticket_block_cycle,
+                        "ticket stage change would activate a Ticket block cycle",
+                        {
+                            "blocking_ticket_id": ticket.id,
+                            "blocked_ticket_id": blocked_ticket_id,
+                        },
                     )
     conn.execute(
         "UPDATE tickets SET field_values = ?, pending_proposal = ?, archived_field_content = ?, "
@@ -627,14 +628,10 @@ def _apply_decision(
         revision_feedback.discard(conn, ticket.id)
     if active_before != active_after:
         if active_after:
-            # Reopened out of done: the links this Ticket still holds block again, so
-            # each target re-derives its stand-in against the now-live source.
-            for target_id in affected_blocked_target_ids:
-                settle_blocked_standin_for_link_target(conn, target_id, now)
+            for blocked_ticket_id in affected_blocked_ticket_ids:
+                settle_blocked_standin_for_ticket(conn, blocked_ticket_id, now)
         else:
-            # Completed into done/dropped: drop the blocks links this Ticket holds and
-            # rewrite each named target's status in this same transaction.
-            _release_outgoing_blocks_links(conn, ticket.id, affected_blocked_target_ids, now)
+            _release_ticket_blocks(conn, ticket.id, affected_blocked_ticket_ids, now)
     capture_ticket_attention(conn, ticket.id, now)
     return _load_ticket(conn, ticket.id)
 
@@ -1066,7 +1063,7 @@ def create_ticket(
         if day_id is not None:
             days_data.add_day_ticket(conn, day_id, ticket_id, now)
         for blocker_ticket_id in blocked_by_ticket_ids or []:
-            core_links.add_link(conn, blocker_ticket_id, ticket_id, LinkKind.blocks, now)
+            ticket_blocks.add_ticket_block(conn, blocker_ticket_id, ticket_id, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1340,8 +1337,6 @@ def accept_proposal(
             worker_type_definition=worker_type_definition,
         )
         updated = _apply_decision(conn, ticket, decision, now)
-        if edited_body is not None:
-            ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         if decision.stage != ticket.stage:
             _write_entered_stage_ticket_status(
                 conn,
@@ -1374,7 +1369,6 @@ def edit_pending_proposal(
             ticket, field, new_body, principal, worker_type_definition=definition
         )
         updated = _apply_decision(conn, ticket, decision, now)
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return updated
 
 
@@ -1399,7 +1393,6 @@ def edit_field_value(
             worker_type_definition=worker_type_definition,
         )
         updated = _apply_decision(conn, ticket, decision, now)
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         if decision.stage != ticket.stage:
             _write_entered_stage_ticket_status(
                 conn,
@@ -1563,16 +1556,21 @@ def delete_ticket(
                 (ticket_id,),
             ).fetchall()
         )
-        link_rows = conn.execute(
-            "SELECT from_id, to_id, kind FROM links "
-            "WHERE from_id = ? OR to_id = ? ORDER BY from_id, to_id, kind",
+        ticket_block_rows = conn.execute(
+            "SELECT blocking_ticket_id, blocked_ticket_id FROM ticket_blocks "
+            "WHERE blocking_ticket_id = ? OR blocked_ticket_id = ? "
+            "ORDER BY blocking_ticket_id, blocked_ticket_id",
             (ticket_id, ticket_id),
         ).fetchall()
-        linked_entity_ids = tuple(
+        linked_ticket_ids = tuple(
             sorted(
                 {
-                    str(row["to_id"] if row["from_id"] == ticket_id else row["from_id"])
-                    for row in link_rows
+                    str(
+                        row["blocked_ticket_id"]
+                        if row["blocking_ticket_id"] == ticket_id
+                        else row["blocking_ticket_id"]
+                    )
+                    for row in ticket_block_rows
                 }
             )
         )
@@ -1580,26 +1578,17 @@ def delete_ticket(
         effective_sprint_id = ticket.effective_sprint_id
         sprint_ids = (effective_sprint_id,) if effective_sprint_id is not None else ()
 
-        conn.execute(
-            "DELETE FROM pending_worker_context WHERE worker_entity_id = ?",
-            (ticket_id,),
-        )
-
         for day_id in day_ids:
             days_data.remove_day_ticket(conn, day_id, ticket_id, now)
-        for row in link_rows:
-            from_id = str(row["from_id"])
-            to_id = str(row["to_id"])
-            kind = str(row["kind"])
+        for row in ticket_block_rows:
             conn.execute(
-                "DELETE FROM links WHERE from_id = ? AND to_id = ? AND kind = ?",
-                (from_id, to_id, kind),
+                "DELETE FROM ticket_blocks "
+                "WHERE blocking_ticket_id = ? AND blocked_ticket_id = ?",
+                (str(row["blocking_ticket_id"]), str(row["blocked_ticket_id"])),
             )
-        # The deleted Ticket held those blocks links; every target it named re-derives
-        # its stand-in now that they are gone.
-        for row in link_rows:
-            if str(row["from_id"]) == ticket_id and str(row["kind"]) == LinkKind.blocks.value:
-                settle_blocked_standin_for_link_target(conn, str(row["to_id"]), now)
+        for row in ticket_block_rows:
+            if str(row["blocking_ticket_id"]) == ticket_id:
+                settle_blocked_standin_for_ticket(conn, str(row["blocked_ticket_id"]), now)
 
         conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
         return TicketDeletion(
@@ -1608,7 +1597,7 @@ def delete_ticket(
             day_ids=day_ids,
             sprint_item_ids=sprint_item_ids,
             sprint_ids=sprint_ids,
-            linked_entity_ids=linked_entity_ids,
+            linked_ticket_ids=linked_ticket_ids,
         )
 
 
@@ -1641,7 +1630,6 @@ def change_scope(
             worker_type_definition=worker_type_definition,
         )
         updated = _apply_decision(conn, ticket, decision, now)
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         if ticket.ticket_status in {
             TicketStatus.empty,
             TicketStatus.blocked,
@@ -1670,7 +1658,6 @@ def replace_guidance(
             "UPDATE tickets SET guidance = ?, updated_at = ? WHERE id = ?",
             (body, now, ticket_id),
         )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1692,7 +1679,6 @@ def append_guidance(
             "UPDATE tickets SET guidance = ?, updated_at = ? WHERE id = ?",
             (guidance, now, ticket_id),
         )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1755,7 +1741,6 @@ def edit_ticket(
             f"UPDATE tickets SET {assignments}, updated_at = ? WHERE id = ?",
             (*params, now, ticket_id),
         )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1768,7 +1753,6 @@ def write_recap(
             "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?",
             (body, now, ticket_id),
         )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, principal)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1800,7 +1784,6 @@ def classify_ticket(
             "UPDATE tickets SET sprint_item_id = ?, project_id = ?, updated_at = ? WHERE id = ?",
             (sprint_item_id, str(item["project_id"]), now, ticket_id),
         )
-        ticket_worker_context.set_ticket_placement_changed(conn, ticket_id)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1837,5 +1820,4 @@ def unclassify_ticket(
             "UPDATE tickets SET sprint_item_id = NULL, updated_at = ? WHERE id = ?",
             (now, ticket_id),
         )
-        ticket_worker_context.set_ticket_placement_changed(conn, ticket_id)
         return _load_ticket_for_write(conn, ticket_id)

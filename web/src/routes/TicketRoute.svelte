@@ -314,13 +314,11 @@
 
   async function removeBlocker(blockerTicketId: string): Promise<void> {
     headerError = null;
-    const query = new URLSearchParams({
-      from_id: blockerTicketId,
-      to_id: stableId,
-      kind: "blocks"
-    });
     try {
-      await mutateJson(`/api/links?${query.toString()}`, { method: "DELETE" });
+      await mutateJson(
+        `/api/collections/blockers/${encodeURIComponent(stableId)}/${encodeURIComponent(blockerTicketId)}`,
+        { method: "DELETE" }
+      );
     } catch (err) {
       headerError = err;
     }
@@ -577,7 +575,6 @@
             bind:conversationState
             conversationId={detail.conversation_id}
             persistenceKey={`owner:ticket:${detail.id}`}
-            ticketId={detail.id}
             label={conversationWorkerTypeLabel(detail)}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
             bind:backends={conversationBackends}

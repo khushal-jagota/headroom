@@ -11,7 +11,6 @@ from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 
 from planner.core.clock import build_clock
 from planner.core.config import load_config
-from planner.core.contracts import LinkKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets import actions as tickets_actions
@@ -198,7 +197,7 @@ def test_user_completion_enters_blocked_when_a_live_blocker_exists(
             title_max_chars=200,
             kickoff_note=None,
         )
-        tickets_actions.add_link(conn, blocker.id, ticket.id, LinkKind.blocks, now=1)
+        tickets_actions.add_ticket_block(conn, blocker.id, ticket.id, now=1)
     finally:
         conn.close()
 

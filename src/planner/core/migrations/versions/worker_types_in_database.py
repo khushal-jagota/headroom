@@ -16,7 +16,7 @@ from typing import Any, Final
 from alembic import op
 
 revision = "worker_types_in_database"
-down_revision = "two_ownership_modes"
+down_revision = "drop_pending_worker_context"
 branch_labels = None
 depends_on = None
 

@@ -507,7 +507,7 @@ def test_loaded_preview_proposal_approves_without_edited_body(
         "--title",
         "Preview proposal approval",
     )["id"]
-    api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
+    api.direct_put(server, f"/api/collections/day_tickets/today/{ticket_id}", {})
     _write_ticket_files(server, ticket_id)
     body = _links(ticket_id)
     cli(

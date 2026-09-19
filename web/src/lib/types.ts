@@ -332,7 +332,7 @@ export type TicketDeletionResponse = {
   day_ids: string[];
   sprint_item_ids: string[];
   sprint_ids: string[];
-  linked_entity_ids: string[];
+  linked_ticket_ids: string[];
 };
 
 export type SprintWireBody = {

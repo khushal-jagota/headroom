@@ -8,10 +8,10 @@ from collections.abc import Callable
 from datetime import datetime
 
 from planner.conversation.contracts import ConversationSystem
-from planner.core import links as core_links
+from planner.core import ticket_blocks
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
-from planner.core.contracts import LinkKind, Principal, PrincipalKind, Priority
+from planner.core.contracts import Principal, PrincipalKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.message_delivery import service as message_delivery_service
@@ -118,23 +118,21 @@ def create_ticket(
     )
 
 
-def add_link(
+def add_ticket_block(
     conn: sqlite3.Connection,
-    from_id: str,
-    to_id: str,
-    kind: LinkKind,
+    blocking_ticket_id: str,
+    blocked_ticket_id: str,
     *,
     now: int,
     admit: Callable[[], None] | None = None,
 ) -> None:
-    """Create a link and settle the target's blocked stand-in in the same transaction."""
+    """Create a Ticket block and settle the blocked Ticket in one transaction."""
     conn.execute("BEGIN IMMEDIATE")
     try:
         if admit is not None:
             admit()
-        core_links.add_link(conn, from_id, to_id, kind, now)
-        if kind is LinkKind.blocks:
-            tickets_data.settle_blocked_standin_for_link_target(conn, to_id, now)
+        ticket_blocks.add_ticket_block(conn, blocking_ticket_id, blocked_ticket_id, now)
+        tickets_data.settle_blocked_standin_for_ticket(conn, blocked_ticket_id, now)
     except BaseException:
         conn.execute("ROLLBACK")
         raise
@@ -142,23 +140,21 @@ def add_link(
         conn.execute("COMMIT")
 
 
-def remove_link(
+def remove_ticket_block(
     conn: sqlite3.Connection,
-    from_id: str,
-    to_id: str,
-    kind: LinkKind,
+    blocking_ticket_id: str,
+    blocked_ticket_id: str,
     *,
     now: int,
     admit: Callable[[], None] | None = None,
 ) -> None:
-    """Delete a link and settle the target's blocked stand-in in the same transaction."""
+    """Remove a Ticket block and settle the blocked Ticket in one transaction."""
     conn.execute("BEGIN IMMEDIATE")
     try:
         if admit is not None:
             admit()
-        core_links.remove_link(conn, from_id, to_id, kind, now)
-        if kind is LinkKind.blocks:
-            tickets_data.settle_blocked_standin_for_link_target(conn, to_id, now)
+        ticket_blocks.remove_ticket_block(conn, blocking_ticket_id, blocked_ticket_id, now)
+        tickets_data.settle_blocked_standin_for_ticket(conn, blocked_ticket_id, now)
     except BaseException:
         conn.execute("ROLLBACK")
         raise

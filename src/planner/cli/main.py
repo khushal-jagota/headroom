@@ -287,8 +287,6 @@ def _sprint_item_record(
         "priority",
         "deadline",
         "kind",
-        "blocked_by",
-        "blockers_cleared",
     )
     return (
         {key: data[key] for key in header_keys if key in data},
@@ -1120,13 +1118,12 @@ def day_set(
 @json_option
 def day_add_ticket(ticket_id: str, date_: str, as_json: bool) -> None:
     data = http.send(
-        "POST",
-        f"/api/day/{date_}/tickets",
+        "PUT",
+        f"/api/collections/day_tickets/{date_}/{ticket_id}",
         as_json=as_json,
-        json_body={"ticket_id": ticket_id},
         request_actor="ordinary",
     )
-    http.emit(data, as_json, f"day {data['id']}: {len(data['tickets'])} ticket(s)")
+    http.emit(data, as_json, f"{ticket_id} added to {data['container_id']}")
 
 
 @day.command("remove-ticket")
@@ -1136,11 +1133,11 @@ def day_add_ticket(ticket_id: str, date_: str, as_json: bool) -> None:
 def day_remove_ticket(ticket_id: str, date_: str, as_json: bool) -> None:
     data = http.send(
         "DELETE",
-        f"/api/day/{date_}/tickets/{ticket_id}",
+        f"/api/collections/day_tickets/{date_}/{ticket_id}",
         as_json=as_json,
         request_actor="ordinary",
     )
-    http.emit(data, as_json, f"day {data['id']}: {len(data['tickets'])} ticket(s)")
+    http.emit(data, as_json, f"{ticket_id} removed from {data['container_id']}")
 
 
 # --- ticket -------------------------------------------------------------------
@@ -1613,10 +1610,9 @@ def ticket_approve(
 @json_option
 def ticket_block(ticket_id: str, blocker_id: str, as_json: bool) -> None:
     data = http.send(
-        "POST",
-        "/api/links",
+        "PUT",
+        f"/api/collections/blockers/{ticket_id}/{blocker_id}",
         as_json=as_json,
-        json_body={"from_id": blocker_id, "to_id": ticket_id, "kind": "blocks"},
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} blocked by {blocker_id}")
@@ -1629,9 +1625,8 @@ def ticket_block(ticket_id: str, blocker_id: str, as_json: bool) -> None:
 def ticket_unblock(ticket_id: str, blocker_id: str, as_json: bool) -> None:
     data = http.send(
         "DELETE",
-        "/api/links",
+        f"/api/collections/blockers/{ticket_id}/{blocker_id}",
         as_json=as_json,
-        params={"from_id": blocker_id, "to_id": ticket_id, "kind": "blocks"},
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} unblocked from {blocker_id}")
@@ -1924,7 +1919,7 @@ def sprint_item_set(
 def sprint_item_add_ticket(item_id: str, ticket_id: str, as_json: bool) -> None:
     data = http.send(
         "PUT",
-        f"/api/items/{item_id}/tickets/{ticket_id}",
+        f"/api/collections/outcome_tickets/{item_id}/{ticket_id}",
         as_json=as_json,
         request_actor="ordinary",
     )
@@ -1938,41 +1933,11 @@ def sprint_item_add_ticket(item_id: str, ticket_id: str, as_json: bool) -> None:
 def sprint_item_remove_ticket(item_id: str, ticket_id: str, as_json: bool) -> None:
     data = http.send(
         "DELETE",
-        f"/api/items/{item_id}/tickets/{ticket_id}",
+        f"/api/collections/outcome_tickets/{item_id}/{ticket_id}",
         as_json=as_json,
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} removed from {item_id}")
-
-
-@sprint_item.command("block")
-@click.argument("item_id")
-@click.option("--by", "blocker_id", required=True, help="Blocking ticket id.")
-@json_option
-def sprint_item_block(item_id: str, blocker_id: str, as_json: bool) -> None:
-    data = http.send(
-        "POST",
-        "/api/links",
-        as_json=as_json,
-        json_body={"from_id": blocker_id, "to_id": item_id, "kind": "blocks"},
-        request_actor="ordinary",
-    )
-    http.emit(data, as_json, f"{item_id} blocked by {blocker_id}")
-
-
-@sprint_item.command("unblock")
-@click.argument("item_id")
-@click.option("--by", "blocker_id", required=True, help="Blocking ticket id.")
-@json_option
-def sprint_item_unblock(item_id: str, blocker_id: str, as_json: bool) -> None:
-    data = http.send(
-        "DELETE",
-        "/api/links",
-        as_json=as_json,
-        params={"from_id": blocker_id, "to_id": item_id, "kind": "blocks"},
-        request_actor="ordinary",
-    )
-    http.emit(data, as_json, f"{item_id} unblocked from {blocker_id}")
 
 
 @sprint_item.group("supervisor")
@@ -2206,67 +2171,6 @@ def sprint_item_supervisor_scope(
         json_body={"ceiling": ceiling, "at_cap": at_cap},
     )
     http.emit(data, as_json, f"{ticket_id} scope set")
-
-
-def _supervisor_day_membership(
-    method: str, item_id: str, ticket_id: str, date_: str, as_json: bool
-) -> None:
-    data = http.send(
-        method,
-        f"/api/items/{item_id}/supervisor/days/{date_}/tickets/{ticket_id}",
-        as_json=as_json,
-    )
-    http.emit(data, as_json, f"{ticket_id} Day membership changed")
-
-
-@sprint_item_supervisor.command("add-to-day")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@click.option("--date", "date_", default="today")
-@json_option
-def sprint_item_supervisor_add_to_day(
-    item_id: str, ticket_id: str, date_: str, as_json: bool
-) -> None:
-    _supervisor_day_membership("POST", item_id, ticket_id, date_, as_json)
-
-
-@sprint_item_supervisor.command("remove-from-day")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@click.option("--date", "date_", default="today")
-@json_option
-def sprint_item_supervisor_remove_from_day(
-    item_id: str, ticket_id: str, date_: str, as_json: bool
-) -> None:
-    _supervisor_day_membership("DELETE", item_id, ticket_id, date_, as_json)
-
-
-def _supervisor_block(method: str, item_id: str, from_id: str, to_id: str, as_json: bool) -> None:
-    kwargs: dict[str, Any] = {"as_json": as_json}
-    if method == "POST":
-        kwargs["json_body"] = {"from_id": from_id, "to_id": to_id}
-    else:
-        kwargs["params"] = {"from_id": from_id, "to_id": to_id}
-    data = http.send(method, f"/api/items/{item_id}/supervisor/blocks", **kwargs)
-    http.emit(data, as_json, f"{from_id} blocks {to_id}: {method.lower()}")
-
-
-@sprint_item_supervisor.command("block")
-@click.argument("item_id")
-@click.option("--from-ticket", "from_id", required=True)
-@click.option("--to", "to_id", required=True)
-@json_option
-def sprint_item_supervisor_block(item_id: str, from_id: str, to_id: str, as_json: bool) -> None:
-    _supervisor_block("POST", item_id, from_id, to_id, as_json)
-
-
-@sprint_item_supervisor.command("unblock")
-@click.argument("item_id")
-@click.option("--from-ticket", "from_id", required=True)
-@click.option("--to", "to_id", required=True)
-@json_option
-def sprint_item_supervisor_unblock(item_id: str, from_id: str, to_id: str, as_json: bool) -> None:
-    _supervisor_block("DELETE", item_id, from_id, to_id, as_json)
 
 
 @sprint_item_supervisor.command("artifact-list")
@@ -2591,7 +2495,7 @@ def _commit_outcome(method: str, sprint_id: str, outcome_id: str, as_json: bool)
         http.fail_validation("a commitment requires a Sprint", as_json)
     result = http.send(
         method,
-        f"/api/sprints/{sid}/outcomes/{outcome_id}",
+        f"/api/collections/sprint_outcomes/{sid}/{outcome_id}",
         as_json=as_json,
         request_actor="ordinary",
     )

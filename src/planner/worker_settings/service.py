@@ -50,16 +50,6 @@ CHIEF_LABEL: Final = "Chief of Staff"
 CHIEF_SKILL_NAME: Final = "panels-chief-of-staff"
 
 
-def database_parent_from_connection(conn: sqlite3.Connection) -> Path | None:
-    row = conn.execute("PRAGMA database_list").fetchone()
-    if row is None:
-        return None
-    path = str(row["file"] if isinstance(row, sqlite3.Row) else row[2])
-    if not path:
-        return None
-    return Path(path).expanduser().parent
-
-
 @contextmanager
 def _one_writer(conn: sqlite3.Connection) -> Iterator[None]:
     """Hold the write lock across a read-modify-write, so two edits cannot lose one.

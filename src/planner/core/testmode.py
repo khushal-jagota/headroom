@@ -55,7 +55,6 @@ def build_test_router(config: Config, clock: Clock) -> APIRouter:
             ticket_id,
             connect_database=request.app.state.conn_factory,
             conversation_system=request.app.state.conversation_system,
-            worker_context_service=request.app.state.worker_context_service,
             worker_type_registry=configured_worker_type_registry(),
             planning_day_id_resolver=lambda: resolve_day_id(
                 "today", clock.now(), config.boundary_hour

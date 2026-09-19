@@ -124,7 +124,7 @@ direct user ─────► user-owned Ticket gate                    change 
         </details>
         <details>
           <summary><span class="number">05</span><span><b>Worker orchestration</b><span>Decide, claim once, and send the Stage instruction.</span></span></summary>
-          <div class="body"><p>One read-only decision checks today's Ticket, Stage, ownership, status, proposal, scope, Closeout lane, and conversation activity. One guarded status flip is the claim. Started and queued sends succeed. Nothing watches the turn end.</p><p class="paths"><code>src/planner/runtime/</code> · <code>src/planner/worker_context/</code></p></div>
+          <div class="body"><p>One read-only decision checks today's Ticket, Stage, ownership, status, proposal, scope, Closeout lane, and conversation activity. One guarded status flip is the claim. The worker opener has one ordered list of Ticket inputs. Started and queued sends succeed. Nothing watches the turn end.</p><p class="paths"><code>src/planner/runtime/</code> · <code>src/planner/tickets/revision_feedback.py</code></p></div>
         </details>
         <details>
           <summary><span class="number">06</span><span><b>Conversation system</b><span>One durable notebook and one live agent per active conversation.</span></span></summary>

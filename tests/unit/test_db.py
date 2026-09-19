@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from alembic import command
 
 from planner.core import db as db_module
 from planner.core.db import (
@@ -42,7 +43,7 @@ RESHAPE_REVISION = "ticket_status_reshape"
 HEAD_REVISION = "worker_types_in_database"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
-CURRENT_SCHEMA_OBJECT_COUNT = 63
+CURRENT_SCHEMA_OBJECT_COUNT = 62
 
 # The five statuses this build ends on, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
@@ -191,6 +192,15 @@ def _build_pre_alembic_database(path: Path, *, schema_version: int = 37) -> None
     conn.close()
 
 
+def _build_database_at_revision(path: Path, revision: str) -> None:
+    engine = db_module._migration_engine(str(path), 5_000)
+    try:
+        with engine.begin() as connection:
+            command.upgrade(db_module._alembic_config(connection), revision)
+    finally:
+        engine.dispose()
+
+
 def _insert_ticket(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -199,8 +209,10 @@ def _insert_ticket(
     ticket_status: str = "empty",
     stage: str = "needs_kickoff",
 ) -> None:
-    legacy = "fields" in {row[1] for row in conn.execute("PRAGMA table_info(tickets)")}
+    ticket_columns = {row[1] for row in conn.execute("PRAGMA table_info(tickets)")}
+    legacy = "fields" in ticket_columns
     column = "fields" if legacy else "field_values"
+    has_alias = "alias" in ticket_columns
     field_content = json.loads(_EMPTY_CODING_FIELDS)
     if ticket_status == "awaiting_approval":
         field_content["kickoff"]["proposal"] = {
@@ -208,15 +220,18 @@ def _insert_ticket(
             "proposed_by": "human",
             "created_at": 1,
         }
+    alias_column = "alias, " if has_alias else ""
+    alias_value = "?, " if has_alias else ""
+    alias_parameters = (f"alias-{ticket_id}",) if has_alias else ()
     conn.execute(
         f"INSERT INTO tickets (id, title, worker_type, employee_backend, ceiling, {column}, "
-        "alias, ticket_status, stage, created_at, updated_at) VALUES (?, ?, 'coding', 'hermes', "
-        "'needs_success', ?, ?, ?, ?, 1, 1)",
+        f"{alias_column}ticket_status, stage, created_at, updated_at) "
+        f"VALUES (?, ?, 'coding', 'hermes', 'needs_success', ?, {alias_value}?, ?, 1, 1)",
         (
             ticket_id,
             title,
             json.dumps(field_content) if legacy else "{}",
-            f"alias-{ticket_id}",
+            *alias_parameters,
             ticket_status,
             stage,
         ),
@@ -290,6 +305,61 @@ def test_fresh_database_is_built_and_marked_at_the_current_revision(
     # Carried so a fresh database is not distinguishable from one the old ladder built.
     # An older checkout reads this marker to decide what it still has to do.
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 37
+    conn.close()
+
+
+def test_ticket_blocks_migration_fails_atomically_for_invalid_legacy_rows(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "invalid-links.db"
+    _build_database_at_revision(db_path, "proposal_delivery_failures")
+    conn = connect(str(db_path))
+    _insert_ticket(conn, "t_blocker")
+    _insert_ticket(conn, "t_blocked")
+    # The historical CHECK prevented unexpected kinds and self-links. Rebuild the
+    # table to prove that the forward migration validates data rather than trusting it.
+    conn.execute("ALTER TABLE links RENAME TO _checked_links")
+    conn.execute(
+        "CREATE TABLE links (from_id TEXT NOT NULL,to_id TEXT NOT NULL,kind TEXT NOT NULL,"
+        "PRIMARY KEY(from_id,to_id,kind))"
+    )
+    conn.execute("DROP TABLE _checked_links")
+    legacy_rows = [
+        ("t_blocker", "t_blocked", "blocks"),
+        ("t_blocker", "t_blocked", "depends_on"),
+        ("t_missing", "t_blocked", "blocks"),
+        ("t_blocker", "si_not_a_ticket", "blocks"),
+        ("t_blocker", "t_blocker", "blocks"),
+    ]
+    conn.executemany("INSERT INTO links VALUES (?, ?, ?)", legacy_rows)
+
+    with pytest.raises(RuntimeError, match="every legacy row"):
+        create_schema(conn)
+
+    assert _revision(conn) == "proposal_delivery_failures"
+    remaining_rows = [
+        tuple(row) for row in conn.execute("SELECT * FROM links ORDER BY rowid")
+    ]
+    assert remaining_rows == legacy_rows
+    assert conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ticket_blocks'"
+    ).fetchone() is None
+    conn.close()
+
+
+def test_ticket_blocks_schema_enforces_ticket_pairs(tmp_path: Path) -> None:
+    conn = connect(str(tmp_path / "ticket-blocks.db"))
+    create_schema(conn)
+    _insert_ticket(conn, "t_blocker")
+    _insert_ticket(conn, "t_blocked")
+    conn.execute("INSERT INTO ticket_blocks VALUES ('t_blocker', 't_blocked')")
+
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO ticket_blocks VALUES ('t_blocker', 't_blocked')")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO ticket_blocks VALUES ('t_blocker', 't_blocker')")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO ticket_blocks VALUES ('t_blocker', 't_missing')")
     conn.close()
 
 
@@ -409,7 +479,21 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
         ).fetchone()[0]
         == ""
     )
-    assert conn.execute("SELECT count(*) FROM links").fetchone()[0] == 4
+    assert [
+        (str(row[0]), str(row[1]))
+        for row in conn.execute(
+            "SELECT blocking_ticket_id, blocked_ticket_id FROM ticket_blocks "
+            "ORDER BY blocking_ticket_id, blocked_ticket_id"
+        )
+    ] == [
+        ("t_finished_blocker", "t_freed"),
+        ("t_live_blocker", "t_blocked"),
+        ("t_live_blocker", "t_blocked_and_done"),
+        ("t_live_blocker", "t_paired"),
+    ]
+    assert conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='links'"
+    ).fetchone() is None
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     # Every retained column, outgoing foreign key, and index survives the rebuild.
     assert _table_structure_before_status_changed_at(
@@ -793,7 +877,7 @@ def test_create_schema_has_projects_project_ids_and_default_rows(
             assert "status" not in columns
             assert "blocked_by" not in columns
             assert "status_proposal" not in columns
-    assert {
-        str(row["name"]) for row in conn.execute("PRAGMA table_info(pending_worker_context)")
-    } == {"worker_entity_id", "context_key", "text", "revision"}
+    assert conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pending_worker_context'"
+    ).fetchone() is None
     conn.close()

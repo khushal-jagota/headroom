@@ -30,10 +30,9 @@ from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
 from planner.sprints import supervisor_service
 from planner.tickets import data as tickets_data
+from planner.tickets import revision_feedback
 from planner.tickets import views as tickets_views
 from planner.tickets.contracts import TicketStatus
-from planner.worker_context import data as context_data
-from planner.worker_context import revision_feedback
 
 _OWNER_HOLDER = {"kind": "owner", "id": "owner"}
 
@@ -489,9 +488,6 @@ def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
                 "UPDATE tickets SET conversation_id = ? WHERE id = ?",
                 (conversation_id, ticket["id"]),
             )
-            context_data.set_context(
-                conn, str(ticket["id"]), "ticket_changed", "Read exact guidance."
-            )
             conn.commit()
         asyncio.run(
             app.state.conversation_system.start_conversation(
@@ -516,13 +512,11 @@ def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
 
     with connect(str(db_path)) as conn:
         after = tickets_data.read_ticket(conn, str(ticket["id"]))
-        pending_context = context_data.snapshot(conn, str(ticket["id"])).items
         feedback = revision_feedback.snapshot(conn, str(ticket["id"]))
     assert rejected.status_code == 200, rejected.text
     assert after.pending_proposal is None
     assert after.ticket_status.value == "empty"
     assert after.guidance == ""
-    assert [entry.text for entry in pending_context] == ["Read exact guidance."]
     assert feedback is not None
     assert feedback.items[0].sender.kind.value == "sprint_item"
     assert feedback.items[0].sender.id == str(item["id"])
@@ -707,6 +701,46 @@ def _child_ticket(client: TestClient, item_id: str, title: str = "Child of the I
     )
     assert created.status_code == 200, created.text
     return str(created.json()["id"])
+
+
+def test_supervisor_ticket_blocks_stay_inside_its_child_tickets(tmp_path: Path) -> None:
+    """The supervisor writes blocks through the one membership call, with its own authority."""
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client, "Owned")
+        other_item = _create_item(client, "Other")
+        blocker_id = _child_ticket(client, str(item["id"]), "Blocker")
+        blocked_id = _child_ticket(client, str(item["id"]), "Blocked")
+        outsider_id = _child_ticket(client, str(other_item["id"]), "Outsider")
+        headers = _supervisor_headers(str(item["id"]))
+
+        added = client.put(f"/api/collections/blockers/{blocked_id}/{blocker_id}", headers=headers)
+        cross_item = client.put(
+            f"/api/collections/blockers/{outsider_id}/{blocker_id}", headers=headers
+        )
+        removed = client.delete(
+            f"/api/collections/blockers/{blocked_id}/{blocker_id}", headers=headers
+        )
+
+    assert added.status_code == 200, added.text
+    assert added.json() == {
+        "collection": "blockers",
+        "container_id": blocked_id,
+        "member_id": blocker_id,
+        "ok": True,
+    }
+    assert cross_item.status_code == 400
+    assert cross_item.json()["error"]["code"] == "agent_forbidden"
+    assert removed.status_code == 200, removed.text
+    with connect(str(db_path)) as conn:
+        assert conn.execute("SELECT count(*) FROM ticket_blocks").fetchone()[0] == 0
+
+
+def test_generic_link_api_does_not_exist(tmp_path: Path) -> None:
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        assert client.post("/api/links", json={}).status_code == 404
+        assert client.delete("/api/links").status_code == 404
 
 
 # --- restarting a dead Worker -------------------------------------------------

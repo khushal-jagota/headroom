@@ -56,7 +56,7 @@ def test_pending_proposal_edits_persist_on_ticket_and_review_before_approval(
         ticket_id=ticket_id,
         stdin="Original proposal.",
     )
-    api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
+    api.direct_put(server, f"/api/collections/day_tickets/today/{ticket_id}", {})
 
     context = context_factory()
     ticket_ready = f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]'

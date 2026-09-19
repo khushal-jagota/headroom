@@ -1,4 +1,4 @@
-"""Ticket routes (§9), plus the ticket-anchored links and the ticket-centric
+"""Ticket routes (§9), plus Ticket blocks and the ticket-centric
 derived views (board, Review). Thin HTTP shells over the stage-3 writers and the
 pure read views: every handler is parse -> auth -> writer -> serialize. No route
 re-implements a domain rule.
@@ -53,7 +53,6 @@ from planner.core.config import Config
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
     JsonDict,
-    LinkKind,
     Principal,
     PrincipalKind,
     Priority,
@@ -82,7 +81,6 @@ from planner.tickets.contracts import (
     EmployeeConfigurationBody,
     EmployeeLaunchConfiguration,
     GuidanceBody,
-    LinkBody,
     PendingProposalEditBody,
     ProposeWithRecapBody,
     RecapBody,
@@ -95,7 +93,6 @@ from planner.tickets.contracts import (
     ValueEditBody,
 )
 from planner.work_attention import add_work_attention
-from planner.worker_context.contracts import WorkerContextService
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
     configured_worker_type_registry,
@@ -163,10 +160,6 @@ def get_conversation_message_files(request: Request) -> ConversationMessageFiles
     return cast(ConversationMessageFiles, message_files)
 
 
-def get_worker_context_service(request: Request) -> WorkerContextService:
-    return cast(WorkerContextService, request.app.state.worker_context_service)
-
-
 DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
@@ -174,7 +167,6 @@ Clk = Annotated[Clock, Depends(get_clock)]
 Conversations = Annotated[ConversationSystem, Depends(get_conversation_system)]
 MessageFiles = Annotated[ConversationMessageFiles, Depends(get_conversation_message_files)]
 ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_record)]
-WorkerContext = Annotated[WorkerContextService, Depends(get_worker_context_service)]
 
 
 def _ticket_detail(
@@ -231,7 +223,7 @@ async def silence_the_worker_before_deleting(
 
 @contextmanager
 def txn(conn: sqlite3.Connection) -> Iterator[None]:
-    """Wrap a NON-self-transacting writer (days/dispatch/links) so a mid-sequence
+    """Wrap a NON-self-transacting writer (days/dispatch/Ticket blocks) so a mid-sequence
     PlannerError rolls back cleanly. Never wrap a ticket/sprint writer — those open
     their own BEGIN IMMEDIATE and would raise 'transaction within a transaction'."""
     conn.execute("BEGIN IMMEDIATE")
@@ -847,7 +839,7 @@ async def delete_ticket(
         "day_ids": list(deleted.day_ids),
         "sprint_item_ids": list(deleted.sprint_item_ids),
         "sprint_ids": list(deleted.sprint_ids),
-        "linked_entity_ids": list(deleted.linked_entity_ids),
+        "linked_ticket_ids": list(deleted.linked_ticket_ids),
     }
 
 
@@ -1342,53 +1334,6 @@ async def request_help(
 @router.get("/tickets/{ticket_id}/copy-text", response_class=PlainTextResponse)
 async def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
     return tickets_views.copy_text(conn, ticket_id)
-
-
-@router.post("/links")
-async def add_link(
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    body = LinkBody(
-        from_id=body_str(raw, "from_id"),
-        to_id=body_str(raw, "to_id"),
-        kind=body_str(raw, "kind"),
-    )
-    kind = parse_enum(LinkKind, body["kind"], "kind")
-    now = clk.now_unix()
-    tickets_actions.add_link(
-        conn,
-        body["from_id"],
-        body["to_id"],
-        kind,
-        now=now,
-        admit=lambda: require_ticket_worker_write(conn, ctx),
-    )
-    return {"from_id": body["from_id"], "to_id": body["to_id"], "kind": kind.value}
-
-
-@router.delete("/links")
-async def remove_link(
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    from_id: str,
-    to_id: str,
-    kind: str,
-) -> JsonDict:
-    kind_enum = parse_enum(LinkKind, kind, "kind")
-    now = clk.now_unix()
-    tickets_actions.remove_link(
-        conn,
-        from_id,
-        to_id,
-        kind_enum,
-        now=now,
-        admit=lambda: require_ticket_worker_write(conn, ctx),
-    )
-    return {"ok": True}
 
 
 async def add_conversation_row_signals(

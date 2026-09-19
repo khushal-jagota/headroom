@@ -192,8 +192,8 @@ def _require_mutable_conversation(runtime: ConversationRuntime, conversation_id:
     """Reject writes to a Ticket's past conversation.
 
     A conversation with no Ticket association belongs to another surface, such as the
-    Chief or development pane, and remains mutable. A Ticket association makes the
-    Ticket's active pointer authoritative.
+    Chief, and remains mutable. A Ticket association makes the Ticket's active pointer
+    authoritative.
     """
     conn = connect(runtime.database_path)
     try:

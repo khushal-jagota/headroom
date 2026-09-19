@@ -20,9 +20,8 @@ from tests.support.probe import (
     uninstall_probe_registry,
 )
 
-from planner.core import links as core_links
+from planner.core import ticket_blocks
 from planner.core.clock import TestClock
-from planner.core.contracts import LinkKind
 from planner.sprints.data import create_item
 from planner.sprints.views import item_tickets
 from planner.tickets.contracts import AtCap
@@ -168,7 +167,7 @@ def test_item_tickets_carries_the_two_facts_the_status_group_rule_needs(
     assert row["gating_field"] == "kickoff"
     assert row["blocked"] is False
 
-    core_links.add_link(tmp_db, blocker.id, child.id, LinkKind.blocks, 2)
+    ticket_blocks.add_ticket_block(tmp_db, blocker.id, child.id, 2)
 
     row = item_tickets(tmp_db, item.id)[0]
     assert row["blocked"] is True
