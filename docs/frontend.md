@@ -43,9 +43,12 @@ One screen per part of the system:
 
   The Tickets view starts with three owner-attention groups in this order: Awaiting
   approval, Assigned, and Messages. A ticket appears in only its first applicable group.
-  Approval takes precedence over assignment, and assignment takes precedence over a
-  reply. Empty groups are not drawn. Every ticket outside these groups follows in the
-  existing status order, so no ticket becomes unreachable.
+  A ticket whose worker broke is named Errored before any of the three, because a broken
+  worker wants the reader more than the request it was carrying. Broken means the ticket
+  is errored, or its last turn ended failed. Otherwise approval takes precedence over
+  assignment, and assignment takes precedence over a reply. Empty groups are not drawn.
+  Every ticket outside these groups follows in the existing status order, so no ticket
+  becomes unreachable.
 
   Blocked and Done arrive shut. Every other group arrives open. A shut group is still
   its own group, with its own name and count, and

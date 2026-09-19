@@ -74,9 +74,16 @@ function workspaceRemainderGroupKey(card: BoardCard): string {
   return String(card.ticket_status);
 }
 
-// Each Ticket gets one group. Attention wins in the shared canonical order. Tickets
-// without attention retain the status group that made them reachable before.
+// Each Ticket gets one group. A broken worker leads, then attention wins in the shared
+// canonical order. Tickets without attention retain the status group that made them
+// reachable before.
+//
+// Errored is read from `agent_state`, which is the status *or* a last turn that ended
+// failed. The raw status alone cannot carry it: nothing in production writes
+// `ticket_status = 'errored'`, so a rail that grouped on the status alone named no
+// broken worker at all. The Sprint Item page reads the same fact in the same place.
 export function workspaceCardGroupKey(card: BoardCard): string {
+  if (!card.is_done && card.agent_state === "errored") return "errored";
   return primaryWorkAttention(card) ?? workspaceRemainderGroupKey(card);
 }
 
