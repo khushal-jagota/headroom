@@ -44,10 +44,6 @@ class DayPatchBody(TypedDict, total=False):       # PATCH /day/{date} — each f
     notes: str | None              # absent/null = leave unchanged
 
 
-class AddDayTicketBody(TypedDict, total=False):   # POST /day/{date}/tickets
-    ticket_id: str                 # required (default "" fails the existence guard)
-
-
 # Planning-date math (§6.1): implemented in days/logic/dates.py at stage 3.
 # Signature is the contract: planning_date(now, boundary_hour) -> calendar date of
 # (now - boundary_hour hours).

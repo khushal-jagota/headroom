@@ -11,6 +11,7 @@ import pytest
 from click.testing import CliRunner
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.probe import build_shipped_registry
 
 from planner.cli import http as cli_http
 from planner.cli.main import main as cli_main
@@ -18,7 +19,8 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
+
+SHIPPED_REGISTRY = build_shipped_registry()
 
 # --- server: the by-ticket-id worker-self route ------------------------------
 
@@ -125,7 +127,7 @@ class _RecordingSend:
     def __call__(self, method: str, path: str, **_kwargs: Any) -> Any:
         self.paths.append(path)
         if path == "/api/worker-types":
-            return {"worker_types": [PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")]}
+            return {"worker_types": [SHIPPED_REGISTRY.manifest("coding")]}
         return self._body
 
 

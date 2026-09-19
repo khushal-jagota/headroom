@@ -63,7 +63,6 @@ from planner.runtime.logic.conversation_start_resolution import (
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import Ticket
 from planner.worker_settings.service import (
-    database_parent_from_connection,
     read_chief_settings,
     read_worker_launch_defaults_for_ticket_creation,
 )
@@ -134,9 +133,7 @@ def worker_resolve(
     registry = worker_type_registry
     if registry is None:
         registry = configured_worker_type_registry()
-    launch_defaults = read_worker_launch_defaults_for_ticket_creation(
-        conn, registry, ticket.worker_type
-    )
+    launch_defaults = read_worker_launch_defaults_for_ticket_creation(registry, ticket.worker_type)
     return resolve_worker_conversation_start(
         ticket_id=ticket.id,
         worker_type_launch_defaults=ConversationStartConfiguration(
@@ -181,10 +178,7 @@ def agent_resolve(
     registry = worker_type_registry
     if registry is None:
         registry = configured_worker_type_registry()
-    database_parent = database_parent_from_connection(conn)
-    if database_parent is None:
-        raise RuntimeError("managed Chief settings need a database that lives in a folder")
-    launch_defaults = read_chief_settings(database_parent).launch_defaults
+    launch_defaults = read_chief_settings(conn).launch_defaults
     return resolve_agent_conversation_start(
         chief_launch_defaults=ConversationStartConfiguration(
             backend_key=ConversationBackendKey(launch_defaults.employee_backend),

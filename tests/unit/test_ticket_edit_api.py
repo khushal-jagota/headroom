@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 from sqlite3 import Connection
 from types import SimpleNamespace
 from typing import Any
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.principals import OWNER_PRINCIPAL
-from tests.support.probe import install_probe_registry, uninstall_probe_registry
+from tests.support.probe import seed_probe_worker_type
 
 from planner.conversation.backend_state import write_model_enablement
 from planner.conversation.contracts import ConversationBackendKey
@@ -29,13 +27,16 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     AtCap,
 )
-from planner.worker_context import data as worker_context_data
+from planner.worker_types.configuration import load_worker_runtime_definitions
 
 
 def _make_app(tmp_path: Path, *, trace: list[str] | None = None) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "planning-test.db"
     boot = connect(str(db_path))
     create_schema(boot)
+    # The probe Worker type is stored like any other, so the app reads it from here.
+    seed_probe_worker_type(boot)
+    load_worker_runtime_definitions(boot)
     boot.close()
     config = load_config(
         path=None,
@@ -104,13 +105,7 @@ def test_ticket_block_api_validates_endpoints_duplicates_and_active_cycles(
     fifth = _create_ticket(db_path, title="Fifth")
 
     def add(client: TestClient, blocking: str, blocked: str) -> Any:
-        return client.post(
-            "/api/ticket-blocks",
-            json={
-                "blocking_ticket_id": blocking,
-                "blocked_ticket_id": blocked,
-            },
-        )
+        return client.put(f"/api/collections/blockers/{blocked}/{blocking}")
 
     with TestClient(app) as client:
         missing_blocker = add(client, "t_missing", first)
@@ -138,8 +133,10 @@ def test_ticket_block_api_validates_endpoints_duplicates_and_active_cycles(
     assert self_block.status_code == 400
     assert self_block.json()["error"]["code"] == "ticket_block_invalid"
     assert created.json() == {
-        "blocking_ticket_id": first,
-        "blocked_ticket_id": second,
+        "collection": "blockers",
+        "container_id": second,
+        "member_id": first,
+        "ok": True,
     }
     assert duplicate.status_code == 400
     assert duplicate.json()["error"]["code"] == "ticket_block_invalid"
@@ -164,15 +161,6 @@ def _create_pristine_ticket(db_path: Path, *, worker_type: str = "probe") -> str
         conn.close()
 
 
-@pytest.fixture
-def probe_runtime() -> Iterator[None]:
-    install_probe_registry()
-    try:
-        yield
-    finally:
-        uninstall_probe_registry()
-
-
 def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
     conn = connect(str(db_path))
     try:
@@ -191,10 +179,6 @@ def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
                 ticket.ticket_status.value,
             ),
             "updated_at": ticket.updated_at,
-            "context": tuple(
-                (item.context_key, item.text, item.revision)
-                for item in worker_context_data.snapshot(conn, ticket_id).items
-            ),
         }
     finally:
         conn.close()
@@ -391,7 +375,6 @@ def test_planning_ticket_creation_uses_regular_placement_without_manufacturing_a
 
 def test_employee_configuration_endpoint_allows_pristine_statuses(
     tmp_path: Path,
-    probe_runtime: None,
 ) -> None:
     app, db_path = _make_app(tmp_path)
     awaiting_id = _create_pristine_ticket(db_path)
@@ -428,7 +411,6 @@ def test_employee_configuration_endpoint_allows_pristine_statuses(
 
 def test_employee_configuration_rejects_a_disabled_model_without_a_partial_write(
     tmp_path: Path,
-    probe_runtime: None,
 ) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _create_pristine_ticket(db_path)
@@ -475,7 +457,6 @@ def _backend_snapshot(
 
 def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
     tmp_path: Path,
-    probe_runtime: None,
 ) -> None:
     class BackendSnapshots:
         async def snapshot(self, backend_key: str, *, refresh: bool = False) -> BackendSnapshot:
@@ -582,13 +563,6 @@ def test_compound_patch_changes_all_fields_in_canonical_order_with_one_context_s
     assert response.json()["project_id"] == "project_vylo"
     assert response.json()["effective_sprint_id"] is None
     assert before["values"] != _snapshot(db_path, ticket_id)["values"]
-    assert _snapshot(db_path, ticket_id)["context"] == (
-        (
-            "ticket_changed",
-            "This ticket changed outside your worker turn. Reread the ticket before continuing.",
-            1,
-        ),
-    )
     transaction_statements = [statement.strip() for statement in trace]
     assert sum(statement == "BEGIN IMMEDIATE" for statement in transaction_statements) == 1
     ticket_updates = [
@@ -603,34 +577,6 @@ def test_compound_patch_changes_all_fields_in_canonical_order_with_one_context_s
         "SELECT 1 FROM PROJECTS WHERE ID" in statement.upper()
         for statement in statements_under_lock
     )
-
-
-def test_compound_patch_rolls_back_the_row_and_context_when_a_later_write_fails(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _create_ticket(db_path)
-    conn = connect(str(db_path))
-    try:
-        # The worker-context notice is written after the ticket row, inside the same
-        # transaction, so failing it proves the row write rolls back with it.
-        conn.execute(
-            "CREATE TRIGGER abort_worker_context_notice "
-            "BEFORE INSERT ON pending_worker_context "
-            "BEGIN SELECT RAISE(ABORT, 'forced worker context failure'); END"
-        )
-    finally:
-        conn.close()
-    before = _snapshot(db_path, ticket_id)
-
-    with TestClient(app, raise_server_exceptions=False) as client:
-        response = client.patch(
-            f"/api/tickets/{ticket_id}",
-            json={"title": "Must roll back", "priority": "P1"},
-        )
-
-    assert response.status_code == 500
-    assert _snapshot(db_path, ticket_id) == before
 
 
 def test_patch_of_existing_non_null_values_is_a_true_noop(tmp_path: Path) -> None:
@@ -723,4 +669,3 @@ def test_an_active_worker_does_not_block_an_ordinary_edit(
     assert response.json()["ticket_status"] == "agent"
     assert response.json()["title"] == "Edited during active work"
     assert response.json()["priority"] == "P1"
-    assert _snapshot(db_path, ticket_id)["context"][-1][2] == 1

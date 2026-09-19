@@ -25,7 +25,6 @@ from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddle
 from planner.core import change_signal
 from planner.core.clock import Clock
 from planner.core.config import HOST, Config
-from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.path_observer import observe_path_changes
 from planner.core.response_compression import (
@@ -47,6 +46,7 @@ from planner.environments.vps_status import (
 from planner.feedback.api import router as feedback_router
 from planner.files.api import router as files_router
 from planner.judgments.api import router as judgments_router
+from planner.membership.api import router as membership_router
 from planner.message_delivery.api import router as message_delivery_router
 from planner.notifications.api import router as notifications_router
 from planner.projects.api import router as projects_router
@@ -57,7 +57,6 @@ from planner.skill_versions import (
 )
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
-from planner.worker_context.service import SqliteWorkerContextService
 from planner.worker_settings.api import router as worker_settings_router
 from planner.worker_types.configuration import (
     configured_worker_runtime_definitions,
@@ -146,7 +145,7 @@ def create_app(
         audit_conn = conn_factory()
         try:
             tickets_data.audit_ticket_registry_integrity(audit_conn)
-            reconcile_managed_skill_versions(audit_conn, Path(config.db_path).expanduser().parent)
+            reconcile_managed_skill_versions(audit_conn)
             reconcile_provisional_worker_step_bindings(audit_conn)
         finally:
             audit_conn.close()
@@ -187,7 +186,6 @@ def create_app(
                 config,
                 clock,
                 conversation_system=app.state.conversation_system,
-                worker_context_service=app.state.worker_context_service,
                 asyncio_loop=asyncio.get_running_loop(),
             )
         try:
@@ -213,9 +211,6 @@ def create_app(
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory
-    app.state.worker_context_service = SqliteWorkerContextService(
-        lambda: connect(config.db_path, config.db_busy_timeout_ms)
-    )
     app.state.conversation = None
     # The conversation system is the running one, so it belongs to the lifespan that
     # starts and stops it. Outside that window there is none.
@@ -259,6 +254,7 @@ def create_app(
         feedback_router,
         worker_settings_router,
         message_delivery_router,
+        membership_router,
     ):
         include_router(domain_router, prefix="/api")
     include_router(files_router)

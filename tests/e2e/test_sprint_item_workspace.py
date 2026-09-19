@@ -84,7 +84,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
         },
     )
     committed = httpx.put(
-        f"{server.base}/api/sprints/{sprint['id']}/outcomes/{item['id']}", timeout=10.0
+        f"{server.base}/api/collections/sprint_outcomes/{sprint['id']}/{item['id']}", timeout=10.0
     )
     assert committed.status_code < 300, committed.text
     today_ticket = _post(
@@ -120,7 +120,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
         },
     )
     removed = httpx.delete(
-        f"{server.base}/api/day/today/tickets/{review_ticket['id']}", timeout=10.0
+        f"{server.base}/api/collections/day_tickets/today/{review_ticket['id']}", timeout=10.0
     )
     assert removed.status_code < 300, removed.text
     api.direct_post(

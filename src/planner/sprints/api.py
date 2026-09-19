@@ -21,12 +21,10 @@ from planner.core.authctx import (
     require_planning_write,
     require_sprint_item_supervisor_read,
     require_sprint_item_supervisor_ticket_write,
-    require_ticket_worker_write,
 )
 from planner.core.contracts import JsonDict, Principal, PrincipalKind, Priority
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days import actions as days_actions
 from planner.days.logic.dates import planning_date, resolve_day_id
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
@@ -56,7 +54,6 @@ from planner.tickets.api import (
     Ctx,
     DbConn,
     MessageFiles,
-    WorkerContext,
     _marshal_accept,
     _parse_next_ceiling,
     _parse_required_principal,
@@ -365,7 +362,6 @@ async def supervisor_restart_worker(
     cfg: Cfg,
     clk: Clk,
     conversations: Conversations,
-    worker_context: WorkerContext,
 ) -> JsonDict:
     """Start this child Ticket's worker step again, optionally on a named configuration.
 
@@ -408,7 +404,6 @@ async def supervisor_restart_worker(
             ticket_id,
             connect_database=lambda: connect(cfg.db_path, cfg.db_busy_timeout_ms),
             conversation_system=conversations,
-            worker_context_service=worker_context,
             worker_type_registry=configured_worker_type_registry(),
             planning_day_id_resolver=lambda: planning_day_id,
             now=clk.now_unix,
@@ -517,105 +512,6 @@ async def supervisor_change_ticket_scope(
         supervisor_sprint_item_id=item_id,
     )
     return tickets_views.ticket_json(ticket, clk.now_unix())
-
-
-@router.post("/items/{item_id}/supervisor/days/{date}/tickets/{ticket_id}")
-async def supervisor_add_ticket_to_day(
-    item_id: str,
-    date: str,
-    ticket_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    cfg: Cfg,
-    clk: Clk,
-) -> JsonDict:
-    day_id = resolve_day_id(date, clk.now(), cfg.boundary_hour)
-    days_actions.add_ticket_to_day(
-        conn,
-        day_id,
-        ticket_id,
-        now=clk.now_unix(),
-        admit=lambda: require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, ticket_id),
-    )
-    return {"sprint_item_id": item_id, "ticket_id": ticket_id, "day_id": day_id}
-
-
-@router.delete("/items/{item_id}/supervisor/days/{date}/tickets/{ticket_id}")
-async def supervisor_remove_ticket_from_day(
-    item_id: str,
-    date: str,
-    ticket_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    cfg: Cfg,
-    clk: Clk,
-) -> JsonDict:
-    day_id = resolve_day_id(date, clk.now(), cfg.boundary_hour)
-    days_actions.remove_ticket_from_day(
-        conn,
-        day_id,
-        ticket_id,
-        now=clk.now_unix(),
-        admit=lambda: require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, ticket_id),
-    )
-    return {"sprint_item_id": item_id, "ticket_id": ticket_id, "day_id": day_id}
-
-
-def _require_supervisor_ticket_block_scope(
-    conn: DbConn,
-    ctx: Ctx,
-    item_id: str,
-    blocking_ticket_id: str,
-    blocked_ticket_id: str,
-) -> None:
-    require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, blocking_ticket_id)
-    require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, blocked_ticket_id)
-
-
-@router.post("/items/{item_id}/supervisor/ticket-blocks")
-async def supervisor_add_ticket_block(
-    item_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    blocking_ticket_id = body_str(raw, "blocking_ticket_id")
-    blocked_ticket_id = body_str(raw, "blocked_ticket_id")
-    tickets_actions.add_ticket_block(
-        conn,
-        blocking_ticket_id,
-        blocked_ticket_id,
-        now=clk.now_unix(),
-        admit=lambda: _require_supervisor_ticket_block_scope(
-            conn, ctx, item_id, blocking_ticket_id, blocked_ticket_id
-        ),
-    )
-    return {
-        "blocking_ticket_id": blocking_ticket_id,
-        "blocked_ticket_id": blocked_ticket_id,
-    }
-
-
-@router.delete("/items/{item_id}/supervisor/ticket-blocks")
-async def supervisor_remove_ticket_block(
-    item_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    blocking_ticket_id: str,
-    blocked_ticket_id: str,
-) -> JsonDict:
-    tickets_actions.remove_ticket_block(
-        conn,
-        blocking_ticket_id,
-        blocked_ticket_id,
-        now=clk.now_unix(),
-        admit=lambda: _require_supervisor_ticket_block_scope(
-            conn, ctx, item_id, blocking_ticket_id, blocked_ticket_id
-        ),
-    )
-    return {"ok": True}
 
 
 @router.get("/items/{item_id}/supervisor/artifacts")
@@ -818,36 +714,6 @@ async def delete_item(
     }
 
 
-@router.put("/items/{item_id}/tickets/{ticket_id}")
-async def classify_item_ticket(
-    item_id: str, ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk
-) -> JsonDict:
-    ticket = tickets_data.classify_ticket(
-        conn,
-        ticket_id,
-        sprint_item_id=item_id,
-        principal=ctx.principal,
-        now=clk.now_unix(),
-        admit=lambda: require_ticket_worker_write(conn, ctx),
-    )
-    return tickets_views.ticket_json(ticket, clk.now_unix())
-
-
-@router.delete("/items/{item_id}/tickets/{ticket_id}")
-async def unclassify_item_ticket(
-    item_id: str, ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk
-) -> JsonDict:
-    ticket = tickets_data.unclassify_ticket(
-        conn,
-        ticket_id,
-        sprint_item_id=item_id,
-        principal=ctx.principal,
-        now=clk.now_unix(),
-        admit=lambda: require_ticket_worker_write(conn, ctx),
-    )
-    return tickets_views.ticket_json(ticket, clk.now_unix())
-
-
 @router.patch("/items/{item_id}")
 async def patch_item(
     item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
@@ -1019,34 +885,6 @@ async def list_ideas(
             project_id=resolved_project.id if resolved_project is not None else None,
         )
     }
-
-
-@router.put("/sprints/{sprint_id}/outcomes/{outcome_id}")
-async def add_outcome_commitment(
-    sprint_id: str, outcome_id: str, conn: DbConn, ctx: Ctx
-) -> JsonDict:
-    result = commitments.set_commitment(
-        conn,
-        sprint_id,
-        outcome_id,
-        committed=True,
-        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
-    )
-    return {"sprint_id": result.sprint_id, "outcome_id": result.outcome_id}
-
-
-@router.delete("/sprints/{sprint_id}/outcomes/{outcome_id}")
-async def remove_outcome_commitment(
-    sprint_id: str, outcome_id: str, conn: DbConn, ctx: Ctx
-) -> JsonDict:
-    result = commitments.set_commitment(
-        conn,
-        sprint_id,
-        outcome_id,
-        committed=False,
-        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
-    )
-    return {"sprint_id": result.sprint_id, "outcome_id": result.outcome_id}
 
 
 @router.post("/sprints/{source_id}/outcomes/{outcome_id}/carry")

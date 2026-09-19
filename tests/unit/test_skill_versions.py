@@ -23,7 +23,7 @@ from planner.conversation.events import (
 from planner.conversation.message_content import text_message_content
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
-from planner.skill_sources import ensure_managed_panels_skills
+from planner.managed_skills import managed_skills_home, read_skill_source, write_skill_source
 from planner.skill_versions import (
     bind_worker_step_skills,
     capture_skill_version,
@@ -112,8 +112,7 @@ def test_each_step_binds_exact_orientation_worker_and_specialist_versions(
 ) -> None:
     _, conn = _database(tmp_path)
     try:
-        root = ensure_managed_panels_skills(tmp_path)
-        bind_worker_step_skills(conn, tmp_path, "message-one", "panels-worker-coding")
+        bind_worker_step_skills(conn, "message-one", "panels-worker-coding")
         first = _binding_rows(conn, "message-one")
         assert [(row["skill_role"], row["skill_name"], row["binding_status"]) for row in first] == [
             ("orientation", "panels", "provisional"),
@@ -121,9 +120,14 @@ def test_each_step_binds_exact_orientation_worker_and_specialist_versions(
             ("specialist", "panels-worker-coding", "provisional"),
         ]
 
-        specialist_path = root / "panels-worker-coding" / "SKILL.md"
-        specialist_path.write_bytes(specialist_path.read_bytes() + b"\nnew stage guidance\n")
-        bind_worker_step_skills(conn, tmp_path, "message-two", "panels-worker-coding")
+        # The row is what a bind reads, so the change that must show up is a change to it.
+        write_skill_source(
+            conn,
+            "panels-worker-coding",
+            read_skill_source(conn, "panels-worker-coding") + "\nnew stage guidance\n",
+            now=1,
+        )
+        bind_worker_step_skills(conn, "message-two", "panels-worker-coding")
         second = _binding_rows(conn, "message-two")
         first_versions = {row["skill_role"]: bytes(row["content"]) for row in first}
         second_versions = {row["skill_role"]: bytes(row["content"]) for row in second}
@@ -140,7 +144,7 @@ def test_queued_binding_is_removed_if_its_later_outcome_did_not_run(
 ) -> None:
     db_path, conn = _database(tmp_path)
     try:
-        bind_worker_step_skills(conn, tmp_path, "queued-message", "panels-worker-coding")
+        bind_worker_step_skills(conn, "queued-message", "panels-worker-coding")
     finally:
         conn.close()
     store = ConversationStore(str(db_path), integer_now=lambda: 1)
@@ -180,22 +184,25 @@ def test_each_managed_save_path_captures_the_exact_rendered_bytes(
     registry = configured_worker_type_registry()
     try:
         worker_settings_service.save_skill(
-            tmp_path,
+            conn,
             "panels",
             {"description": "Café", "markdown_body": "# One\n\n最後\n"},
-            version_connection=conn,
+            now=1,
+            database_parent=tmp_path,
         )
         worker_settings_service.save_chief_skill(
-            tmp_path,
+            conn,
             {"description": "Chief café", "markdown_body": "# Two\n"},
-            version_connection=conn,
+            now=1,
+            database_parent=tmp_path,
         )
         worker_settings_service.save_specialist_skill(
-            tmp_path,
+            conn,
             registry,
             "coding",
             {"description": "Coder café", "markdown_body": "# Three\n\nend\n"},
-            version_connection=conn,
+            now=1,
+            database_parent=tmp_path,
         )
         for skill_name in (
             "panels",
@@ -214,34 +221,34 @@ def test_each_managed_save_path_captures_the_exact_rendered_bytes(
         conn.close()
 
 
-def test_capture_failure_restores_the_previous_skill_bytes_atomically(
+def test_owner_edit_stands_in_the_row_and_the_file_when_version_history_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _, conn = _database(tmp_path)
-    root = ensure_managed_panels_skills(tmp_path)
-    path = root / "panels" / "SKILL.md"
-    before = path.read_bytes()
-    atomic_replacements: list[bytes] = []
-    real_atomic_replace = worker_settings_service._atomic_replace_bytes
+    """The row is the authority, and it commits before the history is recorded.
 
-    def observed_atomic_replace(target: Path, content: bytes) -> None:
-        atomic_replacements.append(content)
-        real_atomic_replace(target, content)
+    So a failure recording the version history cannot take the owner's edit back: the
+    edit stands in the row, and in the copy agents read.
+    """
+    _, conn = _database(tmp_path)
+    path = managed_skills_home(tmp_path) / "panels" / "SKILL.md"
+    before = path.read_bytes()
 
     def fail_capture(*args: object, **kwargs: object) -> str:
         raise RuntimeError("database unavailable")
 
-    monkeypatch.setattr(worker_settings_service, "_atomic_replace_bytes", observed_atomic_replace)
     monkeypatch.setattr(worker_settings_service, "capture_skill_version", fail_capture)
     try:
         with pytest.raises(RuntimeError, match="database unavailable"):
             worker_settings_service.save_skill(
-                tmp_path,
+                conn,
                 "panels",
                 {"description": "changed"},
-                version_connection=conn,
+                now=1,
+                database_parent=tmp_path,
             )
-        assert path.read_bytes() == before
-        assert atomic_replacements[-1] == before
+        edited = read_skill_source(conn, "panels")
+        assert edited != before.decode("utf-8")
+        assert 'description: "changed"' in edited
+        assert path.read_bytes() == edited.encode("utf-8")
     finally:
         conn.close()

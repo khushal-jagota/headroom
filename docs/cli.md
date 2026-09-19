@@ -101,6 +101,12 @@ record shapes. Direct `show` commands also keep their full record shapes.
   more notes as used in a Ticket. The use operation is atomic. A Ticket Worker can use
   notes only in its own Ticket. A Sprint Item supervisor can use notes only in a current
   child Ticket.
+- **`worker-type show <type>`** — print one Worker type's stored record, in the shape
+  `worker-type save` takes back.
+- **`worker-type save`** — declare a Worker type, or replace the one with that id, from a
+  record on stdin. An optional `skill` block declares the specialist skill with it.
+- **`worker-type skill <type> --description "..."`** — replace that Worker type's skill
+  text, with the markdown body on stdin.
 - **`worker-type list`** — list the registered Worker type identifiers in registry
   order. Its normal output is one identifier per line; `--json` returns the complete
   served Worker-type manifest for automation. Commands that require `--worker-type`
@@ -217,14 +223,15 @@ record shapes. Direct `show` commands also keep their full record shapes.
   A worker step gets its first five minutes before it may be restarted, so a Worker that
   is merely slow is left alone. Only a Worker-owned Stage can be restarted. A user-owned
   conversation belongs to the user.
-- **`sprint item supervisor set-item / set-ticket / scope / add-to-day / remove-from-day / block / unblock`**
+- **`sprint item supervisor set-item / set-ticket / scope`**
   — use item-scoped canonical actions for the owning Item and its current child Tickets.
   `scope` takes the ceiling as either the stage name or the plain name of the field that
   stage needs. `--ceiling closeout` and `--ceiling needs_closeout` mean the same thing.
-  `block` and `unblock` use `--blocking-ticket` and `--blocked-ticket`. Both Tickets
-  must be current children of the supervisor's Item. A scope change makes that Sprint
-  Item the ceiling holder and cannot retarget a pending
+  A scope change makes that Sprint Item the ceiling holder and cannot retarget a pending
   proposal.
+- A supervisor changes Day membership and Ticket blocks with the ordinary `day add-ticket`,
+  `day remove-ticket`, `ticket block`, and `ticket unblock`. The supervisor identity
+  carries the authority, so the server still holds it to its own current child Tickets.
 - A supervisor creates a child Ticket with ordinary `ticket create --sprint-item`,
   the same command every other actor uses, and that Ticket is scoped like any other.
 - **`ticket create --ceiling / --at-cap`** — state the new Ticket's scope at creation.

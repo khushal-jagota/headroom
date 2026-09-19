@@ -40,10 +40,10 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "ticket_blocks"
+HEAD_REVISION = "worker_types_in_database"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
-CURRENT_SCHEMA_OBJECT_COUNT = 60
+CURRENT_SCHEMA_OBJECT_COUNT = 62
 
 # The five statuses this build ends on, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
@@ -877,7 +877,7 @@ def test_create_schema_has_projects_project_ids_and_default_rows(
             assert "status" not in columns
             assert "blocked_by" not in columns
             assert "status_proposal" not in columns
-    assert {
-        str(row["name"]) for row in conn.execute("PRAGMA table_info(pending_worker_context)")
-    } == {"worker_entity_id", "context_key", "text", "revision"}
+    assert conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pending_worker_context'"
+    ).fetchone() is None
     conn.close()

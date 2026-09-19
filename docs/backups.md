@@ -24,8 +24,10 @@ managed root exists — a `files/` directory holding a copy of each captured roo
 the database checksum, the format, the list of captured managed roots with the manifest's
 checksum, and the fact that verification passed.
 
-The managed-file tree includes **ticket files** (`files/`), **worker-settings**
-(`worker-settings/`), and canonical Panels **skills** (`skills/`) beside the database.
+The managed-file tree includes **ticket files** (`files/`) and the Panels **skills**
+(`skills/`) beside the database. The skills there are copies Panels writes from the
+database, so the database is what actually has to be restored; the copies are rebuilt
+from it whenever it is opened.
 The user's normal Hermes, Codex, and Claude homes only link to that authority; backup
 does not capture or replace unrelated user-installed skills. The managed skills root is
 captured only once it exists; until then its absence is normal, not a failure.

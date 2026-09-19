@@ -29,7 +29,6 @@ from planner.sprints.logic import (
     DateRange,
     find_overlap,
 )
-from planner.tickets import worker_context as ticket_worker_context
 from planner.tickets.logic import admission
 
 
@@ -122,14 +121,6 @@ def _load_sprint(conn: sqlite3.Connection, sprint_id: str) -> Sprint:
     if row is None:
         raise PlannerError(ErrorCode.not_found, "sprint not found", {"id": sprint_id})
     return _row_to_sprint(row)
-
-
-def _set_child_ticket_placement_changed(conn: sqlite3.Connection, item_id: str) -> None:
-    rows = conn.execute(
-        "SELECT id FROM tickets WHERE sprint_item_id = ? ORDER BY id", (item_id,)
-    ).fetchall()
-    for row in rows:
-        ticket_worker_context.set_ticket_placement_changed(conn, str(row["id"]))
 
 
 def _load_item(conn: sqlite3.Connection, item_id: str) -> SprintItem:
@@ -502,7 +493,6 @@ def update_item_field(
                 "WHERE sprint_item_id = ?",
                 (stored, now, item_id),
             )
-            _set_child_ticket_placement_changed(conn, item_id)
     return _load_item(conn, item_id)
 
 
@@ -567,7 +557,6 @@ def update_item(
                     "WHERE sprint_item_id = ?",
                     (item.project_id, now, item_id),
                 )
-                _set_child_ticket_placement_changed(conn, item_id)
     return _load_item(conn, item_id)
 
 

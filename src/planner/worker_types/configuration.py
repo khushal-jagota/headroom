@@ -1,64 +1,19 @@
-"""Production composition and the explicit Worker-type registry test seam."""
+"""The Worker types this process is running, loaded from the database it opened.
+
+Nearly a hundred places ask what a Worker type is, most of them far from a connection,
+so the answer is held here for the process rather than passed down to every caller. It is
+loaded when a database is opened and again whenever a type is written, which are the only
+two moments it can change.
+"""
 
 from __future__ import annotations
 
+import sqlite3
+import threading
 from dataclasses import dataclass
 
-from planner.worker_types.amend_worker import AMEND_WORKER_TYPE_DEFINITION
-from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.contracts import WorkerTypeDefinition
-from planner.worker_types.debugging import DEBUGGING_WORKER_TYPE_DEFINITION
-from planner.worker_types.exploration import EXPLORATION_WORKER_TYPE_DEFINITION
-from planner.worker_types.general import GENERAL_WORKER_TYPE_DEFINITION
-from planner.worker_types.initiative_planning import INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION
-from planner.worker_types.initiative_review import INITIATIVE_REVIEW_WORKER_TYPE_DEFINITION
-from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
-from planner.worker_types.personal import PERSONAL_TASK_WORKER_TYPE_DEFINITION
-from planner.worker_types.planning_day import PLANNING_DAY_WORKER_TYPE_DEFINITION
-from planner.worker_types.planning_midday_check import (
-    PLANNING_MIDDAY_CHECK_WORKER_TYPE_DEFINITION,
-)
-from planner.worker_types.planning_sprint import PLANNING_SPRINT_WORKER_TYPE_DEFINITION
-from planner.worker_types.product_design import PRODUCT_DESIGN_WORKER_TYPE_DEFINITION
-from planner.worker_types.registry import WorkerTypeRegistry
-from planner.worker_types.research import RESEARCH_WORKER_TYPE_DEFINITION
-
-_KNOWN_SKILLS = frozenset(
-    {
-        "panels-worker",
-        "panels-worker-coding",
-        "panels-worker-general",
-        "panels-worker-debugging",
-        "panels-worker-new-worker",
-        "panels-worker-amend-worker",
-        "panels-worker-exploration",
-        "panels-worker-initiative-planning",
-        "panels-worker-initiative-review",
-        "panels-worker-product-design",
-        "panels-worker-planning-day",
-        "panels-worker-planning-midday-check",
-        "panels-worker-planning-sprint",
-        "panels-worker-personal-task",
-        "panels-worker-research",
-    }
-)
-_KNOWN_TOOLSET_PROFILES = frozenset({"default"})
-_PRODUCTION_WORKER_TYPE_DEFINITIONS = (
-    CODING_WORKER_TYPE_DEFINITION,
-    GENERAL_WORKER_TYPE_DEFINITION,
-    DEBUGGING_WORKER_TYPE_DEFINITION,
-    NEW_WORKER_TYPE_DEFINITION,
-    AMEND_WORKER_TYPE_DEFINITION,
-    EXPLORATION_WORKER_TYPE_DEFINITION,
-    INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION,
-    INITIATIVE_REVIEW_WORKER_TYPE_DEFINITION,
-    PRODUCT_DESIGN_WORKER_TYPE_DEFINITION,
-    PLANNING_DAY_WORKER_TYPE_DEFINITION,
-    PLANNING_MIDDAY_CHECK_WORKER_TYPE_DEFINITION,
-    PLANNING_SPRINT_WORKER_TYPE_DEFINITION,
-    PERSONAL_TASK_WORKER_TYPE_DEFINITION,
-    RESEARCH_WORKER_TYPE_DEFINITION,
-)
+from planner.worker_types.registry import KNOWN_TOOLSET_PROFILES, WorkerTypeRegistry
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,11 +23,9 @@ class ConfiguredWorkerRuntimeDefinitions:
 
 def build_worker_runtime_definitions(
     *,
-    worker_type_definitions: tuple[WorkerTypeDefinition, ...] = (
-        _PRODUCTION_WORKER_TYPE_DEFINITIONS
-    ),
-    known_skills: frozenset[str] = _KNOWN_SKILLS,
-    known_toolset_profiles: frozenset[str] = _KNOWN_TOOLSET_PROFILES,
+    worker_type_definitions: tuple[WorkerTypeDefinition, ...],
+    known_skills: frozenset[str],
+    known_toolset_profiles: frozenset[str] = KNOWN_TOOLSET_PROFILES,
 ) -> ConfiguredWorkerRuntimeDefinitions:
     registry = WorkerTypeRegistry(
         worker_type_definitions,
@@ -82,10 +35,30 @@ def build_worker_runtime_definitions(
     return ConfiguredWorkerRuntimeDefinitions(registry)
 
 
-PRODUCTION_WORKER_RUNTIME_DEFINITIONS = build_worker_runtime_definitions()
-PRODUCTION_WORKER_TYPE_REGISTRY = PRODUCTION_WORKER_RUNTIME_DEFINITIONS.worker_type_registry
+_EMPTY_DEFINITIONS = ConfiguredWorkerRuntimeDefinitions(
+    WorkerTypeRegistry((), known_skills=frozenset(), known_toolset_profiles=frozenset())
+)
+_GUARD = threading.Lock()
+_configured_worker_runtime_definitions = _EMPTY_DEFINITIONS
 
-_configured_worker_runtime_definitions = PRODUCTION_WORKER_RUNTIME_DEFINITIONS
+
+def load_worker_runtime_definitions(conn: sqlite3.Connection) -> ConfiguredWorkerRuntimeDefinitions:
+    """Read the Worker types out of this database and make them the ones in force."""
+    # Imported here because the store reads the registry's rules, and this module is what
+    # the rest of the application asks for a registry.
+    from planner.managed_skills import skill_names
+    from planner.worker_types.store import read_definitions, worker_types_table_exists
+
+    if not worker_types_table_exists(conn):
+        return configured_worker_runtime_definitions()
+    definitions = build_worker_runtime_definitions(
+        worker_type_definitions=read_definitions(conn),
+        known_skills=skill_names(conn),
+    )
+    with _GUARD:
+        global _configured_worker_runtime_definitions
+        _configured_worker_runtime_definitions = definitions
+    return definitions
 
 
 def configured_worker_runtime_definitions() -> ConfiguredWorkerRuntimeDefinitions:

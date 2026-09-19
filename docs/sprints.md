@@ -107,12 +107,12 @@ there. It does more when the user asks it to, and the actions below are how. It 
 manager: it does not push Tickets along, and it does not resolve parked proposals as
 routine work.
 
-A supervisor acts within its own Outcome. It changes Item fields, child Ticket
-fields, Day membership, Ticket blocks between its children, scope, proposal review,
-and Item artifacts through one
-item-scoped service, and every write delegates to the same domain action that direct
-product routes use. A write aimed at another Item, or at a Ticket that is not a current
-child, is refused.
+A supervisor acts within its own Outcome. It changes Item fields, child Ticket fields,
+scope, proposal review, and Item artifacts through one item-scoped service, and every
+write delegates to the same domain action that direct product routes use. Day membership
+and Ticket blocks between its children use the ordinary membership call, where its own
+identity carries the same authority. A write aimed at another Item, or at a Ticket that
+is not a current child, is refused.
 
 A supervisor creates its own child Tickets with the ordinary Ticket creation route. A
 Ticket it creates is scoped like any other: the kickoff parks for the user's approval

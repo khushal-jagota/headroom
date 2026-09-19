@@ -87,14 +87,12 @@ from planner.tickets.contracts import (
     RevisionMessageBody,
     ScopeBody,
     Ticket,
-    TicketBlockBody,
     TicketEdit,
     TicketListFilters,
     TicketStatus,
     ValueEditBody,
 )
 from planner.work_attention import add_work_attention
-from planner.worker_context.contracts import WorkerContextService
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
     configured_worker_type_registry,
@@ -162,10 +160,6 @@ def get_conversation_message_files(request: Request) -> ConversationMessageFiles
     return cast(ConversationMessageFiles, message_files)
 
 
-def get_worker_context_service(request: Request) -> WorkerContextService:
-    return cast(WorkerContextService, request.app.state.worker_context_service)
-
-
 DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
@@ -173,7 +167,6 @@ Clk = Annotated[Clock, Depends(get_clock)]
 Conversations = Annotated[ConversationSystem, Depends(get_conversation_system)]
 MessageFiles = Annotated[ConversationMessageFiles, Depends(get_conversation_message_files)]
 ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_record)]
-WorkerContext = Annotated[WorkerContextService, Depends(get_worker_context_service)]
 
 
 def _ticket_detail(
@@ -1341,47 +1334,6 @@ async def request_help(
 @router.get("/tickets/{ticket_id}/copy-text", response_class=PlainTextResponse)
 async def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
     return tickets_views.copy_text(conn, ticket_id)
-
-
-@router.post("/ticket-blocks")
-async def add_ticket_block(
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    body = TicketBlockBody(
-        blocking_ticket_id=body_str(raw, "blocking_ticket_id"),
-        blocked_ticket_id=body_str(raw, "blocked_ticket_id"),
-    )
-    now = clk.now_unix()
-    tickets_actions.add_ticket_block(
-        conn,
-        body["blocking_ticket_id"],
-        body["blocked_ticket_id"],
-        now=now,
-        admit=lambda: require_ticket_worker_write(conn, ctx),
-    )
-    return dict(body)
-
-
-@router.delete("/ticket-blocks")
-async def remove_ticket_block(
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    blocking_ticket_id: str,
-    blocked_ticket_id: str,
-) -> JsonDict:
-    now = clk.now_unix()
-    tickets_actions.remove_ticket_block(
-        conn,
-        blocking_ticket_id,
-        blocked_ticket_id,
-        now=now,
-        admit=lambda: require_ticket_worker_write(conn, ctx),
-    )
-    return {"ok": True}
 
 
 async def add_conversation_row_signals(

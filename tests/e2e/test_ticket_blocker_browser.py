@@ -38,14 +38,7 @@ def test_ticket_detail_removes_a_blocker_and_settles_status(
             "Browser blocked Ticket",
         )["id"]
     )
-    api.direct_post(
-        server,
-        "/api/ticket-blocks",
-        {
-            "blocking_ticket_id": blocker_id,
-            "blocked_ticket_id": blocked_id,
-        },
-    )
+    api.direct_put(server, f"/api/collections/blockers/{blocked_id}/{blocker_id}", {})
 
     page = open_page(
         context_factory(),

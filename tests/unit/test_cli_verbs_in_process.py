@@ -12,7 +12,7 @@ import httpx
 import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
-from tests.support.probe import install_probe_registry, uninstall_probe_registry
+from tests.support.probe import seed_probe_worker_type
 
 from planner.cli.main import main as cli_main
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
@@ -20,6 +20,7 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.worker_types.configuration import load_worker_runtime_definitions
 
 JsonObject = dict[str, Any]
 
@@ -52,6 +53,9 @@ def cli_app(
     db_path = tmp_path / "cli-verbs.db"
     with connect(str(db_path)) as conn:
         create_schema(conn)
+        # The probe Worker type is stored like any other, so the server reads it from here.
+        seed_probe_worker_type(conn)
+        load_worker_runtime_definitions(conn)
     config = load_config(
         path=None,
         env={
@@ -131,17 +135,7 @@ def api(
     return cli_app[2]
 
 
-@pytest.fixture
-def probe_worker_type() -> Iterator[None]:
-    install_probe_registry()
-    try:
-        yield
-    finally:
-        uninstall_probe_registry()
-
-
 def test_worker_type_list_json_preserves_the_registry_manifest(
-    probe_worker_type: None,
     server: ServerHandle,
     cli: Callable[..., JsonObject],
     api: ApiHelper,
@@ -401,7 +395,6 @@ def test_record_reads_share_manifests_selection_and_identity(
 
 
 def test_planning_worker_cli_claims_authorize_day_midday_and_sprint_writes(
-    planning_worker_registry: None,
     server: ServerHandle,
     cli: Callable[..., JsonObject],
 ) -> None:
