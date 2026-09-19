@@ -11,13 +11,11 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from pathlib import Path
 from typing import Final
 
 from planner.core.db import commit_without_change_signal
-from planner.skill_sources import ensure_managed_panels_skills, panels_skill_root
+from planner.managed_skills import read_all_skill_sources, read_skill_source
 
-SKILL_FILE_NAME: Final = "SKILL.md"
 ORIENTATION_SKILL_NAME: Final = "panels"
 SHARED_WORKER_SKILL_NAME: Final = "panels-worker"
 
@@ -73,21 +71,13 @@ def capture_skill_version(
     return version_id
 
 
-def reconcile_managed_skill_versions(
-    conn: sqlite3.Connection,
-    configured_database_parent: Path | str,
-) -> None:
+def reconcile_managed_skill_versions(conn: sqlite3.Connection) -> None:
     """Record every current managed skill before worker loops can send a step."""
-    root = ensure_managed_panels_skills(
-        configured_database_parent,
-        packaged_skill_root=panels_skill_root(),
-    )
+    sources = read_all_skill_sources(conn)
     conn.execute("BEGIN IMMEDIATE")
     try:
-        for directory in sorted(root.iterdir(), key=lambda path: path.name):
-            skill_path = directory / SKILL_FILE_NAME
-            if directory.is_dir() and not directory.name.startswith(".") and skill_path.is_file():
-                _record_skill_version(conn, directory.name, skill_path.read_bytes())
+        for skill_name, source_text in sources.items():
+            _record_skill_version(conn, skill_name, source_text.encode("utf-8"))
         commit_without_change_signal(conn)
     except BaseException:
         if conn.in_transaction:
@@ -97,22 +87,17 @@ def reconcile_managed_skill_versions(
 
 def bind_worker_step_skills(
     conn: sqlite3.Connection,
-    configured_database_parent: Path | str,
     sender_message_id: str,
     specialist_skill_name: str,
 ) -> None:
     """Bind one worker-step message to its exact three managed skill versions."""
-    root = ensure_managed_panels_skills(
-        configured_database_parent,
-        packaged_skill_root=panels_skill_root(),
-    )
     selected = (
         (ORIENTATION_ROLE, ORIENTATION_SKILL_NAME),
         (SHARED_WORKER_ROLE, SHARED_WORKER_SKILL_NAME),
         (SPECIALIST_ROLE, specialist_skill_name),
     )
     contents = tuple(
-        (role, skill_name, (root / skill_name / SKILL_FILE_NAME).read_bytes())
+        (role, skill_name, read_skill_source(conn, skill_name).encode("utf-8"))
         for role, skill_name in selected
     )
     conn.execute("BEGIN IMMEDIATE")

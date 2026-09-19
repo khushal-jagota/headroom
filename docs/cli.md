@@ -101,6 +101,12 @@ record shapes. Direct `show` commands also keep their full record shapes.
   more notes as used in a Ticket. The use operation is atomic. A Ticket Worker can use
   notes only in its own Ticket. A Sprint Item supervisor can use notes only in a current
   child Ticket.
+- **`worker-type show <type>`** — print one Worker type's stored record, in the shape
+  `worker-type save` takes back.
+- **`worker-type save`** — declare a Worker type, or replace the one with that id, from a
+  record on stdin. An optional `skill` block declares the specialist skill with it.
+- **`worker-type skill <type> --description "..."`** — replace that Worker type's skill
+  text, with the markdown body on stdin.
 - **`worker-type list`** — list the registered Worker type identifiers in registry
   order. Its normal output is one identifier per line; `--json` returns the complete
   served Worker-type manifest for automation. Commands that require `--worker-type`

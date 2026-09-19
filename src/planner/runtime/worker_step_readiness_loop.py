@@ -46,7 +46,6 @@ from planner.skill_versions import (
 )
 from planner.tickets import data as tickets_data
 from planner.worker_context.contracts import WorkerContextService
-from planner.worker_settings.service import database_parent_from_connection
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.registry import WorkerTypeRegistry
 
@@ -79,9 +78,6 @@ async def start_ready_worker_step(
     """
     conn = connect_database()
     try:
-        database_parent = database_parent_from_connection(conn)
-        if database_parent is None:
-            raise RuntimeError("worker-step skill bindings need a file-backed database")
         ticket = tickets_data.read_ticket(conn, ticket_id)
         conversation_id = ticket.conversation_id
         if conversation_id is not None and await conversation_system.is_running(conversation_id):
@@ -133,7 +129,6 @@ async def start_ready_worker_step(
             worker_type_definition = worker_type_registry.require(claimed.worker_type)
             bind_worker_step_skills(
                 conn,
-                database_parent,
                 sender_message_id,
                 worker_type_definition.worker_profile.specialist_skill,
             )

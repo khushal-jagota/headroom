@@ -39,10 +39,10 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "two_ownership_modes"
+HEAD_REVISION = "worker_types_in_database"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
-CURRENT_SCHEMA_OBJECT_COUNT = 60
+CURRENT_SCHEMA_OBJECT_COUNT = 63
 
 # The five statuses this build ends on, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (

@@ -68,26 +68,20 @@ From the approved thinking, write the two files as artifacts:
 - The new worker's **`SKILL.md`** — front matter plus one guidance section per stage, mirroring this skill and `panels-worker-coding`.
 - Its **Worker type definition** — the `WorkerTypeDefinition`: Stages with an ownership mode on every non-terminal Stage, ordered fields, ceiling range, and worker profile. Novel ids are plain strings; reuse the shared `needs_kickoff`/`kickoff`, `needs_closeout`/`closeout`, `done`, `dropped`.
 
-Copy the approved Runtime Defaults values into the definition's `WorkerProfile`.
+Copy the approved Runtime Defaults values into the record's `profile`.
 
 ### needs\_closeout — land it
 
-The mechanical recipe for adding a worker to the running system:
+A worker is declared in the database, so landing one is a write, not a deployment.
 
-First locate the Panels Git checkout in the assigned workspace and make every source
-change there, normally in an isolated worktree. Never land a worker by editing
-`~/Deployments/Panels/current/app` or another deployed app artifact.
+1. `panels worker-type save`, with the whole record on stdin — `worker_type`, `label`, `stages`, `dropped`, `fields`, `profile`, and a `skill` block holding `description` and `markdown_body`. Take the shape from `panels worker-type show coding` and change what differs. The `skill` block is how a new worker's skill comes into being: a Worker type may only name a skill that exists, and these arrive together or not at all.
+2. Read it back with `panels worker-type show <type>`.
+3. Confirm `panels worker-type list` names it, and that ordinary Ticket creation offers it. The base Worker discovers its specialist from `panels worker my-ticket`; there is no second list to update.
+4. Add `src/planner/skills/<name>/SKILL.md` to the repository, so a fresh install is seeded with this worker's skill. That is an ordinary repository change through the branch and staging route, and it changes nothing on this Panels.
 
-1. Place the `SKILL.md` under `src/planner/skills/<name>/`.
-2. Add the `WorkerTypeDefinition` module under `src/planner/worker_types/`.
-3. Register it once in `src/planner/worker_types/configuration.py`: add its skill to the known-skills catalog and its definition to the production configuration tuple.
-4. Provision it: add the skill dir to the planner skill list. On restart this **symlinks the skill into the worker's Hermes home — the step that lets a worker `skill_view` it**. The file must exist before the restart, or startup fails.
-5. Confirm it validates at build and the skill is shipped + provisioned.
-6. Confirm that ordinary Ticket creation lists the Worker type. The base Worker discovers its specialist from `panels worker my-ticket`; there is no second list to update.
+The `profile` carries the backend, model and reasoning effort approved in Runtime Defaults. There is no second copy of them to keep in step.
 
-Before activation, confirm the managed settings bootstrap contains the same backend, model, and reasoning effort approved in Runtime Defaults.
-
-A good **closeout** is a short, verified report: what was placed and registered, and how you confirmed the worker is live.
+A good **closeout** is a short, verified report: what was saved, what `panels worker-type show` reports, and how you confirmed the worker is live.
 
 ### Working disciplines
 

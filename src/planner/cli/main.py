@@ -13,6 +13,7 @@ The command tree mirrors the product model:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from collections.abc import Callable
@@ -848,7 +849,7 @@ def schedule_set(
 
 @main.group("worker-type")
 def worker_type_group() -> None:
-    """Discover the configured Worker types."""
+    """Inspect and declare the Worker types."""
 
 
 @worker_type_group.command("list")
@@ -860,6 +861,58 @@ def worker_type_list(as_json: bool) -> None:
         as_json,
         _lines(data["worker_types"], lambda item: str(item["worker_type"])),
     )
+
+
+@worker_type_group.command("show")
+@click.argument("worker_type")
+@json_option
+def worker_type_show(worker_type: str, as_json: bool) -> None:
+    """Print one Worker type's stored record, in the shape `save` takes back."""
+    data = http.send(
+        "GET",
+        f"/api/worker-types/{worker_type}",
+        as_json=as_json,
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, json.dumps(data, indent=2, ensure_ascii=False))
+
+
+@worker_type_group.command("save")
+@json_option
+def worker_type_save(as_json: bool) -> None:
+    """Declare a Worker type, or replace the one with this id. Record on stdin."""
+    body = read_worker_stdin_body(as_json, "worker type record")
+    try:
+        record = json.loads(body)
+    except ValueError:
+        http.fail_validation("worker type record must be JSON", as_json)
+    if not isinstance(record, dict):
+        http.fail_validation("worker type record must be a JSON object", as_json)
+    data = http.send(
+        "POST",
+        "/api/worker-types",
+        json_body=record,
+        as_json=as_json,
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, f"{data['worker_type']} saved")
+
+
+@worker_type_group.command("skill")
+@click.argument("worker_type")
+@click.option("--description", required=True, help="The one-line description in the frontmatter.")
+@json_option
+def worker_type_skill(worker_type: str, description: str, as_json: bool) -> None:
+    """Replace this Worker type's skill. Markdown body on stdin."""
+    body = read_worker_stdin_body(as_json, "skill body")
+    data = http.send(
+        "PUT",
+        f"/api/workers/{worker_type}/skill",
+        json_body={"description": description, "markdown_body": body},
+        as_json=as_json,
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, f"{data['specialist_skill']['name']} saved")
 
 
 # --- project ------------------------------------------------------------------

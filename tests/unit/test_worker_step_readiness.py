@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
+from tests.support.probe import shipped_definition
 from tests.support.ticket_progress import advance_ticket
 
 from planner.core.contracts import LinkKind, Priority
@@ -21,10 +22,11 @@ from planner.runtime.worker_step_readiness import (
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, Ticket, TicketStatus
-from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
-from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
+
+CODING_WORKER_TYPE_DEFINITION = shipped_definition("coding")
+NEW_WORKER_TYPE_DEFINITION = shipped_definition("new_worker")
 
 _FIXED_NOW = datetime(2026, 7, 14, 12, 0, 0).astimezone()
 PLANNING_DAY_ID = "day_2026-07-14"

@@ -50,11 +50,10 @@ def test_fake_fixture_builds_current_schema_with_registered_worker_types(
         assert len(worker_types) >= 3
         for worker_type in worker_types:
             registry.require(worker_type)
+        # Worker types are rows now, and the fixture database carries the seeded set.
         assert (
-            conn.execute(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='worker_types'"
-            ).fetchone()[0]
-            == 0
+            conn.execute("SELECT COUNT(*) FROM worker_types").fetchone()[0]
+            == len(registry.registered_worker_types())
         )
         assert (
             conn.execute("SELECT COUNT(*) FROM day_tickets").fetchone()[0]

@@ -149,7 +149,7 @@ def create_app(
         audit_conn = conn_factory()
         try:
             tickets_data.audit_ticket_registry_integrity(audit_conn)
-            reconcile_managed_skill_versions(audit_conn, Path(config.db_path).expanduser().parent)
+            reconcile_managed_skill_versions(audit_conn)
             reconcile_provisional_worker_step_bindings(audit_conn)
         finally:
             audit_conn.close()

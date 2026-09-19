@@ -1,27 +1,34 @@
-"""Managed Worker-settings persistence and composition.
+"""Reading and editing what a Worker is, on top of the rows that declare it.
 
-Settings and skill markdown both live beside the configured database. Packaged
-``src/planner/skills`` files seed a new managed home but are never edited or
-used as a live authority.
+There is one authority: the database. A Worker type's structure, what it launches on, and
+its skill are all rows, and the files under ``data/skills`` are copies Panels writes from
+them. Nothing here reconciles two sources, because there is only one.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import shutil
 import sqlite3
-import tempfile
-import threading
-from collections.abc import Callable
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Final
 
-import yaml
-
 from planner.conversation.contracts import require_conversation_backend_key
-from planner.core.contracts import ErrorCode, JsonDict, PlannerError
-from planner.skill_sources import ensure_managed_panels_skills, panels_skill_root
+from planner.core.contracts import ErrorCode, PlannerError
+from planner.managed_skills import (
+    SKILL_FILE_NAME,
+    atomic_replace_text,
+    frontmatter_bounds,
+    has_skill,
+    managed_skills_home,
+    read_all_skill_sources,
+    read_skill_source,
+    render_new_skill,
+    render_skill_from_existing_frontmatter,
+    skill_description,
+    write_skill_source,
+)
 from planner.skill_versions import capture_skill_version
 from planner.worker_settings.contracts import (
     ManagedChiefSettings,
@@ -33,56 +40,14 @@ from planner.worker_settings.contracts import (
     WorkerManagementDetail,
     WorkerManagementSummary,
 )
+from planner.worker_types.configuration import load_worker_runtime_definitions
 from planner.worker_types.contracts import WorkerProfile, WorkerTypeDefinition
 from planner.worker_types.registry import WorkerTypeRegistry
+from planner.worker_types.store import write_definition
 
-SETTINGS_DIR_NAME: Final = "worker-settings"
-SETTINGS_FILE_NAME: Final = "settings.json"
-SKILL_FILE_NAME: Final = "SKILL.md"
-LAST_KNOWN_GOOD_DIR_NAME: Final = ".last-known-good"
-CANDIDATES_DIR_NAME: Final = ".candidates"
 CHIEF_SETTINGS_KEY: Final = "chief_of_staff"
 CHIEF_LABEL: Final = "Chief of Staff"
 CHIEF_SKILL_NAME: Final = "panels-chief-of-staff"
-DEFAULT_CHIEF_BACKEND: Final = "codex"
-DEFAULT_CHIEF_MODEL: Final = "gpt-5.6-sol"
-DEFAULT_CHIEF_REASONING_EFFORT: Final = "medium"
-_WORKER_LOCKS_GUARD = threading.Lock()
-_WORKER_LOCKS: dict[tuple[str, str], threading.RLock] = {}
-
-
-class _PathSnapshot:
-    def __init__(self, path: Path) -> None:
-        self._path = path
-        self._exists = path.exists() or path.is_symlink()
-        self._is_symlink = path.is_symlink()
-        self._link_target = os.readlink(path) if self._is_symlink else None
-        self._bytes = (
-            path.read_bytes() if self._exists and not self._is_symlink and path.is_file() else None
-        )
-
-    def restore(self) -> None:
-        if not self._exists:
-            try:
-                self._path.unlink()
-            except FileNotFoundError:
-                pass
-            return
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            self._path.unlink()
-        except FileNotFoundError:
-            pass
-        if self._is_symlink:
-            assert self._link_target is not None
-            self._path.symlink_to(self._link_target)
-            return
-        if self._bytes is not None:
-            _atomic_replace_bytes(self._path, self._bytes)
-
-
-def managed_worker_settings_root(configured_database_parent: Path | str) -> Path:
-    return Path(configured_database_parent).expanduser() / SETTINGS_DIR_NAME
 
 
 def database_parent_from_connection(conn: sqlite3.Connection) -> Path | None:
@@ -95,206 +60,58 @@ def database_parent_from_connection(conn: sqlite3.Connection) -> Path | None:
     return Path(path).expanduser().parent
 
 
-def _settings_path(root: Path, worker_type: str) -> Path:
-    return root / worker_type / SETTINGS_FILE_NAME
+@contextmanager
+def _one_writer(conn: sqlite3.Connection) -> Iterator[None]:
+    """Hold the write lock across a read-modify-write, so two edits cannot lose one.
 
-
-def _skill_path(root: Path, worker_type: str) -> Path:
-    return root / worker_type / SKILL_FILE_NAME
-
-
-def _last_good_worker_dir(root: Path, worker_type: str) -> Path:
-    return root / LAST_KNOWN_GOOD_DIR_NAME / worker_type
-
-
-def _candidate_skill_path(root: Path, worker_type: str) -> Path:
-    return root / CANDIDATES_DIR_NAME / worker_type / SKILL_FILE_NAME
-
-
-def _worker_settings_lock(root: Path, worker_type: str) -> threading.RLock:
-    key = (str(root.expanduser().resolve()), worker_type)
-    with _WORKER_LOCKS_GUARD:
-        lock = _WORKER_LOCKS.get(key)
-        if lock is None:
-            lock = threading.RLock()
-            _WORKER_LOCKS[key] = lock
-        return lock
-
-
-def _managed_skill_lock(path: Path) -> threading.RLock:
-    resolved = path.expanduser().resolve()
-    return _worker_settings_lock(resolved.parent, f"managed-skill:{resolved.name}")
-
-
-def chief_settings_binding_snapshot_lock(
-    configured_database_parent: Path | str,
-) -> threading.RLock:
-    """Return the reentrant lock guarding a Chief launch-settings snapshot."""
-    root = managed_worker_settings_root(configured_database_parent)
-    return _worker_settings_lock(root, CHIEF_SETTINGS_KEY)
-
-
-def _atomic_replace_text(path: Path, text: str) -> None:
-    _atomic_replace_bytes(path, text.encode("utf-8"))
-
-
-def _atomic_replace_bytes(path: Path, content: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.tmp-{os.getpid()}-", dir=path.parent)
-    tmp_path = Path(tmp_name)
+    Every edit here reads the current record, changes one part of it and writes the whole
+    thing back. Two of those running together would each write what it read, and the
+    slower one would undo the faster one's field.
+    """
+    conn.execute("BEGIN IMMEDIATE")
     try:
-        with os.fdopen(fd, "wb") as tmp:
-            tmp.write(content)
-        os.replace(tmp_path, path)
-    finally:
-        try:
-            tmp_path.unlink()
-        except FileNotFoundError:
-            pass
+        yield
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    conn.execute("COMMIT")
 
 
-def _atomic_replace_json(path: Path, payload: JsonDict) -> None:
-    _atomic_replace_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+def _publish_skill(
+    conn: sqlite3.Connection, database_parent: Path | str, skill_name: str, rendered: str
+) -> None:
+    """Write this skill out where agents read it, and record the exact bytes sent."""
+    atomic_replace_text(
+        managed_skills_home(database_parent) / skill_name / SKILL_FILE_NAME, rendered
+    )
+    capture_skill_version(conn, skill_name, rendered.encode("utf-8"))
 
 
-def _backup_last_known_good(root: Path, worker_type: str) -> None:
-    source_dir = root / worker_type
-    if not source_dir.exists():
-        return
-    target_dir = _last_good_worker_dir(root, worker_type)
-    target_dir.mkdir(parents=True, exist_ok=True)
-    for name in (SETTINGS_FILE_NAME,):
-        source = source_dir / name
-        if source.is_file():
-            shutil.copy2(source, target_dir / name)
-
-
-def _last_known_good_revision_is_complete(root: Path, worker_type: str) -> bool:
-    source_dir = _last_good_worker_dir(root, worker_type)
-    return (source_dir / SETTINGS_FILE_NAME).is_file()
-
-
-def _restore_last_known_good(root: Path, worker_type: str) -> bool:
-    if not _last_known_good_revision_is_complete(root, worker_type):
-        return False
-    source_dir = _last_good_worker_dir(root, worker_type)
-    target_dir = root / worker_type
-    target_dir.mkdir(parents=True, exist_ok=True)
-    for name in (SETTINGS_FILE_NAME,):
-        source = source_dir / name
-        shutil.copy2(source, target_dir / name)
-    return True
-
-
-def _managed_skill_path(configured_database_parent: Path | str, skill_name: str) -> Path:
-    return (
-        ensure_managed_panels_skills(
-            configured_database_parent, packaged_skill_root=panels_skill_root()
-        )
-        / skill_name
-        / SKILL_FILE_NAME
+def parse_skill(source_text: str, skill_name: str) -> ManagedSkill:
+    _frontmatter, markdown_body = frontmatter_bounds(source_text)
+    return ManagedSkill(
+        name=skill_name,
+        description=skill_description(source_text, skill_name),
+        markdown_body=markdown_body,
+        source_text=source_text,
     )
 
 
-def read_skills_home(configured_database_parent: Path | str) -> SkillsHome:
-    root = ensure_managed_panels_skills(
-        configured_database_parent, packaged_skill_root=panels_skill_root()
+def _launch_defaults(profile: WorkerProfile) -> ManagedWorkerLaunchDefaults:
+    return ManagedWorkerLaunchDefaults(
+        employee_backend=profile.default_backend,
+        employee_launch_model=profile.default_model,
+        employee_launch_reasoning_effort=profile.default_reasoning_effort,
     )
-    skills: list[ManagedSkill] = []
-    for directory in sorted(root.iterdir(), key=lambda path: path.name):
-        if not directory.is_dir() or directory.name.startswith("."):
-            continue
-        path = directory / SKILL_FILE_NAME
-        if path.is_file():
-            skills.append(_parse_skill(path.read_text(encoding="utf-8"), directory.name))
-    return SkillsHome(tuple(skills))
 
 
-def save_skill(
-    configured_database_parent: Path | str,
-    skill_name: str,
-    payload: dict[str, Any],
-    *,
-    after_publish: Callable[[], None] | None = None,
-    version_connection: sqlite3.Connection | None = None,
-) -> ManagedSkill:
-    root = ensure_managed_panels_skills(
-        configured_database_parent, packaged_skill_root=panels_skill_root()
-    ).resolve()
-    if not skill_name or skill_name in {".", ".."} or Path(skill_name).name != skill_name:
-        raise PlannerError(ErrorCode.not_found, "skill not found", {"skill_name": skill_name})
-    path = (root / skill_name / SKILL_FILE_NAME).resolve()
-    if root not in path.parents or not path.is_file():
-        raise PlannerError(ErrorCode.not_found, "skill not found", {"skill_name": skill_name})
-    allowed = {"name", "description", "markdown_body", "body"}
-    unexpected = sorted(set(payload) - allowed)
-    if unexpected:
-        raise PlannerError(ErrorCode.validation, "unknown skill field", {"field": unexpected[0]})
-    with _managed_skill_lock(path):
-        current = _parse_skill(path.read_text(encoding="utf-8"), skill_name)
-        if "name" in payload and payload["name"] != skill_name:
-            raise PlannerError(ErrorCode.validation, "skill name is immutable", {})
-        description = payload.get("description", current.description)
-        body = payload.get("markdown_body", payload.get("body", current.markdown_body))
-        if not isinstance(description, str) or not description:
-            raise PlannerError(ErrorCode.validation, "skill description is required", {})
-        if not isinstance(body, str) or not body.strip():
-            raise PlannerError(ErrorCode.validation, "skill body is required", {})
-        rendered = _render_skill_from_existing_frontmatter(
-            current.source_text, expected_skill_name=skill_name,
-            description=description, markdown_body=body,
-        )
-        _parse_skill(rendered, skill_name)
-        snapshot = _PathSnapshot(path)
-        try:
-            _atomic_replace_text(path, rendered)
-            if version_connection is not None:
-                capture_skill_version(version_connection, skill_name, rendered.encode("utf-8"))
-            if after_publish is not None:
-                after_publish()
-        except Exception:
-            snapshot.restore()
-            raise
-    return _parse_skill(path.read_text(encoding="utf-8"), skill_name)
-
-
-def _bootstrap_settings_payload(definition: WorkerTypeDefinition) -> JsonDict:
-    return {
-        "worker_type": definition.worker_type,
-        "launch_defaults": _launch_defaults_payload(
-            ManagedWorkerLaunchDefaults(
-                employee_backend=definition.worker_profile.default_backend,
-                employee_launch_model=definition.worker_profile.default_model,
-                employee_launch_reasoning_effort=(
-                    definition.worker_profile.default_reasoning_effort
-                ),
-            )
-        ),
-    }
-
-
-def _launch_defaults_payload(defaults: ManagedWorkerLaunchDefaults) -> JsonDict:
-    return {
-        "employee_backend": defaults.employee_backend,
-        "employee_launch_model": defaults.employee_launch_model,
-        "employee_launch_reasoning_effort": defaults.employee_launch_reasoning_effort,
-    }
-
-
-def _validate_launch_defaults(
-    raw: object,
-    *,
-    fallback: ManagedWorkerLaunchDefaults | None = None,
-) -> ManagedWorkerLaunchDefaults:
+def validate_launch_defaults(raw: object) -> ManagedWorkerLaunchDefaults:
     """Turn text that claims to be launch defaults into them, or refuse it.
 
-    This is the one door launch defaults come through — a settings screen's request body
-    and a settings file somebody edited both arrive here — so a saved setting that names
-    no model is refused where it is read rather than discovered when a worker starts on a
-    model nobody chose.
+    This is the one door launch defaults come through, so a request that names no model is
+    refused here rather than discovered when a worker starts on a model nobody chose.
     """
-    if raw is None and fallback is not None:
-        return fallback
     if not isinstance(raw, dict) or set(raw) != {
         "employee_backend",
         "employee_launch_model",
@@ -334,603 +151,225 @@ def _validate_launch_defaults(
     )
 
 
-def _launch_defaults_that_name_a_model(
-    stored: object, shipped: ManagedWorkerLaunchDefaults
-) -> object:
-    """Stored launch defaults, replaced by the shipped ones when they name no model.
-
-    A settings file written while a model could be left out can hold a null one, and on
-    the owner's machine that file is the live setting. A null there used to mean "whatever
-    the backend runs by default", which is a value nobody chose and nothing here can see,
-    so it is not passed on. It is not refused either: that would leave the owner with a
-    Workers screen and a Ticket that stay broken until they hand-edit JSON beside the
-    database. What replaces it is the whole block the Worker type ships with, not the
-    model alone — the shipped model belongs to the shipped backend, and pairing it with a
-    backend somebody else chose would name a model that backend has never heard of. The
-    caller writes the repaired block back, so the setting the owner sees is the setting
-    that runs, and they can change it on the screen where they chose the old one.
-    """
-    if (
-        isinstance(stored, dict)
-        and "employee_launch_model" in stored
-        and stored["employee_launch_model"] is None
-    ):
-        return _launch_defaults_payload(shipped)
-    return stored
+# --- the skills home ----------------------------------------------------------
 
 
-def _settings_launch_defaults(
-    settings_path: Path, settings_payload: JsonDict, profile: WorkerProfile
-) -> ManagedWorkerLaunchDefaults:
-    """What this Worker type's settings file launches on, repaired on the way out.
-
-    A file with no launch defaults at all — one written before the block existed — takes
-    the shipped ones, and one that names no model is repaired the same way. Either way the
-    file is rewritten with what was resolved, so the next read finds it already answered.
-    """
-    shipped = ManagedWorkerLaunchDefaults(
-        profile.default_backend, profile.default_model, profile.default_reasoning_effort
-    )
-    stored = settings_payload.get("launch_defaults")
-    launch_defaults = _validate_launch_defaults(
-        _launch_defaults_that_name_a_model(stored, shipped), fallback=shipped
-    )
-    resolved_payload = _launch_defaults_payload(launch_defaults)
-    if stored != resolved_payload:
-        settings_payload["launch_defaults"] = resolved_payload
-        _atomic_replace_json(settings_path, settings_payload)
-    return launch_defaults
-
-
-def _ensure_bootstrapped(root: Path, definition: WorkerTypeDefinition) -> None:
-    worker_type = definition.worker_type
-    worker_dir = root / worker_type
-    worker_dir.mkdir(parents=True, exist_ok=True)
-    settings_path = _settings_path(root, worker_type)
-    if not settings_path.exists():
-        _atomic_replace_json(settings_path, _bootstrap_settings_payload(definition))
-
-
-def _current_revision_is_missing(root: Path, worker_type: str) -> bool:
-    return (
-        not _settings_path(root, worker_type).is_file()
+def read_skills_home(conn: sqlite3.Connection) -> SkillsHome:
+    return SkillsHome(
+        tuple(
+            parse_skill(source_text, name)
+            for name, source_text in read_all_skill_sources(conn).items()
+        )
     )
 
 
-def _load_json_object(path: Path) -> JsonDict:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+def read_skill(conn: sqlite3.Connection, skill_name: str) -> ManagedSkill:
+    return parse_skill(read_skill_source(conn, skill_name), skill_name)
+
+
+def _rendered_skill(
+    conn: sqlite3.Connection,
+    skill_name: str,
+    payload: dict[str, Any],
+    *,
+    allow_partial: bool,
+    what: str,
+) -> str:
+    allowed = {"name", "description", "markdown_body", "body"}
+    unexpected = sorted(set(payload) - allowed)
+    if unexpected:
+        raise PlannerError(ErrorCode.validation, f"unknown {what} field", {"field": unexpected[0]})
+    if "name" in payload and payload["name"] != skill_name:
         raise PlannerError(
             ErrorCode.validation,
-            "managed worker settings are invalid",
-            {"path": str(path)},
-        ) from exc
-    if not isinstance(payload, dict):
-        raise PlannerError(
-            ErrorCode.validation,
-            "managed worker settings must be an object",
-            {"path": str(path)},
+            f"{what} name is immutable",
+            {"skill_name": payload["name"], "expected": skill_name},
         )
-    return payload
-
-
-def _validate_settings_payload(payload: JsonDict, definition: WorkerTypeDefinition) -> None:
-    if payload.get("worker_type") != definition.worker_type:
-        raise PlannerError(
-            ErrorCode.validation,
-            "managed worker settings have the wrong worker type",
-            {"worker_type": payload.get("worker_type"), "expected": definition.worker_type},
-        )
-
-
-def _reconcile_settings_payload(
-    path: Path,
-    payload: JsonDict,
-    definition: WorkerTypeDefinition,
-) -> JsonDict:
-    """Bring a stored settings revision back in line with the running definition.
-
-    Managed settings contain only the Worker identity and launch defaults. Older
-    revisions can contain ownership and ceiling policy. Reconciliation removes
-    those legacy keys before validation, recovery, or a later write preserves them.
-    """
-    if payload.get("worker_type") != definition.worker_type:
-        return payload
-    reconciled: JsonDict = {"worker_type": definition.worker_type}
-    if "launch_defaults" in payload:
-        reconciled["launch_defaults"] = payload["launch_defaults"]
-    if reconciled == payload:
-        return payload
-    _atomic_replace_json(path, reconciled)
-    return reconciled
-
-
-def _frontmatter_bounds(text: str) -> tuple[list[str], str]:
-    lines = text.splitlines(keepends=True)
-    if not lines or lines[0].strip() != "---":
-        raise PlannerError(ErrorCode.validation, "skill frontmatter is missing", {})
-    for index in range(1, len(lines)):
-        if lines[index].strip() == "---":
-            return lines[1:index], "".join(lines[index + 1 :])
-    raise PlannerError(ErrorCode.validation, "skill frontmatter is not closed", {})
-
-
-def _parse_skill(text: str, expected_skill_name: str) -> ManagedSkill:
-    frontmatter_lines, markdown_body = _frontmatter_bounds(text)
-    try:
-        values = yaml.safe_load("".join(frontmatter_lines))
-    except yaml.YAMLError as exc:
-        raise PlannerError(
-            ErrorCode.validation,
-            "skill frontmatter is invalid",
-            {"skill_name": expected_skill_name},
-        ) from exc
-    if not isinstance(values, dict):
-        raise PlannerError(
-            ErrorCode.validation,
-            "skill frontmatter must be a mapping",
-            {"skill_name": expected_skill_name},
-        )
-    name = values.get("name")
-    if name != expected_skill_name:
-        raise PlannerError(
-            ErrorCode.validation,
-            "specialist skill name is immutable",
-            {"skill_name": name, "expected": expected_skill_name},
-        )
-    description = values.get("description")
+    current = read_skill(conn, skill_name)
+    description = payload.get("description", current.description if allow_partial else None)
+    markdown_body = payload.get(
+        "markdown_body", payload.get("body", current.markdown_body if allow_partial else None)
+    )
     if not isinstance(description, str) or not description:
-        raise PlannerError(
-            ErrorCode.validation,
-            "specialist skill description is required",
-            {"skill_name": expected_skill_name},
-        )
-    return ManagedSkill(
-        name=expected_skill_name,
+        raise PlannerError(ErrorCode.validation, f"{what} description is required", {})
+    if not isinstance(markdown_body, str) or not markdown_body.strip():
+        raise PlannerError(ErrorCode.validation, f"{what} body is required", {})
+    rendered = render_skill_from_existing_frontmatter(
+        current.source_text,
+        expected_skill_name=skill_name,
         description=description,
         markdown_body=markdown_body,
-        source_text=text,
     )
+    parse_skill(rendered, skill_name)
+    return rendered
 
 
-def _top_level_key(line: str) -> str | None:
-    if not line or line[0].isspace():
-        return None
-    stripped = line.strip()
-    if not stripped or stripped.startswith("#") or ":" not in line:
-        return None
-    key = line.split(":", 1)[0].strip()
-    if not key or any(character.isspace() for character in key):
-        return None
-    return key
-
-
-def _frontmatter_key_spans(lines: list[str]) -> dict[str, tuple[int, int]]:
-    spans: dict[str, tuple[int, int]] = {}
-    try:
-        frontmatter_node = yaml.compose("".join(lines), Loader=yaml.SafeLoader)
-    except yaml.YAMLError as exc:
-        raise PlannerError(
-            ErrorCode.validation,
-            "skill frontmatter is invalid",
-            {},
-        ) from exc
-    if not isinstance(frontmatter_node, yaml.MappingNode):
-        raise PlannerError(ErrorCode.validation, "skill frontmatter must be a mapping", {})
-    for key_node, value_node in frontmatter_node.value:
-        key = key_node.value
-        if key not in {"name", "description"}:
-            continue
-        if key in spans:
-            raise PlannerError(
-                ErrorCode.validation,
-                "skill frontmatter has duplicate keys",
-                {"key": key},
-            )
-        start = key_node.start_mark.line
-        end = value_node.end_mark.line
-        if value_node.end_mark.column > 0:
-            end += 1
-        spans[key] = (start, min(end, len(lines)))
-    return spans
-
-
-def _yaml_one_line_scalar(value: str) -> str:
-    return json.dumps(value)
-
-
-def _render_skill_from_existing_frontmatter(
-    existing_text: str,
+def save_skill(
+    conn: sqlite3.Connection,
+    skill_name: str,
+    payload: dict[str, Any],
     *,
-    expected_skill_name: str,
-    description: str,
-    markdown_body: str,
-) -> str:
-    frontmatter_lines, _old_body = _frontmatter_bounds(existing_text)
-    spans = _frontmatter_key_spans(frontmatter_lines)
-    replacements = {
-        "name": f"name: {_yaml_one_line_scalar(expected_skill_name)}\n",
-        "description": f"description: {_yaml_one_line_scalar(description)}\n",
-    }
-    rendered_lines = ["---\n"]
-    index = 0
-    while index < len(frontmatter_lines):
-        replacement_key = next(
-            (key for key, (start, _end) in spans.items() if start == index and key in replacements),
-            None,
-        )
-        if replacement_key is None:
-            rendered_lines.append(frontmatter_lines[index])
-            index += 1
-            continue
-        _start, end = spans[replacement_key]
-        rendered_lines.append(replacements[replacement_key])
-        index = end
-    if "name" not in spans:
-        rendered_lines.append(replacements["name"])
-    if "description" not in spans:
-        rendered_lines.append(replacements["description"])
-    rendered_lines.append("---\n")
-    if markdown_body and not markdown_body.startswith("\n"):
-        rendered_lines.append("\n")
-    rendered_lines.append(markdown_body)
-    if markdown_body and not markdown_body.endswith("\n"):
-        rendered_lines.append("\n")
-    return "".join(rendered_lines)
+    now: int,
+    database_parent: Path | str,
+) -> ManagedSkill:
+    with _one_writer(conn):
+        rendered = _rendered_skill(conn, skill_name, payload, allow_partial=True, what="skill")
+        write_skill_source(conn, skill_name, rendered, now=now)
+    _publish_skill(conn, database_parent, skill_name, rendered)
+    return parse_skill(rendered, skill_name)
 
 
-def _read_settings_with_recovery(
-    root: Path, definition: WorkerTypeDefinition
-) -> ManagedWorkerSettings:
-    if _current_revision_is_missing(root, definition.worker_type):
-        if not _restore_last_known_good(root, definition.worker_type):
-            _ensure_bootstrapped(root, definition)
-    try:
-        settings_path = _settings_path(root, definition.worker_type)
-        settings_payload = _reconcile_settings_payload(
-            settings_path,
-            _load_json_object(settings_path),
-            definition,
-        )
-        _validate_settings_payload(settings_payload, definition)
-        launch_defaults = _settings_launch_defaults(
-            settings_path, settings_payload, definition.worker_profile
-        )
-        skill_path = _managed_skill_path(root.parent, definition.worker_profile.specialist_skill)
-        if not skill_path.is_file():
-            raise FileNotFoundError(f"specialist skill source not found: {skill_path}")
-        skill_text = skill_path.read_text(encoding="utf-8")
-        skill = _parse_skill(skill_text, definition.worker_profile.specialist_skill)
-    except PlannerError:
-        if not _restore_last_known_good(root, definition.worker_type):
-            raise
-        settings_path = _settings_path(root, definition.worker_type)
-        settings_payload = _reconcile_settings_payload(
-            settings_path,
-            _load_json_object(settings_path),
-            definition,
-        )
-        _validate_settings_payload(settings_payload, definition)
-        launch_defaults = _settings_launch_defaults(
-            settings_path, settings_payload, definition.worker_profile
-        )
-        skill_path = _managed_skill_path(root.parent, definition.worker_profile.specialist_skill)
-        skill_text = skill_path.read_text(encoding="utf-8")
-        skill = _parse_skill(skill_text, definition.worker_profile.specialist_skill)
-    _backup_last_known_good(root, definition.worker_type)
+def save_worker_type_skill(
+    conn: sqlite3.Connection,
+    skill_name: str,
+    payload: dict[str, Any],
+    *,
+    now: int,
+    database_parent: Path | str,
+) -> ManagedSkill:
+    """Store a Worker type's skill, whether or not one is there yet.
 
-    return ManagedWorkerSettings(
-        worker_type=definition.worker_type,
-        specialist_skill=skill,
-        launch_defaults=launch_defaults,
-        candidate_specialist_skill=None,
-    )
+    A Worker type may only name a skill that exists, so declaring a new Worker and
+    declaring its skill are one act rather than two that can half-happen.
+    """
+    description = payload.get("description")
+    markdown_body = payload.get("markdown_body", payload.get("body"))
+    if not isinstance(description, str) or not description:
+        raise PlannerError(ErrorCode.validation, "specialist skill description is required", {})
+    if not isinstance(markdown_body, str) or not markdown_body.strip():
+        raise PlannerError(ErrorCode.validation, "specialist skill body is required", {})
+    with _one_writer(conn):
+        if has_skill(conn, skill_name):
+            rendered = _rendered_skill(
+                conn,
+                skill_name,
+                {"description": description, "markdown_body": markdown_body},
+                allow_partial=False,
+                what="specialist skill",
+            )
+        else:
+            rendered = render_new_skill(skill_name, description, markdown_body)
+        write_skill_source(conn, skill_name, rendered, now=now)
+    _publish_skill(conn, database_parent, skill_name, rendered)
+    return parse_skill(rendered, skill_name)
+
+
+# --- Worker types -------------------------------------------------------------
 
 
 def read_worker_settings(
-    configured_database_parent: Path | str,
+    conn: sqlite3.Connection,
     registry: WorkerTypeRegistry,
     worker_type: str,
 ) -> ManagedWorkerSettings:
     definition = registry.require(worker_type)
-    root = managed_worker_settings_root(configured_database_parent)
-    with _worker_settings_lock(root, worker_type):
-        settings = _read_settings_with_recovery(root, definition)
-        _validate_launch_defaults(_launch_defaults_payload(settings.launch_defaults))
-        return settings
+    return ManagedWorkerSettings(
+        worker_type=worker_type,
+        specialist_skill=read_skill(conn, definition.worker_profile.specialist_skill),
+        launch_defaults=_launch_defaults(definition.worker_profile),
+        candidate_specialist_skill=None,
+    )
 
 
 def read_worker_management_index(
-    configured_database_parent: Path | str,
+    conn: sqlite3.Connection,
     registry: WorkerTypeRegistry,
 ) -> tuple[WorkerManagementSummary, ...]:
     summaries: list[WorkerManagementSummary] = []
     for worker_type in registry.registered_worker_types():
         definition = registry.require(worker_type)
-        settings = read_worker_settings(configured_database_parent, registry, worker_type)
         summaries.append(
             WorkerManagementSummary(
                 worker_type=worker_type,
                 label=definition.label,
                 specialist_skill_name=definition.worker_profile.specialist_skill,
-                launch_defaults=settings.launch_defaults,
+                launch_defaults=_launch_defaults(definition.worker_profile),
             )
         )
     return tuple(summaries)
 
 
 def read_worker_management_detail(
-    configured_database_parent: Path | str,
+    conn: sqlite3.Connection,
     registry: WorkerTypeRegistry,
     worker_type: str,
 ) -> WorkerManagementDetail:
     return WorkerManagementDetail(
         manifest=registry.manifest(worker_type),
-        settings=read_worker_settings(configured_database_parent, registry, worker_type),
+        settings=read_worker_settings(conn, registry, worker_type),
     )
-
-
-def _chief_settings_path(root: Path) -> Path:
-    return root / CHIEF_SETTINGS_KEY / SETTINGS_FILE_NAME
-
-
-def _default_chief_launch_defaults() -> ManagedWorkerLaunchDefaults:
-    return ManagedWorkerLaunchDefaults(
-        employee_backend=DEFAULT_CHIEF_BACKEND,
-        employee_launch_model=DEFAULT_CHIEF_MODEL,
-        employee_launch_reasoning_effort=DEFAULT_CHIEF_REASONING_EFFORT,
-    )
-
-
-def read_chief_settings(
-    configured_database_parent: Path | str,
-) -> ManagedChiefSettings:
-    """The Chief's managed settings, with a stored block that names no model repaired.
-
-    The repair is the Workers' one, for the Chief's shipped launch defaults: see
-    ``_launch_defaults_that_name_a_model`` for why a null is neither passed on nor
-    refused. The repaired block is written back, so the file stops holding the null.
-    """
-    root = managed_worker_settings_root(configured_database_parent)
-    path = _chief_settings_path(root)
-    with _worker_settings_lock(root, CHIEF_SETTINGS_KEY):
-        if not path.is_file():
-            _atomic_replace_json(
-                path,
-                {
-                    "employee_id": CHIEF_SETTINGS_KEY,
-                    "label": CHIEF_LABEL,
-                    "launch_defaults": _launch_defaults_payload(_default_chief_launch_defaults()),
-                },
-            )
-        payload = _load_json_object(path)
-        if payload.get("employee_id") != CHIEF_SETTINGS_KEY or payload.get("label") != CHIEF_LABEL:
-            raise PlannerError(ErrorCode.validation, "managed Chief settings are invalid", {})
-        stored = payload.get("launch_defaults")
-        launch_defaults = _validate_launch_defaults(
-            _launch_defaults_that_name_a_model(stored, _default_chief_launch_defaults())
-        )
-        resolved_payload = _launch_defaults_payload(launch_defaults)
-        if stored != resolved_payload:
-            payload["launch_defaults"] = resolved_payload
-            _atomic_replace_json(path, payload)
-        skill_path = _managed_skill_path(root.parent, CHIEF_SKILL_NAME)
-        skill = _parse_skill(skill_path.read_text(encoding="utf-8"), CHIEF_SKILL_NAME)
-        return ManagedChiefSettings(
-            employee_id=CHIEF_SETTINGS_KEY,
-            label=CHIEF_LABEL,
-            skill=skill,
-            launch_defaults=launch_defaults,
-        )
-
-
-def update_worker_launch_defaults(
-    configured_database_parent: Path | str,
-    registry: WorkerTypeRegistry,
-    worker_type: str,
-    payload: dict[str, Any],
-    *,
-    after_publish: Callable[[], None] | None = None,
-) -> ManagedWorkerSettings:
-    definition = registry.require(worker_type)
-    root = managed_worker_settings_root(configured_database_parent)
-    with _worker_settings_lock(root, worker_type):
-        _read_settings_with_recovery(root, definition)
-        launch_defaults = _validate_launch_defaults(payload)
-        settings_payload: JsonDict = {
-            "worker_type": worker_type,
-            "launch_defaults": _launch_defaults_payload(launch_defaults),
-        }
-        snapshot = _PathSnapshot(_settings_path(root, worker_type))
-        try:
-            _atomic_replace_json(_settings_path(root, worker_type), settings_payload)
-            if after_publish is not None:
-                after_publish()
-        except Exception:
-            snapshot.restore()
-            raise
-        return _read_settings_with_recovery(root, definition)
-
-
-def update_chief_launch_defaults(
-    configured_database_parent: Path | str,
-    payload: dict[str, Any],
-    *,
-    after_publish: Callable[[], None] | None = None,
-) -> ManagedChiefSettings:
-    root = managed_worker_settings_root(configured_database_parent)
-    with _worker_settings_lock(root, CHIEF_SETTINGS_KEY):
-        launch_defaults = _validate_launch_defaults(payload)
-        path = _chief_settings_path(root)
-        snapshot = _PathSnapshot(path)
-        try:
-            _atomic_replace_json(
-                path,
-                {
-                    "employee_id": CHIEF_SETTINGS_KEY,
-                    "label": CHIEF_LABEL,
-                    "launch_defaults": _launch_defaults_payload(launch_defaults),
-                },
-            )
-            if after_publish is not None:
-                after_publish()
-        except Exception:
-            snapshot.restore()
-            raise
-        skill = _parse_skill(
-            _managed_skill_path(root.parent, CHIEF_SKILL_NAME).read_text(encoding="utf-8"),
-            CHIEF_SKILL_NAME,
-        )
-        return ManagedChiefSettings(CHIEF_SETTINGS_KEY, CHIEF_LABEL, skill, launch_defaults)
-
-
-def save_chief_skill(
-    configured_database_parent: Path | str,
-    payload: dict[str, Any],
-    *,
-    after_publish: Callable[[], None] | None = None,
-    version_connection: sqlite3.Connection | None = None,
-) -> ManagedChiefSettings:
-    """Atomically edit the canonical Chief skill file."""
-    allowed = {"name", "description", "markdown_body", "body"}
-    unexpected = sorted(set(payload) - allowed)
-    if unexpected:
-        raise PlannerError(
-            ErrorCode.validation,
-            "unknown Chief skill field",
-            {"field": unexpected[0]},
-        )
-    if "name" in payload and payload["name"] != CHIEF_SKILL_NAME:
-        raise PlannerError(ErrorCode.validation, "Chief skill name is immutable", {})
-    current_path = _managed_skill_path(configured_database_parent, CHIEF_SKILL_NAME)
-    with _managed_skill_lock(current_path):
-        current = _parse_skill(current_path.read_text(encoding="utf-8"), CHIEF_SKILL_NAME)
-        description = payload.get("description", current.description)
-        body = payload.get("markdown_body", payload.get("body", current.markdown_body))
-        if not isinstance(description, str) or not description:
-            raise PlannerError(ErrorCode.validation, "Chief skill description is required", {})
-        if not isinstance(body, str) or not body.strip():
-            raise PlannerError(ErrorCode.validation, "Chief skill body is required", {})
-        rendered = _render_skill_from_existing_frontmatter(
-            current.source_text,
-            expected_skill_name=CHIEF_SKILL_NAME,
-            description=description,
-            markdown_body=body,
-        )
-        _parse_skill(rendered, CHIEF_SKILL_NAME)
-        snapshot = _PathSnapshot(current_path)
-        try:
-            _atomic_replace_text(current_path, rendered)
-            if version_connection is not None:
-                capture_skill_version(
-                    version_connection, CHIEF_SKILL_NAME, rendered.encode("utf-8")
-                )
-            if after_publish is not None:
-                after_publish()
-        except Exception:
-            snapshot.restore()
-            raise
-    return read_chief_settings(configured_database_parent)
 
 
 def read_worker_launch_defaults_for_ticket_creation(
-    conn: sqlite3.Connection,
     registry: WorkerTypeRegistry,
     worker_type: str,
 ) -> ManagedWorkerLaunchDefaults:
-    parent = database_parent_from_connection(conn)
-    if parent is None:
-        profile = registry.require(worker_type).worker_profile
-        return ManagedWorkerLaunchDefaults(
-            profile.default_backend,
-            profile.default_model,
-            profile.default_reasoning_effort,
-        )
-    return read_worker_settings(parent, registry, worker_type).launch_defaults
+    return _launch_defaults(registry.require(worker_type).worker_profile)
 
 
-def save_specialist_skill(
-    configured_database_parent: Path | str,
+def _with_launch_defaults(
+    definition: WorkerTypeDefinition, launch_defaults: ManagedWorkerLaunchDefaults
+) -> WorkerTypeDefinition:
+    return replace(
+        definition,
+        worker_profile=replace(
+            definition.worker_profile,
+            default_backend=launch_defaults.employee_backend,
+            default_model=launch_defaults.employee_launch_model,
+            default_reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
+        ),
+    )
+
+
+def update_worker_launch_defaults(
+    conn: sqlite3.Connection,
     registry: WorkerTypeRegistry,
     worker_type: str,
     payload: dict[str, Any],
     *,
-    after_publish: Callable[[], None] | None = None,
-    runtime_skills_root: Path | None = None,
-    version_connection: sqlite3.Connection | None = None,
+    now: int,
 ) -> ManagedWorkerSettings:
     definition = registry.require(worker_type)
-    allowed = {"description", "markdown_body", "body"}
-    unexpected = sorted(set(payload) - allowed - {"name"})
-    if unexpected:
-        raise PlannerError(
-            ErrorCode.validation,
-            "unknown specialist skill field",
-            {"field": unexpected[0]},
-        )
-    description = payload.get("description")
-    markdown_body = payload.get("markdown_body", payload.get("body"))
-    if not isinstance(description, str) or not description:
-        raise PlannerError(
-            ErrorCode.validation,
-            "specialist skill description is required",
-            {"worker_type": worker_type},
-        )
-    if not isinstance(markdown_body, str) or not markdown_body.strip():
-        raise PlannerError(
-            ErrorCode.validation,
-            "specialist skill body is required",
-            {"worker_type": worker_type},
-        )
-    root = managed_worker_settings_root(configured_database_parent)
-    canonical_skill_path = _managed_skill_path(
-        configured_database_parent, definition.worker_profile.specialist_skill
+    launch_defaults = validate_launch_defaults(payload)
+    with _one_writer(conn):
+        write_definition(conn, _with_launch_defaults(definition, launch_defaults), now=now)
+    load_worker_runtime_definitions(conn)
+    return ManagedWorkerSettings(
+        worker_type=worker_type,
+        specialist_skill=read_skill(conn, definition.worker_profile.specialist_skill),
+        launch_defaults=launch_defaults,
+        candidate_specialist_skill=None,
     )
-    with _managed_skill_lock(canonical_skill_path):
-        current = _read_settings_with_recovery(root, definition)
-        rendered = _render_skill_from_existing_frontmatter(
-            current.specialist_skill.source_text,
-            expected_skill_name=definition.worker_profile.specialist_skill,
-            description=description,
-            markdown_body=markdown_body,
+
+
+def save_specialist_skill(
+    conn: sqlite3.Connection,
+    registry: WorkerTypeRegistry,
+    worker_type: str,
+    payload: dict[str, Any],
+    *,
+    now: int,
+    database_parent: Path | str,
+) -> ManagedWorkerSettings:
+    definition = registry.require(worker_type)
+    skill_name = definition.worker_profile.specialist_skill
+    with _one_writer(conn):
+        rendered = _rendered_skill(
+            conn, skill_name, dict(payload), allow_partial=False, what="specialist skill"
         )
-        _parse_skill(rendered, definition.worker_profile.specialist_skill)
-        if "name" in payload and payload["name"] != definition.worker_profile.specialist_skill:
-            raise PlannerError(
-                ErrorCode.validation,
-                "specialist skill name is immutable",
-                {
-                    "skill_name": payload["name"],
-                    "expected": definition.worker_profile.specialist_skill,
-                },
-            )
-        skill_snapshot = _PathSnapshot(canonical_skill_path)
-        try:
-            _atomic_replace_text(canonical_skill_path, rendered)
-            if version_connection is not None:
-                capture_skill_version(
-                    version_connection,
-                    definition.worker_profile.specialist_skill,
-                    rendered.encode("utf-8"),
-                )
-            if after_publish is not None:
-                after_publish()
-        except Exception:
-            skill_snapshot.restore()
-            raise
-        return _read_settings_with_recovery(root, definition)
+        write_skill_source(conn, skill_name, rendered, now=now)
+    _publish_skill(conn, database_parent, skill_name, rendered)
+    return read_worker_settings(conn, registry, worker_type)
 
 
 def patch_specialist_skill(
-    configured_database_parent: Path | str,
+    conn: sqlite3.Connection,
     registry: WorkerTypeRegistry,
     worker_type: str,
     patch: SpecialistSkillPatch,
     *,
-    after_publish: Callable[[], None] | None = None,
-    runtime_skills_root: Path | None = None,
-    version_connection: sqlite3.Connection | None = None,
+    now: int,
+    database_parent: Path | str,
 ) -> ManagedWorkerSettings:
     field_names = set(patch)
     if field_names not in ({"description"}, {"markdown_body"}):
@@ -947,45 +386,73 @@ def patch_specialist_skill(
             {"field": next(iter(field_names))},
         )
     definition = registry.require(worker_type)
-    root = managed_worker_settings_root(configured_database_parent)
-    canonical_skill_path = _managed_skill_path(
-        configured_database_parent, definition.worker_profile.specialist_skill
+    current = read_skill(conn, definition.worker_profile.specialist_skill)
+    canonical_payload: dict[str, Any] = {
+        "description": current.description,
+        "markdown_body": current.markdown_body,
+    }
+    canonical_payload.update(patch)
+    return save_specialist_skill(
+        conn, registry, worker_type, canonical_payload, now=now, database_parent=database_parent
     )
-    with _managed_skill_lock(canonical_skill_path):
-        current = _read_settings_with_recovery(root, definition)
-        canonical_payload: dict[str, Any] = {
-            "description": current.specialist_skill.description,
-            "markdown_body": current.specialist_skill.markdown_body,
-        }
-        canonical_payload.update(patch)
-        return save_specialist_skill(
-            configured_database_parent,
-            registry,
-            worker_type,
-            canonical_payload,
-            after_publish=after_publish,
-            runtime_skills_root=runtime_skills_root,
-            version_connection=version_connection,
+
+
+# --- the Chief ----------------------------------------------------------------
+
+
+def read_chief_settings(conn: sqlite3.Connection) -> ManagedChiefSettings:
+    row = conn.execute(
+        "SELECT label, employee_backend, employee_launch_model, "
+        "employee_launch_reasoning_effort FROM chief_settings WHERE employee_id = ?",
+        (CHIEF_SETTINGS_KEY,),
+    ).fetchone()
+    if row is None:
+        raise PlannerError(ErrorCode.validation, "managed Chief settings are invalid", {})
+    return ManagedChiefSettings(
+        employee_id=CHIEF_SETTINGS_KEY,
+        label=str(row["label"]),
+        skill=read_skill(conn, CHIEF_SKILL_NAME),
+        launch_defaults=ManagedWorkerLaunchDefaults(
+            employee_backend=str(row["employee_backend"]),
+            employee_launch_model=str(row["employee_launch_model"]),
+            employee_launch_reasoning_effort=(
+                None
+                if row["employee_launch_reasoning_effort"] is None
+                else str(row["employee_launch_reasoning_effort"])
+            ),
+        ),
+    )
+
+
+def update_chief_launch_defaults(
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+) -> ManagedChiefSettings:
+    launch_defaults = validate_launch_defaults(payload)
+    conn.execute(
+        "UPDATE chief_settings SET employee_backend = ?, employee_launch_model = ?, "
+        "employee_launch_reasoning_effort = ? WHERE employee_id = ?",
+        (
+            launch_defaults.employee_backend,
+            launch_defaults.employee_launch_model,
+            launch_defaults.employee_launch_reasoning_effort,
+            CHIEF_SETTINGS_KEY,
+        ),
+    )
+    return read_chief_settings(conn)
+
+
+def save_chief_skill(
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    *,
+    now: int,
+    database_parent: Path | str,
+) -> ManagedChiefSettings:
+    with _one_writer(conn):
+        rendered = _rendered_skill(
+            conn, CHIEF_SKILL_NAME, dict(payload), allow_partial=True, what="Chief skill"
         )
-
-
-def materialize_specialist_skill(
-    configured_database_parent: Path | str,
-    registry: WorkerTypeRegistry,
-    worker_type: str,
-    target_skills_root: Path,
-) -> None:
-    definition = registry.require(worker_type)
-    target_dir = target_skills_root / definition.worker_profile.specialist_skill
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target_skill = target_dir / SKILL_FILE_NAME
-    source_skill = _managed_skill_path(
-        configured_database_parent, definition.worker_profile.specialist_skill
-    )
-    if not source_skill.is_file():
-        raise FileNotFoundError(f"specialist skill source not found: {source_skill}")
-    if target_skill.is_symlink() and target_skill.resolve() == source_skill.resolve():
-        return
-    if target_skill.exists() or target_skill.is_symlink():
-        target_skill.unlink()
-    target_skill.symlink_to(source_skill)
+        write_skill_source(conn, CHIEF_SKILL_NAME, rendered, now=now)
+    _publish_skill(conn, database_parent, CHIEF_SKILL_NAME, rendered)
+    return read_chief_settings(conn)

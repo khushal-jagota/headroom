@@ -7,12 +7,13 @@ from typing import Any
 
 import pytest
 from click.testing import CliRunner
+from tests.support.probe import build_shipped_registry
 
 from planner.cli import http
 from planner.cli import main as cli_main
 from planner.cli.record_projection import project_record
-from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 
+SHIPPED_REGISTRY = build_shipped_registry()
 
 def test_ticket_set_value_uses_the_generic_field_value_route(
     monkeypatch: pytest.MonkeyPatch,
@@ -52,7 +53,7 @@ def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
         requested_paths.append(path)
         if path == "/api/worker-types":
             return {
-                "worker_types": [PRODUCTION_WORKER_TYPE_REGISTRY.manifest("exploration")]
+                "worker_types": [SHIPPED_REGISTRY.manifest("exploration")]
             }
         return {
             "id": "t_correct",
@@ -126,7 +127,7 @@ def test_ticket_approve_sends_the_explicit_next_holder(
                 "pending_proposal": {"field": "success", "body": "Ready"},
             }
         if path == "/api/worker-types":
-            return {"worker_types": [PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")]}
+            return {"worker_types": [SHIPPED_REGISTRY.manifest("coding")]}
         return {"id": "t_child"}
 
     monkeypatch.setattr(http, "send", fake_send)
@@ -388,7 +389,7 @@ def test_ticket_parts_expose_guidance_and_recap_without_expanding_default_manife
 ) -> None:
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         assert (method, path) == ("GET", "/api/worker-types")
-        return {"worker_types": [PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")]}
+        return {"worker_types": [SHIPPED_REGISTRY.manifest("coding")]}
 
     monkeypatch.setattr(http, "send", fake_send)
     data = {

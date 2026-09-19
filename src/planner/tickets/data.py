@@ -280,7 +280,7 @@ def validate_ticket_creation_context(
     runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
     runtime_definitions.worker_type_registry.require(worker_type)
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(
-        conn, runtime_definitions.worker_type_registry, worker_type
+        runtime_definitions.worker_type_registry, worker_type
     )
     employee_configuration.launch_configuration_for_a_new_ticket(
         default_backend=launch_defaults.employee_backend,
@@ -980,7 +980,7 @@ def create_ticket(
     runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
     worker_type_definition = runtime_definitions.worker_type_registry.require(worker_type)
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(
-        conn, runtime_definitions.worker_type_registry, worker_type
+        runtime_definitions.worker_type_registry, worker_type
     )
     launch_configuration = employee_configuration.launch_configuration_for_a_new_ticket(
         default_backend=launch_defaults.employee_backend,

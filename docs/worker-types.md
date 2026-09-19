@@ -9,7 +9,7 @@ Panels stores that choice on the Ticket for its whole life. A read returns the T
 stored Stage and Worker type as they are; it does not substitute coding behavior or ask a
 registry to reinterpret them.
 
-Thirteen Worker types ship today:
+Fourteen Worker types are seeded into a new database:
 
 - **`coding`** handles product and repository work.
 - **`general`** is the catch-all, chosen when no specialist type fits. It runs a
@@ -25,6 +25,8 @@ Thirteen Worker types ship today:
   without deciding or implementing.
 - **`initiative_planning`** works out the shared top-level how for a confirmed direction,
   then creates the bounded Tickets that carry it.
+- **`initiative_review`** reviews a delivered initiative as one combined result, captures
+  the user's feedback, and creates the agreed follow-up work.
 - **`product_design`** designs holistic product flows and implementation-ready interactive
   artifacts before handing implementation to a coding Ticket.
 - **`planning-day`** reviews the previous Day, agrees the top-level direction with the
@@ -35,13 +37,23 @@ Thirteen Worker types ship today:
   boundary, with canonical writes deferred until Closeout.
 - **`personal`** represents user-owned work, with optional explicit agent support.
 
-Tests also register **`probe`**. It has deliberately unfamiliar Stage and field names so
+Tests also declare **`probe`**. It has deliberately unfamiliar Stage and field names so
 the test suite catches code that still assumes every Ticket is coding-shaped. It is not a
 shipped Worker type.
 
-## The definition owns the workflow
+## Where a Worker type is declared
 
-Each Worker type is one immutable `WorkerTypeDefinition`. The definition contains:
+A Worker type is one row in the `worker_types` table, holding the whole declaration as a
+single document. It is read whole, written whole, and checked whole, because its parts
+mean nothing apart: stages that gate fields the type does not declare are not a partly
+valid Worker type, they are not one at all.
+
+Opening a database loads its Worker types into the process, and that is what the rest of
+Panels reads. Declaring or changing one is therefore a write, not a release: the change is
+in force as soon as it is stored.
+
+Each Worker type is one immutable `WorkerTypeDefinition` once loaded. The definition
+contains:
 
 - its id and human label;
 - the ordered Stages, including the field and ownership mode of each
@@ -88,32 +100,44 @@ workflow. Ticket contracts still own universal Ticket facts such as status and s
 but they do not define a coding lifecycle.
 
 _Code paths:_ `src/planner/worker_types/contracts.py` contains the immutable declaration
-types and behavior. `src/planner/worker_types/coding.py`,
-`src/planner/worker_types/general.py`,
-`src/planner/worker_types/debugging.py`,
-`src/planner/worker_types/new_worker.py`,
-`src/planner/worker_types/amend_worker.py`,
-`src/planner/worker_types/exploration.py`,
-`src/planner/worker_types/research.py`,
-`src/planner/worker_types/initiative_planning.py`,
-`src/planner/worker_types/product_design.py`,
-`src/planner/worker_types/planning_day.py`,
-`src/planner/worker_types/planning_midday_check.py`, and
-`src/planner/worker_types/planning_sprint.py`, and
-`src/planner/worker_types/personal.py` contain the thirteen shipped definitions.
+types and behavior. `src/planner/worker_types/store.py` reads and writes the rows. The
+migration `worker_types_in_database` carries a frozen copy of the fourteen definitions a
+new database is seeded with.
 
-## Validation and the narrow registry
+## Validation at the write door
 
-`WorkerTypeRegistry` validates every definition when the registry is built. It checks the
+Nothing may be stored that is not a Worker type. Text arriving at the store is decoded
+strictly first: every section must be present, no section may be unknown, and every value
+must be of the right kind. A decoded definition then meets the same rules that used to run
+when the modules were imported.
+
+`WorkerTypeRegistry` validates every definition when the registry is built, and the store
+runs those same rules before a row is written. They check the
 shared structural rules: an optional Kickoff stage and field appear together first,
 `done` is the one linear terminal,
 `dropped` sits outside the line, every non-terminal Stage gates one declared field, every
 field is gated once, every non-terminal Stage declares a valid ownership mode,
 terminal Stages declare none, worker skills and toolsets are known, and the default
-Employee backend is registered in the same application composition.
+Employee backend is one of the three the conversation system has.
 
-A malformed definition therefore stops application composition instead of failing only
-when a Ticket happens to reach the bad part of its workflow.
+A malformed definition is therefore refused at the moment somebody tries to store it,
+instead of failing when a Ticket happens to reach the bad part of its workflow.
+
+### Tickets in flight
+
+A Ticket names its Stage, and its saved text is keyed by field id. So a rewrite that
+removes a Stage an unfinished Ticket is standing on, or a field an unfinished Ticket holds
+text in, is refused, and the error names those Tickets. Neither loss is recoverable, and
+neither is the kind of thing to discover afterwards. Adding Stages, reordering them, and
+changing labels are all free. A finished Ticket's text in a removed field goes dark; that
+is accepted loss, and history is not rewritten.
+
+There is no well-known field name every Worker type must carry. The Closeout lane resolves
+the field named `closeout`, but only after establishing that one of the type's own Stages
+gates it, so a type without that field simply has no Closeout lane. The probe Worker type
+declares none and is what keeps that true. The names the runtime does require — the `done`
+terminal, the separate `dropped` Stage, and a `kickoff` field paired with a first
+`needs_kickoff` Stage — are all in the rules above.
 
 The registry has only three jobs:
 
@@ -155,16 +179,18 @@ registry. Ticket, sprint, runtime, and API boundaries import it where workflow
 behavior is needed. Rules under `src/planner/tickets/logic/` receive
 `worker_type_definition` explicitly.
 
-## Production and test composition
+## What this process is running
 
-Application composition lives in `src/planner/worker_types/configuration.py`. It owns the
-catalogs of known specialist skills and toolset profiles, the ordered tuple of shipped
-definitions, and the production registry built from them. The shipped tuple currently
-contains `coding`, `general`, `debugging`, `new_worker`, `amend_worker`, `exploration`,
-`initiative_planning`,
-`product_design`, `planning-day`, `planning-midday-check`, and
-`planning-sprint`, and `personal`, and `research`; its
-order is also the manifest order.
+`src/planner/worker_types/configuration.py` holds the Worker types in force for the
+process. Nearly a hundred places ask what a Worker type is, most of them nowhere near a
+database connection, so the answer is held for the process rather than passed down to
+every caller. It is loaded at exactly two moments, which are the only two at which it can
+change: when a database is opened, and when a type is written.
+
+The known specialist skills are the skills stored in the same database. Adding a Worker
+type therefore does not mean editing a catalogue of names somewhere else.
+
+Row order is manifest order.
 
 Which agent backends exist is not this composition's business. It is the conversation
 system's closed set of three — `hermes`, `codex`, and `claude` — and a Worker type naming
@@ -173,10 +199,10 @@ name into a backend, and every part of Panels that reads one goes through it. A 
 type's starting backend, model, and Reasoning choice belong to its own definition rather
 than to a global fallback.
 
-Tests build an explicit Worker-type registry as one exact configuration value. This can
-include the additional `probe` Worker type without changing production configuration. The
-probe names a real backend of its own, deliberately not one the shipped types name, so
-that "a Worker type may run on a different agent" stays under test.
+Tests store the `probe` Worker type in their own database, through the same door
+production writes through. The probe names a real backend of its own, deliberately not one
+the seeded types name, so that "a Worker type may run on a different agent" stays under
+test.
 
 No registry position means “default.” Order is composition and presentation order only.
 
@@ -196,10 +222,23 @@ the Stage's declared ownership.
 output lists the registered identifiers in registry order, while `--json` preserves the
 complete manifest for automation. The CLI does not maintain its own Worker-type list.
 
+## Declaring and changing a Worker type
+
+There is one write door, `POST /api/worker-types`, and it takes the whole record. An
+optional `skill` block carries the specialist skill's description and body, so declaring a
+new Worker and declaring the skill it names happen together rather than as two writes that
+can half-happen: a Worker type may only name a skill that already exists.
+
+At the command line, `panels worker-type show <type>` prints the stored record in the
+shape `panels worker-type save` takes back on stdin, and
+`panels worker-type skill <type> --description "..."` replaces just the skill text.
+
+Declaring a Worker type is a direct operation. A worker cannot declare one.
+
 The frontend derives one lifecycle per Worker type from this served manifest. It renders a
-Ticket against the entry matching the Ticket's stored `worker_type`. All eleven shipped
-types, including `general` and `personal`, therefore show their own Stage spines without
-frontend type tables.
+Ticket against the entry matching the Ticket's stored `worker_type`. Every stored type,
+including `general` and `personal`, therefore shows its own Stage spine without frontend
+type tables, and a type declared today shows one without a frontend change.
 
 During pristine Kickoff, one launch picker shows the Ticket's backend, model, and Reasoning
 choice beside its approval flow. The picker starts with the values already copied onto the
@@ -210,15 +249,21 @@ disappears. It does not move into the header or become a display of current work
 _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 `web/src/lib/lifecycle.ts` derives the frontend lifecycle.
 
-## Managed settings and the Config page
+## Skills and the Config page
 
-The registry is the immutable workflow and Stage ownership authority. Managed settings
-beside the database contain launch defaults only. The managed skills home owns every
-editable skill. `data/skills` is the live authority for Panels skills.
-The packaged `src/planner/skills` tree seeds a new home only; it is never changed by
-the product and does not replace a managed edit. Native homes use symlinks to selected
-managed skills, never copied overlays. Codex and Claude select all Panels skills. Hermes
-uses the narrower allowlist described below.
+Every managed skill's text is a row in `managed_skills`, and that row is the authority.
+`data/skills/<name>/SKILL.md` is a copy Panels writes from it, because an agent reads a
+file rather than a table, and each agent home links to that file. Opening a database
+writes the copies, so the files always say what the rows say. Nothing edits a copy.
+
+The packaged `src/planner/skills` tree is only what a database with no skills in it is
+seeded from. After that it is not consulted, so a shipped skill and a stored one can
+differ, and the stored one is what runs.
+
+A Worker type owns its specialist skill. `PATCH /api/skills/{skill-name}` refuses one and
+points at the Worker, so each skill has exactly one editor. Native homes use symlinks to
+managed skills, never copied overlays. Codex and Claude select all Panels skills, and the
+Hermes home links every skill in the managed home.
 
 The browser navigation and settings page is **Config** at `#/config`. It has exactly two
 quiet, whitespace-separated sections. Every destination is a whole-row link showing
@@ -246,14 +291,18 @@ screens.
 Legacy `#/workers` and `#/workers/<worker-type>` addresses redirect to `#/config` and
 `#/config/workers/<worker-type>`.
 
-Settings writes use atomic replacement and one writer lock per Worker or Chief. These
-files live beside the database rather than in it, so the writer announces the change
-itself once the new file is in place; if that fails, the canonical file is put back and
-every backend continues to see the prior revision.
+Every edit here reads the current record, changes one part of it and writes the whole
+thing back, so each one holds the write lock across that read and write. Two edits landing
+together would otherwise each write what it read, and the slower one would undo the
+faster one's field.
 
-A settings file can outlive the app version that wrote it. A read reconciles the file to
-the current managed contract and removes legacy ownership and suggested-ceiling keys.
-The corrected file contains only the Worker identity and launch defaults.
+The row commits first and the file copy is written from it afterwards. If recording the
+skill's version history then fails, the owner's edit still stands: the row is the
+authority, and the copy is rewritten from it on every open.
+
+What a Worker type launches on is part of its record rather than a separate setting, so
+there is no second copy to keep in step and nothing to reconcile. The Chief is not a
+Worker type and keeps its own single row.
 
 Every editable skill name is read-only. Description and Markdown body are ordinary
 direct edits that save, fail, and retry independently. Successful skill edits refresh
@@ -276,8 +325,10 @@ Approval derives its initial ceiling from the Worker definition's advance target
 new Stage. A valid terminal Stage is the fallback when no further advance exists.
 `No further` remains a choice for one approval.
 
-_Code paths:_ `src/planner/worker_settings/`, `src/planner/tickets/data.py`,
-`src/planner/environments/hermes_home.py`, and `web/src/routes/ConfigRoute.svelte`.
+_Code paths:_ `src/planner/managed_skills.py` holds the skill rows and writes the copies,
+`src/planner/worker_settings/` composes what the Config page reads and edits, and
+`src/planner/tickets/data.py`, `src/planner/environments/hermes_home.py`, and
+`web/src/routes/ConfigRoute.svelte` are unchanged by where the answers come from.
 
 ## The Ticket owns its launch setup
 
