@@ -279,6 +279,9 @@
         tabindex="-1"
         onkeydown={onListKeydown}
       >
+        <!-- The pointer takes the cursor by moving over an option, not by resting where
+             one appears. A panel that opens under a still pointer sends mouseenter
+             without a move, and that must not overrule the keyboard's cursor. -->
         {#each items as item, index (item.value)}
           <button
             type="button"
@@ -292,7 +295,7 @@
             disabled={selectionDisabled}
             data-listbox-picker-value={item.value}
             data-listbox-picker-active={index === active ? "true" : undefined}
-            onmouseenter={() => (activeIndex = index)}
+            onmousemove={() => (activeIndex = index)}
             onmousedown={(event) => event.preventDefault()}
             onclick={() => choose(item.value)}
             {...optionAttributes?.(item, index === active, item.value === selectedValue)}
