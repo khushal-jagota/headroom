@@ -126,8 +126,10 @@ def test_copy_text_probe_renders_own_fields(
     assert "kickoff:\n" in text
     assert f"{FIELD_ALPHA}:\n" in text
     assert f"{FIELD_BETA}:\n" in text
+    # Closeout is the one field name every Worker type carries, so the probe has it too.
+    assert "closeout:\n" in text
 
-    # No coding-only field appears (success/approach/plan/implementation/closeout).
-    for coding_field in ("success", "approach", "plan", "implementation", "closeout"):
+    # No other coding-only field appears (success/approach/plan/implementation).
+    for coding_field in ("success", "approach", "plan", "implementation"):
         assert f"{coding_field}:\n" not in text
         assert f"{coding_field}_user_note:\n" not in text

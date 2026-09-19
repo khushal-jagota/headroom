@@ -25,6 +25,7 @@ SYNTHETIC_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         StageDefinition("needs_kickoff", "Kickoff", "kickoff", False, StageOwnershipMode.worker),
         StageDefinition(ALPHA, "Alpha", FIELD_ALPHA, False, StageOwnershipMode.worker),
         StageDefinition(BETA, "Beta", FIELD_BETA, False, StageOwnershipMode.worker),
+        StageDefinition("needs_closeout", "Closeout", "closeout", False, StageOwnershipMode.worker),
         StageDefinition("done", "Done", None, True, None),
     ),
     dropped_stage=StageDefinition("dropped", "Dropped", None, True, None),
@@ -32,6 +33,7 @@ SYNTHETIC_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         FieldDefinition("kickoff", "Kickoff"),
         FieldDefinition(FIELD_ALPHA, "Alpha"),
         FieldDefinition(FIELD_BETA, "Beta"),
+        FieldDefinition("closeout", "Closeout"),
     ),
     worker_profile=WorkerProfile("synthetic-worker", "a-model", None, "default", "hermes"),
 )

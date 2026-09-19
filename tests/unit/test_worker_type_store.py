@@ -247,20 +247,38 @@ def test_editing_a_type_changes_what_the_process_runs_without_a_restart(
     assert configured_worker_type_registry().require("coding").label == "Coding, renamed"
 
 
-def test_a_worker_type_without_a_closeout_field_is_a_worker_type(
+def test_a_worker_type_that_declares_no_closeout_is_refused(
     database: sqlite3.Connection,
 ) -> None:
-    """The runtime resolves ``closeout`` by name only where a Stage already gates it.
+    """Every Worker type ends by landing what it produced, so every one declares it.
 
-    The probe declares no such field and works, which is what keeps the Closeout lane an
-    ordinary consequence of a type's own Stages rather than a name every type must carry.
+    The refusal happens at the door, rather than when a Ticket reaches the end of its
+    Stages and finds no Closeout to stand on.
     """
     seed_probe_worker_type(database)
-    load_worker_runtime_definitions(database)
-    probe = configured_worker_type_registry().require("probe")
+    without_closeout = replace(
+        PROBE_WORKER_TYPE_DEFINITION,
+        stages=tuple(
+            stage for stage in PROBE_WORKER_TYPE_DEFINITION.stages if stage.id != "needs_closeout"
+        ),
+        fields=tuple(
+            field for field in PROBE_WORKER_TYPE_DEFINITION.fields if field.id != "closeout"
+        ),
+    )
 
-    assert not probe.has_field("closeout")
-    assert probe.gating_field("needs_alpha") == "alpha"
+    with pytest.raises(PlannerError) as caught:
+        write_definition(database, without_closeout, now=2)
+
+    assert caught.value.code is ErrorCode.validation
+    assert caught.value.message == "every worker type must declare a closeout field"
+    assert caught.value.detail == {"worker_type": "probe", "field": "closeout"}
+    assert read_definition(database, "probe").has_field("closeout")
+
+
+def test_every_seeded_type_declares_a_closeout(database: sqlite3.Connection) -> None:
+    for definition in read_definitions(database):
+        assert definition.has_field("closeout")
+        assert definition.stage_gated_by("closeout") == "needs_closeout"
 
 
 def test_a_skill_can_be_added_and_a_type_declared_against_it(
