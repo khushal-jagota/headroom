@@ -168,6 +168,14 @@ def _start_server(
             root = httpx.get(f"{base}/", timeout=1.0)
             assert root.status_code == 200, root.status_code
             assert "data-svelte-app" in root.text
+            # Tests write to this database directly, through the same domain code the
+            # server runs. That code asks the process which Worker types are in force,
+            # so this process must load them from the server's database too.
+            from planner.core.db import connect
+            from planner.worker_types.configuration import load_worker_runtime_definitions
+
+            with connect(str(db_path)) as definitions_source:
+                load_worker_runtime_definitions(definitions_source)
             return handle
         time.sleep(0.1)
 
