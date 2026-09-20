@@ -30,6 +30,7 @@ from planner.notifications.contracts import (
 from planner.notifications.logic.policy import decide_notification
 from planner.tickets import derivation
 from planner.tickets.contracts import TicketStatus
+from planner.tickets.logic import fields_codec
 from planner.work_attention import ticket_assignment_from_values
 from planner.worker_settings.service import CHIEF_LABEL, CHIEF_SETTINGS_KEY
 
@@ -297,7 +298,7 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
     desired: dict[tuple[str, str, str], tuple[bool, Principal, str, int]] = {}
     ticket_rows = conn.execute(
         "SELECT id, title, stage, worker_type, worker_step_claim, pending_proposal, "
-        "ceiling_holder, conversation_id, updated_at, worker_step_claim_changed_at FROM tickets"
+        "ceiling_holder, conversation_id, updated_at FROM tickets"
     ).fetchall()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     for row in ticket_rows:
@@ -311,6 +312,7 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
         label = str(row["title"])
         conversation = conversations.get(str(row["conversation_id"]), (False, False, 0, 0))
         owner_holds = _owner_holds_ticket_ceiling(str(row["ceiling_holder"]))
+        parked = fields_codec.proposal_from_json(row["pending_proposal"])
         flags = {
             "awaiting_reply": conversation[0],
             "awaiting_approval": facts.proposal_is_parked and owner_holds,
@@ -325,8 +327,10 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
             occurred_at = (
                 conversation[3]
                 if notification_type in {"awaiting_reply", "errored"} and conversation[3]
-                else int(row["worker_step_claim_changed_at"])
-                if notification_type == "awaiting_approval"
+                # A parked proposal knows when it was parked, and that is the wait.
+                # It is the same number the review list shows.
+                else int(parked.created_at)
+                if notification_type == "awaiting_approval" and parked is not None
                 else int(row["updated_at"])
             )
             desired[("ticket", ticket_id, notification_type)] = (
