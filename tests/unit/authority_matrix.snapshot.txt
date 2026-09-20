@@ -1,13 +1,13 @@
 operation                                                owner   chief   outcome_parent  outcome_stranger  ticket_self  ticket_stranger  ticket_planning_day
 ------------------------------------------------------------------------------------------------------------------------------------------------------------
 GET    /tickets (detail=full)                            allow   allow   allow           allow             allow        allow            allow              
-PATCH  /tickets/{t} priority                             allow   allow   refuse          refuse            allow        allow            allow              
+PATCH  /tickets/{t} priority                             allow   allow   refuse          refuse            allow        refuse           refuse             
 PATCH  /tickets/{t} title                                allow   allow   refuse          refuse            refuse       refuse           refuse             
 PATCH  /tickets/{t} sprint_item_id                       allow   allow   refuse          refuse            refuse       refuse           refuse             
 PATCH  /tickets/{t} project_id                           allow   allow   refuse          refuse            refuse       refuse           refuse             
 PATCH  /tickets/{t} ceiling                              allow   allow   refuse          refuse            refuse       refuse           refuse             
 PATCH  /tickets/{t} ceiling_holder                       allow   refuse  refuse          refuse            refuse       refuse           refuse             
-PATCH  /tickets/{t} recap                                allow   allow   refuse          refuse            allow        allow            allow              
+PATCH  /tickets/{t} recap                                allow   allow   refuse          refuse            allow        refuse           refuse             
 DELETE /tickets/{t}                                      allow   allow   allow           refuse            refuse       refuse           refuse             
 POST   /tickets/{t}/propose                              refuse  refuse  refuse          refuse            allow        refuse           refuse             
 POST   /tickets/{t}/request-help                         refuse  refuse  refuse          refuse            allow        refuse           refuse             
@@ -31,7 +31,7 @@ DELETE /items/{i}/supervisor/artifacts/{p}               allow   allow   allow  
 GET    /items/{i}/supervisor/conversation/start-values   allow   allow   allow           refuse            refuse       refuse           refuse             
 POST   /items/{i}/supervisor/conversation/reset          allow   allow   refuse          refuse            refuse       refuse           refuse             
 GET    /items/{i}/workspace                              allow   allow   allow           refuse            refuse       refuse           refuse             
-PATCH  /items/{i}                                        allow   allow   refuse          refuse            refuse       refuse           refuse             
+PATCH  /items/{i}                                        allow   allow   allow           refuse            refuse       refuse           refuse             
 DELETE /items/{i}                                        allow   allow   refuse          refuse            refuse       refuse           refuse             
 PUT    /collections/outcome_tickets                      allow   allow   refuse          refuse            allow        allow            allow              
 PUT    /collections/day_tickets                          allow   allow   allow           refuse            allow        allow            allow              

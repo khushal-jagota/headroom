@@ -159,8 +159,11 @@ def test_supervisor_item_routes_refuse_a_cross_item_actor(tmp_path: Path) -> Non
         }
         own = client.get(f"/api/items/{first['id']}/supervisor/context", headers=headers)
         cross = client.get(f"/api/items/{second['id']}/supervisor/context", headers=headers)
-        write = client.patch(
-            f"/api/items/{first['id']}", json={"body": "not allowed"}, headers=headers
+        own_write = client.patch(
+            f"/api/items/{first['id']}", json={"body": "its own record"}, headers=headers
+        )
+        cross_write = client.patch(
+            f"/api/items/{second['id']}", json={"body": "not allowed"}, headers=headers
         )
 
     assert own.status_code == 200
@@ -168,8 +171,14 @@ def test_supervisor_item_routes_refuse_a_cross_item_actor(tmp_path: Path) -> Non
     assert own.json()["tickets"] == []
     assert cross.status_code == 400
     assert cross.json()["error"]["code"] == "agent_forbidden"
-    assert write.status_code == 400
-    assert write.json()["error"]["code"] == "agent_forbidden"
+    # Changed deliberately by the one-rule Ticket. A supervisor is its own Outcome, so
+    # editing that Outcome's body is its own record and is admitted; it used to be refused
+    # here and allowed only through a second address. Another Outcome is still refused,
+    # which is what this test is for.
+    assert own_write.status_code == 200, own_write.text
+    assert own_write.json()["body"] == "its own record"
+    assert cross_write.status_code == 400
+    assert cross_write.json()["error"]["code"] == "agent_forbidden"
 
 
 def test_supervisor_context_and_history_use_only_the_current_child_conversation(

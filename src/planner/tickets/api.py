@@ -43,10 +43,9 @@ from planner.conversation.storage import ConversationStore
 from planner.core import authority
 from planner.core.authctx import (
     RequestContext,
-    reject_agent_fields,
     request_context,
 )
-from planner.core.authority import require_above, require_self
+from planner.core.authority import require_above, require_above_or_self, require_self
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.contracts import (
@@ -101,13 +100,13 @@ from planner.worker_types.contracts import WorkerTypeDefinition
 
 router = APIRouter()
 
-# §8: workers drive priority/deadline/day/sprint via `ticket set`; title and project are
-# direct-only, so an attributed non-Chief PATCH is agent_forbidden.
-# Fields an attributed non-Chief agent cannot set. The recap and the guidance document
-# are absent on purpose: a Worker keeps its own Ticket's recap current, and writes the
-# user's direction into guidance. The ceiling is here because granting scope is the
-# user's, and a Sprint Item supervisor grants it through its own route.
-_TICKET_DIRECT_ONLY_FIELDS = (
+# Fields on a Ticket that only somebody standing above it may set. A Worker drives its own
+# Ticket's priority, deadline and recap, and writes the user's direction into guidance, so
+# those are the Ticket's own record and are absent here. These are not: renaming a Ticket,
+# moving it between projects or sprints, rewriting a settled field, and above all raising
+# its own ceiling. A Ticket's ceiling is its leash, and a leash a Ticket can lengthen is
+# not one, which is the one thing "your own record" must not be read to grant.
+_TICKET_FIELDS_ONLY_FROM_ABOVE = (
     "title",
     "project",
     "project_id",
@@ -115,12 +114,15 @@ _TICKET_DIRECT_ONLY_FIELDS = (
     "sprint_item_id",
     "field_values",
     "ceiling",
-    # Not "ceiling_holder". Granting scope is the user's, but handing a Ticket on is the
-    # current holder's, whoever that is, so this list is the wrong gate for it.
-    # decide_set_ceiling_holder is the real one, and it refuses every principal that is
-    # neither the holder nor the user — including an attributed Worker, which is the only
-    # principal this omission lets through the door.
+    # Not "ceiling_holder". Handing a Ticket on is not the same as granting it scope, and
+    # decide_set_ceiling_holder is the gate for it.
 )
+
+# The one field nobody may set about a thing they only reach through it. An Outcome stands
+# above its Tickets because of sprint_item_id, so setting it is reassigning the authority
+# the caller is using rather than exercising it. Khushal and the Chief stand above every
+# Outcome, so re-parenting stays theirs.
+_TICKET_FIELD_THAT_MOVES_THE_PARENT = "sprint_item_id"
 
 
 # --- shared plumbing (imported by the other api modules) -----------------------
@@ -914,7 +916,20 @@ async def patch_ticket(
         raise PlannerError(
             ErrorCode.validation, "guidance is either replaced or appended to, not both", {}
         )
-    reject_agent_fields(ctx, body, _TICKET_DIRECT_ONLY_FIELDS)
+    target = authority.ticket(ticket_id)
+    if set(body) & set(_TICKET_FIELDS_ONLY_FROM_ABOVE):
+        require_above(conn, ctx.principal, target)
+    else:
+        require_above_or_self(conn, ctx.principal, target)
+    if (
+        _TICKET_FIELD_THAT_MOVES_THE_PARENT in body
+        and ctx.principal.kind is PrincipalKind.sprint_item
+    ):
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            "an Outcome cannot move a Ticket out of its own chain",
+            {"field": _TICKET_FIELD_THAT_MOVES_THE_PARENT, "ticket_id": ticket_id},
+        )
 
     edit = TicketEdit()
     if "title" in body:

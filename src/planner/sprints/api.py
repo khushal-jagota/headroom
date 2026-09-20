@@ -17,8 +17,6 @@ from planner.conversation.api import OwnerSendBody, conversation_message_content
 from planner.conversation.contracts import require_conversation_backend_key
 from planner.core import authority
 from planner.core.authctx import (
-    reject_agent_fields,
-    require_planning_write,
     require_sprint_item_supervisor_ticket_write,
 )
 from planner.core.authority import require_above, require_above_or_self
@@ -703,8 +701,6 @@ async def patch_item(
             raise PlannerError(ErrorCode.validation, "unknown item field", {"field": key})
     if not body:
         raise PlannerError(ErrorCode.validation, "no item fields to update", {})
-    if ctx.principal.kind is PrincipalKind.sprint_item:
-        reject_agent_fields(ctx, body, recognized)
     edits: dict[str, str | None] = {}
     for field in _ITEM_PLAIN_FIELDS:
         if field in body:
@@ -732,7 +728,7 @@ async def patch_item(
         item_id,
         edits=edits,
         clock=clk,
-        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
+        admit=lambda: require_above_or_self(conn, ctx.principal, authority.outcome(item_id)),
     )
     return sprints_views.item_detail(conn, item_id)
 
