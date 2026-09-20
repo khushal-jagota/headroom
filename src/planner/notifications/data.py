@@ -190,7 +190,7 @@ def _principal_from_stored_subject(subject_kind: str, subject_id: str) -> Princi
 
 
 def _preference_subject_key(edge: AttentionEdge) -> str:
-    """Which saved switch decides this fact.
+    """Which saved switch decides this edge.
 
     Every Ticket shares one switch, and every Sprint Item shares one: a sprint holds
     twenty or thirty Items and they are replaced each sprint, so a switch per Item would
