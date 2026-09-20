@@ -41,6 +41,7 @@ class EnvironmentAnswers:
 
     venv_prefix: Path | None = None
     venv_origin: Path | None = None
+    editable_root: Path | None = None
     planner_file: Path | None = None
     planner_absent: bool = False
     launcher_interpreters: dict[str, Path | None] = field(default_factory=dict)
@@ -64,10 +65,23 @@ def faults(tree: Path, answers: EnvironmentAnswers) -> list[str]:
             f"{venv}/pyvenv.cfg records creation at {answers.venv_origin}, "
             "so this virtualenv was copied or moved and must be rebuilt"
         )
+    if answers.editable_root is not None and answers.editable_root != tree / "src":
+        found.append(
+            f"the editable install in {venv} points at {answers.editable_root}, "
+            f"not {tree}/src"
+        )
     if answers.planner_absent:
         found.append(f"planner is not installed in {venv}")
     elif answers.planner_file is not None and not _inside(answers.planner_file, tree / "src"):
-        found.append(f"planner resolves to {answers.planner_file}, outside {tree}/src")
+        if _inside(answers.planner_file, venv):
+            # It belongs to this tree's virtualenv, but as a copy of the source taken at
+            # install time. Tests would pass on that copy, not on the working tree.
+            found.append(
+                f"planner is installed into {venv} rather than linked to {tree}/src: "
+                "reinstall it with pip install --editable ."
+            )
+        else:
+            found.append(f"planner resolves to {answers.planner_file}, outside {tree}/src")
     for name, interpreter in sorted(answers.launcher_interpreters.items()):
         if interpreter is not None and not _inside(interpreter, venv):
             found.append(f"{name} runs on {interpreter}, outside {venv}")
@@ -78,28 +92,50 @@ def _inside(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
 
-def interpreter_from_shebang(first_line: str) -> Path | None:
+def interpreter_from_launcher(text: str) -> Path | None:
     """Resolve the interpreter a console script launches on.
 
-    Returns ``None`` for a native binary or any line that is not a shebang: those
-    carry no interpreter to redirect.
+    Three forms appear in ``.venv/bin``:
+
+    * ``#!/path/to/python`` — the ordinary shebang.
+    * ``#!/usr/bin/env python`` — names the finder, not the interpreter, so there is
+      no answer here.
+    * A two-line ``/bin/sh`` wrapper. pip writes this instead of a shebang whenever
+      the interpreter path is over 127 bytes or holds a space, which a long worktree
+      name reaches on its own. The real path is the second line's ``exec`` argument.
+
+    Returns ``None`` for a native binary, a relative interpreter, or anything else
+    that records no path: those carry nothing to redirect.
     """
-    if not first_line.startswith("#!"):
+    lines = text.splitlines()
+    if not lines or not lines[0].startswith("#!"):
         return None
-    try:
-        words = shlex.split(first_line[2:].strip())
-    except ValueError:
-        return None
+    words = _split(lines[0][2:])
+    if words and Path(words[0]).name in {"sh", "bash"} and len(lines) > 1:
+        # The line reads: <quoting noise>exec' /path/to/python "$0" "$@"
+        words = _split(lines[1])
+        words = words[1:] if words and words[0].endswith("exec") else words
     if not words:
         return None
-    # ``#!/usr/bin/env python`` names the finder, not the interpreter.
     candidate = words[1] if Path(words[0]).name == "env" and len(words) > 1 else words[0]
     if not candidate.startswith("/"):
         return None
-    # Normalized, never resolved: ``.venv/bin/python`` is a symlink chain ending at
-    # the system interpreter, and resolving it would throw away the only thing this
-    # line records — which virtualenv the launcher runs out of.
-    return Path(os.path.normpath(candidate))
+    # The directory is resolved but the interpreter name is not. ``.venv/bin/python``
+    # is a symlink chain ending at the system interpreter: follow it and every healthy
+    # launcher looks foreign. Leave the directory unresolved and a tree reached through
+    # a symlink looks foreign instead. Resolving only the parent answers both.
+    named = Path(os.path.normpath(candidate))
+    try:
+        return named.parent.resolve() / named.name
+    except OSError:
+        return named
+
+
+def _split(line: str) -> list[str]:
+    try:
+        return shlex.split(line.strip())
+    except ValueError:
+        return []
 
 
 def venv_origin_from_pyvenv_cfg(text: str) -> Path | None:
@@ -119,16 +155,34 @@ def venv_origin_from_pyvenv_cfg(text: str) -> Path | None:
 
 
 def read_launcher_interpreter(launcher: Path) -> Path | None:
-    """Read a console script's shebang, tolerating a native binary or a missing file."""
+    """Read a console script's opening lines, tolerating a native binary or a missing file."""
     try:
         with launcher.open("rb") as handle:
-            head = handle.read(4096).split(b"\n", 1)[0]
+            head = b"\n".join(handle.read(4096).split(b"\n")[:2])
     except OSError:
         return None
     try:
-        return interpreter_from_shebang(head.decode("utf-8"))
+        return interpreter_from_launcher(head.decode("utf-8"))
     except UnicodeDecodeError:
         return None
+
+
+def read_editable_root(venv: Path) -> Path | None:
+    """Resolve the source directory a virtualenv's editable install points at.
+
+    This reads a file. It never imports ``planner``, which is what makes it usable
+    inside mypy, where the import would cost startup time for a question mypy does
+    not otherwise ask.
+    """
+    for site_packages in sorted(venv.glob("lib/python*/site-packages")):
+        for path_file in sorted(site_packages.glob("__editable__*.pth")):
+            try:
+                first = path_file.read_text(encoding="utf-8").splitlines()[:1]
+            except (OSError, UnicodeDecodeError):
+                continue
+            if first and first[0].startswith("/"):
+                return Path(os.path.normpath(first[0]))
+    return None
 
 
 def read_venv_origin(venv: Path) -> Path | None:
@@ -153,13 +207,19 @@ def running_answers(tree: Path, *, ask_planner: bool) -> EnvironmentAnswers:
     if ask_planner:
         try:
             import planner
-        except ImportError:
+        except ImportError as exc:
+            # Only planner's own absence is this module's business. A missing transitive
+            # dependency, or a SyntaxError in the tree being edited, is a different
+            # problem and keeps its own error rather than being reported as the wrong one.
+            if exc.name is not None and exc.name.split(".")[0] != "planner":
+                raise
             planner_absent = True
         else:
             planner_file = Path(planner.__file__).resolve() if planner.__file__ else None
     return EnvironmentAnswers(
         venv_prefix=Path(sys.prefix).resolve(),
         venv_origin=read_venv_origin(venv),
+        editable_root=read_editable_root(venv),
         planner_file=planner_file,
         planner_absent=planner_absent,
     )
@@ -175,20 +235,28 @@ def probed_answers(tree: Path, launchers: tuple[str, ...]) -> EnvironmentAnswers
     venv = tree.resolve() / ".venv"
     planner_file: Path | None = None
     planner_absent = False
-    completed = subprocess.run(
-        [str(venv / "bin" / "python"), "-c", PLANNER_PROBE],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    output = completed.stdout.strip()
-    if completed.returncode != 0 or not output:
+    try:
+        completed = subprocess.run(
+            [str(venv / "bin" / "python"), "-c", PLANNER_PROBE],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        # A dangling ``.venv/bin/python`` after a system Python upgrade. Every other
+        # reader here tolerates a missing file, and so does this one.
+        completed = None
+    # The last line, not the whole of stdout: a chatty path file or sitecustomize can
+    # print before the probe does, and a two-line ``Path`` is nonsense.
+    lines = completed.stdout.strip().splitlines() if completed is not None else []
+    if completed is None or completed.returncode != 0 or not lines:
         planner_absent = True
     else:
-        planner_file = Path(output).resolve()
+        planner_file = Path(lines[-1]).resolve()
     return EnvironmentAnswers(
         venv_prefix=None,
         venv_origin=read_venv_origin(venv),
+        editable_root=read_editable_root(venv),
         planner_file=planner_file,
         planner_absent=planner_absent,
         launcher_interpreters={
@@ -202,7 +270,12 @@ def plugin(version: str) -> type:
 
     ``pyproject.toml`` names this file, and mypy resolves that path against the
     config file, so the tree's own config always loads the tree's own copy of this
-    module. A fault here raises, and mypy stops with the reason.
+    module. A fault here stops mypy with the reason.
+
+    Three answers, not two. ``venv_prefix`` and ``venv_origin`` both go quiet for a
+    relocatable virtualenv built by ``uv``: its launchers resolve the interpreter
+    beside themselves, and it writes no creation path. The editable path file still
+    names the tree it was installed from, and reading it costs no import.
     """
     from mypy.plugin import Plugin
 

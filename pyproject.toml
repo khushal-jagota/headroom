@@ -60,8 +60,11 @@ strict = true
 # them ``Any`` and silently stop checking every call made through them. Moving a type is
 # then meant to list every call site it broke here, in one run, instead of one test run at
 # a time.
-files = ["src", "tests"]
-mypy_path = "src"
+# The verify instrument is checked at the same strictness as what it gates. The rest of
+# scripts/ is not: measure_status_gaps.py is an untyped one-off and rewriting it belongs
+# to whoever next touches it.
+files = ["src", "tests", "scripts/tree_environment.py", "scripts/verify.py", "scripts/verify_lib.py"]
+mypy_path = "src:scripts"
 # ``tests`` has no __init__.py — it is a PEP 420 namespace package rooted at the repo root
 # (see the pytest ``pythonpath`` setting below). Without this, mypy fails on package layout
 # before it checks anything.

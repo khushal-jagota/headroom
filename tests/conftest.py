@@ -20,7 +20,7 @@ import pytest
 TREE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TREE / "scripts"))
 
-import tree_environment  # type: ignore[import-not-found]  # noqa: E402  # reached via sys.path.insert above; not visible to mypy
+import tree_environment  # noqa: E402  # reached via sys.path.insert above
 
 
 def pytest_configure(config: pytest.Config) -> None:
