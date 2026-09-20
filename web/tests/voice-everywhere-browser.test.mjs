@@ -162,7 +162,7 @@ with sync_playwright() as playwright:
         page = browser.new_page(viewport={"width": 1100, "height": 760})
         page.set_default_timeout(5_000)
         page.route("**/api/worker-types", lambda route: route.fulfill(json=MANIFEST))
-        page.route("**/api/tickets/review-voice", lambda route: route.fulfill(json=TICKET))
+        page.route("**/api/tickets?*id=review-voice*", lambda route: route.fulfill(json=TICKET))
         page.route("**/api/conversation/voice-transcriptions", lambda route: route.fulfill(json={"transcript": "dictated words"}))
         page.route("**/api/conversation/conversations/*/voice-transcriptions", lambda route: route.abort())
         page.goto(sys.argv[1] + query, wait_until="domcontentloaded")

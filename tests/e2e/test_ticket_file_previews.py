@@ -118,12 +118,12 @@ def _wait_for_field_text(
 ) -> str:
     deadline = time.monotonic() + WAIT_MS / 1000
     while time.monotonic() < deadline:
-        ticket = api.get(server, f"/api/tickets/{ticket_id}")
+        ticket = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
         value: str = ticket["field_values"].get(field)
         if expected_fragment in value:
             return value
         time.sleep(0.1)
-    ticket = api.get(server, f"/api/tickets/{ticket_id}")
+    ticket = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
     value = ticket["field_values"].get(field)
     assert expected_fragment in value
     return value
@@ -330,7 +330,9 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     page.keyboard.press("Delete")
     page.locator(editable).blur()
     page.wait_for_function("f0 => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
-    stored_after_delete = api.get(server, f"/api/tickets/{ticket_id}")["field_values"].get(
+    stored_after_delete = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")[
+        "field_values"
+    ].get(
         "success_condition"
     )
     assert markdown_token not in stored_after_delete
@@ -359,7 +361,9 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     page.keyboard.press("Backspace")
     page.locator(editable).blur()
     page.wait_for_function("f0 => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
-    stored_after_backspace = api.get(server, f"/api/tickets/{ticket_id}")["field_values"].get(
+    stored_after_backspace = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")[
+        "field_values"
+    ].get(
         "success_condition"
     )
     assert image_token not in stored_after_backspace
@@ -385,7 +389,9 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     page.keyboard.press("Delete")
     page.locator(editable).blur()
     page.wait_for_function("f0 => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
-    stored_after_selected_delete = api.get(server, f"/api/tickets/{ticket_id}")["field_values"].get(
+    stored_after_selected_delete = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")[
+        "field_values"
+    ].get(
         "success_condition"
     )
     assert binary_token not in stored_after_selected_delete
@@ -500,7 +506,9 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
         state="visible", timeout=WAIT_MS
     )
     assert (
-        api.get(server, f"/api/tickets/{ticket_id}")["field_values"].get("success_condition")
+        api.get(server, f"/api/tickets?detail=full&id={ticket_id}")["field_values"].get(
+            "success_condition"
+        )
         == attempted_source
     )
 
@@ -560,6 +568,6 @@ def test_loaded_preview_proposal_approves_without_edited_body(
     page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
     assert len(approval_payloads) == 1
     assert "edited_body" not in approval_payloads[0]
-    ticket = api.get(server, f"/api/tickets/{ticket_id}")
+    ticket = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
     assert ticket["field_values"].get("success_condition") == body
     assert ticket["pending_proposal"] is None

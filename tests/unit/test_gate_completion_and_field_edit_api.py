@@ -112,7 +112,7 @@ def test_the_one_edit_refuses_to_fill_a_blank(tmp_path: Path) -> None:
     tid = _passed_ticket(db_path)
     with TestClient(app) as client:
         response = client.patch(f"/api/tickets/{tid}", json={"field_values": {"plan": "draft"}})
-        after = client.get(f"/api/tickets/{tid}").json()
+        after = client.get(f"/api/tickets?detail=full&id={tid}").json()
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "validation"
     assert "plan" not in after["field_values"]
@@ -175,7 +175,7 @@ def test_completion_rejects_a_worker_owned_gate_without_changing_the_ticket(
             f"/api/tickets/{ticket.id}/complete/brief",
             json={"body": "Not allowed"},
         )
-        after = client.get(f"/api/tickets/{ticket.id}").json()
+        after = client.get(f"/api/tickets?detail=full&id={ticket.id}").json()
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "agent_forbidden"
@@ -245,7 +245,7 @@ def test_a_parked_proposal_has_no_edit_door(tmp_path: Path) -> None:
             json={"field": "plan", "body": "edited plan draft"},
             headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": tid},
         )
-        after = client.get(f"/api/tickets/{tid}").json()
+        after = client.get(f"/api/tickets?detail=full&id={tid}").json()
 
     assert response.status_code == 404
     assert after["pending_proposal"]["body"] == "plan draft"

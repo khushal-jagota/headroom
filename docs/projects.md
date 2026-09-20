@@ -43,8 +43,9 @@ under `No project`.
 
 ## Surfaces
 
-- `GET /api/projects` lists available projects.
-- `GET /api/projects/{project_id}` returns one canonical Project record.
+- `GET /api/projects?detail=summary|full` reads the catalog at the level asked for.
+  `detail` is required and has no default. Add `id=<project_id>` with `detail=full` to
+  read one canonical Project record.
 - `POST /api/projects {name, priority, summary?, folder_path?}` creates an assessed project.
 - `PATCH /api/projects/{project_id}` updates the name, summary, priority, or folder path.
 - `panels project list`, `panels project show <project_id> [summary]`,
