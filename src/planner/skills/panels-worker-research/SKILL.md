@@ -18,7 +18,6 @@ The sequence is **Kickoff → Research Plan → Research → Closeout → Done**
 - **needs_research** — the evidence, gathered, vetted, and synthesized.
 - **needs_closeout** — the deliverable written, linked, and reported.
 - **done** — finished.
-- **dropped** — abandoned.
 
 ### needs_kickoff — preserve the question
 

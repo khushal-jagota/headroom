@@ -13,7 +13,7 @@ import {
   type WorkerTypesResponse
 } from "../src/lib/lifecycle";
 import type { TicketDetail } from "../src/lib/types";
-import { atCapLabel, ticketStatusText } from "../src/lib/ui";
+import { ticketStatusText } from "../src/lib/ui";
 
 const codingManifest = {
   worker_type: "coding",
@@ -69,13 +69,6 @@ const codingManifest = {
       ownership_mode: null
     }
   ],
-  dropped: {
-    id: "dropped",
-    label: "Dropped",
-    gating_field: null,
-    is_terminal: true,
-    ownership_mode: null
-  },
   advance: {
     needs_kickoff: "needs_success",
     needs_success: "needs_approach",
@@ -140,13 +133,6 @@ const researchManifest = {
       ownership_mode: null
     }
   ],
-  dropped: {
-    id: "dropped",
-    label: "Dropped",
-    gating_field: null,
-    is_terminal: true,
-    ownership_mode: null
-  },
   advance: {
     needs_brief: "needs_findings",
     needs_findings: "needs_writeup",
@@ -183,7 +169,6 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     stage: "needs_success",
     ceiling: "done",
     ceiling_holder: { kind: "owner", id: "owner" },
-    at_cap: "propose",
     priority: "P1",
     resolved_priority_anchors: {
       sprint_item: null,
@@ -191,11 +176,8 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     },
     conversation_id: null,
     conversation_history: [],
-    verdict: null,
-    trouble_notes: [],
     field_values: {},
     pending_proposal: null,
-    archived_field_content: "",
     guidance: "",
     ...overrides
   };

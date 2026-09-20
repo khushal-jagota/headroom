@@ -73,7 +73,6 @@ def _park_a_proposal(client: TestClient, item_id: str) -> dict[str, Any]:
             "kickoff_note": "Start here.",
             "sprint_item_id": item_id,
             "ceiling": "needs_success",
-            "at_cap": "propose",
         },
         headers=_supervisor_headers(item_id),
     )
@@ -430,7 +429,7 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
 
     assert sent.status_code == 200, sent.text
     assert sent.json()["sender"] == item["supervisor"]["agent_key"]
-    for field in ("stage", "ceiling", "at_cap", "ticket_status", "day_ids"):
+    for field in ("stage", "ceiling", "ticket_status", "day_ids"):
         assert after[field] == before[field]
     write = cast(InMemoryConversationSystem, app.state.conversation_system).backend_prompt_writes(
         conversation_id
@@ -452,7 +451,6 @@ def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> Non
             path,
             json={
                 "next_ceiling": "needs_approach",
-                "at_cap": "propose",
                 "next_holder": _OWNER_HOLDER,
             },
             headers=_supervisor_headers(str(second["id"])),
@@ -461,7 +459,6 @@ def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> Non
             path,
             json={
                 "next_ceiling": "needs_approach",
-                "at_cap": "propose",
                 "next_holder": _OWNER_HOLDER,
             },
             headers=_supervisor_headers(str(first["id"])),
@@ -676,13 +673,11 @@ def test_supervisor_creates_and_approves_a_ticket_under_its_own_item(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/approve",
             json={
                 "next_ceiling": "needs_approach",
-                "at_cap": "propose",
                 "next_holder": _OWNER_HOLDER,
             },
             headers=headers,
         )
 
-    assert created.json()["at_cap"] == "propose"
     assert created.json()["ticket_status"] == "awaiting_approval"
     assert approved.status_code == 200, approved.text
     assert approved.json()["stage"] == "needs_success"
@@ -775,7 +770,6 @@ def _stranded_child(
             "next_ceiling": (
                 "needs_understanding" if worker_type == "new_worker" else "needs_success"
             ),
-            "at_cap": "propose",
             "next_holder": _OWNER_HOLDER,
         },
     )

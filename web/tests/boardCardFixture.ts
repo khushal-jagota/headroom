@@ -23,7 +23,6 @@ export function boardCard(id: string, values: Partial<BoardCard> = {}): BoardCar
     gating_field: "implementation",
     gating_field_label: "Implementation",
     is_done: false,
-    is_dropped: false,
     blocked: false,
     conversation_id: null,
     waiting_to_closeout: false,

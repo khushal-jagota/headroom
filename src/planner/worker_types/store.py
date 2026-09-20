@@ -23,8 +23,6 @@ from planner.worker_types.contracts import (
 )
 from planner.worker_types.registry import KNOWN_TOOLSET_PROFILES, validate_definition
 
-UNFINISHED_STAGE_EXCLUSIONS = ("done", "dropped")
-
 
 def _fail(message: str, detail: dict[str, Any]) -> PlannerError:
     return PlannerError(ErrorCode.validation, message, detail)
@@ -120,7 +118,6 @@ def definition_to_json(definition: WorkerTypeDefinition) -> str:
             "worker_type": definition.worker_type,
             "label": definition.label,
             "stages": [_stage_to_json(stage) for stage in definition.stages],
-            "dropped": _stage_to_json(definition.dropped_stage),
             "fields": [{"id": field.id, "label": field.label} for field in definition.fields],
             "profile": {
                 "specialist_skill": definition.worker_profile.specialist_skill,
@@ -140,7 +137,7 @@ def definition_from_json(raw: str) -> WorkerTypeDefinition:
     except ValueError as exc:
         raise _fail("stored worker type is not valid JSON", {}) from exc
     payload = _require_exact_keys(
-        decoded, {"worker_type", "label", "stages", "dropped", "fields", "profile"}, "record"
+        decoded, {"worker_type", "label", "stages", "fields", "profile"}, "record"
     )
     stages = payload["stages"]
     fields = payload["fields"]
@@ -150,7 +147,6 @@ def definition_from_json(raw: str) -> WorkerTypeDefinition:
         worker_type=_require_text(payload["worker_type"], "worker type id"),
         label=_require_text(payload["label"], "label"),
         stages=tuple(_stage_from_json(stage) for stage in stages),
-        dropped_stage=_stage_from_json(payload["dropped"]),
         fields=tuple(_field_from_json(field) for field in fields),
         worker_profile=_profile_from_json(payload["profile"]),
     )
@@ -211,8 +207,8 @@ def _tickets_holding_fields(
     holders: list[str] = []
     for row in conn.execute(
         "SELECT id, field_values FROM tickets WHERE worker_type = ? "
-        "AND stage NOT IN (?, ?) ORDER BY id",
-        (worker_type, *UNFINISHED_STAGE_EXCLUSIONS),
+        "AND stage != 'done' ORDER BY id",
+        (worker_type,),
     ):
         stored: Any = json.loads(str(row["field_values"]))
         if not isinstance(stored, dict):

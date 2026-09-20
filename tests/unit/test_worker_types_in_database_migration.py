@@ -134,7 +134,6 @@ def test_overlay_keys_that_stopped_meaning_anything_are_left_behind(parent: Path
             "worker_type",
             "label",
             "stages",
-            "dropped",
             "fields",
             "profile",
         }

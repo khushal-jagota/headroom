@@ -188,7 +188,6 @@ export type PendingTicketProposal = {
   created_at: number;
 };
 
-export type AtCap = "stop" | "propose";
 
 export type Principal = {
   kind: "owner" | "chief" | "sprint_item" | "ticket";
@@ -280,7 +279,6 @@ export type TicketDetail = {
   stage: string;
   ceiling: string;
   ceiling_holder: Principal;
-  at_cap: AtCap;
   priority: string;
   deadline?: string | null;
   project_id?: string | null;
@@ -297,26 +295,12 @@ export type TicketDetail = {
   blocker_summary?: BlockerSummary;
   recap?: string | null;
   guidance: string;
-  verdict: TicketVerdict | null;
-  trouble_notes: TicketTroubleNote[];
   field_values: TicketFieldValues;
   pending_proposal: PendingTicketProposal | null;
-  archived_field_content: string;
   awaiting_reply?: boolean;
   awaiting_approval?: boolean;
   assigned?: boolean;
   agent_state?: AgentState;
-};
-
-export type TicketVerdict = {
-  rating: number | null;
-  text: string | null;
-};
-
-export type TicketTroubleNote = {
-  sequence: number;
-  body: string;
-  created_at: number;
 };
 
 export type EmployeeConfigurationSnapshot = {
@@ -398,7 +382,6 @@ export type SprintItemWorkspaceTicket = WorkAttention & {
   has_pending_proposal: boolean;
   gating_field: string | null;
   blocked: boolean;
-  review_route: AtCap;
   worker_type: string;
   day_ids: string[];
   sprint_id: string | null;
@@ -481,7 +464,6 @@ export type BoardCard = WorkAttention & {
   gating_field: string | null;
   gating_field_label: string | null;
   is_done: boolean;
-  is_dropped: boolean;
   blocked: boolean;
   conversation_id: string | null;
   waiting_to_closeout: boolean;

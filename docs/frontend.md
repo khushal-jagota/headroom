@@ -31,14 +31,13 @@ One screen per part of the system:
   and Ticket views; no proposal wake, retry, failure surfacing, or owner fallback remains.
   Keyboard shortcuts drive the actions that apply to the current item when the
   cursor is not in a text field, and each item fades in as it arrives. A proposal's
-  approve button sends the next ceiling, cap, and owner holder together. Send-back
+  approve button sends the next ceiling and owner holder together. Send-back
   stores the owner's exact attributed comment for the next worker-step prompt while
   clearing the proposal and returning the Ticket to its resting control status. Ticket
   guidance stays independent. A reply in the Ticket conversation leaves the proposal in
   Review until a decision.
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
-  follows the same 5am planning-day boundary as the Day screen; dropped tickets never
-  appear. The Chief of Staff row leads, and under it a selector chooses one of two views
+  follows the same 5am planning-day boundary as the Day screen. The Chief of Staff row leads, and under it a selector chooses one of two views
   over the same tickets: **Tickets** or **Sprint Items**.
 
   The Tickets view starts with three owner-attention groups in this order: Awaiting
@@ -150,23 +149,13 @@ One screen per part of the system:
   priority, effective project, Sprint Item, and Worker above a serif title. The Sprint
   Item appears only when the Ticket has one. Project and Sprint Item are static facts.
   The eyebrow states no Sprint and has no placement controls. The Ticket details
-  disclosure contains only the ceiling and cap selects. Direct blockers get
+  disclosure contains only the ceiling select. Direct blockers get
   their own **Blocked by** line in the masthead, and the exact backend Worker failure
   reason remains visible when one exists. The inline-editable recap is always open on a
   recessed surface, without another label.
 
-  A done Ticket offers an optional verdict above its Stage history. The user can choose
-  one of five ratings, add text, use both, or clear the verdict. A saved verdict remains
-  visible without edit controls if the Ticket returns to an earlier Stage. See
-  `judgments.md`.
-
-  When a worker records trouble during its claimed step, a read-only section appears
-  next to the verdict. It shows each short note and its recorded time in creation order.
-  The section stays absent when no trouble was recorded.
-
   The stages and their workflow remain the Ticket's Worker type's, derived from the
-  served manifest (see below and `worker-types.md`). Guidance and the archive stay off
-  this page. Review still shows Guidance with an approval. The current Stage mark speaks without a second status pill.
+  served manifest (see below and `worker-types.md`). Guidance stays off this page. Review still shows Guidance with an approval. The current Stage mark speaks without a second status pill.
   Its summary adds **awaiting approval** for a parked proposal. Running,
   completed, and upcoming marks need no
   extra label. Stage bodies, editing and approval behavior, and the worker conversation
@@ -451,7 +440,7 @@ hand-rolling the same shapes per screen. Each does one job:
   Priority never borrows the slate-blue attention accent or the status-mark colours.
 - **StageMark** — the single stage dot showing a field's progress.
 - **ApprovalBlock** — the owner approval surface: an editable proposal draft, the scope
-  picker, and the approve/accept action, plus a read-only mode for dropped tickets. Its
+  picker, and the approve/accept action. Its
   approval addresses the next ceiling proposal to the owner.
 - **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
   the kickoff priority, the approval control, and the send-back box. It is named by a
@@ -507,7 +496,7 @@ hand-rolling the same shapes per screen. Each does one job:
   construct structured Codex input.
 - **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
 - **SegmentedControl** — a small set of toggle options (Backlog Project/priority).
-- **ScopePairPicker** — the "approve until … then …" scope control.
+- **CeilingPicker** — the "approve until …" ceiling control.
 - **ErrorLine** — a single error message line.
 
 The Ticket page shows its leash only while scope is editable. A pending proposal hides

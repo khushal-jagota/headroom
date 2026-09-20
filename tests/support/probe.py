@@ -42,7 +42,6 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         StageDefinition(NEEDS_LANDING, "Landing", "closeout", False, StageOwnershipMode.worker),
         StageDefinition("done", "Done", None, True, None),
     ),
-    dropped_stage=StageDefinition("dropped", "Dropped", None, True, None),
     fields=(
         FieldDefinition("kickoff", "Kickoff"),
         FieldDefinition(FIELD_ALPHA, "Alpha"),
@@ -60,8 +59,11 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     ),
 )
 
+# The migration carries a frozen copy of what shipped, so it still names the `dropped`
+# stage the one_ticket_ending migration removes. A stored record no longer has that key.
 SHIPPED_DEFINITIONS: tuple[WorkerTypeDefinition, ...] = tuple(
-    definition_from_json(json.dumps(shipped)) for shipped in SHIPPED_WORKER_TYPES
+    definition_from_json(json.dumps({k: v for k, v in shipped.items() if k != "dropped"}))
+    for shipped in SHIPPED_WORKER_TYPES
 )
 PROBE_KNOWN_SKILLS: frozenset[str] = frozenset(
     {definition.worker_profile.specialist_skill for definition in SHIPPED_DEFINITIONS}

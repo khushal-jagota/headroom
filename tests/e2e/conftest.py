@@ -461,7 +461,7 @@ def cli() -> Callable[..., JsonObject]:
             approve = subprocess.run(
                 [
                     str(PLAN_BIN), "ticket", "approve", data["id"],
-                    "--ceiling", "none", "--at-cap", "propose", "--json",
+                    "--ceiling", "none", "--json",
                 ],
                 capture_output=True,
                 text=True,

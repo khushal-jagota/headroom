@@ -4,7 +4,7 @@
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import { atCapLabel, labelize, stageLabel } from "../lib/ui";
+  import { labelize, stageLabel } from "../lib/ui";
   import {
     ceilingOptionsFor,
     fieldStageVisualStateFor,
@@ -29,8 +29,6 @@
   import StageMark from "../components/StageMark.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import TicketPriorityControl from "../components/TicketPriorityControl.svelte";
-  import TicketVerdict from "../components/TicketVerdict.svelte";
-  import TicketTroubleNotes from "../components/TicketTroubleNotes.svelte";
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
   import ArtifactStrip from "../components/ArtifactStrip.svelte";
   import { ticketArtifactStripItems } from "../lib/artifactStrip";
@@ -230,7 +228,7 @@
   }
 
   function saveScope(body: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/scope`, { method: "POST", body });
+    return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body });
   }
 
   function closeLeash(): void {
@@ -248,23 +246,16 @@
   }
 
   function saveValue(field: string, body: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/value/${field}`, {
-      method: "PUT",
+    return mutateJson(`/api/tickets/${stableId}`, {
+      method: "PATCH",
+      body: { field_values: { [field]: body } }
+    });
+  }
+
+  function completeGate(field: string, body: string): Promise<unknown> {
+    return mutateJson(`/api/tickets/${stableId}/complete/${field}`, {
+      method: "POST",
       body: { body }
-    });
-  }
-
-  function saveProposal(field: string, body: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/proposal`, {
-      method: "PUT",
-      body: { field, body }
-    });
-  }
-
-  function saveVerdict(verdict: { rating: number | null; text: string | null }): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/verdict`, {
-      method: "PUT",
-      body: verdict
     });
   }
 
@@ -398,9 +389,9 @@
                 multiline
                 placeholder="+ add orientation"
                 onSave={(raw) =>
-                  mutateJson(`/api/tickets/${stableId}/recap`, {
-                    method: "PUT",
-                    body: { body: raw }
+                  mutateJson(`/api/tickets/${stableId}`, {
+                    method: "PATCH",
+                    body: { recap: raw }
                   })}
               />
             </ClampedText>
@@ -413,8 +404,7 @@
                   data-leash-face
                 >
                   approved until
-                  <span class="ticket-leash-value" data-leash-ceiling>{stageLabel(detail.ceiling)}</span>,
-                  then <span class="ticket-leash-value" data-leash-cap>{atCapLabel(detail.at_cap)}</span>
+                  <span class="ticket-leash-value" data-leash-ceiling>{stageLabel(detail.ceiling)}</span>
                   <span class="disclosure-chev" aria-hidden="true"></span>
                 </summary>
                 <div class="ticket-leash-menu" role="menu">
@@ -423,24 +413,12 @@
                     data-scope-ceiling
                     aria-label="Approved until stage"
                     value={detail.ceiling}
-                    onchange={(event) => void updateScope({ ceiling: event.currentTarget.value, at_cap: detail.at_cap })}
+                    onchange={(event) => void updateScope({ ceiling: event.currentTarget.value })}
                   >
                     {#each ceilingOptionsFor(lc, detail.stage) as option}
                       <option value={option.value}>{option.label}</option>
                     {/each}
                   </select>
-                  <div class="ticket-leash-rule"></div>
-                  <div data-scope-atcap>
-                    <select
-                      class="ticket-leash-select"
-                      aria-label="At the ceiling"
-                      value={detail.at_cap}
-                      onchange={(event) => void updateScope({ ceiling: detail.ceiling, at_cap: event.currentTarget.value })}
-                    >
-                      <option value="stop">then stop</option>
-                      <option value="propose">then propose</option>
-                    </select>
-                  </div>
                 </div>
               </details>
             {/if}
@@ -469,8 +447,6 @@
           {#if lc}
             <ArtifactStrip items={ticketArtifactStripItems(lc.fieldIds, detail.field_values, detail.pending_proposal)} />
           {/if}
-          <TicketVerdict stage={detail.stage} verdict={detail.verdict} onSave={saveVerdict} />
-          <TicketTroubleNotes notes={detail.trouble_notes} />
           <div class="fields">
             {#snippet kickoffContextRow()}
               {#if detail.employee_configuration_editable}
@@ -513,8 +489,8 @@
                           ? kickoffContextRow
                           : undefined}
                         onAccept={(payload) => acceptField(name, payload)}
-                        onSaveProposal={(raw) => saveProposal(name, raw)}
                         onSaveValue={(raw) => saveValue(name, raw)}
+                        onCompleteGate={(raw) => completeGate(name, raw)}
                       />
                     {/each}
                     <button
@@ -547,8 +523,8 @@
                     ? kickoffContextRow
                     : undefined}
                   onAccept={(payload) => acceptField(name, payload)}
-                  onSaveProposal={(raw) => saveProposal(name, raw)}
                   onSaveValue={(raw) => saveValue(name, raw)}
+                  onCompleteGate={(raw) => completeGate(name, raw)}
                 />
               {/each}
             {/if}

@@ -53,19 +53,18 @@ surface a delivery failure, or fall back to the owner.
 - `ticket create --sprint-item <your item>` creates a child Ticket under your Item. Load
   and follow `panels-ticket-creation` first. A Ticket you create is scoped like any other:
   this Sprint Item becomes its ceiling holder. If creation includes a kickoff proposal,
-  the proposal parks for this Item. Add `--ceiling` and `--at-cap` when the user gave you
-  more scope to grant.
+  the proposal parks for this Item. Add `--ceiling` when the user gave you more scope to
+  grant.
 - `ticket delete <ticket> --yes` permanently deletes a current child Ticket of your Item.
   The Ticket, its fields, and its work history are gone. A Worker mid-turn is killed with
   them, and none of it comes back. The server checks that the Ticket remains a current
   child of your Item. It refuses deletion if that Ticket holds another Ticket's ceiling.
 - `set-item` changes one plain Sprint Item field.
-- `set-ticket` changes one current child Ticket field.
-- `scope` changes the child Ticket ceiling and what happens at it. The ceiling takes
-  either the stage name or the plain name of the field that stage needs. The cap is
-  `stop` or `propose`. This Sprint Item becomes the ceiling holder. You cannot retarget a
-  pending proposal through `scope`.
-- `approve` resolves a parked proposal. Supply `--ceiling` and `--at-cap`. The next holder
+- `set-ticket` changes one current child Ticket field, and `ceiling` is one of them. The
+  ceiling takes either the stage name or the plain name of the field that stage needs. The
+  Worker does that thing, proposes it, and waits. This Sprint Item becomes the ceiling
+  holder. You cannot retarget a pending proposal by setting the ceiling.
+- `approve` resolves a parked proposal. Supply `--ceiling`. The next holder
   defaults to this Sprint Item. Use `--holder-kind` and `--holder-id` to address another
   principal explicitly.
 - `reject` atomically stores the exact attributed rejection feedback for the current

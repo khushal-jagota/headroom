@@ -20,7 +20,6 @@ from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 
 from planner.core.db import connect
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap
 
 WAIT_MS = 10_000
 
@@ -78,15 +77,14 @@ def _links(ticket_id: str) -> str:
 
 
 def _settle_success(
-    server: ServerHandle, ticket_id: str, body: str, *, dropped: bool = False
+    server: ServerHandle, ticket_id: str, body: str
 ) -> None:
     """Seed saved Markdown through the same proposal/accept writers as ordinary work."""
     with closing(connect(str(server.db_path))) as conn:
-        ticket = tickets_data.file_current_proposal_with_recap(
+        ticket = tickets_data.file_current_proposal(
             conn,
             ticket_id,
             body=body,
-            recap="Preview content ready.",
             principal=ticket_principal(ticket_id),
             now=2,
         )
@@ -98,14 +96,11 @@ def _settle_success(
                 principal=OWNER_PRINCIPAL,
                 now=2,
                 next_ceiling="none",
-                at_cap=AtCap.propose,
                 next_holder=OWNER_PRINCIPAL,
             )
         assert ticket.stage == "needs_approach"
         assert ticket.field_values["success"] == body
         assert ticket.pending_proposal is None
-        if dropped:
-            tickets_data.drop_ticket(conn, ticket_id, principal=OWNER_PRINCIPAL, now=2)
 
 
 def _open_ticket_field(page: Page, field: str) -> None:
@@ -169,7 +164,6 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
         server,
         ticket_id,
         f"[HTML](/files/tickets/{ticket_id}/previews/index.html)",
-        dropped=True,
     )
     ticket_selector = f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]'
     page = open_page(context_factory(), server, f"#/workspace/{ticket_id}", ticket_selector)
@@ -434,7 +428,7 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
     def fail_first_save(route: Route) -> None:
         post_data_json = route.request.post_data_json
         assert post_data_json is not None
-        attempts.append(post_data_json["body"])
+        attempts.append(post_data_json["field_values"]["success"])
         if len(attempts) == 1:
             route.fulfill(
                 status=500,
@@ -444,7 +438,7 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
             return
         route.continue_()
 
-    page.route(f"**/api/tickets/{ticket_id}/value/success", fail_first_save)
+    page.route(f"**/api/tickets/{ticket_id}", fail_first_save)
     page.locator(editable).focus()
     page.locator(f"{editable} [data-markdown-caret-guard='after']").last.evaluate(
         """guard => {
@@ -514,8 +508,6 @@ def test_loaded_preview_proposal_approves_without_edited_body(
         server,
         "worker",
         "propose",
-        "--recap",
-        "Preview proposal ready.",
         ticket_id=ticket_id,
         stdin=body,
     )

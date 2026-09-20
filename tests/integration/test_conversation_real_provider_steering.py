@@ -4,6 +4,17 @@ The adapter exercises prove each vendor protocol in isolation.  This exercise st
 production backend factory behind the real conversation system and HTTP API, then reads
 only the same durable view and event payloads that a browser receives.  It is deliberately
 opt-in because every case makes real model calls.
+
+What an active steer proves here, and what it does not.  A ``prompt`` event with a
+``steer`` mode is written only after the backend accepts the steer, and every adapter
+accepts only on a receipt from the provider process itself: claude confirms admission of
+the steer's own message UUID, the hermes extension answers for that exact turn token, and
+codex returns the expected native turn id.  So a pass says the steer crossed the process
+boundary into the exact running turn.  A pass does not say the model saw the steer in its
+context, and it does not say the model acted on it.  A provider that accepted a steer and
+then dropped it would leave this exercise green.  Whether the model answered the steer is
+recorded per case under ``observations`` in the receipts, and nothing asserts it: which
+instruction a model prefers is the one thing on this path that Panels does not control.
 """
 
 from __future__ import annotations
@@ -104,6 +115,10 @@ async def _exercise(
     receipts: dict[str, Any] = {
         "backend": str(case.backend_key),
         "model": case.model,
+        # Observed, never asserted, and kept above the bulk of the file so a reader sees it
+        # without scrolling.  Every case reporting no model effect is what a real steering
+        # regression looks like now that no assertion depends on the model's answer.
+        "observations": {"model_echoed_steer_nonce": "not_reached"},
         "source_sha": source_sha,
         "source_status": source_status,
         "test_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -156,14 +171,29 @@ async def _exercise(
             is_running=True,
         )
 
+        model_steer_text = (
+            f"When the command finishes, add a second line containing exactly {model_nonce}, "
+            "after your ORIGINAL-DONE line."
+        )
         steered = await _send(
             client,
             conversation_id,
-            f"After the current command, reply with exactly {model_nonce} and nothing else.",
+            model_steer_text,
             mode="steer",
         )
         _keep_response(receipts, "model_steer", steered)
         assert steered.json() == {"fate": "injected"}
+        model_steer_admission_events = await _events(client, conversation_id)
+        assert _tool_is_open(model_steer_admission_events, first_tool["payload"]["tool_call_id"])
+        model_steer_admissions = [
+            event
+            for event in model_steer_admission_events
+            if event["kind"] == "prompt"
+            and event["payload"].get("mode") == "steer"
+            and model_nonce in event["payload"].get("text", "")
+        ]
+        assert len(model_steer_admissions) == 1
+        receipts["model_steer_admission"] = model_steer_admissions[0]
         first_events = await _wait_for_event_count(
             client,
             conversation_id,
@@ -172,7 +202,13 @@ async def _exercise(
             timeout=240.0,
             receipts=receipts,
         )
-        assert model_nonce in _agent_text(first_events)
+        model_echoed_steer_nonce = model_nonce in _agent_text(first_events)
+        receipts["observations"]["model_echoed_steer_nonce"] = model_echoed_steer_nonce
+        _write_evidence_from_receipts(receipts)
+        print(
+            f"observation {case.backend_key} on {case.model}: "
+            f"model_echoed_steer_nonce={model_echoed_steer_nonce}"
+        )
 
         refused = await _send(
             client,
@@ -354,7 +390,7 @@ async def _exercise(
     _assert_stopped_effect_absent(final_events, forbidden_nonce, forbidden_file)
     receipts["events"] = final_events
     receipts["assertions"] = {
-        "active_steer_changed_model_output": True,
+        "active_steer_was_admitted_into_the_open_running_turn": True,
         "accepted_steers_are_durable": True,
         "idle_steer_refusal_is_durable_and_not_held": True,
         "one_panels_turn_ended_for_each_ordinary_prompt": True,

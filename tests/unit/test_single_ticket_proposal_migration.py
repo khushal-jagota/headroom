@@ -90,29 +90,24 @@ def test_cutover_keeps_current_saved_value_and_draft_and_archives_raw_metadata(
             "field": "plan",
             **_proposal(current["body"]),
         }
-        archive = after.pop("archived_field_content")
-        sections = _archive_sections(archive)
-        assert {"field": "plan", "content": {"unknown": current["unknown"]}} in sections
-        assert {"field": "plan", "content": {"extra": "kept"}} in sections
-        assert fields["success"]["proposal"]["body"] in archive
-        assert fields["retired"]["value"] in archive
-        assert fields["retired"]["proposal"]["body"] in archive
-        assert {"field": "retired", "content": {"other": {"nested": 9}}} in sections
-        assert "retired_empty" not in archive
-        assert "Unapproved proposal" in archive
+        # The raw metadata this cutover once archived does not reach head: a later
+        # revision drops that column, because a proposal is approved or rejected and
+        # neither leaves a withdrawn draft to keep.
+        assert "archived_field_content" not in after
         assert after.pop("ceiling_holder") == '{"id":"owner","kind":"owner"}'
         before.pop("fields")
         before.pop("stage_ownership_overrides")
         before.pop("default_stage_ownership_mode")
         before.pop("alias")
         before.pop("backend_error")
+        before.pop("at_cap")
         assert before == after
         blank = conn.execute("SELECT pending_proposal FROM tickets WHERE id='b'").fetchone()[0]
         assert json.loads(blank)["body"] == ""
         dropped = conn.execute(
-            "SELECT pending_proposal, archived_field_content FROM tickets WHERE id='c'"
+            "SELECT pending_proposal FROM tickets WHERE id='c'"
         ).fetchone()
-        assert dropped[0] is None and "terminal draft" in dropped[1]
+        assert dropped[0] is None
         rows = [tuple(row) for row in conn.execute("SELECT * FROM tickets ORDER BY id")]
         create_schema(conn)
         assert [tuple(row) for row in conn.execute("SELECT * FROM tickets ORDER BY id")] == rows

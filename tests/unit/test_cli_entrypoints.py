@@ -53,7 +53,7 @@ def test_ticket_block_cli_uses_explicit_ticket_block_resource(
     ]
 
 
-def test_ticket_set_value_uses_the_generic_field_value_route(
+def test_ticket_complete_uses_the_gate_completion_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, str, dict[str, Any]]] = []
@@ -65,14 +65,14 @@ def test_ticket_set_value_uses_the_generic_field_value_route(
     monkeypatch.setattr(http, "send", fake_send)
     result = CliRunner().invoke(
         cli_main.main,
-        ["ticket", "set-value", "t_personal", "outcome", "--value", "Done"],
+        ["ticket", "complete", "t_personal", "outcome", "--value", "Done"],
     )
 
     assert result.exit_code == 0, result.output
     assert calls == [
         (
-            "PUT",
-            "/api/tickets/t_personal/value/outcome",
+            "POST",
+            "/api/tickets/t_personal/complete/outcome",
             {
                 "as_json": False,
                 "json_body": {"body": "Done"},
@@ -103,7 +103,6 @@ def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
             "worker": "panels-worker-exploration",
             "field_values": {},
             "pending_proposal": None,
-            "archived_field_content": "",
         }
 
     monkeypatch.setattr(http, "send", fake_send)
@@ -177,8 +176,6 @@ def test_ticket_approve_sends_the_explicit_next_holder(
             "t_child",
             "--ceiling",
             "needs_approach",
-            "--at-cap",
-            "propose",
             "--holder-kind",
             "sprint_item",
             "--holder-id",
@@ -190,7 +187,6 @@ def test_ticket_approve_sends_the_explicit_next_holder(
     assert calls[-1][0:2] == ("POST", "/api/tickets/t_child/accept/success")
     assert calls[-1][2]["json_body"] == {
         "next_ceiling": "needs_approach",
-        "at_cap": "propose",
         "next_holder": {"kind": "sprint_item", "id": "si_parent"},
     }
 
@@ -216,8 +212,6 @@ def test_supervisor_approve_defaults_the_next_holder_to_its_item(
             "t_child",
             "--ceiling",
             "needs_approach",
-            "--at-cap",
-            "propose",
         ],
     )
 
@@ -230,7 +224,6 @@ def test_supervisor_approve_defaults_the_next_holder_to_its_item(
                 "as_json": False,
                 "json_body": {
                     "next_ceiling": "needs_approach",
-                    "at_cap": "propose",
                     "next_holder": {"kind": "sprint_item", "id": "si_parent"},
                 },
             },
@@ -404,22 +397,22 @@ def test_bounded_list_commands_report_page_facts_in_text_and_json(
 
 
 @pytest.mark.parametrize(
-    ("options", "method", "suffix"), [([], "PUT", ""), (["--append"], "POST", "/append")]
+    ("options", "key"), [([], "guidance"), (["--append"], "guidance_append")]
 )
 def test_worker_note_writes_stdin_once_without_a_field_or_type_read(
-    monkeypatch: pytest.MonkeyPatch, options: list[str], method: str, suffix: str
+    monkeypatch: pytest.MonkeyPatch, options: list[str], key: str
 ) -> None:
     calls: list[tuple[str, str, Any]] = []
 
     def fake_send(verb: str, path: str, **kwargs: Any) -> dict[str, Any]:
         calls.append((verb, path, kwargs.get("json_body")))
-        return {"id": "t_direct", "guidance": kwargs["json_body"]["body"]}
+        return {"id": "t_direct", "guidance": kwargs["json_body"][key]}
 
     monkeypatch.setattr(http, "send", fake_send)
     body = "  Exact stdin\n\n"
     result = CliRunner().invoke(cli_main.main, ["worker", "note", "t_direct", *options], input=body)
     assert result.exit_code == 0, result.output
-    assert calls == [(method, "/api/tickets/t_direct/guidance" + suffix, {"body": body})]
+    assert calls == [("PATCH", "/api/tickets/t_direct", {key: body})]
 
 
 def test_ticket_parts_expose_guidance_and_recap_without_expanding_default_manifest(
@@ -435,7 +428,6 @@ def test_ticket_parts_expose_guidance_and_recap_without_expanding_default_manife
         "worker_type": "coding",
         "field_values": {"kickoff": "request"},
         "pending_proposal": None,
-        "archived_field_content": "",
         "recap": "orientation",
         "guidance": "  exact guidance\n",
     }
@@ -449,7 +441,6 @@ def test_ticket_parts_expose_guidance_and_recap_without_expanding_default_manife
         "implementation",
         "closeout",
         "proposal",
-        "archive",
         "recap",
         "guidance",
     ]

@@ -36,10 +36,6 @@ def test_ticket_summary_filters_search_and_bounds_before_selection(
     value_id = _ticket(tmp_db, fake_clock, "Value source")
     proposal_id = _ticket(tmp_db, fake_clock, "Proposal source")
     note_id = _ticket(tmp_db, fake_clock, "Note source")
-    archive_id = _ticket(tmp_db, fake_clock, "Historical record")
-    tmp_db.execute(
-        "UPDATE tickets SET archived_field_content=? WHERE id=?", ("Archive Needle", archive_id)
-    )
     terminal_id = _ticket(tmp_db, fake_clock, "Terminal Needle")
     tmp_db.execute("UPDATE tickets SET recap = ? WHERE id = ?", ("Recap Needle", recap_id))
     tmp_db.execute(
@@ -74,7 +70,6 @@ def test_ticket_summary_filters_search_and_bounds_before_selection(
         ("value needle", value_id),
         ("proposal needle", proposal_id),
         ("note needle", note_id),
-        ("archive needle", archive_id),
     ):
         page = tickets_views.list_ticket_summaries(
             tmp_db,

@@ -27,6 +27,7 @@ from planner.core.db import connect, create_schema
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     TITLE_MAX_CHARS,
+    TicketEdit,
 )
 from planner.worker_types.configuration import (
     ConfiguredWorkerRuntimeDefinitions,
@@ -45,7 +46,6 @@ CODING_PROBE_WORKER_TYPE_DEFINITION: WorkerTypeDefinition = WorkerTypeDefinition
     worker_type="coding_probe",
     label="Coding Probe",
     stages=CODING_WORKER_TYPE_DEFINITION.stages,
-    dropped_stage=CODING_WORKER_TYPE_DEFINITION.dropped_stage,
     fields=CODING_WORKER_TYPE_DEFINITION.fields,
     worker_profile=CODING_WORKER_TYPE_DEFINITION.worker_profile,
 )
@@ -237,9 +237,14 @@ def test_guidance_is_independent_of_the_worker_type_fields(
         kickoff_note="k",
         project_id="project_vylo",
     )
-    updated = tickets_data.replace_guidance(
-        tmp_db, ticket.id, body="x", principal=OWNER_PRINCIPAL, now=now
-    )
+    updated = tickets_data.edit_ticket(
+            tmp_db,
+            ticket.id,
+            edit=TicketEdit(guidance="x"),
+            title_max_chars=200,
+            principal=OWNER_PRINCIPAL,
+            now=now,
+        )
     assert updated.guidance == "x"
     assert updated.field_values == ticket.field_values
     assert updated.pending_proposal == ticket.pending_proposal

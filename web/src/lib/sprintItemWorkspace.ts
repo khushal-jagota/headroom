@@ -31,22 +31,18 @@ function groupTickets(tickets: SprintItemWorkspaceTicket[]): WorkspaceTicketGrou
 
 export function todayWorkspaceTicketGroups(workspace: SprintItemWorkspace): WorkspaceTicketGroup[] {
   const today = new Set(workspace.today_ticket_ids);
-  return groupTickets(
-    workspace.tickets.filter((ticket) => today.has(ticket.id) && ticket.stage !== "dropped")
-  );
+  return groupTickets(workspace.tickets.filter((ticket) => today.has(ticket.id)));
 }
 
 export function remainingWorkspaceTicketGroups(
   workspace: SprintItemWorkspace
 ): WorkspaceTicketGroup[] {
   const today = new Set(workspace.today_ticket_ids);
-  return groupTickets(
-    workspace.tickets.filter((ticket) => !today.has(ticket.id) && ticket.stage !== "dropped")
-  );
+  return groupTickets(workspace.tickets.filter((ticket) => !today.has(ticket.id)));
 }
 
 export function workspaceProgress(workspace: SprintItemWorkspace): string {
-  const tickets = workspace.tickets.filter((ticket) => ticket.stage !== "dropped");
+  const tickets = workspace.tickets;
   if (!tickets.length) return "No Tickets";
   const open = tickets.filter((ticket) => ticket.stage !== "done");
   if (!open.length) return `All ${tickets.length} done`;
@@ -55,5 +51,5 @@ export function workspaceProgress(workspace: SprintItemWorkspace): string {
 }
 
 export function workspaceTicketIsBacklog(ticket: SprintItemWorkspaceTicket): boolean {
-  return ticket.sprint_id === null && ticket.stage !== "done" && ticket.stage !== "dropped";
+  return ticket.sprint_id === null && ticket.stage !== "done";
 }

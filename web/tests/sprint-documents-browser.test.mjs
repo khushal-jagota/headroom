@@ -46,12 +46,10 @@ try {
     if (path === "/api/sprints/sp_test/tracking") return json({
       sprint, planning_date: "2026-09-08", outcome_groups: [{ outcome, committed: true, tickets: [
         { id: "t_one", title: "Move me", stage: "needs_plan", priority: "P1", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false },
-        { id: "t_dropped", title: "Abandoned work", stage: "dropped", priority: "P2", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false },
         { id: "t_done", title: "Leave done", stage: "done", priority: "P2", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false }
       ] }], unclassified_tickets: [
         { id: "t_loose_one", title: "Loose from One", stage: "needs_plan", priority: "P1", ticket_status: "empty", project_id: "project_one", sprint_item_id: null, waiting_to_closeout: false },
-        { id: "t_loose_two", title: "Loose from Two", stage: "done", priority: "P2", ticket_status: "empty", project_id: "project_two", sprint_item_id: null, waiting_to_closeout: false },
-        { id: "t_loose_dropped", title: "Dropped loose work", stage: "dropped", priority: "P2", ticket_status: "empty", project_id: "project_two", sprint_item_id: null, waiting_to_closeout: false }
+        { id: "t_loose_two", title: "Loose from Two", stage: "done", priority: "P2", ticket_status: "empty", project_id: "project_two", sprint_item_id: null, waiting_to_closeout: false }
       ]
     });
     if (path === "/api/projects") return json({ projects: [{ id: "project_one", name: "One", summary: "", priority: "P1", created_at: 1, updated_at: 1 }, { id: "project_two", name: "Two", summary: "", priority: "P2", created_at: 1, updated_at: 1 }] });
@@ -146,7 +144,6 @@ with sync_playwright() as playwright:
         assert no_outcome.locator('[data-sprint-ticket-id]:visible').count() == 0
         no_outcome.locator(':scope > summary').click()
         assert no_outcome.locator('[data-sprint-ticket-id]:visible').count() == 2
-        assert no_outcome.locator('[data-sprint-ticket-id="t_loose_dropped"]').count() == 0
         assert no_outcome.locator('[data-sprint-ticket-id="t_loose_one"]').get_attribute('href') == '#/workspace/t_loose_one'
         assert no_outcome.locator('[data-sprint-ticket-id="t_loose_two"]').get_attribute('href') == '#/workspace/t_loose_two'
         assert page.evaluate("""() => Boolean(document.querySelector('[data-sprint-no-outcome]').compareDocumentPosition(document.querySelector('.sprint-outcome-actions')) & Node.DOCUMENT_POSITION_FOLLOWING)""")

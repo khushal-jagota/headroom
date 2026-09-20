@@ -5,9 +5,7 @@ from __future__ import annotations
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import (
     NO_FURTHER,
-    AtCap,
     NextCeiling,
-    ScopePair,
     StageOwnershipMode,
     TicketStatus,
 )
@@ -27,25 +25,6 @@ def field_is_passed(
     )
 
 
-def auto_accept_target(
-    stage: str,
-    ceiling: str,
-    field: str,
-    *,
-    worker_type_definition: WorkerTypeDefinition,
-) -> str | None:
-    if worker_type_definition.is_terminal(stage):
-        return None
-    if field != worker_type_definition.gating_field(stage):
-        return None
-    target = worker_type_definition.advance_target(stage)
-    if target is None:
-        raise PlannerError(ErrorCode.validation, "stage has no advance target", {"stage": stage})
-    if worker_type_definition.stage_index(target) > worker_type_definition.stage_index(ceiling):
-        return None
-    return target
-
-
 def at_or_beyond_ceiling(
     stage: str,
     ceiling: str,
@@ -55,26 +34,21 @@ def at_or_beyond_ceiling(
     return worker_type_definition.stage_index(stage) >= worker_type_definition.stage_index(ceiling)
 
 
-def resolve_scope(
+def resolve_next_ceiling(
     new_stage: str,
     next_ceiling: NextCeiling | None,
-    at_cap: AtCap | None,
     *,
     worker_type_definition: WorkerTypeDefinition,
-) -> ScopePair:
-    if next_ceiling is None or at_cap is None:
-        missing: list[str] = []
-        if next_ceiling is None:
-            missing.append("next_ceiling")
-        if at_cap is None:
-            missing.append("at_cap")
+) -> str:
+    """The onward ceiling an approval grants, with the "none" sentinel concretized."""
+    if next_ceiling is None:
         raise PlannerError(
             ErrorCode.scope_missing,
-            "accept requires the onward scope pair",
-            {"missing": missing},
+            "accept requires the onward ceiling",
+            {"missing": ["next_ceiling"]},
         )
     if next_ceiling == NO_FURTHER:
-        return ScopePair(next_ceiling=new_stage, at_cap=at_cap)
+        return new_stage
     ceiling_id = str(next_ceiling)
     if ceiling_id not in worker_type_definition.ceiling_range():
         raise PlannerError(
@@ -90,7 +64,7 @@ def resolve_scope(
             "next_ceiling must be at or beyond the new stage",
             {"next_ceiling": ceiling_id, "new_stage": new_stage},
         )
-    return ScopePair(next_ceiling=ceiling_id, at_cap=at_cap)
+    return ceiling_id
 
 
 def stage_ownership_mode(

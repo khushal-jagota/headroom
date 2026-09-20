@@ -11,7 +11,7 @@ from planner.core import db as db_module
 from planner.core.contracts import CHIEF_PRINCIPAL
 from planner.core.db import connect, create_schema
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap
+from planner.tickets.contracts import TITLE_MAX_CHARS
 
 
 def test_upgrade_deletes_failure_events_and_drops_all_three_outbox_tables(
@@ -37,7 +37,6 @@ def test_upgrade_deletes_failure_events_and_drops_all_three_outbox_tables(
         worker_type="coding",
         kickoff_note="Keep the work",
         stated_ceiling="needs_success",
-        stated_at_cap=AtCap.propose,
     )
     conn.execute(
         "INSERT INTO conversations "

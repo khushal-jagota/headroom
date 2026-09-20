@@ -1,4 +1,3 @@
-import type { AtCap } from "./types";
 
 export const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const PRIORITY_ORDER = ["P0", "P1", "P2", "P3"];
@@ -17,14 +16,6 @@ export type FieldStageVisualState =
 
 export function stageLabel(value: string): string {
   return String(value).replace(/_/g, " ");
-}
-
-export function atCapLabel(value: AtCap): string {
-  const labels: Record<AtCap, string> = {
-    stop: "stop",
-    propose: "propose"
-  };
-  return labels[value];
 }
 
 // Underscores to spaces; capitalizes the first letter by default. Pass

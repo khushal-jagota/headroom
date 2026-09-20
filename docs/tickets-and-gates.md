@@ -9,8 +9,8 @@ door — the proposal resolver.
 The Stage set is not fixed for all Tickets — it is declared by the Ticket's **Worker
 type** (see `worker-types.md`). The lifecycle below is the **`coding`** Worker type's,
 shown here as one concrete example; another Worker type walks its own Stages the same
-way. Every Worker type shares the leading Kickoff, the `done`/`dropped` bookends, and
-the single-door rule.
+way. Every Worker type shares the leading Kickoff, the `done` ending, and the
+single-door rule.
 
 ```
    THE CODING STAGES
@@ -20,12 +20,11 @@ the single-door rule.
    intake      (what is        roughly)       by-step)      propose a           deploy,
    context      "done"?)                                    reviewable          follow-up,
    field                                                     package)            report)
-                                   dropped: any point, direct operation only
 ```
 
 ## The Stages (the coding Worker type)
 
-Every Worker type starts with **Kickoff** and ends at **done** (or **dropped**); the
+Every Worker type starts with **Kickoff** and ends at **done**; the
 Stages between are the Worker type's own. What follows is the `coding` lifecycle.
 
 A ticket starts with **Kickoff**. Kickoff is the first ordinary Ticket field: the
@@ -49,9 +48,9 @@ step), then
 proposed), then **closeout** (only the applicable merge, deploy, follow-up, and
 bookkeeping happen, and a verified report is proposed), and finally it is **done**.
 Each stage has exactly one blank to fill; filling it — and having that accepted — is
-what moves the ticket one stage forward. A ticket can also be **dropped** at any
-point through a direct product operation. Stages advance through approval or direct
-completion of a current user-owned gate; there is no arbitrary Stage jump.
+what moves the ticket one stage forward. **done** is the only ending a Ticket has.
+Stages advance through approval or direct completion of a current user-owned gate;
+there is no arbitrary Stage jump.
 
 The **Kickoff field** preserves intake context: the user's original wording, source
 context, boundaries, and advice. It stays readable beside the work so agents can
@@ -95,7 +94,7 @@ Ticket status or the latest conversation turn.
 
 Work completed elsewhere uses the same ordinary Ticket operations as all other work.
 Create a Ticket through the canonical creation action when no aligned Ticket exists.
-Then use ordinary field-value, recap, scope, placement, and Day operations.
+Then use ordinary field-value, recap, ceiling, placement, and Day operations.
 
 A direct user can settle only the unset gate of the current user-owned Stage. That one
 transaction stores the value, advances one Stage through the canonical transition, sets
@@ -110,7 +109,7 @@ creates the dependent Ticket and every Ticket block in one transaction. A missin
 invalid, or repeated blocker rejects the whole create with a structured error. Nothing is saved. A successful create commits
 once, so readiness is nudged once.
 
-A blocker is **live** while the Ticket doing the blocking is neither done nor dropped.
+A blocker is **live** while the Ticket doing the blocking is not done.
 Blocking shows up in exactly one place: the dependent Ticket's status. When a Ticket
 comes to rest with nothing running, it lands on **blocked** instead of **empty** if a
 live blocker remains. `blocked` only ever stands in for `empty`, so a Ticket that is
@@ -121,7 +120,7 @@ automatic work from starting, because the runtime starts `empty` Tickets and not
 else.
 
 Clearing happens inside the action that removes the cause. When a blocking Ticket is
-finished, dropped, or deleted, or a Ticket block is removed, that same write deletes
+finished or deleted, or a Ticket block is removed, that same write deletes
 the blocks it held and rewrites every Ticket it was blocking in the same transaction —
 back to `empty`, or left on `blocked` when another live blocker remains. A Ticket that
 stays blocked is not rewritten at all, so nothing is announced for a change that did
@@ -183,15 +182,13 @@ advance the Stage. A Ticket has at most one pending proposal, always for its cur
 Stage. Filing another proposal replaces that pending draft. Saved field values remain
 separate, including a saved value beside a pending revision of the same field.
 
-The pending proposal has its own editor. Any authorized actor can replace its text.
-The proposal stays pending and addressed to the same ceiling holder. The edit keeps its
-author, creation time, settled value, Ticket status, Stage, and scope. Direct edits
-of saved values use a separate editor and remain limited to passed fields and direct callers.
+A parked proposal has exactly two outcomes: it is approved, or it is rejected. There is
+no third way to change it while it waits. A reader who wants different text approves the
+proposal with their own text in place of the author's, which is part of approving it, or
+rejects it and says what is wrong.
 
-The archive keeps earlier unapproved drafts and text from retired fields. Dropping a
-Ticket moves its pending draft here without approval. Historical text cannot be approved
-or resumed. The Ticket page does not show the archive. The CLI exposes it as `archive`,
-and copy text and search include it.
+Nothing keeps a withdrawn draft. A rejected proposal is gone, and dropping a Ticket
+discards whatever was parked on it.
 
 Each Ticket has one **guidance** document for durable user corrections and constraints.
 It is separate from settled field values and is never approved as a proposal. Review
@@ -202,7 +199,7 @@ context include it too.
 
 The next automatic Worker step includes current guidance in its actual prompt. A direct
 edit keeps the existing generic Ticket-changed notice. Saving guidance is not an
-immediate conversation intervention: ordinary chat and return-for-revision keep their
+immediate conversation intervention: ordinary chat and rejection keep their
 existing send behavior. A Worker continuing those conversations can read current
 guidance from the Ticket.
 
@@ -213,14 +210,12 @@ updated at any stage — recap is never gated.
 
 _Code paths:_ `src/planner/tickets/logic/resolution.py` (the proposal resolver), `src/planner/tickets/data.py`.
 
-## How far a worker may go: the scope
+## How far a worker may go: the ceiling
 
-Every ticket carries a **scope** with two controls, plus a holder for its ceiling:
+Every ticket carries a **ceiling**, plus a holder for it:
 
-- **The ceiling** — how far along the stages a worker may push this ticket on its own.
-- **At the cap** — what the worker may do when it gets there. **Stop** prevents a
-  proposal at all. **Propose** lets the worker file one, and that proposal parks for the
-  holder's approval.
+- **The ceiling** — the last thing a worker is allowed to do on this ticket on its own.
+  The worker does that thing, proposes it, and waits.
 - **The holder** — the principal who can decide the proposal at that ceiling.
 
 The holder is a full principal kind and ID, not a display label or current conversation.
@@ -228,17 +223,19 @@ Existing Tickets receive the owner principal when the holder column is introduce
 A Ticket cannot hold its own ceiling: its Worker is the proposal author, never its own
 reviewer. Holder Tickets and Sprint Items must exist when the scope is written.
 
-Below the ceiling, a worker-owned Stage's proposal is accepted automatically and the
-ticket advances. At the ceiling, the cap decides whether a worker-owned Stage can propose
-at all. The cap says nothing about who owns a Stage: user-owned Stages still do not
-dispatch automatically after their opening turn. They rest at `empty` with their opener fact.
+Below the ceiling, a worker-owned Stage's answer settles the field and the ticket
+advances, and no proposal is recorded at all. At the ceiling it files a proposal, and the
+ticket parks. So every proposal in the system is one somebody is going to look at. The
+ceiling says nothing about who owns a Stage: user-owned Stages still do not
+dispatch automatically after their opening turn. They rest at `empty` with their opener fact,
+and their answer always parks.
 New tickets start leashed right at
 **Kickoff**: the ceiling is `needs_kickoff` for every Worker type, so nothing advances past
 the human-approved intake until the human grants scope onward — review before agents
 start.
 
-A creator can state the scope instead, at creation, with `ticket create --ceiling` and
-`--at-cap`. Whoever was given the authority to grant scope says so in the same breath as
+A creator can state the ceiling instead, at creation, with `ticket create --ceiling`.
+Whoever was given the authority to grant scope says so in the same breath as
 the Ticket, so work the user has already authorized does not sit waiting for a second
 approval. The kickoff is then judged by the stated scope exactly as a later proposal is:
 it settles and the Ticket starts at the next Stage when the stated ceiling is past
@@ -253,13 +250,11 @@ straight to **done**. (The threshold used by sprint-in-progress behavior is the
 ## The approval gate and Ticket leash
 
 The addressed holder or the owner can decide a parked proposal. Whenever either approves
-a step, they must name the next ceiling, cap, and holder. The system refuses an approval
-that omits any part. The Ticket details disclosure shows
-the same scope as a readable leash:
-"approved until [a stage], then [stop or propose]." The disclosure includes only the
-ceiling and cap selects. A fresh approval starts on **Propose**, so
-the worker runs to the new ceiling and parks there for the named holder unless **Stop** is
-chosen instead. At Kickoff, an unchosen
+a step, they must name the next ceiling and holder. The system refuses an approval
+that omits either. The Ticket details disclosure shows
+the same permission as a readable leash: "approved until [a stage]." The disclosure
+includes only the ceiling select. The worker runs to the new ceiling and parks there for
+the named holder. At Kickoff, an unchosen
 ceiling starts from that Worker type's managed suggestion. Other approvals start from
 their normal next Stage. `No further` remains a one-off choice. The stages it offers
 are always the current one and the
