@@ -247,6 +247,9 @@ class Ticket:  # §3.3 — column names match exactly
     recap: str  # writable only past the type's first worker Stage
     guidance: str = field(default="", kw_only=True)  # durable instructions for the Ticket
     ceiling: str  # ceiling id; a member of the type's ceiling_range
+    # An address, not an authority. It says which principal a parked proposal is for, so
+    # that Review, attention and notifications can put it in front of them. It says
+    # nothing about who may accept or reject it; the one rule answers that.
     ceiling_holder: Principal = field(kw_only=True)
     # Derived when the row is read, never stored. Kept on the Ticket because almost
     # every reader wants the answer, not the facts behind it.

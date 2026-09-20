@@ -9,7 +9,6 @@ from planner.core.contracts import (
     ErrorCode,
     PlannerError,
     Principal,
-    PrincipalKind,
     principal_legacy_actor,
 )
 from planner.tickets.contracts import (
@@ -125,7 +124,6 @@ def decide_accept(
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
-    _require_proposal_decider(ticket, principal, "accept_proposal")
     if edited_body is not None:
         admission.validate_body(edited_body, "edit-accept text")
     proposal = _pending(ticket, field, worker_type_definition)
@@ -265,7 +263,6 @@ def decide_reject(
     Guidance is optional, so the refusal for a Ticket with no worker conversation only
     applies when there is guidance to deliver into one.
     """
-    _require_proposal_decider(ticket, principal, "reject")
     if ticket.worker_step_claim is WorkerStepClaim.out:
         raise PlannerError(
             ErrorCode.already_running,
@@ -324,29 +321,3 @@ def decide_set_ceiling_holder(ticket: Ticket, holder: Principal) -> Decision:
     re-addressing changes nothing about what was proposed.
     """
     return replace(Decision.from_ticket(ticket), ceiling_holder=holder)
-
-
-def _require_proposal_decider(
-    ticket: Ticket, principal: Principal, action: str
-) -> None:
-    """Permit the addressed holder, plus Khushal's owner override."""
-    if principal == Principal(PrincipalKind.ticket, ticket.id):
-        raise PlannerError(
-            ErrorCode.agent_forbidden,
-            f"{action} cannot be decided by the Ticket's own worker",
-            {"action": action, "ticket_id": ticket.id},
-        )
-    if principal == OWNER_PRINCIPAL or principal == ticket.ceiling_holder:
-        return
-    raise PlannerError(
-        ErrorCode.agent_forbidden,
-        f"{action} is available only to the proposal holder or owner",
-        {
-            "action": action,
-            "actor": principal_legacy_actor(principal),
-            "holder": {
-                "kind": ticket.ceiling_holder.kind.value,
-                "id": ticket.ceiling_holder.id,
-            },
-        },
-    )

@@ -128,9 +128,10 @@ def test_worker_api_cannot_decide_a_corrupted_self_held_proposal(app_db: AppDb) 
             },
         )
 
+    # The one rule answers first, and it does not read the holder column at all: nothing
+    # is below itself, so a Ticket never stands above the Ticket it is.
     assert decided.status_code == 400, decided.json()
-    assert decided.json()["error"]["code"] == "validation"
-    assert "own ceiling" in decided.json()["error"]["message"]
+    assert decided.json()["error"]["code"] == "agent_forbidden"
 
 
 def test_accept_rejects_foreign_field_and_foreign_next_ceiling(

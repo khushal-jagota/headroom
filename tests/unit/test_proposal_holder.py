@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sqlite3
-from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
 from unittest.mock import AsyncMock
@@ -29,9 +28,7 @@ from planner.days import data as days_data
 from planner.sprints import data as sprints_data
 from planner.tickets import actions, data, revision_feedback, views
 from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket, TicketEdit
-from planner.tickets.logic import resolution
 from planner.tickets.logic.admission import REVISION_GUIDANCE_MAX_CHARACTERS
-from planner.worker_types.configuration import configured_worker_type_registry
 
 
 def _park(
@@ -149,27 +146,16 @@ def test_canonical_proposal_writer_accepts_only_the_ticket_own_worker(
     assert parked.pending_proposal.body == "Mine"
 
 
-def test_only_holder_or_owner_can_decide_and_approval_requires_next_holder(
+def test_anyone_above_the_ticket_decides_and_approval_requires_next_holder(
     tmp_db: Connection,
 ) -> None:
+    """Deciding is the one rule. The holder the proposal is addressed to grants nothing."""
     ticket = _park(tmp_db, OWNER_PRINCIPAL)
-    with pytest.raises(PlannerError) as forbidden:
-        data.accept_proposal(
-            tmp_db,
-            ticket.id,
-            field="success_condition",
-            principal=CHIEF_PRINCIPAL,
-            now=12,
-            next_ceiling="needs_what_changes",
-            next_holder=CHIEF_PRINCIPAL,
-        )
-    assert forbidden.value.code is ErrorCode.agent_forbidden
-
     approved = data.accept_proposal(
         tmp_db,
         ticket.id,
         field="success_condition",
-        principal=OWNER_PRINCIPAL,
+        principal=CHIEF_PRINCIPAL,
         now=12,
         next_ceiling="needs_what_changes",
         next_holder=CHIEF_PRINCIPAL,
@@ -191,17 +177,19 @@ def test_ticket_cannot_hold_or_decide_its_own_ceiling(tmp_db: Connection) -> Non
             next_holder=self_principal,
         )
 
-    corrupted = replace(ticket, ceiling_holder=self_principal)
-    with pytest.raises(PlannerError, match="own worker"):
-        resolution.decide_accept(
-            corrupted,
-            "success_condition",
-            self_principal,
-            None,
-            "needs_what_changes",
-            OWNER_PRINCIPAL,
-            worker_type_definition=configured_worker_type_registry().require("coding"),
+    # And it could not decide one if the column somehow said it held it. Nothing is
+    # below itself, so a Ticket never stands above the Ticket it is.
+    with pytest.raises(PlannerError) as forbidden:
+        data.accept_proposal(
+            tmp_db,
+            ticket.id,
+            field="success_condition",
+            principal=self_principal,
+            now=12,
+            next_ceiling="needs_what_changes",
+            next_holder=OWNER_PRINCIPAL,
         )
+    assert forbidden.value.code is ErrorCode.agent_forbidden
 
 
 def test_canonical_approval_writer_requires_an_explicit_next_holder() -> None:

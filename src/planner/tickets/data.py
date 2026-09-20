@@ -1148,7 +1148,14 @@ def accept_proposal(
     next_ceiling: NextCeiling | None = None,
     next_holder: Principal,
 ) -> Ticket:
+    """Settle a parked proposal, for a caller standing above the Ticket.
+
+    Nothing is below itself, so a Ticket's own Worker cannot accept what it proposed.
+    That is the rule, not an exception written for this door. next_holder says who the
+    Ticket is addressed to once it moves on.
+    """
     with _txn(conn):
+        authority.require_above(conn, principal, authority.ticket(ticket_id))
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
@@ -1201,6 +1208,7 @@ def require_reject(
     has_guidance: bool,
 ) -> Ticket:
     """Run every current authorization check without sending or writing."""
+    authority.require_above(conn, principal, authority.ticket(ticket_id))
     ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
         conn, ticket_id
     )
@@ -1225,6 +1233,7 @@ def reject_proposal(
     if message is not None:
         admission.validate_revision_guidance(message)
     with _txn(conn):
+        authority.require_above(conn, principal, authority.ticket(ticket_id))
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
