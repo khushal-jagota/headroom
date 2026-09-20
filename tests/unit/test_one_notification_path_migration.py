@@ -51,6 +51,20 @@ def _database_with_both_paths_behind_it(tmp_path: Path) -> Path:
         "(subject_kind, subject_id, notification_type, generation, occurred_at, projected) "
         "VALUES ('ticket', 't_existing', 'awaiting_approval', 1, 9, 1)"
     )
+    # Projected, but the loop stopped before it was decided. Its notification is owed.
+    conn.execute(
+        "INSERT INTO notification_attention_edges"
+        "(subject_kind, subject_id, notification_type, generation, occurred_at, projected) "
+        "VALUES ('ticket', 't_existing', 'assigned', 1, 9, 1)"
+    )
+    conn.execute(
+        "INSERT INTO notification_facts"
+        "(fact_id, notification_type, subject_kind, ticket_id, source_kind, source_id, "
+        "source_sequence, occurred_at, payload) "
+        "VALUES ('attention:ticket:t_existing:assigned:1', 'assigned', 'ticket', "
+        "'t_existing', 'ticket', 't_existing', 1, 9, "
+        '\'{"subject_label":"Existing Ticket"}\')'
+    )
     for fact_id, occurred_at in (
         ("attention:ticket:t_existing:awaiting_approval:1", 9),
         ("ticket:t_existing:4", 5),
@@ -75,11 +89,14 @@ def _database_with_both_paths_behind_it(tmp_path: Path) -> Path:
             "'/#/workspace/t_existing', 'panels-ticket-t_existing', ?)",
             (fact_id, occurred_at),
         )
+        # The edge-derived one is still waiting to go out, which is the row whose loss
+        # would actually be visible. The legacy one was delivered long ago.
+        status = "pending" if fact_id.startswith("attention:") else "delivered"
         conn.execute(
             "INSERT INTO notification_deliveries"
             "(fact_id, subscription_id, status, attempts, next_attempt_at, delivered_at) "
-            "VALUES (?, 'sub_phone', 'delivered', 1, ?, ?)",
-            (fact_id, occurred_at, occurred_at),
+            "VALUES (?, 'sub_phone', ?, 1, ?, ?)",
+            (fact_id, status, occurred_at, None if status == "pending" else occurred_at),
         )
     conn.close()
     return db_path
@@ -112,9 +129,9 @@ def test_upgrade_keeps_the_edge_delivery_and_drops_the_legacy_one(tmp_path: Path
             "/#/workspace/t_existing",
             "panels-ticket-t_existing",
             9,
-            "delivered",
+            "pending",
             1,
-            9,
+            None,
         )
     ]
     # The four stages are gone from the schema, not merely unused.
@@ -136,11 +153,23 @@ def test_upgrade_keeps_the_edge_delivery_and_drops_the_legacy_one(tmp_path: Path
     assert [str(row[1]) for row in conn.execute("PRAGMA table_info(notification_attention_edges)")][
         -1
     ] == "decided"
-    assert (
-        conn.execute("SELECT decided FROM notification_attention_edges").fetchone()["decided"] == 1
-    )
-    # And the loop's real move runs over the upgraded database without repeating itself.
-    assert notifications_data.queue_deliveries(conn, 20) == 0
-    assert conn.execute("SELECT COUNT(*) FROM notification_deliveries").fetchone()[0] == 1
+    assert [
+        (str(row["notification_type"]), int(row["decided"]))
+        for row in conn.execute(
+            "SELECT notification_type, decided FROM notification_attention_edges "
+            "ORDER BY notification_type"
+        )
+    ] == [("assigned", 0), ("awaiting_approval", 1)]
+    # The loop's real move owes exactly the edge that was never decided, and repeats
+    # nothing that was.
+    assert notifications_data.queue_deliveries(conn, 20) == 1
+    assert [
+        (str(row["notification_type"]), str(row["status"]))
+        for row in conn.execute(
+            "SELECT notification_type, status FROM notification_deliveries "
+            "ORDER BY notification_type"
+        )
+    ] == [("assigned", "pending"), ("awaiting_approval", "pending")]
+    assert notifications_data.queue_deliveries(conn, 21) == 0
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     conn.close()

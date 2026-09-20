@@ -122,7 +122,24 @@ def _rebuild_delivery_log() -> None:
     )
 
 
+def _keep_undecided_edges_undecided() -> None:
+    """An edge with a fact but no decision is unfinished, and must stay that way.
+
+    ``projected`` said only that a fact existed. ``decided`` says the edge is finished
+    business. The old loop projected and decided in two transactions, so a stop between
+    them leaves an edge whose fact was never decided. Renaming the flag over that row
+    would retire a notification that was never sent.
+    """
+    op.execute(
+        "UPDATE notification_attention_edges SET projected = 0 WHERE projected = 1 "
+        "AND NOT EXISTS (SELECT 1 FROM notification_decisions d WHERE d.fact_id = "
+        "'attention:' || subject_kind || ':' || subject_id || ':' || notification_type "
+        "|| ':' || generation)"
+    )
+
+
 def upgrade() -> None:
+    _keep_undecided_edges_undecided()
     _rebuild_delivery_log()
     op.execute("DROP TABLE notification_deliveries")
     op.execute("DROP TABLE notification_intents")

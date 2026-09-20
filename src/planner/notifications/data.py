@@ -395,6 +395,16 @@ def queue_deliveries(conn: sqlite3.Connection, now: int) -> int:
         return _queue_attention_deliveries(conn, now)
 
 
+_SUBJECT_STILL_EXISTS = (
+    "((d.subject_kind = 'ticket' "
+    "AND EXISTS (SELECT 1 FROM tickets WHERE tickets.id = d.subject_id)) "
+    "OR (d.subject_kind = 'sprint_item' "
+    "AND EXISTS (SELECT 1 FROM sprint_items WHERE sprint_items.id = d.subject_id)) "
+    "OR (d.subject_kind = 'agent' "
+    "AND EXISTS (SELECT 1 FROM agents WHERE agents.agent_key = d.subject_id)))"
+)
+
+
 def pending_deliveries(
     conn: sqlite3.Connection, now: int, *, limit: int = 50
 ) -> tuple[PendingDelivery, ...]:
@@ -404,7 +414,11 @@ def pending_deliveries(
         "s.subscription_id, s.endpoint, s.p256dh, s.auth FROM notification_deliveries d "
         "JOIN notification_push_subscriptions s ON s.subscription_id = d.subscription_id "
         "WHERE d.status IN ('pending','retry') AND d.next_attempt_at <= ? "
-        "AND s.disabled_at IS NULL ORDER BY d.next_attempt_at, d.subject_kind, d.subject_id, "
+        "AND s.disabled_at IS NULL "
+        # The log holds no foreign key to its subject, so a Ticket deleted after the
+        # queue step's prune would otherwise still be pushed about.
+        f"AND {_SUBJECT_STILL_EXISTS} "
+        "ORDER BY d.next_attempt_at, d.subject_kind, d.subject_id, "
         "d.notification_type, d.generation LIMIT ?",
         (now, limit),
     ).fetchall()

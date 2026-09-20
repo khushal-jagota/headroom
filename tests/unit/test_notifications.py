@@ -567,6 +567,24 @@ def test_nothing_outlives_its_subject(tmp_path: Path) -> None:
     conn.close()
 
 
+def test_a_deleted_subject_is_not_pushed_about_before_the_next_prune(tmp_path: Path) -> None:
+    """The log has no foreign key to its subject, so the read has to ask.
+
+    A Ticket deleted after the queue step committed would otherwise be pushed about by
+    the same poll, and again from the carry-over beyond one read's limit.
+    """
+    conn = connect(str(tmp_path / "deleted-subject-window.db"))
+    create_schema(conn)
+    _subscribe(conn, name="window-device")
+    ticket = _ticket(conn, 1)
+    assert notifications_data.queue_deliveries(conn, 1) == 2
+    assert len(notifications_data.pending_deliveries(conn, 1)) == 2
+
+    conn.execute("DELETE FROM tickets WHERE id = ?", (ticket.id,))
+    assert notifications_data.pending_deliveries(conn, 1) == ()
+    conn.close()
+
+
 def test_a_removed_device_takes_its_deliveries(tmp_path: Path) -> None:
     conn = connect(str(tmp_path / "removed-device.db"))
     create_schema(conn)
