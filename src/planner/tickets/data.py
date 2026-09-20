@@ -58,7 +58,7 @@ from planner.worker_types.configuration import (
     configured_worker_runtime_definitions,
     configured_worker_type_registry,
 )
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import BRIEF_FIELD_ID, WorkerTypeDefinition
 
 
 class _WorkerStepReadinessCheck(Protocol):
@@ -432,7 +432,7 @@ def _seed_kickoff(
     )
     if ownership is None:
         raise PlannerError(ErrorCode.validation, "kickoff stage cannot be terminal")
-    if not worker_type_definition.has_field("kickoff"):
+    if not worker_type_definition.has_field(BRIEF_FIELD_ID):
         return stage, {}, None, machine.resting_ticket_status(ownership)
     if kickoff_note is None:
         return stage, {}, None, TicketStatus.empty
@@ -443,11 +443,18 @@ def _seed_kickoff(
     )
     target = worker_type_definition.advance_target(stage) if below_the_ceiling else None
     if target is not None:
-        return target, {"kickoff": kickoff_note}, None, machine.resting_ticket_status(ownership)
+        return (
+            target,
+            {BRIEF_FIELD_ID: kickoff_note},
+            None,
+            machine.resting_ticket_status(ownership),
+        )
     return (
         stage,
         {},
-        PendingTicketProposal("kickoff", kickoff_note, principal_legacy_actor(principal), now),
+        PendingTicketProposal(
+            BRIEF_FIELD_ID, kickoff_note, principal_legacy_actor(principal), now
+        ),
         TicketStatus.awaiting_approval,
     )
 

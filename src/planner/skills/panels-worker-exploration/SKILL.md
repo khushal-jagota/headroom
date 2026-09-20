@@ -13,16 +13,16 @@ Adjust the depth of Understanding, Research, and Answer to the ticket. Keep disc
 
 The sequence is **Kickoff → Understanding → Research Plan → Research → Answer → Follow-up → Closeout → Done**.
 
-- **needs_kickoff** — preserve the premise and intake context without inventing the solution.
+- **needs_brief** — preserve the premise and intake context without inventing the solution.
 - **needs_understanding** — establish the shared frame and purpose through collaborative discussion.
 - **needs_research_plan** — decide what evidence will answer the real questions and when research is sufficient.
-- **needs_research** — discover, vet, and synthesize the evidence.
+- **needs_findings** — discover, vet, and synthesize the evidence.
 - **needs_answer** — reach and record the answer through collaborative discussion.
-- **needs_follow_up** — propose only consequences supported by the approved answer.
-- **needs_closeout** — perform and verify exactly the approved follow-up.
+- **needs_proposed_follow_up** — propose only consequences supported by the approved answer.
+- **needs_consequences** — perform and verify exactly the approved follow-up.
 - **done** — finished.
 
-### needs_kickoff — preserve the premise
+### needs_brief — preserve the premise
 
 A good **kickoff** keeps the user's wording, source context, boundaries, and uncertainty intact. State what prompted the exploration and why it matters, but do not silently narrow an ambiguous question, assume a preferred route, or manufacture a solution. The premise is ready when a later discussion can begin from it without mistaking an agent guess for user intent.
 
@@ -50,7 +50,7 @@ A good **research plan** defines:
 
 Abstract from the current implementation to the underlying mechanism so the research can reveal better routes rather than merely validate what exists. Keep the plan decision-level: concrete enough to execute and review, but not a speculative findings document. Research may be online, in the codebase, or both; do not force research into Understanding.
 
-### needs_research — discover, vet, and synthesize
+### needs_findings — discover, vet, and synthesize
 
 Execute the approved plan, adapting the search when evidence exposes a real gap. Research owns source discovery, corpus curation, provenance, and synthesis together; do not invent a separate corpus step.
 
@@ -73,13 +73,13 @@ A good **answer** states:
 
 The formal answer must be durable enough to guide later work without reconstructing the chat.
 
-### needs_follow_up — propose consequences
+### needs_proposed_follow_up — propose consequences
 
 Derive follow-up only from the approved answer. It may propose tickets, durable files, record updates, another exploration, or no action. Give each proposed consequence enough destination and scope to approve, and explain how it follows from the answer. Do not create records, modify destinations, publish artifacts, or take any other side effect before approval.
 
 A good **follow-up** is the smallest complete, answer-supported package of consequences; it does not turn every interesting observation into work.
 
-### needs_closeout — apply the approved follow-up
+### needs_consequences — apply the approved follow-up
 
 Perform exactly the approved follow-up and nothing broader. Verify created IDs, destinations, placements, and links; preserve the exploration's durable artifacts and provenance where they belong. Report what was actually applied and how it was checked.
 

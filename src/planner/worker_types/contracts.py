@@ -8,6 +8,14 @@ from typing import TypedDict
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import StageOwnershipMode
 
+# The three names the runtime fixes. Everything else a Worker type calls its Stages and
+# fields is the type's own business. `consequences` is the field every Worker type must
+# declare, because a Worker type ends by landing what it produced. `brief` is paired first
+# for a type that opens with one.
+CONSEQUENCES_FIELD_ID = "consequences"
+BRIEF_FIELD_ID = "brief"
+NEEDS_BRIEF_STAGE_ID = f"needs_{BRIEF_FIELD_ID}"
+
 
 @dataclass(frozen=True, slots=True)
 class StageDefinition:
@@ -131,7 +139,7 @@ class WorkerTypeDefinition:
         return self.ceiling_range()[0]
 
     def first_worker_stage(self) -> str:
-        if self.stage_ids()[0] == "needs_kickoff":
+        if self.stage_ids()[0] == NEEDS_BRIEF_STAGE_ID:
             return self.stage_ids()[1]
         return self.stage_ids()[0]
 

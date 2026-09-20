@@ -68,7 +68,7 @@ def test_opening_a_database_puts_its_worker_types_in_force(
     database: sqlite3.Connection,
 ) -> None:
     registry = configured_worker_type_registry()
-    assert registry.require("coding").stage_ids()[0] == "needs_kickoff"
+    assert registry.require("coding").stage_ids()[0] == "needs_brief"
 
     seed_probe_worker_type(database)
     load_worker_runtime_definitions(database)
@@ -183,7 +183,7 @@ def test_removing_a_field_is_refused_while_a_ticket_holds_text_in_it(
     ticket_id = _probe_ticket(database, "needs_beta")
     database.execute(
         "UPDATE tickets SET field_values = ? WHERE id = ?",
-        (json.dumps({"kickoff": "Kickoff", "alpha": "Work the owner wrote"}), ticket_id),
+        (json.dumps({"brief": "Kickoff", "alpha": "Work the owner wrote"}), ticket_id),
     )
 
     kept_stage_dropped_field = replace(
@@ -248,7 +248,7 @@ def test_editing_a_type_changes_what_the_process_runs_without_a_restart(
     assert configured_worker_type_registry().require("coding").label == "Coding, renamed"
 
 
-def test_a_worker_type_that_declares_no_closeout_is_refused(
+def test_a_worker_type_that_declares_no_consequences_is_refused(
     database: sqlite3.Connection,
 ) -> None:
     """Every Worker type ends by landing what it produced, so every one declares it.
@@ -257,29 +257,29 @@ def test_a_worker_type_that_declares_no_closeout_is_refused(
     Stages and finds no Closeout to stand on.
     """
     seed_probe_worker_type(database)
-    without_closeout = replace(
+    without_consequences = replace(
         PROBE_WORKER_TYPE_DEFINITION,
         stages=tuple(
             stage for stage in PROBE_WORKER_TYPE_DEFINITION.stages if stage.id != NEEDS_LANDING
         ),
         fields=tuple(
-            field for field in PROBE_WORKER_TYPE_DEFINITION.fields if field.id != "closeout"
+            field for field in PROBE_WORKER_TYPE_DEFINITION.fields if field.id != "consequences"
         ),
     )
 
     with pytest.raises(PlannerError) as caught:
-        write_definition(database, without_closeout, now=2)
+        write_definition(database, without_consequences, now=2)
 
     assert caught.value.code is ErrorCode.validation
-    assert caught.value.message == "every worker type must declare a closeout field"
-    assert caught.value.detail == {"worker_type": "probe", "field": "closeout"}
-    assert read_definition(database, "probe").has_field("closeout")
+    assert caught.value.message == "every worker type must declare a consequences field"
+    assert caught.value.detail == {"worker_type": "probe", "field": "consequences"}
+    assert read_definition(database, "probe").has_field("consequences")
 
 
-def test_every_seeded_type_declares_a_closeout(database: sqlite3.Connection) -> None:
+def test_every_seeded_type_declares_consequences(database: sqlite3.Connection) -> None:
     for definition in read_definitions(database):
-        assert definition.has_field("closeout")
-        assert definition.stage_gated_by("closeout") in definition.stage_ids()
+        assert definition.has_field("consequences")
+        assert definition.stage_gated_by("consequences") in definition.stage_ids()
 
 
 def test_a_skill_can_be_added_and_a_type_declared_against_it(

@@ -20,9 +20,9 @@ const codingManifest = {
   label: "Coding",
   stages: [
     {
-      id: "needs_kickoff",
+      id: "needs_brief",
       label: "Kickoff",
-      gating_field: "kickoff",
+      gating_field: "brief",
       is_terminal: false,
       ownership_mode: "worker"
     },
@@ -55,9 +55,9 @@ const codingManifest = {
       ownership_mode: "worker"
     },
     {
-      id: "needs_closeout",
+      id: "needs_consequences",
       label: "Closeout",
-      gating_field: "closeout",
+      gating_field: "consequences",
       is_terminal: false,
       ownership_mode: "worker"
     },
@@ -70,27 +70,27 @@ const codingManifest = {
     }
   ],
   advance: {
-    needs_kickoff: "needs_success",
+    needs_brief: "needs_success",
     needs_success: "needs_approach",
     needs_approach: "needs_plan",
     needs_plan: "needs_implementation",
-    needs_implementation: "needs_closeout",
-    needs_closeout: "done"
+    needs_implementation: "needs_consequences",
+    needs_consequences: "done"
   },
   fields: [
-    { id: "kickoff", label: "Kickoff" },
+    { id: "brief", label: "Kickoff" },
     { id: "success", label: "Success" },
     { id: "approach", label: "Approach" },
     { id: "plan", label: "Plan" },
     { id: "implementation", label: "Implementation" },
-    { id: "closeout", label: "Closeout" }
+    { id: "consequences", label: "Closeout" }
   ],
   ceiling_range: [
     "needs_success",
     "needs_approach",
     "needs_plan",
     "needs_implementation",
-    "needs_closeout",
+    "needs_consequences",
     "done"
   ],
   default_ceiling: "needs_success",
@@ -188,53 +188,53 @@ describe("coding lifecycle", () => {
     expect(codingLifecycle.workerType).toBe("coding");
     expect(codingLifecycle.workerTypeLabel).toBe("Coding");
     expect(codingLifecycle.fieldIds).toEqual([
-      "kickoff",
+      "brief",
       "success",
       "approach",
       "plan",
       "implementation",
-      "closeout"
+      "consequences"
     ]);
     expect(codingLifecycle.stageOrder).toEqual([
-      "needs_kickoff",
+      "needs_brief",
       "needs_success",
       "needs_approach",
       "needs_plan",
       "needs_implementation",
-      "needs_closeout",
+      "needs_consequences",
       "done"
     ]);
     expect(codingLifecycle.gatingField).toEqual({
-      needs_kickoff: "kickoff",
+      needs_brief: "brief",
       needs_success: "success",
       needs_approach: "approach",
       needs_plan: "plan",
       needs_implementation: "implementation",
-      needs_closeout: "closeout"
+      needs_consequences: "consequences"
     });
     expect(codingLifecycle.gatedStage).toEqual({
-      kickoff: "needs_kickoff",
+      brief: "needs_brief",
       success: "needs_success",
       approach: "needs_approach",
       plan: "needs_plan",
       implementation: "needs_implementation",
-      closeout: "needs_closeout"
+      consequences: "needs_consequences"
     });
     expect(codingLifecycle.advance).toEqual({
-      needs_kickoff: "needs_success",
+      needs_brief: "needs_success",
       needs_success: "needs_approach",
       needs_approach: "needs_plan",
       needs_plan: "needs_implementation",
-      needs_implementation: "needs_closeout",
-      needs_closeout: "done"
+      needs_implementation: "needs_consequences",
+      needs_consequences: "done"
     });
     expect(codingLifecycle.stageOwnershipMode).toEqual({
-      needs_kickoff: "worker",
+      needs_brief: "worker",
       needs_success: "worker",
       needs_approach: "user",
       needs_plan: "user",
       needs_implementation: "worker",
-      needs_closeout: "worker",
+      needs_consequences: "worker",
       done: null
     });
   });
@@ -245,13 +245,13 @@ describe("coding lifecycle", () => {
       { value: "needs_approach", label: "needs approach" },
       { value: "needs_plan", label: "needs plan" },
       { value: "needs_implementation", label: "needs implementation" },
-      { value: "needs_closeout", label: "needs closeout" },
+      { value: "needs_consequences", label: "needs consequences" },
       { value: "done", label: "done" }
     ]);
     expect(ceilingOptionsFor(codingLifecycle, "needs_plan")).toEqual([
       { value: "needs_plan", label: "needs plan" },
       { value: "needs_implementation", label: "needs implementation" },
-      { value: "needs_closeout", label: "needs closeout" },
+      { value: "needs_consequences", label: "needs consequences" },
       { value: "done", label: "done" }
     ]);
   });

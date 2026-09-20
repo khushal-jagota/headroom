@@ -23,6 +23,7 @@ from planner.tickets.contracts import (
 )
 from planner.tickets.logic import fields_codec, machine
 from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
@@ -455,7 +456,8 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
                 str(row["conversation_id"]) if row["conversation_id"] is not None else None
             ),
             "waiting_to_closeout": (
-                gating_field_id == "closeout" and ticket_status == TicketStatus.empty.value
+                gating_field_id == CONSEQUENCES_FIELD_ID
+                and ticket_status == TicketStatus.empty.value
             ),
             "sprint_item_id": (
                 str(row["sprint_item_id"]) if row["sprint_item_id"] is not None else None

@@ -87,7 +87,7 @@ def fake_clock() -> TestClock:
     return TestClock(datetime(2026, 7, 4, 12, 0, 0).astimezone())
 
 
-_SAVED_VALUES = json.dumps({"kickoff": "k", "success": "s"})
+_SAVED_VALUES = json.dumps({"brief": "k", "success_condition": "s"})
 
 
 def _raw_insert_ticket(
@@ -95,8 +95,8 @@ def _raw_insert_ticket(
     *,
     ticket_id: str,
     worker_type: str = "coding",
-    stage: str = "needs_success",
-    ceiling: str = "needs_success",
+    stage: str = "needs_success_condition",
+    ceiling: str = "needs_success_condition",
     fields: str = _SAVED_VALUES,
 ) -> None:
     # Direct SQL bypasses the create/write doors (the enumerating CHECKs are gone), so
@@ -184,7 +184,7 @@ def test_metadata_write_rejects_invalid_stored_tuple_before_durable_effect(
         ticket_id="t_invalid_write",
         worker_type="coding",
         stage="needs_unregistered_work",
-        ceiling="needs_success",
+        ceiling="needs_success_condition",
     )
     before = tuple(
         tmp_db.execute(
@@ -292,9 +292,9 @@ def test_second_type_row_round_trips_plain_stored_values(
         tmp_db,
         ticket_id="t_probe",
         worker_type="coding_probe",
-        stage="needs_success",
-        ceiling="needs_success",
+        stage="needs_success_condition",
+        ceiling="needs_success_condition",
     )
     ticket = tickets_data.read_ticket(tmp_db, "t_probe")
     assert ticket.worker_type == "coding_probe"
-    assert ticket.stage == "needs_success"
+    assert ticket.stage == "needs_success_condition"

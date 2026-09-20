@@ -78,32 +78,32 @@ def test_coding_ticket_accepts_coding_field_and_ceiling(
     with TestClient(app) as client:
         tid = _create(client, "coding")
         # A parked proposal fixes its address, so a direct ceiling edit cannot retarget it.
-        scoped = client.patch(f"/api/tickets/{tid}", json={"ceiling": "needs_approach"})
+        scoped = client.patch(f"/api/tickets/{tid}", json={"ceiling": "needs_what_changes"})
         assert scoped.status_code == 400, scoped.json()
         missing_holder = client.post(
-            f"/api/tickets/{tid}/accept/kickoff",
-            json={"next_ceiling": "needs_approach"},
+            f"/api/tickets/{tid}/accept/brief",
+            json={"next_ceiling": "needs_what_changes"},
         )
         assert missing_holder.status_code == 400, missing_holder.json()
         assert missing_holder.json()["error"]["code"] == "scope_missing"
         self_held = client.post(
-            f"/api/tickets/{tid}/accept/kickoff",
+            f"/api/tickets/{tid}/accept/brief",
             json={
-                "next_ceiling": "needs_approach",
+                "next_ceiling": "needs_what_changes",
                 "next_holder": {"kind": "ticket", "id": tid},
             },
         )
         assert self_held.status_code == 400, self_held.json()
         assert self_held.json()["error"]["code"] == "validation"
         approved = client.post(
-            f"/api/tickets/{tid}/accept/kickoff",
+            f"/api/tickets/{tid}/accept/brief",
             json={
-                "next_ceiling": "needs_approach",
+                "next_ceiling": "needs_what_changes",
                 "next_holder": OWNER,
             },
         )
         assert approved.status_code == 200, approved.json()
-        assert approved.json()["ceiling"] == "needs_approach"
+        assert approved.json()["ceiling"] == "needs_what_changes"
 
 
 def test_worker_api_cannot_decide_a_corrupted_self_held_proposal(app_db: AppDb) -> None:
@@ -120,10 +120,10 @@ def test_worker_api_cannot_decide_a_corrupted_self_held_proposal(app_db: AppDb) 
             )
             conn.commit()
         decided = client.post(
-            f"/api/tickets/{ticket_id}/accept/kickoff",
+            f"/api/tickets/{ticket_id}/accept/brief",
             headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
             json={
-                "next_ceiling": "needs_success",
+                "next_ceiling": "needs_success_condition",
                 "next_holder": OWNER,
             },
         )
@@ -141,19 +141,19 @@ def test_accept_rejects_foreign_field_and_foreign_next_ceiling(
         # A probe ticket: accepting a coding field is a per-type field rejection.
         tid = _create(client, "probe")
         bad_field = client.post(
-            f"/api/tickets/{tid}/accept/success",
+            f"/api/tickets/{tid}/accept/success_condition",
             json={"next_ceiling": "none"},
         )
         assert bad_field.status_code == 400
         assert bad_field.json()["error"]["code"] == "validation"
         assert bad_field.json()["error"]["detail"] == {
-            "field": "success",
+            "field": "success_condition",
             "worker_type": "probe",
         }
         # A foreign next_ceiling (coding's needs_plan) on the probe kickoff accept is
         # rejected against probe's ceiling range.
         bad_ceiling = client.post(
-            f"/api/tickets/{tid}/accept/kickoff",
+            f"/api/tickets/{tid}/accept/brief",
             json={"next_ceiling": "needs_plan"},
         )
         assert bad_ceiling.status_code == 400
@@ -173,7 +173,7 @@ def test_probe_proposal_parks_on_registry_selected_field(
         # kickoff already parked at create — accept it keeping ceiling at needs_alpha
         # so the next answer parks at the ceiling.
         client.post(
-            f"/api/tickets/{tid}/accept/kickoff",
+            f"/api/tickets/{tid}/accept/brief",
             json={
                 "next_ceiling": "needs_alpha",
                 "next_holder": OWNER,
@@ -197,9 +197,9 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(app_db: AppDb) -> Non
         parent = _create(client, "coding")
         unrelated = _create(client, "coding")
         scoped = client.post(
-            f"/api/tickets/{target}/accept/kickoff",
+            f"/api/tickets/{target}/accept/brief",
             json={
-                "next_ceiling": "needs_success",
+                "next_ceiling": "needs_success_condition",
                 "next_holder": {"kind": "ticket", "id": parent},
             },
         )
@@ -269,7 +269,7 @@ def test_arbitrary_stage_jump_route_is_removed(app_db: AppDb, probe_installed: N
     with TestClient(app) as client:
         tid = _create(client, "probe")
         client.post(
-            f"/api/tickets/{tid}/accept/kickoff",
+            f"/api/tickets/{tid}/accept/brief",
             json={"next_ceiling": "done", "next_holder": OWNER},
         )
         jumped = client.post(f"/api/tickets/{tid}/stage", json={"to_stage": "needs_beta"})
@@ -288,18 +288,18 @@ def test_stage_filter_non_reserved_needs_no_worker_type(
     with TestClient(app) as client:
         _create(client, "coding")
         # A non-reserved stage filters directly. Advance the coding ticket to
-        # needs_success so the filter returns exactly it.
-        made = client.get("/api/tickets?stage=needs_kickoff").json()["tickets"]
+        # needs_success_condition so the filter returns exactly it.
+        made = client.get("/api/tickets?stage=needs_brief").json()["tickets"]
         assert len(made) == 1
         tid = made[0]["id"]
         client.post(
-            f"/api/tickets/{tid}/accept/kickoff",
+            f"/api/tickets/{tid}/accept/brief",
             json={
-                "next_ceiling": "needs_success",
+                "next_ceiling": "needs_success_condition",
                 "next_holder": OWNER,
             },
         )
-        ok = client.get("/api/tickets?stage=needs_success")
+        ok = client.get("/api/tickets?stage=needs_success_condition")
         assert ok.status_code == 200, ok.json()
         assert [t["id"] for t in ok.json()["tickets"]] == [tid]
         # An unknown stored value is a valid filter and returns no rows.
@@ -318,7 +318,7 @@ def test_guidance_round_trip_validation_and_retired_field_routes(app_db: AppDb) 
         assert saved.status_code == 200
         assert saved.json()["guidance"] == original
         assert saved.json()["field_values"] == {}
-        assert saved.json()["pending_proposal"]["field"] == "kickoff"
+        assert saved.json()["pending_proposal"]["field"] == "brief"
         for body in (
             {},
             {"guidance": None},

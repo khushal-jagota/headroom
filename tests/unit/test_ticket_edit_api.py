@@ -81,7 +81,7 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
         ticket = tickets_data.accept_proposal(
             conn,
             ticket.id,
-            field="kickoff",
+            field="brief",
             principal=OWNER_PRINCIPAL,
             now=1,
             next_ceiling=NO_FURTHER,

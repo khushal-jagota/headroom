@@ -192,7 +192,7 @@ describe("Sprint Item workspace presentation", () => {
       ...value.tickets[0],
       id: "t_kickoff",
       stage: "waiting_for_kickoff",
-      gating_field: "kickoff"
+      gating_field: "brief"
     };
     expect(
       todayWorkspaceTicketGroups({

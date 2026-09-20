@@ -57,5 +57,5 @@ export function ticketStatusGroupKey(ticket: TicketStatusGroupFacts): string {
   const mark = sprintTicketCondition(ticket).mark;
   if (mark === "needs-me") return "needs-me";
   if (mark !== "current-awaiting-approval") return mark;
-  return ticket.gating_field === "kickoff" ? "waiting-for-kickoff" : mark;
+  return ticket.gating_field === "brief" ? "waiting-for-kickoff" : mark;
 }

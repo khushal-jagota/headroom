@@ -220,7 +220,7 @@ def test_production_planning_schedules_create_place_receipt_and_reach_handoff(
         assert ticket.deadline is None
         assert ticket.ticket_status is TicketStatus.empty
         definition = registry.require(ticket.worker_type)
-        if definition.has_field("kickoff"):
+        if definition.has_field("brief"):
             assert ticket.pending_proposal is None
         else:
             assert ticket.stage == definition.default_ceiling()

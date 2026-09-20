@@ -40,7 +40,7 @@ def _park(
     now: int = 10,
     *,
     worker_type: str = "coding",
-    stated_ceiling: str = "needs_success",
+    stated_ceiling: str = "needs_success_condition",
 ) -> Ticket:
     ticket = data.create_ticket(
         conn,
@@ -72,7 +72,7 @@ def test_creation_and_auto_accept_preserve_the_creating_principal(
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         kickoff_note="Kickoff",
-        stated_ceiling="needs_approach",
+        stated_ceiling="needs_what_changes",
     )
     assert ticket.ceiling_holder == CHIEF_PRINCIPAL
 
@@ -83,7 +83,7 @@ def test_creation_and_auto_accept_preserve_the_creating_principal(
         principal=Principal(PrincipalKind.ticket, ticket.id),
         now=11,
     )
-    assert advanced.stage == "needs_approach"
+    assert advanced.stage == "needs_what_changes"
     assert advanced.pending_proposal is None
     assert advanced.ceiling_holder == CHIEF_PRINCIPAL
 
@@ -120,7 +120,7 @@ def test_canonical_proposal_writer_accepts_only_the_ticket_own_worker(
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         kickoff_note="Target",
-        stated_ceiling="needs_success",
+        stated_ceiling="needs_success_condition",
     )
     forbidden_principals = (
         Principal(PrincipalKind.sprint_item, item.id),
@@ -157,10 +157,10 @@ def test_only_holder_or_owner_can_decide_and_approval_requires_next_holder(
         data.accept_proposal(
             tmp_db,
             ticket.id,
-            field="success",
+            field="success_condition",
             principal=CHIEF_PRINCIPAL,
             now=12,
-            next_ceiling="needs_approach",
+            next_ceiling="needs_what_changes",
             next_holder=CHIEF_PRINCIPAL,
         )
     assert forbidden.value.code is ErrorCode.agent_forbidden
@@ -168,10 +168,10 @@ def test_only_holder_or_owner_can_decide_and_approval_requires_next_holder(
     approved = data.accept_proposal(
         tmp_db,
         ticket.id,
-        field="success",
+        field="success_condition",
         principal=OWNER_PRINCIPAL,
         now=12,
-        next_ceiling="needs_approach",
+        next_ceiling="needs_what_changes",
         next_holder=CHIEF_PRINCIPAL,
     )
     assert approved.ceiling_holder == CHIEF_PRINCIPAL
@@ -184,10 +184,10 @@ def test_ticket_cannot_hold_or_decide_its_own_ceiling(tmp_db: Connection) -> Non
         data.accept_proposal(
             tmp_db,
             ticket.id,
-            field="success",
+            field="success_condition",
             principal=OWNER_PRINCIPAL,
             now=12,
-            next_ceiling="needs_approach",
+            next_ceiling="needs_what_changes",
             next_holder=self_principal,
         )
 
@@ -195,10 +195,10 @@ def test_ticket_cannot_hold_or_decide_its_own_ceiling(tmp_db: Connection) -> Non
     with pytest.raises(PlannerError, match="own worker"):
         resolution.decide_accept(
             corrupted,
-            "success",
+            "success_condition",
             self_principal,
             None,
-            "needs_approach",
+            "needs_what_changes",
             OWNER_PRINCIPAL,
             worker_type_definition=configured_worker_type_registry().require("coding"),
         )
@@ -273,7 +273,7 @@ def test_revision_rearms_same_user_owned_stage_and_credits_exact_source_turn(
         tmp_db,
         CHIEF_PRINCIPAL,
         worker_type="new_worker",
-        stated_ceiling="needs_understanding",
+        stated_ceiling="needs_purpose_and_boundaries",
     )
     tmp_db.execute(
         "UPDATE tickets SET conversation_id='c_worker' WHERE id=?",
@@ -281,7 +281,7 @@ def test_revision_rearms_same_user_owned_stage_and_credits_exact_source_turn(
     )
     tmp_db.execute(
         "INSERT INTO ticket_paired_stage_openers(ticket_id,stage,opened_at) "
-        "VALUES (?,'needs_success',1)",
+        "VALUES (?,'needs_success_condition',1)",
         (ticket.id,),
     )
     captured = ConversationTurnReference("c_chief", 7)
@@ -339,10 +339,10 @@ def test_revision_feedback_is_discarded_when_the_ticket_leaves_its_stage(
     data.accept_proposal(
         tmp_db,
         ticket.id,
-        field="success",
+        field="success_condition",
         principal=OWNER_PRINCIPAL,
         now=22,
-        next_ceiling="needs_approach",
+        next_ceiling="needs_what_changes",
         next_holder=OWNER_PRINCIPAL,
     )
 
@@ -454,6 +454,8 @@ def test_migration_backfills_owner_and_startup_audits_holder_integrity(
         "INSERT INTO tickets "
         "(id,title,worker_type,employee_backend,stage,ceiling,"
         "field_values,created_at,updated_at) "
+        # Seeded at an old revision, so it is spelled the way that era spelled it; the
+        # rename revision moves it on the way to head.
         "VALUES ('t_old','Old','coding','codex','needs_kickoff','needs_kickoff','{}',1,1)"
     )
     before.close()

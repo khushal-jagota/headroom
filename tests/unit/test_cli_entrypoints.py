@@ -160,8 +160,8 @@ def test_ticket_approve_sends_the_explicit_next_holder(
             return {
                 "id": "t_child",
                 "worker_type": "coding",
-                "stage": "needs_success",
-                "pending_proposal": {"field": "success", "body": "Ready"},
+                "stage": "needs_success_condition",
+                "pending_proposal": {"field": "success_condition", "body": "Ready"},
             }
         if path == "/api/worker-types":
             return {"worker_types": [SHIPPED_REGISTRY.manifest("coding")]}
@@ -175,7 +175,7 @@ def test_ticket_approve_sends_the_explicit_next_holder(
             "approve",
             "t_child",
             "--ceiling",
-            "needs_approach",
+            "needs_what_changes",
             "--holder-kind",
             "sprint_item",
             "--holder-id",
@@ -184,9 +184,9 @@ def test_ticket_approve_sends_the_explicit_next_holder(
     )
 
     assert result.exit_code == 0, result.output
-    assert calls[-1][0:2] == ("POST", "/api/tickets/t_child/accept/success")
+    assert calls[-1][0:2] == ("POST", "/api/tickets/t_child/accept/success_condition")
     assert calls[-1][2]["json_body"] == {
-        "next_ceiling": "needs_approach",
+        "next_ceiling": "needs_what_changes",
         "next_holder": {"kind": "sprint_item", "id": "si_parent"},
     }
 
@@ -211,7 +211,7 @@ def test_supervisor_approve_defaults_the_next_holder_to_its_item(
             "si_parent",
             "t_child",
             "--ceiling",
-            "needs_approach",
+            "needs_what_changes",
         ],
     )
 
@@ -223,7 +223,7 @@ def test_supervisor_approve_defaults_the_next_holder_to_its_item(
             {
                 "as_json": False,
                 "json_body": {
-                    "next_ceiling": "needs_approach",
+                    "next_ceiling": "needs_what_changes",
                     "next_holder": {"kind": "sprint_item", "id": "si_parent"},
                 },
             },
@@ -259,9 +259,9 @@ def test_ticket_list_passes_repeatable_filters_and_page_controls(
             "ticket",
             "list",
             "--stage",
-            "needs_success",
+            "needs_success_condition",
             "--stage",
-            "needs_approach",
+            "needs_what_changes",
             "--exclude-stage",
             "done",
             "--ticket-status",
@@ -281,7 +281,7 @@ def test_ticket_list_passes_repeatable_filters_and_page_controls(
     assert result.exit_code == 0, result.output
     assert calls[0][0:2] == ("GET", "/api/ticket-summaries")
     assert calls[0][2]["params"] == {
-        "stage": ["needs_success", "needs_approach"],
+        "stage": ["needs_success_condition", "needs_what_changes"],
         "exclude_stage": ["done"],
         "ticket_status": ["agent"],
         "exclude_ticket_status": ["errored"],
@@ -304,7 +304,7 @@ def test_ticket_list_passes_repeatable_filters_and_page_controls(
             {
                 "id": "t_one",
                 "title": "One",
-                "stage": "needs_success",
+                "stage": "needs_success_condition",
                 "ticket_status": "empty",
                 "priority": "P1",
                 "project": None,
@@ -426,7 +426,7 @@ def test_ticket_parts_expose_guidance_and_recap_without_expanding_default_manife
     data = {
         "id": "t_parts",
         "worker_type": "coding",
-        "field_values": {"kickoff": "request"},
+        "field_values": {"brief": "request"},
         "pending_proposal": None,
         "recap": "orientation",
         "guidance": "  exact guidance\n",
@@ -434,12 +434,12 @@ def test_ticket_parts_expose_guidance_and_recap_without_expanding_default_manife
     header, parts = cli_main._ticket_record(data)
     manifest = project_record(header, parts, None)
     assert list(manifest["manifest"]) == [
-        "kickoff",
-        "success",
-        "approach",
+        "brief",
+        "success_condition",
+        "what_changes",
         "plan",
         "implementation",
-        "closeout",
+        "consequences",
         "proposal",
         "recap",
         "guidance",

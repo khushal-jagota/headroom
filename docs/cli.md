@@ -153,7 +153,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   `ticket set` names one field (`ceiling`, `title`, `kickoff-note`, `priority`, or
   `deadline`). Every one of those goes through `PATCH /api/tickets/{id}`, which is the
   only way to change a field on a Ticket. `ceiling` takes either the stage name or the
-  plain name of the field that stage needs, so `closeout` and `needs_closeout` mean the
+  plain name of the field that stage needs, so `consequences` and `needs_consequences` mean the
   same thing. Setting it makes the setting principal the ceiling holder, and it is
   refused while a proposal is pending.
   `ticket complete <ticket-id> <field>` is not a field edit: the user does a user-owned

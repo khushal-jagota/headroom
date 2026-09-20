@@ -117,7 +117,7 @@ export function feedbackTicketStageState(ticket: FeedbackTicket): FieldStageVisu
   if (attention === "awaiting_reply") return "needs-me";
   if (ticket.agent_state === "working") return "current-running";
   if (ticket.agent_state === "errored") return "errored";
-  if (ticket.stage === "needs_closeout") return "current-waiting";
+  if (ticket.stage === "needs_consequences") return "current-waiting";
   return "upcoming";
 }
 
@@ -131,7 +131,7 @@ export function feedbackTicketStateLabel(ticket: FeedbackTicket): string {
   if (ticket.agent_state === "working") return "Running";
   if (ticket.agent_state === "errored") return "Errored";
   const labels: Record<string, string> = { errored: "Errored", blocked: "Blocked" };
-  if (ticket.ticket_status === "empty" && ticket.stage === "needs_closeout") {
+  if (ticket.ticket_status === "empty" && ticket.stage === "needs_consequences") {
     return "Waiting for closeout";
   }
   const stage = ticket.stage.replace(/_/g, " ");

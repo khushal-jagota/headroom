@@ -77,15 +77,15 @@ describe("Ticket status groups", () => {
 
   it("names a kickoff-gated Ticket by its gating field, and only while it awaits approval", () => {
     expect(
-      ticketStatusGroupKey(ticket({ awaiting_approval: true, gating_field: "kickoff" }))
+      ticketStatusGroupKey(ticket({ awaiting_approval: true, gating_field: "brief" }))
     ).toBe("waiting-for-kickoff");
     // The gating field only splits Tickets that are awaiting approval.
     expect(
-      ticketStatusGroupKey(ticket({ ticket_status: "agent", gating_field: "kickoff" }))
+      ticketStatusGroupKey(ticket({ ticket_status: "agent", gating_field: "brief" }))
     ).toBe("current-running");
     expect(
       ticketStatusGroupKey(
-        ticketWithFiledProposal({ assigned: true, gating_field: "kickoff" })
+        ticketWithFiledProposal({ assigned: true, gating_field: "brief" })
       )
     ).toBe("current-assigned");
   });

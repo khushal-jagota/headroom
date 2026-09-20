@@ -11,7 +11,7 @@ import sqlite3
 
 from planner.tickets.contracts import StageOwnershipMode, Ticket, TicketStatus
 from planner.tickets.logic import machine
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID, WorkerTypeDefinition
 
 CloseoutLaneIdentity = tuple[str | None, str]
 
@@ -23,7 +23,7 @@ def closeout_lane_identity(
     worker_type_definition: WorkerTypeDefinition,
 ) -> CloseoutLaneIdentity | None:
     """Return the effective project-and-Worker-type lane for a Closeout Ticket."""
-    if worker_type_definition.gating_field(ticket.stage) != "closeout":
+    if worker_type_definition.gating_field(ticket.stage) != CONSEQUENCES_FIELD_ID:
         return None
     effective_project_id = ticket.project_id
     if ticket.sprint_item_id is not None:
@@ -49,7 +49,7 @@ def _closeout_lane_is_occupied(
     if lane is None:
         return False
     effective_project_id, worker_type = lane
-    closeout_stage = worker_type_definition.stage_gated_by("closeout")
+    closeout_stage = worker_type_definition.stage_gated_by(CONSEQUENCES_FIELD_ID)
     return (
         conn.execute(
             "SELECT 1 FROM tickets t "

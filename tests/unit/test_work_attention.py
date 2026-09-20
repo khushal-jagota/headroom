@@ -175,11 +175,11 @@ def test_setting_the_ceiling_re_derives_who_the_ticket_is_waiting_on(tmp_path: P
     tickets_data.accept_proposal(
         conn,
         ticket.id,
-        field="kickoff",
+        field="brief",
         principal=OWNER_PRINCIPAL,
         now=2,
         edited_body=None,
-        next_ceiling="needs_success",
+        next_ceiling="needs_success_condition",
         next_holder=CHIEF_PRINCIPAL,
     )
     # Forget what the Ticket projected, so only this edit can write it back.
@@ -188,7 +188,7 @@ def test_setting_the_ceiling_re_derives_who_the_ticket_is_waiting_on(tmp_path: P
         (ticket.id,),
     )
 
-    edit: TicketEdit = {"ceiling": "needs_approach"}
+    edit: TicketEdit = {"ceiling": "needs_what_changes"}
     edited = tickets_data.edit_ticket(
         conn,
         ticket.id,
@@ -197,7 +197,7 @@ def test_setting_the_ceiling_re_derives_who_the_ticket_is_waiting_on(tmp_path: P
         principal=OWNER_PRINCIPAL,
         now=3,
     )
-    assert edited.ceiling == "needs_approach"
+    assert edited.ceiling == "needs_what_changes"
     assert edited.ceiling_holder == OWNER_PRINCIPAL
     # The holder moved from the Chief to Khushal, and the projection says so again.
     assert _attention(conn, ticket.id, "assigned") is False

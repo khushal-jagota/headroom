@@ -15,12 +15,12 @@ planning and implementation each Ticket owns.
 The sequence is **Kickoff → Rough Shape → Question Tree → Question Answers → Ticket
 Outlines → Closeout → Done**.
 
-- **needs_kickoff** — preserve the confirmed direction and source context.
-- **needs_rough_shape** — section the initiative into its important parts.
+- **needs_brief** — preserve the confirmed direction and source context.
+- **needs_rough_split_into_parts** — section the initiative into its important parts.
 - **needs_question_tree** — map the cross-cutting questions that must be answered.
 - **needs_question_answers** — work through the consequential questions with the user.
-- **needs_ticket_outlines** — derive the downstream Tickets for the user's sense-check.
-- **needs_closeout** — create and verify exactly those approved Tickets.
+- **needs_proposed_tickets** — derive the downstream Tickets for the user's sense-check.
+- **needs_consequences** — create and verify exactly those approved Tickets.
 - **done** — finished.
 
 ## The scope test
@@ -41,7 +41,7 @@ because the top-level how is difficult. If source material exposes a genuine
 contradiction, name it and bring it to the user rather than silently changing the
 direction or inventing a reconciliation.
 
-### needs_kickoff — preserve the confirmed direction
+### needs_brief — preserve the confirmed direction
 
 Keep the user's wording, the approved Exploration answer when one exists, the source
 sprint item or project context, and explicit boundaries. State what is confirmed and
@@ -52,7 +52,7 @@ A good **kickoff** lets the Rough Shape begin without reconstructing the intake 
 mistaking an agent assumption for settled direction. It does not contain a guessed
 solution or premature Ticket list.
 
-### needs_rough_shape — section the work
+### needs_rough_split_into_parts — section the work
 
 Read the source context and inspect relevant records or systems narrowly before shaping
 the work. Divide the initiative into the few parts that make it understandable. Each
@@ -118,7 +118,7 @@ Do not propose until every question that blocks coherent Ticket boundaries is an
 or the user has explicitly chosen a safe deferral. A strong result makes the shared
 approach usable without replaying the chat and does not consume Ticket-local planning.
 
-### needs_ticket_outlines — derive the bounded work
+### needs_proposed_tickets — derive the bounded work
 
 Derive the smallest coherent Ticket set from the approved answers. This stage does not
 re-argue the shared approach. It packages that approach into reviewable units so the
@@ -145,7 +145,7 @@ do not bury a guess inside one Ticket. Surface the gap for user decision before 
 the outlines as final. A good **ticket outlines** proposal is concise enough to scan and
 complete enough to approve as the exact creation package.
 
-### needs_closeout — create the approved Tickets
+### needs_consequences — create the approved Tickets
 
 Create exactly the approved outlines and nothing broader. Use the outlined Worker type,
 title, placement, and kickoff context. Load and follow `panels-ticket-creation` for the

@@ -36,7 +36,15 @@ def test_upgrade_deletes_failure_events_and_drops_all_three_outbox_tables(
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         kickoff_note="Keep the work",
-        stated_ceiling="needs_success",
+        stated_ceiling="needs_success_condition",
+    )
+    # The Ticket is made through the registry this process runs on, which spells the
+    # settled ids. This database is at an older revision, and the revisions between here
+    # and head check their own era's ids, so put the row back to what that era spelled.
+    conn.execute(
+        "UPDATE tickets SET stage='needs_success', ceiling='needs_success', "
+        "field_values=? WHERE id=?",
+        (json.dumps({"kickoff": "Keep the work"}), ticket.id),
     )
     conn.execute(
         "INSERT INTO conversations "

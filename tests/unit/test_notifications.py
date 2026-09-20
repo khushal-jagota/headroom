@@ -318,24 +318,26 @@ def test_assignment_clear_and_rise_between_projector_polls_keeps_both_edges(
     create_schema(conn)
     ticket = _ticket(conn, 1)
     conn.execute(
-        "UPDATE tickets SET stage='needs_success', ceiling='needs_success', "
+        "UPDATE tickets SET stage='needs_success_condition', ceiling='needs_success_condition', "
         "pending_proposal=NULL WHERE id=?",
         (ticket.id,),
     )
     notifications_data.project_facts(conn)
 
     conn.execute(
-        "UPDATE tickets SET worker_type='new_worker', stage='needs_understanding' WHERE id=?",
+        "UPDATE tickets SET worker_type='new_worker', "
+        "stage='needs_purpose_and_boundaries' WHERE id=?",
         (ticket.id,),
     )
     notifications_attention.capture_ticket_attention(conn, ticket.id, 2)
     conn.execute(
-        "UPDATE tickets SET worker_type='coding', stage='needs_success' WHERE id=?",
+        "UPDATE tickets SET worker_type='coding', stage='needs_success_condition' WHERE id=?",
         (ticket.id,),
     )
     notifications_attention.capture_ticket_attention(conn, ticket.id, 3)
     conn.execute(
-        "UPDATE tickets SET worker_type='new_worker', stage='needs_understanding' WHERE id=?",
+        "UPDATE tickets SET worker_type='new_worker', "
+        "stage='needs_purpose_and_boundaries' WHERE id=?",
         (ticket.id,),
     )
     notifications_attention.capture_ticket_attention(conn, ticket.id, 4)

@@ -35,6 +35,7 @@ from planner.core.contracts import PrincipalKind
 from planner.environments.cli import environment as environment_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.message_delivery.contracts import MessageDeliveryMode
+from planner.worker_types.contracts import BRIEF_FIELD_ID
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
 _TICKET_ID_ENV = "PLAN_TICKET_ID"
@@ -52,7 +53,7 @@ _DAY_FIELDS = {
 _TICKET_SET_FIELDS = {
     "ceiling": "ceiling",
     "title": "title",
-    "kickoff-note": "kickoff",
+    "kickoff-note": "brief",
     "priority": "priority",
     "deadline": "deadline",
     "project": "project",
@@ -1373,7 +1374,7 @@ def ticket_set(
     if field == "kickoff-note" and new_value is None:
         new_value = ""
     body: dict[str, Any] = (
-        {"field_values": {"kickoff": new_value}}
+        {"field_values": {"brief": new_value}}
         if field == "kickoff-note"
         else {api_field: new_value}
     )
@@ -1563,8 +1564,8 @@ def ticket_approve(
     if ceiling is None:
         http.fail_validation("approval requires --ceiling", as_json)
     if kickoff_title is not None:
-        if field != "kickoff":
-            http.fail_validation("--kickoff-title only applies while approving kickoff", as_json)
+        if field != BRIEF_FIELD_ID:
+            http.fail_validation("--kickoff-title only applies while approving the brief", as_json)
         http.send(
             "PATCH",
             f"/api/tickets/{tid}",
@@ -1580,9 +1581,9 @@ def ticket_approve(
     if edit_file is not None:
         field_payload["edited_body"] = _read_source(edit_file, as_json)
     if kickoff_note_file is not None:
-        if field != "kickoff":
+        if field != BRIEF_FIELD_ID:
             http.fail_validation(
-                "--kickoff-note-file only applies while approving kickoff", as_json
+                "--kickoff-note-file only applies while approving the brief", as_json
             )
         if "edited_body" in field_payload:
             http.fail_validation("approval accepts only one edited body option", as_json)

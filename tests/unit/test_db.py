@@ -40,7 +40,7 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "one_ticket_ending"
+HEAD_REVISION = "settled_stage_and_field_ids"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
 CURRENT_SCHEMA_OBJECT_COUNT = 60
@@ -477,8 +477,8 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
             "SELECT ticket_id, stage FROM ticket_paired_stage_openers ORDER BY ticket_id"
         )
     ] == [
-        ("t_discussion", "needs_kickoff"),
-        ("t_paired", "needs_kickoff"),
+        ("t_discussion", "needs_brief"),
+        ("t_paired", "needs_brief"),
     ]
 
     # Two rebuilds dropped and recreated the table the children hang off. With foreign keys
@@ -852,7 +852,8 @@ def test_fresh_schema_rejects_ticket_fields_omission(tmp_path: Path) -> None:
         conn.execute(
             "INSERT INTO tickets (id, title, worker_type, employee_backend, ceiling, "
             "created_at, updated_at) "
-            "VALUES ('t_omits_fields', 'Missing fields', 'coding', 'hermes', 'needs_success', 1, 1)"
+            "VALUES ('t_omits_fields', 'Missing fields', 'coding', 'hermes', "
+            "'needs_success_condition', 1, 1)"
         )
 
     conn.close()

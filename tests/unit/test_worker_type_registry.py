@@ -106,16 +106,16 @@ def test_registry_validation_order_and_messages() -> None:
     assert_error(
         replace(base, stages=(base.stages[0], base.stages[0], *base.stages[1:])),
         "duplicate stage id",
-        {"worker_type": "coding", "stage": "needs_kickoff"},
+        {"worker_type": "coding", "stage": "needs_brief"},
     )
     assert_error(
         replace(base, fields=(*base.fields, base.fields[1])),
         "duplicate field id",
-        {"worker_type": "coding", "field": "success"},
+        {"worker_type": "coding", "field": "success_condition"},
     )
     assert_error(
         replace(base, stages=(replace(base.stages[0], id="start"), *base.stages[1:])),
-        "kickoff stage and field must be paired first",
+        "brief stage and field must be paired first",
         {"worker_type": "coding"},
     )
     assert_error(
@@ -154,7 +154,7 @@ def test_registry_validation_order_and_messages() -> None:
             base,
             stages=(
                 *base.stages[:-1],
-                replace(base.stages[-1], gating_field="closeout"),
+                replace(base.stages[-1], gating_field="consequences"),
             ),
         ),
         "terminal stage may not gate a field",
@@ -170,7 +170,7 @@ def test_registry_validation_order_and_messages() -> None:
             ),
         ),
         "non-terminal stage must gate a field",
-        {"worker_type": "coding", "stage": "needs_success"},
+        {"worker_type": "coding", "stage": "needs_success_condition"},
     )
     assert_error(
         replace(
@@ -184,7 +184,7 @@ def test_registry_validation_order_and_messages() -> None:
         "gating field references an undeclared field",
         {
             "worker_type": "coding",
-            "stage": "needs_success",
+            "stage": "needs_success_condition",
             "gating_field": "ghost",
         },
     )
@@ -193,12 +193,12 @@ def test_registry_validation_order_and_messages() -> None:
             base,
             stages=(
                 base.stages[0],
-                replace(base.stages[1], gating_field="kickoff"),
+                replace(base.stages[1], gating_field="brief"),
                 *base.stages[2:],
             ),
         ),
         "field gated by more than one stage",
-        {"worker_type": "coding", "field": "kickoff"},
+        {"worker_type": "coding", "field": "brief"},
     )
     assert_error(
         replace(base, fields=(*base.fields, FieldDefinition("ghost", "Ghost"))),
@@ -207,7 +207,7 @@ def test_registry_validation_order_and_messages() -> None:
     )
     assert_error(
         replace(base, fields=(base.fields[1], base.fields[0], *base.fields[2:])),
-        "kickoff stage and field must be paired first",
+        "brief stage and field must be paired first",
         {"worker_type": "coding"},
     )
     assert_error(
@@ -236,23 +236,23 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
         "label": "Coding",
         "stages": [
             {
-                "id": "needs_kickoff",
+                "id": "needs_brief",
                 "label": "Kickoff",
-                "gating_field": "kickoff",
+                "gating_field": "brief",
                 "is_terminal": False,
                 "ownership_mode": "worker",
             },
             {
-                "id": "needs_success",
+                "id": "needs_success_condition",
                 "label": "Success",
-                "gating_field": "success",
+                "gating_field": "success_condition",
                 "is_terminal": False,
                 "ownership_mode": "worker",
             },
             {
-                "id": "needs_approach",
+                "id": "needs_what_changes",
                 "label": "Approach",
-                "gating_field": "approach",
+                "gating_field": "what_changes",
                 "is_terminal": False,
                 "ownership_mode": "worker",
             },
@@ -271,9 +271,9 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
                 "ownership_mode": "worker",
             },
             {
-                "id": "needs_closeout",
+                "id": "needs_consequences",
                 "label": "Closeout",
-                "gating_field": "closeout",
+                "gating_field": "consequences",
                 "is_terminal": False,
                 "ownership_mode": "worker",
             },
@@ -286,31 +286,31 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
             },
         ],
         "advance": {
-            "needs_kickoff": "needs_success",
-            "needs_success": "needs_approach",
-            "needs_approach": "needs_plan",
+            "needs_brief": "needs_success_condition",
+            "needs_success_condition": "needs_what_changes",
+            "needs_what_changes": "needs_plan",
             "needs_plan": "needs_implementation",
-            "needs_implementation": "needs_closeout",
-            "needs_closeout": "done",
+            "needs_implementation": "needs_consequences",
+            "needs_consequences": "done",
         },
         "fields": [
-            {"id": "kickoff", "label": "Kickoff"},
-            {"id": "success", "label": "Success"},
-            {"id": "approach", "label": "Approach"},
+            {"id": "brief", "label": "Kickoff"},
+            {"id": "success_condition", "label": "Success"},
+            {"id": "what_changes", "label": "Approach"},
             {"id": "plan", "label": "Plan"},
             {"id": "implementation", "label": "Implementation"},
-            {"id": "closeout", "label": "Closeout"},
+            {"id": "consequences", "label": "Closeout"},
         ],
         "ceiling_range": [
-            "needs_kickoff",
-            "needs_success",
-            "needs_approach",
+            "needs_brief",
+            "needs_success_condition",
+            "needs_what_changes",
             "needs_plan",
             "needs_implementation",
-            "needs_closeout",
+            "needs_consequences",
             "done",
         ],
-        "default_ceiling": "needs_kickoff",
+        "default_ceiling": "needs_brief",
         "worker_profile_id": "panels-worker-coding",
         "default_backend": "codex",
         "default_model": "gpt-5.6-sol",

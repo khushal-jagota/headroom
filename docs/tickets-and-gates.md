@@ -230,7 +230,7 @@ ceiling says nothing about who owns a Stage: user-owned Stages still do not
 dispatch automatically after their opening turn. They rest at `empty` with their opener fact,
 and their answer always parks.
 New tickets start leashed right at
-**Kickoff**: the ceiling is `needs_kickoff` for every Worker type, so nothing advances past
+**Kickoff**: the ceiling is `needs_brief` for every Worker type, so nothing advances past
 the human-approved intake until the human grants scope onward — review before agents
 start.
 

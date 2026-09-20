@@ -22,6 +22,7 @@ from planner.sprints.contracts import (
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets.contracts import TicketStatus
 from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID
 
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
 
@@ -117,7 +118,7 @@ def item_tickets(
         worker_type_definition = registry.require(str(r["worker_type"]))
         gating_field = worker_type_definition.gating_field(stage)
         waiting_to_closeout = (
-            gating_field == "closeout" and ticket_status == TicketStatus.empty.value
+            gating_field == CONSEQUENCES_FIELD_ID and ticket_status == TicketStatus.empty.value
         )
         result.append(
             {

@@ -22,12 +22,12 @@ SHIPPED_REGISTRY = build_shipped_registry()
 CODING_WORKER_TYPE_DEFINITION = shipped_definition("coding")
 
 _EMPTY_FIELDS_DEFAULT = (
-    '{"kickoff":{"value":null,"proposal":null},'
-    '"success":{"value":null,"proposal":null},'
-    '"approach":{"value":null,"proposal":null},'
+    '{"brief":{"value":null,"proposal":null},'
+    '"success_condition":{"value":null,"proposal":null},'
+    '"what_changes":{"value":null,"proposal":null},'
     '"plan":{"value":null,"proposal":null},'
     '"implementation":{"value":null,"proposal":null},'
-    '"closeout":{"value":null,"proposal":null}}'
+    '"consequences":{"value":null,"proposal":null}}'
 )
 
 
@@ -58,12 +58,12 @@ def test_ticket_contract_requires_worker_type_and_stored_stage() -> None:
     assert type_hints["worker_type"] is str
     assert type_hints["stage"] is str
     assert list(CODING_WORKER_TYPE_DEFINITION.stage_ids()) == [
-        "needs_kickoff",
-        "needs_success",
-        "needs_approach",
+        "needs_brief",
+        "needs_success_condition",
+        "needs_what_changes",
         "needs_plan",
         "needs_implementation",
-        "needs_closeout",
+        "needs_consequences",
         "done",
     ]
 
@@ -106,7 +106,7 @@ def test_http_contract_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
         )
         assert made.status_code == 200, made.json()
         assert made.json()["worker_type"] == "coding"
-        assert made.json()["stage"] == "needs_kickoff"
+        assert made.json()["stage"] == "needs_brief"
         assert "ticket_type" not in made.json()
         assert "state" not in made.json()
         manifest = client.get("/api/worker-types")

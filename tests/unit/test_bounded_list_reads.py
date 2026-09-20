@@ -40,14 +40,14 @@ def test_ticket_summary_filters_search_and_bounds_before_selection(
     tmp_db.execute("UPDATE tickets SET recap = ? WHERE id = ?", ("Recap Needle", recap_id))
     tmp_db.execute(
         "UPDATE tickets SET field_values=? WHERE id=?",
-        (json.dumps({"success": "Value Needle"}), value_id),
+        (json.dumps({"success_condition": "Value Needle"}), value_id),
     )
     tmp_db.execute(
         "UPDATE tickets SET pending_proposal=? WHERE id=?",
         (
             json.dumps(
                 {
-                    "field": "success",
+                    "field": "success_condition",
                     "body": "Proposal Needle",
                     "proposed_by": "agent",
                     "created_at": 1,
@@ -61,7 +61,9 @@ def test_ticket_summary_filters_search_and_bounds_before_selection(
         "UPDATE tickets SET stage = 'done', ticket_status = 'empty' WHERE id = ?",
         (terminal_id,),
     )
-    tmp_db.execute("UPDATE tickets SET stage = 'needs_success' WHERE id = ?", (proposal_id,))
+    tmp_db.execute(
+        "UPDATE tickets SET stage = 'needs_success_condition' WHERE id = ?", (proposal_id,)
+    )
     tmp_db.execute("UPDATE tickets SET ticket_status = 'errored' WHERE id = ?", (note_id,))
 
     for needle, expected in (
@@ -85,8 +87,8 @@ def test_ticket_summary_filters_search_and_bounds_before_selection(
         tmp_db,
         page_request=ListPageRequest(limit=1),
         filters=TicketListFilters(
-            stages=("needs_kickoff", "needs_success"),
-            excluded_stages=("needs_success",),
+            stages=("needs_brief", "needs_success_condition"),
+            excluded_stages=("needs_success_condition",),
             ticket_statuses=(TicketStatus.awaiting_approval, TicketStatus.errored),
             excluded_ticket_statuses=(TicketStatus.errored,),
             search="source",
@@ -116,7 +118,7 @@ def test_ticket_summary_filters_search_and_bounds_before_selection(
         tmp_db,
         page_request=ListPageRequest(),
         filters=TicketListFilters(
-            stages=("needs_kickoff", "needs_success"),
+            stages=("needs_brief", "needs_success_condition"),
             ticket_statuses=(TicketStatus.awaiting_approval, TicketStatus.errored),
             excluded_ticket_statuses=(TicketStatus.errored,),
             search="source",

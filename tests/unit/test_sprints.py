@@ -39,7 +39,7 @@ def _insert_ticket(
         "INSERT INTO tickets (id, title, worker_type, employee_backend, stage, "
         "sprint_item_id, ceiling, "
         "ticket_status, field_values, created_at, updated_at) "
-        "VALUES (?, ?, 'coding', 'hermes', ?, ?, 'needs_success', ?, ?, 0, 0)",
+        "VALUES (?, ?, 'coding', 'hermes', ?, ?, 'needs_success_condition', ?, ?, 0, 0)",
         (ticket_id, "child", stage, sprint_item_id, ticket_status, _EMPTY_CODING_FIELDS),
     )
 
@@ -215,7 +215,7 @@ def test_planning_claim_and_sprint_write_share_one_write_lock(
     sprint = create_sprint(
         tmp_db, name="A", date_start="2026-07-01", date_end="2026-07-14", clock=fake_clock
     )
-    _insert_ticket(tmp_db, "t_planning_sprint", "needs_success")
+    _insert_ticket(tmp_db, "t_planning_sprint", "needs_success_condition")
     tmp_db.execute(
         "UPDATE tickets SET worker_type = 'planning-sprint' WHERE id = 't_planning_sprint'"
     )

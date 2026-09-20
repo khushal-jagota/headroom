@@ -44,6 +44,10 @@ def test_upgrade_seeds_attention_and_acknowledges_only_stale_errors(tmp_path: Pa
             ("Recent error", recent),
         )
     ]
+    # The Tickets are made through the registry this process is running on, which spells
+    # the settled ids. This database has not reached the revision that moved them, and the
+    # revisions in between check their own era's ids, so put the rows back to that era.
+    conn.execute("UPDATE tickets SET stage = 'needs_kickoff', ceiling = 'needs_kickoff'")
     for ticket, conversation_id, created_at in (
         (tickets[0], "c_help", old),
         (tickets[1], "c_stale", old),

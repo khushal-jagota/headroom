@@ -76,12 +76,12 @@ describe("Workspace rail", () => {
   it("keeps kickoff approvals in the owner attention group", () => {
     expect(
       workspaceCardGroupKey(
-        card("a", { awaiting_approval: true, gating_field: "kickoff" })
+        card("a", { awaiting_approval: true, gating_field: "brief" })
       )
     ).toBe("awaiting_approval");
     // The gating field does not classify a Ticket without current attention.
     expect(
-      workspaceCardGroupKey(card("b", { ticket_status: "agent", gating_field: "kickoff" }))
+      workspaceCardGroupKey(card("b", { ticket_status: "agent", gating_field: "brief" }))
     ).toBe("agent");
   });
 
@@ -92,7 +92,7 @@ describe("Workspace rail", () => {
       card("blocked", { ticket_status: "blocked" }),
       card("closeout", { waiting_to_closeout: true }),
       card("non-owner-approval", { ticket_status: "awaiting_approval" }),
-      card("kickoff", { awaiting_approval: true, gating_field: "kickoff" }),
+      card("kickoff", { awaiting_approval: true, gating_field: "brief" }),
       card("review", { awaiting_approval: true }),
       card("working", { ticket_status: "agent" }),
       card("assigned", { assigned: true }),
