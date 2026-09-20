@@ -450,7 +450,7 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
     t = data.mark_ticket_errored(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.errored
 
-    t = data.drop_ticket(tmp_db, t.id, principal=OWNER_PRINCIPAL, now=now + 1)
+    t = advance_ticket(tmp_db, t.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now + 1)
     assert t.ticket_status is TicketStatus.empty
     assert tmp_db.execute(
         "SELECT ticket_status FROM tickets WHERE id = ?", (t.id,)
@@ -900,17 +900,17 @@ def test_a08_recap_rules(tmp_db: Connection, cfg: Config, fake_clock: TestClock)
     assert t.stage == "needs_approach"
 
     # And still writable on a terminal ticket.
-    t = data.drop_ticket(tmp_db, t.id, principal=OWNER_PRINCIPAL, now=now)
-    assert t.stage == "dropped"
+    t = advance_ticket(tmp_db, t.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
+    assert t.stage == "done"
     t = data.edit_ticket(
             tmp_db,
             t.id,
-            edit=TicketEdit(recap="post-drop recap"),
+            edit=TicketEdit(recap="post-done recap"),
             title_max_chars=200,
             principal=TEST_TICKET_PRINCIPAL,
             now=now,
         )
-    assert t.recap == "post-drop recap"
+    assert t.recap == "post-done recap"
 
 
 def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
@@ -958,17 +958,17 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
             next_holder=OWNER_PRINCIPAL,
         )
     assert e_before.value.code is ErrorCode.scope_invalid
-    with pytest.raises(PlannerError) as e_dropped:
+    with pytest.raises(PlannerError) as e_unknown:
         data.accept_proposal(
             tmp_db,
             t.id,
             field="success",
             principal=OWNER_PRINCIPAL,
             now=now,
-            next_ceiling="dropped",
+            next_ceiling="needs_nothing",
             next_holder=OWNER_PRINCIPAL,
         )
-    assert e_dropped.value.code is ErrorCode.scope_invalid
+    assert e_unknown.value.code is ErrorCode.scope_invalid
     assert data.read_ticket(tmp_db, t.id).stage == "needs_success"
     assert _ticket_row(tmp_db, t.id) == row_before
 
@@ -1214,9 +1214,8 @@ def test_a_second_live_blocker_holds_the_target_blocked_until_both_clear(
     assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
 
 
-@pytest.mark.parametrize("completion", ["done", "dropped"])
 def test_completing_a_blocker_releases_its_blocks_and_frees_the_target(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock, completion: str
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
     blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
@@ -1224,23 +1223,7 @@ def test_completing_a_blocker_releases_its_blocks_and_frees_the_target(
     _block(tmp_db, blocker_id=blocker.id, target_id=target.id, now=now)
     assert _blocked_tickets(tmp_db, blocker.id) == [target.id]
 
-    if completion == "done":
-        advance_ticket(tmp_db, blocker.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
-    else:
-        draft = "  Earlier draft\n\n```text\nΔ unapproved\n```\n"
-        data.file_current_proposal(
-            tmp_db,
-            blocker.id,
-            body=draft,
-            principal=Principal(PrincipalKind.ticket, blocker.id),
-            now=now,
-        )
-        dropped = data.drop_ticket(tmp_db, blocker.id, principal=OWNER_PRINCIPAL, now=now)
-        # Dropping keeps no copy of the unapproved draft: a proposal is approved or it is
-        # rejected, and neither leaves anything to keep.
-        assert dropped.pending_proposal is None
-        assert dropped.field_values == blocker.field_values
-
+    advance_ticket(tmp_db, blocker.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
     assert _blocked_tickets(tmp_db, blocker.id) == []
     assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
 
@@ -1257,6 +1240,11 @@ def test_a_failed_completion_rolls_back_its_block_release_and_settlements(
     blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
     target = _create(tmp_db, cfg, fake_clock, title="Target")
     _block(tmp_db, blocker_id=blocker.id, target_id=target.id, now=now)
+    # Park the blocker one accepted proposal away from done, so the completion under test
+    # is the single call that lands it.
+    advance_ticket(
+        tmp_db, blocker.id, new_stage="needs_closeout", principal=OWNER_PRINCIPAL, now=now
+    )
     blocker = data.file_current_proposal(
         tmp_db,
         blocker.id,
@@ -1273,7 +1261,15 @@ def test_a_failed_completion_rolls_back_its_block_release_and_settlements(
 
     monkeypatch.setattr(data, "settle_blocked_standin_for_ticket", failing_settle)
     with pytest.raises(RuntimeError, match="mid-completion"):
-        data.drop_ticket(tmp_db, blocker.id, principal=OWNER_PRINCIPAL, now=now)
+        data.accept_proposal(
+            tmp_db,
+            blocker.id,
+            field="closeout",
+            principal=OWNER_PRINCIPAL,
+            now=now,
+            next_ceiling="done",
+            next_holder=OWNER_PRINCIPAL,
+        )
 
     assert data.read_ticket(tmp_db, blocker.id).stage == stage_before
     assert _ticket_row(tmp_db, blocker.id) == blocker_row_before

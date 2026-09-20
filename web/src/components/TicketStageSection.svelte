@@ -56,7 +56,6 @@
 
   let reviewVariant = $derived(variant === "review");
   let fieldLabel = $derived(labelize(name));
-  let isDropped = $derived(ticketStage === "dropped");
   let isGating = $derived(gatingFieldFor(lifecycle, ticketStage) === name);
   let passed = $derived(fieldIsPassedFor(lifecycle, name, ticketStage));
   let hasProposal = $derived(pendingProposal?.field === name);
@@ -68,9 +67,7 @@
 </script>
 
 {#snippet stageBody()}
-  {#if isDropped}
-    <MarkdownBlock text={value} quiet={emptyText} />
-  {:else if isGating && hasProposal}
+  {#if isGating && hasProposal}
     <ApprovalBlock
       layout="review"
       field={name}

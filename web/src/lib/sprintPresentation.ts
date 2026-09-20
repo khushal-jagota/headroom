@@ -140,7 +140,6 @@ export function sprintTicketSectionsForTickets(
   const later: SprintTicket[] = [];
   const done: SprintTicket[] = [];
   for (const ticket of tickets) {
-    if (ticket.stage === "dropped") continue;
     if (ticket.stage === "done") done.push(ticket);
     else if (todayTicketIds.has(ticket.id)) today.push(ticket);
     else later.push(ticket);
@@ -153,7 +152,7 @@ export function sprintTicketSectionsForTickets(
 }
 
 export function outcomeTicketProgress(item: SprintOutcomeGroup): string {
-  const tickets = item.tickets.filter((ticket) => ticket.stage !== "dropped");
+  const tickets = item.tickets;
   const done = tickets.filter((ticket) => ticket.stage === "done").length;
   return `${done}/${tickets.length}`;
 }

@@ -9,8 +9,8 @@ door — the proposal resolver.
 The Stage set is not fixed for all Tickets — it is declared by the Ticket's **Worker
 type** (see `worker-types.md`). The lifecycle below is the **`coding`** Worker type's,
 shown here as one concrete example; another Worker type walks its own Stages the same
-way. Every Worker type shares the leading Kickoff, the `done`/`dropped` bookends, and
-the single-door rule.
+way. Every Worker type shares the leading Kickoff, the `done` ending, and the
+single-door rule.
 
 ```
    THE CODING STAGES
@@ -20,12 +20,11 @@ the single-door rule.
    intake      (what is        roughly)       by-step)      propose a           deploy,
    context      "done"?)                                    reviewable          follow-up,
    field                                                     package)            report)
-                                   dropped: any point, direct operation only
 ```
 
 ## The Stages (the coding Worker type)
 
-Every Worker type starts with **Kickoff** and ends at **done** (or **dropped**); the
+Every Worker type starts with **Kickoff** and ends at **done**; the
 Stages between are the Worker type's own. What follows is the `coding` lifecycle.
 
 A ticket starts with **Kickoff**. Kickoff is the first ordinary Ticket field: the
@@ -49,9 +48,9 @@ step), then
 proposed), then **closeout** (only the applicable merge, deploy, follow-up, and
 bookkeeping happen, and a verified report is proposed), and finally it is **done**.
 Each stage has exactly one blank to fill; filling it — and having that accepted — is
-what moves the ticket one stage forward. A ticket can also be **dropped** at any
-point through a direct product operation. Stages advance through approval or direct
-completion of a current user-owned gate; there is no arbitrary Stage jump.
+what moves the ticket one stage forward. **done** is the only ending a Ticket has.
+Stages advance through approval or direct completion of a current user-owned gate;
+there is no arbitrary Stage jump.
 
 The **Kickoff field** preserves intake context: the user's original wording, source
 context, boundaries, and advice. It stays readable beside the work so agents can
@@ -110,7 +109,7 @@ creates the dependent Ticket and every Ticket block in one transaction. A missin
 invalid, or repeated blocker rejects the whole create with a structured error. Nothing is saved. A successful create commits
 once, so readiness is nudged once.
 
-A blocker is **live** while the Ticket doing the blocking is neither done nor dropped.
+A blocker is **live** while the Ticket doing the blocking is not done.
 Blocking shows up in exactly one place: the dependent Ticket's status. When a Ticket
 comes to rest with nothing running, it lands on **blocked** instead of **empty** if a
 live blocker remains. `blocked` only ever stands in for `empty`, so a Ticket that is
@@ -121,7 +120,7 @@ automatic work from starting, because the runtime starts `empty` Tickets and not
 else.
 
 Clearing happens inside the action that removes the cause. When a blocking Ticket is
-finished, dropped, or deleted, or a Ticket block is removed, that same write deletes
+finished or deleted, or a Ticket block is removed, that same write deletes
 the blocks it held and rewrites every Ticket it was blocking in the same transaction —
 back to `empty`, or left on `blocked` when another live blocker remains. A Ticket that
 stays blocked is not rewritten at all, so nothing is announced for a change that did

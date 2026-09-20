@@ -15,7 +15,7 @@ from planner.core.errors import ErrorCode, PlannerError
 
 def _ticket_is_active(conn: sqlite3.Connection, ticket_id: str) -> bool:
     row = conn.execute("SELECT stage FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
-    return row is not None and str(row["stage"]) not in {"done", "dropped"}
+    return row is not None and str(row["stage"]) != "done"
 
 
 def _require_ticket(conn: sqlite3.Connection, ticket_id: str, field: str) -> None:
@@ -34,7 +34,7 @@ def _active_blocked_ticket_ids(conn: sqlite3.Connection, ticket_id: str) -> list
         FROM ticket_blocks
         JOIN tickets blocker ON blocker.id = ticket_blocks.blocking_ticket_id
         WHERE ticket_blocks.blocking_ticket_id = ?
-          AND blocker.stage NOT IN ('done', 'dropped')
+          AND blocker.stage != 'done'
         ORDER BY ticket_blocks.blocked_ticket_id
         """,
         (ticket_id,),
@@ -134,7 +134,7 @@ def blocked_ticket_ids(conn: sqlite3.Connection) -> set[str]:
     rows = conn.execute(
         "SELECT DISTINCT b.blocked_ticket_id FROM ticket_blocks b "
         "JOIN tickets blocker ON blocker.id = b.blocking_ticket_id "
-        "WHERE blocker.stage NOT IN ('done', 'dropped')"
+        "WHERE blocker.stage != 'done'"
     ).fetchall()
     return {str(row["blocked_ticket_id"]) for row in rows}
 
@@ -152,7 +152,7 @@ def blocker_summary(conn: sqlite3.Connection, ticket_id: str) -> BlockerSummary:
         FROM ticket_blocks
         JOIN tickets blocker ON blocker.id = ticket_blocks.blocking_ticket_id
         WHERE ticket_blocks.blocked_ticket_id = ?
-        ORDER BY blocker.stage NOT IN ('done', 'dropped') DESC,
+        ORDER BY blocker.stage != 'done' DESC,
           blocker.title COLLATE NOCASE,
           blocker.id
         """,
@@ -163,7 +163,7 @@ def blocker_summary(conn: sqlite3.Connection, ticket_id: str) -> BlockerSummary:
             ticket_id=str(row["id"]),
             title=str(row["title"]),
             stage=str(row["stage"]),
-            active=str(row["stage"]) not in {"done", "dropped"},
+            active=str(row["stage"]) != "done",
             href=f"#/workspace/{row['id']}",
         )
         for row in incoming_rows

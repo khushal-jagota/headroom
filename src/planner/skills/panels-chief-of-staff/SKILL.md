@@ -93,7 +93,7 @@ For review questions, inspect the review queue or relevant tickets before advisi
 
 List commands return bounded summaries. Read their page facts before you assume that a
 result is complete. Prefer Ticket filters and `--search` before a larger `--limit`. Use
-`--include-terminal` only when finished or dropped work is relevant.
+`--include-terminal` only when finished work is relevant.
 
 For capture, create the smallest correct object. **A Kickoff is intake, not your plan,
 interpretation, or extrapolation.** Preserve the user's wording closely and include only

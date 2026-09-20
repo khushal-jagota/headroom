@@ -25,7 +25,6 @@ from planner.tickets.contracts import TITLE_MAX_CHARS, TicketEdit
 from planner.tickets.data import (
     accept_proposal,
     create_ticket,
-    drop_ticket,
     edit_ticket,
     file_current_proposal,
 )
@@ -121,7 +120,6 @@ def test_copy_text_probe_renders_own_fields(
         title_max_chars=200,
         worker_type="probe",
     )
-    drop_ticket(tmp_db, ticket.id, principal=OWNER_PRINCIPAL, now=2)
     text = copy_text(tmp_db, ticket.id)
 
     # Probe renders its own field blocks plus one separate guidance document.

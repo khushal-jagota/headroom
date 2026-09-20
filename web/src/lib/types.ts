@@ -295,25 +295,12 @@ export type TicketDetail = {
   blocker_summary?: BlockerSummary;
   recap?: string | null;
   guidance: string;
-  verdict: TicketVerdict | null;
-  trouble_notes: TicketTroubleNote[];
   field_values: TicketFieldValues;
   pending_proposal: PendingTicketProposal | null;
   awaiting_reply?: boolean;
   awaiting_approval?: boolean;
   assigned?: boolean;
   agent_state?: AgentState;
-};
-
-export type TicketVerdict = {
-  rating: number | null;
-  text: string | null;
-};
-
-export type TicketTroubleNote = {
-  sequence: number;
-  body: string;
-  created_at: number;
 };
 
 export type EmployeeConfigurationSnapshot = {
@@ -477,7 +464,6 @@ export type BoardCard = WorkAttention & {
   gating_field: string | null;
   gating_field_label: string | null;
   is_done: boolean;
-  is_dropped: boolean;
   blocked: boolean;
   conversation_id: string | null;
   waiting_to_closeout: boolean;

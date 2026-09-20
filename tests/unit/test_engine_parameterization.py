@@ -27,7 +27,6 @@ SYNTHETIC_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         StageDefinition(BETA, "Beta", FIELD_BETA, False, StageOwnershipMode.worker),
         StageDefinition("done", "Done", None, True, None),
     ),
-    dropped_stage=StageDefinition("dropped", "Dropped", None, True, None),
     fields=(
         FieldDefinition("kickoff", "Kickoff"),
         FieldDefinition(FIELD_ALPHA, "Alpha"),

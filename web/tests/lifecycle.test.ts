@@ -69,13 +69,6 @@ const codingManifest = {
       ownership_mode: null
     }
   ],
-  dropped: {
-    id: "dropped",
-    label: "Dropped",
-    gating_field: null,
-    is_terminal: true,
-    ownership_mode: null
-  },
   advance: {
     needs_kickoff: "needs_success",
     needs_success: "needs_approach",
@@ -140,13 +133,6 @@ const researchManifest = {
       ownership_mode: null
     }
   ],
-  dropped: {
-    id: "dropped",
-    label: "Dropped",
-    gating_field: null,
-    is_terminal: true,
-    ownership_mode: null
-  },
   advance: {
     needs_brief: "needs_findings",
     needs_findings: "needs_writeup",
@@ -190,8 +176,6 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     },
     conversation_id: null,
     conversation_history: [],
-    verdict: null,
-    trouble_notes: [],
     field_values: {},
     pending_proposal: null,
     guidance: "",

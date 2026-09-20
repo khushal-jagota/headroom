@@ -86,21 +86,10 @@ describe("Outcome presentation", () => {
   it("presents unclassified Sprint Tickets without a Sprint Item identity", () => {
     const today = ticket({ id: "t_today", priority: "P2" });
     const later = ticket({ id: "t_later", priority: "P1" });
-    const dropped = ticket({ id: "t_dropped", stage: "dropped" });
-    expect(sprintTicketSectionsForTickets([today, later, dropped], new Set([today.id]))).toEqual({
+    expect(sprintTicketSectionsForTickets([today, later], new Set([today.id]))).toEqual({
       today: [today],
       later: [later],
       done: []
-    });
-  });
-
-  it("excludes dropped Tickets from sections and rollups", () => {
-    const value = item({ tickets: [ticket({ stage: "done" }), ticket({ id: "t_drop", stage: "dropped" })] });
-    expect(outcomeTicketProgress(value)).toBe("1/1");
-    expect(sprintTicketSectionsForTickets(value.tickets || [], new Set())).toEqual({
-      today: [],
-      later: [],
-      done: [value.tickets?.[0]]
     });
   });
 

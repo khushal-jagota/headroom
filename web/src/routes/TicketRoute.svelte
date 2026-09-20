@@ -29,8 +29,6 @@
   import StageMark from "../components/StageMark.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import TicketPriorityControl from "../components/TicketPriorityControl.svelte";
-  import TicketVerdict from "../components/TicketVerdict.svelte";
-  import TicketTroubleNotes from "../components/TicketTroubleNotes.svelte";
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
   import ArtifactStrip from "../components/ArtifactStrip.svelte";
   import { ticketArtifactStripItems } from "../lib/artifactStrip";
@@ -261,13 +259,6 @@
     });
   }
 
-  function saveVerdict(verdict: { rating: number | null; text: string | null }): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/verdict`, {
-      method: "PUT",
-      body: verdict
-    });
-  }
-
   function saveEmployeeConfiguration(
     configuration: EmployeeConfigurationSnapshot
   ): Promise<TicketDetail> {
@@ -456,8 +447,6 @@
           {#if lc}
             <ArtifactStrip items={ticketArtifactStripItems(lc.fieldIds, detail.field_values, detail.pending_proposal)} />
           {/if}
-          <TicketVerdict stage={detail.stage} verdict={detail.verdict} onSave={saveVerdict} />
-          <TicketTroubleNotes notes={detail.trouble_notes} />
           <div class="fields">
             {#snippet kickoffContextRow()}
               {#if detail.employee_configuration_editable}
