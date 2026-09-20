@@ -17,8 +17,8 @@ from planner.conversation.contracts import (
     PromptDeliveryRefused,
 )
 from planner.core import authority
-from planner.core.authctx import RequestContext, require_sprint_item_supervisor_ticket_write
-from planner.core.authority import require_above_or_self
+from planner.core.authctx import RequestContext
+from planner.core.authority import require_above, require_above_or_self
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
@@ -38,6 +38,26 @@ SUPERVISOR_ARTIFACTS_DIRECTORY = "artifacts"
 WORKER_STEP_RESTART_FLOOR_SECONDS = 300
 
 
+def _require_child_of(conn: sqlite3.Connection, sprint_item_id: str, ticket_id: str) -> None:
+    """Refuse a request whose path names one Outcome and whose Ticket sits under another.
+
+    The rule answers whether the caller may act on the Ticket. This answers whether the
+    address is coherent, which is a separate question these routes ask because they carry
+    the Outcome in the path. The addresses go in this Ticket's route step and this goes
+    with them.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM tickets WHERE id = ? AND sprint_item_id = ?",
+        (ticket_id, sprint_item_id),
+    ).fetchone()
+    if row is None:
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            "that Ticket is not a current child of that Outcome",
+            {"sprint_item_id": sprint_item_id, "ticket_id": ticket_id},
+        )
+
+
 def require_current_child(
     conn: sqlite3.Connection,
     ctx: RequestContext,
@@ -45,7 +65,8 @@ def require_current_child(
     ticket_id: str,
 ) -> Ticket:
     """Return the child after the shared server-side authority check."""
-    require_sprint_item_supervisor_ticket_write(conn, ctx, sprint_item_id, ticket_id)
+    require_above(conn, ctx.principal, authority.ticket(ticket_id))
+    _require_child_of(conn, sprint_item_id, ticket_id)
     return tickets_data.read_ticket(conn, ticket_id)
 
 

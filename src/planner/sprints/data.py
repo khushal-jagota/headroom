@@ -12,6 +12,8 @@ from datetime import date
 from typing import NamedTuple, cast
 
 from planner.conversation.contracts import ConversationBackendKey
+from planner.core import authority
+from planner.core.authority import require_above
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, Priority
 from planner.core.errors import ErrorCode, PlannerError
@@ -29,7 +31,6 @@ from planner.sprints.logic import (
     DateRange,
     find_overlap,
 )
-from planner.tickets.logic import admission
 
 
 class ItemRead(NamedTuple):
@@ -432,7 +433,7 @@ def update_supervisor_launch_configuration(
     clock: Clock,
 ) -> SprintItem:
     """Save the complete configuration that an accepted supervisor message used."""
-    admission.require_direct_principal(principal, "update_supervisor_launch_configuration")
+    require_above(conn, principal, authority.outcome(item_id))
     _load_item(conn, item_id)
     with _tx(conn):
         conn.execute(
