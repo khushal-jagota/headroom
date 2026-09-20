@@ -99,12 +99,16 @@ export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicke
   // Ticket another Ticket holds. They read the same red, and never the same word.
   if (ticket.agent_state === "errored") return { mark: "errored", word: "errored" };
   if (ticket.ticket_status === "blocked") return { mark: "errored", word: "blocked" };
+  // The word a row shows is the lowercase of the heading the same Ticket sits under, so
+  // a row and its group never name one fact two ways. The three headings live in
+  // `GROUP_LABELS` in workspaceRail.ts and in `TICKET_STATUS_GROUPS`; a heading changed
+  // there is changed here.
   const attention = primaryWorkAttention(ticket);
   if (attention === "awaiting_approval") {
-    return { mark: "current-awaiting-approval", word: "to review" };
+    return { mark: "current-awaiting-approval", word: "needs your approval" };
   }
-  if (attention === "assigned") return { mark: "current-assigned", word: "assigned" };
-  if (attention === "awaiting_reply") return { mark: "needs-me", word: "need you" };
+  if (attention === "assigned") return { mark: "current-assigned", word: "yours" };
+  if (attention === "awaiting_reply") return { mark: "needs-me", word: "messages" };
   // The durable fact, not the live one. `agent` is what the wakeup system writes when it
   // sends a worker its step, and it holds until the Ticket moves on. Whether a turn is
   // live in process is a different question: a worker that ends its turn to wait on a

@@ -5,6 +5,7 @@ import {
   ticketStatusGroupKey,
   type TicketStatusGroupFacts
 } from "../src/lib/ticketStatusGroups";
+import { sprintTicketCondition } from "../src/lib/sprintPresentation";
 import { workspaceGroups } from "../src/lib/workspaceRail";
 import { boardCard } from "./boardCardFixture";
 
@@ -167,6 +168,23 @@ describe("Ticket status groups", () => {
         (group) => group.key === ticketStatusGroupKey(ticketWithFiledProposal(mineFacts))
       )?.label
     ).toBe("Yours");
+  });
+
+  // The row and its heading never disagree. A Ticket row shows `condition.word` as
+  // visible text on the Sprint screen and as the mark's label on the Sprint Item page,
+  // one line under the heading it sits beneath, so the word is the heading lowercased.
+  it.each([
+    [{ awaiting_approval: true }, "needs your approval"],
+    [{ assigned: true }, "yours"],
+    [{ awaiting_reply: true }, "messages"]
+  ])("says the same word in a row as in the heading above it", (facts, word) => {
+    const railGroups = workspaceGroups([boardCard("t_one", facts)]);
+    const pageKey = ticketStatusGroupKey(ticket(facts));
+    const pageLabel = TICKET_STATUS_GROUPS.find((group) => group.key === pageKey)?.label;
+
+    expect(sprintTicketCondition(ticket(facts)).word).toBe(word);
+    expect(railGroups[0].label.toLowerCase()).toBe(word);
+    expect(pageLabel?.toLowerCase()).toBe(word);
   });
 
   it("names a stage that is the user's own Yours on both screens", () => {
