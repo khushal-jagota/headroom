@@ -238,6 +238,31 @@ describe("Workspace rail", () => {
     ).toEqual(["all-three", "reply"]);
   });
 
+  it("keeps a broken worker's own attention group beneath a Sprint Item", () => {
+    // An Item is read at rest, so it holds to the three groups. The Tickets view is the
+    // screen that leads with a broken worker, and it still does.
+    const rail = buildWorkspaceRail(
+      [
+        card("broken-approval", {
+          sprint_item_id: "si_one",
+          awaiting_approval: true,
+          agent_state: "errored"
+        }),
+        card("broken-quiet", { sprint_item_id: "si_one", agent_state: "errored" })
+      ],
+      [item("si_one")]
+    );
+
+    expect(rail.items[0].groups.map((group) => group.label)).toEqual([
+      "Awaiting approval"
+    ]);
+    expect(
+      rail.items[0].groups.flatMap((group) => group.cards.map((entry) => entry.id))
+    ).toEqual(["broken-approval"]);
+    // The Tickets view still names both broken workers first, and names them Errored.
+    expect(rail.groups.map((group) => group.key)).toEqual(["errored"]);
+  });
+
   it("orders Items by priority then a fixed creation-time tie-break", () => {
     const rail = buildWorkspaceRail(
       [

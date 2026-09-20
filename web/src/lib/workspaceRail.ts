@@ -123,12 +123,13 @@ function cardOrder(left: BoardCard, right: BoardCard): number {
 
 function groupCards(
   cards: readonly BoardCard[],
-  keys: readonly string[]
+  keys: readonly string[],
+  keyOf: (card: BoardCard) => string = workspaceCardGroupKey
 ): WorkspaceTicketGroup[] {
   const byGroup = new Map<string, BoardCard[]>();
   const firstSeen: string[] = [];
   for (const card of cards) {
-    const key = workspaceCardGroupKey(card);
+    const key = keyOf(card);
     if (!byGroup.has(key)) {
       byGroup.set(key, []);
       firstSeen.push(key);
@@ -153,12 +154,19 @@ export function workspaceGroups(cards: readonly BoardCard[]): WorkspaceTicketGro
 
 // An Item exposes only work that needs the owner. Quiet child Tickets remain available
 // from the Tickets view and from the Item workspace.
+//
+// An Item is read at rest, under a title the reader has not clicked, so it holds to the
+// three groups and nothing else. It therefore names a Ticket by the attention it filtered
+// on, not by `workspaceCardGroupKey`, whose broken-worker branch comes first and would put
+// a Ticket the reader must approve under a fourth heading, Errored. The Tickets view is
+// the screen that leads with a broken worker, and it still does.
 export function workspaceAttentionGroups(
   cards: readonly BoardCard[]
 ): WorkspaceTicketGroup[] {
   return groupCards(
     cards.filter((card) => primaryWorkAttention(card) !== null),
-    ATTENTION_GROUP_ORDER
+    ATTENTION_GROUP_ORDER,
+    (card) => primaryWorkAttention(card) ?? workspaceCardGroupKey(card)
   );
 }
 

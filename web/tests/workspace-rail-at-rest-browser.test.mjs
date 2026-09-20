@@ -83,6 +83,9 @@ board = {
         card("t_assigned", "si_needs_him", "Needs him", assigned=True),
         card("t_message", "si_needs_him", "Needs him", awaiting_reply=True),
         card("t_agents_approval", "si_needs_him", "Needs him", ticket_status="awaiting_approval"),
+        # A broken worker still holding a proposal for him. It is his to approve, and the
+        # Item at rest keeps the three groups, so it belongs under Awaiting approval.
+        card("t_broken", "si_needs_him", "Needs him", awaiting_approval=True, agent_state="errored"),
         card("t_quiet", "si_quiet", "Quiet", agent_state="working"),
     ]}],
     "sprint_items": [item("si_needs_him"), item("si_quiet")],
@@ -109,7 +112,10 @@ with sync_playwright() as p:
     needs_him.wait_for()
 
     # Nothing is selected, and the groups are already there.
-    assert page.locator('[data-sprint-item][aria-current="page"]').count() == 0
+    assert page.locator('[data-sprint-item] [aria-current="page"]').count() == 0
+    assert page.locator(".board-workspace-item--selected").count() == 0
+
+    # Exactly the three groups. A broken worker does not open a fourth one here.
     headers = needs_him.locator("[data-bucket-key]")
     expect(headers).to_have_count(3)
     assert [headers.nth(i).get_attribute("data-bucket-key") for i in range(3)] == [
@@ -122,6 +128,7 @@ with sync_playwright() as p:
     # The rows are there too, one Ticket under one header.
     for ticket_id, key in [
         ("t_approval", "awaiting_approval"),
+        ("t_broken", "awaiting_approval"),
         ("t_assigned", "assigned"),
         ("t_message", "awaiting_reply"),
     ]:

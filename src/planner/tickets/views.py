@@ -383,9 +383,9 @@ def ticket_ids_for_conversations(
     """Which Tickets own these conversations.
 
     The caller holds conversations, not Tickets, and a conversation can belong to a
-    Sprint Item's supervisor instead. Reading every Ticket's conversation and matching
-    here keeps the query free of a parameter per conversation, so it holds as the
-    record grows.
+    Sprint Item's supervisor instead. This matches in Python over one unparameterised
+    scan, so the whole conversation record can be asked about without a bound parameter
+    for each conversation in it.
     """
     wanted = frozenset(conversation_ids)
     if not wanted:
