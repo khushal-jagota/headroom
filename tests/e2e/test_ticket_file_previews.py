@@ -76,9 +76,7 @@ def _links(ticket_id: str) -> str:
     return "\n".join(f"[{label}]({href})" for label, href in _expected_hrefs(ticket_id).items())
 
 
-def _settle_success(
-    server: ServerHandle, ticket_id: str, body: str
-) -> None:
+def _settle_success(server: ServerHandle, ticket_id: str, body: str) -> None:
     """Seed saved Markdown through the same proposal/accept writers as ordinary work."""
     with closing(connect(str(server.db_path))) as conn:
         ticket = tickets_data.file_current_proposal(
@@ -426,9 +424,19 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
     attempts: list[str] = []
 
     def fail_first_save(route: Route) -> None:
+        # This URL is the whole Ticket: the detail the screen reads, the recap write and
+        # the scope write all share it. Handle only the field save under test, and let
+        # every other request through, or a refetch arrives here with no body at all.
+        if route.request.method != "PATCH":
+            route.continue_()
+            return
         post_data_json = route.request.post_data_json
         assert post_data_json is not None
-        attempts.append(post_data_json["field_values"]["success"])
+        saved = post_data_json.get("field_values", {}).get("success")
+        if saved is None:
+            route.continue_()
+            return
+        attempts.append(saved)
         if len(attempts) == 1:
             route.fulfill(
                 status=500,
@@ -466,8 +474,18 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
 
     # The failed-save repaint clears surface dirtiness. Focus and blur again without
     # another input; product retry state must resubmit the exact attempted source.
-    page.locator(editable).focus()
-    page.locator(editable).blur()
+    # Stay inside a Playwright call until the retry answers. The sync API dispatches a
+    # route handler only while the test is in a Playwright call, and the poll below is
+    # plain Python. Without this wait the intercepted retry is never continued, so it
+    # never reaches the server and the poll times out on the pre-retry value.
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "PATCH"
+            and response.url.endswith(f"/api/tickets/{ticket_id}")
+        )
+    ):
+        page.locator(editable).focus()
+        page.locator(editable).blur()
     _wait_for_field_text(api, server, ticket_id, "success", "Retry me exactly.")
     assert attempts == [attempted_source, attempted_source]
 
