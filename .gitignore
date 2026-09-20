@@ -10,8 +10,8 @@ playwright-report/
 .DS_Store
 *.egg-info/
 .gstack/
-agent_backends/node_modules/
-web/node_modules/
+agent_backends/node_modules
+web/node_modules
 # What the web node suites write beside themselves while they run. They delete their own
 # on the way out; these patterns are for the runs that are interrupted and never get to.
 web/tests/.worker-configuration-*

@@ -288,10 +288,12 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
     finally:
         conn.close()
     with TestClient(app) as client:
-        assert client.get(f"/api/tickets/{defaulted.json()['id']}").json()["day_ids"] == [
+        defaulted_read = f"/api/tickets?detail=full&id={defaulted.json()['id']}"
+        assert client.get(defaulted_read).json()["day_ids"] == [
             "day_2026-07-10"
         ]
-        assert client.get(f"/api/tickets/{explicit_backlog.json()['id']}").json()["day_ids"] == [
+        explicit_backlog_read = f"/api/tickets?detail=full&id={explicit_backlog.json()['id']}"
+        assert client.get(explicit_backlog_read).json()["day_ids"] == [
             "day_2026-07-10"
         ]
 

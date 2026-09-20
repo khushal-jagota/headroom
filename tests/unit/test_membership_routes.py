@@ -115,9 +115,9 @@ def test_a_ticket_goes_under_an_outcome_and_comes_out_again(tmp_path: Path) -> N
         ticket_id = _ticket(client)
         path = _member(client, "outcome_tickets", str(item["id"]), ticket_id)
         added = client.put(path)
-        placed = client.get(f"/api/tickets/{ticket_id}").json()["sprint_item_id"]
+        placed = client.get(f"/api/tickets?detail=full&id={ticket_id}").json()["sprint_item_id"]
         removed = client.delete(path)
-        detached = client.get(f"/api/tickets/{ticket_id}").json()["sprint_item_id"]
+        detached = client.get(f"/api/tickets?detail=full&id={ticket_id}").json()["sprint_item_id"]
 
     assert added.status_code == 200, added.text
     assert placed == item["id"]

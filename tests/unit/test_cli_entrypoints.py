@@ -156,7 +156,7 @@ def test_ticket_approve_sends_the_explicit_next_holder(
 
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         calls.append((method, path, kwargs))
-        if path == "/api/tickets/t_child":
+        if path == "/api/tickets" and kwargs.get("params", {}).get("id") == "t_child":
             return {
                 "id": "t_child",
                 "worker_type": "coding",
@@ -277,8 +277,9 @@ def test_ticket_list_passes_repeatable_filters_and_page_controls(
     )
 
     assert result.exit_code == 0, result.output
-    assert calls[0][0:2] == ("GET", "/api/ticket-summaries")
+    assert calls[0][0:2] == ("GET", "/api/tickets")
     assert calls[0][2]["params"] == {
+        "detail": "summary",
         "stage": ["needs_success_condition", "needs_what_changes"],
         "exclude_stage": ["done"],
         "ticket_status": ["agent"],
@@ -297,7 +298,7 @@ def test_ticket_list_passes_repeatable_filters_and_page_controls(
     (
         (
             ("ticket", "list"),
-            "/api/ticket-summaries",
+            "/api/tickets",
             "tickets",
             {
                 "id": "t_one",
@@ -311,7 +312,7 @@ def test_ticket_list_passes_repeatable_filters_and_page_controls(
         ),
         (
             ("sprint", "list"),
-            "/api/sprint-summaries",
+            "/api/sprints",
             "sprints",
             {
                 "id": "sp_one",
@@ -322,7 +323,7 @@ def test_ticket_list_passes_repeatable_filters_and_page_controls(
         ),
         (
             ("sprint", "item", "list"),
-            "/api/sprint-item-summaries",
+            "/api/items",
             "items",
             {"id": "si_one", "title": "One", "status": "todo", "priority": "P2"},
         ),
@@ -342,7 +343,7 @@ def test_ticket_list_passes_repeatable_filters_and_page_controls(
         ),
         (
             ("project", "list"),
-            "/api/project-summaries",
+            "/api/projects",
             "projects",
             {"id": "project_one", "name": "One"},
         ),
@@ -508,7 +509,7 @@ def test_ticket_approve_defaults_the_next_holder_to_the_user(
 
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         calls.append((method, path, kwargs))
-        if path == "/api/tickets/t_child":
+        if path == "/api/tickets" and kwargs.get("params", {}).get("id") == "t_child":
             return {
                 "id": "t_child",
                 "worker_type": "coding",

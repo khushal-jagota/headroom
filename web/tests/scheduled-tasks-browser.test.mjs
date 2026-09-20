@@ -116,8 +116,8 @@ try {
     if (path === "/api/review") {
       return json({ items: [], running_worker_count: 0, awaiting_approval_count: 0 });
     }
-    if (path === "/api/projects") return json({ projects });
-    if (path === "/api/items") return json({ items: sprintItems });
+    if (path === "/api/projects?detail=full") return json({ projects });
+    if (path === "/api/items?detail=full") return json({ items: sprintItems });
     if (path === "/api/worker-types") return json({ worker_types: workerTypes });
     if (path === "/api/schedules" && method === "GET") return json({ schedules });
     if (path === "/api/schedules" && method === "POST") {

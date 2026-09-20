@@ -52,21 +52,21 @@ export const queries = {
   backlogTicketSummaries: (offset: number, limit = 30) =>
     jsonQuery<TicketSummariesResponse>(
       ["tickets", "backlog", { limit, offset }],
-      `/api/ticket-summaries?sprint_id=null&limit=${limit}&offset=${offset}`
+      `/api/tickets?detail=summary&sprint_id=null&limit=${limit}&offset=${offset}`
     ),
   outcomeSummaries: (offset: number, limit = 30, projectId = "", search = "") =>
     jsonQuery<SprintItemSummariesResponse>(
       ["outcomes", { limit, offset, projectId, search }],
-      `/api/sprint-item-summaries?limit=${limit}&offset=${offset}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""}${search ? `&search=${encodeURIComponent(search)}` : ""}`
+      `/api/items?detail=summary&limit=${limit}&offset=${offset}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""}${search ? `&search=${encodeURIComponent(search)}` : ""}`
     ),
   ideas: () => jsonQuery<IdeasResponse>(["ideas"], "/api/ideas"),
   feedback: () => jsonQuery<FeedbackResponse>(["feedback"], "/api/feedback"),
   feedbackCount: () =>
     jsonQuery<FeedbackCountResponse>(["feedback-count"], "/api/feedback/count"),
-  projects: () => jsonQuery<ProjectsResponse>(["projects"], "/api/projects"),
+  projects: () => jsonQuery<ProjectsResponse>(["projects"], "/api/projects?detail=full"),
   schedules: () => jsonQuery<SchedulesResponse>(["schedules"], "/api/schedules"),
-  sprintSummaries: () => jsonQuery<SprintsResponse>(["sprints"], "/api/sprints"),
-  sprintItems: () => jsonQuery<SprintItemsResponse>(["items"], "/api/items"),
+  sprintSummaries: () => jsonQuery<SprintsResponse>(["sprints"], "/api/sprints?detail=full"),
+  sprintItems: () => jsonQuery<SprintItemsResponse>(["items"], "/api/items?detail=full"),
   currentSprint: () =>
     jsonQuery<CurrentSprintResponse>(["sprint", "current"], "/api/sprint/current"),
   sprintTracking: (sprintId: string) =>
@@ -85,7 +85,7 @@ export const queries = {
       `/api/items/${encodeURIComponent(itemId)}/supervisor/conversation/start-values`
     ),
   ticket: (ticketId: string) =>
-    jsonQuery<TicketDetail>(["ticket", ticketId], `/api/tickets/${encodeURIComponent(ticketId)}`),
+    jsonQuery<TicketDetail>(["ticket", ticketId], `/api/tickets?detail=full&id=${encodeURIComponent(ticketId)}`),
   // What a conversation started right now would run on, for each owner that starts one.
   // It follows the change stream because the owner can change it: Config sets the
   // Chief's, and a Ticket's own last-chosen values move when its worker is talked to.
