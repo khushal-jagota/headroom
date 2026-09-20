@@ -95,7 +95,7 @@ def _supervisor_headers(item_id: str) -> dict[str, str]:
     }
 
 
-def test_supervisor_context_marks_a_held_proposal_as_awaiting_approval(
+def test_the_workspace_marks_a_proposal_addressed_to_its_reader(
     tmp_path: Path,
 ) -> None:
     app, _db_path = _app(tmp_path)
@@ -103,7 +103,7 @@ def test_supervisor_context_marks_a_held_proposal_as_awaiting_approval(
         item = _create_item(client)
         ticket = _park_a_proposal(client, str(item["id"]))
         response = client.get(
-            f"/api/items/{item['id']}/supervisor/context",
+            f"/api/items/{item['id']}/workspace",
             headers=_supervisor_headers(str(item["id"])),
         )
 
@@ -157,8 +157,8 @@ def test_supervisor_item_routes_refuse_a_cross_item_actor(tmp_path: Path) -> Non
             "X-Plan-Actor": "sprint_item_supervisor",
             "X-Plan-Sprint-Item-ID": str(first["id"]),
         }
-        own = client.get(f"/api/items/{first['id']}/supervisor/context", headers=headers)
-        cross = client.get(f"/api/items/{second['id']}/supervisor/context", headers=headers)
+        own = client.get(f"/api/items/{first['id']}/workspace", headers=headers)
+        cross = client.get(f"/api/items/{second['id']}/workspace", headers=headers)
         own_write = client.patch(
             f"/api/items/{first['id']}", json={"body": "its own record"}, headers=headers
         )
@@ -167,7 +167,7 @@ def test_supervisor_item_routes_refuse_a_cross_item_actor(tmp_path: Path) -> Non
         )
 
     assert own.status_code == 200
-    assert own.json()["sprint_item"]["body"] == ""
+    assert own.json()["body"] == ""
     assert own.json()["tickets"] == []
     assert cross.status_code == 400
     assert cross.json()["error"]["code"] == "agent_forbidden"
@@ -538,7 +538,7 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
     app, db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _create_item(client)
-        before = client.get(f"/api/items/{item['id']}/supervisor").json()
+        before = client.get("/api/items", params={"detail": "full", "id": item["id"]}).json()
         sent = client.post(
             f"/api/items/{item['id']}/conversation/send",
             json={
@@ -549,7 +549,9 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
             },
         )
         conversation_id = sent.json()["conversation_id"]
-        after_send = client.get(f"/api/items/{item['id']}/supervisor").json()
+        after_send = client.get(
+            "/api/items", params={"detail": "full", "id": item["id"]}
+        ).json()
         with connect(str(db_path)) as conn:
             conn.execute(
                 "INSERT INTO conversations(conversation_id,backend_key,model,"
@@ -569,11 +571,12 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
         reset = client.post(f"/api/items/{item['id']}/conversation/reset")
         workspace = client.get(f"/api/items/{item['id']}/workspace")
 
-    assert before["conversation_id"] is None
+    assert before["supervisor"]["conversation_id"] is None
     assert sent.status_code == 200, sent.text
     assert conversation_id.startswith("conv_")
-    assert after_send["launch_configuration"]["employee_launch_model"] == ("gpt-5.6-terra")
-    assert after_send["launch_configuration"]["employee_launch_reasoning_effort"] == "high"
+    launch = after_send["supervisor"]["launch_configuration"]
+    assert launch["employee_launch_model"] == "gpt-5.6-terra"
+    assert launch["employee_launch_reasoning_effort"] == "high"
     assert reset.json() == {"conversation_id": None}
     assert workspace.json()["conversation_history"] == [
         {"conversation_id": conversation_id, "created_at": 1}

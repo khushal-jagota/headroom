@@ -19,8 +19,6 @@ PATCH  /tickets/{t} field_values                  allow   allow   allow         
 POST   /tickets/{t}/complete/{f}                  allow   allow   allow           refuse            refuse       refuse           refuse             
 POST   /tickets/{t}/accept/{f}                    allow   allow   allow           refuse            refuse       refuse           refuse             
 POST   /tickets/{t}/reject                        allow   allow   allow           refuse            refuse       refuse           refuse             
-GET    /items/{i}/supervisor                      allow   allow   allow           refuse            refuse       refuse           refuse             
-GET    /items/{i}/supervisor/context              allow   allow   allow           refuse            refuse       refuse           refuse             
 GET    /items/{i}/supervisor/tickets/{t}/context  allow   allow   allow           refuse            refuse       refuse           refuse             
 GET    /items/{i}/supervisor/tickets/{t}/history  allow   allow   allow           refuse            refuse       refuse           refuse             
 POST   /tickets/{t}/restart-worker                allow   allow   allow           refuse            refuse       refuse           refuse             

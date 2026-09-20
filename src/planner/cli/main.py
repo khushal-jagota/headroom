@@ -2017,12 +2017,20 @@ def sprint_item_supervisor() -> None:
 @click.argument("item_id")
 @json_option
 def sprint_item_supervisor_show(item_id: str, as_json: bool) -> None:
-    data = http.send(
+    item = http.send(
         "GET",
-        f"/api/items/{item_id}/supervisor",
+        "/api/items",
         as_json=as_json,
+        params={"detail": "full", "id": item_id},
         request_actor="ordinary",
     )
+    supervisor = item["supervisor"]
+    data = {
+        "sprint_item_id": item["id"],
+        "agent_key": supervisor["agent_key"],
+        "conversation_id": supervisor["conversation_id"],
+        "launch_configuration": supervisor["launch_configuration"],
+    }
     launch = data["launch_configuration"]
     http.emit(
         data,
@@ -2037,7 +2045,7 @@ def sprint_item_supervisor_show(item_id: str, as_json: bool) -> None:
 def sprint_item_supervisor_context(item_id: str, as_json: bool) -> None:
     data = http.send(
         "GET",
-        f"/api/items/{item_id}/supervisor/context",
+        f"/api/items/{item_id}/workspace",
         as_json=as_json,
         request_actor="ordinary",
     )

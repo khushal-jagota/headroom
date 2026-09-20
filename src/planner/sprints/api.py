@@ -206,7 +206,13 @@ async def get_item_workspace(
     conversations: Conversations,
     conversation_record: ConversationRecord,
 ) -> JsonDict:
-    """Return the page facts without creating a second action surface."""
+    """Everything a reader of this Outcome needs, for whoever is reading.
+
+    ``awaiting_approval`` is answered against the caller's own principal, because the
+    ceiling holder is an address: the question is whether a parked proposal is addressed
+    to the reader. Khushal reads what is addressed to Khushal, an Outcome what is
+    addressed to it. That is one read serving both, rather than a second route.
+    """
     require_above_or_self(conn, ctx.principal, authority.outcome(item_id))
     planning_day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
     result = sprints_views.item_workspace(conn, item_id, planning_day_id)
@@ -216,66 +222,10 @@ async def get_item_workspace(
         conversation_record,
         tickets=result["tickets"],
         sprint_items=(result,),
+        approval_holder=ctx.principal,
     )
     result["artifacts"] = sprint_item_files.list_files(conn, ctx.principal, item_id, cfg.db_path)
     return result
-
-
-def _supervisor_json(conn: DbConn, item_id: str) -> JsonDict:
-    item = sprints_data.read_item(conn, item_id).item
-    launch = item.supervisor_launch_configuration
-    return {
-        "sprint_item_id": item.id,
-        "agent_key": item.supervisor_agent_key,
-        "conversation_id": conversation_start.read_agent_conversation(
-            conn, item.supervisor_agent_key
-        ),
-        "launch_configuration": {
-            "employee_backend": launch.employee_backend.value,
-            "employee_launch_model": launch.employee_launch_model,
-            "employee_launch_reasoning_effort": launch.employee_launch_reasoning_effort,
-        },
-    }
-
-
-@router.get("/items/{item_id}/supervisor")
-async def get_item_supervisor(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
-    require_above_or_self(conn, ctx.principal, authority.outcome(item_id))
-    return _supervisor_json(conn, item_id)
-
-
-@router.get("/items/{item_id}/supervisor/context")
-async def get_item_supervisor_context(
-    item_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
-) -> JsonDict:
-    """The Item overview: the Item, its supervisor, and one line per child Ticket. The
-    supervisor drills into a Ticket through its own ticket-context route."""
-    require_above_or_self(conn, ctx.principal, authority.outcome(item_id))
-    item = sprints_data.read_item(conn, item_id).item
-    tickets = sprints_views.item_ticket_overview(conn, item_id)
-    response = {
-        "sprint_item": {
-            "id": item.id,
-            "title": item.title,
-            "body": item.body,
-            "priority": item.priority.value,
-            "project_id": item.project_id,
-        },
-        "supervisor": _supervisor_json(conn, item_id),
-        "tickets": tickets,
-    }
-    await add_work_attention(
-        conn,
-        conversations,
-        conversation_record,
-        tickets=tickets,
-        approval_holder=Principal(PrincipalKind.sprint_item, item_id),
-    )
-    return response
 
 
 @router.get("/items/{item_id}/supervisor/tickets/{ticket_id}/context")
