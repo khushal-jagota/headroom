@@ -6,21 +6,17 @@ import asyncio
 import json
 import sqlite3
 from collections.abc import Iterable
-from enum import StrEnum
 from typing import TypedDict
 
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.storage import ConversationAttentionFacts, ConversationStore
+from planner.core import ticket_blocks
 from planner.core.contracts import OWNER_PRINCIPAL, JsonDict, Principal
-from planner.tickets.contracts import StageOwnershipMode, TicketStatus
+from planner.tickets import derivation
+from planner.tickets.contracts import StageOwnershipMode
+from planner.tickets.derivation import AgentState, TicketFacts
 from planner.tickets.logic import machine
 from planner.worker_types.configuration import configured_worker_type_registry
-
-
-class AgentState(StrEnum):
-    working = "working"
-    idle = "idle"
-    errored = "errored"
 
 
 class WorkAttention(TypedDict):
@@ -73,7 +69,7 @@ def _ticket_rows(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sq
         return {}
     placeholders = ",".join("?" for _ in ticket_ids)
     rows = conn.execute(
-        "SELECT id, stage, worker_type, ticket_status, pending_proposal, ceiling_holder, "
+        "SELECT id, stage, worker_type, worker_step_claim, pending_proposal, ceiling_holder, "
         "conversation_id "
         f"FROM tickets WHERE id IN ({placeholders})",
         tuple(sorted(ticket_ids)),
@@ -85,6 +81,7 @@ def _ticket_attention(
     row: sqlite3.Row,
     conversation: tuple[bool, bool, bool] | None,
     *,
+    facts: TicketFacts,
     approval_holder: Principal,
 ) -> WorkAttention:
     holder = json.loads(str(row["ceiling_holder"]))
@@ -92,23 +89,20 @@ def _ticket_attention(
         "kind": OWNER_PRINCIPAL.kind.value,
         "id": OWNER_PRINCIPAL.id,
     }
-    awaiting_approval = (
-        str(row["ticket_status"]) == TicketStatus.awaiting_approval.value
-        and row["pending_proposal"] is not None
-        and holder == {"kind": approval_holder.kind.value, "id": approval_holder.id}
-    )
+    awaiting_approval = facts.proposal_is_parked and holder == {
+        "kind": approval_holder.kind.value,
+        "id": approval_holder.id,
+    }
     awaiting_reply, running, last_turn_failed = conversation or (False, False, False)
     assigned = ticket_assignment_from_values(
         stage=str(row["stage"]),
         worker_type=str(row["worker_type"]),
         owner_holds_ceiling=owner_holds_ceiling,
     )
-    agent_state = (
-        AgentState.working
-        if running
-        else AgentState.errored
-        if str(row["ticket_status"]) == TicketStatus.errored.value or last_turn_failed
-        else AgentState.idle
+    agent_state = derivation.agent_state(
+        facts.ticket_status,
+        turn_is_running=running,
+        last_turn_failed=last_turn_failed,
     )
     return {
         "awaiting_reply": awaiting_reply,
@@ -209,12 +203,18 @@ async def add_work_attention(
     conversations = await _conversation_attention(
         conversation_system, conversation_record, conversation_ids
     )
+    blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     ticket_attention = {
         ticket_id: _ticket_attention(
             row,
             conversations.get(str(row["conversation_id"]))
             if row["conversation_id"] is not None
             else None,
+            facts=derivation.derive_ticket_facts(
+                derivation.stored_facts_from_row(
+                    row, has_live_blocker=ticket_id in blocked_ticket_ids
+                )
+            ),
             approval_holder=approval_holder,
         )
         for ticket_id, row in stored_tickets.items()

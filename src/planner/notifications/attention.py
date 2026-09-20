@@ -9,6 +9,9 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from planner.tickets import derivation
+from planner.tickets.contracts import TicketStatus
+
 
 def _record(
     conn: sqlite3.Connection,
@@ -98,13 +101,16 @@ def capture_ticket_attention(conn: sqlite3.Connection, ticket_id: str, occurred_
     from planner.work_attention import ticket_assignment_from_values
 
     row = conn.execute(
-        "SELECT id, stage, worker_type, ticket_status, pending_proposal, ceiling_holder, "
-        "conversation_id "
+        "SELECT id, stage, worker_type, worker_step_claim, pending_proposal, ceiling_holder, "
+        f"conversation_id, {derivation.HAS_LIVE_BLOCKER_COLUMN} "
         "FROM tickets WHERE id=?",
         (ticket_id,),
     ).fetchone()
     if row is None:
         return
+    facts = derivation.derive_ticket_facts(
+        derivation.stored_facts_from_row(row, has_live_blocker=bool(row["has_live_blocker"]))
+    )
     conversation = conversation_attention(conn, row["conversation_id"]).get(
         str(row["conversation_id"]), (False, False, 0, 0)
     )
@@ -112,17 +118,13 @@ def capture_ticket_attention(conn: sqlite3.Connection, ticket_id: str, occurred_
     owner_holds = holder.get("kind") == "owner"
     flags = {
         "awaiting_reply": conversation[0],
-        "awaiting_approval": (
-            str(row["ticket_status"]) == "awaiting_approval"
-            and row["pending_proposal"] is not None
-            and owner_holds
-        ),
+        "awaiting_approval": facts.proposal_is_parked and owner_holds,
         "assigned": ticket_assignment_from_values(
             stage=str(row["stage"]),
             worker_type=str(row["worker_type"]),
             owner_holds_ceiling=owner_holds,
         ),
-        "errored": str(row["ticket_status"]) == "errored" or conversation[1],
+        "errored": facts.ticket_status is TicketStatus.errored or conversation[1],
     }
     for notification_type, active in flags.items():
         _record(conn, "ticket", ticket_id, notification_type, active, occurred_at)

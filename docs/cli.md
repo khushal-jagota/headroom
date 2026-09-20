@@ -45,8 +45,9 @@ The command tree matches the system model:
 - `sprint ...` — create, inspect, edit, and populate sprints and sprint items.
 - `worker ...` — worker-only writes such as ticket proposals, recaps, and notes.
 
-Ordinary command groups do not expose internal runtime controls. Ticket `ticket_status`
-and run claiming remain code-owned. No command performs an arbitrary Stage jump.
+Ordinary command groups do not expose internal runtime controls. The Ticket's
+worker-step claim remains code-owned, and its status is derived from that claim and the
+Ticket's other facts rather than set. No command performs an arbitrary Stage jump.
 
 ## Bounded list reads
 

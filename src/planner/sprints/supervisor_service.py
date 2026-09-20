@@ -26,7 +26,7 @@ from planner.runtime import conversation_start, worker_step_readiness
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
-from planner.tickets.contracts import StageOwnershipMode, Ticket, TicketStatus
+from planner.tickets.contracts import StageOwnershipMode, Ticket, WorkerStepClaim
 from planner.tickets.logic import machine
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -191,8 +191,8 @@ def require_restartable_child(
             "only a Worker-owned Stage has a worker step to restart",
             {"ticket_id": ticket_id, "stage": ticket.stage},
         )
-    if ticket.ticket_status is TicketStatus.agent:
-        age = now - ticket.ticket_status_changed_at
+    if ticket.worker_step_claim is WorkerStepClaim.out:
+        age = now - ticket.worker_step_claim_changed_at
         if age < WORKER_STEP_RESTART_FLOOR_SECONDS:
             # The one bound on a restart loop: each restart resets this clock, so a
             # supervisor that keeps restarting has to wait out the floor every time.
@@ -206,7 +206,7 @@ def require_restartable_child(
                 },
             )
         return ticket
-    if ticket.ticket_status is TicketStatus.errored:
+    if ticket.worker_step_claim is WorkerStepClaim.errored:
         return ticket
     if ticket.conversation_id is None:
         # A restart whose start was refused lands here. Restarting again is how a
@@ -233,14 +233,13 @@ async def restart_worker(
 ) -> dict[str, object]:
     """Kill this child Ticket's dead conversation, give the claim back, and start again.
 
-    The claim is the status, so a reset on its own would leave the Ticket at ``agent``
-    with no conversation and nothing that ever picks it up. Both halves happen here, and
-    the supervisor sees one action.
+    A reset on its own would leave the claim out, with no conversation and nothing that
+    ever picks the Ticket up. Both halves happen here, and the supervisor sees one action.
 
     ``write_employee_configuration`` is already validated when it arrives: the caller
     resolved it against the backend registry and catalog before anything was killed, so a
     bad argument costs the Ticket nothing. It runs in the same transaction as the claim,
-    after it, because the launch values unfreeze only once the Ticket is out of ``agent``.
+    after it, because the launch values unfreeze only once the claim is back.
     """
     ticket = require_restartable_child(conn, ctx, sprint_item_id, ticket_id, now=now)
     killed_conversation_id = ticket.conversation_id
@@ -253,12 +252,12 @@ async def restart_worker(
         await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
     conn.execute("BEGIN IMMEDIATE")
     try:
-        if ticket.ticket_status is TicketStatus.agent:
+        if ticket.worker_step_claim is WorkerStepClaim.out:
             given_back = tickets_data.release_worker_step_claim(
                 conn,
                 ticket_id,
-                expected_status=ticket.ticket_status,
-                expected_status_revision=ticket.ticket_status_revision,
+                expected_claim=ticket.worker_step_claim,
+                expected_claim_revision=ticket.worker_step_claim_revision,
                 now=now,
             )
             if not given_back:
@@ -267,7 +266,7 @@ async def restart_worker(
                     "the Ticket moved while it was being restarted",
                     {"ticket_id": ticket_id},
                 )
-        elif ticket.ticket_status is TicketStatus.errored:
+        elif ticket.worker_step_claim is WorkerStepClaim.errored:
             tickets_data.clear_ticket_error_for_restart(conn, ticket_id, now=now)
         if write_employee_configuration is not None:
             write_employee_configuration(conn)

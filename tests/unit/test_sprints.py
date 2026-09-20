@@ -30,7 +30,7 @@ def _insert_ticket(
     stage: str,
     *,
     sprint_item_id: str | None = None,
-    ticket_status: str = "empty",
+    worker_step_claim: str = "none",
 ) -> None:
     # T04 owns ticket writers; a direct INSERT is the sanctioned test-fixture
     # shortcut for setting child/blocker ticket-states (only NOT-NULL non-defaulted
@@ -38,9 +38,9 @@ def _insert_ticket(
     conn.execute(
         "INSERT INTO tickets (id, title, worker_type, employee_backend, stage, "
         "sprint_item_id, ceiling, "
-        "ticket_status, field_values, created_at, updated_at) "
+        "worker_step_claim, field_values, created_at, updated_at) "
         "VALUES (?, ?, 'coding', 'hermes', ?, ?, 'needs_success', ?, ?, 0, 0)",
-        (ticket_id, "child", stage, sprint_item_id, ticket_status, _EMPTY_CODING_FIELDS),
+        (ticket_id, "child", stage, sprint_item_id, worker_step_claim, _EMPTY_CODING_FIELDS),
     )
 
 

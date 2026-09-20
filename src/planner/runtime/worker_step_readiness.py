@@ -55,9 +55,9 @@ def _closeout_lane_is_occupied(
             "SELECT 1 FROM tickets t "
             "LEFT JOIN sprint_items si ON si.id = t.sprint_item_id "
             "WHERE t.id != ? AND t.worker_type = ? AND t.stage = ? "
-            # blocked stands in for empty: a blocked Closeout Ticket is resting, so it
-            # does not occupy the lane.
-            "AND t.ticket_status NOT IN ('empty', 'blocked') "
+            # A resting Closeout Ticket does not occupy the lane, and a blocked one is
+            # resting.
+            "AND (t.worker_step_claim != 'none' OR t.pending_proposal IS NOT NULL) "
             "AND CASE WHEN t.sprint_item_id IS NOT NULL THEN si.project_id "
             "ELSE t.project_id END IS ? LIMIT 1",
             (ticket.id, worker_type, closeout_stage, effective_project_id),

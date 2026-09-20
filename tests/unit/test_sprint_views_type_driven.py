@@ -167,18 +167,18 @@ def test_item_tickets_carries_the_two_facts_the_status_group_rule_needs(
 
 
 @pytest.mark.parametrize(
-    ("stage", "ticket_status", "ceiling", "expected"),
+    ("stage", "worker_step_claim", "ceiling", "expected"),
     [
-        ("needs_closeout", "empty", "needs_closeout", True),
-        ("needs_closeout", "empty", "done", True),
-        ("needs_success", "empty", "done", False),
-        ("needs_closeout", "agent", "done", False),
+        ("needs_closeout", "none", "needs_closeout", True),
+        ("needs_closeout", "none", "done", True),
+        ("needs_success", "none", "done", False),
+        ("needs_closeout", "out", "done", False),
     ],
 )
 def test_item_tickets_identifies_only_runnable_empty_closeout_tickets(
     tmp_db: Connection,
     stage: str,
-    ticket_status: str,
+    worker_step_claim: str,
     ceiling: str,
     expected: bool,
 ) -> None:
@@ -195,9 +195,12 @@ def test_item_tickets_identifies_only_runnable_empty_closeout_tickets(
         title_max_chars=200,
         sprint_item_id=item.id,
     )
+    # No parked proposal: this case is about a Ticket at rest, and a parked proposal is
+    # one of the things that means it is not.
     tmp_db.execute(
-        "UPDATE tickets SET stage = ?, ticket_status = ?, ceiling = ? WHERE id = ?",
-        (stage, ticket_status, ceiling, child.id),
+        "UPDATE tickets SET stage = ?, worker_step_claim = ?, ceiling = ?, "
+        "pending_proposal = NULL WHERE id = ?",
+        (stage, worker_step_claim, ceiling, child.id),
     )
 
     rows = item_tickets(tmp_db, item.id)

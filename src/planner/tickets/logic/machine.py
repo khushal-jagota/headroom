@@ -7,7 +7,6 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     NextCeiling,
     StageOwnershipMode,
-    TicketStatus,
 )
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -82,19 +81,3 @@ def stage_ownership_mode(
             {"stage": stage},
         )
     return ownership_mode
-
-
-def resting_ticket_status(ownership_mode: StageOwnershipMode) -> TicketStatus:
-    """All ownership modes enter at the one unclaimed control state."""
-    return TicketStatus.empty
-
-
-def worker_step_departure_status(ownership_mode: StageOwnershipMode) -> TicketStatus:
-    """The status a Ticket occupies while its worker step is out.
-
-    Every Stage rests at ``empty``. Worker-owned steps and the one collaborative opener
-    for a user-owned Stage both occupy the ordinary ``agent`` control state.
-    """
-    if ownership_mode in {StageOwnershipMode.worker, StageOwnershipMode.user}:
-        return TicketStatus.agent
-    raise AssertionError(f"unknown ownership mode: {ownership_mode}")

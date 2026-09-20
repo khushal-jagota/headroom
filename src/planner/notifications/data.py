@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from planner.core import ticket_blocks
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.notifications import attention as attention_data
 from planner.notifications.contracts import (
@@ -27,6 +28,8 @@ from planner.notifications.contracts import (
     notification_preference_is_valid,
 )
 from planner.notifications.logic.policy import decide_notification
+from planner.tickets import derivation
+from planner.tickets.contracts import TicketStatus
 from planner.work_attention import ticket_assignment_from_values
 from planner.worker_settings.service import CHIEF_LABEL, CHIEF_SETTINGS_KEY
 
@@ -293,10 +296,16 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
     conversations = attention_data.conversation_attention(conn)
     desired: dict[tuple[str, str, str], tuple[bool, Principal, str, int]] = {}
     ticket_rows = conn.execute(
-        "SELECT id, title, stage, worker_type, ticket_status, pending_proposal, "
-        "ceiling_holder, conversation_id, updated_at, ticket_status_changed_at FROM tickets"
+        "SELECT id, title, stage, worker_type, worker_step_claim, pending_proposal, "
+        "ceiling_holder, conversation_id, updated_at, worker_step_claim_changed_at FROM tickets"
     ).fetchall()
+    blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     for row in ticket_rows:
+        facts = derivation.derive_ticket_facts(
+            derivation.stored_facts_from_row(
+                row, has_live_blocker=str(row["id"]) in blocked_ticket_ids
+            )
+        )
         ticket_id = str(row["id"])
         subject = Principal(PrincipalKind.ticket, ticket_id)
         label = str(row["title"])
@@ -304,23 +313,19 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
         owner_holds = _owner_holds_ticket_ceiling(str(row["ceiling_holder"]))
         flags = {
             "awaiting_reply": conversation[0],
-            "awaiting_approval": (
-                str(row["ticket_status"]) == "awaiting_approval"
-                and row["pending_proposal"] is not None
-                and owner_holds
-            ),
+            "awaiting_approval": facts.proposal_is_parked and owner_holds,
             "assigned": ticket_assignment_from_values(
                 stage=str(row["stage"]),
                 worker_type=str(row["worker_type"]),
                 owner_holds_ceiling=owner_holds,
             ),
-            "errored": str(row["ticket_status"]) == "errored" or conversation[1],
+            "errored": facts.ticket_status is TicketStatus.errored or conversation[1],
         }
         for notification_type, active in flags.items():
             occurred_at = (
                 conversation[3]
                 if notification_type in {"awaiting_reply", "errored"} and conversation[3]
-                else int(row["ticket_status_changed_at"])
+                else int(row["worker_step_claim_changed_at"])
                 if notification_type == "awaiting_approval"
                 else int(row["updated_at"])
             )

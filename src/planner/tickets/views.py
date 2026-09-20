@@ -15,6 +15,7 @@ from planner.list_reads.configuration import TICKET_RECAP_PREVIEW_CHARS
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
+from planner.tickets import derivation
 from planner.tickets.contracts import (
     BoardCard,
     BoardSprintItem,
@@ -22,6 +23,7 @@ from planner.tickets.contracts import (
     TicketListFilters,
     TicketStatus,
 )
+from planner.tickets.derivation import TicketFacts
 from planner.tickets.logic import fields_codec, machine
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -158,7 +160,7 @@ def _ticket_search_text(row: sqlite3.Row) -> str:
     registry = configured_worker_type_registry()
     definition = registry.require(str(row["worker_type"]))
     values = fields_codec.values_from_json(str(row["field_values"]), definition.field_ids())
-    proposal = fields_codec.proposal_from_json(row["pending_proposal"])
+    proposal = fields_codec.proposal_from_json(row["searchable_pending_proposal"])
     return "\n".join(
         (
             str(row["title"]),
@@ -177,13 +179,13 @@ def _recap_preview(recap: str) -> str:
     return compact[: TICKET_RECAP_PREVIEW_CHARS - 1].rstrip() + "…"
 
 
-def _ticket_summary_json(row: sqlite3.Row) -> JsonDict:
+def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
     return {
         "id": str(row["id"]),
         "title": str(row["title"]),
         "worker_type": str(row["worker_type"]),
         "stage": str(row["stage"]),
-        "ticket_status": str(row["ticket_status"]),
+        "ticket_status": facts.ticket_status.value,
         "priority": str(row["priority"]),
         "project_id": (
             str(row["effective_project_id"]) if row["effective_project_id"] is not None else None
@@ -242,13 +244,14 @@ def list_ticket_summaries(
     searchable_guidance = "tickets.guidance" if filters.search else "NULL"
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.worker_type, tickets.stage, "
-        "tickets.ticket_status, tickets.priority, tickets.recap, "
+        "tickets.worker_step_claim, tickets.priority, tickets.recap, "
+        "tickets.pending_proposal, "
         + searchable_guidance
         + " AS guidance, "
         + searchable_fields
         + " AS field_values, "
         + searchable_proposal
-        + " AS pending_proposal, "
+        + " AS searchable_pending_proposal, "
         "tickets.project_id AS effective_project_id, "
         "projects.name AS project_name, tickets.sprint_item_id, "
         "sprint_items.title AS sprint_item_title, tickets.sprint_id "
@@ -262,11 +265,17 @@ def list_ticket_summaries(
         tuple(params),
     ).fetchall()
     registry = configured_worker_type_registry()
+    blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     search = filters.search.casefold() if filters.search else None
-    matches: list[sqlite3.Row] = []
+    matches: list[tuple[sqlite3.Row, TicketFacts]] = []
     for row in rows:
         stage = str(row["stage"])
-        status = TicketStatus(str(row["ticket_status"]))
+        facts = derivation.derive_ticket_facts(
+            derivation.stored_facts_from_row(
+                row, has_live_blocker=str(row["id"]) in blocked_ticket_ids
+            )
+        )
+        status = facts.ticket_status
         definition = registry.require(str(row["worker_type"]))
         if not filters.include_terminal and definition.is_terminal(stage):
             continue
@@ -280,10 +289,10 @@ def list_ticket_summaries(
             continue
         if search is not None and search not in _ticket_search_text(row).casefold():
             continue
-        matches.append(row)
+        matches.append((row, facts))
     selected = matches[page_request.offset : page_request.offset + page_request.limit]
     return ListPage(
-        rows=tuple(_ticket_summary_json(row) for row in selected),
+        rows=tuple(_ticket_summary_json(row, facts) for row, facts in selected),
         match_count=len(matches),
         limit=page_request.limit,
         offset=page_request.offset,
@@ -409,7 +418,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "tickets.pending_proposal, tickets.worker_type, "
         "tickets.employee_backend, "
         "tickets.conversation_id, "
-        "tickets.ticket_status, "
+        "tickets.worker_step_claim, "
         "tickets.ceiling, "
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
@@ -449,7 +458,11 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         is_parented = row["sprint_item_id"] is not None
         group_project_id = parent_project_id if is_parented else ticket_project_id
         group_project_name = parent_project_name if is_parented else ticket_project_name
-        ticket_status = str(row["ticket_status"])
+        facts = derivation.derive_ticket_facts(
+            derivation.stored_facts_from_row(
+                row, has_live_blocker=str(row["id"]) in blocked_ticket_ids
+            )
+        )
         card: BoardCard = {
             "id": str(row["id"]),
             "title": str(row["title"]),
@@ -461,7 +474,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "group_project": group_project_name,
             "activity_at": int(row["updated_at"]),
             "has_pending_proposal": row["pending_proposal"] is not None,
-            "ticket_status": ticket_status,
+            "ticket_status": facts.ticket_status.value,
             "worker_type": worker_type,
             "employee_backend": str(row["employee_backend"]),
             "stage": stage,
@@ -470,13 +483,11 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "gating_field_label": gating_field_label,
             "is_done": stage == worker_type_definition.completed_stage(),
             "is_dropped": stage == worker_type_definition.dropped_stage.id,
-            "blocked": str(row["id"]) in blocked_ticket_ids,
+            "blocked": facts.blocked,
             "conversation_id": (
                 str(row["conversation_id"]) if row["conversation_id"] is not None else None
             ),
-            "waiting_to_closeout": (
-                gating_field_id == "closeout" and ticket_status == TicketStatus.empty.value
-            ),
+            "waiting_to_closeout": facts.waiting_to_closeout,
             "sprint_item_id": (
                 str(row["sprint_item_id"]) if row["sprint_item_id"] is not None else None
             ),
@@ -558,16 +569,21 @@ def _board_sprint_items(
 
 def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
     rows = conn.execute(
-        "SELECT id, title, stage, worker_type, ticket_status, ticket_status_changed_at, "
+        "SELECT id, title, stage, worker_type, worker_step_claim, "
         "pending_proposal, ceiling_holder FROM tickets "
         "WHERE id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) ORDER BY id",
         (day_id,),
     ).fetchall()
     registry = configured_worker_type_registry()
+    blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     items: list[JsonDict] = []
     for row in rows:
-        ticket_status = str(row["ticket_status"])
-        if ticket_status != TicketStatus.awaiting_approval.value:
+        facts = derivation.derive_ticket_facts(
+            derivation.stored_facts_from_row(
+                row, has_live_blocker=str(row["id"]) in blocked_ticket_ids
+            )
+        )
+        if facts.ticket_status is not TicketStatus.awaiting_approval:
             continue
         holder = json.loads(str(row["ceiling_holder"]))
         if holder != {"kind": "owner", "id": "owner"}:
@@ -599,7 +615,7 @@ def review_view(
     day_id: str,
 ) -> JsonDict:
     running_workers = conn.execute(
-        "SELECT COUNT(*) AS count FROM tickets WHERE ticket_status = 'agent'"
+        "SELECT COUNT(*) AS count FROM tickets WHERE worker_step_claim = 'out'"
     ).fetchone()
     return {
         "items": _review_items(conn, day_id=day_id),

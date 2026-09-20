@@ -124,13 +124,15 @@ def add_ticket_block(
     now: int,
     admit: Callable[[], None] | None = None,
 ) -> None:
-    """Create a Ticket block and settle the blocked Ticket in one transaction."""
+    """Create a Ticket block under admission, in one transaction.
+
+    Nothing is settled afterwards. What the blocked Ticket shows is derived from this row.
+    """
     conn.execute("BEGIN IMMEDIATE")
     try:
         if admit is not None:
             admit()
         ticket_blocks.add_ticket_block(conn, blocking_ticket_id, blocked_ticket_id, now)
-        tickets_data.settle_blocked_standin_for_ticket(conn, blocked_ticket_id, now)
     except BaseException:
         conn.execute("ROLLBACK")
         raise
@@ -146,13 +148,15 @@ def remove_ticket_block(
     now: int,
     admit: Callable[[], None] | None = None,
 ) -> None:
-    """Remove a Ticket block and settle the blocked Ticket in one transaction."""
+    """Remove a Ticket block under admission, in one transaction.
+
+    Nothing is settled afterwards. What the blocked Ticket shows is derived from this row.
+    """
     conn.execute("BEGIN IMMEDIATE")
     try:
         if admit is not None:
             admit()
         ticket_blocks.remove_ticket_block(conn, blocking_ticket_id, blocked_ticket_id, now)
-        tickets_data.settle_blocked_standin_for_ticket(conn, blocked_ticket_id, now)
     except BaseException:
         conn.execute("ROLLBACK")
         raise

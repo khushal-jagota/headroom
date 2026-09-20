@@ -111,21 +111,19 @@ invalid, or repeated blocker rejects the whole create with a structured error. N
 once, so readiness is nudged once.
 
 A blocker is **live** while the Ticket doing the blocking is neither done nor dropped.
-Blocking shows up in exactly one place: the dependent Ticket's status. When a Ticket
-comes to rest with nothing running, it lands on **blocked** instead of **empty** if a
-live blocker remains. `blocked` only ever stands in for `empty`, so a Ticket that is
-running a step, waiting for approval, asking for help, or held by the user keeps that
-status untouched. Blocking still writes no Blocked Stage and changes nothing about the
-Ticket's real Stage, ownership, scope, proposal, or direct user controls. It only keeps
-automatic work from starting, because the runtime starts `empty` Tickets and nothing
-else.
+Blocking shows up in exactly one place: the dependent Ticket's status. When a Ticket is
+at rest with nothing running, it reads as **blocked** instead of **empty** if a live
+blocker remains. Only rest is called blocked, so a Ticket that is running a step or
+waiting for approval reads as that instead. Blocking still writes no Blocked Stage and
+changes nothing about the Ticket's real Stage, ownership, scope, proposal, or direct
+user controls. It only keeps automatic work from starting, because the runtime starts
+resting Tickets and nothing else.
 
-Clearing happens inside the action that removes the cause. When a blocking Ticket is
-finished, dropped, or deleted, or a Ticket block is removed, that same write deletes
-the blocks it held and rewrites every Ticket it was blocking in the same transaction —
-back to `empty`, or left on `blocked` when another live blocker remains. A Ticket that
-stays blocked is not rewritten at all, so nothing is announced for a change that did
-not happen.
+Nothing is written to clear it. When a blocking Ticket is finished, dropped, or
+deleted, or a Ticket block is removed, that same write removes the blocks it held, and
+every Ticket it was blocking stops reading as blocked from that moment. A Ticket that
+another live blocker still holds keeps reading as blocked. There is no stored value to
+repair, because the answer is worked out each time it is asked for.
 
 A newly created dependent Ticket parks its Kickoff proposal first, so it waits for
 approval before it can rest anywhere. It becomes `blocked` the first time it comes to
@@ -138,8 +136,9 @@ absent when no active blocker remains. Panels does not show reverse, cleared, tr
 graph views.
 
 Any Ticket worker can add or remove Ticket blocks. The worker must send its own
-existing Ticket id with its worker identity. Direct callers keep the same access. The Ticket block writer validates both Tickets, rejects active cycles, updates
-blocked Ticket status, and commits the complete change once.
+existing Ticket id with its worker identity. Direct callers keep the same access. The Ticket block writer validates both Tickets, rejects active cycles, and commits the
+complete change once. It writes nothing to the blocked Ticket, because what that Ticket
+reads as is worked out from the block itself.
 
 ### Ordinary Ticket edits
 

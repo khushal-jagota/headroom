@@ -10,6 +10,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.judgments.contracts import TicketJudgment, TroubleNote, Verdict
 from planner.judgments.logic.trouble_notes import normalize_trouble_note
 from planner.judgments.logic.verdicts import normalize_verdict, require_finished_ticket
+from planner.tickets.contracts import WorkerStepClaim
 
 
 @contextmanager
@@ -95,19 +96,19 @@ def append_trouble_note(
     normalized_body = normalize_trouble_note(body)
     with _txn(conn):
         ticket = conn.execute(
-            "SELECT ticket_status FROM tickets WHERE id = ?", (ticket_id,)
+            "SELECT worker_step_claim FROM tickets WHERE id = ?", (ticket_id,)
         ).fetchone()
         if ticket is None:
             raise PlannerError(
                 ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id}
             )
-        if str(ticket["ticket_status"]) != "agent":
+        if str(ticket["worker_step_claim"]) != WorkerStepClaim.out.value:
             raise PlannerError(
                 ErrorCode.validation,
                 "trouble can be recorded only during an active claimed worker step",
                 {
                     "ticket_id": ticket_id,
-                    "ticket_status": str(ticket["ticket_status"]),
+                    "worker_step_claim": str(ticket["worker_step_claim"]),
                 },
             )
         conn.execute(

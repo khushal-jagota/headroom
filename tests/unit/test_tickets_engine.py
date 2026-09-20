@@ -394,7 +394,7 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
     )
     assert claimed is not None
     assert claimed.ticket_status is TicketStatus.agent
-    assert claimed.ticket_status_changed_at == now
+    assert claimed.worker_step_claim_changed_at == now
     assert resolver_calls == 1
     assert readiness_calls == 1
 
@@ -415,8 +415,8 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
         data.release_worker_step_claim(
             tmp_db,
             t.id,
-            expected_status=claimed.ticket_status,
-            expected_status_revision=claimed.ticket_status_revision,
+            expected_claim=claimed.worker_step_claim,
+            expected_claim_revision=claimed.worker_step_claim_revision,
             now=now,
         )
         is True
@@ -453,8 +453,8 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
     t = data.drop_ticket(tmp_db, t.id, principal=OWNER_PRINCIPAL, now=now + 1)
     assert t.ticket_status is TicketStatus.empty
     assert tmp_db.execute(
-        "SELECT ticket_status FROM tickets WHERE id = ?", (t.id,)
-    ).fetchone()[0] == "empty"
+        "SELECT worker_step_claim FROM tickets WHERE id = ?", (t.id,)
+    ).fetchone()[0] == "none"
 
 
 def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(
@@ -471,21 +471,21 @@ def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(
     assert data.release_worker_step_claim(
         tmp_db,
         t.id,
-        expected_status=claimed.ticket_status,
-        expected_status_revision=claimed.ticket_status_revision,
+        expected_claim=claimed.worker_step_claim,
+        expected_claim_revision=claimed.worker_step_claim_revision,
         now=now,
     )
     reclaimed = _claim_ready_worker_step(tmp_db, t.id, now=now + 5)
     assert reclaimed is not None
     assert reclaimed.ticket_status is claimed.ticket_status
-    assert reclaimed.ticket_status_changed_at != claimed.ticket_status_changed_at
+    assert reclaimed.worker_step_claim_changed_at != claimed.worker_step_claim_changed_at
 
     assert (
         data.release_worker_step_claim(
             tmp_db,
             t.id,
-            expected_status=claimed.ticket_status,
-            expected_status_revision=claimed.ticket_status_revision,
+            expected_claim=claimed.worker_step_claim,
+            expected_claim_revision=claimed.worker_step_claim_revision,
             now=now + 6,
         )
         is False
@@ -507,8 +507,8 @@ def test_a_user_owned_stage_records_its_opener_and_returns_to_empty(
     assert data.release_worker_step_claim(
         tmp_db,
         t.id,
-        expected_status=claimed.ticket_status,
-        expected_status_revision=claimed.ticket_status_revision,
+        expected_claim=claimed.worker_step_claim,
+        expected_claim_revision=claimed.worker_step_claim_revision,
         now=now + 1,
     )
     assert data.read_ticket(tmp_db, t.id).ticket_status is TicketStatus.empty
@@ -1245,14 +1245,14 @@ def test_completing_a_blocker_releases_its_blocks_and_frees_the_target(
     assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
 
 
-def test_a_failed_completion_rolls_back_its_block_release_and_settlements(
+def test_a_failed_completion_rolls_back_its_block_release(
     tmp_db: Connection,
     cfg: Config,
     fake_clock: TestClock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The stage change, the link deletion, and every target settlement are one
-    # transaction: when any part of the completion fails, none of it lands.
+    # The stage change and the link deletion are one transaction: when any part of the
+    # completion fails, none of it lands.
     now = fake_clock.now_unix()
     blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
     target = _create(tmp_db, cfg, fake_clock, title="Target")
@@ -1268,10 +1268,12 @@ def test_a_failed_completion_rolls_back_its_block_release_and_settlements(
     stage_before = blocker.stage
     target_row_before = _ticket_row(tmp_db, target.id)
 
-    def failing_settle(conn: Connection, target_id: str, now: int) -> None:
-        raise RuntimeError("settlement failed mid-completion")
+    def failing_release(
+        conn: Connection, ticket_id: str, blocked_ticket_ids: tuple[str, ...]
+    ) -> None:
+        raise RuntimeError("block release failed mid-completion")
 
-    monkeypatch.setattr(data, "settle_blocked_standin_for_ticket", failing_settle)
+    monkeypatch.setattr(data, "_release_ticket_blocks", failing_release)
     with pytest.raises(RuntimeError, match="mid-completion"):
         data.drop_ticket(tmp_db, blocker.id, principal=OWNER_PRINCIPAL, now=now)
 

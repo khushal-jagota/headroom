@@ -27,7 +27,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.days import data as days_data
 from planner.notifications.attention import capture_ticket_attention
-from planner.tickets import revision_feedback
+from planner.tickets import derivation, revision_feedback
 from planner.tickets.contracts import (
     EmployeeLaunchConfiguration,
     NextCeiling,
@@ -40,7 +40,7 @@ from planner.tickets.contracts import (
     TicketDeletion,
     TicketEdit,
     TicketFieldValues,
-    TicketStatus,
+    WorkerStepClaim,
 )
 from planner.tickets.logic import (
     admission,
@@ -350,9 +350,14 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         guidance=row["guidance"],
         ceiling=str(row["ceiling"]),
         ceiling_holder=_principal_from_json(str(row["ceiling_holder"])),
-        ticket_status=TicketStatus(row["ticket_status"]),
-        ticket_status_changed_at=int(row["ticket_status_changed_at"]),
-        ticket_status_revision=int(row["ticket_status_revision"]),
+        ticket_status=derivation.derive_ticket_status(
+            derivation.stored_facts_from_row(
+                row, has_live_blocker=bool(row["has_live_blocker"])
+            )
+        ),
+        worker_step_claim=WorkerStepClaim(row["worker_step_claim"]),
+        worker_step_claim_changed_at=int(row["worker_step_claim_changed_at"]),
+        worker_step_claim_revision=int(row["worker_step_claim_revision"]),
         conversation_id=row["conversation_id"],
         field_values=fields_codec.values_from_json(
             row["field_values"], worker_type_definition.field_ids()
@@ -378,7 +383,8 @@ def _ticket_row(conn: sqlite3.Connection, ticket_id: str) -> sqlite3.Row:
         "SELECT tickets.*, projects.name AS project_name, "
         "projects.priority AS priority_project_priority, "
         "sprint_items.title AS priority_sprint_item_title, "
-        "sprint_items.priority AS priority_sprint_item_priority "
+        "sprint_items.priority AS priority_sprint_item_priority, "
+        f"{derivation.HAS_LIVE_BLOCKER_COLUMN} "
         "FROM tickets LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects ON projects.id = tickets.project_id "
         "WHERE tickets.id = ?",
@@ -425,7 +431,7 @@ def _seed_kickoff(
     stage: str,
     ceiling: str,
     worker_type_definition: WorkerTypeDefinition,
-) -> tuple[str, TicketFieldValues, PendingTicketProposal | None, TicketStatus]:
+) -> tuple[str, TicketFieldValues, PendingTicketProposal | None]:
     ownership = machine.stage_ownership_mode(
         stage,
         worker_type_definition=worker_type_definition,
@@ -433,9 +439,9 @@ def _seed_kickoff(
     if ownership is None:
         raise PlannerError(ErrorCode.validation, "kickoff stage cannot be terminal")
     if not worker_type_definition.has_field("kickoff"):
-        return stage, {}, None, machine.resting_ticket_status(ownership)
+        return stage, {}, None
     if kickoff_note is None:
-        return stage, {}, None, TicketStatus.empty
+        return stage, {}, None
     # A stated ceiling past kickoff settles the kickoff on the spot: below the ceiling a
     # worker-owned Stage writes its field and moves on, and creation is that write.
     below_the_ceiling = ownership is StageOwnershipMode.worker and not machine.at_or_beyond_ceiling(
@@ -443,12 +449,11 @@ def _seed_kickoff(
     )
     target = worker_type_definition.advance_target(stage) if below_the_ceiling else None
     if target is not None:
-        return target, {"kickoff": kickoff_note}, None, machine.resting_ticket_status(ownership)
+        return target, {"kickoff": kickoff_note}, None
     return (
         stage,
         {},
         PendingTicketProposal("kickoff", kickoff_note, principal_legacy_actor(principal), now),
-        TicketStatus.awaiting_approval,
     )
 
 
@@ -502,70 +507,16 @@ def _blocked_ticket_ids(conn: sqlite3.Connection, ticket_id: str) -> tuple[str, 
     return tuple(str(row["blocked_ticket_id"]) for row in rows)
 
 
-def _has_live_blocker(conn: sqlite3.Connection, ticket_id: str) -> bool:
-    """Return whether an active Ticket blocks this Ticket."""
-    return (
-        conn.execute(
-            "SELECT 1 FROM ticket_blocks "
-            "JOIN tickets blocker ON blocker.id = ticket_blocks.blocking_ticket_id "
-            "WHERE ticket_blocks.blocked_ticket_id = ? "
-            "AND blocker.stage NOT IN ('done', 'dropped') LIMIT 1",
-            (ticket_id,),
-        ).fetchone()
-        is not None
-    )
-
-
-def _blocked_standin(
-    conn: sqlite3.Connection, ticket_id: str, ticket_status: TicketStatus
-) -> TicketStatus:
-    """`blocked` stands in for `empty` while a live blocker exists; every other value
-    passes through untouched. There is no condition on the Ticket's own stage."""
-    if ticket_status is not TicketStatus.empty:
-        return ticket_status
-    if _has_live_blocker(conn, ticket_id):
-        return TicketStatus.blocked
-    return TicketStatus.empty
-
-
-def settle_blocked_standin(conn: sqlite3.Connection, ticket_id: str, now: int) -> None:
-    """Re-derive one resting Ticket's empty/blocked stand-in after its blockers changed.
-
-    The single transition writer for the blocker-driven pair. A no-op unless the Ticket is
-    currently resting at `empty` or `blocked` — every other status owns itself — and it
-    writes only when the value actually changes, so a Ticket that stays blocked because
-    another live blocker remains writes nothing.
-    """
-    row = conn.execute("SELECT ticket_status FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
-    if row is None:
-        return
-    current = TicketStatus(str(row["ticket_status"]))
-    if current not in (TicketStatus.empty, TicketStatus.blocked):
-        return
-    target = _blocked_standin(conn, ticket_id, TicketStatus.empty)
-    if target is current:
-        return
-    _write_ticket_status(conn, ticket_id, target, now)
-
-
-def settle_blocked_standin_for_ticket(
-    conn: sqlite3.Connection, blocked_ticket_id: str, now: int
-) -> None:
-    settle_blocked_standin(conn, blocked_ticket_id, now)
-
-
 def _release_ticket_blocks(
-    conn: sqlite3.Connection, ticket_id: str, blocked_ticket_ids: tuple[str, ...], now: int
+    conn: sqlite3.Connection, ticket_id: str, blocked_ticket_ids: tuple[str, ...]
 ) -> None:
-    """Remove a completed Ticket's blocks and settle each blocked Ticket."""
+    """Remove a completed Ticket's blocks. What each blocked Ticket then shows is derived."""
     for blocked_ticket_id in blocked_ticket_ids:
         conn.execute(
             "DELETE FROM ticket_blocks "
             "WHERE blocking_ticket_id = ? AND blocked_ticket_id = ?",
             (ticket_id, blocked_ticket_id),
         )
-    for blocked_ticket_id in blocked_ticket_ids:
-        settle_blocked_standin_for_ticket(conn, blocked_ticket_id, now)
 
 
 def _apply_decision(
@@ -621,111 +572,54 @@ def _apply_decision(
             (ticket.id,),
         )
         revision_feedback.discard(conn, ticket.id)
-    if active_before != active_after:
-        if active_after:
-            for blocked_ticket_id in affected_blocked_ticket_ids:
-                settle_blocked_standin_for_ticket(conn, blocked_ticket_id, now)
-        else:
-            _release_ticket_blocks(conn, ticket.id, affected_blocked_ticket_ids, now)
+    if active_before != active_after and not active_after:
+        _release_ticket_blocks(conn, ticket.id, affected_blocked_ticket_ids)
     capture_ticket_attention(conn, ticket.id, now)
     return _load_ticket(conn, ticket.id)
 
 
-def _write_ticket_status(
+def _write_worker_step_claim(
     conn: sqlite3.Connection,
     ticket_id: str,
-    ticket_status: TicketStatus,
+    worker_step_claim: WorkerStepClaim,
     now: int,
 ) -> None:
-    # The one write door also carries the stand-in: a caller asking for `empty` on a
-    # Ticket with a live blocker durably lands on `blocked`.
-    ticket_status = _blocked_standin(conn, ticket_id, ticket_status)
-    # ticket_status_changed_at answers "how long has this Ticket been where it is",
-    # so it moves only when the value really moves — rewriting the same status is not a
+    # worker_step_claim_changed_at answers "how long has this Ticket been where it is",
+    # so it moves only when the value really moves — rewriting the same claim is not a
     # change. The CASE keeps that comparison against the stored row, in the one write.
     conn.execute(
-        "UPDATE tickets SET ticket_status = ?, updated_at = ?, "
-        "ticket_status_changed_at = CASE WHEN ticket_status = ? "
-        "THEN ticket_status_changed_at ELSE ? END, "
-        "ticket_status_revision = CASE WHEN ticket_status = ? "
-        "THEN ticket_status_revision ELSE ticket_status_revision + 1 END WHERE id = ?",
+        "UPDATE tickets SET worker_step_claim = ?, updated_at = ?, "
+        "worker_step_claim_changed_at = CASE WHEN worker_step_claim = ? "
+        "THEN worker_step_claim_changed_at ELSE ? END, "
+        "worker_step_claim_revision = CASE WHEN worker_step_claim = ? "
+        "THEN worker_step_claim_revision ELSE worker_step_claim_revision + 1 END WHERE id = ?",
         (
-            ticket_status.value,
+            worker_step_claim.value,
             now,
-            ticket_status.value,
+            worker_step_claim.value,
             now,
-            ticket_status.value,
+            worker_step_claim.value,
             ticket_id,
         ),
     )
     capture_ticket_attention(conn, ticket_id, now)
 
 
-def _resting_status_for_ticket(
+def _give_back_worker_step_claim(
     conn: sqlite3.Connection,
     ticket: Ticket,
     *,
-    worker_type_definition: WorkerTypeDefinition,
-) -> TicketStatus:
-    ownership_mode = machine.stage_ownership_mode(
-        ticket.stage,
-        worker_type_definition=worker_type_definition,
-    )
-    resting = (
-        TicketStatus.empty
-        if ownership_mode is None
-        else machine.resting_ticket_status(ownership_mode)
-    )
-    return _blocked_standin(conn, ticket.id, resting)
-
-
-def _entered_stage_status_for_ticket(
-    conn: sqlite3.Connection,
-    ticket: Ticket,
-    *,
-    worker_type_definition: WorkerTypeDefinition,
-) -> TicketStatus:
-    entered = TicketStatus.empty
-    return _blocked_standin(conn, ticket.id, entered)
-
-
-def _write_resting_ticket_status(
-    conn: sqlite3.Connection,
-    ticket: Ticket,
-    *,
-    worker_type_definition: WorkerTypeDefinition,
     now: int,
 ) -> None:
-    target_status = _resting_status_for_ticket(
-        conn,
-        ticket,
-        worker_type_definition=worker_type_definition,
-    )
-    if ticket.ticket_status is target_status:
-        return
-    _write_ticket_status(
-        conn,
-        ticket.id,
-        target_status,
-        now,
-    )
+    """A canonical write settles the Ticket, so whatever step was out is finished.
 
-
-def _write_entered_stage_ticket_status(
-    conn: sqlite3.Connection,
-    ticket: Ticket,
-    *,
-    worker_type_definition: WorkerTypeDefinition,
-    now: int,
-) -> None:
-    target_status = _entered_stage_status_for_ticket(
-        conn,
-        ticket,
-        worker_type_definition=worker_type_definition,
-    )
-    if ticket.ticket_status is target_status:
+    One function covers both entering a Stage and staying on one. Rest is no longer a
+    value to compute: a Ticket with no claim out is resting, and what that rest is
+    called — `empty`, `blocked`, `awaiting_approval` — is derived from the facts.
+    """
+    if ticket.worker_step_claim is WorkerStepClaim.none:
         return
-    _write_ticket_status(conn, ticket.id, target_status, now)
+    _write_worker_step_claim(conn, ticket.id, WorkerStepClaim.none, now)
 
 
 def write_ticket_conversation_start(
@@ -875,7 +769,7 @@ def employee_configuration_editable(ticket: Ticket) -> bool:
     for. A reset Ticket is exactly one whose next conversation has not been started, and
     choosing what that one runs on is the point of restarting it.
     """
-    return ticket.conversation_id is None and ticket.ticket_status is not TicketStatus.agent
+    return ticket.conversation_id is None and ticket.worker_step_claim is not WorkerStepClaim.out
 
 
 def write_employee_configuration(
@@ -1010,7 +904,7 @@ def create_ticket(
             if stated_ceiling is None
             else worker_type_definition.resolve_ceiling(stated_ceiling)
         )
-        stage, initial_values, initial_proposal, initial_ticket_status = _seed_kickoff(
+        stage, initial_values, initial_proposal = _seed_kickoff(
             kickoff_note,
             principal,
             now,
@@ -1025,9 +919,9 @@ def create_ticket(
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_id, sprint_item_id, "
             "recap, ceiling, ceiling_holder, "
-            "ticket_status, conversation_id, field_values, pending_proposal, "
-            "created_at, updated_at, ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, NULL, "
+            "conversation_id, field_values, pending_proposal, "
+            "created_at, updated_at, worker_step_claim_changed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
             "?, ?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1044,7 +938,6 @@ def create_ticket(
                 sprint_item_id,
                 ceiling,
                 _principal_to_json(principal),
-                initial_ticket_status.value,
                 values_json,
                 fields_codec.proposal_to_json(initial_proposal),
                 now,
@@ -1067,11 +960,6 @@ def audit_ticket_registry_integrity(conn: sqlite3.Connection) -> None:
                 conn, str(row["id"])
             )
             require_conversation_backend_key(ticket.employee_backend)
-            if (
-                ticket.ticket_status is TicketStatus.awaiting_approval
-                and ticket.pending_proposal is None
-            ):
-                raise PlannerError(ErrorCode.validation, "awaiting approval without a proposal")
         except (PlannerError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             raise RuntimeError(
                 f"ticket integrity audit failed: id={row['id']} reason={exc}"
@@ -1088,7 +976,8 @@ def read_ticket_by_conversation_id(conn: sqlite3.Connection, conversation_id: st
         "SELECT tickets.*, projects.name AS project_name, "
         "projects.priority AS priority_project_priority, "
         "sprint_items.title AS priority_sprint_item_title, "
-        "sprint_items.priority AS priority_sprint_item_priority "
+        "sprint_items.priority AS priority_sprint_item_priority, "
+        f"{derivation.HAS_LIVE_BLOCKER_COLUMN} "
         "FROM tickets LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects ON projects.id = tickets.project_id "
         "JOIN ticket_conversations ON ticket_conversations.ticket_id = tickets.id "
@@ -1125,15 +1014,16 @@ def claim_ticket_for_worker_step(
     readiness_check: _WorkerStepReadinessCheck,
     now: int,
 ) -> Ticket | None:
-    """Take this Ticket out of ``empty`` for one worker step, or report it is not ready.
+    """Take the claim on this Ticket's worker step, or report it is not ready.
 
-    The status flip IS the claim: there is no claim stamp and no separate run row. The
+    The claim is the whole record: there is no claim stamp and no separate run row. The
     readiness check runs again here, inside the write transaction, where its answer is
     final — two racing callers both re-check under the same write lock and only the one
-    that finds the Ticket still at ``empty`` writes.
+    that finds the Ticket still unclaimed writes.
 
-    Returns the claimed Ticket, whose ``ticket_status`` and ``ticket_status_revision``
-    are what ``release_worker_step_claim`` must be given to give the claim back.
+    Returns the claimed Ticket, whose ``worker_step_claim`` and
+    ``worker_step_claim_revision`` are what ``release_worker_step_claim`` must be given
+    to give the claim back.
     """
     with _txn(conn):
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
@@ -1163,12 +1053,7 @@ def claim_ticket_for_worker_step(
                 "VALUES (?, ?, ?)",
                 (ticket_id, ticket.stage, now),
             )
-        _write_ticket_status(
-            conn,
-            ticket_id,
-            machine.worker_step_departure_status(ownership_mode),
-            now,
-        )
+        _write_worker_step_claim(conn, ticket_id, WorkerStepClaim.out, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1195,9 +1080,9 @@ def clear_ticket_error_for_restart(
     """Clear an error only through the explicit restart path."""
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
-        if ticket.ticket_status is not TicketStatus.errored:
+        if ticket.worker_step_claim is not WorkerStepClaim.errored:
             return ticket
-        _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
+        _write_worker_step_claim(conn, ticket_id, WorkerStepClaim.none, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1205,27 +1090,25 @@ def release_worker_step_claim(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    expected_status: TicketStatus,
-    expected_status_revision: int,
+    expected_claim: WorkerStepClaim,
+    expected_claim_revision: int,
     now: int,
 ) -> bool:
     """Give a worker-step claim back, but only if the Ticket has not moved on since.
 
-    Both the departure status and its monotonic revision must still match. A later
-    transition can return to the same status within the same second; its revision
+    Both the claim taken and its monotonic revision must still match. A later
+    transition can return to the same claim within the same second; its revision
     still differs, so an old release cannot erase the fresh claim.
 
-    Reports whether the release actually fired. The flip goes back through the one status
-    write door, so a Ticket that has since acquired a live blocker lands on ``blocked``
-    rather than ``empty``, exactly as any other return to rest does.
+    Reports whether the release actually fired.
     """
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
-        if ticket.ticket_status is not expected_status:
+        if ticket.worker_step_claim is not expected_claim:
             return False
-        if ticket.ticket_status_revision != expected_status_revision:
+        if ticket.worker_step_claim_revision != expected_claim_revision:
             return False
-        _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
+        _write_worker_step_claim(conn, ticket_id, WorkerStepClaim.none, now)
         return True
 
 
@@ -1237,7 +1120,7 @@ def mark_ticket_errored(
 ) -> Ticket:
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
-        _write_ticket_status(conn, ticket_id, TicketStatus.errored, now)
+        _write_worker_step_claim(conn, ticket_id, WorkerStepClaim.errored, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1274,24 +1157,8 @@ def file_current_proposal(
             worker_type_definition=worker_type_definition,
         )
         _apply_decision(conn, ticket, decision, now)
-        if decision.pending_proposal is not None:
-            _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
-        else:
-            updated = _load_ticket_for_write(conn, ticket_id)
-            if decision.stage != ticket.stage:
-                _write_entered_stage_ticket_status(
-                    conn,
-                    updated,
-                    worker_type_definition=worker_type_definition,
-                    now=now,
-                )
-            else:
-                _write_resting_ticket_status(
-                    conn,
-                    updated,
-                    worker_type_definition=worker_type_definition,
-                    now=now,
-                )
+        # Filing is the end of the worker's step, whether the answer parked or settled.
+        _give_back_worker_step_claim(conn, _load_ticket_for_write(conn, ticket_id), now=now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1322,20 +1189,7 @@ def accept_proposal(
             worker_type_definition=worker_type_definition,
         )
         updated = _apply_decision(conn, ticket, decision, now)
-        if decision.stage != ticket.stage:
-            _write_entered_stage_ticket_status(
-                conn,
-                updated,
-                worker_type_definition=worker_type_definition,
-                now=now,
-            )
-        else:
-            _write_resting_ticket_status(
-                conn,
-                updated,
-                worker_type_definition=worker_type_definition,
-                now=now,
-            )
+        _give_back_worker_step_claim(conn, updated, now=now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1361,12 +1215,7 @@ def complete_user_owned_gate(
         )
         updated = _apply_decision(conn, ticket, decision, now)
         if decision.stage != ticket.stage:
-            _write_entered_stage_ticket_status(
-                conn,
-                updated,
-                worker_type_definition=worker_type_definition,
-                now=now,
-            )
+            _give_back_worker_step_claim(conn, updated, now=now)
             return _load_ticket_for_write(conn, ticket_id)
         return updated
 
@@ -1444,12 +1293,7 @@ def reject_proposal(
             "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
             (ticket_id, ticket.stage),
         )
-        _write_resting_ticket_status(
-            conn,
-            updated,
-            worker_type_definition=worker_type_definition,
-            now=now,
-        )
+        _give_back_worker_step_claim(conn, updated, now=now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1462,12 +1306,7 @@ def drop_ticket(
         )
         decision = resolution.decide_drop(ticket, principal)
         updated = _apply_decision(conn, ticket, decision, now)
-        _write_resting_ticket_status(
-            conn,
-            updated,
-            worker_type_definition=worker_type_definition,
-            now=now,
-        )
+        _give_back_worker_step_claim(conn, updated, now=now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1514,7 +1353,7 @@ def delete_ticket(
                 "ticket cannot be deleted while it holds another Ticket ceiling",
                 {"ticket_id": ticket_id, "held_ticket_id": str(held_elsewhere["id"])},
             )
-        if not even_while_running and ticket.ticket_status is TicketStatus.agent:
+        if not even_while_running and ticket.worker_step_claim is WorkerStepClaim.out:
             raise PlannerError(
                 ErrorCode.already_running,
                 "ticket activity is still running",
@@ -1558,9 +1397,6 @@ def delete_ticket(
                 "WHERE blocking_ticket_id = ? AND blocked_ticket_id = ?",
                 (str(row["blocking_ticket_id"]), str(row["blocked_ticket_id"])),
             )
-        for row in ticket_block_rows:
-            if str(row["blocking_ticket_id"]) == ticket_id:
-                settle_blocked_standin_for_ticket(conn, str(row["blocked_ticket_id"]), now)
 
         conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
         return TicketDeletion(
@@ -1695,22 +1531,8 @@ def edit_ticket(
             f"UPDATE tickets SET {assignments}, updated_at = ? WHERE id = ?",
             (*params, now, ticket_id),
         )
-        updated = _load_ticket_for_write(conn, ticket_id)
-        # A new ceiling can free a resting Ticket to take its next step, exactly as the
-        # separate ceiling operation used to.
-        if "ceiling" in edit and ticket.ticket_status in {
-            TicketStatus.empty,
-            TicketStatus.blocked,
-        }:
-            _write_resting_ticket_status(
-                conn,
-                updated,
-                worker_type_definition=worker_type_definition,
-                now=now,
-            )
         # Who holds the ceiling decides whether the user is waiting on this Ticket, so a
-        # new holder re-derives its attention. The resting rewrite above does it only when
-        # the status really moves, which a ceiling change usually does not.
+        # new holder re-derives its attention.
         if "ceiling" in edit:
             capture_ticket_attention(conn, ticket_id, now)
         return _load_ticket_for_write(conn, ticket_id)
