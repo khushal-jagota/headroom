@@ -290,6 +290,19 @@ class ConversationStore:
             self._read_events_after_sync, conversation_id, after_sequence
         )
 
+    async def read_latest_events(
+        self, conversation_id: str, *, before_sequence: int | None, limit: int
+    ) -> tuple[StoredConversationEvent, ...]:
+        """The last rows of this conversation's record, in order, ending before a position.
+
+        The backward half of ``read_events_after``. A reader who arrives at a long
+        conversation wants its end, and then the page before that, which is what
+        ``before_sequence`` walks back through.
+        """
+        return await asyncio.to_thread(
+            self._read_latest_events_sync, conversation_id, before_sequence, limit
+        )
+
     async def read_event(
         self, conversation_id: str, sequence: int
     ) -> StoredConversationEvent | None:
@@ -698,6 +711,28 @@ class ConversationStore:
                 "FROM conversation_events WHERE conversation_id = ? AND sequence > ? "
                 "ORDER BY sequence",
                 (conversation_id, after_sequence),
+            ).fetchall()
+        finally:
+            conn.close()
+        return tuple(_stored_event(row) for row in rows)
+
+    def _read_latest_events_sync(
+        self, conversation_id: str, before_sequence: int | None, limit: int
+    ) -> tuple[StoredConversationEvent, ...]:
+        conn = self._connect()
+        parameters: list[object] = [conversation_id]
+        before_clause = ""
+        if before_sequence is not None:
+            before_clause = " AND sequence < ?"
+            parameters.append(before_sequence)
+        parameters.append(limit)
+        try:
+            rows = conn.execute(
+                "SELECT * FROM (SELECT conversation_id, sequence, kind, payload, created_at "
+                "FROM conversation_events WHERE conversation_id = ?"
+                + before_clause
+                + " ORDER BY sequence DESC LIMIT ?) ORDER BY sequence",
+                tuple(parameters),
             ).fetchall()
         finally:
             conn.close()

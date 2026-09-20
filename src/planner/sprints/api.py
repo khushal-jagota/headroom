@@ -31,7 +31,7 @@ from planner.message_delivery import service as message_delivery_service
 from planner.projects import data as projects_data
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
-from planner.sprints import commitments, supervisor_service
+from planner.sprints import commitments
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
 from planner.sprints import views as sprints_views
@@ -226,44 +226,6 @@ async def get_item_workspace(
     )
     result["artifacts"] = sprint_item_files.list_files(conn, ctx.principal, item_id, cfg.db_path)
     return result
-
-
-@router.get("/items/{item_id}/supervisor/tickets/{ticket_id}/context")
-async def get_supervisor_ticket_context(
-    item_id: str,
-    ticket_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    triggering_message_sequence: int | None = None,
-) -> JsonDict:
-    return supervisor_service.ticket_context(
-        conn,
-        ctx,
-        item_id,
-        ticket_id,
-        now=clk.now_unix(),
-        triggering_message_sequence=triggering_message_sequence,
-    )
-
-
-@router.get("/items/{item_id}/supervisor/tickets/{ticket_id}/history")
-async def get_supervisor_ticket_history(
-    item_id: str,
-    ticket_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    limit: int = 30,
-    before_sequence: int | None = None,
-) -> JsonDict:
-    return supervisor_service.conversation_history(
-        conn,
-        ctx,
-        item_id,
-        ticket_id,
-        limit=limit,
-        before_sequence=before_sequence,
-    )
 
 
 @router.get("/items/{item_id}/conversation/start-values")

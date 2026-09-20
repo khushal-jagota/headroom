@@ -2052,6 +2052,24 @@ def sprint_item_supervisor_context(item_id: str, as_json: bool) -> None:
     http.emit(data, as_json, f"{item_id} {len(data['tickets'])} current Tickets")
 
 
+def _triggering_worker_message(
+    conversation_id: str, sequence: int, as_json: bool
+) -> dict[str, Any] | None:
+    """The one Worker message a wake-up named, read where the conversation is read."""
+    if not conversation_id:
+        return None
+    page = http.send(
+        "GET",
+        f"/api/conversation/conversations/{conversation_id}/events",
+        as_json=as_json,
+        params={"after": sequence - 1, "limit": 1},
+    )
+    events = page["events"]
+    if not events or events[0]["sequence"] != sequence or events[0]["kind"] != "agent_message":
+        return None
+    return dict(events[0])
+
+
 @sprint_item_supervisor.command("ticket-context")
 @click.argument("item_id")
 @click.argument("ticket_id")
@@ -2063,12 +2081,24 @@ def sprint_item_supervisor_ticket_context(
     triggering_message_sequence: int | None,
     as_json: bool,
 ) -> None:
-    data = http.send(
+    ticket = http.send(
         "GET",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/context",
+        "/api/tickets",
         as_json=as_json,
-        params=_drop_none({"triggering_message_sequence": triggering_message_sequence}),
+        params={"detail": "full", "id": ticket_id},
     )
+    triggering = None
+    if triggering_message_sequence is not None:
+        triggering = _triggering_worker_message(
+            str(ticket["conversation_id"] or ""), triggering_message_sequence, as_json
+        )
+    data = {
+        "sprint_item_id": ticket["sprint_item_id"],
+        "ticket": ticket,
+        "day_ids": ticket["day_ids"],
+        "conversation_id": ticket["conversation_id"],
+        "triggering_worker_message": triggering,
+    }
     http.emit(data, as_json, f"{ticket_id} current Worker context")
 
 
@@ -2085,12 +2115,28 @@ def sprint_item_supervisor_history(
     before_sequence: int | None,
     as_json: bool,
 ) -> None:
-    data = http.send(
+    ticket = http.send(
         "GET",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/history",
+        "/api/tickets",
         as_json=as_json,
-        params=_drop_none({"limit": limit, "before_sequence": before_sequence}),
+        params={"detail": "full", "id": ticket_id},
     )
+    conversation_id = ticket["conversation_id"]
+    if not conversation_id:
+        http.fail_validation("the Ticket has no current Worker conversation", as_json)
+    page = http.send(
+        "GET",
+        f"/api/conversation/conversations/{conversation_id}/events",
+        as_json=as_json,
+        params=_drop_none({"limit": limit, "before": before_sequence}),
+    )
+    data = {
+        "sprint_item_id": ticket["sprint_item_id"],
+        "ticket_id": ticket_id,
+        "conversation_id": conversation_id,
+        "events": page["events"],
+        "has_more": page["has_more"],
+    }
     http.emit(data, as_json, f"{ticket_id} {len(data['events'])} history events")
 
 

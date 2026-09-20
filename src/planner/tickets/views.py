@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict
 
 from planner.core import ticket_blocks
@@ -298,8 +300,40 @@ def list_ticket_summaries(
     )
 
 
+@contextmanager
+def _coherent_read(conn: sqlite3.Connection) -> Iterator[None]:
+    """Hold one read result together against writes landing under it.
+
+    A deferred ``BEGIN`` fixes one WAL snapshot and does not reserve the writer.
+    ``ROLLBACK`` closes an owned read on every exit without emitting the process change
+    signal. An existing transaction owner keeps ownership and supplies its own boundary.
+
+    This detail is assembled from several queries, so without it a reader could see a
+    Ticket's row from before a move and its Day membership from after. The Outcome-scoped
+    read that used to hold this snapshot is gone; the property belongs to the ordinary
+    read that replaced it, not to the address it was reached through.
+    """
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        conn.execute("BEGIN")
+    try:
+        yield
+    finally:
+        if owns_transaction and conn.in_transaction:
+            conn.execute("ROLLBACK")
+
+
 def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDict:
-    ticket = tickets_data.read_ticket(conn, ticket_id)
+    with _coherent_read(conn):
+        # This read is also what fixes the snapshot. A deferred BEGIN reserves nothing
+        # until a statement actually reads, so the Ticket's own row has to be read here
+        # rather than further in, or the rows around it could come from after a write.
+        ticket = tickets_data.read_ticket(conn, ticket_id)
+        return _ticket_detail_rows(conn, ticket, now)
+
+
+def _ticket_detail_rows(conn: sqlite3.Connection, ticket: Ticket, now: int) -> JsonDict:
+    ticket_id = ticket.id
     detail = ticket_json(ticket, now)
     day_rows = conn.execute(
         "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id ASC",

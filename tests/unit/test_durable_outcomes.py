@@ -15,7 +15,6 @@ from planner.core.clock import TestClock as Clock
 from planner.core.db import connect
 from planner.core.errors import PlannerError
 from planner.sprints import commitments, data, views
-from planner.sprints.supervisor_service import require_current_child
 from planner.tickets import data as tickets
 from planner.tickets.contracts import Ticket
 
@@ -214,12 +213,12 @@ def test_carry_rejects_entire_stale_selection_and_preserves_existing_authority(
         principal=OWNER_PRINCIPAL,
         now=3,
     )
-    assert require_current_child(tmp_db, supervisor, outcome.id, valid.id).id == valid.id
+    require_above(tmp_db, supervisor.principal, authority.ticket(valid.id))
     tickets.classify_ticket(
         tmp_db, valid.id, sprint_item_id=other.id, principal=OWNER_PRINCIPAL, now=4
     )
     with pytest.raises(PlannerError):
-        require_current_child(tmp_db, supervisor, outcome.id, valid.id)
+        require_above(tmp_db, supervisor.principal, authority.ticket(valid.id))
 
 
 def test_creation_validates_explicit_placement_and_blockers_without_an_outcome(

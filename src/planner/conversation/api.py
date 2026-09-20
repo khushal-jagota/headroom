@@ -107,6 +107,7 @@ from planner.conversation.voice_transcription import (
 )
 from planner.core.authctx import RequestContext, request_context, require_owner
 from planner.core.db import connect
+from planner.core.errors import ErrorCode, PlannerError
 from planner.core.response_compression import answers_with_an_event_stream
 from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
 
@@ -463,14 +464,45 @@ async def advance_owner_read(
     return {"owner_read_through_sequence": record.owner_read_through_sequence}
 
 
+# One page of a conversation's record is capped here, so a reader walking backwards
+# through a long one asks a bounded question every time.
+MAXIMUM_EVENT_PAGE = 100
+
+
 @router.get("/conversations/{conversation_id}/events")
 async def read_conversation_events(
-    conversation_id: str, runtime: Runtime, after: int = 0
+    conversation_id: str,
+    runtime: Runtime,
+    after: int = 0,
+    before: int | None = None,
+    limit: int | None = None,
 ) -> dict[str, Any]:
+    """This conversation's record, forwards from a position or backwards from its end.
+
+    ``after`` reads on from where a caller got to. ``limit``, with an optional ``before``,
+    reads the other direction: the last events, then the page before those. A reader who
+    is catching up wants the first; a reader who has just arrived wants the second.
+    """
+    if limit is not None and (limit < 1 or limit > MAXIMUM_EVENT_PAGE):
+        raise PlannerError(
+            ErrorCode.validation,
+            f"limit must be between 1 and {MAXIMUM_EVENT_PAGE}",
+            {"limit": limit},
+        )
+    if before is not None and limit is None:
+        raise PlannerError(
+            ErrorCode.validation, "before needs a limit: it reads backwards", {"before": before}
+        )
     record = await _require_conversation(runtime, conversation_id)
-    events = await runtime.store.read_events_after(conversation_id, after)
+    if limit is None:
+        events = await runtime.store.read_events_after(conversation_id, after)
+    else:
+        events = await runtime.store.read_latest_events(
+            conversation_id, before_sequence=before, limit=limit
+        )
     return {
-        "events": [_public_event_json(event, backend_key=record.backend_key) for event in events]
+        "events": [_public_event_json(event, backend_key=record.backend_key) for event in events],
+        "has_more": bool(events) and events[0].sequence > 1,
     }
 
 

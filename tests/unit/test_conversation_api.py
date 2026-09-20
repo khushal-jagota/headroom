@@ -2454,7 +2454,7 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
         assert view.json()["is_running"] is False
 
         events = client.get("/api/conversation/conversations/wired/events")
-        assert events.json() == {"events": []}
+        assert events.json() == {"events": [], "has_more": False}
 
         # The worker path and the browser's conversation are the same system. A worker's
         # prompt goes into a real conversation, not a stand-in beside it.
@@ -2716,7 +2716,7 @@ def test_the_raw_message_envelope_has_an_exact_boundary_and_counts_all_images(
             assert rejected.json()["detail"] == "a conversation message's images are too large"
             assert (
                 await client.get("/api/conversation/conversations/aggregate/events")
-            ).json() == {"events": []}
+            ).json() == {"events": [], "has_more": False}
             aggregate_files = harness.db_path.parent / "files" / "conversations" / "aggregate"
             assert not aggregate_files.exists()
 

@@ -28,7 +28,6 @@ from planner.core.server import create_app
 from planner.runtime import conversation_start
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
-from planner.sprints import supervisor_service
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback
 from planner.tickets import views as tickets_views
@@ -181,7 +180,7 @@ def test_supervisor_item_routes_refuse_a_cross_item_actor(tmp_path: Path) -> Non
     assert cross_write.json()["error"]["code"] == "agent_forbidden"
 
 
-def test_supervisor_context_and_history_use_only_the_current_child_conversation(
+def test_a_ticket_and_its_conversation_read_at_their_own_addresses(
     tmp_path: Path,
 ) -> None:
     app, db_path = _app(tmp_path)
@@ -230,16 +229,19 @@ def test_supervisor_context_and_history_use_only_the_current_child_conversation(
             )
             conn.commit()
         context = client.get(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/context",
-            params={"triggering_message_sequence": 2},
+            "/api/tickets",
+            params={"detail": "full", "id": ticket["id"]},
             headers=_supervisor_headers(str(item["id"])),
         )
-        context_without_trigger = client.get(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/context",
+        # The triggering Worker message is one event of the Ticket's conversation, so it
+        # is read where the conversation is read rather than through a second door.
+        triggering = client.get(
+            f"/api/conversation/conversations/{conversation_id}/events",
+            params={"after": 1, "limit": 1},
             headers=_supervisor_headers(str(item["id"])),
         )
         history = client.get(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/history",
+            f"/api/conversation/conversations/{conversation_id}/events",
             params={"limit": 1},
             headers=_supervisor_headers(str(item["id"])),
         )
@@ -247,30 +249,30 @@ def test_supervisor_context_and_history_use_only_the_current_child_conversation(
         unsubscribe = change_signal.subscribe(lambda: signals.append(None))
         try:
             quiet_context = client.get(
-                f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/context",
+                "/api/tickets",
+                params={"detail": "full", "id": ticket["id"]},
                 headers=_supervisor_headers(str(item["id"])),
             )
         finally:
             unsubscribe()
 
     assert context.status_code == 200, context.text
-    assert context.json()["triggering_worker_message"]["payload"]["text"] == ("Exact Worker update")
     assert context.json()["conversation_id"] == conversation_id
-    assert context_without_trigger.json()["triggering_worker_message"] is None
+    assert triggering.json()["events"][0]["payload"]["text"] == "Exact Worker update"
     assert quiet_context.status_code == 200, quiet_context.text
     assert signals == []
     assert history.json()["events"][0]["sequence"] == 2
     assert history.json()["has_more"] is True
 
 
-def test_ticket_context_serializes_a_concurrent_child_move(
+def test_reading_one_ticket_serializes_a_concurrent_child_move(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app, db_path = _app(tmp_path)
     move_attempted = threading.Event()
     move_finished = threading.Event()
     move_thread: threading.Thread | None = None
-    original_ticket_detail = tickets_views.ticket_detail
+    original_ticket_detail = tickets_views._ticket_detail_rows
 
     with TestClient(app) as client:
         first = _create_item(client, "First")
@@ -295,17 +297,20 @@ def test_ticket_context_serializes_a_concurrent_child_move(
                 moving.commit()
             move_finished.set()
 
-        def ticket_detail_during_move(conn: Any, ticket_id: str, now: int) -> dict[str, Any]:
+        def ticket_detail_during_move(conn: Any, read: Any, now: int) -> dict[str, Any]:
             nonlocal move_thread
             move_thread = threading.Thread(target=move_child)
             move_thread.start()
             assert move_attempted.wait(1)
             assert move_finished.wait(1)
-            return original_ticket_detail(conn, ticket_id, now)
+            return original_ticket_detail(conn, read, now)
 
-        monkeypatch.setattr(tickets_views, "ticket_detail", ticket_detail_during_move)
+        # Patched inside the snapshot, as the Outcome-scoped read used to be: the move
+        # lands after BEGIN, so the read must still answer from before it.
+        monkeypatch.setattr(tickets_views, "_ticket_detail_rows", ticket_detail_during_move)
         context = client.get(
-            f"/api/items/{first['id']}/supervisor/tickets/{ticket['id']}/context",
+            "/api/tickets",
+            params={"detail": "full", "id": ticket["id"]},
             headers=_supervisor_headers(str(first["id"])),
         )
 
@@ -313,90 +318,9 @@ def test_ticket_context_serializes_a_concurrent_child_move(
     move_thread.join(timeout=2)
     assert move_finished.is_set()
     assert context.status_code == 200, context.text
-    assert context.json()["ticket"]["sprint_item_id"] == first["id"]
+    assert context.json()["sprint_item_id"] == first["id"]
     with connect(str(db_path)) as conn:
         assert tickets_data.read_ticket(conn, str(ticket["id"])).sprint_item_id == second["id"]
-
-
-def test_history_serializes_a_concurrent_conversation_reset(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    app, db_path = _app(tmp_path)
-    conversation_id = "conv-history-before-reset"
-    replacement_id = "conv-history-after-reset"
-    reset_attempted = threading.Event()
-    reset_finished = threading.Event()
-    reset_thread: threading.Thread | None = None
-    original_require_current_child = supervisor_service.require_current_child
-
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket = client.post(
-            "/api/tickets",
-            json={
-                "worker_type": "coding",
-                "title": "Reset child",
-                "kickoff_note": "Start.",
-                "sprint_item_id": item["id"],
-            },
-        ).json()
-        with connect(str(db_path)) as conn:
-            conn.executemany(
-                "INSERT INTO conversations(conversation_id,backend_key,model,"
-                "workspace_folder,access,latest_sequence,created_at) "
-                "VALUES (?, 'codex', 'test', '/tmp', 'full', ?, 1)",
-                ((conversation_id, 1), (replacement_id, 0)),
-            )
-            conn.execute(
-                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
-                (conversation_id, ticket["id"]),
-            )
-            conn.execute(
-                "INSERT INTO conversation_events "
-                "(conversation_id,sequence,kind,payload,created_at) VALUES (?,?,?,?,?)",
-                (
-                    conversation_id,
-                    1,
-                    "agent_message",
-                    json.dumps({"text": "History before reset"}),
-                    1,
-                ),
-            )
-            conn.commit()
-
-        def reset_conversation() -> None:
-            with connect(str(db_path)) as resetting:
-                reset_attempted.set()
-                resetting.execute(
-                    "UPDATE tickets SET conversation_id = ? WHERE id = ?",
-                    (replacement_id, ticket["id"]),
-                )
-                resetting.commit()
-            reset_finished.set()
-
-        def require_child_during_reset(*args: Any, **kwargs: Any) -> Any:
-            nonlocal reset_thread
-            ticket_result = original_require_current_child(*args, **kwargs)
-            reset_thread = threading.Thread(target=reset_conversation)
-            reset_thread.start()
-            assert reset_attempted.wait(1)
-            assert reset_finished.wait(1)
-            return ticket_result
-
-        monkeypatch.setattr(supervisor_service, "require_current_child", require_child_during_reset)
-        history = client.get(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/history",
-            headers=_supervisor_headers(str(item["id"])),
-        )
-
-    assert reset_thread is not None
-    reset_thread.join(timeout=2)
-    assert reset_finished.is_set()
-    assert history.status_code == 200, history.text
-    assert history.json()["conversation_id"] == conversation_id
-    assert history.json()["events"][0]["payload"]["text"] == "History before reset"
-    with connect(str(db_path)) as conn:
-        assert tickets_data.read_ticket(conn, str(ticket["id"])).conversation_id == (replacement_id)
 
 
 def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(

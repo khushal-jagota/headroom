@@ -1,46 +1,44 @@
-operation                                         owner   chief   outcome_parent  outcome_stranger  ticket_self  ticket_stranger  ticket_planning_day
------------------------------------------------------------------------------------------------------------------------------------------------------
-GET    /tickets (detail=full)                     allow   allow   allow           allow             allow        allow            allow              
-PATCH  /tickets/{t} priority                      allow   allow   allow           refuse            allow        refuse           refuse             
-PATCH  /tickets/{t} title                         allow   allow   allow           refuse            refuse       refuse           refuse             
-PATCH  /tickets/{t} sprint_item_id                allow   allow   refuse          refuse            refuse       refuse           refuse             
-PATCH  /tickets/{t} project_id                    allow   allow   allow           refuse            refuse       refuse           refuse             
-PATCH  /tickets/{t} ceiling                       allow   allow   allow           refuse            refuse       refuse           refuse             
-PATCH  /tickets/{t} ceiling_holder                allow   allow   allow           refuse            refuse       refuse           refuse             
-PATCH  /tickets/{t} recap                         allow   allow   allow           refuse            allow        refuse           refuse             
-DELETE /tickets/{t}                               allow   allow   allow           refuse            refuse       refuse           refuse             
-POST   /tickets/{t}/propose                       refuse  refuse  refuse          refuse            allow        refuse           refuse             
-POST   /tickets/{t}/request-help                  refuse  refuse  refuse          refuse            allow        refuse           refuse             
-PUT    /tickets/{t}/employee-configuration        allow   allow   allow           refuse            refuse       refuse           refuse             
-POST   /tickets/{t}/conversation/send             allow   allow   allow           refuse            refuse       refuse           refuse             
-POST   /tickets/{t}/conversation/reset            allow   allow   allow           refuse            refuse       refuse           refuse             
-GET    /tickets/{t}/worker-self                   allow   allow   allow           allow             allow        allow            allow              
-PATCH  /tickets/{t} field_values                  allow   allow   allow           refuse            refuse       refuse           refuse             
-POST   /tickets/{t}/complete/{f}                  allow   allow   allow           refuse            refuse       refuse           refuse             
-POST   /tickets/{t}/accept/{f}                    allow   allow   allow           refuse            refuse       refuse           refuse             
-POST   /tickets/{t}/reject                        allow   allow   allow           refuse            refuse       refuse           refuse             
-GET    /items/{i}/supervisor/tickets/{t}/context  allow   allow   allow           refuse            refuse       refuse           refuse             
-GET    /items/{i}/supervisor/tickets/{t}/history  allow   allow   allow           refuse            refuse       refuse           refuse             
-POST   /tickets/{t}/restart-worker                allow   allow   allow           refuse            refuse       refuse           refuse             
-PUT    /files/sprint-items/{i}/{p}                allow   allow   allow           refuse            refuse       refuse           refuse             
-DELETE /files/sprint-items/{i}/{p}                allow   allow   allow           refuse            refuse       refuse           refuse             
-GET    /items/{i}/conversation/start-values       allow   allow   allow           refuse            refuse       refuse           refuse             
-POST   /items/{i}/conversation/reset              allow   allow   refuse          refuse            refuse       refuse           refuse             
-GET    /items/{i}/workspace                       allow   allow   allow           refuse            refuse       refuse           refuse             
-PATCH  /items/{i}                                 allow   allow   allow           refuse            refuse       refuse           refuse             
-DELETE /items/{i}                                 allow   allow   refuse          refuse            refuse       refuse           refuse             
-PUT    /collections/outcome_tickets               allow   allow   refuse          refuse            allow        refuse           refuse             
-PUT    /collections/day_tickets                   allow   allow   allow           refuse            allow        refuse           refuse             
-PUT    /collections/blockers                      allow   allow   allow           refuse            allow        refuse           refuse             
-PUT    /collections/sprint_outcomes               allow   allow   refuse          refuse            refuse       refuse           refuse             
-PATCH  /day/{d} focus                             allow   allow   refuse          refuse            refuse       refuse           allow              
-PATCH  /day/{d} midday_reconciliation             allow   allow   refuse          refuse            refuse       refuse           refuse             
-PATCH  /day/{d} notes                             allow   allow   refuse          refuse            refuse       refuse           refuse             
-POST   /sprints                                   allow   allow   refuse          refuse            refuse       refuse           refuse             
-PATCH  /sprints/{s}                               allow   allow   refuse          refuse            refuse       refuse           refuse             
-POST   /projects                                  allow   allow   refuse          refuse            refuse       refuse           refuse             
-PATCH  /projects/{p}                              allow   allow   refuse          refuse            refuse       refuse           refuse             
-PUT    /workers/{w}/launch-defaults               allow   allow   refuse          refuse            refuse       refuse           refuse             
-PATCH  /skills/{n}                                allow   allow   refuse          refuse            refuse       refuse           refuse             
-POST   /feedback                                  allow   allow   refuse          refuse            refuse       refuse           refuse             
-POST   /messages/send                             allow   allow   allow           refuse            refuse       refuse           refuse             
+operation                                    owner   chief   outcome_parent  outcome_stranger  ticket_self  ticket_stranger  ticket_planning_day
+------------------------------------------------------------------------------------------------------------------------------------------------
+GET    /tickets (detail=full)                allow   allow   allow           allow             allow        allow            allow              
+PATCH  /tickets/{t} priority                 allow   allow   allow           refuse            allow        refuse           refuse             
+PATCH  /tickets/{t} title                    allow   allow   allow           refuse            refuse       refuse           refuse             
+PATCH  /tickets/{t} sprint_item_id           allow   allow   refuse          refuse            refuse       refuse           refuse             
+PATCH  /tickets/{t} project_id               allow   allow   allow           refuse            refuse       refuse           refuse             
+PATCH  /tickets/{t} ceiling                  allow   allow   allow           refuse            refuse       refuse           refuse             
+PATCH  /tickets/{t} ceiling_holder           allow   allow   allow           refuse            refuse       refuse           refuse             
+PATCH  /tickets/{t} recap                    allow   allow   allow           refuse            allow        refuse           refuse             
+DELETE /tickets/{t}                          allow   allow   allow           refuse            refuse       refuse           refuse             
+POST   /tickets/{t}/propose                  refuse  refuse  refuse          refuse            allow        refuse           refuse             
+POST   /tickets/{t}/request-help             refuse  refuse  refuse          refuse            allow        refuse           refuse             
+PUT    /tickets/{t}/employee-configuration   allow   allow   allow           refuse            refuse       refuse           refuse             
+POST   /tickets/{t}/conversation/send        allow   allow   allow           refuse            refuse       refuse           refuse             
+POST   /tickets/{t}/conversation/reset       allow   allow   allow           refuse            refuse       refuse           refuse             
+GET    /tickets/{t}/worker-self              allow   allow   allow           allow             allow        allow            allow              
+PATCH  /tickets/{t} field_values             allow   allow   allow           refuse            refuse       refuse           refuse             
+POST   /tickets/{t}/complete/{f}             allow   allow   allow           refuse            refuse       refuse           refuse             
+POST   /tickets/{t}/accept/{f}               allow   allow   allow           refuse            refuse       refuse           refuse             
+POST   /tickets/{t}/reject                   allow   allow   allow           refuse            refuse       refuse           refuse             
+POST   /tickets/{t}/restart-worker           allow   allow   allow           refuse            refuse       refuse           refuse             
+PUT    /files/sprint-items/{i}/{p}           allow   allow   allow           refuse            refuse       refuse           refuse             
+DELETE /files/sprint-items/{i}/{p}           allow   allow   allow           refuse            refuse       refuse           refuse             
+GET    /items/{i}/conversation/start-values  allow   allow   allow           refuse            refuse       refuse           refuse             
+POST   /items/{i}/conversation/reset         allow   allow   refuse          refuse            refuse       refuse           refuse             
+GET    /items/{i}/workspace                  allow   allow   allow           refuse            refuse       refuse           refuse             
+PATCH  /items/{i}                            allow   allow   allow           refuse            refuse       refuse           refuse             
+DELETE /items/{i}                            allow   allow   refuse          refuse            refuse       refuse           refuse             
+PUT    /collections/outcome_tickets          allow   allow   refuse          refuse            allow        refuse           refuse             
+PUT    /collections/day_tickets              allow   allow   allow           refuse            allow        refuse           refuse             
+PUT    /collections/blockers                 allow   allow   allow           refuse            allow        refuse           refuse             
+PUT    /collections/sprint_outcomes          allow   allow   refuse          refuse            refuse       refuse           refuse             
+PATCH  /day/{d} focus                        allow   allow   refuse          refuse            refuse       refuse           allow              
+PATCH  /day/{d} midday_reconciliation        allow   allow   refuse          refuse            refuse       refuse           refuse             
+PATCH  /day/{d} notes                        allow   allow   refuse          refuse            refuse       refuse           refuse             
+POST   /sprints                              allow   allow   refuse          refuse            refuse       refuse           refuse             
+PATCH  /sprints/{s}                          allow   allow   refuse          refuse            refuse       refuse           refuse             
+POST   /projects                             allow   allow   refuse          refuse            refuse       refuse           refuse             
+PATCH  /projects/{p}                         allow   allow   refuse          refuse            refuse       refuse           refuse             
+PUT    /workers/{w}/launch-defaults          allow   allow   refuse          refuse            refuse       refuse           refuse             
+PATCH  /skills/{n}                           allow   allow   refuse          refuse            refuse       refuse           refuse             
+POST   /feedback                             allow   allow   refuse          refuse            refuse       refuse           refuse             
+POST   /messages/send                        allow   allow   allow           refuse            refuse       refuse           refuse             

@@ -294,15 +294,6 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
         "POST   /tickets/{t}/reject",
         lambda s: Call("POST", f"/api/tickets/{s.ticket_a}/reject", {"message": "Revise this."}),
     ),
-    # --- the same Ticket, through the supervisor address
-    (
-        "GET    /items/{i}/supervisor/tickets/{t}/context",
-        lambda s: Call("GET", f"/api/items/{s.item_a}/supervisor/tickets/{s.ticket_a}/context"),
-    ),
-    (
-        "GET    /items/{i}/supervisor/tickets/{t}/history",
-        lambda s: Call("GET", f"/api/items/{s.item_a}/supervisor/tickets/{s.ticket_a}/history"),
-    ),
     (
         "POST   /tickets/{t}/restart-worker",
         lambda s: Call("POST", f"/api/tickets/{s.ticket_a}/restart-worker", {}),
