@@ -6,7 +6,8 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from planner.core.authctx import require_direct_write, require_feedback_use
+from planner.core.authctx import require_feedback_use
+from planner.core.authority import owner_only, require_above
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.feedback import actions, views
@@ -52,7 +53,7 @@ async def feedback_count(conn: DbConn) -> JsonDict:
 
 @router.post("/feedback")
 async def create_feedback(raw: dict[str, Any], conn: DbConn, clk: Clk, ctx: Ctx) -> JsonDict:
-    require_direct_write(ctx)
+    require_above(conn, ctx.principal, owner_only("feedback"), "recording feedback")
     _reject_unknown(raw, frozenset({"text", "page_address", "page_label"}))
     note = actions.create_feedback(
         conn,
@@ -66,13 +67,13 @@ async def create_feedback(raw: dict[str, Any], conn: DbConn, clk: Clk, ctx: Ctx)
 
 @router.post("/feedback/{feedback_id}/dismiss")
 async def dismiss_feedback(feedback_id: str, conn: DbConn, clk: Clk, ctx: Ctx) -> JsonDict:
-    require_direct_write(ctx)
+    require_above(conn, ctx.principal, owner_only("feedback"), "dismissing feedback")
     return views.note_json(actions.dismiss_feedback(conn, feedback_id, now=clk.now_unix()))
 
 
 @router.post("/feedback/{feedback_id}/reopen")
 async def reopen_feedback(feedback_id: str, conn: DbConn, clk: Clk, ctx: Ctx) -> JsonDict:
-    require_direct_write(ctx)
+    require_above(conn, ctx.principal, owner_only("feedback"), "reopening feedback")
     return views.note_json(actions.reopen_feedback(conn, feedback_id, now=clk.now_unix()))
 
 
