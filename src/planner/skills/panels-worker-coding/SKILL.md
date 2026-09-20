@@ -15,7 +15,6 @@ Each stage is named for what the ticket needs next; your step is to give it that
 - **needs\_implementation** — needs its **implementation**. Implementation follows the plan, performs the work, and proposes a concise, reviewable package with concrete evidence.
 - **needs\_closeout** — needs its **closeout**. It performs only the applicable merge, deploy, follow-up, and bookkeeping, then proposes a concise, verified report.
 - **done** — finished.
-- **dropped** — abandoned.
 
 ### How to complete ticket stages effectively
 

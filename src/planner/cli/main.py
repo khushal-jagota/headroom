@@ -1328,7 +1328,7 @@ def ticket_delete(ticket_id: str | None, yes: bool, force: bool, as_json: bool) 
     "--include-terminal",
     is_flag=True,
     default=False,
-    help="Include done and dropped Tickets.",
+    help="Include done Tickets.",
 )
 @click.option("--search", default=None, help="Case-insensitive Ticket text search.")
 @click.option("--project", default=None, help="Only show project name.")
@@ -2435,28 +2435,6 @@ def worker_request_help(
         body["recipient"] = recipient
     data = http.send("POST", f"/api/tickets/{tid}/request-help", as_json=as_json, json_body=body)
     http.emit(data, as_json, f"help message {data['fate']}")
-
-
-@worker.command("trouble")
-@click.option(
-    "--body-file",
-    default=None,
-    help="Removed: pipe the one-line trouble note on stdin instead.",
-)
-@json_option
-def worker_trouble(body_file: str | None, as_json: bool) -> None:
-    """Record trouble on the current worker's Ticket."""
-    tid = resolve_ticket_id(None, as_json)
-    refuse_worker_body_file(body_file, as_json, "pipe the trouble note on stdin instead")
-    body = read_worker_stdin_body(as_json, "trouble note")
-    data = http.send(
-        "POST",
-        f"/api/tickets/{tid}/trouble-notes",
-        as_json=as_json,
-        json_body={"body": body},
-    )
-    note = data["trouble_note"]
-    http.emit(data, as_json, f"trouble recorded on {tid} as note {note['sequence']}")
 
 
 @worker.command("recap")

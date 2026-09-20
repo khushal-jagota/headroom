@@ -118,13 +118,11 @@ describe("Sprint Item workspace presentation", () => {
     const value = workspace();
     expect(value.tickets.map(workspaceTicketIsBacklog)).toEqual([false, false, true]);
     expect(workspaceTicketIsBacklog({ ...value.tickets[2], stage: "done" })).toBe(false);
-    expect(workspaceTicketIsBacklog({ ...value.tickets[2], stage: "dropped" })).toBe(false);
   });
 
-  it("calls zero non-dropped children No Tickets", () => {
+  it("calls zero children No Tickets", () => {
     const value = workspace();
     expect(workspaceProgress({ ...value, tickets: [] })).toBe("No Tickets");
-    expect(workspaceProgress({ ...value, tickets: [{ ...value.tickets[0], stage: "dropped" }] })).toBe("No Tickets");
     expect(workspaceProgress({ ...value, tickets: [{ ...value.tickets[0], stage: "done" }] })).toBe("All 1 done");
   });
 

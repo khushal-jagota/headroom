@@ -71,7 +71,6 @@ class BoardCard(TypedDict):
     gating_field: str | None
     gating_field_label: str | None
     is_done: bool
-    is_dropped: bool
     blocked: bool
     conversation_id: str | None
     waiting_to_closeout: bool

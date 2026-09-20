@@ -22,7 +22,7 @@ Importantly, remember agents are really smart. You do not need to spell everythi
 - **needs\_drafting** — the artifacts: the new worker's `SKILL.md` and its Worker type definition written as ticket artifacts for review\..
 - **needs\_closeout** — landing it: files placed, registered, provisioned; a restart makes it live.
 
-(`needs_kickoff`, `done`, and `dropped` are the universal bookends every worker shares.)
+(`needs_kickoff` and `done` are the universal bookends every worker shares.)
 
 ### needs\_understanding — understand the worker before designing it
 
@@ -43,7 +43,7 @@ Propose a concise durable Understanding result. It should carry forward only the
 Decide the new worker's stages before touching any files. The work in understanding should make this simple. A good **stages** proposal gives:
 
 - A ordered `needs_<x>` stages, each gating a same-named `<x>` field, each with one line on what it needs.
-- An **ownership mode for every non-terminal Stage** — `worker` or `user`. User ownership includes the worker as a collaborator. Terminal `done` and `dropped` have no ownership mode.
+- An **ownership mode for every non-terminal Stage** — `worker` or `user`. User ownership includes the worker as a collaborator. Terminal `done` has no ownership mode.
 - The **alternatives you weighed**.
 - What you **included or excluded, and why** — a stage earns its place only as a real, separately-reviewable beat; if two always get approved together, they're one.
 
@@ -66,7 +66,7 @@ Recommend one explicit runtime tuple from the approved design and runtime catalo
 From the approved thinking, write the two files as artifacts:
 
 - The new worker's **`SKILL.md`** — front matter plus one guidance section per stage, mirroring this skill and `panels-worker-coding`.
-- Its **Worker type definition** — the `WorkerTypeDefinition`: Stages with an ownership mode on every non-terminal Stage, ordered fields, ceiling range, and worker profile. Novel ids are plain strings; reuse the shared `needs_kickoff`/`kickoff`, `needs_closeout`/`closeout`, `done`, `dropped`.
+- Its **Worker type definition** — the `WorkerTypeDefinition`: Stages with an ownership mode on every non-terminal Stage, ordered fields, ceiling range, and worker profile. Novel ids are plain strings; reuse the shared `needs_kickoff`/`kickoff`, `needs_closeout`/`closeout`, and `done`.
 
 Copy the approved Runtime Defaults values into the record's `profile`.
 
@@ -74,7 +74,7 @@ Copy the approved Runtime Defaults values into the record's `profile`.
 
 A worker is declared in the database, so landing one is a write, not a deployment.
 
-1. `panels worker-type save`, with the whole record on stdin — `worker_type`, `label`, `stages`, `dropped`, `fields`, `profile`, and a `skill` block holding `description` and `markdown_body`. Take the shape from `panels worker-type show coding` and change what differs. The `skill` block is how a new worker's skill comes into being: a Worker type may only name a skill that exists, and these arrive together or not at all.
+1. `panels worker-type save`, with the whole record on stdin — `worker_type`, `label`, `stages`, `fields`, `profile`, and a `skill` block holding `description` and `markdown_body`. Take the shape from `panels worker-type show coding` and change what differs. The `skill` block is how a new worker's skill comes into being: a Worker type may only name a skill that exists, and these arrive together or not at all.
 2. Read it back with `panels worker-type show <type>`.
 3. Confirm `panels worker-type list` names it, and that ordinary Ticket creation offers it. The base Worker discovers its specialist from `panels worker my-ticket`; there is no second list to update.
 4. Add `src/planner/skills/<name>/SKILL.md` to the repository, so a fresh install is seeded with this worker's skill. That is an ordinary repository change through the branch and staging route, and it changes nothing on this Panels.

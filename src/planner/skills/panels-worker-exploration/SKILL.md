@@ -21,7 +21,6 @@ The sequence is **Kickoff → Understanding → Research Plan → Research → A
 - **needs_follow_up** — propose only consequences supported by the approved answer.
 - **needs_closeout** — perform and verify exactly the approved follow-up.
 - **done** — finished.
-- **dropped** — abandoned.
 
 ### needs_kickoff — preserve the premise
 

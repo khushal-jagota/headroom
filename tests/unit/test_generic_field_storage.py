@@ -11,6 +11,7 @@ from tests.support.probe import FIELD_ALPHA as A_FIELD
 from tests.support.probe import FIELD_BETA as B_FIELD
 from tests.support.probe import NEEDS_ALPHA as A
 from tests.support.probe import NEEDS_BETA as B
+from tests.support.probe import NEEDS_LANDING as CLOSEOUT_STAGE
 from tests.support.probe import install_probe_registry, shipped_definition, uninstall_probe_registry
 
 from planner.core.clock import TestClock
@@ -136,8 +137,25 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
         next_holder=OWNER_PRINCIPAL,
     )
     assert (
-        ticket.stage == "done"
+        ticket.stage == CLOSEOUT_STAGE
         and ticket.field_values[B_FIELD] == "beta 2"
+        and ticket.pending_proposal is None
+    )
+    ticket = data.file_current_proposal(
+        tmp_db, tid, body="landed", principal=ticket_principal(tid), now=now
+    )
+    ticket = data.accept_proposal(
+        tmp_db,
+        tid,
+        field="closeout",
+        principal=OWNER_PRINCIPAL,
+        now=now,
+        next_ceiling=NO_FURTHER,
+        next_holder=OWNER_PRINCIPAL,
+    )
+    assert (
+        ticket.stage == "done"
+        and ticket.field_values["closeout"] == "landed"
         and ticket.pending_proposal is None
     )
 

@@ -67,6 +67,19 @@ def test_every_shipped_type_arrives_with_its_stages_fields_and_profile(parent: P
         conn.close()
 
 
+def test_every_frozen_definition_declares_a_closeout(parent: Path) -> None:
+    """The migration carries its own frozen copies and never calls the write guard.
+
+    So the guard cannot vouch for them. This does, and it keeps doing so if anyone
+    reaches back into the frozen list.
+    """
+    for shipped in SHIPPED_WORKER_TYPES:
+        fields = [str(field["id"]) for field in shipped["fields"]]
+        gating = [stage["gating_field"] for stage in shipped["stages"]]
+        assert "closeout" in fields, shipped["worker_type"]
+        assert gating.count("closeout") == 1, shipped["worker_type"]
+
+
 def test_a_database_with_no_overlay_takes_the_shipped_launch_defaults(parent: Path) -> None:
     conn = _open(parent)
     try:
@@ -121,7 +134,6 @@ def test_overlay_keys_that_stopped_meaning_anything_are_left_behind(parent: Path
             "worker_type",
             "label",
             "stages",
-            "dropped",
             "fields",
             "profile",
         }

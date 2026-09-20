@@ -287,7 +287,7 @@ def body_str_list(body: JsonDict, key: str) -> list[str]:
 # against that Worker type's definition (not a global enum), and a bare str is passed to
 # the engine (already str-native and definition-parameterized). This is what lets
 # a non-coding Worker type (e.g. probe stages needs_alpha/needs_beta) flow through the
-# real routes. Reserved bookends (needs_kickoff/done/dropped) are shared by every
+# real routes. Reserved bookends (needs_kickoff/done) are shared by every
 # Worker type (PLAN invariant 1); the Worker-type-specific middle Stages/fields are not.
 
 
@@ -553,12 +553,8 @@ async def list_ticket_summaries(
     included_stages = tuple(stage or ())
     registry = configured_worker_type_registry()
     terminal_stages = {
-        terminal
+        registry.require(worker_type).completed_stage()
         for worker_type in registry.registered_worker_types()
-        for terminal in (
-            registry.require(worker_type).completed_stage(),
-            registry.require(worker_type).dropped_stage.id,
-        )
     }
     requested_terminal = sorted(set(included_stages) & terminal_stages)
     if requested_terminal and not include_terminal:
@@ -1221,24 +1217,6 @@ async def complete_user_owned_gate(
         ticket_id,
         field=field,
         new_body=body["body"],
-        principal=ctx.principal,
-        now=now,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/tickets/{ticket_id}/drop")
-async def drop_ticket(
-    ticket_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    require_direct_write(ctx)
-    now = clk.now_unix()
-    ticket = tickets_data.drop_ticket(
-        conn,
-        ticket_id,
         principal=ctx.principal,
         now=now,
     )

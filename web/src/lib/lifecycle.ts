@@ -28,7 +28,6 @@ export type WorkerTypeManifest = {
   worker_type: string;
   label: string;
   stages: ManifestStage[];
-  dropped: ManifestStage;
   advance: Record<string, string>;
   fields: ManifestField[];
   ceiling_range: string[];

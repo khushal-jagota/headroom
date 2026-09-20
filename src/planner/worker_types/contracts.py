@@ -46,7 +46,6 @@ class WorkerTypeDefinition:
     worker_type: str
     label: str
     stages: tuple[StageDefinition, ...]
-    dropped_stage: StageDefinition
     fields: tuple[FieldDefinition, ...]
     worker_profile: WorkerProfile
 
@@ -74,16 +73,12 @@ class WorkerTypeDefinition:
         )
 
     def is_known_stage(self, stage: str) -> bool:
-        return stage == self.dropped_stage.id or stage in self.stage_ids()
+        return stage in self.stage_ids()
 
     def is_terminal(self, stage: str) -> bool:
-        if stage == self.dropped_stage.id:
-            return True
         return self.stage_definition(stage).is_terminal
 
     def gating_field(self, stage: str) -> str | None:
-        if stage == self.dropped_stage.id:
-            return None
         return self.stage_definition(stage).gating_field
 
     def stage_gated_by(self, field: str) -> str:
@@ -113,8 +108,6 @@ class WorkerTypeDefinition:
         )
 
     def advance_target(self, stage: str) -> str | None:
-        if stage == self.dropped_stage.id:
-            return None
         index = self.stage_index(stage)
         if self.stages[index].is_terminal:
             return None
@@ -183,7 +176,6 @@ class WorkerTypeManifest(TypedDict):
     worker_type: str
     label: str
     stages: list[WorkerTypeManifestStage]
-    dropped: WorkerTypeManifestStage
     advance: dict[str, str]
     fields: list[WorkerTypeManifestField]
     ceiling_range: list[str]
