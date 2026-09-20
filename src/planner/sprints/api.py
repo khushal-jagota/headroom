@@ -57,6 +57,7 @@ from planner.tickets.api import (
     _marshal_accept,
     _parse_next_ceiling,
     _parse_required_principal,
+    _parse_stated_holder,
     body_opt_str,
     body_str,
     body_str_list,
@@ -471,6 +472,8 @@ async def supervisor_update_ticket(
         edit["deadline"] = body_opt_str(raw, field)
     elif field == "ceiling":
         edit["ceiling"] = body_str(raw, field)
+    elif field == "ceiling_holder":
+        edit["ceiling_holder"] = _parse_stated_holder(value, field)
     else:
         raise PlannerError(ErrorCode.validation, "unknown Ticket field", {"field": field})
     ticket = tickets_data.edit_ticket(
