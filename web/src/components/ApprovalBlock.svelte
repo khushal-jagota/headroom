@@ -5,7 +5,9 @@
   import ErrorLine from "./ErrorLine.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import CeilingPicker from "./CeilingPicker.svelte";
+  import { OWNER_HOLDER } from "../lib/ceilingHolder";
   import { fieldLabelFor, type Lifecycle } from "../lib/lifecycle";
+  import type { Principal } from "../lib/types";
 
   let {
     field = "",
@@ -15,6 +17,7 @@
     note = "",
     newStage = null,
     lifecycle = null,
+    sprintItem = null,
     layout = "default",
     disabled = false,
     onApprove,
@@ -29,6 +32,7 @@
     note?: string | null;
     newStage?: string | null;
     lifecycle?: Lifecycle | null;
+    sprintItem?: { id: string; title: string } | null;
     layout?: "default" | "review";
     disabled?: boolean;
     onApprove?: (payload: Record<string, unknown>) => Promise<unknown>;
@@ -40,6 +44,10 @@
   let draft = $state("");
   let lastProposalBody = $state<string | null>(null);
   let ceiling = $state<string | null>(null);
+  // Approving is a ceiling-setting moment, so it offers the same choices as any other.
+  // This used to send `owner` no matter what the screen showed, which meant a proposal
+  // approved in the browser could only ever stay with Khushal.
+  let holder = $state<Principal>(OWNER_HOLDER);
   let inFlight = $state(false);
   let resolved = $state(false);
   let error = $state<unknown>(null);
@@ -74,7 +82,7 @@
       }
       if (!ceilingForApproval) return;
       payload.next_ceiling = ceilingForApproval;
-      payload.next_holder = { kind: "owner", id: "owner" };
+      payload.next_holder = holder;
       await onApprove?.(payload);
       resolved = true;
     } catch (err) {
@@ -90,6 +98,7 @@
       lastProposalBody = incoming;
       draft = incoming;
       ceiling = null;
+      holder = OWNER_HOLDER;
       resolved = false;
     }
   });
@@ -110,7 +119,7 @@
       >
         Approve
       </Button>
-      <CeilingPicker {newStage} {lifecycle} bind:ceiling />
+      <CeilingPicker {newStage} {lifecycle} {sprintItem} bind:ceiling bind:holder />
     </div>
   </div>
 {/snippet}

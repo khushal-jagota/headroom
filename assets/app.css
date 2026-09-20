@@ -4927,6 +4927,12 @@ select {
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
+/* The separator between the two halves of the ceiling. Quieter than either of them,
+ * so "Until Approach · then me" reads as two facts rather than three. */
+.ticket-leash-word {
+  color: var(--text-faintest);
+}
+
 .ticket-leash-menu {
   position: absolute;
   top: calc(100% + var(--space-2));
@@ -4939,6 +4945,9 @@ select {
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-float);
+  /* Two selects when nothing is parked, one when something is: how far, and who. */
+  display: grid;
+  gap: var(--space-1);
 }
 
 .ticket-leash-option {
@@ -6249,6 +6258,20 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 
 [data-screen="backlog"] .form .foot .spacer {
   flex: 1;
+}
+
+/* who holds the new Ticket's ceiling — the leash's own quiet "then <who>" wording,
+ * sat on the create row beside the other choices. */
+[data-screen="backlog"] .form .foot .in-holder {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--type-sm);
+}
+
+[data-screen="backlog"] .form .foot .in-holder-word {
+  color: var(--text-faintest);
 }
 
 /* priority group — a whisper label + rhythm (the Sprint status-group treatment) */

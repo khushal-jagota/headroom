@@ -241,6 +241,8 @@ describe("coding lifecycle", () => {
     });
   });
 
+  // The leash reads "Until Approach", so an option carries the manifest's own stage
+  // label. A stage rename lands in the control with no code change.
   it("offers scope options from the beginning and middle of the range", () => {
     expect(ceilingOptionsFor(codingLifecycle, "needs_success")).toEqual([
       { value: "needs_success", label: "Success Condition" },

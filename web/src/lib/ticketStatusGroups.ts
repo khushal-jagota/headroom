@@ -30,6 +30,7 @@ export const TICKET_STATUS_GROUPS: readonly TicketStatusGroupDefinition[] = [
   { key: "current-awaiting-approval", label: "Awaiting approval", quiet: false },
   { key: "current-assigned", label: "Assigned", quiet: false },
   { key: "current-running", label: "Agent", quiet: false },
+  { key: "status_awaiting_approval", label: "Awaiting an agent's approval", quiet: true },
   { key: "current-waiting", label: "Waiting on Consequences", quiet: true },
   { key: "upcoming", label: "Empty", quiet: true },
   { key: "blocked", label: "Blocked", quiet: true },
@@ -56,6 +57,18 @@ export function ticketStatusGroupKey(ticket: TicketStatusGroupFacts): string {
   if (ticket.ticket_status === "blocked") return "blocked";
   const mark = sprintTicketCondition(ticket).mark;
   if (mark === "needs-me") return "needs-me";
-  if (mark !== "current-awaiting-approval") return mark;
+  if (mark !== "current-awaiting-approval") {
+    // A proposal is parked, but not for the reader: `awaiting_approval` on the condition
+    // is true only when the viewer holds the ceiling, so a Ticket held by an agent used
+    // to fall through to Empty. The rail names these, and this page names them the same.
+    //
+    // Only out of `upcoming`. The rail reaches its own `status_awaiting_approval` only
+    // after every attention group, so a broken worker still reads Errored and a Ticket
+    // that is the user's own still reads Assigned — a parked proposal never renames them.
+    if (mark === "upcoming" && ticket.ticket_status === "awaiting_approval") {
+      return "status_awaiting_approval";
+    }
+    return mark;
+  }
   return ticket.gating_field === "kickoff" ? "waiting-for-kickoff" : mark;
 }

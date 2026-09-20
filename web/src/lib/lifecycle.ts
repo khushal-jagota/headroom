@@ -132,6 +132,9 @@ export function ceilingOptionsFor(
   if (!lc) return [];
   let start = lc.stageOrder.indexOf(floorStage);
   if (start < 0) start = 0;
+  // Leash option labels are the Worker type's own Stage labels, so the control reads
+  // "Until What Changes" and follows a Stage rename without a code change. This
+  // replaces the earlier lowercase stageLabel(id) wording ("needs approach").
   return lc.stageOrder.slice(start).map((stage) => ({
     value: stage,
     label: stageLabelFor(lc, stage)

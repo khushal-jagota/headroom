@@ -13,6 +13,11 @@
     lifecycleFor,
     stageLabelFor
   } from "../lib/lifecycle";
+  import {
+    holderFromValue,
+    holderOptionsFor,
+    holderValue
+  } from "../lib/ceilingHolder";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
@@ -76,6 +81,25 @@
         !manifest.data.worker_types.some((item) => item.worker_type === ticket.data?.worker_type)
     )
   );
+  // The one Sprint Item this Ticket's ceiling can be handed to, named as Khushal names
+  // it. Absent when the Ticket sits outside an Item, and then only me and the Chief show.
+  let ticketSprintItem = $derived(
+    ticket.data?.sprint_item_id
+      ? {
+          id: ticket.data.sprint_item_id,
+          title: ticket.data.resolved_priority_anchors?.sprint_item?.title || "Sprint Item"
+        }
+      : null
+  );
+
+  function holderLabel(detail: TicketDetail): string {
+    const value = holderValue(detail.ceiling_holder);
+    const match = holderOptionsFor(ticketSprintItem, detail.ceiling_holder).find(
+      (option) => option.value === value
+    );
+    return match?.label || value;
+  }
+
   const emptyTicketFieldText = "Not written yet.";
 
   let headerError = $state<unknown>(null);
@@ -399,25 +423,52 @@
             </ClampedText>
           </div>
           <div class="ticket-operating">
-            {#if detail.stage !== "done" && detail.stage !== "needs_kickoff" && detail.pending_proposal === null}
+            <!-- The ceiling is set here: how far the Ticket may go, and who is asked when
+                 it gets there. A parked proposal freezes the stage, because moving it
+                 would change what was proposed, and leaves the holder free — which is how
+                 a proposal sitting in the wrong queue gets moved to the right one.
+                 A parked Kickoff is one of those: a Ticket opened for somebody else
+                 parks its Kickoff in their queue, so the holder half belongs here too. -->
+            {#if detail.stage !== "done" && (detail.stage !== "needs_kickoff" || detail.pending_proposal !== null)}
               <details class="ticket-leash" bind:this={leashMenu} data-leash>
                 <summary
                   class="ticket-leash-face"
                   data-leash-face
                 >
-                  approved until
-                  <span class="ticket-leash-value" data-leash-ceiling>{stageLabelFor(lc, detail.ceiling)}</span>
+                  {#if detail.pending_proposal === null}
+                    Until
+                    <span class="ticket-leash-value" data-leash-ceiling>{stageLabelFor(lc, detail.ceiling)}</span>
+                    <span class="ticket-leash-word" aria-hidden="true">·</span>
+                  {/if}
+                  then
+                  <span class="ticket-leash-value" data-leash-holder>{holderLabel(detail)}</span>
                   <span class="disclosure-chev" aria-hidden="true"></span>
                 </summary>
                 <div class="ticket-leash-menu" role="menu">
+                  {#if detail.pending_proposal === null}
+                    <select
+                      class="ticket-leash-select"
+                      data-scope-ceiling
+                      aria-label="Ceiling stage"
+                      value={detail.ceiling}
+                      onchange={(event) => void updateScope({ ceiling: event.currentTarget.value })}
+                    >
+                      {#each ceilingOptionsFor(lc, detail.stage) as option}
+                        <option value={option.value}>{option.label}</option>
+                      {/each}
+                    </select>
+                  {/if}
                   <select
                     class="ticket-leash-select"
-                    data-scope-ceiling
-                    aria-label="Approved until stage"
-                    value={detail.ceiling}
-                    onchange={(event) => void updateScope({ ceiling: event.currentTarget.value })}
+                    data-scope-holder
+                    aria-label="Who holds the ceiling"
+                    value={holderValue(detail.ceiling_holder)}
+                    onchange={(event) =>
+                      void updateScope({
+                        ceiling_holder: holderFromValue(event.currentTarget.value, ticketSprintItem)
+                      })}
                   >
-                    {#each ceilingOptionsFor(lc, detail.stage) as option}
+                    {#each holderOptionsFor(ticketSprintItem, detail.ceiling_holder) as option}
                       <option value={option.value}>{option.label}</option>
                     {/each}
                   </select>
@@ -483,6 +534,7 @@
                         lifecycle={lc}
                         ticketStage={detail.stage}
                         ceiling={detail.ceiling}
+                        sprintItem={ticketSprintItem}
                         emptyText={emptyTicketFieldText}
                         editableCurrentValue={userOwnsCurrentStage(detail)}
                         runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
@@ -507,7 +559,7 @@
                   </div>
                 </details>
               {/if}
-              {#each lc.fieldIds.filter((name) => !settledFields.includes(name)) as name}
+              {#each lc.fieldIds.filter((name) => !settledFields.includes(name)) as name (`${detail.id}:${name}`)}
                 {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
                 <TicketStageSection
                   {name}
@@ -517,6 +569,7 @@
                   lifecycle={lc}
                   ticketStage={detail.stage}
                   ceiling={detail.ceiling}
+                  sprintItem={ticketSprintItem}
                   emptyText={emptyTicketFieldText}
                   editableCurrentValue={userOwnsCurrentStage(detail)}
                   runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}

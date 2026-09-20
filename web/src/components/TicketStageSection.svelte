@@ -22,6 +22,7 @@
     ticketStage,
     ceiling,
     lifecycle = null,
+    sprintItem = null,
     stageState = "upcoming",
     variant = "ticket",
     emptyText = "Not written yet.",
@@ -41,6 +42,7 @@
     ticketStage: string;
     ceiling: string;
     lifecycle?: Lifecycle | null;
+    sprintItem?: { id: string; title: string } | null;
     stageState?: FieldStageVisualState;
     variant?: "ticket" | "review";
     emptyText?: string;
@@ -77,6 +79,7 @@
       proposedBy={pendingProposal?.proposed_by || ""}
       newStage={nextStage}
       {lifecycle}
+      {sprintItem}
       {contextRow}
       disabled={approvalDisabled}
       onApprove={onAccept}
