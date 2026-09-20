@@ -431,6 +431,8 @@ with sync_playwright() as playwright:
     assert model_controlled and model_picker.locator(f"#{model_controlled}").get_attribute("role") == "listbox"
     assert model_picker.locator("button").evaluate_all("buttons => buttons.filter(button => button.tabIndex === 0).length") == 1
     model_picker.locator('[data-conversation-picker-choice="sonnet"]').hover()
+    # A pointer that moves onto a row makes that row the active one.
+    page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=sonnet]')?.getAttribute('data-conversation-picker-active') === 'true'")
     assert model_trigger.get_attribute("aria-label") == model_label
     model_picker.get_by_role("listbox").press("s")
     page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=sonnet]')?.getAttribute('data-conversation-picker-active') === 'true'")
@@ -444,8 +446,18 @@ with sync_playwright() as playwright:
     model_picker.get_by_role("listbox").press(" ")
     page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('opus')")
     assert "opus" in model_trigger.get_attribute("aria-label").lower()
+
     model_trigger.press("ArrowDown")
     page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
+
+    # The pointer has rested on sonnet since the hover above, and opus is now the chosen
+    # model. When the options mount again the browser sends a mouse move at the pointer's
+    # resting place. That is the browser reporting geometry, not a person choosing a row,
+    # so the chosen model keeps the active mark. Settle first, or the mouse move has not
+    # arrived yet and the check proves nothing.
+    page.wait_for_timeout(200)
+    assert model_picker.locator('[data-conversation-picker-choice="opus"]').get_attribute("data-conversation-picker-active") == "true"
+
     model_picker.get_by_role("listbox").press("End")
     page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=sonnet]')?.getAttribute('data-conversation-picker-active') === 'true'")
     model_picker.get_by_role("listbox").press("Enter")
