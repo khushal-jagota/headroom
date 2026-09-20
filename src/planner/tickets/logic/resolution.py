@@ -321,14 +321,44 @@ def decide_set_ceiling(
     if ticket.pending_proposal is not None:
         raise PlannerError(
             ErrorCode.validation,
-            "the ceiling cannot change while a proposal is pending",
+            "the ceiling stage cannot change while a proposal is pending",
             {"ticket_id": ticket.id},
         )
+    # The holder is not implied by who moved the ceiling. Raising or lowering how far a
+    # Ticket may go must never move it into a different approval queue.
     return replace(
         Decision.from_ticket(ticket),
         ceiling=worker_type_definition.resolve_ceiling(ceiling),
-        ceiling_holder=principal,
     )
+
+
+def decide_set_ceiling_holder(
+    ticket: Ticket,
+    holder: Principal,
+    principal: Principal,
+) -> Decision:
+    """Point the ceiling at a different principal, parked proposal or not.
+
+    Moving the holder is the one half of a ceiling change that a filed proposal does not
+    freeze: it does not change what was proposed, only who is asked. It is narrower than
+    setting the stage, so that a third agent cannot pull a parked proposal out of the
+    queue it was filed into.
+    """
+    admission.require_direct_or_supervisor_principal(principal, "set_ceiling_holder")
+    if principal != OWNER_PRINCIPAL and principal != ticket.ceiling_holder:
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            "the ceiling holder can be changed only by the current holder or the user",
+            {
+                "action": "set_ceiling_holder",
+                "actor": principal_legacy_actor(principal),
+                "holder": {
+                    "kind": ticket.ceiling_holder.kind.value,
+                    "id": ticket.ceiling_holder.id,
+                },
+            },
+        )
+    return replace(Decision.from_ticket(ticket), ceiling_holder=holder)
 
 
 def _require_proposal_decider(

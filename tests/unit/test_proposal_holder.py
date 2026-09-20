@@ -485,3 +485,93 @@ def test_migration_backfills_owner_and_startup_audits_holder_integrity(
     with pytest.raises(RuntimeError, match="ceiling holder does not exist"):
         data.audit_ticket_registry_integrity(upgraded)
     upgraded.close()
+
+
+def test_setting_the_ceiling_leaves_the_holder_alone(tmp_db: Connection) -> None:
+    """How far a Ticket may go and who is asked are set separately."""
+    ticket = data.create_ticket(
+        tmp_db,
+        title="Chief-held",
+        principal=CHIEF_PRINCIPAL,
+        now=10,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note="Kickoff",
+        stated_ceiling="needs_success",
+    )
+    assert ticket.ceiling_holder == CHIEF_PRINCIPAL
+
+    moved = data.edit_ticket(
+        tmp_db,
+        ticket.id,
+        edit=TicketEdit(ceiling="needs_plan"),
+        title_max_chars=TITLE_MAX_CHARS,
+        principal=OWNER_PRINCIPAL,
+        now=11,
+    )
+    assert moved.ceiling == "needs_plan"
+    assert moved.ceiling_holder == CHIEF_PRINCIPAL
+
+
+def test_the_holder_moves_while_a_proposal_is_parked(tmp_db: Connection) -> None:
+    ticket = _park(tmp_db, CHIEF_PRINCIPAL)
+    assert ticket.pending_proposal is not None
+
+    handed = data.edit_ticket(
+        tmp_db,
+        ticket.id,
+        edit=TicketEdit(ceiling_holder=OWNER_PRINCIPAL),
+        title_max_chars=TITLE_MAX_CHARS,
+        principal=CHIEF_PRINCIPAL,
+        now=12,
+    )
+    assert handed.ceiling_holder == OWNER_PRINCIPAL
+    assert handed.ceiling == ticket.ceiling
+    assert handed.pending_proposal == ticket.pending_proposal
+
+
+def test_only_the_current_holder_or_the_user_moves_the_holder(
+    tmp_db: Connection, fake_clock: Clock
+) -> None:
+    item = sprints_data.create_item(
+        tmp_db, title="Bystander", project_id="project_vylo", clock=fake_clock
+    )
+    ticket = _park(tmp_db, CHIEF_PRINCIPAL)
+
+    with pytest.raises(PlannerError) as forbidden:
+        data.edit_ticket(
+            tmp_db,
+            ticket.id,
+            edit=TicketEdit(ceiling_holder=OWNER_PRINCIPAL),
+            title_max_chars=TITLE_MAX_CHARS,
+            principal=Principal(PrincipalKind.sprint_item, item.id),
+            now=12,
+        )
+    assert forbidden.value.code is ErrorCode.agent_forbidden
+    assert data.read_ticket(tmp_db, ticket.id).ceiling_holder == CHIEF_PRINCIPAL
+
+    taken = data.edit_ticket(
+        tmp_db,
+        ticket.id,
+        edit=TicketEdit(ceiling_holder=OWNER_PRINCIPAL),
+        title_max_chars=TITLE_MAX_CHARS,
+        principal=OWNER_PRINCIPAL,
+        now=13,
+    )
+    assert taken.ceiling_holder == OWNER_PRINCIPAL
+
+
+def test_creation_names_a_holder_the_creator_does_not_hold(tmp_db: Connection) -> None:
+    """The Chief opens a Ticket that Khushal holds, without holding it first."""
+    ticket = data.create_ticket(
+        tmp_db,
+        title="For the user to review",
+        principal=CHIEF_PRINCIPAL,
+        now=10,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note="Kickoff",
+        stated_ceiling="needs_success",
+        stated_holder=OWNER_PRINCIPAL,
+    )
+    assert ticket.ceiling_holder == OWNER_PRINCIPAL

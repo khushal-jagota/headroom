@@ -156,6 +156,10 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     # states scope creates the Ticket already scoped. Omission keeps the default leash:
     # the kickoff parks for approval.
     ceiling: str | None
+    # Who the ceiling is held for. Absent, the creator holds it, as before. A creator can
+    # name any holder here without holding anything first: this is how a Ticket is opened
+    # for somebody else to review.
+    ceiling_holder: object  # full Principal
 
 
 class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
@@ -176,7 +180,8 @@ class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     guidance: str  # replaces the document
     guidance_append: str  # adds to it; naming both in one call is refused
     field_values: Mapping[str, str]  # settled values only, by field id
-    ceiling: str
+    ceiling: str  # how far the Ticket may go; refused while a proposal is parked
+    ceiling_holder: Principal  # who is asked; allowed while a proposal is parked
 
 
 class ProposalBody(TypedDict, total=False):  # POST /tickets/{id}/propose

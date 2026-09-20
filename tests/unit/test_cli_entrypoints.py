@@ -176,9 +176,7 @@ def test_ticket_approve_sends_the_explicit_next_holder(
             "t_child",
             "--ceiling",
             "needs_approach",
-            "--holder-kind",
-            "sprint_item",
-            "--holder-id",
+            "--holder",
             "si_parent",
         ],
     )

@@ -110,6 +110,8 @@ _TICKET_DIRECT_ONLY_FIELDS = (
     "sprint_item_id",
     "field_values",
     "ceiling",
+    # Not "ceiling_holder": handing a Ticket on is exactly what a Sprint Item that holds
+    # one needs to do, and the decision already limits it to the holder or the user.
 )
 
 
@@ -352,6 +354,7 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         sprint_item_id=body_opt_str(raw, "sprint_item_id"),
         blocked_by_ticket_ids=body_str_list(raw, "blocked_by_ticket_ids"),
         ceiling=body_opt_str(raw, "ceiling"),
+        ceiling_holder=raw.get("ceiling_holder"),
     )
     if "employee_backend" in raw:
         body["employee_backend"] = body_str(raw, "employee_backend")
@@ -399,6 +402,18 @@ def _parse_principal(raw: object, field: str) -> Principal | None:
         return Principal(kind, principal_id)
     except ValueError as exc:
         raise PlannerError(ErrorCode.validation, str(exc), {field: raw}) from exc
+
+
+def _parse_stated_holder(raw: object, field: str) -> Principal:
+    """A holder named on an edit. Unlike approval, there is nothing to fall back to."""
+    principal = _parse_principal(raw, field)
+    if principal is None:
+        raise PlannerError(
+            ErrorCode.validation,
+            f"{field} must be a principal object with kind and id",
+            {field: raw},
+        )
+    return principal
 
 
 def _parse_required_principal(raw: object, field: str) -> Principal:
@@ -472,6 +487,7 @@ async def create_ticket(
         sprint_item_id_explicit="sprint_item_id" in raw,
         sprint_id_explicit="sprint_id" in raw,
         stated_ceiling=body["ceiling"],
+        stated_holder=_parse_principal(body["ceiling_holder"], "ceiling_holder"),
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -861,6 +877,7 @@ async def patch_ticket(
         "guidance_append",
         "field_values",
         "ceiling",
+        "ceiling_holder",
     )
     for key in body:
         if key not in recognized:
@@ -900,6 +917,8 @@ async def patch_ticket(
         edit["guidance_append"] = body_str(body, "guidance_append")
     if "ceiling" in body:
         edit["ceiling"] = body_str(body, "ceiling")
+    if "ceiling_holder" in body:
+        edit["ceiling_holder"] = _parse_stated_holder(body["ceiling_holder"], "ceiling_holder")
     if "field_values" in body:
         edit["field_values"] = _marshal_settled_field_values(
             conn, ticket_id, body["field_values"]

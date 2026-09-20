@@ -236,12 +236,34 @@ the human-approved intake until the human grants scope onward — review before 
 start.
 
 A creator can state the ceiling instead, at creation, with `ticket create --ceiling`.
+The same breath names who holds it, with `ticket create --holder`. A creator can name any
+holder, including the user, without holding anything itself — that is how a Ticket is
+opened for somebody else to review. Name nobody and the creator holds it, which is the
+ordinary case: a Sprint Item that opens a Ticket holds it.
 Whoever was given the authority to grant scope says so in the same breath as
 the Ticket, so work the user has already authorized does not sit waiting for a second
 approval. The kickoff is then judged by the stated scope exactly as a later proposal is:
 it settles and the Ticket starts at the next Stage when the stated ceiling is past
 kickoff, and it parks for approval otherwise. State nothing and the default leash holds,
 which is the ordinary case for intake the human wants to sense-check.
+
+### Changing a ceiling on a running Ticket
+
+Both halves can change later, and they change separately.
+
+- **How far it may go** — `ticket set <id> ceiling`. This is refused while a proposal is
+  parked, because moving the ceiling under a filed proposal changes what was proposed.
+  Setting it never moves the holder: raising or lowering a ceiling must not move a Ticket
+  into somebody else's queue.
+- **Who is asked** — `ticket set <id> ceiling-holder`. This is allowed while a proposal is
+  parked. Pointing a parked proposal at a different reviewer does not change what was
+  proposed, only who decides it, so it is the way a proposal sitting in the wrong queue
+  reaches the right one. Only the current holder or the user can do it, so no third agent
+  can pull a parked proposal out of a queue it was filed into.
+
+Everywhere tooling takes a holder — creation, either change, and both approve commands —
+it takes one `--holder`, and reads the kind from what it is given: `me`, `chief`, a Sprint
+Item id, or a Ticket id.
 
 Every later stage behaves the same way, including the last two: an accepted
 implementation advances to **needs closeout**, and an accepted closeout advances
@@ -252,9 +274,16 @@ straight to **done**. (The threshold used by sprint-in-progress behavior is the
 
 The addressed holder or the owner can decide a parked proposal. Whenever either approves
 a step, they must name the next ceiling and holder. The system refuses an approval
-that omits either. The Ticket details disclosure shows
-the same permission as a readable leash: "approved until [a stage]." The disclosure
-includes only the ceiling select. The worker runs to the new ceiling and parks there for
+that omits either. Approving is a ceiling-setting moment like any other, so the approve
+row carries the same control the Ticket page does, and the approver can hand the Ticket
+onward rather than only keeping it.
+
+The Ticket details disclosure shows the same permission as a readable leash:
+"Until [a stage] · then [who]", where who reads `me`, `Chief`, or the Ticket's Sprint Item
+by its name. The stage name is the Worker type's own label, so a renamed stage reads
+correctly with no code change. While a proposal is parked the disclosure drops its stage
+select and keeps the holder one, which is the split refusal made visible. A Ticket can hold
+another Ticket's ceiling and tooling can set that; it is not offered on screen. The worker runs to the new ceiling and parks there for
 the named holder. At Kickoff, an unchosen
 ceiling starts from that Worker type's managed suggestion. Other approvals start from
 their normal next Stage. `No further` remains a one-off choice. The stages it offers

@@ -6253,6 +6253,16 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   flex: 1;
 }
 
+/* who holds the new Ticket's ceiling — the leash's own quiet "then <who>" wording,
+ * sat on the create row beside the other choices. */
+[data-screen="backlog"] .form .foot .in-holder {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--type-sm);
+}
+
 /* priority group — a whisper label + rhythm (the Sprint status-group treatment) */
 [data-screen="backlog"] .grp {
   margin-top: var(--space-6);

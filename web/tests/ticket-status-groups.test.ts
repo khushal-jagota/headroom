@@ -38,6 +38,7 @@ describe("Ticket status groups", () => {
       "Awaiting approval",
       "Assigned",
       "Agent",
+      "Awaiting an agent's approval",
       "Waiting for closeout",
       "Empty",
       "Blocked",

@@ -4,7 +4,8 @@
   import { queries } from "../lib/queryCatalogue";
   import { PRIORITY_ORDER } from "../lib/ui";
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import type { ListPageFacts, TicketSummary } from "../lib/types";
+  import type { ListPageFacts, Principal, TicketSummary } from "../lib/types";
+  import { OWNER_HOLDER, holderOptionsFor, holderFromValue, holderValue } from "../lib/ceilingHolder";
   import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
@@ -34,6 +35,9 @@
   let workerType = $state<string | null>(null);
   let deadline = $state("");
   let kickoffNote = $state("");
+  // Who is asked when this Ticket reaches its ceiling. A Ticket made here has no Sprint
+  // Item, so the choice is me or the Chief, and unchanged it stays with whoever made it.
+  let holder = $state<Principal>(OWNER_HOLDER);
   let createError = $state<unknown>(null);
   let creating = $state(false);
 
@@ -84,7 +88,8 @@
       project_id: project,
       priority,
       sprint_id: null,
-      sprint_item_id: null
+      sprint_item_id: null,
+      ceiling_holder: holder
     };
     if (deadline.trim()) payload.deadline = deadline.trim();
     try {
@@ -126,6 +131,20 @@
               {/snippet}
             </SegmentedControl>
             <input class="in due-in" type="text" placeholder="due YYYY-MM-DD — optional" data-input="deadline" bind:value={deadline} />
+            <label class="in-holder">
+              <span class="in-holder-word">then</span>
+              <select
+                class="in"
+                aria-label="Who holds the ceiling"
+                data-input="ceiling-holder"
+                value={holderValue(holder)}
+                onchange={(event) => (holder = holderFromValue(event.currentTarget.value, null))}
+              >
+                {#each holderOptionsFor(null, holder) as option}
+                  <option value={option.value}>{option.label}</option>
+                {/each}
+              </select>
+            </label>
             <div class="spacer"></div>
             <Button variant="primary" data-commit="" disabled={creating || !title.trim() || !project || !workerType} onclick={() => void createTicket()}>Add ticket</Button>
           </div>

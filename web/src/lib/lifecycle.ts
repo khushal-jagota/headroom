@@ -116,9 +116,12 @@ export function ceilingOptionsFor(
   if (!lc) return [];
   let start = lc.stageOrder.indexOf(floorStage);
   if (start < 0) start = 0;
-  // Leash option labels stay the lowercase stageLabel(id) ("needs success"), NOT
-  // the manifest's capitalized stage.label — preserving today's mockup wording.
-  return lc.stageOrder.slice(start).map((stage) => ({ value: stage, label: stageLabel(stage) }));
+  // Leash option labels are the manifest's own stage labels ("Approach"), so the
+  // control reads "Until Approach" and follows a stage rename without a code change.
+  // This replaces the earlier lowercase stageLabel(id) wording ("needs approach").
+  return lc.stageOrder
+    .slice(start)
+    .map((stage) => ({ value: stage, label: lc.stageLabel[stage] || stageLabel(stage) }));
 }
 
 export function preferredScopeCeilingFor(

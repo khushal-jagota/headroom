@@ -60,13 +60,17 @@ surface a delivery failure, or fall back to the owner.
   them, and none of it comes back. The server checks that the Ticket remains a current
   child of your Item. It refuses deletion if that Ticket holds another Ticket's ceiling.
 - `set-item` changes one plain Sprint Item field.
-- `set-ticket` changes one current child Ticket field, and `ceiling` is one of them. The
-  ceiling takes either the stage name or the plain name of the field that stage needs. The
-  Worker does that thing, proposes it, and waits. This Sprint Item becomes the ceiling
-  holder. You cannot retarget a pending proposal by setting the ceiling.
+- `set-ticket` changes one current child Ticket field. Two of them are the ceiling.
+  `ceiling` takes either the stage name or the plain name of the field that stage needs.
+  The Worker does that thing, proposes it, and waits. Setting it leaves the holder alone,
+  and it is refused while a proposal is parked.
+  `ceiling-holder` changes who is asked, and it is allowed while a proposal is parked.
+  That is how you hand a proposal already sitting in your queue to Khushal:
+  `set-ticket <ticket-id> ceiling-holder --value me`. Only the current holder or Khushal
+  can do it.
 - `approve` resolves a parked proposal. Supply `--ceiling`. The next holder
-  defaults to this Sprint Item. Use `--holder-kind` and `--holder-id` to address another
-  principal explicitly.
+  defaults to this Sprint Item. Use `--holder` to address another principal: `me`,
+  `chief`, a Sprint Item id, or a Ticket id.
 - `reject` atomically stores the exact attributed rejection feedback for the current
   Stage, clears the proposal, re-arms a user-owned Stage when applicable, and settles the
   Ticket at its normal resting status. It does not change Ticket guidance or send a
