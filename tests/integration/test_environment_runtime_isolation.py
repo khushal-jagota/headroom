@@ -59,7 +59,8 @@ def test_staging_runs_on_demand_with_dynamic_port_and_persistent_state(
         second = _start_staging(repository, environment_root, log_path)
         second_url = _wait_for_staging_url(second, log_path)
         _wait_for_health(second, second_url, log_path)
-        projects = httpx.get(f"{second_url}/api/projects", timeout=5.0).json()["projects"]
+        read = f"{second_url}/api/projects?detail=full"
+        projects = httpx.get(read, timeout=5.0).json()["projects"]
         assert project_id in {project["id"] for project in projects}
         _terminate(second)
         assert not Path(manifest["server_control_socket_path"]).exists()

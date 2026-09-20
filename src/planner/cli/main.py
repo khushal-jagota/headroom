@@ -944,9 +944,9 @@ def project_group() -> None:
 def project_list(limit: int, offset: int, as_json: bool) -> None:
     data = http.send(
         "GET",
-        "/api/project-summaries",
+        "/api/projects",
         as_json=as_json,
-        params={"limit": limit, "offset": offset},
+        params={"detail": "summary", "limit": limit, "offset": offset},
         request_actor="ordinary",
     )
     http.emit(
@@ -967,8 +967,9 @@ def project_show(project_id: str, part_names: str | None, as_json: bool) -> None
     """Show a Project manifest or selected comma-separated PART_NAMES."""
     data = http.send(
         "GET",
-        f"/api/projects/{project_id}",
+        "/api/projects",
         as_json=as_json,
+        params={"detail": "full", "id": project_id},
         request_actor="ordinary",
     )
     header, parts = _project_record(data)
@@ -1278,7 +1279,13 @@ def ticket_create(
 def ticket_show(ticket_id: str | None, part_names: str | None, as_json: bool) -> None:
     """Show a Ticket manifest or selected comma-separated PART_NAMES."""
     tid = resolve_ticket_id(ticket_id, as_json)
-    data = http.send("GET", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary")
+    data = http.send(
+        "GET",
+        "/api/tickets",
+        as_json=as_json,
+        params={"detail": "full", "id": tid},
+        request_actor="ordinary",
+    )
     header, parts = _ticket_record(data)
     _emit_record(header, parts, part_names, as_json)
 
@@ -1374,9 +1381,9 @@ def ticket_list(
     )
     data = http.send(
         "GET",
-        "/api/ticket-summaries",
+        "/api/tickets",
         as_json=as_json,
-        params=params,
+        params={"detail": "summary", **params},
         request_actor="ordinary",
     )
     http.emit(
@@ -1587,7 +1594,13 @@ def ticket_approve(
     as_json: bool,
 ) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
-    detail = http.send("GET", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary")
+    detail = http.send(
+        "GET",
+        "/api/tickets",
+        as_json=as_json,
+        params={"detail": "full", "id": tid},
+        request_actor="ordinary",
+    )
     stage = detail["stage"]
     manifest = _worker_type(detail["worker_type"], as_json)
     field = _gating_field_for_stage(manifest, stage)
@@ -1726,9 +1739,9 @@ def sprint_create(
 def sprint_list(limit: int, offset: int, as_json: bool) -> None:
     data = http.send(
         "GET",
-        "/api/sprint-summaries",
+        "/api/sprints",
         as_json=as_json,
-        params={"limit": limit, "offset": offset},
+        params={"detail": "summary", "limit": limit, "offset": offset},
         request_actor="ordinary",
     )
     http.emit(
@@ -1760,8 +1773,9 @@ def sprint_show(sprint_id: str | None, part_names: str | None, as_json: bool) ->
     else:
         data = http.send(
             "GET",
-            f"/api/sprints/{sprint_id}",
+            "/api/sprints",
             as_json=as_json,
+            params={"detail": "full", "id": sprint_id},
             request_actor="ordinary",
         )
     header, parts = _sprint_record(data)
@@ -1864,9 +1878,9 @@ def sprint_item_list(
     )
     data = http.send(
         "GET",
-        "/api/sprint-item-summaries",
+        "/api/items",
         as_json=as_json,
-        params=params,
+        params={"detail": "summary", **params},
         request_actor="ordinary",
     )
     http.emit(
@@ -1888,7 +1902,13 @@ def sprint_item_list(
 @json_option
 def sprint_item_show(item_id: str, part_names: str | None, as_json: bool) -> None:
     """Show an Item manifest or selected comma-separated PART_NAMES."""
-    data = http.send("GET", f"/api/items/{item_id}", as_json=as_json, request_actor="ordinary")
+    data = http.send(
+        "GET",
+        "/api/items",
+        as_json=as_json,
+        params={"detail": "full", "id": item_id},
+        request_actor="ordinary",
+    )
     header, parts = _sprint_item_record(data)
     _emit_record(header, parts, part_names, as_json)
 

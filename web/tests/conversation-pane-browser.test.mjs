@@ -48,6 +48,26 @@ try {
   let heldPromptRows = $state<any[]>([]);
   let supportsSteer = $state(false);
   let composerDisabled = $state(false);
+
+  // Enough command entries to fill the menu, and enough shared letters to narrow it.
+  const composerCatalog = [
+    { kind: "command", display_text: "/recap", insertion_text: "/recap ",
+      description: "Recap the ticket", argument_hint: null },
+    { kind: "command", display_text: "/release", insertion_text: "/release ",
+      description: "Cut a release", argument_hint: null },
+    { kind: "command", display_text: "/rename", insertion_text: "/rename ",
+      description: "Rename the thing", argument_hint: null },
+    { kind: "command", display_text: "/reset", insertion_text: "/reset ",
+      description: "Reset local state", argument_hint: null },
+    { kind: "command", display_text: "/review", insertion_text: "/review ",
+      description: "Review the current diff", argument_hint: null },
+    { kind: "command", display_text: "/start", insertion_text: "/start ",
+      description: "Start the worker", argument_hint: null },
+    { kind: "command", display_text: "/status", insertion_text: "/status ",
+      description: "Show the status", argument_hint: null },
+    { kind: "command", display_text: "/stop", insertion_text: "/stop ",
+      description: "Stop the worker", argument_hint: null }
+  ];
   let conversationState = $state<ConversationState>("rest");
   let lens = $state<"focus" | "full">("focus");
 
@@ -275,6 +295,7 @@ try {
         outgoingMessages={[]}
         ownSenderLabel="owner"
         composerDisabled={composerDisabled}
+        {composerCatalog}
         onSend={captureSend}
       />
     </div>
@@ -732,6 +753,77 @@ with sync_playwright() as playwright:
     assert page.locator("[data-conversation-turn-fold]").count() == 0
     assert page.locator("[data-conversation-turn-count]").count() == 0
     assert page.locator("[data-conversation-turn-settled-head]").count() == 1
+
+    # The composer catalog menu opens from the keyboard, under a pointer left wherever it
+    # was. A menu that mounts or reflows under a still pointer receives a mouse event at
+    # the pointer's resting place, and that is the browser reporting geometry rather than
+    # a person choosing a row. This section parks the pointer, so it runs last and on a
+    # fresh page.
+    page.reload(wait_until="domcontentloaded")
+    state(page, "rest")
+    page.locator(INPUT).click()
+    state(page, "peeked")
+
+    CATALOG_MENU = "[data-conversation-catalog]"
+    CATALOG_ROW = "[data-conversation-catalog-entry]"
+
+    def catalog_rows(page):
+        return page.locator(CATALOG_ROW).evaluate_all(
+            "rows => rows.map(row => row.getAttribute('data-conversation-catalog-entry'))")
+
+    def highlighted_entry(page):
+        return page.evaluate(
+            "() => document.querySelector('[data-conversation-catalog-active]')"
+            "?.getAttribute('data-conversation-catalog-entry') ?? null")
+
+    def close_catalog_menu(page):
+        page.locator(INPUT).press("Control+a")
+        page.locator(INPUT).press("Backspace")
+        page.wait_for_selector(CATALOG_MENU, state="detached")
+
+    # Where the rows land while the whole catalog shows.
+    page.locator(INPUT).type("/")
+    page.wait_for_selector(CATALOG_MENU)
+    every_entry = catalog_rows(page)
+    assert every_entry[0] == "/recap", every_entry
+    third_row = page.locator(CATALOG_ROW).nth(2).bounding_box()
+    close_catalog_menu(page)
+
+    # Park the pointer over the third row's place. Nothing clicks after this, because a
+    # click would move the pointer and the whole point is that it never moves again.
+    page.mouse.move(third_row["x"] + third_row["width"] / 2,
+                    third_row["y"] + third_row["height"] / 2)
+
+    # The keyboard opens the menu and owns the highlight. Settle first, or the mouse event
+    # has not arrived yet and the check proves nothing.
+    page.locator(INPUT).type("/")
+    page.wait_for_selector(CATALOG_MENU)
+    page.wait_for_timeout(200)
+    assert highlighted_entry(page) == every_entry[0], highlighted_entry(page)
+
+    # Backspace widens the open list, so rows slide back under the still pointer. A new
+    # list starts its highlight at the top, and geometry does not move it. The list must
+    # really grow, or this checks nothing.
+    page.locator(INPUT).type("r")
+    page.wait_for_function("count => document.querySelectorAll('[data-conversation-catalog-entry]')"
+                           ".length < count", arg=len(every_entry))
+    narrowed = catalog_rows(page)
+    page.locator(INPUT).press("Backspace")
+    page.wait_for_function("count => document.querySelectorAll('[data-conversation-catalog-entry]')"
+                           ".length === count", arg=len(every_entry))
+    page.wait_for_timeout(200)
+    widened = catalog_rows(page)
+    assert len(widened) > len(narrowed), (narrowed, widened)
+    assert highlighted_entry(page) == widened[0], (highlighted_entry(page), widened)
+
+    # A real pointer move still moves the highlight. Without this the guard above can be
+    # satisfied by a menu that never responds to the mouse at all.
+    wanted = page.locator(CATALOG_ROW).nth(5)
+    wanted_entry = wanted.get_attribute("data-conversation-catalog-entry")
+    wanted.hover()
+    page.wait_for_function(
+        "entry => document.querySelector('[data-conversation-catalog-active]')"
+        "?.getAttribute('data-conversation-catalog-entry') === entry", arg=wanted_entry)
 
     browser.close()
 

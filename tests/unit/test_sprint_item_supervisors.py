@@ -417,7 +417,7 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
                 ConversationStartRequest(conversation_id=conversation_id, model="test-model")
             )
         )
-        before = client.get(f"/api/tickets/{ticket['id']}").json()
+        before = client.get(f"/api/tickets?detail=full&id={ticket['id']}").json()
         sent = client.post(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/message",
             json={
@@ -425,7 +425,7 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
             },
             headers=_supervisor_headers(str(item["id"])),
         )
-        after = client.get(f"/api/tickets/{ticket['id']}").json()
+        after = client.get(f"/api/tickets?detail=full&id={ticket['id']}").json()
 
     assert sent.status_code == 200, sent.text
     assert sent.json()["sender"] == item["supervisor"]["agent_key"]
@@ -860,7 +860,7 @@ def test_restart_refuses_a_stage_the_worker_does_not_own(tmp_path: Path) -> None
             json={},
             headers=_supervisor_headers(str(item["id"])),
         )
-        after = client.get(f"/api/tickets/{ticket_id}")
+        after = client.get(f"/api/tickets?detail=full&id={ticket_id}")
 
     assert response.status_code == 400, response.text
     assert response.json()["error"]["message"] == (

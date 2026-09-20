@@ -124,10 +124,13 @@ every Ticket it was blocking stops reading as blocked from that moment. A Ticket
 another live blocker still holds keeps reading as blocked. There is no stored value to
 repair, because the answer is worked out each time it is asked for.
 
-A newly created dependent Ticket parks its Brief proposal first, so it waits for
-approval before it can rest anywhere. It becomes `blocked` the first time it comes to
-rest with its blockers still live. On the Workspace screen a blocked Ticket then sits
-in the **Blocked** group, which starts collapsed.
+A newly created dependent Ticket needs no first moment of rest before its blockers
+count. The create commits the Ticket and its blocks together, and every read works the
+answer out again. A Ticket whose stated scope accepts its Brief inside the create reads
+as `blocked` at once. A Ticket whose Brief parks reads as `awaiting_approval` until that
+is settled, because a parked proposal outranks a blocker, and as `blocked` from then on.
+On the Workspace screen a blocked Ticket sits in the **Blocked** group, which starts
+collapsed.
 
 Ticket detail shows only direct blockers that are active now. Each row links to the
 blocker and can remove that Ticket block, during the Brief or later. The section is

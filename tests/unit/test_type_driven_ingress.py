@@ -289,7 +289,7 @@ def test_stage_filter_non_reserved_needs_no_worker_type(
         _create(client, "coding")
         # A non-reserved stage filters directly. Advance the coding ticket to
         # needs_success_condition so the filter returns exactly it.
-        made = client.get("/api/tickets?stage=needs_brief").json()["tickets"]
+        made = client.get("/api/tickets?detail=full&stage=needs_brief").json()["tickets"]
         assert len(made) == 1
         tid = made[0]["id"]
         client.post(
@@ -299,11 +299,11 @@ def test_stage_filter_non_reserved_needs_no_worker_type(
                 "next_holder": OWNER,
             },
         )
-        ok = client.get("/api/tickets?stage=needs_success_condition")
+        ok = client.get("/api/tickets?detail=full&stage=needs_success_condition")
         assert ok.status_code == 200, ok.json()
         assert [t["id"] for t in ok.json()["tickets"]] == [tid]
         # An unknown stored value is a valid filter and returns no rows.
-        unknown = client.get("/api/tickets?stage=needs_ghost")
+        unknown = client.get("/api/tickets?detail=full&stage=needs_ghost")
         assert unknown.status_code == 200
         assert unknown.json()["tickets"] == []
 
@@ -313,6 +313,7 @@ def test_guidance_round_trip_validation_and_retired_field_routes(app_db: AppDb) 
     with TestClient(app) as client:
         ticket_id = _create(client, "coding")
         path = f"/api/tickets/{ticket_id}"
+        read_path = f"/api/tickets?detail=full&id={ticket_id}"
         original = "  Scope boundary\n\nKeep this.  "
         saved = client.patch(path, json={"guidance": original})
         assert saved.status_code == 200
@@ -327,7 +328,7 @@ def test_guidance_round_trip_validation_and_retired_field_routes(app_db: AppDb) 
             {"key": "plan"},
         ):
             assert client.patch(path, json=body).status_code == 400
-            assert client.get(path).json()["guidance"] == original
+            assert client.get(read_path).json()["guidance"] == original
         assert client.patch(path, json={"guidance_append": ""}).json() == saved.json()
         appended = client.patch(path, json={"guidance_append": "\nNew direction  "})
         assert appended.json()["guidance"] == original + "\n\n\nNew direction  "

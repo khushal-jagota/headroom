@@ -61,6 +61,12 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
+from planner.list_reads.detail import (
+    ReadDetail,
+    parse_read_detail,
+    reject_parameters,
+    require_full_for_one,
+)
 from planner.message_delivery import service as message_delivery_service
 from planner.message_delivery.contracts import MessageDeliveryResult, MessageRecordedToOwner
 from planner.projects import data as projects_data
@@ -496,46 +502,14 @@ async def create_ticket(
 
 
 @router.get("/tickets")
-async def list_tickets(
+async def read_tickets(
     conn: DbConn,
     cfg: Cfg,
     clk: Clk,
     conversations: Conversations,
     conversation_record: ConversationRecord,
-    stage: str | None = None,
-    project: str | None = None,
-    project_id: str | None = None,
-    sprint_id: str | None = None,
-    sprint_item_id: str | None = None,
-    day: str | None = None,
-) -> JsonDict:
-    # Stage is stored canonical data. Listing compares it directly and does not need
-    # to resolve or interpret the Ticket's Worker type.
-    resolved_project = projects_data.resolve_project(
-        conn, project_id=project_id, project_name=project
-    )
-    # `day` ('today' | ISO) scopes the list to one day's board via the day_tickets join.
-    day_id = resolve_day_id(day, clk.now(), cfg.boundary_hour) if day is not None else None
-    rows = tickets_views.list_tickets(
-        conn,
-        clk.now_unix(),
-        stage=stage,
-        project_id=resolved_project.id if resolved_project is not None else None,
-        sprint_id=sprint_id,
-        sprint_item_id=sprint_item_id,
-        day_id=day_id,
-    )
-    await add_work_attention(conn, conversations, conversation_record, tickets=rows)
-    return {"tickets": rows}
-
-
-@router.get("/ticket-summaries")
-async def list_ticket_summaries(
-    conn: DbConn,
-    cfg: Cfg,
-    clk: Clk,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
+    detail: str | None = None,
+    object_id: Annotated[str | None, Query(alias="id")] = None,
     stage: Annotated[list[str] | None, Query()] = None,
     exclude_stage: Annotated[list[str] | None, Query()] = None,
     ticket_status: Annotated[list[str] | None, Query()] = None,
@@ -547,9 +521,72 @@ async def list_ticket_summaries(
     sprint_id: str | None = None,
     sprint_item_id: str | None = None,
     day: str | None = None,
-    limit: int = DEFAULT_LIST_LIMIT,
-    offset: int = 0,
+    limit: int | None = None,
+    offset: int | None = None,
 ) -> JsonDict:
+    """Read Tickets at the level the caller asks for, or one Ticket by id."""
+    level = parse_read_detail(detail)
+    scope = {
+        "stage": stage,
+        "exclude_stage": exclude_stage,
+        "ticket_status": ticket_status,
+        "exclude_ticket_status": exclude_ticket_status,
+        "include_terminal": include_terminal or None,
+        "search": search,
+        "project": project,
+        "project_id": project_id,
+        "sprint_id": sprint_id,
+        "sprint_item_id": sprint_item_id,
+        "day": day,
+        "limit": limit,
+        "offset": offset,
+    }
+    if object_id is not None:
+        require_full_for_one(level)
+        reject_parameters("id", scope)
+        one = _ticket_detail(conn, object_id, clk.now_unix())
+        await add_work_attention(conn, conversations, conversation_record, tickets=(one,))
+        return one
+
+    # Stage is stored canonical data. Reading compares it directly and does not need
+    # to resolve or interpret the Ticket's Worker type.
+    resolved_project = projects_data.resolve_project(
+        conn, project_id=project_id, project_name=project
+    )
+    # `day` ('today' | ISO) scopes the read to one day's board via the day_tickets join.
+    day_id = resolve_day_id(day, clk.now(), cfg.boundary_hour) if day is not None else None
+
+    if level is ReadDetail.full:
+        reject_parameters(
+            "detail=full",
+            {
+                "exclude_stage": exclude_stage,
+                "ticket_status": ticket_status,
+                "exclude_ticket_status": exclude_ticket_status,
+                "include_terminal": include_terminal or None,
+                "search": search,
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+        if stage is not None and len(stage) > 1:
+            raise PlannerError(
+                ErrorCode.validation,
+                "detail=full takes at most one stage",
+                {"stages": list(stage)},
+            )
+        rows = tickets_views.list_tickets(
+            conn,
+            clk.now_unix(),
+            stage=stage[0] if stage else None,
+            project_id=resolved_project.id if resolved_project is not None else None,
+            sprint_id=sprint_id,
+            sprint_item_id=sprint_item_id,
+            day_id=day_id,
+        )
+        await add_work_attention(conn, conversations, conversation_record, tickets=rows)
+        return {"tickets": rows}
+
     included_stages = tuple(stage or ())
     registry = configured_worker_type_registry()
     terminal_stages = {
@@ -570,13 +607,12 @@ async def list_ticket_summaries(
         parse_enum(TicketStatus, value, "exclude_ticket_status")
         for value in (exclude_ticket_status or ())
     )
-    resolved_project = projects_data.resolve_project(
-        conn, project_id=project_id, project_name=project
-    )
-    day_id = resolve_day_id(day, clk.now(), cfg.boundary_hour) if day is not None else None
     page = tickets_views.list_ticket_summaries(
         conn,
-        page_request=ListPageRequest(limit=limit, offset=offset),
+        page_request=ListPageRequest(
+            limit=DEFAULT_LIST_LIMIT if limit is None else limit,
+            offset=0 if offset is None else offset,
+        ),
         filters=TicketListFilters(
             stages=included_stages,
             excluded_stages=tuple(exclude_stage or ()),
@@ -766,19 +802,6 @@ async def get_worker_self_ticket(
         .require(ticket.worker_type)
         .worker_profile.specialist_skill
     )
-    return detail
-
-
-@router.get("/tickets/{ticket_id}")
-async def get_ticket(
-    ticket_id: str,
-    conn: DbConn,
-    clk: Clk,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
-) -> JsonDict:
-    detail = _ticket_detail(conn, ticket_id, clk.now_unix())
-    await add_work_attention(conn, conversations, conversation_record, tickets=(detail,))
     return detail
 
 

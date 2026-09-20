@@ -52,10 +52,10 @@ try {
         { id: "t_loose_two", title: "Loose from Two", stage: "done", priority: "P2", ticket_status: "empty", project_id: "project_two", sprint_item_id: null, waiting_to_closeout: false }
       ]
     });
-    if (path === "/api/projects") return json({ projects: [{ id: "project_one", name: "One", summary: "", priority: "P1", created_at: 1, updated_at: 1 }, { id: "project_two", name: "Two", summary: "", priority: "P2", created_at: 1, updated_at: 1 }] });
+    if (path === "/api/projects?detail=full") return json({ projects: [{ id: "project_one", name: "One", summary: "", priority: "P1", created_at: 1, updated_at: 1 }, { id: "project_two", name: "Two", summary: "", priority: "P2", created_at: 1, updated_at: 1 }] });
     if (path === "/api/day/today") return json({ tickets: [] });
-    if (path === "/api/sprints") return json({ sprints: [sprint, { ...sprint, id: "sp_next", name: "Next" }] });
-    if (path.startsWith("/api/sprint-item-summaries?")) return json({ items: [outcome], page: { match_count: 1, return_count: 1, limit: 30, offset: 0, omitted_before: 0, omitted_after: 0, complete: true, next_offset: null } });
+    if (path === "/api/sprints?detail=full") return json({ sprints: [sprint, { ...sprint, id: "sp_next", name: "Next" }] });
+    if (path.startsWith("/api/items?detail=summary")) return json({ items: [outcome], page: { match_count: 1, return_count: 1, limit: 30, offset: 0, omitted_before: 0, omitted_after: 0, complete: true, next_offset: null } });
     if (path === "/api/items" && method === "POST") return json({ ...outcome, id: "outcome_created", title: body.title });
     if (path.includes("/collections/sprint_outcomes/") && path.endsWith("/outcome_created") && method === "PUT") { commitmentAttempts += 1; if (commitmentAttempts === 1) return new Response(JSON.stringify({ error: { code: "failed", message: "Try again" } }), { status: 500, headers: { "Content-Type": "application/json" } }); return json({ sprint_id: "sp_test", outcome_id: "outcome_created" }); }
     if (path.endsWith("/outcomes/outcome_existing/carry") && method === "POST") return json(body);
