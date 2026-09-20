@@ -209,7 +209,8 @@ def test_conversation_replies_do_not_change_a_parked_proposal(
     api: ApiHelper,
 ) -> None:
     ticket_id = _parked_on_a_proposal(server, cli)
-    assert api.get(server, f"/api/tickets?detail=full&id={ticket_id}")["ticket_status"] == "awaiting_approval"
+    read = f"/api/tickets?detail=full&id={ticket_id}"
+    assert api.get(server, read)["ticket_status"] == "awaiting_approval"
     # Nothing is seeded: a Ticket nobody has spoken to has no conversation, and the first
     # message is what makes one.
 
@@ -250,7 +251,8 @@ def test_conversation_replies_do_not_change_a_parked_proposal(
     )
     page.wait_for_selector(FATE, timeout=WAIT_MS)
     assert "not delivered" in page.inner_text(FATE)
-    assert api.get(server, f"/api/tickets?detail=full&id={ticket_id}")["ticket_status"] == "awaiting_approval"
+    read = f"/api/tickets?detail=full&id={ticket_id}"
+    assert api.get(server, read)["ticket_status"] == "awaiting_approval"
 
     # A message that reaches the conversation is still only a conversation message. It
     # does not decide the proposal or change the Ticket's control status.
@@ -262,5 +264,6 @@ def test_conversation_replies_do_not_change_a_parked_proposal(
         "{ conversation_id: 'conv_made_by_the_message', fate: 'queued', queue_position: 1 })"
     )
 
-    assert api.get(server, f"/api/tickets?detail=full&id={ticket_id}")["ticket_status"] == "awaiting_approval"
+    read = f"/api/tickets?detail=full&id={ticket_id}"
+    assert api.get(server, read)["ticket_status"] == "awaiting_approval"
     assert replies == []

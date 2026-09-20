@@ -328,7 +328,9 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     page.keyboard.press("Delete")
     page.locator(editable).blur()
     page.wait_for_function("f0 => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
-    stored_after_delete = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")["field_values"].get(
+    stored_after_delete = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")[
+        "field_values"
+    ].get(
         "success"
     )
     assert markdown_token not in stored_after_delete
@@ -357,7 +359,9 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     page.keyboard.press("Backspace")
     page.locator(editable).blur()
     page.wait_for_function("f0 => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
-    stored_after_backspace = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")["field_values"].get(
+    stored_after_backspace = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")[
+        "field_values"
+    ].get(
         "success"
     )
     assert image_token not in stored_after_backspace
@@ -383,7 +387,9 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     page.keyboard.press("Delete")
     page.locator(editable).blur()
     page.wait_for_function("f0 => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
-    stored_after_selected_delete = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")["field_values"].get(
+    stored_after_selected_delete = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")[
+        "field_values"
+    ].get(
         "success"
     )
     assert binary_token not in stored_after_selected_delete
