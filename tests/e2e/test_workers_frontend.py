@@ -254,7 +254,7 @@ def test_worker_selection_persists_from_kickoff_card_context_row(
         f'[data-employee-configuration-backend="{target}"]',
         timeout=WAIT_MS,
     )
-    saved = api.get(server, f"/api/tickets/{ticket}")
+    saved = api.get(server, f"/api/tickets?detail=full&id={ticket}")
     assert {
         "employee_backend": saved["employee_backend"],
         "employee_launch_model": saved["employee_launch_model"],

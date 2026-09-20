@@ -95,7 +95,7 @@ try {
     if (path === "/api/review") {
       return json({ running_worker_count: 0, awaiting_approval_count: 0 });
     }
-    if (path === "/api/projects") return json({ projects });
+    if (path === "/api/projects?detail=full") return json({ projects });
     if (path === "/api/worker-types") {
       return json({
         worker_types: [
@@ -104,19 +104,19 @@ try {
         ]
       });
     }
-    if (path === "/api/ticket-summaries?sprint_id=null&limit=30&offset=0") {
+    if (path === "/api/tickets?detail=summary&sprint_id=null&limit=30&offset=0") {
       return json({
         tickets: backlogTickets,
         page: page(backlogTickets.length, backlogTickets.length + 1, 0)
       });
     }
-    if (path === "/api/ticket-summaries?sprint_id=null&limit=30&offset=30") {
+    if (path === "/api/tickets?detail=summary&sprint_id=null&limit=30&offset=30") {
       return json({ tickets: [ticket("ticket_last", "P1")], page: page(1, backlogTickets.length + 1, 30) });
     }
-    if (path === "/api/sprint-item-summaries?limit=30&offset=0") {
+    if (path === "/api/items?detail=summary&limit=30&offset=0") {
       return json({ items: firstItemPage, page: page(30, 31, 0) });
     }
-    if (path === "/api/sprint-item-summaries?limit=30&offset=30") {
+    if (path === "/api/items?detail=summary&limit=30&offset=30") {
       return json({ items: [finalItem], page: page(1, 31, 30) });
     }
     if (path === "/api/tickets" && method === "POST") {

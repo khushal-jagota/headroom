@@ -164,6 +164,8 @@ async def create_item(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
 @router.get("/items")
 async def read_items(
     conn: DbConn,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
     detail: str | None = None,
     object_id: Annotated[str | None, Query(alias="id")] = None,
     search: str | None = None,
@@ -186,7 +188,9 @@ async def read_items(
                 "offset": offset,
             },
         )
-        return sprints_views.item_detail(conn, object_id)
+        item = sprints_views.item_detail(conn, object_id)
+        await add_work_attention(conn, conversations, conversation_record, sprint_items=(item,))
+        return item
     resolved_project = projects_data.resolve_project(
         conn, project_id=project_id, project_name=project
     )
@@ -195,7 +199,9 @@ async def read_items(
         reject_parameters(
             "detail=full", {"search": search, "limit": limit, "offset": offset}
         )
-        return {"items": sprints_views.list_items(conn, project_id=resolved_project_id)}
+        rows = sprints_views.list_items(conn, project_id=resolved_project_id)
+        await add_work_attention(conn, conversations, conversation_record, sprint_items=rows)
+        return {"items": rows}
     page = sprints_views.list_item_summaries(
         conn,
         page_request=ListPageRequest(
@@ -205,6 +211,7 @@ async def read_items(
         project_id=resolved_project_id,
         search=search,
     )
+    await add_work_attention(conn, conversations, conversation_record, sprint_items=page.rows)
     return page.response("items")
 
 

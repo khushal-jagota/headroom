@@ -222,7 +222,7 @@ def test_sprint_documents_round_trip_and_reject_stale_writes(
             stale = client.post("/api/sprints", json={**body, retired: "Do not drop this"})
             assert stale.status_code == 400
             assert stale.json()["error"]["detail"]["field"] == retired
-        assert len(client.get("/api/sprints").json()["sprints"]) == 1
+        assert len(client.get("/api/sprints?detail=full").json()["sprints"]) == 1
 
         def send(method: str, url: str, **kwargs: Any) -> Any:
             response = client.request(method, url, json=kwargs.get("json_body"))

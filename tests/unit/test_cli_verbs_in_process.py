@@ -511,7 +511,7 @@ def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
         "a-codex-model",
     )
     assert updated["employee_backend"] == "codex"
-    stored = api.get(server, f"/api/tickets/{created['id']}")
+    stored = api.get(server, f"/api/tickets?detail=full&id={created['id']}")
     assert stored["employee_backend"] == "codex"
     assert stored["employee_launch_model"] == "a-codex-model"
 
@@ -634,7 +634,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "--kickoff-note",
         "intake context from user",
     )["id"]
-    created = api.get(server, f"/api/tickets/{tid}")
+    created = api.get(server, f"/api/tickets?detail=full&id={tid}")
     assert created["stage"] == "needs_kickoff"
     assert created["pending_proposal"]["body"] == "intake context from user"
 
@@ -662,7 +662,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
     )
     # The recap is a separate write, so a Worker keeps it current on its own.
     cli(server, "worker", "recap", tid, ticket_id=tid, stdin="Ready to approve.")
-    assert api.get(server, f"/api/tickets/{tid}")["recap"] == "Ready to approve."
+    assert api.get(server, f"/api/tickets?detail=full&id={tid}")["recap"] == "Ready to approve."
     approved = cli(server, "ticket", "approve", tid, "--ceiling", "none")
     assert approved["stage"] == "needs_approach"
     assert approved["field_values"].get("success") == "success body"
@@ -684,7 +684,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         ticket_id=tid,
         stdin="additional approach note",
     )
-    appended_detail = api.get(server, f"/api/tickets/{tid}")
+    appended_detail = api.get(server, f"/api/tickets?detail=full&id={tid}")
     assert appended_detail["guidance"] == "approach note\n\nadditional approach note"
     cli(
         server,
@@ -694,7 +694,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         ticket_id=tid,
         stdin="replaced approach note",
     )
-    detail = api.get(server, f"/api/tickets/{tid}")
+    detail = api.get(server, f"/api/tickets?detail=full&id={tid}")
     assert detail["guidance"] == "replaced approach note"
 
     new_worker_id = cli(
@@ -714,7 +714,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         ticket_id=new_worker_id,
         stdin="stages note",
     )
-    new_worker_detail = api.get(server, f"/api/tickets/{new_worker_id}")
+    new_worker_detail = api.get(server, f"/api/tickets?detail=full&id={new_worker_id}")
     assert new_worker_detail["guidance"] == "stages note"
 
     copied = cli(server, "ticket", "copy", tid)
@@ -761,7 +761,7 @@ def test_sprint_item_ticket_commands_move_atomically_and_to_backlog(
     )
 
     cli(server, "sprint", "item", "add-ticket", item["id"], tid)
-    detail = api.get(server, f"/api/tickets/{tid}")
+    detail = api.get(server, f"/api/tickets?detail=full&id={tid}")
     assert detail["sprint_item_id"] == item["id"]
     assert detail["effective_sprint_id"] == sprint["id"]
 
@@ -770,7 +770,7 @@ def test_sprint_item_ticket_commands_move_atomically_and_to_backlog(
     assert renamed["name"] == "Renamed CLI sprint"
 
     cli(server, "sprint", "item", "remove-ticket", item["id"], tid)
-    detail = api.get(server, f"/api/tickets/{tid}")
+    detail = api.get(server, f"/api/tickets?detail=full&id={tid}")
     assert detail["sprint_item_id"] is None
     assert detail["effective_sprint_id"] == sprint["id"]
 
@@ -871,4 +871,4 @@ def test_the_ceiling_and_a_settled_value_are_set_like_every_other_field(
         "corrected intake",
     )
     assert corrected["field_values"]["kickoff"] == "corrected intake"
-    assert api.get(server, f"/api/tickets/{tid}")["stage"] == "needs_success"
+    assert api.get(server, f"/api/tickets?detail=full&id={tid}")["stage"] == "needs_success"
