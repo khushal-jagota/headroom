@@ -9,8 +9,6 @@ from __future__ import annotations
 from typing import assert_type
 
 from planner.tickets.contracts import (
-    AtCap,
-    ScopePair,
     StageOwnershipMode,
     Ticket,
     TicketStatus,
@@ -31,26 +29,16 @@ def _cases(
         bool,
     )
     assert_type(
-        machine.auto_accept_target(
-            stage,
-            "needs_beta",
-            field,
-            worker_type_definition=definition,
-        ),
-        str | None,
-    )
-    assert_type(
         machine.at_or_beyond_ceiling(stage, "needs_beta", worker_type_definition=definition),
         bool,
     )
     assert_type(
-        machine.resolve_scope(
+        machine.resolve_next_ceiling(
             stage,
             "none",
-            AtCap.propose,
             worker_type_definition=definition,
         ),
-        ScopePair,
+        str,
     )
     assert_type(ticket.pending_proposal is not None, bool)
     assert_type(

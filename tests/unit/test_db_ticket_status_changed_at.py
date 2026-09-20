@@ -20,7 +20,7 @@ from tests.support.principals import OWNER_PRINCIPAL
 from planner.core.db import MIGRATIONS_DIRECTORY, connect, create_schema
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
-from planner.tickets.contracts import NO_FURTHER, AtCap
+from planner.tickets.contracts import NO_FURTHER
 
 SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_v37.sql"
 PREVIOUS_REVISION = "ticket_status_reshape"
@@ -202,7 +202,6 @@ def test_a_new_ticket_and_a_status_change_keep_the_column_current(
         principal=OWNER_PRINCIPAL,
         now=11_000,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
         next_holder=OWNER_PRINCIPAL,
     )
     assert settled.ticket_status is not created.ticket_status

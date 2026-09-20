@@ -12,8 +12,6 @@ from planner.core.contracts import (
     PrincipalKind,
     principal_legacy_actor,
 )
-from planner.tickets.contracts import AtCap
-from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 REVISION_GUIDANCE_MAX_CHARACTERS: Final = 10_000
@@ -53,12 +51,16 @@ def require_direct_or_supervisor_principal(principal: Principal, action: str) ->
 
 def check_agent_proposal(
     stage: str,
-    ceiling: str,
-    at_cap: AtCap,
     field: str,
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> None:
+    """Whether this Ticket can take a worker submission on this field at all.
+
+    The ceiling is not asked here. A ceiling names the last thing a worker is allowed to
+    do, so reaching it decides whether the answer parks for approval, never whether the
+    worker is allowed to answer.
+    """
     if worker_type_definition.is_terminal(stage):
         raise PlannerError(
             ErrorCode.validation, "no proposals on a terminal ticket", {"stage": stage}
@@ -75,23 +77,6 @@ def check_agent_proposal(
             ErrorCode.validation,
             "agents may propose only the current gating field",
             {"field": field, "gating_field": gating, "stage": stage},
-        )
-    if not machine.at_or_beyond_ceiling(
-        stage,
-        ceiling,
-        worker_type_definition=worker_type_definition,
-    ):
-        return
-    if at_cap == AtCap.stop:
-        raise PlannerError(
-            ErrorCode.at_cap_stop,
-            "ticket is at its ceiling with at_cap=stop",
-            {
-                "gating_field": gating,
-                "stage": stage,
-                "ceiling": ceiling,
-                "at_cap": "stop",
-            },
         )
 
 

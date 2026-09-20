@@ -11,7 +11,7 @@ from tests.support.ticket_progress import advance_ticket
 from planner.runtime.logic.worker_step_prompt import compose_worker_step_prompt
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback
-from planner.tickets.contracts import NO_FURTHER, AtCap, Ticket
+from planner.tickets.contracts import NO_FURTHER, Ticket, TicketEdit
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
@@ -31,10 +31,11 @@ def test_each_worker_stage_has_the_same_ordered_ticket_inputs(
     field: str,
 ) -> None:
     ticket = _ticket_at_stage(tmp_db, stage)
-    tickets_data.replace_guidance(
+    tickets_data.edit_ticket(
         tmp_db,
         ticket.id,
-        body="Keep the agreed boundary.",
+        edit=TicketEdit(guidance="Keep the agreed boundary."),
+        title_max_chars=200,
         principal=OWNER_PRINCIPAL,
         now=3,
     )
@@ -110,7 +111,6 @@ def _ticket_at_stage(tmp_db: Connection, stage: str) -> Ticket:
         principal=OWNER_PRINCIPAL,
         now=1,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
         next_holder=OWNER_PRINCIPAL,
     )
     return advance_ticket(tmp_db, ticket.id, new_stage=stage, principal=OWNER_PRINCIPAL, now=2)

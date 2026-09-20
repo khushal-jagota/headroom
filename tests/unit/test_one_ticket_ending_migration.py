@@ -16,11 +16,15 @@ from alembic import command
 
 from planner.core import db as db_module
 from planner.core.db import connect, create_schema
-from planner.core.migrations.versions.one_ticket_ending import TROUBLE_BULLET
+from planner.core.migrations.versions.one_ticket_ending import (
+    SKILL_REPLACEMENTS,
+    STAGE_LINE,
+    TROUBLE_BULLET,
+)
 from planner.managed_skills import read_skill_source
 from planner.worker_types.store import read_definitions
 
-PREVIOUS_REVISION = "worker_types_in_database"
+PREVIOUS_REVISION = "drop_ticket_archived_field_content"
 
 
 def _upgrade_to_previous_revision(path: Path) -> sqlite3.Connection:
@@ -37,9 +41,9 @@ def _seed_ticket(conn: sqlite3.Connection, ticket_id: str, stage: str) -> None:
     conn.execute(
         "INSERT INTO tickets "
         "(id, worker_type, employee_backend, stage, title, project_id, ceiling, "
-        "field_values, archived_field_content, created_at, updated_at) VALUES "
-        "(?, 'coding', 'codex', ?, ?, 'project_test', 'done', ?, ?, 1, 1)",
-        (ticket_id, stage, f"Title {ticket_id}", json.dumps({"kickoff": "why"}), "old draft"),
+        "field_values, created_at, updated_at) VALUES "
+        "(?, 'coding', 'codex', ?, ?, 'project_test', 'done', ?, 1, 1)",
+        (ticket_id, stage, f"Title {ticket_id}", json.dumps({"kickoff": "why"})),
     )
 
 
@@ -57,16 +61,21 @@ def seeded(tmp_path: Path) -> Path:
         "INSERT INTO ticket_judgments (ticket_id, verdict_rating, verdict_text) "
         "VALUES ('t_open', 3, 'fine')"
     )
-    # The shipped skill text at this revision still told a worker to use the command.
-    source = str(
+    # The rows are seeded from the packaged tree, which this change has already corrected.
+    # Put the shipped text back, so what the migration has to find is really there.
+    for skill_name, replacements in SKILL_REPLACEMENTS.items():
+        source = str(
+            conn.execute(
+                "SELECT source_text FROM managed_skills WHERE skill_name = ?", (skill_name,)
+            ).fetchone()["source_text"]
+        )
+        shipped = source
+        for old_text, new_text in replacements:
+            shipped = shipped.replace(new_text, old_text) if new_text else shipped + "\n" + old_text
         conn.execute(
-            "SELECT source_text FROM managed_skills WHERE skill_name = 'panels-worker'"
-        ).fetchone()["source_text"]
-    )
-    conn.execute(
-        "UPDATE managed_skills SET source_text = ? WHERE skill_name = 'panels-worker'",
-        (source + "\n" + TROUBLE_BULLET,),
-    )
+            "UPDATE managed_skills SET source_text = ? WHERE skill_name = ?",
+            (shipped, skill_name),
+        )
     conn.commit()
     conn.close()
     return db_path
@@ -91,13 +100,12 @@ def test_a_dropped_ticket_becomes_done_and_keeps_everything_else(seeded: Path) -
     create_schema(conn)
     try:
         row = conn.execute(
-            "SELECT stage, title, field_values, archived_field_content FROM tickets "
+            "SELECT stage, title, field_values FROM tickets "
             "WHERE id = 't_dropped'"
         ).fetchone()
         assert str(row["stage"]) == "done"
         assert str(row["title"]) == "Title t_dropped"
         assert json.loads(str(row["field_values"])) == {"kickoff": "why"}
-        assert str(row["archived_field_content"]) == "old draft"
         # A Ticket that was not at dropped is untouched.
         assert (
             str(conn.execute("SELECT stage FROM tickets WHERE id = 't_open'").fetchone()["stage"])
@@ -130,5 +138,22 @@ def test_the_worker_skill_stops_naming_a_command_that_is_gone(seeded: Path) -> N
         source = read_skill_source(conn, "panels-worker")
         assert TROUBLE_BULLET not in source
         assert "panels worker request-help" in source
+    finally:
+        conn.close()
+
+
+def test_every_skill_stops_teaching_the_stage_that_is_gone(seeded: Path) -> None:
+    conn = connect(str(seeded))
+    create_schema(conn)
+    try:
+        for skill_name in SKILL_REPLACEMENTS:
+            source = read_skill_source(conn, skill_name)
+            assert STAGE_LINE not in source, skill_name
+        # The one that mattered most: the record `panels worker-type save` now refuses
+        # the `dropped` key, so the skill must stop telling a worker to send it.
+        new_worker = read_skill_source(conn, "panels-worker-new-worker")
+        assert "`stages`, `dropped`, `fields`" not in new_worker
+        assert "`worker_type`, `label`, `stages`, `fields`, `profile`" in new_worker
+        assert "dropped" not in new_worker
     finally:
         conn.close()

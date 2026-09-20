@@ -6,7 +6,7 @@ from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL, tic
 
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback
-from planner.tickets.contracts import NO_FURTHER, AtCap, Ticket
+from planner.tickets.contracts import NO_FURTHER, Ticket
 
 
 def test_revision_feedback_is_attributed_stage_scoped_and_acknowledged_by_revision(
@@ -75,11 +75,10 @@ def test_advancing_a_ticket_discards_its_previous_stage_feedback(tmp_db: Connect
         message="Replace this proposal.",
         now=2,
     )
-    tickets_data.file_current_proposal_with_recap(
+    tickets_data.file_current_proposal(
         tmp_db,
         ticket.id,
         body="Revised success",
-        recap="Ready for review",
         principal=ticket_principal(ticket.id),
         now=3,
     )
@@ -90,7 +89,6 @@ def test_advancing_a_ticket_discards_its_previous_stage_feedback(tmp_db: Connect
         principal=OWNER_PRINCIPAL,
         now=4,
         next_ceiling="needs_plan",
-        at_cap=AtCap.propose,
         next_holder=OWNER_PRINCIPAL,
     )
 
@@ -118,6 +116,5 @@ def _ticket(tmp_db: Connection) -> Ticket:
         principal=OWNER_PRINCIPAL,
         now=1,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
         next_holder=OWNER_PRINCIPAL,
     )

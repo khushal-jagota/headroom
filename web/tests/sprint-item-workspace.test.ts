@@ -51,7 +51,6 @@ function workspace(): SprintItemWorkspace {
         has_pending_proposal: true,
         gating_field: "implementation",
         blocked: false,
-        review_route: "propose",
         worker_type: "coding",
         day_ids: ["day_2026-08-12"], sprint_id: "sp_old", sprint_name: "Previous"
       },
@@ -69,7 +68,6 @@ function workspace(): SprintItemWorkspace {
         has_pending_proposal: false,
         gating_field: null,
         blocked: false,
-        review_route: "stop",
         worker_type: "coding",
         day_ids: ["day_2026-08-12"], sprint_id: "sp_current", sprint_name: "Current"
       },
@@ -87,7 +85,6 @@ function workspace(): SprintItemWorkspace {
         has_pending_proposal: false,
         gating_field: null,
         blocked: false,
-        review_route: "stop",
         worker_type: "coding",
         day_ids: [], sprint_id: null, sprint_name: null
       }

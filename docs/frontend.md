@@ -31,7 +31,7 @@ One screen per part of the system:
   and Ticket views; no proposal wake, retry, failure surfacing, or owner fallback remains.
   Keyboard shortcuts drive the actions that apply to the current item when the
   cursor is not in a text field, and each item fades in as it arrives. A proposal's
-  approve button sends the next ceiling, cap, and owner holder together. Send-back
+  approve button sends the next ceiling and owner holder together. Send-back
   stores the owner's exact attributed comment for the next worker-step prompt while
   clearing the proposal and returning the Ticket to its resting control status. Ticket
   guidance stays independent. A reply in the Ticket conversation leaves the proposal in
@@ -43,9 +43,12 @@ One screen per part of the system:
 
   The Tickets view starts with three owner-attention groups in this order: Awaiting
   approval, Assigned, and Messages. A ticket appears in only its first applicable group.
-  Approval takes precedence over assignment, and assignment takes precedence over a
-  reply. Empty groups are not drawn. Every ticket outside these groups follows in the
-  existing status order, so no ticket becomes unreachable.
+  A ticket whose worker broke is named Errored before any of the three, because a broken
+  worker wants the reader more than the request it was carrying. Broken means the ticket
+  is errored, or its last turn ended failed. Otherwise approval takes precedence over
+  assignment, and assignment takes precedence over a reply. Empty groups are not drawn.
+  Every ticket outside these groups follows in the existing status order, so no ticket
+  becomes unreachable.
 
   Blocked and Done arrive shut. Every other group arrives open. A shut group is still
   its own group, with its own name and count, and
@@ -147,14 +150,13 @@ One screen per part of the system:
   priority, effective project, Sprint Item, and Worker above a serif title. The Sprint
   Item appears only when the Ticket has one. Project and Sprint Item are static facts.
   The eyebrow states no Sprint and has no placement controls. The Ticket details
-  disclosure contains only the ceiling and cap selects. Direct blockers get
+  disclosure contains only the ceiling select. Direct blockers get
   their own **Blocked by** line in the masthead, and the exact backend Worker failure
   reason remains visible when one exists. The inline-editable recap is always open on a
   recessed surface, without another label.
 
   The stages and their workflow remain the Ticket's Worker type's, derived from the
-  served manifest (see below and `worker-types.md`). Guidance and the archive stay off
-  this page. Review still shows Guidance with an approval. The current Stage mark speaks without a second status pill.
+  served manifest (see below and `worker-types.md`). Guidance stays off this page. Review still shows Guidance with an approval. The current Stage mark speaks without a second status pill.
   Its summary adds **awaiting approval** for a parked proposal. Running,
   completed, and upcoming marks need no
   extra label. Stage bodies, editing and approval behavior, and the worker conversation
@@ -495,7 +497,7 @@ hand-rolling the same shapes per screen. Each does one job:
   construct structured Codex input.
 - **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
 - **SegmentedControl** — a small set of toggle options (Backlog Project/priority).
-- **ScopePairPicker** — the "approve until … then …" scope control.
+- **CeilingPicker** — the "approve until …" ceiling control.
 - **ErrorLine** — a single error message line.
 
 The Ticket page shows its leash only while scope is editable. A pending proposal hides

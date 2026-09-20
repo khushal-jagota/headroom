@@ -76,21 +76,16 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AcceptBody,
-    AtCap,
     CreateTicketBody,
     EmployeeConfigurationBody,
     EmployeeLaunchConfiguration,
-    GuidanceBody,
-    PendingProposalEditBody,
-    ProposeWithRecapBody,
-    RecapBody,
-    RevisionMessageBody,
-    ScopeBody,
+    GateCompletionBody,
+    ProposalBody,
+    RejectionBody,
     Ticket,
     TicketEdit,
     TicketListFilters,
     TicketStatus,
-    ValueEditBody,
 )
 from planner.work_attention import add_work_attention
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
@@ -103,12 +98,18 @@ router = APIRouter()
 
 # §8: workers drive priority/deadline/day/sprint via `ticket set`; title and project are
 # direct-only, so an attributed non-Chief PATCH is agent_forbidden.
+# Fields an attributed non-Chief agent cannot set. The recap and the guidance document
+# are absent on purpose: a Worker keeps its own Ticket's recap current, and writes the
+# user's direction into guidance. The ceiling is here because granting scope is the
+# user's, and a Sprint Item supervisor grants it through its own route.
 _TICKET_DIRECT_ONLY_FIELDS = (
     "title",
     "project",
     "project_id",
     "sprint_id",
     "sprint_item_id",
+    "field_values",
+    "ceiling",
 )
 
 
@@ -320,10 +321,22 @@ def _validate_field(worker_type_definition: WorkerTypeDefinition, field: str) ->
 # --- request-body marshallers (contract shapes in tickets/contracts.py) ---------
 
 
-def _marshal_guidance(raw: dict[str, Any]) -> GuidanceBody:
-    if set(raw) != {"body"} or not isinstance(raw["body"], str):
-        raise PlannerError(ErrorCode.validation, "guidance requires a string body", {})
-    return GuidanceBody(body=raw["body"])
+def _marshal_settled_field_values(
+    conn: sqlite3.Connection, ticket_id: str, raw: object
+) -> dict[str, str]:
+    """Settled field edits, checked against the Ticket's own Worker type before any write."""
+    if not isinstance(raw, dict) or not raw:
+        raise PlannerError(ErrorCode.validation, "field_values requires a non-empty object", {})
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    values: dict[str, str] = {}
+    for field, body in raw.items():
+        if not isinstance(body, str):
+            raise PlannerError(
+                ErrorCode.validation, "a field value must be a string", {"field": field}
+            )
+        _validate_field(worker_type_definition, str(field))
+        values[str(field)] = body
+    return values
 
 
 def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
@@ -339,7 +352,6 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         sprint_item_id=body_opt_str(raw, "sprint_item_id"),
         blocked_by_ticket_ids=body_str_list(raw, "blocked_by_ticket_ids"),
         ceiling=body_opt_str(raw, "ceiling"),
-        at_cap=body_opt_str(raw, "at_cap"),
     )
     if "employee_backend" in raw:
         body["employee_backend"] = body_str(raw, "employee_backend")
@@ -352,7 +364,6 @@ def _marshal_accept(raw: JsonDict) -> AcceptBody:
     return AcceptBody(
         edited_body=body_opt_str(raw, "edited_body"),
         next_ceiling=body_opt_str(raw, "next_ceiling"),
-        at_cap=body_opt_str(raw, "at_cap"),
         next_holder=raw.get("next_holder"),
     )
 
@@ -419,15 +430,6 @@ def _parse_next_ceiling(
         ) from exc
 
 
-def _parse_scope_at_cap(raw: str | None) -> AtCap | None:
-    if raw is None:
-        return None
-    try:
-        return AtCap(raw)
-    except ValueError:
-        raise PlannerError(ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": raw}) from None
-
-
 # --- ticket routes -------------------------------------------------------------
 
 
@@ -470,7 +472,6 @@ async def create_ticket(
         sprint_item_id_explicit="sprint_item_id" in raw,
         sprint_id_explicit="sprint_id" in raw,
         stated_ceiling=body["ceiling"],
-        stated_at_cap=_parse_scope_at_cap(body["at_cap"]),
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -851,12 +852,21 @@ async def patch_ticket(
         "project_id",
         "sprint_id",
         "sprint_item_id",
+        "recap",
+        "guidance",
+        "guidance_append",
+        "field_values",
+        "ceiling",
     )
     for key in body:
         if key not in recognized:
             raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": key})
     if not body:
         raise PlannerError(ErrorCode.validation, "no ticket fields to update", {})
+    if "guidance" in body and "guidance_append" in body:
+        raise PlannerError(
+            ErrorCode.validation, "guidance is either replaced or appended to, not both", {}
+        )
     reject_agent_fields(ctx, body, _TICKET_DIRECT_ONLY_FIELDS)
 
     edit = TicketEdit()
@@ -878,6 +888,18 @@ async def patch_ticket(
         edit["sprint_id"] = body_opt_str(body, "sprint_id")
     if "sprint_item_id" in body:
         edit["sprint_item_id"] = body_opt_str(body, "sprint_item_id")
+    if "recap" in body:
+        edit["recap"] = body_str(body, "recap")
+    if "guidance" in body:
+        edit["guidance"] = body_str(body, "guidance")
+    if "guidance_append" in body:
+        edit["guidance_append"] = body_str(body, "guidance_append")
+    if "ceiling" in body:
+        edit["ceiling"] = body_str(body, "ceiling")
+    if "field_values" in body:
+        edit["field_values"] = _marshal_settled_field_values(
+            conn, ticket_id, body["field_values"]
+        )
     now = clk.now_unix()
     ticket = tickets_data.edit_ticket(
         conn,
@@ -904,15 +926,11 @@ async def propose_current_field(
             "only the Ticket's own Worker can file its proposal",
             {"ticket_id": ticket_id},
         )
-    body = ProposeWithRecapBody(
-        body=body_str(raw, "body"),
-        recap=body_str(raw, "recap"),
-    )
+    body = ProposalBody(body=body_str(raw, "body"))
     ticket = tickets_actions.file_current_proposal(
         conn,
         ticket_id,
         body=body["body"],
-        recap=body["recap"],
         ctx=ctx,
         clock=clk,
     )
@@ -933,7 +951,6 @@ async def accept_field(
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
     next_ceiling = _parse_next_ceiling(body["next_ceiling"], worker_type_definition)
-    at_cap = _parse_scope_at_cap(body["at_cap"])
     ticket = tickets_data.accept_proposal(
         conn,
         ticket_id,
@@ -942,14 +959,13 @@ async def accept_field(
         now=now,
         edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
-        at_cap=at_cap,
         next_holder=_parse_required_principal(body["next_holder"], "next_holder"),
     )
     return tickets_views.ticket_json(ticket, now)
 
 
-@router.post("/tickets/{ticket_id}/return-for-revision")
-async def return_ticket_for_revision(
+@router.post("/tickets/{ticket_id}/reject")
+async def reject_ticket_proposal(
     ticket_id: str,
     raw: dict[str, Any],
     conn: DbConn,
@@ -957,9 +973,10 @@ async def return_ticket_for_revision(
     clk: Clk,
     conversations: Conversations,
 ) -> JsonDict:
-    body = RevisionMessageBody(message=body_str(raw, "message"))
+    """Send a parked proposal back, with guidance for the executing agent or without."""
+    body = RejectionBody(message=body_opt_str(raw, "message"))
     now = clk.now_unix()
-    ticket = await tickets_actions.return_ticket_for_revision(
+    ticket = await tickets_actions.reject_ticket_proposal(
         conversations,
         conn,
         ticket_id,
@@ -1152,59 +1169,8 @@ async def reset_ticket_conversation(
     return tickets_views.ticket_json(tickets_data.read_ticket(conn, ticket_id), now)
 
 
-@router.put("/tickets/{ticket_id}/guidance")
-async def put_guidance(
-    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
-) -> JsonDict:
-    body = _marshal_guidance(raw)
-    ticket = tickets_data.replace_guidance(
-        conn, ticket_id, body=body["body"], principal=ctx.principal, now=clk.now_unix()
-    )
-    return tickets_views.ticket_json(ticket, clk.now_unix())
-
-
-@router.post("/tickets/{ticket_id}/guidance/append")
-async def append_guidance(
-    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
-) -> JsonDict:
-    body = _marshal_guidance(raw)
-    ticket = tickets_data.append_guidance(
-        conn, ticket_id, body=body["body"], principal=ctx.principal, now=clk.now_unix()
-    )
-    return tickets_views.ticket_json(ticket, clk.now_unix())
-
-
-@router.put("/tickets/{ticket_id}/recap")
-async def put_recap(
-    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
-) -> JsonDict:
-    body = RecapBody(body=body_str(raw, "body"))
-    now = clk.now_unix()
-    ticket = tickets_data.write_recap(
-        conn, ticket_id, body=body["body"], principal=ctx.principal, now=now
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.put("/tickets/{ticket_id}/proposal")
-async def edit_pending_proposal(
-    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
-) -> JsonDict:
-    body = PendingProposalEditBody(field=body_str(raw, "field"), body=body_str(raw, "body"))
-    now = clk.now_unix()
-    ticket = tickets_data.edit_pending_proposal(
-        conn,
-        ticket_id,
-        field=body["field"],
-        new_body=body["body"],
-        principal=ctx.principal,
-        now=now,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.put("/tickets/{ticket_id}/value/{field}")
-async def put_value(
+@router.post("/tickets/{ticket_id}/complete/{field}")
+async def complete_user_owned_gate(
     ticket_id: str,
     field: str,
     raw: dict[str, Any],
@@ -1213,58 +1179,22 @@ async def put_value(
     clk: Clk,
     conversations: Conversations,
 ) -> JsonDict:
-    body = ValueEditBody(body=body_str(raw, "body"))
-    ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    """The user does a user-owned Stage's work themselves, and the Stage advances.
+
+    This is not a field edit and does not live on the edit path. It fills a blank the
+    Ticket is gated on and moves the Ticket forward, which is a consequence only an
+    approval otherwise has.
+    """
+    body = GateCompletionBody(body=body_str(raw, "body"))
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
-    if field not in ticket.field_values:
-        await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
+    await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
     now = clk.now_unix()
-    ticket = tickets_data.edit_field_value(
+    ticket = tickets_data.complete_user_owned_gate(
         conn,
         ticket_id,
         field=field,
         new_body=body["body"],
-        principal=ctx.principal,
-        now=now,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/tickets/{ticket_id}/scope")
-async def scope_ticket(
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    body = ScopeBody(ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap"))
-    require_direct_write(ctx)
-    now = clk.now_unix()
-    ceiling_raw = body["ceiling"]
-    at_cap_raw = body["at_cap"]
-    if ceiling_raw is None or at_cap_raw is None:
-        missing = [
-            name
-            for name, value in (("ceiling", ceiling_raw), ("at_cap", at_cap_raw))
-            if value is None
-        ]
-        raise PlannerError(
-            ErrorCode.scope_missing,
-            "scope requires ceiling and at_cap",
-            {"missing": missing},
-        )
-    try:
-        at_cap = AtCap(at_cap_raw)
-    except ValueError:
-        raise PlannerError(
-            ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": at_cap_raw}
-        ) from None
-    ticket = tickets_data.change_scope(
-        conn,
-        ticket_id,
-        ceiling=ceiling_raw,
-        at_cap=at_cap,
         principal=ctx.principal,
         now=now,
     )

@@ -15,7 +15,6 @@ from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
-    AtCap,
     BoardCard,
     BoardSprintItem,
     Ticket,
@@ -99,14 +98,12 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
             "kind": ticket.ceiling_holder.kind.value,
             "id": ticket.ceiling_holder.id,
         },
-        "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
         "conversation_id": ticket.conversation_id,
         "field_values": dict(ticket.field_values),
         "pending_proposal": asdict(ticket.pending_proposal)
         if ticket.pending_proposal is not None
         else None,
-        "archived_field_content": ticket.archived_field_content,
         "created_at": ticket.created_at,
         "updated_at": ticket.updated_at,
     }
@@ -166,7 +163,6 @@ def _ticket_search_text(row: sqlite3.Row) -> str:
             str(row["title"]),
             str(row["recap"]),
             str(row["guidance"]),
-            str(row["archived_field_content"]),
             *values.values(),
             proposal.body if proposal is not None else "",
         )
@@ -242,7 +238,6 @@ def list_ticket_summaries(
     )
     searchable_fields = "tickets.field_values" if filters.search else "NULL"
     searchable_proposal = "tickets.pending_proposal" if filters.search else "NULL"
-    searchable_archive = "tickets.archived_field_content" if filters.search else "NULL"
     searchable_guidance = "tickets.guidance" if filters.search else "NULL"
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.worker_type, tickets.stage, "
@@ -253,8 +248,6 @@ def list_ticket_summaries(
         + " AS field_values, "
         + searchable_proposal
         + " AS pending_proposal, "
-        + searchable_archive
-        + " AS archived_field_content, "
         "tickets.project_id AS effective_project_id, "
         "projects.name AS project_name, tickets.sprint_item_id, "
         "sprint_items.title AS sprint_item_title, tickets.sprint_id "
@@ -364,7 +357,6 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"{field_blocks}"
         f"pending proposal:\n"
         f"{show(ticket.pending_proposal.body if ticket.pending_proposal else None)}\n"
-        f"\nhistorical record:\n{show(ticket.archived_field_content)}\n"
         f"recap:\n{show(ticket.recap)}\n"
         f"\nguidance:\n{show(ticket.guidance)}\n"
         f"\n"
@@ -399,7 +391,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "tickets.employee_backend, "
         "tickets.conversation_id, "
         "tickets.ticket_status, "
-        "tickets.ceiling, tickets.at_cap, "
+        "tickets.ceiling, "
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
@@ -439,13 +431,6 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         group_project_id = parent_project_id if is_parented else ticket_project_id
         group_project_name = parent_project_name if is_parented else ticket_project_name
         ticket_status = str(row["ticket_status"])
-        stopped_at_current_stage = str(
-            row["at_cap"]
-        ) == AtCap.stop.value and machine.at_or_beyond_ceiling(
-            stage,
-            str(row["ceiling"]),
-            worker_type_definition=worker_type_definition,
-        )
         card: BoardCard = {
             "id": str(row["id"]),
             "title": str(row["title"]),
@@ -470,9 +455,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
                 str(row["conversation_id"]) if row["conversation_id"] is not None else None
             ),
             "waiting_to_closeout": (
-                gating_field_id == "closeout"
-                and ticket_status == TicketStatus.empty.value
-                and not stopped_at_current_stage
+                gating_field_id == "closeout" and ticket_status == TicketStatus.empty.value
             ),
             "sprint_item_id": (
                 str(row["sprint_item_id"]) if row["sprint_item_id"] is not None else None

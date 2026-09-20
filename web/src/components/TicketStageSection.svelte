@@ -31,8 +31,8 @@
     runLabelAttention = false,
     contextRow,
     onAccept,
-    onSaveProposal,
-    onSaveValue
+    onSaveValue,
+    onCompleteGate
   }: {
     name: string;
     value?: string;
@@ -50,8 +50,8 @@
     runLabelAttention?: boolean;
     contextRow?: Snippet;
     onAccept: (payload: Record<string, unknown>) => Promise<unknown>;
-    onSaveProposal?: (raw: string) => Promise<unknown>;
     onSaveValue?: (raw: string) => Promise<unknown>;
+    onCompleteGate?: (raw: string) => Promise<unknown>;
   } = $props();
 
   let reviewVariant = $derived(variant === "review");
@@ -60,7 +60,8 @@
   let passed = $derived(fieldIsPassedFor(lifecycle, name, ticketStage));
   let hasProposal = $derived(pendingProposal?.field === name);
   let nextStage = $derived(advanceTargetFor(lifecycle, ticketStage, ceiling));
-  let canEditValue = $derived(passed || (isGating && editableCurrentValue && !hasProposal));
+  let canEditValue = $derived(passed);
+  let canCompleteGate = $derived(isGating && editableCurrentValue && !hasProposal);
   let defaultOpen = $derived(isGating);
 
 </script>
@@ -78,10 +79,13 @@
       {contextRow}
       disabled={approvalDisabled}
       onApprove={onAccept}
-      onProposalSave={onSaveProposal}
     />
   {:else}
-    {#if canEditValue && editableValue && onSaveValue}
+    {#if canCompleteGate && editableValue && onCompleteGate}
+      <div class="ticket-field-value">
+        <InlineEdit {value} markdown multiline placeholder="Value..." onSave={onCompleteGate} />
+      </div>
+    {:else if canEditValue && editableValue && onSaveValue}
       <div class="ticket-field-value">
         <InlineEdit {value} markdown multiline placeholder="Value..." onSave={onSaveValue} />
       </div>

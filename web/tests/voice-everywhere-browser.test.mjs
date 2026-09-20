@@ -146,14 +146,13 @@ TICKET = {
   "id": "review-voice", "title": "Review voice", "worker_type": "coding",
   "employee_backend": "codex", "employee_launch_model": None,
   "employee_launch_reasoning_effort": None, "employee_configuration_editable": True,
-  "stage": "needs_implementation", "ceiling": "done", "at_cap": "propose",
+  "stage": "needs_implementation", "ceiling": "done",
   "priority": "P2",
   "resolved_priority_anchors": {"sprint_item": None, "project": None},
   "ticket_status": "awaiting_approval", "conversation_id": None,
   "conversation_history": [],
   "guidance": "", "field_values": {},
-  "pending_proposal": {"field": "implementation", "body": "Done", "proposed_by": "worker", "created_at": 1},
-  "archived_field_content": ""
+  "pending_proposal": {"field": "implementation", "body": "Done", "proposed_by": "worker", "created_at": 1}
 }
 
 with sync_playwright() as playwright:

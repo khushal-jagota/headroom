@@ -13,7 +13,7 @@ import {
   type WorkerTypesResponse
 } from "../src/lib/lifecycle";
 import type { TicketDetail } from "../src/lib/types";
-import { atCapLabel, ticketStatusText } from "../src/lib/ui";
+import { ticketStatusText } from "../src/lib/ui";
 
 const codingManifest = {
   worker_type: "coding",
@@ -169,7 +169,6 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     stage: "needs_success",
     ceiling: "done",
     ceiling_holder: { kind: "owner", id: "owner" },
-    at_cap: "propose",
     priority: "P1",
     resolved_priority_anchors: {
       sprint_item: null,
@@ -179,7 +178,6 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     conversation_history: [],
     field_values: {},
     pending_proposal: null,
-    archived_field_content: "",
     guidance: "",
     ...overrides
   };

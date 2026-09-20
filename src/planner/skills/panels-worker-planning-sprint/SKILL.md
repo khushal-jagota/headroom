@@ -20,7 +20,6 @@ The sequence is **Kickoff → Review → Next Sprint → Closeout → Done**.
 - **needs_next_sprint** — use the approved review to settle the next sprint.
 - **needs_closeout** — write both approved packages and verify the canonical records.
 - **done** — finished.
-- **dropped** — abandoned.
 
 ## Shared judgment
 

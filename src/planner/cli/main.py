@@ -35,7 +35,6 @@ from planner.core.contracts import PrincipalKind
 from planner.environments.cli import environment as environment_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.message_delivery.contracts import MessageDeliveryMode
-from planner.tickets.contracts import AtCap
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
 _TICKET_ID_ENV = "PLAN_TICKET_ID"
@@ -51,6 +50,7 @@ _DAY_FIELDS = {
 
 
 _TICKET_SET_FIELDS = {
+    "ceiling": "ceiling",
     "title": "title",
     "kickoff-note": "kickoff",
     "priority": "priority",
@@ -86,6 +86,7 @@ _SUPERVISOR_ITEM_FIELDS = {
 }
 
 _SUPERVISOR_TICKET_FIELDS = {
+    "ceiling": "ceiling",
     "title": "title",
     "priority": "priority",
     "deadline": "deadline",
@@ -177,16 +178,6 @@ def read_value_or_file(
     return value
 
 
-def read_recap(recap: str | None, recap_file: str | None, as_json: bool) -> str:
-    if recap_file is not None:
-        http.fail_validation("--recap-file is no longer supported: pass --recap TEXT", as_json)
-    if recap is None:
-        http.fail_validation("recap required: pass --recap TEXT", as_json)
-    if not recap.strip():
-        http.fail_validation("empty recap", as_json)
-    return recap
-
-
 def resolve_ticket_id(positional: str | None, as_json: bool) -> str:
     if positional is not None and positional != "-":
         return positional
@@ -255,7 +246,6 @@ def _ticket_record(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Reco
         "sprint_item_id",
         "effective_sprint_id",
         "ceiling",
-        "at_cap",
     )
     header = {key: data[key] for key in header_keys if key in data}
     manifest = _worker_type(str(data["worker_type"]), True)
@@ -263,7 +253,6 @@ def _ticket_record(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Reco
         field["id"]: part(data["field_values"].get(field["id"])) for field in manifest["fields"]
     }
     parts["proposal"] = part(data.get("pending_proposal"))
-    parts["archive"] = part(data.get("archived_field_content", ""))
     parts["recap"] = part(data.get("recap", ""))
     parts["guidance"] = part(data.get("guidance", ""))
     return header, parts
@@ -517,9 +506,9 @@ def feedback_use(ticket_id: str, feedback_ids: tuple[str, ...], as_json: bool) -
 @click.option(
     "--mode",
     type=click.Choice([mode.value for mode in MessageDeliveryMode]),
-    default=MessageDeliveryMode.queue.value,
+    default=MessageDeliveryMode.steer.value,
     show_default=True,
-    help="Queue, steer into the running turn, or interrupt it and send now.",
+    help="Steer into the running turn, queue behind it, or interrupt it and send now.",
 )
 @click.option(
     "--message",
@@ -1186,13 +1175,6 @@ def ticket() -> None:
     default=None,
     help="Initial ceiling, as a stage name or the plain field name that stage needs.",
 )
-@click.option(
-    "--at-cap",
-    "at_cap",
-    type=click.Choice([a.value for a in AtCap]),
-    default=None,
-    help="Initial behaviour at the ceiling. Omit to park the kickoff for approval.",
-)
 @json_option
 def ticket_create(
     title: str,
@@ -1210,14 +1192,11 @@ def ticket_create(
     kickoff_note: str | None,
     kickoff_note_file: str | None,
     ceiling: str | None,
-    at_cap: str | None,
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {"title": title, "worker_type": worker_type}
     if ceiling is not None:
         body["ceiling"] = ceiling
-    if at_cap is not None:
-        body["at_cap"] = at_cap
     if employee_backend is not None:
         body["employee_backend"] = employee_backend
     if employee_launch_model is not None:
@@ -1387,29 +1366,50 @@ def ticket_set(
 ) -> None:
     api_field = _TICKET_SET_FIELDS[field]
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field in {"title", "priority"} and new_value is None:
+    if field in {"title", "priority", "ceiling"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
     if field == "priority" and new_value not in _PRIORITIES:
         http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
     if field == "kickoff-note" and new_value is None:
         new_value = ""
-    if field == "kickoff-note":
-        data = http.send(
-            "PUT",
-            f"/api/tickets/{ticket_id}/value/kickoff",
-            as_json=as_json,
-            json_body={"body": new_value},
-            request_actor="ordinary",
-        )
-    else:
-        data = http.send(
-            "PATCH",
-            f"/api/tickets/{ticket_id}",
-            as_json=as_json,
-            json_body={api_field: new_value},
-            request_actor="ordinary",
-        )
+    body: dict[str, Any] = (
+        {"field_values": {"kickoff": new_value}}
+        if field == "kickoff-note"
+        else {api_field: new_value}
+    )
+    data = http.send(
+        "PATCH",
+        f"/api/tickets/{ticket_id}",
+        as_json=as_json,
+        json_body=body,
+        request_actor="ordinary",
+    )
     http.emit(data, as_json, f"{data['id']} {field} set")
+
+
+@ticket.command("complete")
+@click.argument("ticket_id")
+@click.argument("field")
+@click.option("--value", default=None, help="Complete the gate with this value.")
+@click.option("--body-file", default=None, help="Read the value from this file, or - for stdin.")
+@json_option
+def ticket_complete(
+    ticket_id: str,
+    field: str,
+    value: str | None,
+    body_file: str | None,
+    as_json: bool,
+) -> None:
+    """Do a user-owned Stage's work yourself. The Stage then advances."""
+    body = read_value_or_file(value, body_file, False, as_json, field)
+    data = http.send(
+        "POST",
+        f"/api/tickets/{ticket_id}/complete/{field}",
+        as_json=as_json,
+        json_body={"body": body},
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, f"{data['id']} {field} completed")
 
 
 @ticket.command("set-value")
@@ -1425,12 +1425,13 @@ def ticket_set_value(
     body_file: str | None,
     as_json: bool,
 ) -> None:
+    """Correct a value the Ticket has already passed."""
     body = read_value_or_file(value, body_file, False, as_json, field)
     data = http.send(
-        "PUT",
-        f"/api/tickets/{ticket_id}/value/{field}",
+        "PATCH",
+        f"/api/tickets/{ticket_id}",
         as_json=as_json,
-        json_body={"body": body},
+        json_body={"field_values": {field: body}},
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} {field} set")
@@ -1528,12 +1529,6 @@ def ticket_employee_configuration(
 @ticket.command("approve")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option("--ceiling", default=None, help="Next ceiling stage or none.")
-@click.option(
-    "--at-cap",
-    default=None,
-    type=click.Choice([a.value for a in AtCap]),
-    help="stop or propose.",
-)
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @click.option(
     "--holder-kind",
@@ -1548,7 +1543,6 @@ def ticket_employee_configuration(
 def ticket_approve(
     ticket_id: str | None,
     ceiling: str | None,
-    at_cap: str | None,
     edit_file: str | None,
     holder_kind: str,
     holder_id: str | None,
@@ -1566,8 +1560,8 @@ def ticket_approve(
     proposal = detail["pending_proposal"]
     if proposal is None or proposal["field"] != field:
         http.fail_validation(f"no pending {field} proposal", as_json)
-    if ceiling is None or at_cap is None:
-        http.fail_validation("approval requires --ceiling and --at-cap", as_json)
+    if ceiling is None:
+        http.fail_validation("approval requires --ceiling", as_json)
     if kickoff_title is not None:
         if field != "kickoff":
             http.fail_validation("--kickoff-title only applies while approving kickoff", as_json)
@@ -1581,7 +1575,6 @@ def ticket_approve(
     resolved_holder_id = holder_id or holder_kind
     field_payload: dict[str, Any] = {
         "next_ceiling": ceiling,
-        "at_cap": at_cap,
         "next_holder": {"kind": holder_kind, "id": resolved_holder_id},
     }
     if edit_file is not None:
@@ -2144,7 +2137,7 @@ def sprint_item_supervisor_set_ticket(
     as_json: bool,
 ) -> None:
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field in {"title", "priority"} and new_value is None:
+    if field in {"title", "priority", "ceiling"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
     data = http.send(
         "PATCH",
@@ -2153,24 +2146,6 @@ def sprint_item_supervisor_set_ticket(
         json_body={_SUPERVISOR_TICKET_FIELDS[field]: new_value},
     )
     http.emit(data, as_json, f"{ticket_id} {field} set")
-
-
-@sprint_item_supervisor.command("scope")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@click.option("--ceiling", required=True)
-@click.option("--at-cap", required=True, type=click.Choice([a.value for a in AtCap]))
-@json_option
-def sprint_item_supervisor_scope(
-    item_id: str, ticket_id: str, ceiling: str, at_cap: str, as_json: bool
-) -> None:
-    data = http.send(
-        "POST",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/scope",
-        as_json=as_json,
-        json_body={"ceiling": ceiling, "at_cap": at_cap},
-    )
-    http.emit(data, as_json, f"{ticket_id} scope set")
 
 
 @sprint_item_supervisor.command("artifact-list")
@@ -2256,12 +2231,6 @@ def sprint_item_supervisor_reset(item_id: str, as_json: bool) -> None:
 @click.argument("item_id")
 @click.argument("ticket_id")
 @click.option("--ceiling", required=True, help="Next ceiling Stage or none.")
-@click.option(
-    "--at-cap",
-    required=True,
-    type=click.Choice([a.value for a in AtCap]),
-    help="Behaviour at the next ceiling: stop or propose.",
-)
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @click.option(
     "--holder-kind",
@@ -2275,7 +2244,6 @@ def sprint_item_supervisor_approve(
     item_id: str,
     ticket_id: str,
     ceiling: str,
-    at_cap: str,
     edit_file: str | None,
     holder_kind: str,
     holder_id: str | None,
@@ -2284,7 +2252,6 @@ def sprint_item_supervisor_approve(
     """Approve one parked proposal for this Sprint Item."""
     body: dict[str, Any] = {
         "next_ceiling": ceiling,
-        "at_cap": at_cap,
         "next_holder": {
             "kind": holder_kind,
             "id": holder_id or (item_id if holder_kind == "sprint_item" else holder_kind),
@@ -2359,8 +2326,8 @@ def worker_my_ticket(part_names: str | None, as_json: bool) -> None:
 @worker.command("propose")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option("--body-file", default=None, help="Removed: pipe proposal text on stdin instead.")
-@click.option("--recap", default=None, help="Short recap for the proposal.")
-@click.option("--recap-file", default=None, help="Removed: pass --recap TEXT instead.")
+@click.option("--recap", default=None, help="Removed: use `worker recap` instead.")
+@click.option("--recap-file", default=None, help="Removed: use `worker recap` instead.")
 @json_option
 def worker_propose(
     ticket_id: str | None,
@@ -2371,13 +2338,16 @@ def worker_propose(
 ) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     refuse_worker_body_file(body_file, as_json, "pipe proposal text on stdin instead")
+    if recap is not None or recap_file is not None:
+        http.fail_validation(
+            "a proposal no longer carries the recap: use `panels worker recap` instead", as_json
+        )
     body = read_worker_stdin_body(as_json, "proposal body")
-    recap_text = read_recap(recap, recap_file, as_json)
     data = http.send(
         "POST",
         f"/api/tickets/{tid}/propose",
         as_json=as_json,
-        json_body={"body": body, "recap": recap_text},
+        json_body={"body": body},
     )
     http.emit(data, as_json, f"proposed on {data['id']}")
 
@@ -2439,7 +2409,9 @@ def worker_recap(ticket_id: str | None, body_file: str | None, as_json: bool) ->
     refuse_worker_body_file(body_file, as_json, "pipe recap text on stdin instead")
     body = read_worker_stdin_body(as_json, "recap")
     tid = resolve_ticket_id(ticket_id, as_json)
-    data = http.send("PUT", f"/api/tickets/{tid}/recap", as_json=as_json, json_body={"body": body})
+    data = http.send(
+        "PATCH", f"/api/tickets/{tid}", as_json=as_json, json_body={"recap": body}
+    )
     http.emit(data, as_json, f"recap written on {data['id']}")
 
 
@@ -2451,13 +2423,12 @@ def worker_note(ticket_id: str | None, append_note: bool, as_json: bool) -> None
     """Write Ticket guidance from stdin; no field selection is needed."""
     tid = resolve_ticket_id(ticket_id, as_json)
     body = sys.stdin.read()
-    method = "POST" if append_note else "PUT"
-    suffix = "/append" if append_note else ""
+    key = "guidance_append" if append_note else "guidance"
     data = http.send(
-        method,
-        f"/api/tickets/{tid}/guidance{suffix}",
+        "PATCH",
+        f"/api/tickets/{tid}",
         as_json=as_json,
-        json_body={"body": body},
+        json_body={key: body},
     )
     http.emit(data, as_json, f"guidance written on {data['id']}")
 

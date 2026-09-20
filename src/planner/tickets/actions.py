@@ -17,7 +17,7 @@ from planner.days.logic.dates import resolve_day_id
 from planner.message_delivery import service as message_delivery_service
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, Ticket
+from planner.tickets.contracts import Ticket
 from planner.tickets.logic import admission
 
 LOGGER = logging.getLogger(__name__)
@@ -81,7 +81,6 @@ def create_ticket(
     sprint_item_id_explicit: bool = False,
     sprint_id_explicit: bool = False,
     stated_ceiling: str | None = None,
-    stated_at_cap: AtCap | None = None,
 ) -> Ticket:
     if planning_now is None:
         day_id = None
@@ -114,7 +113,6 @@ def create_ticket(
         employee_launch_model=employee_launch_model,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
         stated_ceiling=stated_ceiling,
-        stated_at_cap=stated_at_cap,
     )
 
 
@@ -167,45 +165,50 @@ def file_current_proposal(
     ticket_id: str,
     *,
     body: str,
-    recap: str,
     ctx: RequestContext,
     clock: Clock,
 ) -> Ticket:
-    """Park a proposal for its ceiling holder to review."""
-    return tickets_data.file_current_proposal_with_recap(
+    """A Worker's answer to the current Stage: settled below the ceiling, parked at it.
+
+    The recap does not come with it. The recap is the Ticket's running orientation and a
+    Worker keeps it current as it works, which is a different thing from what the Worker
+    is asking to have approved.
+    """
+    return tickets_data.file_current_proposal(
         conn,
         ticket_id,
         body=body,
-        recap=recap,
         principal=ctx.principal,
         now=clock.now_unix(),
     )
 
 
-async def return_ticket_for_revision(
+async def reject_ticket_proposal(
     conversation_system: ConversationSystem,
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    message: str,
+    message: str | None,
     ctx: RequestContext,
     clock: Clock,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
-    """Commit the rejection guidance, then return without backend I/O."""
-    admission.validate_revision_guidance(message)
+    """Send the proposal back, with guidance for the executing agent or without."""
+    if message is not None:
+        admission.validate_revision_guidance(message)
     principal = ctx.principal
     now = clock.now_unix()
     source_turn = await message_delivery_service.revision_source_turn(
         conversation_system, conn, ctx=ctx
     )
-    ticket = tickets_data.require_return_for_revision(
+    ticket = tickets_data.require_reject(
         conn,
         ticket_id,
         principal=principal,
+        has_guidance=message is not None,
         supervisor_sprint_item_id=supervisor_sprint_item_id,
     )
-    revised = tickets_data.return_for_revision(
+    revised = tickets_data.reject_proposal(
         conn,
         ticket_id,
         message=message,

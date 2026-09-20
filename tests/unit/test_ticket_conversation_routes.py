@@ -28,7 +28,7 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.runtime.conversation_start import CONVERSATION_ID_PREFIX
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, AtCap
+from planner.tickets.contracts import NO_FURTHER
 
 _AGENT = {"X-Plan-Actor": "agent"}
 _TITLE_MAX_CHARS = 200
@@ -309,7 +309,6 @@ def _past_kickoff(db_path: Path, ticket_id: str) -> None:
             principal=OWNER_PRINCIPAL,
             now=1,
             next_ceiling=NO_FURTHER,
-            at_cap=AtCap.propose,
             next_holder=OWNER_PRINCIPAL,
         )
         conn.commit()
@@ -321,13 +320,12 @@ def _park_on_a_proposal(db_path: Path, ticket_id: str) -> None:
     _past_kickoff(db_path, ticket_id)
     conn: Connection = connect(str(db_path))
     try:
-        tickets_data.file_current_proposal_with_recap(
+        tickets_data.file_current_proposal(
             conn,
             ticket_id,
             body="how we will know",
             principal=ticket_principal(ticket_id),
             now=1,
-            recap="Current work",
         )
         conn.commit()
     finally:

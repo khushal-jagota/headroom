@@ -50,6 +50,29 @@ describe("Workspace rail", () => {
     );
   });
 
+  // Nothing in production writes `ticket_status = 'errored'`, so the raw status named no
+  // broken worker at all. `agent_state` carries the status or a last turn that ended
+  // failed, and it leads, exactly as it does on the Sprint Item page.
+  it("names a broken worker Errored from its failed last turn, ahead of attention", () => {
+    expect(workspaceCardGroupKey(card("failed", { agent_state: "errored" }))).toBe("errored");
+    expect(
+      workspaceCardGroupKey(
+        card("failed-dispatched", { ticket_status: "agent", agent_state: "errored" })
+      )
+    ).toBe("errored");
+    expect(
+      workspaceCardGroupKey(
+        card("failed-approval", { awaiting_approval: true, agent_state: "errored" })
+      )
+    ).toBe("errored");
+    // A finished Ticket stays finished.
+    expect(
+      workspaceCardGroupKey(
+        card("failed-done", { stage: "done", is_done: true, agent_state: "errored" })
+      )
+    ).toBe("done");
+  });
+
   it("keeps kickoff approvals in the owner attention group", () => {
     expect(
       workspaceCardGroupKey(

@@ -188,7 +188,6 @@ export type PendingTicketProposal = {
   created_at: number;
 };
 
-export type AtCap = "stop" | "propose";
 
 export type Principal = {
   kind: "owner" | "chief" | "sprint_item" | "ticket";
@@ -280,7 +279,6 @@ export type TicketDetail = {
   stage: string;
   ceiling: string;
   ceiling_holder: Principal;
-  at_cap: AtCap;
   priority: string;
   deadline?: string | null;
   project_id?: string | null;
@@ -299,7 +297,6 @@ export type TicketDetail = {
   guidance: string;
   field_values: TicketFieldValues;
   pending_proposal: PendingTicketProposal | null;
-  archived_field_content: string;
   awaiting_reply?: boolean;
   awaiting_approval?: boolean;
   assigned?: boolean;
@@ -385,7 +382,6 @@ export type SprintItemWorkspaceTicket = WorkAttention & {
   has_pending_proposal: boolean;
   gating_field: string | null;
   blocked: boolean;
-  review_route: AtCap;
   worker_type: string;
   day_ids: string[];
   sprint_id: string | null;

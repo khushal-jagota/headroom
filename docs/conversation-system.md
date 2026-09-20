@@ -252,12 +252,12 @@ a drop. Attachments wait beside the draft and can be removed one at a time. They
 travel with words or form the whole message. There is no separate upload conversation
 or attachment record.
 
-The command accepts `--mode queue|steer|send_now`. Queue is the default for command sends.
-Queue holds behind active work. Steer asks the current turn to admit the message. Send now
+The command accepts `--mode steer|queue|send_now`. Steer is the default for command sends.
+Steer asks the current turn to admit the message. Queue holds behind active work. Send now
 interrupts current work and starts the message first. The Send Message API accepts the
-same three values and defaults an omitted value to `queue`.
+same three values and defaults an omitted value to `steer`.
 
-The browser composer defaults to steer. Its mode control also exposes queue and send now.
+The browser composer defaults to steer as well. Its mode control also exposes queue and send now.
 Enter and the send arrow use the selected mode. Every selected mode starts an idle turn.
 Attachments and run changes cannot steer, so they enter the queue with a visible reason.
 A confirmed steer refusal does the same. An uncertain steer remains terminal and never
