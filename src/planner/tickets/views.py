@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Collection
 from dataclasses import asdict
 
 from planner.core import ticket_blocks
@@ -376,11 +377,40 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
 # --- board (§10.3) -------------------------------------------------------------
 
 
-def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
+def ticket_ids_for_conversations(
+    conn: sqlite3.Connection, conversation_ids: Collection[str]
+) -> frozenset[str]:
+    """Which Tickets own these conversations.
+
+    The caller holds conversations, not Tickets, and a conversation can belong to a
+    Sprint Item's supervisor instead. Reading every Ticket's conversation and matching
+    here keeps the query free of a parameter per conversation, so it holds as the
+    record grows.
+    """
+    wanted = frozenset(conversation_ids)
+    if not wanted:
+        return frozenset()
+    rows = conn.execute(
+        "SELECT id, conversation_id FROM tickets WHERE conversation_id IS NOT NULL"
+    ).fetchall()
+    return frozenset(str(row["id"]) for row in rows if str(row["conversation_id"]) in wanted)
+
+
+def board_view(
+    conn: sqlite3.Connection,
+    *,
+    day_id: str,
+    ticket_ids_holding_unread_owner_message: Collection[str] = (),
+) -> JsonDict:
     """The current planning day's roster of Ticket cards, read straight from the database.
 
     Ticket detail remains a separate resource, so narrowing this projection does not
     constrain direct Ticket routes or an already-open inspector.
+
+    The Day is the roster, with one exception. A Ticket holding a message the owner has
+    not read joins it whatever Day it is on, because he has not seen the message and a
+    Day he did not put it on cannot be his answer to it. Everything else keeps the Day
+    rule, and a named Ticket already on the Day is not returned twice.
 
     Each card carries its conversation link. The async route uses it to add the shared
     owner-attention and agent-state projection.
@@ -388,7 +418,11 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
     Beside the columns, ``sprint_items`` carries each represented Sprint Item's own
     supervisor conversation. A card answers for its Ticket's worker, and no card answers
     for the Item's own worker, so the rail cannot mark an Item's title without this.
+    Those Items follow the rows, so a Ticket that joined by its unread message brings
+    its own Item with it.
     """
+    named_ticket_ids = tuple(dict.fromkeys(ticket_ids_holding_unread_owner_message))
+    named_placeholders = ",".join("?" for _ in named_ticket_ids)
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.stage, tickets.priority, tickets.deadline, "
         "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
@@ -405,9 +439,9 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects AS parent_projects ON parent_projects.id = sprint_items.project_id "
-        "JOIN day_tickets ON day_tickets.ticket_id = tickets.id "
-        "WHERE day_tickets.day_id = ?",
-        (day_id,),
+        "WHERE tickets.id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)"
+        + (f" OR tickets.id IN ({named_placeholders})" if named_ticket_ids else ""),
+        (day_id, *named_ticket_ids),
     ).fetchall()
     registry = configured_worker_type_registry()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
