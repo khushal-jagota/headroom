@@ -96,17 +96,29 @@ def notification_preference_is_valid(subject_key: str, notification_type: str) -
 
 
 @dataclass(frozen=True, slots=True)
-class NotificationFact:
-    fact_id: str
+class EdgeKey:
+    """What one false-to-true attention transition is called, everywhere."""
+
+    subject_kind: str
+    subject_id: str
     notification_type: str
+    generation: int
+
+
+@dataclass(frozen=True, slots=True)
+class AttentionEdge:
+    key: EdgeKey
     subject: Principal
     subject_label: str
     occurred_at: int
 
+    @property
+    def notification_type(self) -> str:
+        return self.key.notification_type
+
 
 @dataclass(frozen=True, slots=True)
 class NotificationIntent:
-    fact_id: str
     title: str
     body: str
     route: str
@@ -123,7 +135,7 @@ class PushSubscription:
 
 @dataclass(frozen=True, slots=True)
 class PendingDelivery:
-    fact_id: str
+    edge: EdgeKey
     subscription: PushSubscription
     intent: NotificationIntent
     attempts: int

@@ -13,11 +13,11 @@ from planner.notifications import data as notifications_data
 PREVIOUS_REVISION = "backend_usage_and_model_enablement"
 
 
-def _upgrade_to_previous_revision(path: Path) -> None:
+def _upgrade_to(path: Path, revision: str) -> None:
     engine = db_module._migration_engine(str(path), 5000)
     with engine.connect() as connection:
         with connection.begin():
-            command.upgrade(db_module._alembic_config(connection), PREVIOUS_REVISION)
+            command.upgrade(db_module._alembic_config(connection), revision)
     engine.dispose()
 
 
@@ -25,7 +25,7 @@ def test_upgrade_keys_preferences_by_subject_and_preserves_notification_history(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "notification-preferences-by-subject.db"
-    _upgrade_to_previous_revision(db_path)
+    _upgrade_to(db_path, PREVIOUS_REVISION)
     conn = connect(str(db_path))
     ticket_id = "t_existing"
     conn.execute(
@@ -110,8 +110,10 @@ def test_upgrade_keys_preferences_by_subject_and_preserves_notification_history(
     )
     conn.close()
 
+    # The assertions run at the last revision that still has the notification history
+    # this migration preserves. one_notification_path drops it after that.
+    _upgrade_to(db_path, "derive_ticket_status")
     upgraded = connect(str(db_path))
-    create_schema(upgraded)
 
     assert [
         tuple(row)
@@ -185,7 +187,12 @@ def test_upgrade_keys_preferences_by_subject_and_preserves_notification_history(
         ("conversation", "c_existing_chief", 1),
         ("ticket", ticket_id, 0),
     ]
-    notifications_data.project_facts(upgraded)
-    assert upgraded.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 1
     assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
     upgraded.close()
+
+    # And the rest of the chain still runs over those same rows.
+    head = connect(str(db_path))
+    create_schema(head)
+    assert notifications_data.queue_deliveries(head, 7) == 0
+    assert head.execute("PRAGMA foreign_key_check").fetchall() == []
+    head.close()

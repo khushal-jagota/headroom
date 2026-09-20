@@ -226,8 +226,8 @@ Launchers scrub ambient planner configuration and supply explicit paths.
 
 Deployment builds one exact commit, verifies a persistent-state snapshot, replaces only
 the app, and proves the requested revision. Failure restores both the prior app and the
-pre-cutover snapshot. Backups contain the SQLite record and managed files. Web Push
-projects selected Ticket, Chief, and Sprint Item supervisor events into durable delivery
+pre-cutover snapshot. Backups contain the SQLite record and managed files. Web Push turns a
+selected Ticket, Chief, or Sprint Item supervisor attention edge into durable delivery
 work.
 
 Read **Runtime environments** (`environments.md`), **Production deployment**

@@ -37,8 +37,7 @@ class NotificationLoop:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
             now = self._clock.now_unix()
-            data.project_facts(conn)
-            data.apply_policy(conn, now)
+            data.queue_deliveries(conn, now)
             identity = data.read_web_push_identity(conn)
             deliveries = data.pending_deliveries(conn, now)
             for delivery in deliveries:
