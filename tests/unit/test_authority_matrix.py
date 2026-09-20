@@ -50,7 +50,9 @@ class Seed:
     ticket_a: str
     ticket_b: str
     ticket_planning: str
+    ticket_user_owned: str
     sprint_id: str
+    gating_field: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +157,17 @@ def _seed(db_path: Path) -> Seed:
                 },
             )
         )
+        ticket_user_owned = _ok(
+            client.post(
+                "/api/tickets",
+                json={
+                    "worker_type": "personal",
+                    "title": "A user-owned gate",
+                    "kickoff_note": "Start here.",
+                    "sprint_item_id": item_a["id"],
+                },
+            )
+        )
         sprint = _ok(
             client.post(
                 "/api/sprints",
@@ -166,11 +179,13 @@ def _seed(db_path: Path) -> Seed:
             )
         )
     return Seed(
+        gating_field=str(ticket_a["stage"]).removeprefix("needs_"),
         item_a=str(item_a["id"]),
         item_b=str(item_b["id"]),
         ticket_a=str(ticket_a["id"]),
         ticket_b=str(ticket_b["id"]),
         ticket_planning=str(ticket_planning["id"]),
+        ticket_user_owned=str(ticket_user_owned["id"]),
         sprint_id=str(sprint["id"]),
     )
 
@@ -178,14 +193,6 @@ def _seed(db_path: Path) -> Seed:
 def _ok(response: Any) -> dict[str, Any]:
     assert response.status_code == 200, f"{response.request.url}: {response.text}"
     return cast(dict[str, Any], response.json())
-
-
-def _gating_field(db_path: Path, ticket_id: str) -> str:
-    with TestClient(_app_on(db_path)) as client:
-        ticket = _ok(client.get("/api/tickets", params={"detail": "full", "id": ticket_id}))
-    rows = ticket.get("tickets") or [ticket]
-    stage = str(rows[0]["stage"] if isinstance(rows, list) else ticket["stage"])
-    return stage.removeprefix("needs_")
 
 
 # --- the operations -------------------------------------------------------------
@@ -262,7 +269,27 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
         "GET    /tickets/{t}/worker-self",
         lambda s: Call("GET", f"/api/tickets/{s.ticket_a}/worker-self"),
     ),
+    (
+        "PATCH  /tickets/{t} field_values",
+        lambda s: Call(
+            "PATCH", f"/api/tickets/{s.ticket_a}", {"field_values": {s.gating_field: "Edited."}}
+        ),
+    ),
+    (
+        "POST   /tickets/{t}/complete/{f}",
+        lambda s: Call(
+            "POST", f"/api/tickets/{s.ticket_user_owned}/complete/brief", {"body": "Mine."}
+        ),
+    ),
     # --- the approval gate, at its ordinary address
+    (
+        "POST   /tickets/{t}/accept/{f}",
+        lambda s: Call(
+            "POST",
+            f"/api/tickets/{s.ticket_a}/accept/{s.gating_field}",
+            {"next_holder": _OWNER_HOLDER},
+        ),
+    ),
     (
         "POST   /tickets/{t}/reject",
         lambda s: Call("POST", f"/api/tickets/{s.ticket_a}/reject", {"message": "Revise this."}),
