@@ -118,10 +118,9 @@ _TICKET_FIELDS_ONLY_FROM_ABOVE = (
     # decide_set_ceiling_holder is the gate for it.
 )
 
-# The one field nobody may set about a thing they only reach through it. An Outcome stands
-# above its Tickets because of sprint_item_id, so setting it is reassigning the authority
-# the caller is using rather than exercising it. Khushal and the Chief stand above every
-# Outcome, so re-parenting stays theirs.
+# The one field nobody may set about a thing they only reach through it.
+# authority.refuse_outcome_re_parenting says why, and the collection write that sets the
+# same column asks it too, so one exception has one statement and one answer at both doors.
 _TICKET_FIELD_THAT_MOVES_THE_PARENT = "sprint_item_id"
 
 
@@ -921,15 +920,8 @@ async def patch_ticket(
         require_above(conn, ctx.principal, target)
     else:
         require_above_or_self(conn, ctx.principal, target)
-    if (
-        _TICKET_FIELD_THAT_MOVES_THE_PARENT in body
-        and ctx.principal.kind is PrincipalKind.sprint_item
-    ):
-        raise PlannerError(
-            ErrorCode.agent_forbidden,
-            "an Outcome cannot move a Ticket out of its own chain",
-            {"field": _TICKET_FIELD_THAT_MOVES_THE_PARENT, "ticket_id": ticket_id},
-        )
+    if _TICKET_FIELD_THAT_MOVES_THE_PARENT in body:
+        authority.refuse_outcome_re_parenting(ctx.principal, ticket_id)
 
     edit = TicketEdit()
     if "title" in body:

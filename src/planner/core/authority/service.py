@@ -144,10 +144,28 @@ def require_above_or_self(conn: sqlite3.Connection, caller: Principal, target: T
         _refuse(caller, target)
 
 
+def refuse_outcome_re_parenting(caller: Principal, ticket_id: str) -> None:
+    """The one stated exception to the rule, asked wherever a Ticket's Outcome is set.
+
+    An Outcome stands above its Tickets because of ``tickets.sprint_item_id``. Setting that
+    column is reassigning the authority the caller is using rather than exercising it, and
+    "strictly below" cannot refuse it: at the moment of the call the Ticket really is below
+    the Outcome. Khushal and the Chief stand above every Outcome, so re-parenting is theirs.
+    """
+    if caller.kind is not PrincipalKind.sprint_item:
+        return
+    raise PlannerError(
+        ErrorCode.agent_forbidden,
+        "an Outcome cannot move a Ticket out of its own chain",
+        {"field": "sprint_item_id", "ticket_id": ticket_id},
+    )
+
+
 __all__ = [
     "chain_facts",
     "is_above",
     "is_above_or_self",
+    "refuse_outcome_re_parenting",
     "require_above",
     "require_above_or_self",
     "require_self",

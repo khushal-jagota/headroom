@@ -13,12 +13,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from planner.core import authority
-from planner.core.authctx import (
-    RequestContext,
-    require_sprint_item_supervisor_ticket_write,
-    require_ticket_worker_write,
+from planner.core.authctx import RequestContext
+from planner.core.authority import (
+    refuse_outcome_re_parenting,
+    require_above,
+    require_above_or_self,
 )
-from planner.core.authority import require_above
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.contracts import Principal
@@ -134,10 +134,19 @@ def _required(admit: Callable[[], None] | None) -> Callable[[], None]:
 # --- the authority rules ------------------------------------------------------
 
 
-def _ticket_worker_rule(
+def _day_ticket_rule(
     conn: sqlite3.Connection, ctx: RequestContext, container_id: str, member_id: str
 ) -> None:
-    require_ticket_worker_write(conn, ctx)
+    """A Day holds no authority of its own, so the Ticket is the thing acted on."""
+    require_above_or_self(conn, ctx.principal, authority.ticket(member_id))
+
+
+def _outcome_ticket_rule(
+    conn: sqlite3.Connection, ctx: RequestContext, container_id: str, member_id: str
+) -> None:
+    """The Ticket is acted on, and this write is the one that sets its Outcome."""
+    require_above_or_self(conn, ctx.principal, authority.ticket(member_id))
+    refuse_outcome_re_parenting(ctx.principal, member_id)
 
 
 def _sprint_planning_rule(
@@ -146,18 +155,11 @@ def _sprint_planning_rule(
     require_above(conn, ctx.principal, authority.plan("sprint_outcomes"))
 
 
-def _supervisor_day_rule(
+def _blocker_rule(
     conn: sqlite3.Connection, ctx: RequestContext, container_id: str, member_id: str
 ) -> None:
-    require_sprint_item_supervisor_ticket_write(conn, ctx, ctx.principal.id, member_id)
-
-
-def _supervisor_blocker_rule(
-    conn: sqlite3.Connection, ctx: RequestContext, container_id: str, member_id: str
-) -> None:
-    """A supervisor may block one of its own children with another of its own children."""
-    require_sprint_item_supervisor_ticket_write(conn, ctx, ctx.principal.id, member_id)
-    require_sprint_item_supervisor_ticket_write(conn, ctx, ctx.principal.id, container_id)
+    """The blocked Ticket is the one acted on. The blocking Ticket is named, not changed."""
+    require_above_or_self(conn, ctx.principal, authority.ticket(container_id))
 
 
 @dataclass(frozen=True)
@@ -166,25 +168,24 @@ class CollectionEntry:
 
     add: Write
     remove: Write
-    rule: Rule | None
-    supervisor_rule: Rule | None = None
+    rule: Rule
     resolve_container: Callable[[str, Clock, Config], str] = field(default=_container_as_given)
 
 
 ENTRIES: dict[Collection, CollectionEntry] = {
-    # A Ticket on a Day has never had an authority rule of its own, and it keeps none.
-    # A Sprint Item supervisor gets the rule its own route used to apply.
+    # Every entry asks the one rule about the thing the write acts on. There is no longer a
+    # second rule chosen from the caller's kind: that split was the two-doors shape in one
+    # file, and a collection now answers the same question whoever is asking.
     Collection.day_tickets: CollectionEntry(
         add=_add_day_ticket,
         remove=_remove_day_ticket,
-        rule=None,
-        supervisor_rule=_supervisor_day_rule,
+        rule=_day_ticket_rule,
         resolve_container=_day_container,
     ),
     Collection.outcome_tickets: CollectionEntry(
         add=_add_outcome_ticket,
         remove=_remove_outcome_ticket,
-        rule=_ticket_worker_rule,
+        rule=_outcome_ticket_rule,
     ),
     Collection.sprint_outcomes: CollectionEntry(
         add=_commit_outcome,
@@ -194,7 +195,6 @@ ENTRIES: dict[Collection, CollectionEntry] = {
     Collection.blockers: CollectionEntry(
         add=_add_blocker,
         remove=_remove_blocker,
-        rule=_ticket_worker_rule,
-        supervisor_rule=_supervisor_blocker_rule,
+        rule=_blocker_rule,
     ),
 }

@@ -33,9 +33,9 @@ POST   /items/{i}/supervisor/conversation/reset          allow   allow   refuse 
 GET    /items/{i}/workspace                              allow   allow   allow           refuse            refuse       refuse           refuse             
 PATCH  /items/{i}                                        allow   allow   allow           refuse            refuse       refuse           refuse             
 DELETE /items/{i}                                        allow   allow   refuse          refuse            refuse       refuse           refuse             
-PUT    /collections/outcome_tickets                      allow   allow   refuse          refuse            allow        allow            allow              
-PUT    /collections/day_tickets                          allow   allow   allow           refuse            allow        allow            allow              
-PUT    /collections/blockers                             allow   allow   refuse          refuse            allow        allow            allow              
+PUT    /collections/outcome_tickets                      allow   allow   refuse          refuse            allow        refuse           refuse             
+PUT    /collections/day_tickets                          allow   allow   allow           refuse            allow        refuse           refuse             
+PUT    /collections/blockers                             allow   allow   allow           refuse            allow        refuse           refuse             
 PUT    /collections/sprint_outcomes                      allow   allow   refuse          refuse            refuse       refuse           refuse             
 PATCH  /day/{d} focus                                    allow   allow   refuse          refuse            refuse       refuse           allow              
 PATCH  /day/{d} midday_reconciliation                    allow   allow   refuse          refuse            refuse       refuse           refuse             

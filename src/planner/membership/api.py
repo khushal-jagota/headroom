@@ -1,8 +1,7 @@
 """The one way to put a thing in a collection, and the one way to take it out.
 
-The collection is a parameter, not an address. Both routes look the collection up,
-choose the authority rule from the request identity, and hand the work to the code
-that owns that collection.
+The collection is a parameter, not an address. Both routes look the collection up, ask
+its one authority rule, and hand the work to the code that owns that collection.
 """
 
 from __future__ import annotations
@@ -11,7 +10,6 @@ from functools import partial
 
 from fastapi import APIRouter
 
-from planner.core.contracts import PrincipalKind
 from planner.membership.collections import ENTRIES, CollectionEntry, MembershipWrite
 from planner.membership.contracts import Collection, MembershipAnswer
 from planner.tickets.api import Cfg, Clk, Ctx, DbConn, parse_enum
@@ -32,16 +30,13 @@ def _prepare(
 ) -> tuple[CollectionEntry, MembershipWrite]:
     entry = ENTRIES[parse_enum(Collection, collection, "collection")]
     resolved_container = entry.resolve_container(container_id, clk, cfg)
-    rule = entry.rule
-    if ctx.principal.kind is PrincipalKind.sprint_item and entry.supervisor_rule is not None:
-        rule = entry.supervisor_rule
     write = MembershipWrite(
         conn=conn,
         principal=ctx.principal,
         container_id=resolved_container,
         member_id=member_id,
         now=clk.now_unix(),
-        admit=None if rule is None else partial(rule, conn, ctx, resolved_container, member_id),
+        admit=partial(entry.rule, conn, ctx, resolved_container, member_id),
     )
     return entry, write
 
