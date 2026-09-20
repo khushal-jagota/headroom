@@ -4239,7 +4239,6 @@ select {
   flex: 1;
   min-width: 0;
   font-size: var(--type-sm);
-  text-transform: capitalize;
   color: var(--text-faint);
 }
 
@@ -5279,7 +5278,6 @@ a.artifact-chip:hover,
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-transform: capitalize;
   white-space: nowrap;
 }
 

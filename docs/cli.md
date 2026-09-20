@@ -116,7 +116,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   carries the same Worker type and placement context as `ticket create`, and it can be
   enabled or disabled. With no kickoff
   context, the created Ticket has no pending proposal, so readiness can start its
-  Worker-owned Kickoff. Supplying kickoff context creates the ordinary proposed Kickoff
+  Worker-owned Brief. Supplying kickoff context creates the ordinary proposed Brief
   and waits for approval. By default each
   occurrence resolves direct placement in the current Sprint; `--sprint` selects a fixed
   Sprint, `--backlog` leaves it unscheduled, and independent `--sprint-item` supplies
@@ -129,7 +129,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   directly.
 - **`ticket create / show / list / set / approve / block / unblock / delete`** — manage
   tickets. `ticket create` requires `--worker-type` and can take a `--kickoff-note` /
-  `--kickoff-note-file` intake body for the Kickoff field. `--employee-backend` overrides
+  `--kickoff-note-file` intake body for the Brief field. `--employee-backend` overrides
   the Worker type's registered default, and when it names a different backend
   `--employee-launch-model` has to say which model that backend runs the new Ticket's
   worker on — the Worker type's own model belongs to the Worker type's own backend.
@@ -180,7 +180,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
 - **`ticket employee-configuration <id> --backend <key> --model <id> [--reasoning-effort <e>]`**
   — set what this Ticket's worker launches on. All three go together, because a model id
   belongs to the backend that named it; leave `--reasoning-effort` out for a model that
-  takes none. It changes that choice only during pristine Kickoff, before a conversation
+  takes none. It changes that choice only during a pristine Brief, before a conversation
   exists.
 - **`ticket copy`** — copy one ticket's plain-text packet.
 - **`sprint create / list / show / set`** — plan sprints. `current` resolves through
@@ -239,8 +239,8 @@ record shapes. Direct `show` commands also keep their full record shapes.
 - **`ticket create --ceiling`** — state the new Ticket's ceiling at creation.
   The creator that was given the scope states it, so authorized work does not sit waiting
   for a second approval. That creator is also the ceiling holder. A stated ceiling past
-  the kickoff settles the kickoff and starts the Ticket at the next Stage. Omit both
-  options to keep the default: the kickoff parks for its creator's approval.
+  the Brief settles the Brief and starts the Ticket at the next Stage. Omit both
+  options to keep the default: the Brief parks for its creator's approval.
 - **`sprint item supervisor artifact-list / artifact-write / artifact-delete`** — manage
   files under the owning Item's `artifacts/` directory.
 - **`worker propose / recap / note / request-help / my-ticket`** — worker actions.

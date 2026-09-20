@@ -42,7 +42,7 @@ current. It does not copy a plan or start a rollover workflow.
 At 05:05 local time, just after the 5am planning-day boundary, the internal schedule
 creates a `planning-day` Ticket for the current planning day. Its specialist Worker
 gathers current evidence, plans the four morning fields with the user, and writes the
-agreed Day only at Closeout. At 14:30, a
+agreed Day only at Consequences. At 14:30, a
 `planning-midday-check` Ticket compares that intent with current execution, agrees any
 useful intervention, carries it out, and records the reconciliation. Each planning
 Ticket uses the Personal Project and direct current-Sprint placement. Repeat or pre-laid

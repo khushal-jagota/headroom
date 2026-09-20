@@ -11,7 +11,7 @@ Tickets. An idea is a loose thought that is not committed work. Choose the Worke
 fits the job, use its registered specialist guidance, and let that type supply its
 normal employee runtime defaults.
 
-Give the Ticket a clear outcome-oriented title and a light, faithful Kickoff. Intake is
+Give the Ticket a clear outcome-oriented title and a light, faithful Brief. Intake is
 the user's request plus only the factual context the Worker needs to understand it.
 Ground references to existing work, preserve agreed boundaries and dependencies, and
 do not turn creation into premature planning.
@@ -73,19 +73,19 @@ resolved. Do not use either as a second priority scale.
 
 ## Scope stated at creation
 
-By default a new Ticket parks its Kickoff for the user's approval. That default is right
+By default a new Ticket parks its Brief for the user's approval. That default is right
 for ordinary intake: the user wants to sense-check what work exists before it starts.
 
 State the scope instead when the user gave you the scope to grant. `--ceiling` says the
 last thing the new Worker may do: it does that thing, proposes it, and waits for the
-user. Stating a ceiling past kickoff settles the
-Kickoff and starts the Ticket at its next Stage, so work the user has already authorized
+user. Stating a ceiling past the Brief settles the
+Brief and starts the Ticket at its next Stage, so work the user has already authorized
 begins instead of waiting for a second approval.
 
 State only the scope you were actually given. Widening a Ticket beyond what the user
 authorized is not a creation detail.
 
-After creation, read the Ticket back as a whole. Its title, Worker type, Kickoff,
+After creation, read the Ticket back as a whole. Its title, Worker type, Brief,
 today status, direct Project and Sprint, optional Sprint Item, priority,
 deadline, and blockers should tell one coherent story. Correct a mismatch through the
 ordinary owning surface rather than compensating for it in prose.

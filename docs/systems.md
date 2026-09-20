@@ -23,7 +23,7 @@ direct user ─────► user-owned Ticket gate                    change 
 The proposal resolver is the only door for gated Ticket field values and Stage
 advances. It is not the only writer in Panels. Ordinary direct actions have their own
 domain writers. Three planning Worker types receive narrow Day or Sprint write authority
-for their Closeout. A direct user can settle the current user-owned Ticket gate.
+for their Consequences. A direct user can settle the current user-owned Ticket gate.
 
 ## The systems
 
@@ -139,7 +139,7 @@ _Code paths:_ `src/planner/scheduled_tickets/` and `src/planner/core/loops.py`.
 
 The readiness loop examines today's Tickets and applies one complete, read-only
 decision. A Ticket must be on today, non-terminal, and ready for its declared ownership,
-within scope, free of a parked proposal, and clear for its Closeout lane. The
+within scope, free of a parked proposal, and clear for its Consequences lane. The
 conversation system supplies the one fact the record cannot: whether that Ticket's
 worker is already busy.
 
@@ -147,7 +147,7 @@ One guarded status flip out of `empty` is the claim. There is no claim stamp or 
 User-owned claims also record one opener fact for the current Stage entry. An accepted
 opening turn returns the status to `empty`, while readiness uses the fact to prevent a
 repeat. Panels then starts or reuses the Ticket conversation and sends one ordered list
-of Ticket inputs: Stage instruction, guidance, settled kickoff, and current-Stage
+of Ticket inputs: Stage instruction, guidance, settled Brief, and current-Stage
 revision feedback where present. Started and queued both count as delivered. Refusal
 releases every claim and removes any tentative opener fact.
 

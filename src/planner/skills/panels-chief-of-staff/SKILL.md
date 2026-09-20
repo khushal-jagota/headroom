@@ -51,7 +51,7 @@ Record completed external work through ordinary Ticket operations. Search curren
 
 If no aligned Ticket exists, load and follow `panels-ticket-creation`. Create the Ticket with `panels ticket create`, then use ordinary field, recap, placement, scope, and Day operations. Use `panels ticket complete <ticket-id> <field>` for the unset gate of the current user-owned Stage, and `panels ticket set-value <ticket-id> <field>` to correct a settled earlier value. Panels does not support bulk field prefixes or arbitrary Stage jumps.
 
-Preserve the user's report in Kickoff and recap text. If an existing Worker type no longer contains a live Ticket's Stage, use an explicit repository migration with that Worker change. Do not repair it through the product API.
+Preserve the user's report in Brief and recap text. If an existing Worker type no longer contains a live Ticket's Stage, use an explicit repository migration with that Worker change. Do not repair it through the product API.
 
 When a Ticket relies on existing Tickets being complete, pass each prerequisite Ticket id with repeatable `--blocked-by <ticket-id>`.
 
@@ -95,25 +95,25 @@ List commands return bounded summaries. Read their page facts before you assume 
 result is complete. Prefer Ticket filters and `--search` before a larger `--limit`. Use
 `--include-terminal` only when finished work is relevant.
 
-For capture, create the smallest correct object. **A Kickoff is intake, not your plan,
+For capture, create the smallest correct object. **A Brief is intake, not your plan,
 interpretation, or extrapolation.** Preserve the user's wording closely and include only
 what the user actually stated. Bring in context from inspected records or other Tickets
 when it is directly relevant and factual; include additional framing from discussion only
 after the user agrees to it. If the user did not state an intention, concern, desired
 outcome, scope, or reason, do not guess one. Do not invent questions to answer,
 consequences, requirements, architecture, methods, tests, or process instructions. When
-missing intent prevents correct capture, ask briefly; otherwise write a light Kickoff and
-let the Ticket's conversation and notes add or correct context. Longer Kickoffs are earned
+missing intent prevents correct capture, ask briefly; otherwise write a light Brief and
+let the Ticket's conversation and notes add or correct context. Longer Briefs are earned
 only by what the user actually supplied or approved. Less is more because the user must
 read and trust the record.
 
 **Expand the referent, not the scope.** When the user alludes to an existing Panels
 feature, message, workflow, Ticket, or mechanism, inspect the relevant code and records
-before writing the Kickoff. Add the smallest factual explanation needed for a later
+before writing the Brief. Add the smallest factual explanation needed for a later
 reader to understand what the user meant. Do not make the user restate context that Chief
 can retrieve.
 
-Every substantive Kickoff sentence must be one of:
+Every substantive Brief sentence must be one of:
 
 1. something the user stated or agreed;
 2. factual context needed to explain a specific thing the user referenced; or
@@ -139,7 +139,7 @@ does not decide or implement. When the question itself is still undefined, use
 Use the `initiative_review` Worker type when a delivered initiative or another coherent
 multi-Ticket change needs one combined review before integration. It inspects the actual
 combined result, captures the user's specific feedback, and creates the agreed follow-up
-work before closeout.
+work before Consequences.
 
 Use the `amend_worker` Worker type when an existing Worker type needs changing: a Stage
 removed or added, an ownership mode, a runtime default, or its skill guidance. One

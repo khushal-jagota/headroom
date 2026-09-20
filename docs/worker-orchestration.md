@@ -31,9 +31,9 @@ all of these hold right now:
    and errors out of the runnable set. User-owned Stages are already excluded by rule 3.
 5. Nothing is already parked on that blank waiting for approval.
 6. Scope permits work at the current ceiling.
-7. If the blank is Closeout, no other Ticket in the same project-and-Worker-type lane
-   is at Closeout and not resting. One poll sends at most one Ticket into each free
-   lane.
+7. If the blank is Consequences, no other Ticket in the same project-and-Worker-type
+   lane is at Consequences and not resting. One poll sends at most one Ticket into
+   each free lane.
 
 Then one more question that the record cannot answer: **is this Ticket's worker busy
 right now?** The conversation system is asked directly, and a busy worker is left alone
@@ -72,7 +72,7 @@ occurrences, and suppression.
 ## Sending the step
 
 The opening message is composed first as one ordered, inspectable list of Panels inputs:
-the Stage instruction, Ticket guidance when present, the settled kickoff, and revision
+the Stage instruction, Ticket guidance when present, the settled Brief, and revision
 feedback for the current Stage when present. The worker sees each one because it is in
 the actual message. Worker skills and conversation history stay separate from this list.
 It is composed before anything else so that a failure here cannot leave a conversation

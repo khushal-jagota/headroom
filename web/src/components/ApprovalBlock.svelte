@@ -5,8 +5,7 @@
   import ErrorLine from "./ErrorLine.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import CeilingPicker from "./CeilingPicker.svelte";
-  import { labelize } from "../lib/ui";
-  import type { Lifecycle } from "../lib/lifecycle";
+  import { fieldLabelFor, type Lifecycle } from "../lib/lifecycle";
 
   let {
     field = "",
@@ -46,7 +45,7 @@
   let error = $state<unknown>(null);
   let reviewLayout = $derived(layout === "review");
   let hasNote = $derived(Boolean(onNoteSave) || Boolean((note || "").trim()));
-  let contentTitle = $derived(labelize(whatLabel || field.replace(/_/g, " ")));
+  let contentTitle = $derived(whatLabel || fieldLabelFor(lifecycle, field));
 
   let actionDisabled = $derived(
     disabled || inFlight || resolved || ceiling === null
@@ -118,7 +117,7 @@
 
 <div class="approval {reviewLayout ? 'approval--review' : ''}" data-approval-block data-mode="pending" data-field={field || undefined}>
     {#if !reviewLayout}
-      <div class="approval-what">{whatLabel || field.replace(/_/g, " ")}</div>
+      <div class="approval-what">{contentTitle}</div>
     {/if}
 
     {#if proposedBy && !reviewLayout}

@@ -26,11 +26,11 @@ export type TicketStatusGroupDefinition = {
 export const TICKET_STATUS_GROUPS: readonly TicketStatusGroupDefinition[] = [
   { key: "errored", label: "Errored", quiet: false },
   { key: "needs-me", label: "Needs you", quiet: false },
-  { key: "waiting-for-kickoff", label: "Waiting for kickoff", quiet: false },
+  { key: "waiting-for-kickoff", label: "Waiting for Brief", quiet: false },
   { key: "current-awaiting-approval", label: "Awaiting approval", quiet: false },
   { key: "current-assigned", label: "Assigned", quiet: false },
   { key: "current-running", label: "Agent", quiet: false },
-  { key: "current-waiting", label: "Waiting for closeout", quiet: true },
+  { key: "current-waiting", label: "Waiting on Consequences", quiet: true },
   { key: "upcoming", label: "Empty", quiet: true },
   { key: "blocked", label: "Blocked", quiet: true },
   { key: "completed", label: "Done", quiet: true }

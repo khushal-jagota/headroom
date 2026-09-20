@@ -52,7 +52,7 @@ surface a delivery failure, or fall back to the owner.
 
 - `ticket create --sprint-item <your item>` creates a child Ticket under your Item. Load
   and follow `panels-ticket-creation` first. A Ticket you create is scoped like any other:
-  this Sprint Item becomes its ceiling holder. If creation includes a kickoff proposal,
+  this Sprint Item becomes its ceiling holder. If creation includes a Brief proposal,
   the proposal parks for this Item. Add `--ceiling` when the user gave you more scope to
   grant.
 - `ticket delete <ticket> --yes` permanently deletes a current child Ticket of your Item.

@@ -91,7 +91,7 @@ def test_a_change_reaches_the_open_board_without_a_reload(
 ) -> None:
     # The Workspace rail holds the groups that want the reader, so a Ticket has to be in
     # one of them to have a card at all. A kickoff note parks the Ticket for approval,
-    # which is Waiting for Kickoff — the live update itself is what this test is about.
+    # which is Waiting for Brief — the live update itself is what this test is about.
     ticket_id = cli(
         server,
         "ticket",

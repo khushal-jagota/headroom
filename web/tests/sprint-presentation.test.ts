@@ -56,7 +56,7 @@ describe("Sprint ticket conditions", () => {
     [ticket({ ticket_status: "awaiting_approval", awaiting_approval: true }), "current-awaiting-approval", "to review"],
     [ticket({ awaiting_reply: true }), "needs-me", "need you"],
     [ticket({ ticket_status: "agent", agent_state: "working" }), "current-running", "working"],
-    [ticket({ waiting_to_closeout: true }), "current-waiting", "waiting for closeout"],
+    [ticket({ waiting_to_closeout: true }), "current-waiting", "waiting on consequences"],
     [ticket(), "upcoming", "to do"]
   ])("maps %o to %s and %s", (input, mark, word) => {
     expect(sprintTicketCondition(input)).toEqual({ mark, word });
