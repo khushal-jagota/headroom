@@ -31,8 +31,13 @@ from planner.notifications.contracts import (
     NOTIFICATION_SUBJECTS,
     AttentionEdge,
     EdgeKey,
+    NotificationIntent,
+    PushSubscription,
+    WebPushIdentity,
+    WebPushResult,
 )
 from planner.notifications.logic.policy import decide_notification
+from planner.notifications.runtime import NotificationLoop
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import NO_FURTHER, TITLE_MAX_CHARS, Ticket, TicketEdit
 
@@ -714,3 +719,52 @@ def test_an_awaiting_approval_edge_is_dated_from_when_the_proposal_parked(
     assert edge is not None
     assert int(edge["occurred_at"]) == 900
     conn.close()
+
+
+def test_the_loop_sends_one_edge_to_the_registered_device_and_records_it(
+    tmp_path: Path,
+) -> None:
+    """The whole loop, against a device that is not anyone's phone."""
+    db_path = tmp_path / "loop.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    notifications_data.get_or_create_web_push_identity(conn, 1)
+    subscription_id = _subscribe(conn, name="loop-device")
+    ticket = _ticket(conn, 1)
+    conn.close()
+
+    sent: list[tuple[str, NotificationIntent]] = []
+
+    class RecordingAdapter:
+        def send(
+            self,
+            subscription: PushSubscription,
+            intent: NotificationIntent,
+            identity: WebPushIdentity,
+            *,
+            subject: str,
+        ) -> WebPushResult:
+            sent.append((subscription.subscription_id, intent))
+            return WebPushResult(delivered=True)
+
+    loop = NotificationLoop(
+        str(db_path),
+        MutableClock(parse_fake_now("2026-09-20T05:00:00+01:00")),
+        canonical_origin="https://panels.example",
+        adapter=RecordingAdapter(),
+    )
+    assert loop.poll_once() == 2
+    assert [subscription for subscription, _ in sent] == [subscription_id] * 2
+    assert {intent.route for _, intent in sent} == {f"/#/workspace/{ticket.id}"}
+    assert {intent.tag for _, intent in sent} == {f"panels-ticket-{ticket.id}"}
+
+    # Nothing is sent twice, and the log says what went out.
+    assert loop.poll_once() == 0
+    with connect(str(db_path)) as conn:
+        assert [
+            (str(row["notification_type"]), str(row["status"]), int(row["attempts"]))
+            for row in conn.execute(
+                "SELECT notification_type, status, attempts FROM notification_deliveries "
+                "ORDER BY notification_type"
+            )
+        ] == [("assigned", "delivered", 1), ("awaiting_approval", "delivered", 1)]
