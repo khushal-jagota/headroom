@@ -50,6 +50,11 @@ The canonical Stage writer clears the fact when the Ticket leaves that Stage. A 
 Stage entry can therefore receive its own opener without a database trigger.
 All readiness questions run again inside the write, so only one racer wins the claim.
 
+Day membership is one of those questions, and it is asked at the start of a worker step
+and again inside the claim. Nothing asks it afterwards. Taking a Ticket off today
+therefore stops its next wake, and it does not stop the turn already in flight. That
+turn ends on its own, and the Ticket moves again only when someone acts on it.
+
 Checking too often costs nothing: the check reads and decides, and writes nothing. So
 the loop does not wait out its timer. Every write committed through the database door
 announces itself — the announcement says nothing about what changed — and the loop

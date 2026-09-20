@@ -1228,6 +1228,91 @@ def test_completing_a_blocker_releases_its_blocks_and_frees_the_target(
     assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
 
 
+def _created_with_blockers(
+    conn: Connection,
+    cfg: Config,
+    clock: TestClock,
+    *,
+    title: str,
+    blocker_ids: list[str],
+) -> Ticket:
+    """Create a dependent Ticket the way the incident did: on the Day, with its blockers,
+    and with a ceiling that accepts the Brief inside the create itself. Nothing writes to
+    the Ticket after creation, so this is the one act the readiness loop then sees."""
+    return _create(
+        conn,
+        cfg,
+        clock,
+        title=title,
+        settle_kickoff=False,
+        stated_ceiling="needs_success_condition",
+        day_id=_AUTOMATIC_PLANNING_DAY_ID,
+        blocked_by_ticket_ids=blocker_ids,
+    )
+
+
+def test_a_ticket_created_with_a_live_blocker_never_starts_until_it_clears(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
+    created = _created_with_blockers(
+        tmp_db, cfg, fake_clock, title="Blocked at birth", blocker_ids=[blocker.id]
+    )
+
+    assert created.stage == "needs_success_condition"
+    assert created.ticket_status is TicketStatus.blocked
+    assert _claim_ready_worker_step(tmp_db, created.id, now=now) is None
+
+    advance_ticket(tmp_db, blocker.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
+
+    assert data.read_ticket(tmp_db, created.id).ticket_status is TicketStatus.empty
+    claimed = _claim_ready_worker_step(tmp_db, created.id, now=now + 1)
+    assert claimed is not None
+    assert claimed.ticket_status is TicketStatus.agent
+
+
+def test_every_creation_blocker_holds_until_the_last_one_is_done(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    blockers = [_create(tmp_db, cfg, fake_clock, title=f"Blocker {index}").id for index in range(4)]
+    created = _created_with_blockers(
+        tmp_db, cfg, fake_clock, title="Blocked four times", blocker_ids=blockers
+    )
+
+    assert created.ticket_status is TicketStatus.blocked
+    assert _claim_ready_worker_step(tmp_db, created.id, now=now) is None
+
+    for blocker_id in blockers[:-1]:
+        advance_ticket(tmp_db, blocker_id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
+        assert data.read_ticket(tmp_db, created.id).ticket_status is TicketStatus.blocked
+        assert _claim_ready_worker_step(tmp_db, created.id, now=now) is None
+
+    advance_ticket(tmp_db, blockers[-1], new_stage="done", principal=OWNER_PRINCIPAL, now=now)
+
+    claimed = _claim_ready_worker_step(tmp_db, created.id, now=now + 1)
+    assert claimed is not None
+    assert claimed.ticket_status is TicketStatus.agent
+
+
+def test_a_blocker_already_done_at_creation_holds_nothing(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    blocker = _create(tmp_db, cfg, fake_clock, title="Spent blocker")
+    advance_ticket(tmp_db, blocker.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
+
+    created = _created_with_blockers(
+        tmp_db, cfg, fake_clock, title="Free at birth", blocker_ids=[blocker.id]
+    )
+
+    assert created.ticket_status is TicketStatus.empty
+    claimed = _claim_ready_worker_step(tmp_db, created.id, now=now + 1)
+    assert claimed is not None
+    assert claimed.ticket_status is TicketStatus.agent
+
+
 def test_a_failed_completion_rolls_back_its_block_release(
     tmp_db: Connection,
     cfg: Config,
