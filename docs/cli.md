@@ -135,7 +135,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   worker on — the Worker type's own model belongs to the Worker type's own backend.
   When `--priority` is omitted, creation uses the parent Sprint Item priority, then an
   assessed Project priority, then P3. An explicit `--priority P0|P1|P2|P3` overrides
-  that default. `ticket list` excludes done and dropped Tickets unless
+  that default. `ticket list` excludes done Tickets unless
   `--include-terminal` is present. Repeat `--stage` or `--exclude-stage` for Stage
   inclusion or exclusion. Repeat `--ticket-status` or `--exclude-ticket-status` for
   control-status inclusion or exclusion. Values inside one filter type use OR. Different

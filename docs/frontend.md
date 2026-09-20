@@ -37,8 +37,7 @@ One screen per part of the system:
   guidance stays independent. A reply in the Ticket conversation leaves the proposal in
   Review until a decision.
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
-  follows the same 5am planning-day boundary as the Day screen; dropped tickets never
-  appear. The Chief of Staff row leads, and under it a selector chooses one of two views
+  follows the same 5am planning-day boundary as the Day screen. The Chief of Staff row leads, and under it a selector chooses one of two views
   over the same tickets: **Tickets** or **Sprint Items**.
 
   The Tickets view starts with three owner-attention groups in this order: Awaiting
@@ -441,7 +440,7 @@ hand-rolling the same shapes per screen. Each does one job:
   Priority never borrows the slate-blue attention accent or the status-mark colours.
 - **StageMark** — the single stage dot showing a field's progress.
 - **ApprovalBlock** — the owner approval surface: an editable proposal draft, the scope
-  picker, and the approve/accept action, plus a read-only mode for dropped tickets. Its
+  picker, and the approve/accept action. Its
   approval addresses the next ceiling proposal to the owner.
 - **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
   the kickoff priority, the approval control, and the send-back box. It is named by a

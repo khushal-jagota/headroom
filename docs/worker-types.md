@@ -58,7 +58,6 @@ contains:
 - its id and human label;
 - the ordered Stages, including the field and ownership mode of each
   non-terminal Stage (`worker` or `user`);
-- the separate `dropped` terminal Stage;
 - the ordered fields carried by its Tickets;
 - the worker profile, including the specialist skill and the default Employee backend,
   model, and reasoning effort copied onto a new Ticket.
@@ -114,8 +113,7 @@ when the modules were imported.
 `WorkerTypeRegistry` validates every definition when the registry is built, and the store
 runs those same rules before a row is written. They check the
 shared structural rules: an optional Kickoff stage and field appear together first,
-`done` is the one linear terminal,
-`dropped` sits outside the line, every non-terminal Stage gates one declared field, every
+`done` is the one terminal, every non-terminal Stage gates one declared field, every
 field is gated once, every non-terminal Stage declares a valid ownership mode,
 terminal Stages declare none, worker skills and toolsets are known, and the default
 Employee backend is one of the three the conversation system has.
@@ -136,8 +134,8 @@ There is no well-known field name every Worker type must carry. The Closeout lan
 the field named `closeout`, but only after establishing that one of the type's own Stages
 gates it, so a type without that field simply has no Closeout lane. The probe Worker type
 declares none and is what keeps that true. The names the runtime does require — the `done`
-terminal, the separate `dropped` Stage, and a `kickoff` field paired with a first
-`needs_kickoff` Stage — are all in the rules above.
+terminal and a `kickoff` field paired with a first `needs_kickoff` Stage — are all in
+the rules above.
 
 The registry has only three jobs:
 
@@ -449,8 +447,7 @@ One new Worker type needs one definition and one production registration path:
 2. Add one definition module under `src/planner/worker_types/`. Construct an immutable
    `WorkerTypeDefinition` with its ordered Stages, fields, worker profile, starting
    Employee backend/model/reasoning values. Give every non-terminal Stage a deliberate
-   ownership mode; `done` and `dropped` have
-   none. Novel Stage and field ids are plain strings.
+   ownership mode; `done` has none. Novel Stage and field ids are plain strings.
 3. In `src/planner/worker_types/configuration.py`, add the specialist skill to the known
    skills catalog and add the definition to `_PRODUCTION_WORKER_TYPE_DEFINITIONS`. Do not
    register it anywhere else.
@@ -462,9 +459,9 @@ One new Worker type needs one definition and one production registration path:
 6. Restart Panels and provision the production skill homes. Composition validates the
    registry before the Worker type becomes live.
 
-The shared kickoff, completion, and drop ids are structural rules, not imported lifecycle
+The shared kickoff and completion ids are structural rules, not imported lifecycle
 constants. The new definition still declares them directly: `needs_kickoff` gating
-`kickoff`, terminal `done`, and the separate terminal `dropped`.
+`kickoff`, and terminal `done`.
 
 ## Ordinary field completion
 
