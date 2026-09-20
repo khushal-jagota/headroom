@@ -47,6 +47,7 @@ from claude_agent_sdk import (
     UserMessage,
 )
 
+from planner.conversation.backends import claude_agent_sdk as claude_agent_sdk_module
 from planner.conversation.backends.claude_agent_sdk import (
     ALWAYS_ALLOW_THIS_SESSION_OPTION_ID,
     APPROVE_ONCE_OPTION_ID,
@@ -160,6 +161,11 @@ class _ScriptedClaudeSdkClient:
         self.watched_user_message_uuids: list[str] = []
         self.steer_admission: bool | None = True
         self.result_user_message_uuids: dict[str, frozenset[str]] = {}
+        # The commands claude has finished with, as a terminal lifecycle receipt or a
+        # correlated result said so. A steer claude folded into the running turn is
+        # settled this way and is never named on any result.
+        self.settled_user_message_uuids: set[str] = set()
+        self._settlements: dict[str, asyncio.Event] = {}
         self.cancelled_user_message_uuids: frozenset[str] | None = None
         self.still_queued_user_message_uuids: frozenset[str] = frozenset()
         self.disconnected = False
@@ -198,7 +204,28 @@ class _ScriptedClaudeSdkClient:
     def user_message_uuids_for_result(self, result_uuid: str | None) -> frozenset[str]:
         if result_uuid is None:
             return frozenset()
-        return self.result_user_message_uuids.pop(result_uuid, frozenset())
+        named = self.result_user_message_uuids.pop(result_uuid, frozenset())
+        for user_message_uuid in named:
+            self.settle_user_message(user_message_uuid)
+        return named
+
+    def user_message_is_settled(self, user_message_uuid: str) -> bool:
+        return user_message_uuid in self.settled_user_message_uuids
+
+    async def wait_for_user_message_settlement(self, user_message_uuid: str) -> None:
+        await self._settlement(user_message_uuid).wait()
+
+    def settle_user_message(self, user_message_uuid: str) -> None:
+        """What a terminal lifecycle receipt does, for a test to do on purpose."""
+        self.settled_user_message_uuids.add(user_message_uuid)
+        self._settlement(user_message_uuid).set()
+
+    def _settlement(self, user_message_uuid: str) -> asyncio.Event:
+        settlement = self._settlements.get(user_message_uuid)
+        if settlement is None:
+            settlement = asyncio.Event()
+            self._settlements[user_message_uuid] = settlement
+        return settlement
 
     async def _drain(self) -> AsyncIterator[Message]:
         while True:
@@ -629,6 +656,115 @@ def test_the_custom_transport_retains_uuid_admission_and_result_membership() -> 
             {command_uuid, "another-command"}
         )
         await messages.aclose()
+
+    _run(exercise)
+
+
+def test_the_custom_transport_settles_a_command_on_its_terminal_receipt() -> None:
+    """Queued and started are claude still working. The three terminal states are not."""
+
+    async def exercise() -> None:
+        for state, settles in (
+            ("queued", False),
+            ("started", False),
+            ("completed", True),
+            ("cancelled", True),
+            ("discarded", True),
+        ):
+            inner = _ScriptedRawTransport()
+            transport = _ClaudeProtocolTransport(inner)
+            command_uuid = f"30000000-0000-4000-8000-0000000000{state[:2]}"
+            transport.watch_user_message(command_uuid)
+            messages = cast(
+                AsyncGenerator[dict[str, Any], None], transport.read_messages()
+            )
+            frame = asyncio.ensure_future(anext(messages))
+            inner.say(
+                {
+                    "type": "command_lifecycle",
+                    "command_uuid": command_uuid,
+                    "state": state,
+                }
+            )
+            await frame
+
+            assert transport.user_message_is_settled(command_uuid) is settles
+            await messages.aclose()
+
+    _run(exercise)
+
+
+def test_the_custom_transport_settles_a_command_a_result_names() -> None:
+    async def exercise() -> None:
+        inner = _ScriptedRawTransport()
+        transport = _ClaudeProtocolTransport(inner)
+        command_uuid = "30000000-0000-4000-8000-00000000001a"
+        transport.watch_user_message(command_uuid)
+        messages = cast(AsyncGenerator[dict[str, Any], None], transport.read_messages())
+        frame = asyncio.ensure_future(anext(messages))
+        inner.say(
+            {
+                "type": "result",
+                "uuid": "result-1",
+                "user_message_uuid": command_uuid,
+            }
+        )
+        await frame
+
+        assert transport.user_message_is_settled(command_uuid) is True
+        await transport.wait_for_user_message_settlement(command_uuid)
+        await messages.aclose()
+
+    _run(exercise)
+
+
+def test_the_custom_transport_gives_up_on_a_command_claude_never_acknowledged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Silence past the admission bound is a child that never took the command.
+
+    The queue receipt is written as the child reads the line, so nothing at all after that
+    bound means nothing is running. Waiting on it would be waiting on a fact that is not
+    coming, which is the defect this whole change removes.
+    """
+    monkeypatch.setattr(
+        claude_agent_sdk_module, "CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS", 0.01
+    )
+
+    async def exercise() -> None:
+        inner = _ScriptedRawTransport()
+        transport = _ClaudeProtocolTransport(inner)
+        command_uuid = "30000000-0000-4000-8000-00000000001b"
+        transport.watch_user_message(command_uuid)
+
+        assert transport.user_message_is_settled(command_uuid) is False
+        await transport.wait_for_user_message_settlement(command_uuid)
+        assert transport.user_message_is_settled(command_uuid) is True
+
+    _run(exercise)
+
+
+def test_the_custom_transport_settles_everything_when_the_stream_closes() -> None:
+    async def exercise() -> None:
+        inner = _ScriptedRawTransport()
+        transport = _ClaudeProtocolTransport(inner)
+        command_uuid = "30000000-0000-4000-8000-00000000001c"
+        transport.watch_user_message(command_uuid)
+        messages = cast(AsyncGenerator[dict[str, Any], None], transport.read_messages())
+        frame = asyncio.ensure_future(anext(messages))
+        inner.say(
+            {
+                "type": "command_lifecycle",
+                "command_uuid": command_uuid,
+                "state": "queued",
+            }
+        )
+        await frame
+        assert transport.user_message_is_settled(command_uuid) is False
+
+        await messages.aclose()
+
+        assert transport.user_message_is_settled(command_uuid) is True
 
     _run(exercise)
 
@@ -1771,6 +1907,158 @@ def test_a_native_steer_write_failure_keeps_the_dropped_composition_fact(
         assert outcome == BackendSteerUncertain(
             composed_content_delivered=False
         )
+        await child.stop()
+
+    _run(exercise)
+
+
+async def _until(condition: Callable[[], bool]) -> None:
+    """Let the adapter's own tasks run until something a test is waiting for is true."""
+    for _ in range(200):
+        if condition():
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("the adapter never reached the state under test")
+
+
+def test_a_steer_claude_folded_into_the_running_turn_still_ends_it(
+    tmp_path: Path,
+) -> None:
+    """The hang, as the real CLI produced it: one result, naming nothing.
+
+    Claude took the steer into the loop already running rather than starting a
+    continuation for it. So there is no second turn and no second result, and the one
+    result carries no UUID list at all. Only the steer's own terminal receipt says it is
+    over, and the turn must end on that.
+    """
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        await _write(child)
+        assert isinstance(
+            await child.steer(
+                TURN, text_message_content("and append DONE"), sender_label="owner"
+            ),
+            BackendSteerAccepted,
+        )
+        steer_uuid = clients[0].watched_user_message_uuids[0]
+
+        clients[0].settle_user_message(steer_uuid)
+        clients[0].say(
+            _assistant(TextBlock(text="FIRST STEERED")),
+            _result(result_uuid="root-result"),
+        )
+        await clients[0].until_taken_in()
+
+        assert [ending["turn"] for ending in sink.endings] == [TURN]
+        assert sink.endings[0]["ending"] is ConversationTurnEnding.completed
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_steer_that_settles_after_its_result_still_ends_the_turn(
+    tmp_path: Path,
+) -> None:
+    """The same case with the two frames the other way round.
+
+    The real CLI sends the terminal receipt first. Nothing in the protocol promises that,
+    so the result is kept rather than dropped, and it becomes the ending as soon as the
+    last steer is settled.
+    """
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        await _write(child)
+        assert isinstance(
+            await child.steer(
+                TURN, text_message_content("and append DONE"), sender_label="owner"
+            ),
+            BackendSteerAccepted,
+        )
+        steer_uuid = clients[0].watched_user_message_uuids[0]
+
+        clients[0].say(_result(result_uuid="root-result"))
+        await clients[0].until_taken_in()
+        assert sink.endings == []
+
+        clients[0].settle_user_message(steer_uuid)
+        await _until(lambda: bool(sink.endings))
+
+        assert [ending["turn"] for ending in sink.endings] == [TURN]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_settled_steer_does_not_end_a_turn_twice(tmp_path: Path) -> None:
+    """A steer settling after its own correlated result must not write a second ending."""
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        await _write(child)
+        assert isinstance(
+            await child.steer(
+                TURN, text_message_content("carry on"), sender_label="owner"
+            ),
+            BackendSteerAccepted,
+        )
+        steer_uuid = clients[0].watched_user_message_uuids[0]
+
+        clients[0].say(_result(result_uuid="root-result"))
+        await clients[0].until_taken_in()
+        assert sink.endings == []
+
+        clients[0].result_user_message_uuids["steer-result"] = frozenset({steer_uuid})
+        clients[0].say(_result(result_uuid="steer-result"))
+        await clients[0].until_taken_in()
+        await _until(lambda: bool(sink.endings))
+
+        assert len(sink.endings) == 1
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_stopping_a_turn_claude_folded_a_steer_into_keeps_the_wire(
+    tmp_path: Path,
+) -> None:
+    """Stop must not demand a cancellation receipt for a command that left the queue.
+
+    A folded steer is being answered inside the running turn, so claude has nothing queued
+    to cancel and never names it. Demanding that name failed the stop, broke the wire, and
+    threw away a working child — a person pressed Stop and lost the session behind it.
+    """
+
+    async def exercise() -> None:
+        child, _, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        await _write(child)
+        assert isinstance(
+            await child.steer(
+                TURN, text_message_content("and append DONE"), sender_label="owner"
+            ),
+            BackendSteerAccepted,
+        )
+        clients[0].cancelled_user_message_uuids = frozenset()
+        clients[0].still_queued_user_message_uuids = frozenset()
+
+        await _cancel_with_result(child, clients[0], _result(result_uuid="root-result"))
+
+        assert clients[0].interrupts == 1
+        await _write(child, "the next thing", TURN_2)
+        assert clients[0].prompts[-1] == "owner:\nthe next thing"
         await child.stop()
 
     _run(exercise)

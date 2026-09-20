@@ -191,8 +191,19 @@ CLAUDE_SDK_MAX_BUFFER_SIZE: Final[int] = 4 * 1024 * 1024
 
 # A command lifecycle receipt normally follows a streaming-input write immediately. A
 # missing receipt after this bound leaves admission unknown. The command remains owned by
-# its captured turn until a UUID-correlated result arrives or Stop discards the child.
+# its captured turn until Claude settles it or Stop discards the child.
 CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS: Final[float] = 5.0
+
+# The lifecycle states that say Claude has finished with a command, whichever way it ran
+# it. This is what settles a steering command, and it is the only fact that settles one
+# Claude folded into the turn that was already running: a folded command never gets a
+# result of its own to be named on.
+#
+# ``discarded`` is the child dropping a command it never ran, which is an ending for that
+# command in the only sense this adapter needs.
+TERMINAL_COMMAND_LIFECYCLE_STATES: Final[frozenset[str]] = frozenset(
+    {"completed", "cancelled", "discarded"}
+)
 
 # Stop must not leave a queued steering command behind. A missing cancel receipt is a
 # failed cancellation, which makes the core discard this child and resume its session on
@@ -298,6 +309,14 @@ class ClaudeSdkClient(Protocol):
         self, result_uuid: str | None
     ) -> frozenset[str]: ...
 
+    def user_message_is_settled(self, user_message_uuid: str) -> bool:
+        """Has Claude finished with this command, on a receipt of its own."""
+        ...
+
+    async def wait_for_user_message_settlement(self, user_message_uuid: str) -> None:
+        """Return when Claude has finished with this command, however long that takes."""
+        ...
+
     def receive_messages(self) -> AsyncIterator[Message]: ...
 
     async def interrupt(self) -> None: ...
@@ -333,6 +352,13 @@ def claude_sdk_client(options: ClaudeAgentOptions) -> ClaudeSdkClient:
 @dataclass(slots=True)
 class _ObservedUserMessage:
     admission: asyncio.Future[bool | None]
+    settled: asyncio.Future[None]
+
+
+def _settle(observed: _ObservedUserMessage) -> None:
+    """Claude is finished with this command, and will say nothing more about it."""
+    if not observed.settled.done():
+        observed.settled.set_result(None)
 
 
 class _ClaudeProtocolTransport(Transport):
@@ -362,6 +388,7 @@ class _ClaudeProtocolTransport(Transport):
             for observed in self._user_messages.values():
                 if not observed.admission.done():
                     observed.admission.set_result(None)
+                _settle(observed)
             for response in self._control_responses.values():
                 if not response.done():
                     response.set_result(None)
@@ -375,11 +402,14 @@ class _ClaudeProtocolTransport(Transport):
                 if isinstance(command_uuid, str)
                 else None
             )
-            if observed is not None and not observed.admission.done():
-                if state in {"queued", "started", "completed"}:
-                    observed.admission.set_result(True)
-                elif state == "cancelled":
-                    observed.admission.set_result(False)
+            if observed is not None:
+                if not observed.admission.done():
+                    if state in {"queued", "started", "completed"}:
+                        observed.admission.set_result(True)
+                    elif state in {"cancelled", "discarded"}:
+                        observed.admission.set_result(False)
+                if state in TERMINAL_COMMAND_LIFECYCLE_STATES:
+                    _settle(observed)
         if message.get("type") == "result":
             result_uuid = message.get("uuid")
             if isinstance(result_uuid, str):
@@ -387,8 +417,10 @@ class _ClaudeProtocolTransport(Transport):
                 self._result_user_message_uuids[result_uuid] = user_message_uuids
                 for user_message_uuid in user_message_uuids:
                     observed = self._user_messages.get(user_message_uuid)
-                    if observed is not None and not observed.admission.done():
-                        observed.admission.set_result(True)
+                    if observed is not None:
+                        if not observed.admission.done():
+                            observed.admission.set_result(True)
+                        _settle(observed)
 
         if message.get("type") == "control_response":
             response = message.get("response")
@@ -405,8 +437,10 @@ class _ClaudeProtocolTransport(Transport):
                 waiting.set_result(payload if isinstance(payload, dict) else None)
 
     def watch_user_message(self, user_message_uuid: str) -> None:
+        loop = asyncio.get_running_loop()
         self._user_messages[user_message_uuid] = _ObservedUserMessage(
-            admission=asyncio.get_running_loop().create_future(),
+            admission=loop.create_future(),
+            settled=loop.create_future(),
         )
 
     async def wait_for_user_message_admission(
@@ -431,6 +465,28 @@ class _ClaudeProtocolTransport(Transport):
         for user_message_uuid in user_message_uuids:
             self._user_messages.pop(user_message_uuid, None)
         return user_message_uuids
+
+    def user_message_is_settled(self, user_message_uuid: str) -> bool:
+        observed = self._user_messages.get(user_message_uuid)
+        return observed is None or observed.settled.done()
+
+    async def wait_for_user_message_settlement(self, user_message_uuid: str) -> None:
+        observed = self._user_messages.get(user_message_uuid)
+        if observed is None:
+            return
+        if not observed.admission.done():
+            # Claude has said nothing at all about this command. The child emits the queue
+            # receipt as it reads the line, so silence past this bound is a child that
+            # never took the command — not one that is quietly working on it.
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(observed.admission),
+                    CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                _settle(observed)
+                return
+        await asyncio.shield(observed.settled)
 
     async def interrupt_and_cancel_queued(
         self,
@@ -504,6 +560,12 @@ class _ObservedClaudeSdkClient:
     def user_message_uuids_for_result(self, result_uuid: str | None) -> frozenset[str]:
         return self._transport.user_message_uuids_for_result(result_uuid)
 
+    def user_message_is_settled(self, user_message_uuid: str) -> bool:
+        return self._transport.user_message_is_settled(user_message_uuid)
+
+    async def wait_for_user_message_settlement(self, user_message_uuid: str) -> None:
+        await self._transport.wait_for_user_message_settlement(user_message_uuid)
+
     async def interrupt(self) -> None:
         await self._client.interrupt()
 
@@ -574,6 +636,8 @@ class _TurnInFlight:
     token: TurnToken
     cancel_requested: bool = False
     owned_steer_uuids: set[str] = field(default_factory=set)
+    held_result: ResultMessage | None = None
+    steer_settlement_watch: asyncio.Task[None] | None = None
     ended: asyncio.Event = field(default_factory=asyncio.Event)
     parked_asks: dict[str, _ParkedPermissionAsk] = field(default_factory=dict)
     parked_user_inputs: dict[str, _ParkedUserInput] = field(default_factory=dict)
@@ -816,8 +880,9 @@ class ClaudeAgentSdkBackendChild:
 
         Claude can fold the command into the current model loop or run a native
         continuation. Both stay under the captured token. A UUID lifecycle receipt says
-        that Claude owns the command. A correlated result settles it. Neither signal is
-        used to classify which native path Claude chose.
+        that Claude owns the command, and a terminal receipt or a correlated result says
+        Claude has finished with it. Neither signal is used to classify which native path
+        Claude chose.
         """
         sender_content = content if sender_content is None else sender_content
         turn = self._turn
@@ -864,8 +929,8 @@ class ClaudeAgentSdkBackendChild:
             await client.query(asked)
         except Exception:
             # The command can have crossed the process boundary before this failure. Keep
-            # its ownership on the turn so a later correlated result remains captured. A
-            # stream failure, if there was one, closes the wire through the reader path.
+            # its ownership on the turn so Claude's later receipt for it remains captured.
+            # A stream failure, if there was one, closes the wire through the reader path.
             return BackendSteerUncertain(
                 composed_content_delivered=not native_command
             )
@@ -889,7 +954,15 @@ class ClaudeAgentSdkBackendChild:
         )
 
     async def cancel_running_turn(self) -> None:
-        """Stop active work and prove that no owned queued command remains."""
+        """Stop active work and prove that nothing of this turn's is still queued.
+
+        The proof is about the queue, and only about the queue. It used to also demand
+        that Claude name every steering command this turn owns among the cancelled ones.
+        A steer Claude folded into the running turn can never be named there: it left the
+        queue in order to be answered, so there is nothing queued left to cancel. That
+        demand failed the stop, broke the wire, and discarded a child that was working —
+        a person pressed Stop and lost the session behind it.
+        """
         turn = self._turn
         if turn is None:
             return
@@ -898,14 +971,14 @@ class ClaudeAgentSdkBackendChild:
         turn.cancel_requested = True
         client = self._connected_client()
         try:
-            cancelled, still_queued = await client.interrupt_and_cancel_queued()
+            _, still_queued = await client.interrupt_and_cancel_queued()
         except Exception as did_not_reach:
             self._wire_broken = True
             raise PromptWriteFailed(str(did_not_reach)) from did_not_reach
-        if still_queued or not turn.owned_steer_uuids.issubset(cancelled):
+        if still_queued:
             self._wire_broken = True
             raise PromptWriteFailed(
-                "claude did not confirm cancellation of every owned steering command"
+                "claude did not confirm cancellation of every queued command"
             )
         turn.owned_steer_uuids.clear()
         # The core records the interruption as soon as this returns. Settle every callback
@@ -972,6 +1045,7 @@ class ClaudeAgentSdkBackendChild:
         self._turn = None
         self._last_ended_turn = None
         if turn is not None:
+            self._stop_waiting_for_steers(turn)
             self._settle_parked_asks(turn)
         reader = self._reader
         self._reader = None
@@ -1107,6 +1181,7 @@ class ClaudeAgentSdkBackendChild:
             return
         self._turn = None
         self._last_ended_turn = turn
+        self._stop_waiting_for_steers(turn)
         self._settle_parked_asks(turn)
         try:
             await self._sink.turn_ended(
@@ -1126,6 +1201,19 @@ class ClaudeAgentSdkBackendChild:
         turn = self._turn
         if turn is not None:
             await self._end_turn(turn, ConversationTurnEnding.failed, why)
+
+    def _stop_waiting_for_steers(self, turn: _TurnInFlight) -> None:
+        """The turn is over, so nothing is still waiting for one of its steers.
+
+        The watch can be the caller — it ends the turn from the result it held — and a task
+        that cancels itself never finishes the ending it came here to write.
+        """
+        watch = turn.steer_settlement_watch
+        turn.steer_settlement_watch = None
+        turn.held_result = None
+        if watch is None or watch.done() or watch is asyncio.current_task():
+            return
+        watch.cancel()
 
     def _settle_parked_asks(self, turn: _TurnInFlight) -> None:
         """A turn's asks die with it, and the SDK is told so rather than left waiting."""
@@ -1379,17 +1467,75 @@ class ClaudeAgentSdkBackendChild:
         Two things say it was stopped rather than finished, and both are facts rather than
         readings of an error's wording: the CLI's own name for a turn that was aborted, and
         this adapter having asked for the interrupt itself.
+
+        A result is the Panels ending only once Claude has finished with every steering
+        command this turn owns. It says so in two ways, and either will do: a result that
+        names the command, or a terminal lifecycle receipt for it. The second is what a
+        folded steer gets — Claude takes it into the turn already running, so no result of
+        its own is ever produced to name it, and waiting for one waits forever.
+
+        A result that arrives first is kept rather than dropped, because a steer can settle
+        after it. Then there is no later result to end on, and the held one is the ending.
         """
         await self._report_what_has_been_spent(turn, message)
         client = self._connected_client()
-        result_user_message_uuids = client.user_message_uuids_for_result(message.uuid)
-        turn.owned_steer_uuids.difference_update(result_user_message_uuids)
+        turn.owned_steer_uuids.difference_update(
+            client.user_message_uuids_for_result(message.uuid)
+        )
+        self._forget_the_settled_steers(turn, client)
         if turn.owned_steer_uuids:
-            # The root provider result is not the Panels ending when Claude queued a
-            # native continuation for an owned steer. Every following event remains on
-            # this token until a result names each owned steering UUID.
+            turn.held_result = message
+            self._wait_out_the_unsettled_steers(turn, client)
             return
         await self._end_turn_from_result(turn, message)
+
+    def _forget_the_settled_steers(
+        self, turn: _TurnInFlight, client: ClaudeSdkClient
+    ) -> None:
+        turn.owned_steer_uuids.difference_update(
+            {
+                user_message_uuid
+                for user_message_uuid in turn.owned_steer_uuids
+                if client.user_message_is_settled(user_message_uuid)
+            }
+        )
+
+    def _wait_out_the_unsettled_steers(
+        self, turn: _TurnInFlight, client: ClaudeSdkClient
+    ) -> None:
+        """Hold the kept result open until the last owned steer is finished with.
+
+        Claude sends a terminal receipt for a folded steer before the result it was folded
+        into, so this watch is the case that order is reversed. It waits on receipts rather
+        than on silence: a later result takes the ending back from it, and a stream that
+        closes settles everything it is waiting on.
+        """
+        waiting_for = frozenset(turn.owned_steer_uuids)
+
+        async def end_when_they_are_settled() -> None:
+            try:
+                for user_message_uuid in waiting_for:
+                    await client.wait_for_user_message_settlement(user_message_uuid)
+                if turn.ended.is_set() or turn.held_result is None:
+                    return
+                self._forget_the_settled_steers(turn, client)
+                if turn.owned_steer_uuids:
+                    return
+                await self._end_turn_from_result(turn, turn.held_result)
+            except asyncio.CancelledError:
+                raise
+            except Exception as settling_failed:
+                # Nothing awaits this task, so a failure here would be a turn that quietly
+                # never ends — the thing being fixed. It ends the turn instead.
+                await self._fail_the_running_turn(str(settling_failed))
+
+        previous = turn.steer_settlement_watch
+        if previous is not None and not previous.done():
+            previous.cancel()
+        turn.steer_settlement_watch = asyncio.create_task(
+            end_when_they_are_settled(),
+            name=f"planner.conversation.steer.{turn.token.conversation_id}",
+        )
 
     async def _end_turn_from_result(
         self, turn: _TurnInFlight, message: ResultMessage
