@@ -17,6 +17,20 @@ from planner.core.errors import ErrorCode, PlannerError
 LIVE_BLOCKER_PREDICATE = "blocker.stage NOT IN ('done', 'dropped')"
 
 
+def touch_blocked_ticket(conn: sqlite3.Connection, blocked_ticket_id: str, now: int) -> None:
+    """A block arriving or leaving is activity on the Ticket it holds.
+
+    Nothing about the blocked Ticket's own state is written: what it reads as is derived
+    from the block rows. This moves only the activity time the Workspace rail orders by,
+    so a Ticket that has just become blocked, or that its blocker has just freed, still
+    rises where the user is looking.
+    """
+    conn.execute(
+        "UPDATE tickets SET updated_at = ? WHERE id = ?",
+        (now, blocked_ticket_id),
+    )
+
+
 def _ticket_is_active(conn: sqlite3.Connection, ticket_id: str) -> bool:
     row = conn.execute("SELECT stage FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
     return row is not None and str(row["stage"]) not in {"done", "dropped"}
@@ -107,6 +121,7 @@ def add_ticket_block(
                 "ticket block already exists or violates a constraint",
                 detail,
             ) from exc
+        touch_blocked_ticket(conn, blocked_ticket_id, now)
     except BaseException:
         if own_txn:
             conn.execute("ROLLBACK")
@@ -133,6 +148,7 @@ def remove_ticket_block(
     )
     if cursor.rowcount == 0:
         raise PlannerError(ErrorCode.not_found, "ticket block not found", detail)
+    touch_blocked_ticket(conn, blocked_ticket_id, now)
 
 
 def blocked_ticket_ids(conn: sqlite3.Connection) -> set[str]:

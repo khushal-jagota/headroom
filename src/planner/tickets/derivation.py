@@ -44,7 +44,6 @@ class TicketFacts:
     ticket_id: str
     ticket_status: TicketStatus
     blocked: bool
-    proposal_is_parked: bool
     waiting_to_closeout: bool
 
 
@@ -73,6 +72,19 @@ def derive_ticket_status(stored: StoredTicketFacts) -> TicketStatus:
     return TicketStatus.empty
 
 
+# The same rule, as a SQL predicate, for the one reader that has to ask it of many rows
+# inside a query rather than of facts it already holds. It must keep answering what
+# ``derive_ticket_status`` answers: a Ticket is at rest when nothing has its step out,
+# nothing failed, and nothing is parked on it. Whether a blocker holds it does not
+# change that — `blocked` is a name for rest.
+RESTS_PREDICATE = "t.worker_step_claim = 'none' AND t.pending_proposal IS NULL"
+
+
+def ticket_rests(stored: StoredTicketFacts) -> bool:
+    """Whether this Ticket is at rest. The Python face of ``RESTS_PREDICATE``."""
+    return derive_ticket_status(stored) in (TicketStatus.empty, TicketStatus.blocked)
+
+
 def derive_ticket_facts(stored: StoredTicketFacts) -> TicketFacts:
     ticket_status = derive_ticket_status(stored)
     gating_field = configured_worker_type_registry().require(stored.worker_type).gating_field(
@@ -82,7 +94,6 @@ def derive_ticket_facts(stored: StoredTicketFacts) -> TicketFacts:
         ticket_id=stored.ticket_id,
         ticket_status=ticket_status,
         blocked=stored.has_live_blocker,
-        proposal_is_parked=stored.has_pending_proposal,
         waiting_to_closeout=(
             gating_field == "closeout" and ticket_status is TicketStatus.empty
         ),

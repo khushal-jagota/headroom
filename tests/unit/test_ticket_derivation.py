@@ -180,3 +180,46 @@ def test_one_ticket_is_read_without_a_second_query_for_its_blockers(tmp_path: Pa
     # The blocker question travels as a column on the row the read already fetched.
     assert counting.queries == 1
     conn.close()
+
+
+def _updated_at(conn: sqlite3.Connection, ticket_id: str) -> int:
+    return int(
+        conn.execute("SELECT updated_at FROM tickets WHERE id = ?", (ticket_id,)).fetchone()[0]
+    )
+
+
+def test_a_block_arriving_or_leaving_is_activity_on_the_ticket_it_holds(
+    tmp_path: Path,
+) -> None:
+    """What a blocked Ticket reads as is derived. When it last moved is still recorded.
+
+    The Workspace rail orders by that time, so a Ticket that has just become blocked, or
+    that its blocker has just freed, has to rise where the user is looking.
+    """
+    conn = _db(tmp_path)
+    blocker_id = _ticket(conn, "Blocker")
+    blocked_id = _ticket(conn, "Blocked")
+    before = _updated_at(conn, blocked_id)
+
+    ticket_blocks.add_ticket_block(conn, blocker_id, blocked_id, before + 100)
+    assert _updated_at(conn, blocked_id) == before + 100
+
+    ticket_blocks.remove_ticket_block(conn, blocker_id, blocked_id, before + 200)
+    assert _updated_at(conn, blocked_id) == before + 200
+    conn.close()
+
+
+def test_completing_a_blocker_is_activity_on_every_ticket_it_frees(tmp_path: Path) -> None:
+    conn = _db(tmp_path)
+    blocker_id = _ticket(conn, "Blocker")
+    blocked_id = _ticket(conn, "Blocked")
+    ticket_blocks.add_ticket_block(conn, blocker_id, blocked_id, 2)
+    settled = _updated_at(conn, blocked_id)
+
+    tickets_data.drop_ticket(conn, blocker_id, principal=OWNER_PRINCIPAL, now=settled + 500)
+
+    assert _updated_at(conn, blocked_id) == settled + 500
+    assert (
+        derivation.load_ticket_facts(conn, {blocked_id})[blocked_id].blocked is False
+    )
+    conn.close()

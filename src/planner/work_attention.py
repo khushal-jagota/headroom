@@ -13,7 +13,7 @@ from planner.conversation.storage import ConversationAttentionFacts, Conversatio
 from planner.core import ticket_blocks
 from planner.core.contracts import OWNER_PRINCIPAL, JsonDict, Principal
 from planner.tickets import derivation
-from planner.tickets.contracts import StageOwnershipMode
+from planner.tickets.contracts import StageOwnershipMode, TicketStatus
 from planner.tickets.derivation import AgentState, TicketFacts
 from planner.tickets.logic import machine
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -89,7 +89,7 @@ def _ticket_attention(
         "kind": OWNER_PRINCIPAL.kind.value,
         "id": OWNER_PRINCIPAL.id,
     }
-    awaiting_approval = facts.proposal_is_parked and holder == {
+    awaiting_approval = facts.ticket_status is TicketStatus.awaiting_approval and holder == {
         "kind": approval_holder.kind.value,
         "id": approval_holder.id,
     }

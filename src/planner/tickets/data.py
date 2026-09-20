@@ -508,7 +508,7 @@ def _blocked_ticket_ids(conn: sqlite3.Connection, ticket_id: str) -> tuple[str, 
 
 
 def _release_ticket_blocks(
-    conn: sqlite3.Connection, ticket_id: str, blocked_ticket_ids: tuple[str, ...]
+    conn: sqlite3.Connection, ticket_id: str, blocked_ticket_ids: tuple[str, ...], now: int
 ) -> None:
     """Remove a completed Ticket's blocks. What each blocked Ticket then shows is derived."""
     for blocked_ticket_id in blocked_ticket_ids:
@@ -517,6 +517,7 @@ def _release_ticket_blocks(
             "WHERE blocking_ticket_id = ? AND blocked_ticket_id = ?",
             (ticket_id, blocked_ticket_id),
         )
+        ticket_blocks.touch_blocked_ticket(conn, blocked_ticket_id, now)
 
 
 def _apply_decision(
@@ -572,8 +573,13 @@ def _apply_decision(
             (ticket.id,),
         )
         revision_feedback.discard(conn, ticket.id)
-    if active_before != active_after and not active_after:
-        _release_ticket_blocks(conn, ticket.id, affected_blocked_ticket_ids)
+    if active_before != active_after:
+        if active_after:
+            # The Ticket is doing the blocking again, which is activity on what it holds.
+            for blocked_ticket_id in affected_blocked_ticket_ids:
+                ticket_blocks.touch_blocked_ticket(conn, blocked_ticket_id, now)
+        else:
+            _release_ticket_blocks(conn, ticket.id, affected_blocked_ticket_ids, now)
     capture_ticket_attention(conn, ticket.id, now)
     return _load_ticket(conn, ticket.id)
 
@@ -1397,6 +1403,10 @@ def delete_ticket(
                 "WHERE blocking_ticket_id = ? AND blocked_ticket_id = ?",
                 (str(row["blocking_ticket_id"]), str(row["blocked_ticket_id"])),
             )
+            if str(row["blocking_ticket_id"]) == ticket_id:
+                ticket_blocks.touch_blocked_ticket(
+                    conn, str(row["blocked_ticket_id"]), now
+                )
 
         conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
         return TicketDeletion(

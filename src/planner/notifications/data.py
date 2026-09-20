@@ -315,7 +315,9 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
         parked = fields_codec.proposal_from_json(row["pending_proposal"])
         flags = {
             "awaiting_reply": conversation[0],
-            "awaiting_approval": facts.proposal_is_parked and owner_holds,
+            "awaiting_approval": (
+                facts.ticket_status is TicketStatus.awaiting_approval and owner_holds
+            ),
             "assigned": ticket_assignment_from_values(
                 stage=str(row["stage"]),
                 worker_type=str(row["worker_type"]),

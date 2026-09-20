@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from planner.tickets import derivation
 from planner.tickets.contracts import StageOwnershipMode, Ticket, TicketStatus
 from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -56,8 +57,8 @@ def _closeout_lane_is_occupied(
             "LEFT JOIN sprint_items si ON si.id = t.sprint_item_id "
             "WHERE t.id != ? AND t.worker_type = ? AND t.stage = ? "
             # A resting Closeout Ticket does not occupy the lane, and a blocked one is
-            # resting.
-            "AND (t.worker_step_claim != 'none' OR t.pending_proposal IS NOT NULL) "
+            # resting. The predicate is the derivation's own, so the two cannot drift.
+            f"AND NOT ({derivation.RESTS_PREDICATE}) "
             "AND CASE WHEN t.sprint_item_id IS NOT NULL THEN si.project_id "
             "ELSE t.project_id END IS ? LIMIT 1",
             (ticket.id, worker_type, closeout_stage, effective_project_id),

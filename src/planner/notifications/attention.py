@@ -118,7 +118,8 @@ def capture_ticket_attention(conn: sqlite3.Connection, ticket_id: str, occurred_
     owner_holds = holder.get("kind") == "owner"
     flags = {
         "awaiting_reply": conversation[0],
-        "awaiting_approval": facts.proposal_is_parked and owner_holds,
+        "awaiting_approval": facts.ticket_status is TicketStatus.awaiting_approval
+        and owner_holds,
         "assigned": ticket_assignment_from_values(
             stage=str(row["stage"]),
             worker_type=str(row["worker_type"]),

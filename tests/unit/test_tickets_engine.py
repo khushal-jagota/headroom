@@ -1269,7 +1269,7 @@ def test_a_failed_completion_rolls_back_its_block_release(
     target_row_before = _ticket_row(tmp_db, target.id)
 
     def failing_release(
-        conn: Connection, ticket_id: str, blocked_ticket_ids: tuple[str, ...]
+        conn: Connection, ticket_id: str, blocked_ticket_ids: tuple[str, ...], now: int
     ) -> None:
         raise RuntimeError("block release failed mid-completion")
 
