@@ -125,9 +125,9 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     assert removed.status_code < 300, removed.text
     api.direct_post(
         server,
-        f"/api/tickets/{review_ticket['id']}/accept/kickoff",
+        f"/api/tickets/{review_ticket['id']}/accept/brief",
         {
-            "next_ceiling": "needs_success",
+            "next_ceiling": "needs_success_condition",
             "next_holder": {"kind": "owner", "id": "owner"},
         },
     )

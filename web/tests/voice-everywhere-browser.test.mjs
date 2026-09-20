@@ -132,12 +132,12 @@ MANIFEST = {
     "worker_type": "coding", "label": "Coding",
     "stages": [
       {"id": "needs_implementation", "label": "Implementation", "gating_field": "implementation", "is_terminal": False, "ownership_mode": "worker"},
-      {"id": "needs_closeout", "label": "Closeout", "gating_field": "closeout", "is_terminal": False, "ownership_mode": "worker"},
+      {"id": "needs_consequences", "label": "Closeout", "gating_field": "consequences", "is_terminal": False, "ownership_mode": "worker"},
       {"id": "done", "label": "Done", "gating_field": None, "is_terminal": True, "ownership_mode": None}
     ],
-    "advance": {"needs_implementation": "needs_closeout", "needs_closeout": "done"},
-    "fields": [{"id": "implementation", "label": "Implementation"}, {"id": "closeout", "label": "Closeout"}],
-    "ceiling_range": ["needs_implementation", "needs_closeout", "done"],
+    "advance": {"needs_implementation": "needs_consequences", "needs_consequences": "done"},
+    "fields": [{"id": "implementation", "label": "Implementation"}, {"id": "consequences", "label": "Closeout"}],
+    "ceiling_range": ["needs_implementation", "needs_consequences", "done"],
     "default_ceiling": "needs_implementation", "worker_profile_id": "panels-worker-coding",
     "default_backend": "codex", "default_model": None, "default_reasoning_effort": None
   }]

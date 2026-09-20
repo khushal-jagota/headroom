@@ -154,7 +154,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   `ticket set` names one field (`ceiling`, `ceiling-holder`, `title`, `kickoff-note`,
   `priority`, or `deadline`). Every one of those goes through `PATCH /api/tickets/{id}`,
   which is the only way to change a field on a Ticket. `ceiling` takes either the stage
-  name or the plain name of the field that stage needs, so `closeout` and `needs_closeout`
+  name or the plain name of the field that stage needs, so `consequences` and `needs_consequences`
   mean the same thing. Setting `ceiling` leaves the holder alone, and it is refused while a
   proposal is pending. `ceiling-holder` takes a `--holder` word or id, and it is allowed
   while a proposal is pending: it changes who decides, not what was proposed. Only the
@@ -340,7 +340,7 @@ one worker step at a time and writes the Ticket's status itself (see
 - **Worker types** (`worker-types.md`) — the registry `worker my-ticket` reads the
   ticket's specialist skill from.
 
-Sprint writing has four parts: `primary_bet`, `kickoff`, `checkpoint`, and `review`.
+Sprint writing has four parts: `primary_bet`, `brief`, `checkpoint`, and `review`.
 The primary bet is the short summary shown above Sprint tracking; the others are complete
 Markdown documents. For example, `panels sprint set current review --body-file review.md`
 replaces the review document. Sprint creation accepts `--primary-bet`, `--kickoff`,

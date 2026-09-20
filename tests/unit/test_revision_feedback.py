@@ -85,7 +85,7 @@ def test_advancing_a_ticket_discards_its_previous_stage_feedback(tmp_db: Connect
     tickets_data.accept_proposal(
         tmp_db,
         ticket.id,
-        field="success",
+        field="success_condition",
         principal=OWNER_PRINCIPAL,
         now=4,
         next_ceiling="needs_plan",
@@ -112,7 +112,7 @@ def _ticket(tmp_db: Connection) -> Ticket:
     return tickets_data.accept_proposal(
         tmp_db,
         ticket.id,
-        field="kickoff",
+        field="brief",
         principal=OWNER_PRINCIPAL,
         now=1,
         next_ceiling=NO_FURTHER,

@@ -87,7 +87,7 @@ class _World:
             ticket = tickets_data.accept_proposal(
                 conn,
                 ticket.id,
-                field="kickoff",
+                field="brief",
                 principal=OWNER_PRINCIPAL,
                 now=0,
                 next_ceiling="none",
@@ -311,7 +311,7 @@ def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _
 
     writes = world.conversations.backend_prompt_writes("conv-revision-feedback")
     assert len(writes) == 1
-    assert "Revision feedback from owner owner for stage needs_success" in writes[0].text
+    assert "Revision feedback from owner owner for stage needs_success_condition" in writes[0].text
     assert "  Preserve this exact feedback.  " in writes[0].text
     assert "Mutable guidance changed independently." in writes[0].text
     assert world.pending_revision_feedback(ticket_id) is False
@@ -512,11 +512,11 @@ def test_the_opener_carries_the_ordered_worker_inputs(world: _World) -> None:
     sender_message_id = world.conversations.observations("conv-opener")[-1].sender_message_id
     assert sender_message_id is not None
     assert f"Work ticket {ticket_id} — Ship it" in writes[0].text
-    assert "propose the 'success' field for approval" in writes[0].text
+    assert "propose the 'success_condition' field for approval" in writes[0].text
     assert "Stage owner: worker" in writes[0].text
     assert f"[Ticket guidance]\n{guidance}\n[/Ticket guidance]" in writes[0].text
     assert (
-        "[Ticket kickoff]\nUse this agreed starting point.\n[/Ticket kickoff]" in writes[0].text
+        "[Ticket brief]\nUse this agreed starting point.\n[/Ticket brief]" in writes[0].text
     )
     assert "[Pending worker context]" not in writes[0].text
     bindings = world.skill_bindings()
@@ -538,7 +538,7 @@ def test_a_user_owned_stage_rests_empty_after_its_single_collaborative_opener(
 
     assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
     text = world.conversations.backend_prompt_writes("conv-paired")[0].text
-    assert "open the collaborative discussion for the 'understanding' field" in text
+    assert "open the collaborative discussion for the 'purpose_and_boundaries' field" in text
     assert "Stage owner: user" in text
     assert world.start_step(ticket_id) is False
     assert len(world.conversations.backend_prompt_writes("conv-paired")) == 1
@@ -679,7 +679,7 @@ def test_one_closeout_lane_takes_one_ticket_per_pass(world: _World) -> None:
     with world.connect() as conn:
         for ticket_id in (first, second):
             advance_ticket(
-                conn, ticket_id, new_stage="needs_closeout", principal=OWNER_PRINCIPAL, now=0
+                conn, ticket_id, new_stage="needs_consequences", principal=OWNER_PRINCIPAL, now=0
             )
         conn.execute("UPDATE tickets SET updated_at = 10 WHERE id = ?", (first,))
         conn.execute("UPDATE tickets SET updated_at = 20 WHERE id = ?", (second,))

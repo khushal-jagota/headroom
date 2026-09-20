@@ -8,12 +8,12 @@ description: Check the planning day at 14:30, agree any useful intervention, car
 This is an execution intervention, not a productivity scorecard. Help meaningful work
 move without creating a second plan.
 
-### needs_kickoff
+### needs_brief
 
 Identify the planning date and the 14:30 checkpoint plainly. Orient to the morning intent;
 do not pre-decide the Agreed Intervention.
 
-### needs_action
+### needs_agreed_intervention
 
 Read the Day, its `planning-day` Ticket, and live Ticket state. Lead with what actually
 happened. Raise only slippage or blockers that matter to action now. If morning planning
@@ -23,7 +23,7 @@ Pipe one compact confrontation and bounded recommendation to
 `panels worker request-help --owner`. Make no changes before the user answers and approves.
 After the exchange, propose only the settled changes or `No action`.
 
-### needs_closeout
+### needs_consequences
 
 Re-read affected state and execute only the approved changes through ordinary Panels
 surfaces. If reality has materially changed, return to the user rather than stretching

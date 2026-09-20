@@ -62,7 +62,7 @@ def _ticket(
     ticket = tickets_data.accept_proposal(
         conn,
         ticket.id,
-        field="kickoff",
+        field="brief",
         principal=OWNER_PRINCIPAL,
         now=2,
         next_ceiling=ceiling or definition.first_worker_stage(),
@@ -115,8 +115,8 @@ def _block(conn: sqlite3.Connection, *, blocker_id: str, target_id: str, now: in
 @pytest.mark.parametrize(
     ("worker_type", "first_stage", "expected_ready", "definition"),
     [
-        ("coding", "needs_success", True, CODING_WORKER_TYPE_DEFINITION),
-        ("new_worker", "needs_understanding", True, NEW_WORKER_TYPE_DEFINITION),
+        ("coding", "needs_success_condition", True, CODING_WORKER_TYPE_DEFINITION),
+        ("new_worker", "needs_purpose_and_boundaries", True, NEW_WORKER_TYPE_DEFINITION),
     ],
 )
 def test_shipped_worker_types_use_their_real_first_worker_stage_ownership(
@@ -193,9 +193,9 @@ _READY_UNDER_WORKER_OWNERSHIP: dict[TicketStatus, bool] = {
 @pytest.mark.parametrize(
     ("worker_type", "ceiling"),
     [
-        ("coding", "needs_approach"),
-        ("coding", "needs_success"),
-        ("new_worker", "needs_thinking"),
+        ("coding", "needs_what_changes"),
+        ("coding", "needs_success_condition"),
+        ("new_worker", "needs_what_good_looks_like_at_each_stage"),
         ("new_worker", "needs_stages"),
     ],
 )
@@ -212,14 +212,14 @@ def test_a_ticket_at_its_ceiling_is_still_started_to_propose(
             tickets_data.file_current_proposal(
                 conn,
                 ticket.id,
-                body="understanding",
+                body="purpose_and_boundaries",
                 principal=ticket_principal(ticket.id),
                 now=3,
             )
             ticket = tickets_data.accept_proposal(
                 conn,
                 ticket.id,
-                field="understanding",
+                field="purpose_and_boundaries",
                 principal=OWNER_PRINCIPAL,
                 now=4,
                 next_ceiling=ceiling,
@@ -254,7 +254,7 @@ _EXPECTED_BLOCKERS = {
     "membership": "the Ticket is not on today's Day",
     "status": "the Ticket is at user, so no worker step is due",
     "terminal": "the Stage done is terminal",
-    "next_gate": "the Stage needs_success has no field for a worker to fill",
+    "next_gate": "the Stage needs_success_condition has no field for a worker to fill",
     # Filing a proposal parks it and writes `awaiting_approval` in the same breath, and
     # the status is asked about first. The Ticket is refused either way.
     "proposal": "the Ticket is at awaiting_approval, so no worker step is due",
@@ -265,7 +265,7 @@ _EXPECTED_BLOCKERS = {
 def test_a_ready_ticket_names_no_blocker(tmp_path: Path) -> None:
     conn = _db(tmp_path)
     try:
-        ticket = _ticket(conn, ceiling="needs_success")
+        ticket = _ticket(conn, ceiling="needs_success_condition")
         assert _blocker(conn, ticket) is None
         assert _ready(conn, ticket)
     finally:
@@ -276,7 +276,9 @@ def test_a_ready_ticket_names_no_blocker(tmp_path: Path) -> None:
 
 
 def _to_closeout(conn: sqlite3.Connection, ticket_id: str) -> None:
-    advance_ticket(conn, ticket_id, new_stage="needs_closeout", principal=OWNER_PRINCIPAL, now=5)
+    advance_ticket(
+        conn, ticket_id, new_stage="needs_consequences", principal=OWNER_PRINCIPAL, now=5
+    )
 
 
 @pytest.mark.parametrize(

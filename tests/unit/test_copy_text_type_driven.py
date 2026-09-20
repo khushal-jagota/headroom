@@ -1,7 +1,7 @@
 """t_tt04a Seam 1 — copy_text is driven by the ticket's own type field order.
 
 Coding renders its six field blocks byte-identically to today (a permanent golden
-pinning field order); a probe ticket renders its OWN fields (kickoff/alpha/beta),
+pinning field order); a probe ticket renders its OWN fields (brief/alpha/beta),
 never a coding field. Probe rows go in through the real create_ticket door, and this
 module carries its OWN local ``probe_registry`` fixture (Codex F3: the one in
 ``test_probe_type.py`` is module-local, not shared).
@@ -32,26 +32,26 @@ from planner.tickets.views import copy_text
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 # The permanent copy_text golden: coding's six field blocks in exact order, with a
-# settled kickoff value and a success user-note so the golden discriminates per-field
+# settled brief value and a success_condition user-note so the golden discriminates per-field
 # placement (not just an all-"(none)" shape).
 _CODING_COPY_TEXT_GOLDEN = (
     "Coding ticket\n"
-    "stage: needs_success\n"
+    "stage: needs_success_condition\n"
     "priority: P3\n"
     "employee_backend: codex\n"
     "owner: worker\n"
     "\n"
-    "kickoff:\nkickoff body\n"
+    "brief:\nkickoff body\n"
     "\n"
-    "success:\n(none)\n"
+    "success_condition:\n(none)\n"
     "\n"
-    "approach:\n(none)\n"
+    "what_changes:\n(none)\n"
     "\n"
     "plan:\n(none)\n"
     "\n"
     "implementation:\n(none)\n"
     "\n"
-    "closeout:\n(none)\n"
+    "consequences:\n(none)\n"
     "\n"
     "pending proposal:\n(none)\n"
     "recap:\nCurrent work\n"
@@ -86,16 +86,16 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
         principal=ticket_principal(ticket.id),
         now=2,
     )
-    # Accept kickoff so its value settles and the ticket advances to needs_success (the
-    # default ceiling is now needs_kickoff, so kickoff parks until accepted — the golden
-    # pins a SETTLED kickoff value, so we accept and expand the ceiling onward).
+    # Accept brief so its value settles and the ticket advances to needs_success_condition
+    # (the default ceiling is now needs_brief, so brief parks until accepted — the golden
+    # pins a SETTLED brief value, so we accept and expand the ceiling onward).
     accept_proposal(
         tmp_db,
         ticket.id,
-        field="kickoff",
+        field="brief",
         principal=OWNER_PRINCIPAL,
         now=3,
-        next_ceiling="needs_success",
+        next_ceiling="needs_success_condition",
         next_holder=OWNER_PRINCIPAL,
     )
     edit_ticket(
@@ -123,13 +123,13 @@ def test_copy_text_probe_renders_own_fields(
     text = copy_text(tmp_db, ticket.id)
 
     # Probe renders its own field blocks plus one separate guidance document.
-    assert "kickoff:\n" in text
+    assert "brief:\n" in text
     assert f"{FIELD_ALPHA}:\n" in text
     assert f"{FIELD_BETA}:\n" in text
-    # Closeout is the one field name every Worker type carries, so the probe has it too.
-    assert "closeout:\n" in text
+    # Consequences is the one field every Worker type carries, so the probe has it too.
+    assert "consequences:\n" in text
 
-    # No other coding-only field appears (success/approach/plan/implementation).
-    for coding_field in ("success", "approach", "plan", "implementation"):
+    # No other coding-only field appears (success_condition/what_changes/plan/implementation).
+    for coding_field in ("success_condition", "what_changes", "plan", "implementation"):
         assert f"{coding_field}:\n" not in text
         assert f"{coding_field}_user_note:\n" not in text

@@ -13,11 +13,11 @@ Use it selectively. It complements Sprint Item supervisors, Initiative Planning,
 
 The sequence is **Brief → Review → Feedback → Follow-ups → Consequences → Done**.
 
-- **needs_kickoff** — identify the intended outcome, combined change, source context, target base, and integration route.
+- **needs_brief** — identify the intended outcome, combined change, source context, target base, and integration route.
 - **needs_review** — inspect the combined result, run proportionate checks, and create the HTML review for an exact commit.
 - **needs_feedback** — review the result with the user and record the agreed meaning and disposition of each comment.
 - **needs_followups** — convert agreed feedback into separate Tickets or other scoped work, with clear integration effects.
-- **needs_closeout** — integrate the approved result when no blocker remains, or preserve the target and report the handoff.
+- **needs_consequences** — integrate the approved result when no blocker remains, or preserve the target and report the handoff.
 - **done** — finished.
 
 ## Review identity
@@ -28,7 +28,7 @@ Follow the risks and seams of the initiative. Do not apply a fixed checklist. Se
 
 A material source or behavior change invalidates the review and its approval. Return the Ticket to Review before integration. A clean integration does not invalidate approval when it preserves the reviewed tree.
 
-## needs_kickoff — establish the review target
+## needs_brief — establish the review target
 
 Name the intended outcome, the combined branch or change set, and the source records. Identify the target base, the integration route, and any explicit authority for deployment or publication.
 
@@ -90,7 +90,7 @@ Read every created or updated record back and verify it. Keep a trace from each 
 
 A good **followups** proposal lists the created or updated work and maps every agreed comment to it.
 
-## needs_closeout — integrate or hand off
+## needs_consequences — integrate or hand off
 
 If explicit approval exists and no blocker remains, integrate the exact reviewed result through the defined route. Confirm that the approved tree remains unchanged.
 

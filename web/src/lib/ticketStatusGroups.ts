@@ -70,5 +70,5 @@ export function ticketStatusGroupKey(ticket: TicketStatusGroupFacts): string {
     }
     return mark;
   }
-  return ticket.gating_field === "kickoff" ? "waiting-for-kickoff" : mark;
+  return ticket.gating_field === "brief" ? "waiting-for-kickoff" : mark;
 }

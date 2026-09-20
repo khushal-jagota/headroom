@@ -175,11 +175,11 @@ def test_setting_the_ceiling_re_derives_who_the_ticket_is_waiting_on(tmp_path: P
     tickets_data.accept_proposal(
         conn,
         ticket.id,
-        field="kickoff",
+        field="brief",
         principal=OWNER_PRINCIPAL,
         now=2,
         edited_body=None,
-        next_ceiling="needs_success",
+        next_ceiling="needs_success_condition",
         next_holder=CHIEF_PRINCIPAL,
     )
     # Forget what the Ticket projected, so only this edit can write it back.
@@ -188,7 +188,7 @@ def test_setting_the_ceiling_re_derives_who_the_ticket_is_waiting_on(tmp_path: P
         (ticket.id,),
     )
 
-    edit: TicketEdit = {"ceiling": "needs_approach"}
+    edit: TicketEdit = {"ceiling": "needs_what_changes"}
     edited = tickets_data.edit_ticket(
         conn,
         ticket.id,
@@ -197,7 +197,7 @@ def test_setting_the_ceiling_re_derives_who_the_ticket_is_waiting_on(tmp_path: P
         principal=OWNER_PRINCIPAL,
         now=3,
     )
-    assert edited.ceiling == "needs_approach"
+    assert edited.ceiling == "needs_what_changes"
     # How far the Ticket may go moved. Who holds it did not.
     assert edited.ceiling_holder == CHIEF_PRINCIPAL
     assert _attention(conn, ticket.id, "assigned") is False
@@ -219,7 +219,7 @@ def test_setting_the_ceiling_re_derives_who_the_ticket_is_waiting_on(tmp_path: P
         now=4,
     )
     assert moved.ceiling_holder == OWNER_PRINCIPAL
-    assert moved.ceiling == "needs_approach"
+    assert moved.ceiling == "needs_what_changes"
     assert _captured_rows(conn, ticket.id) > 0
     conn.close()
 

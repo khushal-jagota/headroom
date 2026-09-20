@@ -38,7 +38,7 @@ Fourteen Worker types are seeded into a new database:
 - **`personal`** represents user-owned work, with optional explicit agent support.
 
 Tests also declare **`probe`**. Its Stage and field names are deliberately unfamiliar,
-apart from the two the rules fix: the `kickoff` field it opens with and the `closeout`
+apart from the two the rules fix: the `brief` field it opens with and the `consequences`
 field every Worker type declares. Even the Stage that gates its Consequences carries a name
 of its own. So the test suite catches code that still assumes every Ticket is
 coding-shaped. It is not a shipped Worker type.
@@ -117,7 +117,7 @@ when the modules were imported.
 runs those same rules before a row is written. They check the
 shared structural rules: an optional Brief stage and field appear together first,
 `done` is the one terminal, every non-terminal Stage gates one declared field, every
-field is gated once, every type declares a `closeout`, every non-terminal Stage declares
+field is gated once, every type declares a `consequences`, every non-terminal Stage declares
 a valid ownership mode,
 terminal Stages declare none, worker skills and toolsets are known, and the default
 Employee backend is one of the three the conversation system has.
@@ -136,19 +136,19 @@ is accepted loss, and history is not rewritten.
 
 ### Every Worker type declares a Consequences Stage
 
-A Worker type ends by landing what it produced, so every Worker type declares a `closeout`
+A Worker type ends by landing what it produced, so every Worker type declares a `consequences`
 field. A type that declares none has nowhere to land its work, and nobody learns that
 until a Ticket reaches the end of its Stages. So the write door refuses it, and the error
 says which requirement it missed.
 
-The rule is one line: the declared fields must include `closeout`. The rules above finish
-it, because a declared field must be gated, and gated only once. So `closeout` gates
+The rule is one line: the declared fields must include `consequences`. The rules above finish
+it, because a declared field must be gated, and gated only once. So `consequences` gates
 exactly one Stage. Which Stage, and what that Stage is called, are the type's own choice.
-The seeded types all put it last before `done` and all call it `needs_closeout`, but
+The seeded types all put it last before `done` and all call it `needs_consequences`, but
 neither is required.
 
 The other names the runtime fixes are the `done` terminal and, for a type that opens with
-a Brief, a `kickoff` field paired with a first `needs_kickoff` Stage. They are in the
+a Brief, a `brief` field paired with a first `needs_brief` Stage. They are in the
 rules above. Nothing else is a well-known name. The probe Worker type in the test suite
 names its other Stages and fields unfamiliarly, and that is what keeps the rest of Panels
 from assuming coding's shape.
@@ -479,8 +479,8 @@ One new Worker type needs one definition and one production registration path:
    registry before the Worker type becomes live.
 
 The shared kickoff and completion ids are structural rules, not imported lifecycle
-constants. The new definition still declares them directly: `needs_kickoff` gating
-`kickoff`, and terminal `done`.
+constants. The new definition still declares them directly: `needs_brief` gating
+`brief`, and terminal `done`.
 
 ## Ordinary field completion
 

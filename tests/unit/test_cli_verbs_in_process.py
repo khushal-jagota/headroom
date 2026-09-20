@@ -331,7 +331,7 @@ def test_record_reads_share_manifests_selection_and_identity(
     )
     project_part = cli(server, "project", "show", "project_other", "summary")
 
-    assert list(ticket_manifest["manifest"])[0] == "kickoff"
+    assert list(ticket_manifest["manifest"])[0] == "brief"
     assert ticket_manifest["header"]["ticket_status"] == "awaiting_approval"
     assert worker_manifest["header"]["worker"] == "panels-worker-coding"
     assert worker_manifest["header"]["id"] == ticket["id"]
@@ -376,7 +376,7 @@ def test_record_reads_share_manifests_selection_and_identity(
 
     human = CliRunner().invoke(
         cli_main,
-        ["ticket", "show", ticket["id"], "kickoff"],
+        ["ticket", "show", ticket["id"], "brief"],
         env={"PLAN_SERVER_URL": server.base},
     )
     assert human.exit_code == 0, human.output
@@ -635,7 +635,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "intake context from user",
     )["id"]
     created = api.get(server, f"/api/tickets?detail=full&id={tid}")
-    assert created["stage"] == "needs_kickoff"
+    assert created["stage"] == "needs_brief"
     assert created["pending_proposal"]["body"] == "intake context from user"
 
     accepted_kickoff = cli(
@@ -649,9 +649,9 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "-",
         stdin="updated intake",
     )
-    assert accepted_kickoff["stage"] == "needs_success"
-    assert accepted_kickoff["ceiling"] == "needs_success"
-    assert accepted_kickoff["field_values"].get("kickoff") == "updated intake"
+    assert accepted_kickoff["stage"] == "needs_success_condition"
+    assert accepted_kickoff["ceiling"] == "needs_success_condition"
+    assert accepted_kickoff["field_values"].get("brief") == "updated intake"
 
     cli(
         server,
@@ -664,8 +664,8 @@ def test_ticket_approval_copy_and_worker_note_shape(
     cli(server, "worker", "recap", tid, ticket_id=tid, stdin="Ready to approve.")
     assert api.get(server, f"/api/tickets?detail=full&id={tid}")["recap"] == "Ready to approve."
     approved = cli(server, "ticket", "approve", tid, "--ceiling", "none")
-    assert approved["stage"] == "needs_approach"
-    assert approved["field_values"].get("success") == "success body"
+    assert approved["stage"] == "needs_what_changes"
+    assert approved["field_values"].get("success_condition") == "success body"
 
     cli(
         server,
@@ -856,19 +856,20 @@ def test_the_ceiling_and_a_settled_value_are_set_like_every_other_field(
         "--kickoff-note",
         "intake",
     )["id"]
-    cli(server, "ticket", "approve", tid, "--ceiling", "needs_success")
+    cli(server, "ticket", "approve", tid, "--ceiling", "needs_success_condition")
 
-    raised = cli(server, "ticket", "set", tid, "ceiling", "--value", "closeout")
-    assert raised["ceiling"] == "needs_closeout"
+    raised = cli(server, "ticket", "set", tid, "ceiling", "--value", "consequences")
+    assert raised["ceiling"] == "needs_consequences"
 
     corrected = cli(
         server,
         "ticket",
         "set-value",
         tid,
-        "kickoff",
+        "brief",
         "--value",
         "corrected intake",
     )
-    assert corrected["field_values"]["kickoff"] == "corrected intake"
-    assert api.get(server, f"/api/tickets?detail=full&id={tid}")["stage"] == "needs_success"
+    assert corrected["field_values"]["brief"] == "corrected intake"
+    read = f"/api/tickets?detail=full&id={tid}"
+    assert api.get(server, read)["stage"] == "needs_success_condition"

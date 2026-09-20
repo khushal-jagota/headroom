@@ -72,7 +72,7 @@ def _park_a_proposal(client: TestClient, item_id: str) -> dict[str, Any]:
             "title": "Supervisor review",
             "kickoff_note": "Start here.",
             "sprint_item_id": item_id,
-            "ceiling": "needs_success",
+            "ceiling": "needs_success_condition",
         },
         headers=_supervisor_headers(item_id),
     )
@@ -450,7 +450,7 @@ def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> Non
         cross = client.post(
             path,
             json={
-                "next_ceiling": "needs_approach",
+                "next_ceiling": "needs_what_changes",
                 "next_holder": _OWNER_HOLDER,
             },
             headers=_supervisor_headers(str(second["id"])),
@@ -458,7 +458,7 @@ def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> Non
         approved = client.post(
             path,
             json={
-                "next_ceiling": "needs_approach",
+                "next_ceiling": "needs_what_changes",
                 "next_holder": _OWNER_HOLDER,
             },
             headers=_supervisor_headers(str(first["id"])),
@@ -467,8 +467,8 @@ def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> Non
     assert cross.status_code == 400
     assert cross.json()["error"]["code"] == "agent_forbidden"
     assert approved.status_code == 200, approved.text
-    assert approved.json()["stage"] == "needs_approach"
-    assert approved.json()["field_values"].get("success") == "The result is verified."
+    assert approved.json()["stage"] == "needs_what_changes"
+    assert approved.json()["field_values"].get("success_condition") == "The result is verified."
 
 
 def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
@@ -672,7 +672,7 @@ def test_supervisor_creates_and_approves_a_ticket_under_its_own_item(
         approved = client.post(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/approve",
             json={
-                "next_ceiling": "needs_approach",
+                "next_ceiling": "needs_what_changes",
                 "next_holder": _OWNER_HOLDER,
             },
             headers=headers,
@@ -680,8 +680,8 @@ def test_supervisor_creates_and_approves_a_ticket_under_its_own_item(
 
     assert created.json()["ticket_status"] == "awaiting_approval"
     assert approved.status_code == 200, approved.text
-    assert approved.json()["stage"] == "needs_success"
-    assert approved.json()["field_values"].get("kickoff") == "Do the work."
+    assert approved.json()["stage"] == "needs_success_condition"
+    assert approved.json()["field_values"].get("brief") == "Do the work."
 
 
 def _child_ticket(client: TestClient, item_id: str, title: str = "Child of the Item") -> str:
@@ -765,10 +765,12 @@ def _stranded_child(
         },
     ).json()
     accepted = client.post(
-        f"/api/tickets/{ticket['id']}/accept/kickoff",
+        f"/api/tickets/{ticket['id']}/accept/brief",
         json={
             "next_ceiling": (
-                "needs_understanding" if worker_type == "new_worker" else "needs_success"
+                "needs_purpose_and_boundaries"
+                if worker_type == "new_worker"
+                else "needs_success_condition"
             ),
             "next_holder": _OWNER_HOLDER,
         },

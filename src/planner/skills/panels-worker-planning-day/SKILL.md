@@ -33,7 +33,7 @@ opinion. End with the best evidence-backed guess for today's direction.
 
 Propose `review` as a short orientation with the artifact link and direction guess.
 
-### needs_direction
+### needs_todays_direction
 
 Open from the direction guess in the review and invite correction. Discuss only whether
 the day attacks the most important and interesting work. Keep detailed Ticket operations
@@ -42,7 +42,7 @@ and Day overview fields out of this conversation.
 Pressure-test the direction against the sprint, unfinished commitments, and honest
 capacity. The user chooses the direction. The agent owns its detailed translation.
 
-Propose `direction` as the concise top-level agreement, not a transcript or change list.
+Propose `todays_direction` as the concise top-level agreement, not a transcript or change list.
 
 ### needs_day_changes
 
@@ -55,7 +55,7 @@ the user to catch an unexpected addition, removal, creation, or reshape.
 
 Propose `day_changes` as the exact change list. Do not include Day overview fields.
 
-### needs_closeout
+### needs_consequences
 
 The Day agreement authorizes only the approved change list.
 
@@ -64,7 +64,7 @@ an approved Ticket, load and follow `panels-ticket-creation`. Derive the four Da
 fields from the agreed direction without user input. Then read the Day and affected
 Tickets back to verify the complete result. Never bypass Ticket gates.
 
-Propose a short verified `closeout`. Set a recap that the next Previous Day Review can
+Propose a short verified `consequences`. Set a recap that the next Previous Day Review can
 understand without the conversation.
 
 ### done and dropped

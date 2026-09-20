@@ -13,13 +13,13 @@ This worker runs unattended. The user reviews at each approval gate, not in conv
 
 The sequence is **Brief → Research Plan → Findings → Consequences → Done**.
 
-- **needs_kickoff** — the question as asked, its boundaries, and what the answer is for.
+- **needs_brief** — the question as asked, its boundaries, and what the answer is for.
 - **needs_research_plan** — the transferable problem, the questions, the search angles, and the stop conditions.
-- **needs_research** — the evidence, gathered, vetted, and synthesized.
-- **needs_closeout** — the deliverable written, linked, and reported.
+- **needs_findings** — the evidence, gathered, vetted, and synthesized.
+- **needs_consequences** — the deliverable written, linked, and reported.
 - **done** — finished.
 
-### needs_kickoff — preserve the question
+### needs_brief — preserve the question
 
 Keep the requester's wording, the boundaries, and the stated uncertainty. Record what the answer is for, because that decides what depth is enough. Do not narrow an ambiguous question, and do not begin answering it.
 
@@ -40,7 +40,7 @@ A good **research plan** gives:
 
 Keep it decision-level. It is the one cheap moment to redirect the work before the effort is spent.
 
-### needs_research — gather, vet, synthesize
+### needs_findings — gather, vet, synthesize
 
 Fan out subagents, one per search angle. Give each a goal and let it adapt. Do not tell them about each other, because blind angles find different things. If an angle returns nothing, record that as a result.
 
@@ -57,7 +57,7 @@ Use probes, tests, or sketches only where the plan calls for them as evidence.
 
 If coverage was cut, say what was dropped and why. Silent truncation reads as full coverage.
 
-### needs_closeout — land the deliverable
+### needs_consequences — land the deliverable
 
 Write the substance as a ticket artifact and link it. Keep the **Consequences** field to a short report: what was found, what stayed open, and where the artifact is.
 

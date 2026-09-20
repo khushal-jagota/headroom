@@ -57,7 +57,7 @@ def test_item_tickets_probe_child_decodes(
     accept_proposal(
         tmp_db,
         probe.id,
-        field="kickoff",
+        field="brief",
         principal=OWNER_PRINCIPAL,
         now=2,
         next_ceiling=NEEDS_ALPHA,
@@ -84,7 +84,7 @@ def test_item_tickets_probe_child_decodes(
 
 def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
     # A coding child projects exactly as before: has_pending_proposal True while a
-    # gating proposal is parked at needs_success.
+    # gating proposal is parked at needs_success_condition.
     clock = TestClock(datetime(2026, 7, 4, 12, 0, 0).astimezone())
     item = create_item(tmp_db, title="Item", project_id="project_vylo", clock=clock)
     child = create_ticket(
@@ -96,8 +96,8 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
         title_max_chars=200,
         sprint_item_id=item.id,
     )
-    # Accept kickoff (default ceiling is now needs_kickoff, so kickoff parks until
-    # accepted), expanding the ceiling to needs_success; a success proposal then parks.
+    # Accept kickoff (default ceiling is now needs_brief, so kickoff parks until
+    # accepted), expanding the ceiling to needs_success_condition; a success proposal then parks.
     file_current_proposal(
         tmp_db,
         child.id,
@@ -108,10 +108,10 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
     accept_proposal(
         tmp_db,
         child.id,
-        field="kickoff",
+        field="brief",
         principal=OWNER_PRINCIPAL,
         now=2,
-        next_ceiling="needs_success",
+        next_ceiling="needs_success_condition",
         next_holder=OWNER_PRINCIPAL,
     )
     file_current_proposal(
@@ -126,7 +126,7 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
     assert len(rows) == 1
     row = rows[0]
     assert row["id"] == child.id
-    assert row["stage"] == "needs_success"
+    assert row["stage"] == "needs_success_condition"
     assert row["has_pending_proposal"] is True
 
 
@@ -157,7 +157,7 @@ def test_item_tickets_carries_the_two_facts_the_status_group_rule_needs(
     )
 
     row = item_tickets(tmp_db, item.id)[0]
-    assert row["gating_field"] == "kickoff"
+    assert row["gating_field"] == "brief"
     assert row["blocked"] is False
 
     ticket_blocks.add_ticket_block(tmp_db, blocker.id, child.id, 2)
@@ -169,10 +169,10 @@ def test_item_tickets_carries_the_two_facts_the_status_group_rule_needs(
 @pytest.mark.parametrize(
     ("stage", "worker_step_claim", "ceiling", "expected"),
     [
-        ("needs_closeout", "none", "needs_closeout", True),
-        ("needs_closeout", "none", "done", True),
-        ("needs_success", "none", "done", False),
-        ("needs_closeout", "out", "done", False),
+        ("needs_consequences", "none", "needs_consequences", True),
+        ("needs_consequences", "none", "done", True),
+        ("needs_success_condition", "none", "done", False),
+        ("needs_consequences", "out", "done", False),
     ],
 )
 def test_item_tickets_identifies_only_runnable_empty_closeout_tickets(

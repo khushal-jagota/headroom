@@ -105,7 +105,8 @@ def test_a_dropped_ticket_becomes_done_and_keeps_everything_else(seeded: Path) -
         ).fetchone()
         assert str(row["stage"]) == "done"
         assert str(row["title"]) == "Title t_dropped"
-        assert json.loads(str(row["field_values"])) == {"kickoff": "why"}
+        # Going to head also moves the field key, which a later revision renames.
+        assert json.loads(str(row["field_values"])) == {"brief": "why"}
         # A Ticket that was not at dropped is untouched.
         assert (
             str(conn.execute("SELECT stage FROM tickets WHERE id = 't_open'").fetchone()["stage"])

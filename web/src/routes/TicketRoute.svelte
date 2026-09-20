@@ -324,8 +324,8 @@
   // choice is editable. Direct blockers belong to the Ticket itself, so they
   // always stay in the masthead instead of moving into a stage card.
   let kickoffCardShowsContextRow = $derived(
-    gatingFieldFor(lc, ticket.data?.stage ?? "") === "kickoff" &&
-      ticket.data?.pending_proposal?.field === "kickoff" &&
+    gatingFieldFor(lc, ticket.data?.stage ?? "") === "brief" &&
+      ticket.data?.pending_proposal?.field === "brief" &&
       Boolean(ticket.data?.employee_configuration_editable)
   );
 
@@ -429,7 +429,7 @@
                  a proposal sitting in the wrong queue gets moved to the right one.
                  A parked Kickoff is one of those: a Ticket opened for somebody else
                  parks its Kickoff in their queue, so the holder half belongs here too. -->
-            {#if detail.stage !== "done" && (detail.stage !== "needs_kickoff" || detail.pending_proposal !== null)}
+            {#if detail.stage !== "done" && (detail.stage !== "needs_brief" || detail.pending_proposal !== null)}
               <details class="ticket-leash" bind:this={leashMenu} data-leash>
                 <summary
                   class="ticket-leash-face"
@@ -539,7 +539,7 @@
                         editableCurrentValue={userOwnsCurrentStage(detail)}
                         runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                         runLabelAttention={stageState === "current-awaiting-approval"}
-                        contextRow={name === "kickoff" && kickoffCardShowsContextRow
+                        contextRow={name === "brief" && kickoffCardShowsContextRow
                           ? kickoffContextRow
                           : undefined}
                         onAccept={(payload) => acceptField(name, payload)}
@@ -574,7 +574,7 @@
                   editableCurrentValue={userOwnsCurrentStage(detail)}
                   runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                   runLabelAttention={stageState === "current-awaiting-approval"}
-                  contextRow={name === "kickoff" && kickoffCardShowsContextRow
+                  contextRow={name === "brief" && kickoffCardShowsContextRow
                     ? kickoffContextRow
                     : undefined}
                   onAccept={(payload) => acceptField(name, payload)}

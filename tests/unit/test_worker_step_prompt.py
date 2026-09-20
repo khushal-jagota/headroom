@@ -18,11 +18,11 @@ from planner.worker_types.configuration import configured_worker_type_registry
 @pytest.mark.parametrize(
     ("stage", "field"),
     [
-        ("needs_success", "success"),
-        ("needs_approach", "approach"),
+        ("needs_success_condition", "success_condition"),
+        ("needs_what_changes", "what_changes"),
         ("needs_plan", "plan"),
         ("needs_implementation", "implementation"),
-        ("needs_closeout", "closeout"),
+        ("needs_consequences", "consequences"),
     ],
 )
 def test_each_worker_stage_has_the_same_ordered_ticket_inputs(
@@ -50,7 +50,7 @@ def test_each_worker_stage_has_the_same_ordered_ticket_inputs(
     assert [item.name for item in prompt.inputs] == [
         "stage instruction",
         "Ticket guidance",
-        "Ticket kickoff",
+        "Ticket brief",
     ]
     assert prompt.inputs[0].text == (
         f"Work ticket {ticket.id} — Ticket inputs. It is at Stage '{stage}'; take the next step "
@@ -59,14 +59,14 @@ def test_each_worker_stage_has_the_same_ordered_ticket_inputs(
     assert prompt.model_text == (
         f"{prompt.inputs[0].text}\n\n"
         "[Ticket guidance]\nKeep the agreed boundary.\n[/Ticket guidance]\n\n"
-        "[Ticket kickoff]\nStart with the settled brief.\n[/Ticket kickoff]"
+        "[Ticket brief]\nStart with the settled brief.\n[/Ticket brief]"
     )
 
 
 def test_revision_feedback_is_the_only_optional_worker_input_after_ticket_inputs(
     tmp_db: Connection,
 ) -> None:
-    ticket = _ticket_at_stage(tmp_db, "needs_success")
+    ticket = _ticket_at_stage(tmp_db, "needs_success_condition")
     feedback = revision_feedback.set_feedback(
         tmp_db,
         ticket.id,
@@ -84,11 +84,11 @@ def test_revision_feedback_is_the_only_optional_worker_input_after_ticket_inputs
 
     assert [item.name for item in prompt.inputs] == [
         "stage instruction",
-        "Ticket kickoff",
+        "Ticket brief",
         "Ticket revision feedback",
     ]
     assert prompt.inputs[-1].text == (
-        "Revision feedback from owner owner for stage needs_success:\n"
+        "Revision feedback from owner owner for stage needs_success_condition:\n"
         "Preserve this exact feedback."
     )
     assert "[Pending worker context]" not in prompt.model_text
@@ -107,7 +107,7 @@ def _ticket_at_stage(tmp_db: Connection, stage: str) -> Ticket:
     ticket = tickets_data.accept_proposal(
         tmp_db,
         ticket.id,
-        field="kickoff",
+        field="brief",
         principal=OWNER_PRINCIPAL,
         now=1,
         next_ceiling=NO_FURTHER,

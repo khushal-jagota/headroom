@@ -293,7 +293,7 @@ def body_str_list(body: JsonDict, key: str) -> list[str]:
 # against that Worker type's definition (not a global enum), and a bare str is passed to
 # the engine (already str-native and definition-parameterized). This is what lets
 # a non-coding Worker type (e.g. probe stages needs_alpha/needs_beta) flow through the
-# real routes. Reserved bookends (needs_kickoff/done) are shared by every
+# real routes. Reserved bookends (needs_brief/done) are shared by every
 # Worker type (PLAN invariant 1); the Worker-type-specific middle Stages/fields are not.
 
 
