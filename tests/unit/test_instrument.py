@@ -1,13 +1,15 @@
-"""Focused proof for the verify mode, CSS gate, and real/test clock boundary."""
+"""Focused proof for the verify mode, CSS gate, environment check, and real/test clock boundary."""
 
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
+import tree_environment  # type: ignore[import-not-found]  # noqa: E402  # reached via sys.path.insert above; not visible to mypy
 import verify_lib  # type: ignore[import-not-found]  # noqa: E402  # reached via sys.path.insert above; not visible to mypy
 
 from planner.core.clock import RealClock, build_clock  # noqa: E402
@@ -84,3 +86,93 @@ def test_check_css_syntax_clean_and_each_failure_mode() -> None:
     # legal string continuation (LF or CRLF), not a termination error.
     assert verify_lib.check_css_syntax('/* { */ .a { content: "\\\n}"; }') == []
     assert verify_lib.check_css_syntax('.a { content: "x\\\r\ny"; }') == []
+
+
+def test_environment_faults_name_every_way_a_copied_virtualenv_redirects_a_gate(
+    tmp_path: Path,
+) -> None:
+    tree = tmp_path / "mine"
+    (tree / "src").mkdir(parents=True)
+    other = tmp_path / "theirs"
+
+    clean = tree_environment.EnvironmentAnswers(
+        venv_prefix=tree / ".venv",
+        venv_origin=tree / ".venv",
+        planner_file=tree / "src" / "planner" / "__init__.py",
+        launcher_interpreters={"pytest": tree / ".venv" / "bin" / "python"},
+    )
+    assert tree_environment.faults(tree, clean) == []
+
+    # Nothing collected is not a fault: a caller that cannot see an answer stays quiet.
+    assert tree_environment.faults(tree, tree_environment.EnvironmentAnswers()) == []
+
+    def only_fault(**overrides: object) -> str:
+        answers = replace(clean, **overrides)
+        found = tree_environment.faults(tree, answers)
+        assert len(found) == 1, found
+        return str(found[0])
+
+    assert "the running interpreter belongs to" in only_fault(venv_prefix=other / ".venv")
+    assert "was copied or moved" in only_fault(venv_origin=other / ".venv")
+    assert "planner is not installed" in only_fault(planner_absent=True, planner_file=None)
+    assert "outside" in only_fault(planner_file=other / "src" / "planner" / "__init__.py")
+    assert "pytest runs on" in only_fault(
+        launcher_interpreters={"pytest": other / ".venv" / "bin" / "python"}
+    )
+
+    # A native binary carries no interpreter, so it contributes no answer.
+    assert tree_environment.faults(tree, replace(clean, launcher_interpreters={"ruff": None})) == []
+
+    # Every fault is reported together, not one at a time.
+    both = replace(clean, venv_prefix=other / ".venv", planner_absent=True)
+    assert len(tree_environment.faults(tree, both)) == 2
+
+
+def test_a_launcher_shebang_keeps_the_virtualenv_it_names(tmp_path: Path) -> None:
+    """The one line that matters is the virtualenv, not the interpreter behind it.
+
+    ``.venv/bin/python`` is a symlink chain ending at the system interpreter. Follow
+    it and every launcher looks like it runs outside its own virtualenv, which reads
+    as a fault on a tree that is perfectly correct.
+    """
+    tree = tmp_path / "mine"
+    bin_dir = tree / ".venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    system_python = tmp_path / "usr" / "bin" / "python3.13"
+    system_python.parent.mkdir(parents=True)
+    system_python.write_text("", encoding="utf-8")
+    (bin_dir / "python").symlink_to(system_python)
+    launcher = bin_dir / "pytest"
+    launcher.write_text(f"#!{bin_dir / 'python'}\nrest of the script\n", encoding="utf-8")
+
+    interpreter = tree_environment.read_launcher_interpreter(launcher)
+    assert interpreter == bin_dir / "python"
+    answers = tree_environment.EnvironmentAnswers(launcher_interpreters={"pytest": interpreter})
+    assert tree_environment.faults(tree, answers) == []
+
+    # A native binary and a missing file both read as "no answer", not as a fault.
+    (bin_dir / "ruff").write_bytes(b"\x7fELF\x02\x01\x01\x00" + bytes(64))
+    assert tree_environment.read_launcher_interpreter(bin_dir / "ruff") is None
+    assert tree_environment.read_launcher_interpreter(bin_dir / "absent") is None
+
+
+def test_shebang_and_pyvenv_cfg_readers_answer_only_when_the_file_says_so() -> None:
+    venv_python = "/home/vps/tree/.venv/bin/python"
+    assert tree_environment.interpreter_from_shebang(f"#!{venv_python}") == Path(venv_python)
+    assert tree_environment.interpreter_from_shebang(f"#!/usr/bin/env {venv_python}") == Path(
+        venv_python
+    )
+    # A native binary, a relative interpreter, and an empty line carry no answer.
+    assert tree_environment.interpreter_from_shebang("\x7fELF\x02\x01\x01") is None
+    assert tree_environment.interpreter_from_shebang("#!python3") is None
+    assert tree_environment.interpreter_from_shebang("#!") is None
+
+    created_at = "/home/vps/tree/.venv"
+    cfg = (
+        "home = /usr/bin\n"
+        "version = 3.13.5\n"
+        f"command = /usr/bin/python3 -m venv {created_at}\n"
+    )
+    assert tree_environment.venv_origin_from_pyvenv_cfg(cfg) == Path(created_at)
+    # uv writes no command line, so the check stays silent rather than guesses.
+    assert tree_environment.venv_origin_from_pyvenv_cfg("home = /usr/bin\nuv = 0.12.5\n") is None

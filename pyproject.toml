@@ -67,6 +67,12 @@ mypy_path = "src"
 # before it checks anything.
 explicit_package_bases = true
 python_version = "3.12"
+# Not analysis: the plugin entry point refuses to load when this mypy comes from
+# another tree's virtualenv. A bare ``mypy`` at a terminal is reported as evidence
+# just as ``./verify`` is, and a copied virtualenv checks this source against that
+# other tree's pinned dependency versions. mypy resolves this path against the
+# directory holding this file, so the tree's config always loads the tree's guard.
+plugins = ["scripts/tree_environment.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -16,6 +16,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from tree_environment import faults, probed_answers
 from verify_lib import check_css_syntax, parse_verify_mode
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -137,12 +138,39 @@ def run_frontend() -> GateResult:
     return GateResult("frontend", ok)
 
 
+def check_environment() -> bool:
+    """Prove the gates will run on this tree before any of them reports a result.
+
+    A virtualenv copied from another worktree keeps absolute paths into that
+    worktree, so a gate can pass on code that is not here. Print what was found
+    either way: a green run should show which tree it tested.
+    """
+    answers = probed_answers(REPO_ROOT, ("mypy", "pytest"))
+    print(f"\n=== environment check: {REPO_ROOT} ===", flush=True)
+    print(f"[verify] planner resolves to: {answers.planner_file or 'not installed'}", flush=True)
+    found = faults(REPO_ROOT, answers)
+    for reason in found:
+        print(f"[verify] {reason}", flush=True)
+    if found:
+        print(
+            "[verify] rebuild the virtualenv in place: rm -rf .venv && "
+            "python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt"
+            " && .venv/bin/python -m pip install --editable .",
+            flush=True,
+        )
+    return not found
+
+
 def main() -> int:
     try:
         mode = parse_verify_mode(sys.argv[1:])
     except ValueError as exc:
         print(exc)
         print("VERIFY: FAIL")
+        return 2
+
+    if not check_environment():
+        print("\nVERIFY: FAIL")
         return 2
 
     DATA_VERIFY.mkdir(parents=True, exist_ok=True)
