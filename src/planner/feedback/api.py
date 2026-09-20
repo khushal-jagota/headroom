@@ -6,8 +6,8 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from planner.core.authctx import require_feedback_use
-from planner.core.authority import owner_only, require_above
+from planner.core import authority
+from planner.core.authority import owner_only, require_above, require_above_or_self
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.feedback import actions, views
@@ -87,6 +87,6 @@ async def use_feedback(raw: dict[str, Any], conn: DbConn, clk: Clk, ctx: Ctx) ->
         feedback_ids,
         ticket_id=ticket_id,
         now=clk.now_unix(),
-        admit=lambda: require_feedback_use(conn, ctx, ticket_id),
+        admit=lambda: require_above_or_self(conn, ctx.principal, authority.ticket(ticket_id)),
     )
     return {"notes": [views.note_json(note) for note in notes]}

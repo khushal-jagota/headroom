@@ -21,7 +21,12 @@ import sqlite3
 
 from planner.core.authority.contracts import Target, TargetKind
 from planner.core.authority.declarations import stands_above_for_worker_type
-from planner.core.authority.logic import ChainFacts, stands_above, stands_above_or_is_self
+from planner.core.authority.logic import (
+    ChainFacts,
+    is_self,
+    stands_above,
+    stands_above_or_is_self,
+)
 from planner.core.contracts import (
     ErrorCode,
     PlannerError,
@@ -123,9 +128,17 @@ def require_above(conn: sqlite3.Connection, caller: Principal, target: Target) -
         _refuse(caller, target)
 
 
-def require_above_or_self(
-    conn: sqlite3.Connection, caller: Principal, target: Target
-) -> None:
+def require_self(conn: sqlite3.Connection, caller: Principal, target: Target) -> None:
+    """Admit only the target's own principal, for an act that is nobody else's to perform.
+
+    A Ticket proposes its own work, records its own trouble and asks for its own help. That
+    is the Ticket speaking, so standing above it does not grant it.
+    """
+    if not is_self(caller, target, chain_facts(conn, caller, target)):
+        _refuse(caller, target)
+
+
+def require_above_or_self(conn: sqlite3.Connection, caller: Principal, target: Target) -> None:
     """Admit the target's own principal as well, for an operation on its own record."""
     if not is_above_or_self(conn, caller, target):
         _refuse(caller, target)
@@ -137,4 +150,5 @@ __all__ = [
     "is_above_or_self",
     "require_above",
     "require_above_or_self",
+    "require_self",
 ]

@@ -45,10 +45,8 @@ from planner.core.authctx import (
     RequestContext,
     reject_agent_fields,
     request_context,
-    require_ticket_delete,
-    require_ticket_worker_write,
 )
-from planner.core.authority import require_above
+from planner.core.authority import require_above, require_self
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.contracts import (
@@ -855,7 +853,12 @@ async def delete_ticket(
     conversations: Conversations,
     force: Annotated[bool, Query()] = False,
 ) -> JsonDict:
-    supervisor_sprint_item_id = require_ticket_delete(conn, ctx, ticket_id)
+    require_above(conn, ctx.principal, authority.ticket(ticket_id))
+    # The writer re-asks under its own transaction, so it needs the caller's position, not
+    # a second authority. Only an Outcome has one to pass down.
+    supervisor_sprint_item_id = (
+        ctx.principal.id if ctx.principal.kind is PrincipalKind.sprint_item else None
+    )
     # A supervisor deletes its own child Ticket outright, and force is how the user reaches
     # the same place. Both walk past the running guards, so the Ticket's turn is killed
     # here instead: a Worker must never outlive the Ticket it belongs to.
@@ -1256,13 +1259,7 @@ async def request_help(
     clk: Clk,
     conversations: Conversations,
 ) -> JsonDict:
-    require_ticket_worker_write(conn, ctx)
-    if ctx.principal != Principal(PrincipalKind.ticket, ticket_id):
-        raise PlannerError(
-            ErrorCode.agent_forbidden,
-            "only the Ticket's own Worker can request help",
-            {"ticket_id": ticket_id},
-        )
+    require_self(conn, ctx.principal, authority.ticket(ticket_id))
     if set(body) - {"message", "recipient"}:
         raise PlannerError(ErrorCode.validation, "unknown help request field", {})
     message = body_str(body, "message")

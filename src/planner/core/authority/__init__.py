@@ -21,6 +21,7 @@ from planner.core.authority.service import (
     is_above_or_self,
     require_above,
     require_above_or_self,
+    require_self,
 )
 
 __all__ = [
@@ -37,6 +38,7 @@ __all__ = [
     "plan",
     "require_above",
     "require_above_or_self",
+    "require_self",
     "stands_above",
     "stands_above_or_is_self",
     "ticket",

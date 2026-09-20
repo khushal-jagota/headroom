@@ -182,10 +182,12 @@ def test_feedback_use_admission_runs_inside_the_write_transaction(
     ticket = _create_ticket(feedback_client, "Authorization destination")
     observed: list[bool] = []
 
-    def admit(conn: Connection, _ctx: object, _ticket_id: str) -> None:
+    def admit(conn: Connection, _caller: object, _target: object) -> None:
         observed.append(conn.in_transaction)
 
-    monkeypatch.setattr("planner.feedback.api.require_feedback_use", admit)
+    # The one rule replaced require_feedback_use here. What this proves is unchanged: the
+    # admission runs inside the writer's transaction, not before it.
+    monkeypatch.setattr("planner.feedback.api.require_above_or_self", admit)
     response = feedback_client.post(
         "/api/feedback/use",
         json={"feedback_ids": [note["id"]], "ticket_id": ticket["id"]},
