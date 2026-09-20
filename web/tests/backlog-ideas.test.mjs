@@ -243,7 +243,7 @@ with sync_playwright() as playwright:
     page.locator('section[data-screen="backlog"]').wait_for()
 
     assert page.locator('[data-pagination="tickets"] [data-page-range]').inner_text() == "1–30 of 31"
-    assert not any("sprint-item-summaries" in request["path"] for request in page.evaluate("window.__requests()"))
+    assert not any("/api/items" in request["path"] for request in page.evaluate("window.__requests()"))
     assert page.locator('[data-backlog-outcomes], [data-outcome-picker]').count() == 0
     assert page.locator('[data-backlog-tickets] > .section-heading').count() == 0
     first_ticket = page.locator('[data-ticket-id="ticket_0"]')
@@ -298,7 +298,7 @@ with sync_playwright() as playwright:
         "sprint_item_id": None,
         "ceiling_holder": {"kind": "chief", "id": "chief"},
     }
-    assert not any("sprint-item-summaries" in request["path"] for request in page.evaluate("window.__requests()"))
+    assert not any("/api/items" in request["path"] for request in page.evaluate("window.__requests()"))
     page.locator('[data-create="ticket"] > summary').click()
     def assert_backlog_layout(width):
         page.set_viewport_size({"width": width, "height": 900})
