@@ -8,27 +8,23 @@
   import type { Principal } from "../lib/types";
 
   // The whole ceiling in one control: how far the Ticket may go, and who is asked when
-  // it gets there. It reads "Until Approach · then me". Wherever a ceiling is set — the
-  // Ticket page leash, the approve row, the Backlog create form — this is the control,
-  // so the words are the same in all three.
-  //
-  // `stageEditable={false}` drops the stage half. A parked proposal freezes how far the
-  // Ticket may go, because moving it would change what was proposed, but it does not
-  // freeze who is asked.
+  // it gets there. It reads "Until Approach · then me", and the approve row is where a
+  // ceiling is set with both halves live. The Ticket page leash and the Backlog create
+  // form are their own markup because they write on change rather than on a button, but
+  // all three take their words and their options from `ceilingHolder.ts`, so a change
+  // there lands on every one of them.
   let {
     newStage,
     lifecycle = null,
     ceiling = $bindable<string | null>(null),
     holder = $bindable<Principal | null>(null),
-    sprintItem = null,
-    stageEditable = true
+    sprintItem = null
   }: {
     newStage: string | null;
     lifecycle?: Lifecycle | null;
     ceiling?: string | null;
     holder?: Principal | null;
     sprintItem?: { id: string; title: string } | null;
-    stageEditable?: boolean;
   } = $props();
 
   let choice = $state("");
@@ -46,7 +42,7 @@
   }
 
   $effect(() => {
-    if (!lifecycle || !stageEditable) return;
+    if (!lifecycle) return;
     const nextDefault = preferredScopeCeilingFor(lifecycle, newStage) || "none";
     let next = ceiling === null ? nextDefault : choice || ceiling;
     if (!options.some((option) => option.value === next)) next = nextDefault;
@@ -56,18 +52,16 @@
 </script>
 
 <div class="scope-picker">
-  {#if stageEditable}
-    <span class="scope-word">Until</span>
-    <label class="scope-select">
-      <select data-scope-ceiling bind:value={choice} aria-label="Ceiling stage">
-        <option value="" disabled hidden></option>
-        {#each options as option}
-          <option value={option.value}>{option.label}</option>
-        {/each}
-      </select>
-    </label>
-    <span class="scope-word" aria-hidden="true">·</span>
-  {/if}
+  <span class="scope-word">Until</span>
+  <label class="scope-select">
+    <select data-scope-ceiling bind:value={choice} aria-label="Ceiling stage">
+      <option value="" disabled hidden></option>
+      {#each options as option}
+        <option value={option.value}>{option.label}</option>
+      {/each}
+    </select>
+  </label>
+  <span class="scope-word" aria-hidden="true">·</span>
   <span class="scope-word">then</span>
   <label class="scope-select">
     <select

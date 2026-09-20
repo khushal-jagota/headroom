@@ -575,3 +575,52 @@ def test_creation_names_a_holder_the_creator_does_not_hold(tmp_db: Connection) -
         stated_holder=OWNER_PRINCIPAL,
     )
     assert ticket.ceiling_holder == OWNER_PRINCIPAL
+
+
+def test_a_worker_cannot_move_a_holder_even_though_the_field_is_not_direct_only(
+    tmp_db: Connection,
+) -> None:
+    """`ceiling_holder` is left out of the direct-only list on purpose.
+
+    Granting scope is the user's, but handing a Ticket on is the current holder's, so the
+    direct-only list is the wrong gate. This pins the gate that is doing the work.
+    """
+    ticket = _park(tmp_db, CHIEF_PRINCIPAL)
+    with pytest.raises(PlannerError) as forbidden:
+        data.edit_ticket(
+            tmp_db,
+            ticket.id,
+            edit=TicketEdit(ceiling_holder=OWNER_PRINCIPAL),
+            title_max_chars=TITLE_MAX_CHARS,
+            principal=Principal(PrincipalKind.ticket, ticket.id),
+            now=12,
+        )
+    assert forbidden.value.code is ErrorCode.agent_forbidden
+    assert data.read_ticket(tmp_db, ticket.id).ceiling_holder == CHIEF_PRINCIPAL
+
+
+def test_a_ticket_that_holds_a_ceiling_can_hand_it_on(tmp_db: Connection) -> None:
+    """A holder that can decide a proposal can also pass it to somebody better placed."""
+    parent = data.create_ticket(
+        tmp_db,
+        title="Parent",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note="Parent",
+    )
+    holder = Principal(PrincipalKind.ticket, parent.id)
+    child = _park(tmp_db, holder, now=10)
+    assert child.ceiling_holder == holder
+
+    handed = data.edit_ticket(
+        tmp_db,
+        child.id,
+        edit=TicketEdit(ceiling_holder=OWNER_PRINCIPAL),
+        title_max_chars=TITLE_MAX_CHARS,
+        principal=holder,
+        now=12,
+    )
+    assert handed.ceiling_holder == OWNER_PRINCIPAL
+    assert handed.pending_proposal == child.pending_proposal

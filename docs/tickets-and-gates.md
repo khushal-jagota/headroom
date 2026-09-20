@@ -283,10 +283,11 @@ The Ticket details disclosure shows the same permission as a readable leash:
 by its name. The stage name is the Worker type's own label, so a renamed stage reads
 correctly with no code change. While a proposal is parked the disclosure drops its stage
 select and keeps the holder one, which is the split refusal made visible. A Ticket can hold
-another Ticket's ceiling and tooling can set that; it is not offered on screen. The worker runs to the new ceiling and parks there for
-the named holder. At Kickoff, an unchosen
-ceiling starts from that Worker type's managed suggestion. Other approvals start from
-their normal next Stage. `No further` remains a one-off choice. The stages it offers
+another Ticket's ceiling and tooling can set that; it is not offered on screen.
+
+The worker runs to the new ceiling and parks there for the named holder. At Kickoff, an
+unchosen ceiling starts from that Worker type's managed suggestion. Other approvals start
+from their normal next Stage. `No further` remains a one-off choice. The stages it offers
 are always the current one and the
 ones after it, never an earlier one, so you can't hand back ground the ticket has
 already covered. One shared source of the allowed stages feeds both the Ticket leash

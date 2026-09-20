@@ -433,8 +433,10 @@
             <!-- The ceiling is set here: how far the Ticket may go, and who is asked when
                  it gets there. A parked proposal freezes the stage, because moving it
                  would change what was proposed, and leaves the holder free — which is how
-                 a proposal sitting in the wrong queue gets moved to the right one. -->
-            {#if detail.stage !== "done" && detail.stage !== "needs_kickoff"}
+                 a proposal sitting in the wrong queue gets moved to the right one.
+                 A parked Kickoff is one of those: a Ticket opened for somebody else
+                 parks its Kickoff in their queue, so the holder half belongs here too. -->
+            {#if detail.stage !== "done" && (detail.stage !== "needs_kickoff" || detail.pending_proposal !== null)}
               <details class="ticket-leash" bind:this={leashMenu} data-leash>
                 <summary
                   class="ticket-leash-face"
@@ -443,7 +445,7 @@
                   {#if detail.pending_proposal === null}
                     Until
                     <span class="ticket-leash-value" data-leash-ceiling>{lc?.stageLabel[detail.ceiling] || stageLabel(detail.ceiling)}</span>
-                    <span class="ticket-leash-word">·</span>
+                    <span class="ticket-leash-word" aria-hidden="true">·</span>
                   {/if}
                   then
                   <span class="ticket-leash-value" data-leash-holder>{holderLabel(detail)}</span>
@@ -566,7 +568,7 @@
                   </div>
                 </details>
               {/if}
-              {#each lc.fieldIds.filter((name) => !settledFields.includes(name)) as name}
+              {#each lc.fieldIds.filter((name) => !settledFields.includes(name)) as name (`${detail.id}:${name}`)}
                 {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
                 <TicketStageSection
                   {name}

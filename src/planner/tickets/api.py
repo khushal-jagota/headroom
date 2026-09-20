@@ -110,8 +110,11 @@ _TICKET_DIRECT_ONLY_FIELDS = (
     "sprint_item_id",
     "field_values",
     "ceiling",
-    # Not "ceiling_holder": handing a Ticket on is exactly what a Sprint Item that holds
-    # one needs to do, and the decision already limits it to the holder or the user.
+    # Not "ceiling_holder". Granting scope is the user's, but handing a Ticket on is the
+    # current holder's, whoever that is, so this list is the wrong gate for it.
+    # decide_set_ceiling_holder is the real one, and it refuses every principal that is
+    # neither the holder nor the user — including an attributed Worker, which is the only
+    # principal this omission lets through the door.
 )
 
 

@@ -66,8 +66,8 @@ surface a delivery failure, or fall back to the owner.
   and it is refused while a proposal is parked.
   `ceiling-holder` changes who is asked, and it is allowed while a proposal is parked.
   That is how you hand a proposal already sitting in your queue to Khushal:
-  `set-ticket <ticket-id> ceiling-holder --value me`. Only the current holder or Khushal
-  can do it.
+  `set-ticket <item-id> <ticket-id> ceiling-holder --value me`. Only the current holder
+  or Khushal can do it.
 - `approve` resolves a parked proposal. Supply `--ceiling`. The next holder
   defaults to this Sprint Item. Use `--holder` to address another principal: `me`,
   `chief`, a Sprint Item id, or a Ticket id.

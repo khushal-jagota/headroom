@@ -74,7 +74,7 @@ def respond(route):
     elif path == 'tickets/t_personal':
         result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_outcome', 'ceiling':'needs_outcome', 'field_values':{'kickoff':'Context'}, 'pending_proposal':None, 'ticket_status':'empty'}
     elif path == 'tickets/t_kickoff':
-        result={**ticket, 'id': 't_kickoff', 'stage': 'needs_kickoff', 'sprint_item_id': None, 'resolved_priority_anchors': {**ticket['resolved_priority_anchors'], 'sprint_item': None}, 'pending_proposal': None, 'field_values': {}}
+        result={**ticket, 'id': 't_kickoff', 'stage': 'needs_kickoff', 'ceiling': 'needs_kickoff', 'ceiling_holder': {'kind': 'chief', 'id': 'chief'}, 'sprint_item_id': None, 'resolved_priority_anchors': {**ticket['resolved_priority_anchors'], 'sprint_item': None}, 'pending_proposal': {'field': 'kickoff', 'body': 'Opened for somebody else', 'proposed_by': 'chief', 'created_at': 1}, 'field_values': {}}
     elif path == 'tickets/t_open':
         result={**ticket, 'id': 't_open', 'ticket_status': 'empty', 'pending_proposal': None, 'ceiling_holder': {'kind': 'owner', 'id': 'owner'}}
     elif path == 'tickets/t_done':
@@ -180,7 +180,16 @@ with sync_playwright() as p:
     expect(page.locator('[data-project-fact]')).to_have_text('One')
     assert page.locator('[data-outcome-fact]').count() == 0
     assert page.locator('[data-copy]').count() == 0
-    assert 'Copy' not in page.locator('.ticket-operating').inner_text()
+    # A Ticket opened for somebody else parks its Kickoff in their queue. That is the
+    # first moment a proposal can sit in the wrong place, so the holder half is here too.
+    kickoff_leash=page.locator('[data-leash]')
+    assert kickoff_leash.count() == 1
+    assert kickoff_leash.locator('[data-leash-face]').inner_text().strip() == 'then Chief'
+    kickoff_leash.locator(':scope > summary').click()
+    assert kickoff_leash.locator('[data-scope-ceiling]').count() == 0
+    assert kickoff_leash.locator('[data-scope-holder]').count() == 1
+    # No Sprint Item on this one, so the Item option is absent.
+    assert [option.inner_text() for option in kickoff_leash.locator('[data-scope-holder] option').all()] == ['me', 'Chief']
     page.evaluate("window.__showTicket('t_done')")
     page.locator('[data-ticket-id="t_done"]').wait_for()
     assert page.locator('[data-copy]').count() == 0

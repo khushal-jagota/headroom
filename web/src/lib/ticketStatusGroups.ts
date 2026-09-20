@@ -61,7 +61,13 @@ export function ticketStatusGroupKey(ticket: TicketStatusGroupFacts): string {
     // A proposal is parked, but not for the reader: `awaiting_approval` on the condition
     // is true only when the viewer holds the ceiling, so a Ticket held by an agent used
     // to fall through to Empty. The rail names these, and this page names them the same.
-    if (ticket.ticket_status === "awaiting_approval") return "status_awaiting_approval";
+    //
+    // Only out of `upcoming`. The rail reaches its own `status_awaiting_approval` only
+    // after every attention group, so a broken worker still reads Errored and a Ticket
+    // that is the user's own still reads Assigned — a parked proposal never renames them.
+    if (mark === "upcoming" && ticket.ticket_status === "awaiting_approval") {
+      return "status_awaiting_approval";
+    }
     return mark;
   }
   return ticket.gating_field === "kickoff" ? "waiting-for-kickoff" : mark;

@@ -448,3 +448,81 @@ def test_ticket_parts_expose_guidance_and_recap_without_expanding_default_manife
         "guidance": {"value": data["guidance"], "proposal": None},
         "recap": {"value": "orientation", "proposal": None},
     }
+
+
+def test_holder_words_and_ids_resolve_to_one_principal_shape() -> None:
+    """`--holder` is the one way tooling names a holder. The kind follows the value."""
+    resolve = cli_main.resolve_holder
+    assert resolve("me", False) == {"kind": "owner", "id": "owner"}
+    assert resolve("owner", False) == {"kind": "owner", "id": "owner"}
+    assert resolve("Chief", False) == {"kind": "chief", "id": "chief"}
+    assert resolve("si_parent", False) == {"kind": "sprint_item", "id": "si_parent"}
+    assert resolve("t_other", False) == {"kind": "ticket", "id": "t_other"}
+    with pytest.raises(SystemExit):
+        resolve("whoever", False)
+
+
+def test_ticket_create_sends_a_named_holder_and_omits_it_otherwise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A creator can open a Ticket for somebody else. Unstated, the server decides."""
+    bodies: list[dict[str, Any]] = []
+
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        bodies.append(kwargs.get("json_body") or {})
+        return {"id": "t_new", "title": "New", "stage": "needs_kickoff", "priority": "P2"}
+
+    monkeypatch.setattr(http, "send", fake_send)
+    base = ["ticket", "create", "--title", "New", "--worker-type", "coding"]
+    assert CliRunner().invoke(cli_main.main, [*base, "--holder", "me"]).exit_code == 0
+    assert bodies[-1]["ceiling_holder"] == {"kind": "owner", "id": "owner"}
+    assert CliRunner().invoke(cli_main.main, base).exit_code == 0
+    assert "ceiling_holder" not in bodies[-1]
+
+
+def test_ticket_set_ceiling_holder_patches_a_principal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The holder is an ordinary field edit, so it goes through the ordinary door."""
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs))
+        return {"id": "t_child"}
+
+    monkeypatch.setattr(http, "send", fake_send)
+    result = CliRunner().invoke(
+        cli_main.main,
+        ["ticket", "set", "t_child", "ceiling-holder", "--value", "me"],
+    )
+    assert result.exit_code == 0, result.output
+    assert calls[-1][0:2] == ("PATCH", "/api/tickets/t_child")
+    assert calls[-1][2]["json_body"] == {"ceiling_holder": {"kind": "owner", "id": "owner"}}
+
+
+def test_ticket_approve_defaults_the_next_holder_to_the_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitting `--holder` keeps what the direct command always did."""
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs))
+        if path == "/api/tickets/t_child":
+            return {
+                "id": "t_child",
+                "worker_type": "coding",
+                "stage": "needs_success",
+                "pending_proposal": {"field": "success", "body": "Ready"},
+            }
+        if path == "/api/worker-types":
+            return {"worker_types": [SHIPPED_REGISTRY.manifest("coding")]}
+        return {"id": "t_child"}
+
+    monkeypatch.setattr(http, "send", fake_send)
+    result = CliRunner().invoke(
+        cli_main.main,
+        ["ticket", "approve", "t_child", "--ceiling", "needs_approach"],
+    )
+    assert result.exit_code == 0, result.output
+    assert calls[-1][2]["json_body"]["next_holder"] == {"kind": "owner", "id": "owner"}

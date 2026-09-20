@@ -204,10 +204,11 @@ record shapes. Direct `show` commands also keep their full record shapes.
 - **`sprint item supervisor approve / reject`** — resolve a parked proposal on a current
   child Ticket when that exact Sprint Item is its ceiling holder. Approval requires the
   next ceiling. It also sends the full next holder. The holder defaults to the
-  same Sprint Item; `--holder` can address the next proposal to a different principal. Rejection can carry focused revision guidance. When it does, the
-  Ticket appends
+  same Sprint Item; `--holder` can address the next proposal to a different principal.
+  Rejection can carry focused revision guidance. When it does, the Ticket appends
   that exact comment to guidance, invalidates worker context, and returns the Stage to
-  rest in one SQLite commit. The holder stays the same for the revised proposal.
+  rest in one SQLite commit. A holder's rejection keeps that holder for the revised
+  proposal. Khushal's own rejection makes him the holder, through the owner override.
 - **`sprint item supervisor ticket-context / history / message-worker`** — read one
   current child Ticket, page through its current Worker conversation, or send attributed
   guidance to that Ticket's current conversation. `message-worker` resolves the current

@@ -36,7 +36,7 @@
   let deadline = $state("");
   let kickoffNote = $state("");
   // Who is asked when this Ticket reaches its ceiling. A Ticket made here has no Sprint
-  // Item, so the choice is me or the Chief, and unchanged it stays with whoever made it.
+  // Item, so the choice is me or the Chief. It starts at me, which is who is making it.
   let holder = $state<Principal>(OWNER_HOLDER);
   let createError = $state<unknown>(null);
   let creating = $state(false);
@@ -97,6 +97,8 @@
       title = "";
       deadline = "";
       kickoffNote = "";
+      // Who a Ticket is for is a fact about that Ticket, not a mode the form stays in.
+      holder = OWNER_HOLDER;
     } catch (err) {
       createError = err;
     } finally {
