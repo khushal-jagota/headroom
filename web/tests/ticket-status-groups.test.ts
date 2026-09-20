@@ -34,12 +34,12 @@ describe("Ticket status groups", () => {
     expect(TICKET_STATUS_GROUPS.map((group) => group.label)).toEqual([
       "Errored",
       "Needs you",
-      "Waiting for kickoff",
+      "Waiting for Brief",
       "Awaiting approval",
       "Assigned",
       "Agent",
       "Awaiting an agent's approval",
-      "Waiting for closeout",
+      "Waiting on Consequences",
       "Empty",
       "Blocked",
       "Done"
@@ -51,7 +51,7 @@ describe("Ticket status groups", () => {
     ).toEqual([
       "Errored",
       "Needs you",
-      "Waiting for kickoff",
+      "Waiting for Brief",
       "Awaiting approval",
       "Assigned",
       "Agent"

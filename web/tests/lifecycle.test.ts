@@ -4,10 +4,12 @@ import {
   buildLifecycle,
   ceilingOptionsFor,
   fieldIsPassedFor,
+  fieldLabelFor,
   fieldStageVisualStateFor,
   gatingFieldFor,
   lifecycleFor,
   preferredScopeCeilingFor,
+  stageLabelFor,
   ticketStageVisualStateFor,
   type WorkerTypeManifest,
   type WorkerTypesResponse
@@ -21,21 +23,21 @@ const codingManifest = {
   stages: [
     {
       id: "needs_kickoff",
-      label: "Kickoff",
+      label: "Brief",
       gating_field: "kickoff",
       is_terminal: false,
       ownership_mode: "worker"
     },
     {
       id: "needs_success",
-      label: "Success",
+      label: "Success Condition",
       gating_field: "success",
       is_terminal: false,
       ownership_mode: "worker"
     },
     {
       id: "needs_approach",
-      label: "Approach",
+      label: "What Changes",
       gating_field: "approach",
       is_terminal: false,
       ownership_mode: "user"
@@ -56,7 +58,7 @@ const codingManifest = {
     },
     {
       id: "needs_closeout",
-      label: "Closeout",
+      label: "Consequences",
       gating_field: "closeout",
       is_terminal: false,
       ownership_mode: "worker"
@@ -78,12 +80,12 @@ const codingManifest = {
     needs_closeout: "done"
   },
   fields: [
-    { id: "kickoff", label: "Kickoff" },
-    { id: "success", label: "Success" },
-    { id: "approach", label: "Approach" },
+    { id: "kickoff", label: "Brief" },
+    { id: "success", label: "Success Condition" },
+    { id: "approach", label: "What Changes" },
     { id: "plan", label: "Plan" },
     { id: "implementation", label: "Implementation" },
-    { id: "closeout", label: "Closeout" }
+    { id: "closeout", label: "Consequences" }
   ],
   ceiling_range: [
     "needs_success",
@@ -243,19 +245,35 @@ describe("coding lifecycle", () => {
   // label. A stage rename lands in the control with no code change.
   it("offers scope options from the beginning and middle of the range", () => {
     expect(ceilingOptionsFor(codingLifecycle, "needs_success")).toEqual([
-      { value: "needs_success", label: "Success" },
-      { value: "needs_approach", label: "Approach" },
+      { value: "needs_success", label: "Success Condition" },
+      { value: "needs_approach", label: "What Changes" },
       { value: "needs_plan", label: "Plan" },
       { value: "needs_implementation", label: "Implementation" },
-      { value: "needs_closeout", label: "Closeout" },
+      { value: "needs_closeout", label: "Consequences" },
       { value: "done", label: "Done" }
     ]);
     expect(ceilingOptionsFor(codingLifecycle, "needs_plan")).toEqual([
       { value: "needs_plan", label: "Plan" },
       { value: "needs_implementation", label: "Implementation" },
-      { value: "needs_closeout", label: "Closeout" },
+      { value: "needs_closeout", label: "Consequences" },
       { value: "done", label: "Done" }
     ]);
+  });
+
+  it("names a Stage and a field from the Worker type, and falls back to the id", () => {
+    expect(fieldLabelFor(codingLifecycle, "closeout")).toBe("Consequences");
+    expect(stageLabelFor(codingLifecycle, "needs_closeout")).toBe("Consequences");
+    expect(fieldLabelFor(codingLifecycle, "success")).toBe("Success Condition");
+    expect(stageLabelFor(codingLifecycle, "needs_approach")).toBe("What Changes");
+
+    // Before the manifest arrives there is no label to read, so the id is spelled out.
+    // This is the only window in which a reader sees anything but the settled name.
+    expect(fieldLabelFor(null, "closeout")).toBe("Closeout");
+    expect(stageLabelFor(null, "needs_closeout")).toBe("needs closeout");
+
+    // A field or Stage the loaded type does not declare falls back the same way.
+    expect(fieldLabelFor(codingLifecycle, "research")).toBe("Research");
+    expect(stageLabelFor(codingLifecycle, "needs_research")).toBe("needs research");
   });
 
   it("derives the approval ceiling from the stage after the newly entered Stage", () => {

@@ -6,7 +6,12 @@
 //
 // stageLabel and the FieldStageVisualState type are imported FROM ui.ts;
 // ui.ts must NOT import from here (no cycle).
-import { stageLabel, type FieldStageVisualState, type TicketStageVisualInput } from "./ui";
+import {
+  labelize,
+  stageLabel,
+  type FieldStageVisualState,
+  type TicketStageVisualInput
+} from "./ui";
 import type { StageOwnershipMode, TicketDetail } from "./types";
 
 // --- served worker_types manifest shapes ----------------------------------------
@@ -108,6 +113,18 @@ export function advanceTargetFor(
   return lc.advance[stage] || null;
 }
 
+// The two names a reader sees. The Worker type's stored label is the name, and the
+// id-derived text is only what shows before the manifest arrives. Every screen that
+// spells a Stage or a field out goes through one of these, so one vocabulary reaches
+// the page, the heading, and the leash together.
+export function fieldLabelFor(lc: Lifecycle | null, field: string): string {
+  return lc?.fieldLabel[field] || labelize(field);
+}
+
+export function stageLabelFor(lc: Lifecycle | null, stage: string): string {
+  return lc?.stageLabel[stage] || stageLabel(stage);
+}
+
 export function ceilingOptionsFor(
   lc: Lifecycle | null,
   floorStage: string
@@ -115,12 +132,13 @@ export function ceilingOptionsFor(
   if (!lc) return [];
   let start = lc.stageOrder.indexOf(floorStage);
   if (start < 0) start = 0;
-  // Leash option labels are the manifest's own stage labels ("Approach"), so the
-  // control reads "Until Approach" and follows a stage rename without a code change.
-  // This replaces the earlier lowercase stageLabel(id) wording ("needs approach").
-  return lc.stageOrder
-    .slice(start)
-    .map((stage) => ({ value: stage, label: lc.stageLabel[stage] || stageLabel(stage) }));
+  // Leash option labels are the Worker type's own Stage labels, so the control reads
+  // "Until What Changes" and follows a Stage rename without a code change. This
+  // replaces the earlier lowercase stageLabel(id) wording ("needs approach").
+  return lc.stageOrder.slice(start).map((stage) => ({
+    value: stage,
+    label: stageLabelFor(lc, stage)
+  }));
 }
 
 export function preferredScopeCeilingFor(

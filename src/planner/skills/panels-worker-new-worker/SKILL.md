@@ -7,13 +7,13 @@ description: "Stage-by-stage guidance for a new-worker ticket \u2014 designing a
 
 This Ticket's deliverable is **another worker**: a new Worker type and the specialist skill that guides it. A worker is a short lifecycle — ordered Stages, each with one gated field and one ownership mode — plus the skill that teaches an agent to do each Stage well.
 
-The hard part isn't writing files; it's the **thinking** — what the worker is for, what shape its lifecycle takes, what "good" means at each stage, and who does the work. Understanding is the collaborative beat after universal Kickoff: use the same Ticket Chat conversation to learn enough with the human before you design the lifecycle. Each later stage is a thinking beat the human reviews before you move on.\
+The hard part isn't writing files; it's the **thinking** — what the worker is for, what shape its lifecycle takes, what "good" means at each stage, and who does the work. Purpose and Boundaries is the collaborative beat after the universal Brief: use the same Ticket Chat conversation to learn enough with the human before you design the lifecycle. Each later stage is a thinking beat the human reviews before you move on.\
 \
 Importantly, remember agents are really smart. You do not need to spell everything out. less is more when drafting.
 
 ### The stages
 
-**Understanding → Stages → Thinking → Runtime Defaults → Drafting → Closeout → Done**
+**Purpose and Boundaries → Stages → What Good Looks Like at Each Stage → Model and Effort → Drafting → Consequences → Done**
 
 - **needs\_understanding** — the short collaborative conversation that captures what this worker is for, where the hard judgment lives, and the boundaries the lifecycle must respect.
 - **needs\_stages** — the new worker's lifecycle: its ordered stages, what each one needs, and who owns each Stage.
@@ -36,11 +36,11 @@ Begin with a small purposeful core set. Cover:
 
 Follow up only when an answer exposes a material gap. Do not ask for polish, preference, or extra detail that will not change the lifecycle. Stop when those categories are sufficiently understood to design the lifecycle and its ownership decisions.
 
-Propose a concise durable Understanding result. It should carry forward only the facts the later Stages need: the worker's purpose/outcome, the hard judgment points, the constraints/examples/boundaries, and any open risk that should shape the lifecycle.
+Propose a concise durable result for Purpose and Boundaries. It should carry forward only the facts the later Stages need: the worker's purpose/outcome, the hard judgment points, the constraints/examples/boundaries, and any open risk that should shape the lifecycle.
 
 ### needs\_stages — shape the lifecycle
 
-Decide the new worker's stages before touching any files. The work in understanding should make this simple. A good **stages** proposal gives:
+Decide the new worker's stages before touching any files. The work in Purpose and Boundaries should make this simple. A good **stages** proposal gives:
 
 - A ordered `needs_<x>` stages, each gating a same-named `<x>` field, each with one line on what it needs.
 - An **ownership mode for every non-terminal Stage** — `worker` or `user`. User ownership includes the worker as a collaborator. Terminal `done` has no ownership mode.
@@ -63,12 +63,12 @@ Recommend one explicit runtime tuple from the approved design and runtime catalo
 
 ### needs\_drafting — write the artifacts
 
-From the approved thinking, write the two files as artifacts:
+From the approved What Good Looks Like at Each Stage, write the two files as artifacts:
 
 - The new worker's **`SKILL.md`** — front matter plus one guidance section per stage, mirroring this skill and `panels-worker-coding`.
 - Its **Worker type definition** — the `WorkerTypeDefinition`: Stages with an ownership mode on every non-terminal Stage, ordered fields, ceiling range, and worker profile. Novel ids are plain strings; reuse the shared `needs_kickoff`/`kickoff`, `needs_closeout`/`closeout`, and `done`.
 
-Copy the approved Runtime Defaults values into the record's `profile`.
+Copy the approved Model and Effort values into the record's `profile`.
 
 ### needs\_closeout — land it
 
@@ -79,9 +79,9 @@ A worker is declared in the database, so landing one is a write, not a deploymen
 3. Confirm `panels worker-type list` names it, and that ordinary Ticket creation offers it. The base Worker discovers its specialist from `panels worker my-ticket`; there is no second list to update.
 4. Add `src/planner/skills/<name>/SKILL.md` to the repository, so a fresh install is seeded with this worker's skill. That is an ordinary repository change through the branch and staging route, and it changes nothing on this Panels.
 
-The `profile` carries the backend, model and reasoning effort approved in Runtime Defaults. There is no second copy of them to keep in step.
+The `profile` carries the backend, model and reasoning effort approved in Model and Effort. There is no second copy of them to keep in step.
 
-A good **closeout** is a short, verified report: what was saved, what `panels worker-type show` reports, and how you confirmed the worker is live.
+A good **Consequences** is a short, verified report: what was saved, what `panels worker-type show` reports, and how you confirmed the worker is live.
 
 ### Working disciplines
 

@@ -159,12 +159,12 @@ One screen per part of the system:
   Its summary adds **awaiting approval** for a parked proposal. Running,
   completed, and upcoming marks need no
   extra label. Stage bodies, editing and approval behavior, and the worker conversation
-  in serif along the bottom remain in place. During pristine Kickoff, the approval context also shows a restrained
+  in serif along the bottom remain in place. During a pristine Brief, the approval context also shows a restrained
   **Worker** picker whose choices come only from the backends this machine actually has —
   the same answer the conversation composer's model and effort pickers read. Changing
   it writes the stored Ticket choice but does not create a session. The first prompt attaches
-  through that choice; accepting Kickoff may eagerly attach. Once Kickoff advances or the
-  Ticket has a conversation, the pill becomes read-only.
+  through that choice; accepting the Brief may eagerly attach. Once the Brief advances or
+  the Ticket has a conversation, the pill becomes read-only.
 
   A compact artifact strip is the first element under the header when lifecycle fields
   link to managed Ticket or Sprint Item files. It reads the pending proposal first, then
@@ -315,7 +315,7 @@ provider or transport failure in its existing feedback line.
   There is no second transcript to merge: the record's rows are what a pane shows, read
   after the position it already holds and then kept up over a live tail of those same
   rows. Opening a Ticket attaches to nothing and spawns nothing — an agent starts when a
-  message is sent to it — so merely looking at a Ticket during Kickoff cannot freeze its
+  message is sent to it — so merely looking at a Ticket during the Brief cannot freeze its
   backend choice.
 - **Markdown is GFM and sanitized.** Written text (briefs, notes, ideas) renders
   through a Vite-owned unified pipeline. It supports CommonMark and ordinary GFM,
@@ -443,7 +443,7 @@ hand-rolling the same shapes per screen. Each does one job:
   picker, and the approve/accept action. Its
   approval addresses the next ceiling proposal to the owner.
 - **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
-  the kickoff priority, the approval control, and the send-back box. It is named by a
+  the priority control on a Brief, the approval control, and the send-back box. It is named by a
   ticket id and a field and reads that ticket itself, so any screen can raise the same
   ask. Which ask is current — walking, skipping, the keyboard shortcuts — stays with the
   screen. The Review screen mounts it.

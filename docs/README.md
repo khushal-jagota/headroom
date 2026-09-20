@@ -26,7 +26,7 @@ and Ticket Worker actions as separate command groups.
 
 Ticket gated fields still have one door: a Worker files a proposal, and the proposal
 resolver alone can settle its value or advance its Stage. Three planning Worker types
-also receive narrow authority to write their agreed Day or Sprint result at Closeout.
+also receive narrow authority to write their agreed Day or Sprint result at Consequences.
 A direct user can complete the unset gate of the current user-owned Stage. The same
 canonical transition settles the value and advances one Stage. There is no arbitrary
 Stage setter. A Sprint Item supervisor has no private door: it writes through the same

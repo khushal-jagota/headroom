@@ -4,12 +4,14 @@
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import { labelize, stageLabel } from "../lib/ui";
+  import { labelize } from "../lib/ui";
   import {
     ceilingOptionsFor,
+    fieldLabelFor,
     fieldStageVisualStateFor,
     gatingFieldFor,
-    lifecycleFor
+    lifecycleFor,
+    stageLabelFor
   } from "../lib/lifecycle";
   import {
     holderFromValue,
@@ -435,7 +437,7 @@
                 >
                   {#if detail.pending_proposal === null}
                     Until
-                    <span class="ticket-leash-value" data-leash-ceiling>{lc?.stageLabel[detail.ceiling] || stageLabel(detail.ceiling)}</span>
+                    <span class="ticket-leash-value" data-leash-ceiling>{stageLabelFor(lc, detail.ceiling)}</span>
                     <span class="ticket-leash-word" aria-hidden="true">·</span>
                   {/if}
                   then
@@ -518,7 +520,7 @@
                 <details class="stage-fold" data-stage-fold>
                   <summary class="stage-fold-summary" data-stage-fold-open>
                     <StageMark state="completed" />
-                    <span class="stage-fold-names">{settledFields.join(" · ")}</span>
+                    <span class="stage-fold-names">{settledFields.map((name) => fieldLabelFor(lc, name)).join(" · ")}</span>
                     <span class="disclosure-chev" aria-hidden="true"></span>
                   </summary>
                   <div class="stage-fold-rows">

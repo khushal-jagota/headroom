@@ -7,13 +7,13 @@ description: Stage-by-stage guidance for reviewing the current sprint and planni
 
 Planning Sprint is the durable final-day carrier for one ordered boundary workflow:
 review the current sprint, then plan the next. The Worker prepares automatically, pauses
-for the user's strategic judgment, and writes only the approved result during Closeout.
+for the user's strategic judgment, and writes only the approved result during Consequences.
 It does not own the day-four Checkpoint, in-sprint reconciliation, daily planning, scheduling,
 or operational cutover.
 
 ### The stages
 
-The sequence is **Kickoff → Review → Next Sprint → Closeout → Done**.
+The sequence is **Brief → Review → Next Sprint → Consequences → Done**.
 
 - **needs_kickoff** — identify the sprint boundary this Ticket owns.
 - **needs_review** — gather evidence, discuss the current sprint, and settle its review.
@@ -95,9 +95,9 @@ otherwise carry only the commitment. Never move all children implicitly. Existin
 
 ### needs_closeout — write and verify
 
-Closeout is the only canonical-write phase. Refresh affected records and compare them
-with the approved Review and Next Sprint packages. If material drift makes either unsafe,
-request user help rather than improvising.
+The Consequences stage is the only canonical-write phase. Refresh affected records and
+compare them with the approved Review and Next Sprint packages. If material drift makes
+either unsafe, request user help rather than improvising.
 
 For a normal or stale boundary, write the current sprint's `review` document first and
 read it back through `panels sprint show <id> review`.
@@ -110,5 +110,5 @@ Tickets back; completed history and unselected work remain in their existing Spr
 avoid duplicate creates on retry, and leave the exact continuation point visible after a
 partial failure.
 
-A good **closeout** briefly names what landed and the readback evidence that it matches
+A good **Consequences** briefly names what landed and the readback evidence that it matches
 both approvals. Do not alter the daily plan or expand into excluded sprint workflows.
