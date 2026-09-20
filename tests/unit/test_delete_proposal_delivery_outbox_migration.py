@@ -8,10 +8,8 @@ from pathlib import Path
 from alembic import command
 
 from planner.core import db as db_module
-from planner.core.contracts import CHIEF_PRINCIPAL
 from planner.core.db import connect, create_schema
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS
 
 
 def test_upgrade_deletes_failure_events_and_drops_all_three_outbox_tables(
@@ -28,26 +26,27 @@ def test_upgrade_deletes_failure_events_and_drops_all_three_outbox_tables(
     engine.dispose()
 
     conn = connect(str(db_path))
-    ticket = tickets_data.create_ticket(
-        conn,
-        title="Keep the Ticket",
-        principal=CHIEF_PRINCIPAL,
-        now=1,
-        title_max_chars=TITLE_MAX_CHARS,
-        worker_type="coding",
-        kickoff_note="Keep the work",
-        stated_ceiling="needs_success",
+    # Written in the shape this revision has. The current writer cannot be used: it writes
+    # the columns the schema ends with, and the point here is to start before them.
+    ticket_id = "t_keep"
+    conn.execute(
+        "INSERT INTO tickets "
+        "(id,title,worker_type,employee_backend,stage,ceiling,ticket_status,field_values,"
+        "created_at,updated_at) "
+        "VALUES (?,'Keep the Ticket','coding','codex','needs_success','needs_success',"
+        "'empty','{}',1,1)",
+        (ticket_id,),
     )
     conn.execute(
         "INSERT INTO conversations "
         "(conversation_id,backend_key,workspace_folder,access,latest_sequence,created_at) "
         "VALUES ('c_old','codex','/tmp/work','full',6,1)"
     )
-    conn.execute("UPDATE tickets SET conversation_id='c_old' WHERE id=?", (ticket.id,))
-    prompt_sender_message_id = f"ticket-rejection:{ticket.id}:3:2:3"
-    uncertain_sender_message_id = f"ticket-rejection:{ticket.id}:4:2:4"
-    refused_sender_message_id = f"ticket-rejection:{ticket.id}:1:2:1"
-    discarded_sender_message_id = f"ticket-rejection:{ticket.id}:2:2:2"
+    conn.execute("UPDATE tickets SET conversation_id='c_old' WHERE id=?", (ticket_id,))
+    prompt_sender_message_id = f"ticket-rejection:{ticket_id}:3:2:3"
+    uncertain_sender_message_id = f"ticket-rejection:{ticket_id}:4:2:4"
+    refused_sender_message_id = f"ticket-rejection:{ticket_id}:1:2:1"
+    discarded_sender_message_id = f"ticket-rejection:{ticket_id}:2:2:2"
     conn.execute(
         "INSERT INTO conversation_events "
         "(conversation_id,sequence,kind,payload,created_at) VALUES "
@@ -69,14 +68,14 @@ def test_upgrade_deletes_failure_events_and_drops_all_three_outbox_tables(
         "(ticket_id,proposal_generation,delivery_attempt,holder_kind,holder_id,message,"
         "state,retry_at,created_at,updated_at) "
         "VALUES (?,1,1,'chief','chief','Review','pending',2,2,2)",
-        (ticket.id,),
+        (ticket_id,),
     )
     conn.execute(
         "INSERT INTO ticket_rejection_messages "
         "(id,ticket_id,rejection_generation,sequence,delivery_attempt,message,state,"
         "retry_at,created_at,updated_at) "
         "VALUES ('rejection',?,1,1,1,'Returned','pending',2,2,2)",
-        (ticket.id,),
+        (ticket_id,),
     )
     legacy_comments = (
         ("pending", 1, "  Keep exact spacing.\nAnd this line.  ", "owner", "owner", True),
@@ -105,7 +104,7 @@ def test_upgrade_deletes_failure_events_and_drops_all_three_outbox_tables(
             "VALUES (?,?,?,?,?,?,?,?,?,2,?,?)",
             (
                 f"comment-{generation}",
-                ticket.id,
+                ticket_id,
                 generation,
                 2,
                 delivery_attempt,
@@ -121,7 +120,7 @@ def test_upgrade_deletes_failure_events_and_drops_all_three_outbox_tables(
         "INSERT INTO proposal_delivery_failures "
         "(ticket_id,proposal_generation,attempt_count,last_error,visibility_message_id,"
         "created_at) VALUES (?,1,10,'failed','failure-visible',2)",
-        (ticket.id,),
+        (ticket_id,),
     )
     conn.close()
 
@@ -142,10 +141,10 @@ def test_upgrade_deletes_failure_events_and_drops_all_three_outbox_tables(
     assert "ticket_revision_feedback" in table_names
     feedback = upgraded.execute(
         "SELECT stage, feedback_json, revision FROM ticket_revision_feedback WHERE ticket_id=?",
-        (ticket.id,),
+        (ticket_id,),
     ).fetchone()
     assert feedback is not None
-    assert str(feedback["stage"]) == tickets_data.read_ticket(upgraded, ticket.id).stage
+    assert str(feedback["stage"]) == tickets_data.read_ticket(upgraded, ticket_id).stage
     assert int(feedback["revision"]) == 1
     assert json.loads(str(feedback["feedback_json"])) == [
         {"sender_kind": sender_kind, "sender_id": sender_id, "message": message}
@@ -164,6 +163,6 @@ def test_upgrade_deletes_failure_events_and_drops_all_three_outbox_tables(
         "prompt_delivery_refused",
         "prompt_discarded",
     ]
-    assert tickets_data.read_ticket(upgraded, ticket.id).title == "Keep the Ticket"
+    assert tickets_data.read_ticket(upgraded, ticket_id).title == "Keep the Ticket"
     assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
     upgraded.close()

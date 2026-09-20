@@ -10,12 +10,14 @@ import pytest
 from alembic import command
 
 from planner.core import db as db_module
+from planner.core import ticket_blocks
 from planner.core.db import (
     BASELINE_REVISION,
     ChangeSignallingConnection,
     connect,
     create_schema,
 )
+from planner.tickets import derivation
 
 _EMPTY_CODING_FIELDS = json.dumps(
     {
@@ -40,15 +42,13 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "settled_stage_names"
+HEAD_REVISION = "derive_ticket_status"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
 CURRENT_SCHEMA_OBJECT_COUNT = 60
 
-# The five statuses this build ends on, as the CHECK constraint renders them.
-FINAL_TICKET_STATUS_CHECK = (
-    "ticket_status IN ('empty','blocked','agent','awaiting_approval','errored')"
-)
+# The one state-of-control value this build stores, as the CHECK constraint renders it.
+FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"
 
 # The names the reshape moved off. None of them survives, in the schema or in the rows.
 RETIRED_TICKET_STATUSES = (
@@ -87,18 +87,22 @@ def _table_structure(conn: sqlite3.Connection, table: str) -> dict[str, object]:
     }
 
 
-# What the ticket_status_changed_at revision adds to `tickets`: name, type, NOT NULL,
-# default, primary-key position, in PRAGMA table_info's shape.
-STATUS_CHANGED_AT_COLUMN = ("ticket_status_changed_at", "INTEGER", 1, "0", 0)
-STATUS_REVISION_COLUMN = ("ticket_status_revision", "INTEGER", 1, "0", 0)
+# What the claim columns add to `tickets`: name, type, NOT NULL, default, primary-key
+# position, in PRAGMA table_info's shape. They replaced the stored status and its two
+# companions, which this build derives instead.
+CLAIM_COLUMN = ("worker_step_claim", "TEXT", 1, "'none'", 0)
+CLAIM_CHANGED_AT_COLUMN = ("worker_step_claim_changed_at", "INTEGER", 1, "0", 0)
+CLAIM_REVISION_COLUMN = ("worker_step_claim_revision", "INTEGER", 1, "0", 0)
 GUIDANCE_COLUMN = ("guidance", "TEXT", 1, "''", 0)
 
 
-def _table_structure_before_status_changed_at(
+def _table_structure_before_the_claim_columns(
     structure: dict[str, object],
 ) -> dict[str, object]:
-    """The tickets structure before its status-tracking columns were added."""
+    """The tickets structure before its state-of-control columns were added."""
     columns = list(structure["columns"])  # type: ignore[call-overload]
+    assert columns[-3:] == [CLAIM_COLUMN, CLAIM_CHANGED_AT_COLUMN, CLAIM_REVISION_COLUMN]
+    columns = columns[:-3]
     holder_column = columns.pop()
     assert holder_column[:3] == ("ceiling_holder", "TEXT", 1)
     assert json.loads(str(holder_column[3]).strip("'")) == {
@@ -113,11 +117,22 @@ def _table_structure_before_status_changed_at(
     assert guidance_column == GUIDANCE_COLUMN
     sprint_column = columns.pop()
     assert sprint_column[:2] == ("sprint_id", "TEXT")
-    assert columns[-2:] == [STATUS_CHANGED_AT_COLUMN, STATUS_REVISION_COLUMN]
-    columns = columns[:-2]
     item_index = next(i for i, column in enumerate(columns) if column[0] == "sprint_item_id")
     columns.insert(item_index + 1, sprint_column)
     return {**structure, "columns": columns}
+
+
+def _without_the_stored_status(structure: dict[str, object]) -> dict[str, object]:
+    """The old shape with the three columns this build stopped storing removed."""
+    retired = {"ticket_status", "ticket_status_changed_at", "ticket_status_revision"}
+    return {
+        **structure,
+        "columns": [
+            column
+            for column in structure["columns"]  # type: ignore[attr-defined]
+            if column[0] not in retired
+        ],
+    }
 
 
 def _with_the_conversation_link_renamed(
@@ -232,16 +247,27 @@ def _insert_ticket(
     alias_column = "alias, " if has_alias else ""
     alias_value = "?, " if has_alias else ""
     alias_parameters = (f"alias-{ticket_id}",) if has_alias else ()
+    # Once the status stopped being stored, the only state of control a fixture can write
+    # is the claim. Every status this helper takes that is not a claim is now derived.
+    stores_status = "ticket_status" in ticket_columns
+    state_column = "ticket_status" if stores_status else "worker_step_claim"
+    state_value = (
+        ticket_status
+        if stores_status
+        else {"agent_running_step": "out", "agent": "out", "errored": "errored"}.get(
+            ticket_status, "none"
+        )
+    )
     conn.execute(
         f"INSERT INTO tickets (id, title, worker_type, employee_backend, ceiling, {column}, "
-        f"{alias_column}ticket_status, stage, created_at, updated_at) "
+        f"{alias_column}{state_column}, stage, created_at, updated_at) "
         f"VALUES (?, ?, 'coding', 'hermes', 'needs_success', ?, {alias_value}?, ?, 1, 1)",
         (
             ticket_id,
             title,
             json.dumps(field_content) if legacy else "{}",
             *alias_parameters,
-            ticket_status,
+            state_value,
             stage,
         ),
     )
@@ -392,17 +418,21 @@ def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(
     # promises is that the table keeps its shape and the rows are still there, brought onto
     # the values the revisions since the baseline moved them to.
     assert _revision(conn) == HEAD_REVISION
-    assert _table_structure_before_status_changed_at(
+    assert _table_structure_before_the_claim_columns(
         _table_structure(conn, "tickets")
-    ) == _without_the_cap(
-        _without_ticket_ownership_policy(
-            _without_removed_ticket_fields(_with_the_conversation_link_renamed(structure_before))
+    ) == _without_the_stored_status(
+        _without_the_cap(
+            _without_ticket_ownership_policy(
+                _without_removed_ticket_fields(
+                    _with_the_conversation_link_renamed(structure_before)
+                )
+            )
         )
     )
     assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
     assert tuple(
-        conn.execute("SELECT title, ticket_status FROM tickets WHERE id = 't_old'").fetchone()
-    ) == ("Written before Alembic", "agent")
+        conn.execute("SELECT title, worker_step_claim FROM tickets WHERE id = 't_old'").fetchone()
+    ) == ("Written before Alembic", "out")
     # The step run went with its table. Adoption keeps the rows of everything that
     # survives; a table the conversation layer left behind is not one of those.
     assert "employee_step_runs" not in _schema_objects(conn)
@@ -436,7 +466,9 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
         ("t_live_blocker", "t_blocked"),
         ("t_finished_blocker", "t_freed"),
         ("t_live_blocker", "t_blocked_and_done"),
-        # blocked only ever stands in for empty, so this one stays at what it mapped to.
+        # The reshape mapped this one to `empty` and never re-derived the stand-in, so a
+        # stored status said `empty` while a live blocker existed. Derived, it says
+        # `blocked` — which is the drift that stopping storing the status removes.
         ("t_live_blocker", "t_paired"),
     ):
         conn.execute(
@@ -454,12 +486,20 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
     create_schema(conn)
 
     assert _revision(conn) == HEAD_REVISION
+    blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     assert {
-        str(row[0]): str(row[1]) for row in conn.execute("SELECT id, ticket_status FROM tickets")
+        str(row["id"]): derivation.derive_ticket_status(
+            derivation.stored_facts_from_row(
+                row, has_live_blocker=str(row["id"]) in blocked_ticket_ids
+            )
+        ).value
+        for row in conn.execute(
+            "SELECT id, stage, worker_type, worker_step_claim, pending_proposal FROM tickets"
+        )
     } == {
         "t_empty": "empty",
         "t_agent": "agent",
-        "t_paired": "empty",
+        "t_paired": "blocked",
         "t_takeover": "empty",
         "t_discussion": "empty",
         "t_awaiting": "awaiting_approval",
@@ -507,18 +547,23 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
     ).fetchone() is None
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     # Every retained column, outgoing foreign key, and index survives the rebuild.
-    assert _table_structure_before_status_changed_at(
+    assert _table_structure_before_the_claim_columns(
         _table_structure(conn, "tickets")
-    ) == _without_the_cap(
-        _without_ticket_ownership_policy(
-            _without_removed_ticket_fields(_with_the_conversation_link_renamed(structure_before))
+    ) == _without_the_stored_status(
+        _without_the_cap(
+            _without_ticket_ownership_policy(
+                _without_removed_ticket_fields(
+                    _with_the_conversation_link_renamed(structure_before)
+                )
+            )
         )
     )
 
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
     ).fetchone()[0]
-    assert FINAL_TICKET_STATUS_CHECK in tickets_sql
+    assert FINAL_WORKER_STEP_CLAIM_CHECK in tickets_sql
+    assert "ticket_status" not in tickets_sql
     assert "length(title) <= 200" in tickets_sql
     assert "priority IN ('P0','P1','P2','P3')" in tickets_sql
     assert "at_cap" not in tickets_sql
@@ -527,7 +572,7 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
     for retired in RETIRED_TICKET_STATUSES:
         assert retired not in tickets_sql
     with pytest.raises(sqlite3.IntegrityError):
-        conn.execute("UPDATE tickets SET ticket_status = 'paired_work' WHERE id = 't_paired'")
+        conn.execute("UPDATE tickets SET worker_step_claim = 'paired_work' WHERE id = 't_paired'")
     conn.close()
 
 

@@ -13,6 +13,7 @@ from planner.tickets.contracts import (
     ResolvedTicketPriorityAnchors,
     Ticket,
     TicketStatus,
+    WorkerStepClaim,
 )
 from planner.tickets.logic import resolution
 
@@ -39,8 +40,9 @@ def _ticket(*, stage: str = "needs_success") -> Ticket:
         ceiling="done",
         ceiling_holder=OWNER_PRINCIPAL,
         ticket_status=TicketStatus.awaiting_approval,
-        ticket_status_changed_at=0,
-        ticket_status_revision=0,
+        worker_step_claim=WorkerStepClaim.none,
+        worker_step_claim_changed_at=0,
+        worker_step_claim_revision=0,
         conversation_id=None,
         field_values={},
         pending_proposal=None,
@@ -101,7 +103,6 @@ def test_direct_user_completes_unset_current_user_owned_gate() -> None:
         worker_type="personal",
         field_values={"kickoff": "context"},
         ceiling="needs_outcome",
-        ticket_status=TicketStatus.empty,
     )
 
     decision = resolution.decide_complete_user_owned_gate(
@@ -124,7 +125,6 @@ def test_direct_user_cannot_complete_any_field_except_the_current_gate(field: st
         _ticket(stage="needs_outcome"),
         worker_type="personal",
         field_values={},
-        ticket_status=TicketStatus.empty,
     )
     with pytest.raises(PlannerError) as exc:
         resolution.decide_complete_user_owned_gate(
@@ -143,7 +143,6 @@ def test_direct_user_cannot_complete_a_gate_with_a_pending_proposal() -> None:
         worker_type="personal",
         field_values={"kickoff": "context"},
         pending_proposal=PendingTicketProposal("outcome", "draft", "worker", 7),
-        ticket_status=TicketStatus.empty,
     )
     with pytest.raises(PlannerError) as exc:
         resolution.decide_complete_user_owned_gate(
@@ -156,15 +155,12 @@ def test_direct_user_cannot_complete_a_gate_with_a_pending_proposal() -> None:
     assert exc.value.code == ErrorCode.validation
 
 
-@pytest.mark.parametrize("status", [TicketStatus.agent, TicketStatus.awaiting_approval])
-def test_direct_user_cannot_complete_a_gate_while_control_is_active(
-    status: TicketStatus,
-) -> None:
+def test_direct_user_cannot_complete_a_gate_while_the_worker_step_is_out() -> None:
     ticket = replace(
         _ticket(stage="needs_outcome"),
         worker_type="personal",
         field_values={"kickoff": "context"},
-        ticket_status=status,
+        worker_step_claim=WorkerStepClaim.out,
     )
     with pytest.raises(PlannerError) as exc:
         resolution.decide_complete_user_owned_gate(

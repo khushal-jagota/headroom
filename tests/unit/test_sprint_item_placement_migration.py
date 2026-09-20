@@ -260,7 +260,7 @@ def test_migration_moves_direct_placements_to_shared_other_items_and_preserves_s
         )
     with pytest.raises(sqlite3.IntegrityError):
         upgraded.execute(
-            "UPDATE tickets SET ticket_status = 'mystery' WHERE id = 't_vylo_one'"
+            "UPDATE tickets SET worker_step_claim = 'mystery' WHERE id = 't_vylo_one'"
         )
     upgraded.close()
 

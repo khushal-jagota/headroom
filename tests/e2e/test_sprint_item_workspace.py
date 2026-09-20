@@ -169,7 +169,8 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     active_id = "conv_workspace_active"
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET ticket_status = 'agent', sprint_id = NULL WHERE id = ?",
+            "UPDATE tickets SET worker_step_claim = 'out', pending_proposal = NULL, "
+            "sprint_id = NULL WHERE id = ?",
             (backlog_ticket["id"],),
         )
         _store_supervisor_conversation(
