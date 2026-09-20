@@ -17,7 +17,7 @@ _SEND_PATHS: Final = tuple(
         r"^/api/conversation/conversations/[^/]+/send$",
         r"^/api/chief/conversation/send$",
         r"^/api/tickets/[^/]+/conversation/send$",
-        r"^/api/items/[^/]+/supervisor/conversation/send$",
+        r"^/api/items/[^/]+/conversation/send$",
         r"^/api/messages/send$",
     )
 )

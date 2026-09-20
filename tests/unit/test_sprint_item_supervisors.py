@@ -540,7 +540,7 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
         item = _create_item(client)
         before = client.get(f"/api/items/{item['id']}/supervisor").json()
         sent = client.post(
-            f"/api/items/{item['id']}/supervisor/conversation/send",
+            f"/api/items/{item['id']}/conversation/send",
             json={
                 "content": [{"piece": "text", "text": "Hello"}],
                 "sender_label": "owner",
@@ -566,7 +566,7 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
                 ),
             )
             conn.commit()
-        reset = client.post(f"/api/items/{item['id']}/supervisor/conversation/reset")
+        reset = client.post(f"/api/items/{item['id']}/conversation/reset")
         workspace = client.get(f"/api/items/{item['id']}/workspace")
 
     assert before["conversation_id"] is None

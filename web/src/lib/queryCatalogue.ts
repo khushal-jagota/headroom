@@ -82,7 +82,7 @@ export const queries = {
   sprintItemConversationStartValues: (itemId: string) =>
     jsonQuery<ConversationStartValues>(
       ["sprint-item", itemId, "conversation-start-values"],
-      `/api/items/${encodeURIComponent(itemId)}/supervisor/conversation/start-values`
+      `/api/items/${encodeURIComponent(itemId)}/conversation/start-values`
     ),
   ticket: (ticketId: string) =>
     jsonQuery<TicketDetail>(["ticket", ticketId], `/api/tickets?detail=full&id=${encodeURIComponent(ticketId)}`),

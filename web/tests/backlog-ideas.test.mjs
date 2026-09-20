@@ -167,7 +167,7 @@ try {
         conversation_history: []
       });
     }
-    if (path === "/api/items/item_offboard/supervisor/conversation/start-values") {
+    if (path === "/api/items/item_offboard/conversation/start-values") {
       return json({ backend_key: "codex", model: "gpt-5", reasoning_effort: null });
     }
     if (path === "/api/conversation/backends") {

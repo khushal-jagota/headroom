@@ -329,12 +329,12 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
         lambda s: Call("DELETE", f"/api/items/{s.item_a}/supervisor/artifacts/note.md"),
     ),
     (
-        "GET    /items/{i}/supervisor/conversation/start-values",
-        lambda s: Call("GET", f"/api/items/{s.item_a}/supervisor/conversation/start-values"),
+        "GET    /items/{i}/conversation/start-values",
+        lambda s: Call("GET", f"/api/items/{s.item_a}/conversation/start-values"),
     ),
     (
-        "POST   /items/{i}/supervisor/conversation/reset",
-        lambda s: Call("POST", f"/api/items/{s.item_a}/supervisor/conversation/reset"),
+        "POST   /items/{i}/conversation/reset",
+        lambda s: Call("POST", f"/api/items/{s.item_a}/conversation/reset"),
     ),
     ("GET    /items/{i}/workspace", lambda s: Call("GET", f"/api/items/{s.item_a}/workspace")),
     # --- an Outcome, through its ordinary address

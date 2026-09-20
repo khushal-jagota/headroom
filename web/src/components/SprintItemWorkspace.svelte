@@ -73,7 +73,7 @@
 
   async function sendMessage(body: OwnerSendBody): Promise<DeliveredMessage> {
     const delivered = await mutateJson<DeliveredMessage>(
-      `/api/items/${encodeURIComponent(itemId)}/supervisor/conversation/send`,
+      `/api/items/${encodeURIComponent(itemId)}/conversation/send`,
       { method: "POST", body }
     );
     conversationId = delivered.conversation_id;
@@ -82,7 +82,7 @@
 
   async function newConversation(): Promise<void> {
     await mutateJson(
-      `/api/items/${encodeURIComponent(itemId)}/supervisor/conversation/reset`,
+      `/api/items/${encodeURIComponent(itemId)}/conversation/reset`,
       { method: "POST" }
     );
     conversationId = null;

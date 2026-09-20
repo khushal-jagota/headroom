@@ -2281,7 +2281,7 @@ def sprint_item_supervisor_send(
         text = _read_source(body_file, as_json)
     data = http.send(
         "POST",
-        f"/api/items/{item_id}/supervisor/conversation/send",
+        f"/api/items/{item_id}/conversation/send",
         as_json=as_json,
         json_body={
             "content": [{"piece": "text", "text": text}],
@@ -2298,7 +2298,7 @@ def sprint_item_supervisor_send(
 def sprint_item_supervisor_reset(item_id: str, as_json: bool) -> None:
     data = http.send(
         "POST",
-        f"/api/items/{item_id}/supervisor/conversation/reset",
+        f"/api/items/{item_id}/conversation/reset",
         as_json=as_json,
         request_actor="ordinary",
     )

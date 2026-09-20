@@ -423,8 +423,14 @@ async def supervisor_delete_artifact(
     return supervisor_service.delete_artifact(conn, ctx, item_id, cfg.db_path, artifact_path)
 
 
-@router.get("/items/{item_id}/supervisor/conversation/start-values")
-async def get_item_supervisor_start_values(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
+@router.get("/items/{item_id}/conversation/start-values")
+async def get_item_conversation_start_values(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
+    """What a first message to this Outcome's agent would start it on.
+
+    The Outcome's conversation door, beside the Ticket's and the Chief's. The prefix it
+    lost claimed an authority it never used: this admits Khushal and the Chief, and the
+    Outcome reading its own start values, exactly as before.
+    """
     require_above_or_self(conn, ctx.principal, authority.outcome(item_id))
     values = conversation_start.sprint_item_supervisor_resolve(
         sprints_data.read_item(conn, item_id).item
@@ -436,8 +442,8 @@ async def get_item_supervisor_start_values(item_id: str, conn: DbConn, ctx: Ctx)
     }
 
 
-@router.post("/items/{item_id}/supervisor/conversation/send")
-async def send_to_item_supervisor(
+@router.post("/items/{item_id}/conversation/send")
+async def send_to_item_conversation(
     item_id: str,
     body: OwnerSendBody,
     conn: DbConn,
@@ -446,6 +452,12 @@ async def send_to_item_supervisor(
     message_files: MessageFiles,
     clk: Clk,
 ) -> JsonDict:
+    """Talk into this Outcome's agent conversation, the way the Ticket door works.
+
+    Not the same operation as POST /messages/send. That command sends one line of text to
+    a principal. This is the door a person types at: it carries the browser's own message
+    name, the files attached to it, and what the conversation is to run on.
+    """
     require_above(conn, ctx.principal, authority.outcome(item_id))
     return await _send_to_item_supervisor(
         item_id, body, conn, ctx, conversations, message_files, clk
@@ -498,10 +510,11 @@ async def _send_to_item_supervisor(
     return {"conversation_id": delivered.conversation_id, **delivery_fate_json(delivered.fate)}
 
 
-@router.post("/items/{item_id}/supervisor/conversation/reset")
-async def reset_item_supervisor(
+@router.post("/items/{item_id}/conversation/reset")
+async def reset_item_conversation(
     item_id: str, conn: DbConn, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
+    """Cut this Outcome's agent loose from its conversation. This is what New does."""
     require_above(conn, ctx.principal, authority.outcome(item_id))
     async with sprints_service.supervisor_lifecycle_lock(item_id):
         item = sprints_data.read_item(conn, item_id).item
