@@ -195,16 +195,17 @@ def test_sprint_documents_round_trip_and_reject_stale_writes(
         assert created.status_code == 200, created.text
         sprint_id = created.json()["id"]
         route = f"/api/sprints/{sprint_id}"
+        read_route = f"/api/sprints?detail=full&id={sprint_id}"
         assert {field: created.json()[field] for field in body} == body
         edited = client.patch(route, json={"kickoff": "New intent", "checkpoint": ""})
         assert edited.status_code == 200
-        before_rejection = client.get(route).json()
+        before_rejection = client.get(read_route).json()
         assert before_rejection["kickoff"] == "New intent"
         assert before_rejection["checkpoint"] == ""
         assert before_rejection["primary_bet"] == body["primary_bet"]
         for invalid in ({"kickoff": "Lost", "review": []}, {"kickoff": "Lost", "outcomes": "Old"}):
             assert client.patch(route, json=invalid).status_code == 400
-            assert client.get(route).json() == before_rejection
+            assert client.get(read_route).json() == before_rejection
         for retired in (
             "limiting_factor",
             "supports",
@@ -225,7 +226,9 @@ def test_sprint_documents_round_trip_and_reject_stale_writes(
         assert len(client.get("/api/sprints?detail=full").json()["sprints"]) == 1
 
         def send(method: str, url: str, **kwargs: Any) -> Any:
-            response = client.request(method, url, json=kwargs.get("json_body"))
+            response = client.request(
+                method, url, json=kwargs.get("json_body"), params=kwargs.get("params")
+            )
             assert response.status_code == 200, response.text
             return response.json()
 
@@ -246,4 +249,4 @@ def test_sprint_documents_round_trip_and_reject_stale_writes(
             main, ["sprint", "set", sprint_id, "outcomes", "--value", "Old"]
         )
         assert stale_command.exit_code != 0
-        assert client.get(route).json()["review"] == review_file.read_text()
+        assert client.get(read_route).json()["review"] == review_file.read_text()

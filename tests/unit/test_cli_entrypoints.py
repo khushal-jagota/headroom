@@ -156,7 +156,7 @@ def test_ticket_approve_sends_the_explicit_next_holder(
 
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         calls.append((method, path, kwargs))
-        if path == "/api/tickets/t_child":
+        if path == "/api/tickets" and kwargs.get("params", {}).get("id") == "t_child":
             return {
                 "id": "t_child",
                 "worker_type": "coding",
@@ -509,7 +509,7 @@ def test_ticket_approve_defaults_the_next_holder_to_the_user(
 
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         calls.append((method, path, kwargs))
-        if path == "/api/tickets/t_child":
+        if path == "/api/tickets" and kwargs.get("params", {}).get("id") == "t_child":
             return {
                 "id": "t_child",
                 "worker_type": "coding",
