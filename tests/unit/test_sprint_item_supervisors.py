@@ -811,7 +811,7 @@ def test_restart_gives_the_claim_back_and_starts_a_new_conversation(
         item = _create_item(client)
         ticket_id = _stranded_child(client, db_path, str(item["id"]))
         response = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            f"/api/tickets/{ticket_id}/restart-worker",
             json={},
             headers=_supervisor_headers(str(item["id"])),
         )
@@ -839,7 +839,7 @@ def test_restart_clears_an_explicit_error_and_starts_again(tmp_path: Path) -> No
                 now=1,
             )
         response = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            f"/api/tickets/{ticket_id}/restart-worker",
             json={},
             headers=_supervisor_headers(str(item["id"])),
         )
@@ -866,7 +866,7 @@ def test_restart_refuses_a_stage_the_worker_does_not_own(tmp_path: Path) -> None
             worker_type="new_worker",
         )
         response = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            f"/api/tickets/{ticket_id}/restart-worker",
             json={},
             headers=_supervisor_headers(str(item["id"])),
         )

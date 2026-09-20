@@ -2152,7 +2152,7 @@ def sprint_item_supervisor_restart_worker(
         }
     data = http.send(
         "POST",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/restart-worker",
+        f"/api/tickets/{ticket_id}/restart-worker",
         as_json=as_json,
         json_body=body,
     )

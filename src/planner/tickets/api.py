@@ -55,6 +55,7 @@ from planner.core.contracts import (
     PrincipalKind,
     Priority,
 )
+from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
@@ -73,9 +74,11 @@ from planner.runtime.logic.conversation_start_resolution import (
     ConversationStartOverrides,
     ConversationStartValues,
 )
+from planner.runtime.worker_step_readiness_loop import start_ready_worker_step
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
+from planner.tickets import worker_restart
 from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
@@ -820,6 +823,79 @@ async def put_ticket_employee_configuration(
     )
     ticket = write_resolved_employee_configuration(conn, ticket_id, resolved, now=clk.now_unix())
     return _ticket_detail(conn, ticket.id, clk.now_unix())
+
+
+@router.post("/tickets/{ticket_id}/restart-worker")
+async def restart_ticket_worker(
+    ticket_id: str,
+    raw: dict[str, Any],
+    request: Request,
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+    conversations: Conversations,
+) -> JsonDict:
+    """Start this Ticket's worker step again, optionally on a named configuration.
+
+    New on Khushal's surface. No ordinary route did this: reset and re-configure exist
+    separately, and neither releases the claim and starts. Only an Outcome manager could
+    reach it, through a wrapper of its own.
+
+    The configuration is resolved before the restart, so a backend or model this Ticket
+    cannot launch on is a plain refusal rather than a killed conversation. Position is
+    proved before even that: resolving asks the backends what they offer, and no caller
+    reaches a question about a Ticket it does not stand above.
+    """
+    require_above(conn, ctx.principal, authority.ticket(ticket_id))
+    backend = body_opt_str(raw, "employee_backend")
+    model = body_opt_str(raw, "employee_launch_model")
+    if (backend is None) != (model is None):
+        raise PlannerError(
+            ErrorCode.validation,
+            "a launch configuration needs both a backend and a model",
+            {},
+        )
+    write_configuration: Callable[[sqlite3.Connection], None] | None = None
+    if backend is not None and model is not None:
+        resolved = await resolve_employee_configuration(
+            request,
+            conn,
+            ticket_id,
+            employee_backend=backend,
+            employee_launch_model=model,
+            employee_launch_reasoning_effort=body_opt_str(raw, "employee_launch_reasoning_effort"),
+        )
+
+        def write_the_resolved_configuration(open_conn: sqlite3.Connection) -> None:
+            write_resolved_employee_configuration(
+                open_conn, ticket_id, resolved, now=clk.now_unix()
+            )
+
+        write_configuration = write_the_resolved_configuration
+
+    planning_day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
+
+    async def start_worker_step() -> bool:
+        return await start_ready_worker_step(
+            ticket_id,
+            connect_database=lambda: connect(cfg.db_path, cfg.db_busy_timeout_ms),
+            conversation_system=conversations,
+            worker_type_registry=configured_worker_type_registry(),
+            planning_day_id_resolver=lambda: planning_day_id,
+            now=clk.now_unix,
+        )
+
+    return await worker_restart.restart_worker(
+        conversations,
+        conn,
+        ctx.principal,
+        ticket_id,
+        write_employee_configuration=write_configuration,
+        start_worker_step=start_worker_step,
+        planning_day_id=planning_day_id,
+        now=clk.now_unix(),
+    )
 
 
 @router.delete("/tickets/{ticket_id}")

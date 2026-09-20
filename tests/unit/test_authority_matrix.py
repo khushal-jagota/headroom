@@ -309,10 +309,8 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
         lambda s: Call("GET", f"/api/items/{s.item_a}/supervisor/tickets/{s.ticket_a}/history"),
     ),
     (
-        "POST   /items/{i}/supervisor/tickets/{t}/restart-worker",
-        lambda s: Call(
-            "POST", f"/api/items/{s.item_a}/supervisor/tickets/{s.ticket_a}/restart-worker", {}
-        ),
+        "POST   /tickets/{t}/restart-worker",
+        lambda s: Call("POST", f"/api/tickets/{s.ticket_a}/restart-worker", {}),
     ),
     (
         "GET    /items/{i}/supervisor/artifacts",
