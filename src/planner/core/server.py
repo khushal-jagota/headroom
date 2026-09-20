@@ -45,7 +45,6 @@ from planner.environments.vps_status import (
 )
 from planner.feedback.api import router as feedback_router
 from planner.files.api import router as files_router
-from planner.judgments.api import router as judgments_router
 from planner.membership.api import router as membership_router
 from planner.message_delivery.api import router as message_delivery_router
 from planner.notifications.api import router as notifications_router
@@ -245,7 +244,6 @@ def create_app(
 
     for domain_router in (
         tickets_router,
-        judgments_router,
         projects_router,
         sprints_router,
         days_router,

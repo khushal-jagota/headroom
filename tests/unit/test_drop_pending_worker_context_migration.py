@@ -10,7 +10,7 @@ from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 
 PREVIOUS_REVISION = "remove_ticket_alias_and_backend_error"
-HEAD_REVISION = "drop_ticket_archived_field_content"
+HEAD_REVISION = "one_ticket_ending"
 
 
 def test_migration_drops_every_pending_worker_context_row(tmp_path: Path) -> None:

@@ -37,9 +37,11 @@ Fourteen Worker types are seeded into a new database:
   boundary, with canonical writes deferred until Closeout.
 - **`personal`** represents user-owned work, with optional explicit agent support.
 
-Tests also declare **`probe`**. It has deliberately unfamiliar Stage and field names so
-the test suite catches code that still assumes every Ticket is coding-shaped. It is not a
-shipped Worker type.
+Tests also declare **`probe`**. Its Stage and field names are deliberately unfamiliar,
+apart from the two the rules fix: the `kickoff` field it opens with and the `closeout`
+field every Worker type declares. Even the Stage that gates its Closeout carries a name
+of its own. So the test suite catches code that still assumes every Ticket is
+coding-shaped. It is not a shipped Worker type.
 
 ## Where a Worker type is declared
 
@@ -58,7 +60,6 @@ contains:
 - its id and human label;
 - the ordered Stages, including the field and ownership mode of each
   non-terminal Stage (`worker` or `user`);
-- the separate `dropped` terminal Stage;
 - the ordered fields carried by its Tickets;
 - the worker profile, including the specialist skill and the default Employee backend,
   model, and reasoning effort copied onto a new Ticket.
@@ -114,9 +115,9 @@ when the modules were imported.
 `WorkerTypeRegistry` validates every definition when the registry is built, and the store
 runs those same rules before a row is written. They check the
 shared structural rules: an optional Kickoff stage and field appear together first,
-`done` is the one linear terminal,
-`dropped` sits outside the line, every non-terminal Stage gates one declared field, every
-field is gated once, every non-terminal Stage declares a valid ownership mode,
+`done` is the one terminal, every non-terminal Stage gates one declared field, every
+field is gated once, every type declares a `closeout`, every non-terminal Stage declares
+a valid ownership mode,
 terminal Stages declare none, worker skills and toolsets are known, and the default
 Employee backend is one of the three the conversation system has.
 
@@ -132,12 +133,26 @@ neither is the kind of thing to discover afterwards. Adding Stages, reordering t
 changing labels are all free. A finished Ticket's text in a removed field goes dark; that
 is accepted loss, and history is not rewritten.
 
-There is no well-known field name every Worker type must carry. The Closeout lane resolves
-the field named `closeout`, but only after establishing that one of the type's own Stages
-gates it, so a type without that field simply has no Closeout lane. The probe Worker type
-declares none and is what keeps that true. The names the runtime does require — the `done`
-terminal, the separate `dropped` Stage, and a `kickoff` field paired with a first
-`needs_kickoff` Stage — are all in the rules above.
+### Every Worker type declares a Closeout
+
+A Worker type ends by landing what it produced, so every Worker type declares a `closeout`
+field. A type that declares none has nowhere to land its work, and nobody learns that
+until a Ticket reaches the end of its Stages. So the write door refuses it, and the error
+says which requirement it missed.
+
+The rule is one line: the declared fields must include `closeout`. The rules above finish
+it, because a declared field must be gated, and gated only once. So `closeout` gates
+exactly one Stage. Which Stage, and what that Stage is called, are the type's own choice.
+The seeded types all put it last before `done` and all call it `needs_closeout`, but
+neither is required.
+
+The other names the runtime fixes are the `done` terminal and, for a type that opens with
+a Kickoff, a `kickoff` field paired with a first `needs_kickoff` Stage. They are in the
+rules above. Nothing else is a well-known name. The probe Worker type in the test suite
+names its other Stages and fields unfamiliarly, and that is what keeps the rest of Panels
+from assuming coding's shape.
+
+### What the registry does with them
 
 The registry has only three jobs:
 
@@ -449,8 +464,7 @@ One new Worker type needs one definition and one production registration path:
 2. Add one definition module under `src/planner/worker_types/`. Construct an immutable
    `WorkerTypeDefinition` with its ordered Stages, fields, worker profile, starting
    Employee backend/model/reasoning values. Give every non-terminal Stage a deliberate
-   ownership mode; `done` and `dropped` have
-   none. Novel Stage and field ids are plain strings.
+   ownership mode; `done` has none. Novel Stage and field ids are plain strings.
 3. In `src/planner/worker_types/configuration.py`, add the specialist skill to the known
    skills catalog and add the definition to `_PRODUCTION_WORKER_TYPE_DEFINITIONS`. Do not
    register it anywhere else.
@@ -462,9 +476,9 @@ One new Worker type needs one definition and one production registration path:
 6. Restart Panels and provision the production skill homes. Composition validates the
    registry before the Worker type becomes live.
 
-The shared kickoff, completion, and drop ids are structural rules, not imported lifecycle
+The shared kickoff and completion ids are structural rules, not imported lifecycle
 constants. The new definition still declares them directly: `needs_kickoff` gating
-`kickoff`, terminal `done`, and the separate terminal `dropped`.
+`kickoff`, and terminal `done`.
 
 ## Ordinary field completion
 

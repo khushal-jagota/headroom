@@ -22,7 +22,6 @@ Outlines → Closeout → Done**.
 - **needs_ticket_outlines** — derive the downstream Tickets for the user's sense-check.
 - **needs_closeout** — create and verify exactly those approved Tickets.
 - **done** — finished.
-- **dropped** — abandoned.
 
 ## The scope test
 

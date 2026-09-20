@@ -168,8 +168,6 @@ def decide_complete_user_owned_gate(
     """
     admission.validate_body(new_body, "field value")
     admission.require_direct_principal(principal, "complete_user_owned_gate")
-    if ticket.stage == "dropped":
-        raise PlannerError(ErrorCode.validation, "dropped tickets cannot be edited")
     if worker_type_definition.is_terminal(ticket.stage):
         raise PlannerError(
             ErrorCode.validation, "terminal tickets have no gate to complete", {"field": field}
@@ -234,8 +232,6 @@ def decide_edit_settled_field(
     """Correct a value the Ticket has already passed. It changes nothing else."""
     admission.validate_body(new_body, "field value")
     admission.require_direct_principal(principal, "edit_settled_field")
-    if ticket.stage == "dropped":
-        raise PlannerError(ErrorCode.validation, "dropped tickets cannot be edited")
     if (
         fields_codec.field_value(
             ticket.field_values, field, worker_type_definition=worker_type_definition
@@ -297,17 +293,6 @@ def decide_reject(
             OWNER_PRINCIPAL if principal == OWNER_PRINCIPAL else ticket.ceiling_holder
         ),
     )
-
-
-def decide_drop(ticket: Ticket, principal: Principal) -> Decision:
-    admission.require_direct_principal(principal, "drop_ticket")
-    if ticket.stage in ("done", "dropped"):
-        raise PlannerError(
-            ErrorCode.validation,
-            "terminal tickets cannot be dropped",
-            {"stage": ticket.stage},
-        )
-    return replace(Decision.from_ticket(ticket), stage="dropped", pending_proposal=None)
 
 
 def decide_set_ceiling(
