@@ -106,6 +106,22 @@ def test_the_one_edit_corrects_a_settled_field(tmp_path: Path) -> None:
     assert body["ceiling"] == "needs_plan"
 
 
+def test_worker_cannot_edit_settled_value(tmp_path: Path) -> None:
+    """A settled value is not the Ticket's own record, so its own Worker is refused."""
+    app, db_path = _make_app(tmp_path)
+    tid = _passed_ticket(db_path)
+    with TestClient(app) as client:
+        response = client.patch(
+            f"/api/tickets/{tid}",
+            json={"field_values": {"success_condition": "edited success"}},
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": tid},
+        )
+        after = client.get(f"/api/tickets?detail=full&id={tid}").json()
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "agent_forbidden"
+    assert after["field_values"]["success_condition"] == "success v1"
+
+
 def test_the_one_edit_refuses_to_fill_a_blank(tmp_path: Path) -> None:
     """Filling the current gate is completion, an operation, and not this door."""
     app, db_path = _make_app(tmp_path)

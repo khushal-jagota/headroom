@@ -12,7 +12,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
+from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL, ticket_principal
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 from tests.support.ticket_progress import advance_ticket
 
@@ -134,7 +134,7 @@ def test_ticket_guidance_round_trip_keeps_kickoff_separate(
         t.id,
         edit=TicketEdit(guidance="approach guidance"),
         title_max_chars=200,
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=ticket_principal(t.id),
         now=fake_clock.now_unix(),
     )
     assert t.guidance == "approach guidance"
@@ -872,7 +872,7 @@ def test_a08_recap_rules(tmp_db: Connection, cfg: Config, fake_clock: TestClock)
             t.id,
             edit=TicketEdit(recap="first recap"),
             title_max_chars=200,
-            principal=TEST_TICKET_PRINCIPAL,
+            principal=ticket_principal(t.id),
             now=now,
         )
     assert t.recap == "first recap"
@@ -893,7 +893,7 @@ def test_a08_recap_rules(tmp_db: Connection, cfg: Config, fake_clock: TestClock)
             t.id,
             edit=TicketEdit(recap="second recap"),
             title_max_chars=200,
-            principal=TEST_TICKET_PRINCIPAL,
+            principal=ticket_principal(t.id),
             now=now,
         )
     assert t.recap == "second recap"
@@ -907,7 +907,7 @@ def test_a08_recap_rules(tmp_db: Connection, cfg: Config, fake_clock: TestClock)
             t.id,
             edit=TicketEdit(recap="post-done recap"),
             title_max_chars=200,
-            principal=TEST_TICKET_PRINCIPAL,
+            principal=ticket_principal(t.id),
             now=now,
         )
     assert t.recap == "post-done recap"
@@ -1280,7 +1280,7 @@ def test_a_failed_completion_rolls_back_its_block_release(
     assert _ticket_row(tmp_db, target.id) == target_row_before
 
 
-def test_delete_admission_uses_the_exact_sprint_item_principal(
+def test_delete_admission_asks_the_one_rule_about_the_exact_ticket(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     project = projects_data.create_project(
@@ -1317,7 +1317,6 @@ def test_delete_admission_uses_the_exact_sprint_item_principal(
             tmp_db,
             ticket.id,
             principal=Principal(PrincipalKind.sprint_item, "item_other"),
-            supervisor_sprint_item_id=item.id,
             now=fake_clock.now_unix(),
         )
     assert wrong_supervisor_error.value.code is ErrorCode.agent_forbidden
@@ -1326,7 +1325,6 @@ def test_delete_admission_uses_the_exact_sprint_item_principal(
         tmp_db,
         ticket.id,
         principal=Principal(PrincipalKind.sprint_item, item.id),
-        supervisor_sprint_item_id=item.id,
         now=fake_clock.now_unix(),
     )
     assert tmp_db.execute("SELECT 1 FROM tickets WHERE id = ?", (ticket.id,)).fetchone() is None

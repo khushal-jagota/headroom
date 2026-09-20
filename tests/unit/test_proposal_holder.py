@@ -579,14 +579,8 @@ def test_creation_names_a_holder_the_creator_does_not_hold(tmp_db: Connection) -
     assert ticket.ceiling_holder == OWNER_PRINCIPAL
 
 
-def test_a_worker_cannot_move_a_holder_even_though_the_field_is_not_direct_only(
-    tmp_db: Connection,
-) -> None:
-    """`ceiling_holder` is left out of the direct-only list on purpose.
-
-    Granting scope is the user's, but handing a Ticket on is the current holder's, so the
-    direct-only list is the wrong gate. This pins the gate that is doing the work.
-    """
+def test_a_worker_cannot_move_its_own_ticket_holder(tmp_db: Connection) -> None:
+    """Re-addressing a parked proposal is a write from above, not the Ticket's own record."""
     ticket = _park(tmp_db, CHIEF_PRINCIPAL)
     with pytest.raises(PlannerError) as forbidden:
         data.edit_ticket(
@@ -601,8 +595,8 @@ def test_a_worker_cannot_move_a_holder_even_though_the_field_is_not_direct_only(
     assert data.read_ticket(tmp_db, ticket.id).ceiling_holder == CHIEF_PRINCIPAL
 
 
-def test_a_ticket_that_holds_a_ceiling_can_hand_it_on(tmp_db: Connection) -> None:
-    """A holder that can decide a proposal can also pass it to somebody better placed."""
+def test_holding_a_ceiling_grants_a_ticket_nothing(tmp_db: Connection) -> None:
+    """A holder is an address. Being one gives a Ticket no reach it did not have."""
     parent = data.create_ticket(
         tmp_db,
         title="Parent",
@@ -616,13 +610,14 @@ def test_a_ticket_that_holds_a_ceiling_can_hand_it_on(tmp_db: Connection) -> Non
     child = _park(tmp_db, holder, now=10)
     assert child.ceiling_holder == holder
 
-    handed = data.edit_ticket(
-        tmp_db,
-        child.id,
-        edit=TicketEdit(ceiling_holder=OWNER_PRINCIPAL),
-        title_max_chars=TITLE_MAX_CHARS,
-        principal=holder,
-        now=12,
-    )
-    assert handed.ceiling_holder == OWNER_PRINCIPAL
-    assert handed.pending_proposal == child.pending_proposal
+    with pytest.raises(PlannerError) as forbidden:
+        data.edit_ticket(
+            tmp_db,
+            child.id,
+            edit=TicketEdit(ceiling_holder=OWNER_PRINCIPAL),
+            title_max_chars=TITLE_MAX_CHARS,
+            principal=holder,
+            now=12,
+        )
+    assert forbidden.value.code is ErrorCode.agent_forbidden
+    assert data.read_ticket(tmp_db, child.id).ceiling_holder == holder

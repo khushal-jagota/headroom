@@ -100,29 +100,6 @@ from planner.worker_types.contracts import WorkerTypeDefinition
 
 router = APIRouter()
 
-# Fields on a Ticket that only somebody standing above it may set. A Worker drives its own
-# Ticket's priority, deadline and recap, and writes the user's direction into guidance, so
-# those are the Ticket's own record and are absent here. These are not: renaming a Ticket,
-# moving it between projects or sprints, rewriting a settled field, and above all raising
-# its own ceiling. A Ticket's ceiling is its leash, and a leash a Ticket can lengthen is
-# not one, which is the one thing "your own record" must not be read to grant.
-_TICKET_FIELDS_ONLY_FROM_ABOVE = (
-    "title",
-    "project",
-    "project_id",
-    "sprint_id",
-    "sprint_item_id",
-    "field_values",
-    "ceiling",
-    # Not "ceiling_holder". Handing a Ticket on is not the same as granting it scope, and
-    # decide_set_ceiling_holder is the gate for it.
-)
-
-# The one field nobody may set about a thing they only reach through it.
-# authority.refuse_outcome_re_parenting says why, and the collection write that sets the
-# same column asks it too, so one exception has one statement and one answer at both doors.
-_TICKET_FIELD_THAT_MOVES_THE_PARENT = "sprint_item_id"
-
 
 # --- shared plumbing (imported by the other api modules) -----------------------
 
@@ -855,15 +832,10 @@ async def delete_ticket(
     force: Annotated[bool, Query()] = False,
 ) -> JsonDict:
     require_above(conn, ctx.principal, authority.ticket(ticket_id))
-    # The writer re-asks under its own transaction, so it needs the caller's position, not
-    # a second authority. Only an Outcome has one to pass down.
-    supervisor_sprint_item_id = (
-        ctx.principal.id if ctx.principal.kind is PrincipalKind.sprint_item else None
-    )
-    # A supervisor deletes its own child Ticket outright, and force is how the user reaches
+    # An Outcome deletes its own child Ticket outright, and force is how the user reaches
     # the same place. Both walk past the running guards, so the Ticket's turn is killed
     # here instead: a Worker must never outlive the Ticket it belongs to.
-    even_while_running = force or supervisor_sprint_item_id is not None
+    even_while_running = force or ctx.principal.kind is PrincipalKind.sprint_item
     if even_while_running:
         await silence_the_worker_before_deleting(conn, conversations, ticket_id)
     else:
@@ -874,7 +846,6 @@ async def delete_ticket(
         principal=ctx.principal,
         now=clk.now_unix(),
         even_while_running=even_while_running,
-        supervisor_sprint_item_id=supervisor_sprint_item_id,
     )
     return {
         "ok": True,
@@ -915,13 +886,10 @@ async def patch_ticket(
         raise PlannerError(
             ErrorCode.validation, "guidance is either replaced or appended to, not both", {}
         )
-    target = authority.ticket(ticket_id)
-    if set(body) & set(_TICKET_FIELDS_ONLY_FROM_ABOVE):
-        require_above(conn, ctx.principal, target)
-    else:
-        require_above_or_self(conn, ctx.principal, target)
-    if _TICKET_FIELD_THAT_MOVES_THE_PARENT in body:
-        authority.refuse_outcome_re_parenting(ctx.principal, ticket_id)
+    # The floor: a stranger is refused here, before any of this body is looked at. Which
+    # of these fields need a caller above the Ticket rather than the Ticket itself is
+    # edit_ticket's question, asked once, where the write happens.
+    require_above_or_self(conn, ctx.principal, authority.ticket(ticket_id))
 
     edit = TicketEdit()
     if "title" in body:
@@ -1242,6 +1210,7 @@ async def complete_user_owned_gate(
     approval otherwise has.
     """
     body = GateCompletionBody(body=body_str(raw, "body"))
+    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
     await reject_while_the_conversation_is_running(conn, conversations, ticket_id)

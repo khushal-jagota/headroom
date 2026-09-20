@@ -3,7 +3,7 @@
 from dataclasses import replace
 
 import pytest
-from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
+from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.probe import shipped_definition
 
 from planner.core.contracts import Priority
@@ -61,7 +61,6 @@ def test_edit_passed_value_changes_only_saved_values() -> None:
         ticket,
         "success_condition",
         "new",
-        OWNER_PRINCIPAL,
         worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
     )
     assert decision.field_values == {"brief": "request", "success_condition": "new"}
@@ -78,23 +77,14 @@ def test_edit_settled_field_rejects_an_unsettled_or_unpassed_field(field: str) -
             ticket,
             field,
             "new",
-            OWNER_PRINCIPAL,
             worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
         )
     assert exc.value.code == ErrorCode.validation
 
 
-def test_worker_cannot_edit_settled_value() -> None:
-    ticket = replace(_ticket(stage="needs_plan"), field_values={"success_condition": "settled"})
-    with pytest.raises(PlannerError) as exc:
-        resolution.decide_edit_settled_field(
-            ticket,
-            "success_condition",
-            "new",
-            TEST_TICKET_PRINCIPAL,
-            worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
-        )
-    assert exc.value.code == ErrorCode.agent_forbidden
+# Who may edit a settled value is no longer this rule's question. A settled field is in
+# admission.TICKET_FIELDS_ONLY_FROM_ABOVE, so the one rule answers it where the write
+# happens: test_worker_cannot_edit_settled_value, in the api file beside this one.
 
 
 def test_direct_user_completes_unset_current_user_owned_gate() -> None:

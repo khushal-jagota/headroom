@@ -167,7 +167,6 @@ def decide_complete_user_owned_gate(
     Correcting an already-settled value is the ordinary edit, on the ordinary path.
     """
     admission.validate_body(new_body, "field value")
-    admission.require_direct_principal(principal, "complete_user_owned_gate")
     if worker_type_definition.is_terminal(ticket.stage):
         raise PlannerError(
             ErrorCode.validation, "terminal tickets have no gate to complete", {"field": field}
@@ -225,13 +224,11 @@ def decide_edit_settled_field(
     ticket: Ticket,
     field: str,
     new_body: str,
-    principal: Principal,
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
     """Correct a value the Ticket has already passed. It changes nothing else."""
     admission.validate_body(new_body, "field value")
-    admission.require_direct_principal(principal, "edit_settled_field")
     if (
         fields_codec.field_value(
             ticket.field_values, field, worker_type_definition=worker_type_definition
@@ -298,11 +295,9 @@ def decide_reject(
 def decide_set_ceiling(
     ticket: Ticket,
     ceiling: str,
-    principal: Principal,
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
-    admission.require_direct_or_supervisor_principal(principal, "set_ceiling")
     if ticket.pending_proposal is not None:
         raise PlannerError(
             ErrorCode.validation,
@@ -317,36 +312,17 @@ def decide_set_ceiling(
     )
 
 
-def decide_set_ceiling_holder(
-    ticket: Ticket,
-    holder: Principal,
-    principal: Principal,
-) -> Decision:
-    """Point the ceiling at a different principal, parked proposal or not.
+def decide_set_ceiling_holder(ticket: Ticket, holder: Principal) -> Decision:
+    """Re-address a parked proposal: say which principal it is now for.
 
-    Moving the holder is the one half of a ceiling change that a filed proposal does not
-    freeze: it does not change what was proposed, only who is asked. It is narrower than
-    setting the stage, so that a third agent cannot pull a parked proposal out of the
-    queue it was filed into.
+    The holder is an address. It says who a proposal is for, and it decides nothing about
+    who may accept or reject it. So handing it on is an ordinary write on the Ticket, and
+    the caller needs what any other write on the Ticket needs: to stand above it.
+
+    It is still set on its own, separately from the ceiling stage. A filed proposal
+    freezes how far the Ticket may go; who is asked about it is not frozen, because
+    re-addressing changes nothing about what was proposed.
     """
-    # The current holder may always hand on what it holds, whatever kind it is: a Ticket
-    # that can decide a proposal can also pass it to somebody better placed. Anyone else
-    # needs the ordinary authority to touch a ceiling at all.
-    if principal != ticket.ceiling_holder:
-        admission.require_direct_or_supervisor_principal(principal, "set_ceiling_holder")
-    if principal != OWNER_PRINCIPAL and principal != ticket.ceiling_holder:
-        raise PlannerError(
-            ErrorCode.agent_forbidden,
-            "the ceiling holder can be changed only by the current holder or the user",
-            {
-                "action": "set_ceiling_holder",
-                "actor": principal_legacy_actor(principal),
-                "holder": {
-                    "kind": ticket.ceiling_holder.kind.value,
-                    "id": ticket.ceiling_holder.id,
-                },
-            },
-        )
     return replace(Decision.from_ticket(ticket), ceiling_holder=holder)
 
 

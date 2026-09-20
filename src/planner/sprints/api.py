@@ -486,7 +486,6 @@ async def supervisor_update_ticket(
         title_max_chars=TITLE_MAX_CHARS,
         principal=ctx.principal,
         now=clk.now_unix(),
-        supervisor_sprint_item_id=item_id,
     )
     return tickets_views.ticket_json(ticket, clk.now_unix())
 
@@ -570,7 +569,6 @@ async def supervisor_approve_ticket(
         edited_body=body["edited_body"],
         next_ceiling=_parse_next_ceiling(body["next_ceiling"], worker_type_definition),
         next_holder=_parse_required_principal(body["next_holder"], "next_holder"),
-        supervisor_sprint_item_id=item_id,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -595,7 +593,6 @@ async def supervisor_reject_ticket(
         message=message,
         ctx=ctx,
         clock=clk,
-        supervisor_sprint_item_id=item_id,
     )
     return tickets_views.ticket_json(ticket, now)
 

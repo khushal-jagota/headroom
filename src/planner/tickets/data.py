@@ -16,7 +16,7 @@ from dataclasses import replace
 from typing import Protocol
 
 from planner.conversation.contracts import require_conversation_backend_key
-from planner.core import ticket_blocks
+from planner.core import authority, ticket_blocks
 from planner.core.contracts import (
     Principal,
     PrincipalKind,
@@ -457,43 +457,6 @@ def _seed_kickoff(
             BRIEF_FIELD_ID, kickoff_note, principal_legacy_actor(principal), now
         ),
     )
-
-
-def _require_current_supervisor_parent(
-    conn: sqlite3.Connection,
-    ticket: Ticket,
-    sprint_item_id: str | None,
-    principal: Principal,
-    action: str = "Ticket review",
-) -> None:
-    """Recheck exact current parent while the resolving write holds its transaction."""
-    if principal.kind is not PrincipalKind.sprint_item and sprint_item_id is None:
-        return
-    if principal.kind is not PrincipalKind.sprint_item or sprint_item_id != principal.id:
-        raise PlannerError(
-            ErrorCode.agent_forbidden,
-            f"{action} is not available to this Sprint Item supervisor",
-            {
-                "actor": principal_legacy_actor(principal),
-                "sprint_item_id": sprint_item_id,
-                "ticket_id": ticket.id,
-            },
-        )
-    row = conn.execute(
-        "SELECT 1 FROM sprint_items AS item "
-        "WHERE item.id = ? AND item.kind = 'normal' AND ? = item.id",
-        (sprint_item_id, ticket.sprint_item_id),
-    ).fetchone()
-    if row is None:
-        raise PlannerError(
-            ErrorCode.agent_forbidden,
-            f"{action} is not available to this Sprint Item supervisor",
-            {
-                "actor": principal_legacy_actor(principal),
-                "sprint_item_id": sprint_item_id,
-                "ticket_id": ticket.id,
-            },
-        )
 
 
 def _active_blocker_stage(stage: str) -> bool:
@@ -1184,13 +1147,11 @@ def accept_proposal(
     edited_body: str | None = None,
     next_ceiling: NextCeiling | None = None,
     next_holder: Principal,
-    supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
     with _txn(conn):
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
-        _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id, principal)
         decision = resolution.decide_accept(
             ticket,
             field,
@@ -1238,18 +1199,10 @@ def require_reject(
     *,
     principal: Principal,
     has_guidance: bool,
-    supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
     """Run every current authorization check without sending or writing."""
     ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
         conn, ticket_id
-    )
-    _require_current_supervisor_parent(
-        conn,
-        ticket,
-        supervisor_sprint_item_id,
-        principal,
-        "Ticket proposal rejection",
     )
     resolution.decide_reject(
         ticket,
@@ -1268,7 +1221,6 @@ def reject_proposal(
     principal: Principal,
     now: int,
     expected_proposal: PendingTicketProposal | None = None,
-    supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
     if message is not None:
         admission.validate_revision_guidance(message)
@@ -1276,7 +1228,6 @@ def reject_proposal(
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
-        _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id, principal)
         field = worker_type_definition.gating_field(ticket.stage)
         current_proposal = ticket.pending_proposal
         if expected_proposal is not None and current_proposal != expected_proposal:
@@ -1316,7 +1267,6 @@ def delete_ticket(
     principal: Principal,
     now: int,
     even_while_running: bool = False,
-    supervisor_sprint_item_id: str | None = None,
 ) -> TicketDeletion:
     """Permanently remove a mistaken ticket and its product footprint in one transaction.
 
@@ -1326,20 +1276,13 @@ def delete_ticket(
 
     `even_while_running` deletes a Ticket the status still calls claimed. The user asks
     for it with `--force`, for a status stranded at `agent` with no worker behind it, and
-    a Sprint Item supervisor deleting its own child Ticket always has it. It skips that
-    one guard: the actor check above still runs, and silencing a live worker is the
-    route's, since only the conversation system knows one is there.
-
-    A Sprint Item supervisor deletes only a current child of its own Item. The route
-    admits it and names that Item here, and the parent is rechecked inside the
-    transaction, because a Ticket can move between the two.
+    an Outcome deleting its own child Ticket always has it. It skips that one guard, and
+    silencing a live worker is the route's, since only the conversation system knows one
+    is there.
     """
-    admission.require_direct_or_supervisor_principal(principal, "delete_ticket")
     with _txn(conn):
+        authority.require_above(conn, principal, authority.ticket(ticket_id))
         ticket = _load_ticket_for_write(conn, ticket_id)
-        _require_current_supervisor_parent(
-            conn, ticket, supervisor_sprint_item_id, principal, "Ticket deletion"
-        )
         held_elsewhere = conn.execute(
             "SELECT id FROM tickets WHERE id != ? "
             "AND json_extract(ceiling_holder, '$.kind') = 'ticket' "
@@ -1420,19 +1363,23 @@ def edit_ticket(
     title_max_chars: int,
     principal: Principal,
     now: int,
-    supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
-    if principal.kind is PrincipalKind.sprint_item and supervisor_sprint_item_id is None:
-        raise PlannerError(
-            ErrorCode.agent_forbidden,
-            "edit_ticket requires the Sprint Item supervisor parent",
-            {"actor": principal_legacy_actor(principal), "ticket_id": ticket_id},
-        )
+    """Change Ticket fields, under the one rule, asked here where the write happens.
+
+    Most of a Ticket is its own record and a Worker keeps it current. The fields in
+    admission.TICKET_FIELDS_ONLY_FROM_ABOVE are not, and need a caller above the Ticket.
+    """
     with _txn(conn):
+        target = authority.ticket(ticket_id)
+        if set(edit) & admission.TICKET_FIELDS_ONLY_FROM_ABOVE:
+            authority.require_above(conn, principal, target)
+        else:
+            authority.require_above_or_self(conn, principal, target)
+        if admission.TICKET_FIELD_THAT_MOVES_THE_PARENT in edit:
+            authority.refuse_outcome_re_parenting(principal, ticket_id)
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
-        _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id, principal)
 
         title = edit["title"] if "title" in edit else ticket.title
         priority = edit["priority"] if "priority" in edit else ticket.priority
@@ -1488,7 +1435,6 @@ def edit_ticket(
                     replace(ticket, field_values=edited_values),
                     field,
                     body,
-                    principal,
                     worker_type_definition=worker_type_definition,
                 )
                 edited_values = dict(decision.field_values)
@@ -1507,7 +1453,6 @@ def edit_ticket(
             ceiling_decision = resolution.decide_set_ceiling(
                 ticket,
                 edit["ceiling"],
-                principal,
                 worker_type_definition=worker_type_definition,
             )
             if ceiling_decision.ceiling != ticket.ceiling:
@@ -1518,7 +1463,7 @@ def edit_ticket(
 
         if "ceiling_holder" in edit:
             holder_decision = resolution.decide_set_ceiling_holder(
-                ticket, edit["ceiling_holder"], principal
+                ticket, edit["ceiling_holder"]
             )
             if holder_decision.ceiling_holder != ticket.ceiling_holder:
                 _validate_ceiling_holder(conn, holder_decision.ceiling_holder, ticket_id=ticket.id)
