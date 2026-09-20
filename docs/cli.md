@@ -8,8 +8,7 @@ state header plus a manifest. The manifest lists every authored part in stable o
 including empty parts. It reports the Unicode character count for
 each part. Pass one optional comma-separated positional list to expand only those parts.
 Each expanded part contains `value` and `proposal`. Ticket field parts contain saved
-values; the separate `proposal` part contains the one current draft and `archive` contains
-the Historical record:
+values, and the separate `proposal` part contains the one current draft:
 
 ```sh
 panels ticket show t_example
@@ -143,7 +142,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   filter types use AND, and exclusions apply last. A terminal `--stage` also requires
   `--include-terminal`. An unknown Stage produces no matches.
   `--search` performs a case-insensitive substring match across the title, recap, field
-  values, the pending proposal, Ticket guidance, and the Historical record. Search keeps stable Ticket order and combines
+  values, the pending proposal, and Ticket guidance. Search keeps stable Ticket order and combines
   with placement filters and page controls. Results include Ticket state, placement, and
   a short recap preview. Search does not rank matches or return snippets.
   `ticket create` uses Today and the current Sprint when placement is omitted.
@@ -151,17 +150,21 @@ record shapes. Direct `show` commands also keep their full record shapes.
   `--sprint-item <id>` adds coherent Item classification.
   The creating principal becomes the ceiling holder. A proposal that parks at that
   ceiling is addressed to that exact principal.
-  `ticket set` names one field (`title`, `kickoff-note`, `priority`, or `deadline`).
-  `ticket set-value <ticket-id> <field>` writes any field declared by the Ticket's Worker
-  type. It edits settled earlier values. For an unset current user-owned gate, it stores
-  the value and advances exactly one Stage through the canonical transition.
+  `ticket set` names one field (`ceiling`, `title`, `kickoff-note`, `priority`, or
+  `deadline`). Every one of those goes through `PATCH /api/tickets/{id}`, which is the
+  only way to change a field on a Ticket. `ceiling` takes either the stage name or the
+  plain name of the field that stage needs, so `closeout` and `needs_closeout` mean the
+  same thing. Setting it makes the setting principal the ceiling holder, and it is
+  refused while a proposal is pending.
+  `ticket complete <ticket-id> <field>` is not a field edit: the user does a user-owned
+  Stage's work themselves, and the Ticket advances exactly one Stage.
   `ticket place <ticket-id>` updates Project, Sprint, and optional Sprint Item as one
   coherent change. Select a Project with `--project` or `--project-id`. Select a Sprint
   with `--sprint <id|current>` or `--backlog`. Select classification with
   `--sprint-item <id>` or `--clear-sprint-item`. Omitted dimensions keep their current
   values, and the server rejects an incoherent final combination.
   `ticket approve` works for the addressed holder and for the owner override. It requires
-  `--ceiling` and `--at-cap`, and it sends the full next holder with every approval.
+  `--ceiling`, and it sends the full next holder with every approval.
   `--holder-kind owner|chief|sprint_item|ticket` and `--holder-id <id>` name that holder.
   The direct command defaults to the owner holder. Use an explicit ID for a Sprint Item
   or Ticket holder.
@@ -200,9 +203,10 @@ record shapes. Direct `show` commands also keep their full record shapes.
   user message, or reset its current conversation.
 - **`sprint item supervisor approve / reject`** — resolve a parked proposal on a current
   child Ticket when that exact Sprint Item is its ceiling holder. Approval requires the
-  next ceiling and cap. It also sends the full next holder. The holder defaults to the
+  next ceiling. It also sends the full next holder. The holder defaults to the
   same Sprint Item; `--holder-kind` and `--holder-id` can address the next proposal to a
-  different principal. Rejection requires focused revision guidance. The Ticket appends
+  different principal. Rejection can carry focused revision guidance. When it does, the
+  Ticket appends
   that exact comment to guidance, invalidates worker context, and returns the Stage to
   rest in one SQLite commit. The holder stays the same for the revised proposal.
 - **`sprint item supervisor ticket-context / history / message-worker`** — read one
@@ -223,18 +227,16 @@ record shapes. Direct `show` commands also keep their full record shapes.
   A worker step gets its first five minutes before it may be restarted, so a Worker that
   is merely slow is left alone. Only a Worker-owned Stage can be restarted. A user-owned
   conversation belongs to the user.
-- **`sprint item supervisor set-item / set-ticket / scope`**
+- **`sprint item supervisor set-item / set-ticket`**
   — use item-scoped canonical actions for the owning Item and its current child Tickets.
-  `scope` takes the ceiling as either the stage name or the plain name of the field that
-  stage needs. `--ceiling closeout` and `--ceiling needs_closeout` mean the same thing.
-  A scope change makes that Sprint Item the ceiling holder and cannot retarget a pending
-  proposal.
+  `set-ticket` names one field, and `ceiling` is one of them. Setting the ceiling makes
+  that Sprint Item the ceiling holder and cannot retarget a pending proposal.
 - A supervisor changes Day membership and Ticket blocks with the ordinary `day add-ticket`,
   `day remove-ticket`, `ticket block`, and `ticket unblock`. The supervisor identity
   carries the authority, so the server still holds it to its own current child Tickets.
 - A supervisor creates a child Ticket with ordinary `ticket create --sprint-item`,
   the same command every other actor uses, and that Ticket is scoped like any other.
-- **`ticket create --ceiling / --at-cap`** — state the new Ticket's scope at creation.
+- **`ticket create --ceiling`** — state the new Ticket's ceiling at creation.
   The creator that was given the scope states it, so authorized work does not sit waiting
   for a second approval. That creator is also the ceiling holder. A stated ceiling past
   the kickoff settles the kickoff and starts the Ticket at the next Stage. Omit both
@@ -244,8 +246,10 @@ record shapes. Direct `show` commands also keep their full record shapes.
 - **`worker propose / recap / note / trouble / request-help / my-ticket`** — worker actions.
   `propose`, `recap`, `note`, and `trouble` take their text on stdin only; there is no
   file-path option, so no shared `/tmp` file can carry one Ticket's text onto another.
-  `worker propose` infers the current gating field from the Ticket Stage and requires a
-  short recap on `--recap TEXT` in the same request. `worker note <id>` replaces the
+  `worker propose` infers the current gating field from the Ticket Stage and carries only
+  what is being proposed. Below the ceiling it settles that field and the Ticket advances;
+  at the ceiling it parks for approval. The recap is separate: a Worker keeps it current
+  with `worker recap <id>` as it works. `worker note <id>` replaces the
   Ticket guidance document and accepts `--append` to add text with one blank line.
   Empty replacement clears guidance; empty append does nothing. No field argument
   or type lookup is needed. Ticket reads offer `recap` and `guidance` parts. `worker my-ticket`

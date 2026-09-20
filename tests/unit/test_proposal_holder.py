@@ -28,7 +28,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
 from planner.sprints import data as sprints_data
 from planner.tickets import actions, data, revision_feedback, views
-from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap, Ticket
+from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket, TicketEdit
 from planner.tickets.logic import resolution
 from planner.tickets.logic.admission import REVISION_GUIDANCE_MAX_CHARACTERS
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -51,13 +51,11 @@ def _park(
         worker_type=worker_type,
         kickoff_note="Agreed kickoff",
         stated_ceiling=stated_ceiling,
-        stated_at_cap=AtCap.propose,
     )
-    return data.file_current_proposal_with_recap(
+    return data.file_current_proposal(
         conn,
         ticket.id,
         body="Success proposal",
-        recap="Proposal ready",
         principal=Principal(PrincipalKind.ticket, ticket.id),
         now=now + 1,
     )
@@ -75,15 +73,13 @@ def test_creation_and_auto_accept_preserve_the_creating_principal(
         worker_type="coding",
         kickoff_note="Kickoff",
         stated_ceiling="needs_approach",
-        stated_at_cap=AtCap.propose,
     )
     assert ticket.ceiling_holder == CHIEF_PRINCIPAL
 
-    advanced = data.file_current_proposal_with_recap(
+    advanced = data.file_current_proposal(
         tmp_db,
         ticket.id,
         body="Success",
-        recap="Moving within scope",
         principal=Principal(PrincipalKind.ticket, ticket.id),
         now=11,
     )
@@ -125,7 +121,6 @@ def test_canonical_proposal_writer_accepts_only_the_ticket_own_worker(
         worker_type="coding",
         kickoff_note="Target",
         stated_ceiling="needs_success",
-        stated_at_cap=AtCap.propose,
     )
     forbidden_principals = (
         Principal(PrincipalKind.sprint_item, item.id),
@@ -134,21 +129,19 @@ def test_canonical_proposal_writer_accepts_only_the_ticket_own_worker(
     )
     for principal in forbidden_principals:
         with pytest.raises(PlannerError) as forbidden:
-            data.file_current_proposal_with_recap(
+            data.file_current_proposal(
                 tmp_db,
                 target.id,
                 body="Not mine",
-                recap="Not mine",
                 principal=principal,
                 now=4,
             )
         assert forbidden.value.code is ErrorCode.agent_forbidden
 
-    parked = data.file_current_proposal_with_recap(
+    parked = data.file_current_proposal(
         tmp_db,
         target.id,
         body="Mine",
-        recap="Mine",
         principal=Principal(PrincipalKind.ticket, target.id),
         now=5,
     )
@@ -168,7 +161,6 @@ def test_only_holder_or_owner_can_decide_and_approval_requires_next_holder(
             principal=CHIEF_PRINCIPAL,
             now=12,
             next_ceiling="needs_approach",
-            at_cap=AtCap.propose,
             next_holder=CHIEF_PRINCIPAL,
         )
     assert forbidden.value.code is ErrorCode.agent_forbidden
@@ -180,7 +172,6 @@ def test_only_holder_or_owner_can_decide_and_approval_requires_next_holder(
         principal=OWNER_PRINCIPAL,
         now=12,
         next_ceiling="needs_approach",
-        at_cap=AtCap.propose,
         next_holder=CHIEF_PRINCIPAL,
     )
     assert approved.ceiling_holder == CHIEF_PRINCIPAL
@@ -197,7 +188,6 @@ def test_ticket_cannot_hold_or_decide_its_own_ceiling(tmp_db: Connection) -> Non
             principal=OWNER_PRINCIPAL,
             now=12,
             next_ceiling="needs_approach",
-            at_cap=AtCap.propose,
             next_holder=self_principal,
         )
 
@@ -209,7 +199,6 @@ def test_ticket_cannot_hold_or_decide_its_own_ceiling(tmp_db: Connection) -> Non
             self_principal,
             None,
             "needs_approach",
-            AtCap.propose,
             OWNER_PRINCIPAL,
             worker_type_definition=configured_worker_type_registry().require("coding"),
         )
@@ -223,11 +212,11 @@ def test_canonical_approval_writer_requires_an_explicit_next_holder() -> None:
 def test_scope_cannot_retarget_a_pending_proposal(tmp_db: Connection) -> None:
     ticket = _park(tmp_db, OWNER_PRINCIPAL)
     with pytest.raises(PlannerError, match="proposal is pending"):
-        data.change_scope(
+        data.edit_ticket(
             tmp_db,
             ticket.id,
-            ceiling="needs_plan",
-            at_cap=AtCap.propose,
+            edit=TicketEdit(ceiling="needs_plan"),
+            title_max_chars=200,
             principal=CHIEF_PRINCIPAL,
             now=12,
         )
@@ -257,7 +246,7 @@ def test_revision_stores_exact_attributed_feedback_without_mutating_guidance_and
     )
 
     revised = asyncio.run(
-        actions.return_ticket_for_revision(
+        actions.reject_ticket_proposal(
             AsyncMock(),
             tmp_db,
             ticket.id,
@@ -303,7 +292,7 @@ def test_revision_rearms_same_user_owned_stage_and_credits_exact_source_turn(
     )
 
     revised = asyncio.run(
-        actions.return_ticket_for_revision(
+        actions.reject_ticket_proposal(
             conversation,
             tmp_db,
             ticket.id,
@@ -333,18 +322,17 @@ def test_revision_feedback_is_discarded_when_the_ticket_leaves_its_stage(
     tmp_db.execute(
         "UPDATE tickets SET conversation_id='c_stage_scope' WHERE id=?", (ticket.id,)
     )
-    data.return_for_revision(
+    data.reject_proposal(
         tmp_db,
         ticket.id,
         message="Revise only this stage.",
         principal=OWNER_PRINCIPAL,
         now=20,
     )
-    data.file_current_proposal_with_recap(
+    data.file_current_proposal(
         tmp_db,
         ticket.id,
         body="Revised success",
-        recap="Revised",
         principal=Principal(PrincipalKind.ticket, ticket.id),
         now=21,
     )
@@ -355,7 +343,6 @@ def test_revision_feedback_is_discarded_when_the_ticket_leaves_its_stage(
         principal=OWNER_PRINCIPAL,
         now=22,
         next_ceiling="needs_approach",
-        at_cap=AtCap.propose,
         next_holder=OWNER_PRINCIPAL,
     )
 
@@ -376,7 +363,7 @@ def test_new_revision_feedback_has_an_explicit_character_limit(tmp_db: Connectio
         (("c_limit_accepted", accepted.id), ("c_limit_rejected", rejected.id)),
     )
 
-    data.return_for_revision(
+    data.reject_proposal(
         tmp_db,
         accepted.id,
         message="x" * REVISION_GUIDANCE_MAX_CHARACTERS,
@@ -388,7 +375,7 @@ def test_new_revision_feedback_has_an_explicit_character_limit(tmp_db: Connectio
     assert stored.items[0].message == "x" * REVISION_GUIDANCE_MAX_CHARACTERS
 
     with pytest.raises(PlannerError, match="at most 10000 characters"):
-        data.return_for_revision(
+        data.reject_proposal(
             tmp_db,
             rejected.id,
             message="x" * (REVISION_GUIDANCE_MAX_CHARACTERS + 1),

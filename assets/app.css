@@ -2694,8 +2694,8 @@ select {
   font: inherit;
 }
 
-/* The scope pair reads as two quiet pills between the leash words — the same
- * boxed vocabulary as the ticket header's leash (mockup: .scope .sel). */
+/* The ceiling reads as one quiet pill after the leash word — the same boxed
+ * vocabulary as the ticket header's leash (mockup: .scope .sel). */
 .scope-picker {
   min-width: 0;
   max-width: 100%;
@@ -2740,10 +2740,6 @@ select {
 
 .scope-select select:hover {
   background-image: var(--interaction-hover);
-}
-
-.scope-atcap {
-  display: inline-flex;
 }
 
 .proposal-meta {
@@ -4983,12 +4979,6 @@ select {
   width: var(--space-3);
   color: var(--accent-bright);
   font-size: var(--type-xs);
-}
-
-.ticket-leash-rule {
-  height: var(--border-hairline);
-  margin: var(--space-1) 0;
-  background: var(--border-color);
 }
 
 .ticket-leash-select {

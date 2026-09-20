@@ -15,7 +15,7 @@ Let the user provide only the context they need. Do not turn kickoff into planni
 
 The user defines and owns the desired outcome. Help clarify or express it when asked, but do not substitute an agent-authored plan or decide what completion means for the user.
 
-The user can complete an unset current user-owned field with `panels ticket set-value <ticket-id> <field> --value <text>` or `--body-file <path>`. This ordinary edit records the value and advances one Stage. It does not grant permission for the Worker to start the next Stage.
+The user can complete an unset current user-owned field with `panels ticket complete <ticket-id> <field> --value <text>` or `--body-file <path>`. This records the value and advances one Stage. It does not grant permission for the Worker to start the next Stage.
 
 ## Closeout
 

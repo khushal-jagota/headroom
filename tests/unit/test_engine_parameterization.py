@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from planner.core.errors import PlannerError
-from planner.tickets.contracts import AtCap, StageOwnershipMode
+from planner.tickets.contracts import StageOwnershipMode
 from planner.tickets.logic import fields_codec, machine
 from planner.worker_types.contracts import (
     FieldDefinition,
@@ -44,15 +44,6 @@ def test_foreign_definition_drives_machine_semantics() -> None:
         known_toolset_profiles=frozenset({"default"}),
     )
     definition = SYNTHETIC_WORKER_TYPE_DEFINITION
-    assert (
-        machine.auto_accept_target(
-            ALPHA,
-            BETA,
-            FIELD_ALPHA,
-            worker_type_definition=definition,
-        )
-        == BETA
-    )
     assert machine.field_is_passed(
         FIELD_ALPHA,
         BETA,
@@ -64,12 +55,11 @@ def test_foreign_definition_drives_machine_semantics() -> None:
         worker_type_definition=definition,
     )
     assert (
-        machine.resolve_scope(
+        machine.resolve_next_ceiling(
             BETA,
             "done",
-            AtCap.stop,
             worker_type_definition=definition,
-        ).next_ceiling
+        )
         == "done"
     )
 

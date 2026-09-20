@@ -1,7 +1,8 @@
-"""The only module that writes Ticket rows. Stage, ceiling/at_cap, and fields
-value mutations happen in exactly one function (_apply_decision); every public
-writer is one BEGIN IMMEDIATE transaction. An ordinary Ticket edit validates and
-writes its requested plain attributes together. Other semantic writers remain
+"""The only module that writes Ticket rows. Every Stage move happens in exactly one
+function (_apply_decision), and every public writer is one BEGIN IMMEDIATE transaction.
+An ordinary Ticket edit validates and writes its requested attributes together, the
+ceiling and a settled field value among them: it decides each one through the same pure
+rules but moves no Stage, so it writes its own row. Other semantic writers remain
 separate. sqlite3 and ids live here only; the clock arrives as now (unix
 seconds) and the title limit as an argument."""
 
@@ -11,6 +12,7 @@ import json
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from typing import Protocol
 
 from planner.conversation.contracts import require_conversation_backend_key
@@ -27,7 +29,6 @@ from planner.days import data as days_data
 from planner.notifications.attention import capture_ticket_attention
 from planner.tickets import revision_feedback
 from planner.tickets.contracts import (
-    AtCap,
     EmployeeLaunchConfiguration,
     NextCeiling,
     PendingTicketProposal,
@@ -349,7 +350,6 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         guidance=row["guidance"],
         ceiling=str(row["ceiling"]),
         ceiling_holder=_principal_from_json(str(row["ceiling_holder"])),
-        at_cap=AtCap(row["at_cap"]),
         ticket_status=TicketStatus(row["ticket_status"]),
         ticket_status_changed_at=int(row["ticket_status_changed_at"]),
         ticket_status_revision=int(row["ticket_status_revision"]),
@@ -358,7 +358,6 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
             row["field_values"], worker_type_definition.field_ids()
         ),
         pending_proposal=fields_codec.proposal_from_json(row["pending_proposal"]),
-        archived_field_content=str(row["archived_field_content"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         worker_type=worker_type,
@@ -437,13 +436,12 @@ def _seed_kickoff(
         return stage, {}, None, machine.resting_ticket_status(ownership)
     if kickoff_note is None:
         return stage, {}, None, TicketStatus.empty
-    target = (
-        machine.auto_accept_target(
-            stage, ceiling, "kickoff", worker_type_definition=worker_type_definition
-        )
-        if ownership is StageOwnershipMode.worker
-        else None
+    # A stated ceiling past kickoff settles the kickoff on the spot: below the ceiling a
+    # worker-owned Stage writes its field and moves on, and creation is that write.
+    below_the_ceiling = ownership is StageOwnershipMode.worker and not machine.at_or_beyond_ceiling(
+        stage, ceiling, worker_type_definition=worker_type_definition
     )
+    target = worker_type_definition.advance_target(stage) if below_the_ceiling else None
     if target is not None:
         return target, {"kickoff": kickoff_note}, None, machine.resting_ticket_status(ownership)
     return (
@@ -575,7 +573,6 @@ def _apply_decision(
 ) -> Ticket:
     new_stage = decision.stage
     new_ceiling = decision.ceiling
-    new_at_cap = decision.at_cap
     _validate_ceiling_holder(conn, decision.ceiling_holder, ticket_id=ticket.id)
     # Pre-persist door: the prospective (stage, ceiling) must be registry-valid for
     # this ticket's type before any SQL — the enforcement the dropped DB CHECKs gave.
@@ -606,16 +603,14 @@ def _apply_decision(
                         },
                     )
     conn.execute(
-        "UPDATE tickets SET field_values = ?, pending_proposal = ?, archived_field_content = ?, "
-        "stage = ?, ceiling = ?, ceiling_holder = ?, at_cap = ?, updated_at = ? WHERE id = ?",
+        "UPDATE tickets SET field_values = ?, pending_proposal = ?, "
+        "stage = ?, ceiling = ?, ceiling_holder = ?, updated_at = ? WHERE id = ?",
         (
             fields_codec.values_to_json(decision.field_values),
             fields_codec.proposal_to_json(decision.pending_proposal),
-            decision.archived_field_content,
             str(new_stage),
             str(new_ceiling),
             _principal_to_json(decision.ceiling_holder),
-            new_at_cap.value,
             now,
             ticket.id,
         ),
@@ -970,7 +965,6 @@ def create_ticket(
     blocked_by_ticket_ids: list[str] | None = None,
     day_id: str | None = None,
     stated_ceiling: str | None = None,
-    stated_at_cap: AtCap | None = None,
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
@@ -1016,7 +1010,6 @@ def create_ticket(
             if stated_ceiling is None
             else worker_type_definition.resolve_ceiling(stated_ceiling)
         )
-        at_cap = stated_at_cap or AtCap.propose
         stage, initial_values, initial_proposal, initial_ticket_status = _seed_kickoff(
             kickoff_note,
             principal,
@@ -1031,10 +1024,10 @@ def create_ticket(
             "id, title, worker_type, employee_backend, employee_launch_model, "
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_id, sprint_item_id, "
-            "recap, ceiling, ceiling_holder, at_cap, "
+            "recap, ceiling, ceiling_holder, "
             "ticket_status, conversation_id, field_values, pending_proposal, "
             "created_at, updated_at, ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, NULL, "
             "?, ?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1051,7 +1044,6 @@ def create_ticket(
                 sprint_item_id,
                 ceiling,
                 _principal_to_json(principal),
-                at_cap.value,
                 initial_ticket_status.value,
                 values_json,
                 fields_codec.proposal_to_json(initial_proposal),
@@ -1249,20 +1241,20 @@ def mark_ticket_errored(
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def file_current_proposal_with_recap(
+def file_current_proposal(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
     body: str,
-    recap: str,
     principal: Principal,
     now: int,
 ) -> Ticket:
-    """Worker proposal surface: infer the current gating field and update recap atomically.
+    """The Worker's answer to the Stage it is on, settled or parked.
 
-    Standalone recap keeps its normal "past needs_success" guard. A proposal always carries
-    a recap, so this writer validates and writes it in the same transaction even when the
-    proposal parks at the first success gate.
+    Only the answer. The Ticket's recap is a separate field on a separate write, because
+    what a Worker asks to have approved and how the Ticket reads to a cold user are two
+    different things. A rejected proposal can therefore leave a recap that is ahead of the
+    approved record until the Worker's next step, which is accepted.
     """
     if principal != Principal(PrincipalKind.ticket, ticket_id):
         raise PlannerError(
@@ -1270,7 +1262,6 @@ def file_current_proposal_with_recap(
             "only the Ticket's own Worker can file its proposal",
             {"ticket_id": ticket_id},
         )
-    admission.validate_body(recap, "recap")
     with _txn(conn):
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
@@ -1283,10 +1274,6 @@ def file_current_proposal_with_recap(
             worker_type_definition=worker_type_definition,
         )
         _apply_decision(conn, ticket, decision, now)
-        conn.execute(
-            "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?",
-            (recap, now, ticket_id),
-        )
         if decision.pending_proposal is not None:
             _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
         else:
@@ -1317,7 +1304,6 @@ def accept_proposal(
     now: int,
     edited_body: str | None = None,
     next_ceiling: NextCeiling | None = None,
-    at_cap: AtCap | None = None,
     next_holder: Principal,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
@@ -1332,7 +1318,6 @@ def accept_proposal(
             principal,
             edited_body,
             next_ceiling,
-            at_cap,
             next_holder,
             worker_type_definition=worker_type_definition,
         )
@@ -1354,25 +1339,7 @@ def accept_proposal(
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def edit_pending_proposal(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    field: str,
-    new_body: str,
-    principal: Principal,
-    now: int,
-) -> Ticket:
-    with _txn(conn):
-        ticket, definition = _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
-        decision = resolution.decide_edit_pending_proposal(
-            ticket, field, new_body, principal, worker_type_definition=definition
-        )
-        updated = _apply_decision(conn, ticket, decision, now)
-        return updated
-
-
-def edit_field_value(
+def complete_user_owned_gate(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
@@ -1385,7 +1352,7 @@ def edit_field_value(
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
-        decision = resolution.decide_edit_value(
+        decision = resolution.decide_complete_user_owned_gate(
             ticket,
             field,
             new_body,
@@ -1404,11 +1371,12 @@ def edit_field_value(
         return updated
 
 
-def require_return_for_revision(
+def require_reject(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
     principal: Principal,
+    has_guidance: bool,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
     """Run every current authorization check without sending or writing."""
@@ -1422,25 +1390,27 @@ def require_return_for_revision(
         principal,
         "Ticket proposal rejection",
     )
-    resolution.decide_return_for_revision(
+    resolution.decide_reject(
         ticket,
         principal,
+        has_guidance=has_guidance,
         worker_type_definition=worker_type_definition,
     )
     return ticket
 
 
-def return_for_revision(
+def reject_proposal(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    message: str,
+    message: str | None,
     principal: Principal,
     now: int,
     expected_proposal: PendingTicketProposal | None = None,
     supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
-    admission.validate_revision_guidance(message)
+    if message is not None:
+        admission.validate_revision_guidance(message)
     with _txn(conn):
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
@@ -1454,19 +1424,21 @@ def return_for_revision(
                 "proposal changed before revision guidance was applied",
                 {"ticket_id": ticket_id, "field": field},
             )
-        decision = resolution.decide_return_for_revision(
+        decision = resolution.decide_reject(
             ticket,
             principal,
+            has_guidance=message is not None,
             worker_type_definition=worker_type_definition,
         )
-        revision_feedback.set_feedback(
-            conn,
-            ticket_id,
-            stage=ticket.stage,
-            sender=principal,
-            message=message,
-            now=now,
-        )
+        if message is not None:
+            revision_feedback.set_feedback(
+                conn,
+                ticket_id,
+                stage=ticket.stage,
+                sender=principal,
+                message=message,
+                now=now,
+            )
         updated = _apply_decision(conn, ticket, decision, now)
         conn.execute(
             "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
@@ -1601,87 +1573,6 @@ def delete_ticket(
         )
 
 
-def change_scope(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    ceiling: str,
-    at_cap: AtCap,
-    principal: Principal,
-    now: int,
-    supervisor_sprint_item_id: str | None = None,
-) -> Ticket:
-    if principal.kind is PrincipalKind.sprint_item and supervisor_sprint_item_id is None:
-        raise PlannerError(
-            ErrorCode.agent_forbidden,
-            "change_scope requires the Sprint Item supervisor parent",
-            {"actor": principal_legacy_actor(principal), "ticket_id": ticket_id},
-        )
-    with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
-        )
-        _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id, principal)
-        decision = resolution.decide_scope_change(
-            ticket,
-            ceiling,
-            at_cap,
-            principal,
-            worker_type_definition=worker_type_definition,
-        )
-        updated = _apply_decision(conn, ticket, decision, now)
-        if ticket.ticket_status in {
-            TicketStatus.empty,
-            TicketStatus.blocked,
-        }:
-            _write_resting_ticket_status(
-                conn,
-                updated,
-                worker_type_definition=worker_type_definition,
-                now=now,
-            )
-        return _load_ticket_for_write(conn, ticket_id)
-
-
-def replace_guidance(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    body: str,
-    principal: Principal,
-    now: int,
-) -> Ticket:
-    """Replace the Ticket's durable guidance without changing its workflow."""
-    with _txn(conn):
-        _load_ticket_for_write(conn, ticket_id)
-        conn.execute(
-            "UPDATE tickets SET guidance = ?, updated_at = ? WHERE id = ?",
-            (body, now, ticket_id),
-        )
-        return _load_ticket_for_write(conn, ticket_id)
-
-
-def append_guidance(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    body: str,
-    principal: Principal,
-    now: int,
-) -> Ticket:
-    """Append in one transaction; an empty append changes nothing."""
-    with _txn(conn):
-        ticket = _load_ticket_for_write(conn, ticket_id)
-        if not body:
-            return ticket
-        guidance = f"{ticket.guidance}\n\n{body}" if ticket.guidance else body
-        conn.execute(
-            "UPDATE tickets SET guidance = ?, updated_at = ? WHERE id = ?",
-            (guidance, now, ticket_id),
-        )
-        return _load_ticket_for_write(conn, ticket_id)
-
-
 def edit_ticket(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -1699,7 +1590,9 @@ def edit_ticket(
             {"actor": principal_legacy_actor(principal), "ticket_id": ticket_id},
         )
     with _txn(conn):
-        ticket = _load_ticket_for_write(conn, ticket_id)
+        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
+            conn, ticket_id
+        )
         _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id, principal)
 
         title = edit["title"] if "title" in edit else ticket.title
@@ -1732,6 +1625,67 @@ def edit_ticket(
             ("sprint_item_id", "sprint_item_id", ticket.sprint_item_id, sprint_item_id),
         )
         changes = [change for change in candidates if change[2] != change[3]]
+
+        # The guidance document, the recap, and the settled field values are Ticket
+        # fields like any other, so they are set here. They are listed apart because each
+        # is a whole document rather than a scalar, not because it takes another door.
+        if "guidance" in edit:
+            changes.append(("guidance", "guidance", ticket.guidance, edit["guidance"]))
+        if "guidance_append" in edit and edit["guidance_append"]:
+            appended = (
+                f"{ticket.guidance}\n\n{edit['guidance_append']}"
+                if ticket.guidance
+                else edit["guidance_append"]
+            )
+            changes.append(("guidance", "guidance", ticket.guidance, appended))
+        if "recap" in edit:
+            changes.append(("recap", "recap", ticket.recap, edit["recap"]))
+
+        settled_values = edit.get("field_values")
+        edited_values = dict(ticket.field_values)
+        if settled_values:
+            for field, body in settled_values.items():
+                decision = resolution.decide_edit_settled_field(
+                    replace(ticket, field_values=edited_values),
+                    field,
+                    body,
+                    principal,
+                    worker_type_definition=worker_type_definition,
+                )
+                edited_values = dict(decision.field_values)
+            changes.append(
+                (
+                    "field_values",
+                    "field_values",
+                    fields_codec.values_to_json(ticket.field_values),
+                    fields_codec.values_to_json(edited_values),
+                )
+            )
+
+        if "ceiling" in edit:
+            ceiling_decision = resolution.decide_set_ceiling(
+                ticket,
+                edit["ceiling"],
+                principal,
+                worker_type_definition=worker_type_definition,
+            )
+            if ceiling_decision.ceiling != ticket.ceiling or (
+                ceiling_decision.ceiling_holder != ticket.ceiling_holder
+            ):
+                _validate_ceiling_holder(conn, ceiling_decision.ceiling_holder, ticket_id=ticket.id)
+                worker_type_definition.validate_ticket_position(
+                    ticket.stage, ceiling_decision.ceiling
+                )
+                changes.append(("ceiling", "ceiling", ticket.ceiling, ceiling_decision.ceiling))
+                changes.append(
+                    (
+                        "ceiling_holder",
+                        "ceiling_holder",
+                        _principal_to_json(ticket.ceiling_holder),
+                        _principal_to_json(ceiling_decision.ceiling_holder),
+                    )
+                )
+
         if not changes:
             return ticket
 
@@ -1741,18 +1695,24 @@ def edit_ticket(
             f"UPDATE tickets SET {assignments}, updated_at = ? WHERE id = ?",
             (*params, now, ticket_id),
         )
-        return _load_ticket_for_write(conn, ticket_id)
-
-
-def write_recap(
-    conn: sqlite3.Connection, ticket_id: str, *, body: str, principal: Principal, now: int
-) -> Ticket:
-    with _txn(conn):
-        _load_ticket_for_write(conn, ticket_id)
-        conn.execute(
-            "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?",
-            (body, now, ticket_id),
-        )
+        updated = _load_ticket_for_write(conn, ticket_id)
+        # A new ceiling can free a resting Ticket to take its next step, exactly as the
+        # separate ceiling operation used to.
+        if "ceiling" in edit and ticket.ticket_status in {
+            TicketStatus.empty,
+            TicketStatus.blocked,
+        }:
+            _write_resting_ticket_status(
+                conn,
+                updated,
+                worker_type_definition=worker_type_definition,
+                now=now,
+            )
+        # Who holds the ceiling decides whether the user is waiting on this Ticket, so a
+        # new holder re-derives its attention. The resting rewrite above does it only when
+        # the status really moves, which a ceiling change usually does not.
+        if "ceiling" in edit:
+            capture_ticket_attention(conn, ticket_id, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 

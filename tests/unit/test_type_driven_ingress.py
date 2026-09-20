@@ -77,15 +77,12 @@ def test_coding_ticket_accepts_coding_field_and_ceiling(
     app, _db = app_db
     with TestClient(app) as client:
         tid = _create(client, "coding")
-        # A parked proposal fixes its address, so direct scope cannot retarget it.
-        scoped = client.post(
-            f"/api/tickets/{tid}/scope",
-            json={"ceiling": "needs_approach", "at_cap": "stop"},
-        )
+        # A parked proposal fixes its address, so a direct ceiling edit cannot retarget it.
+        scoped = client.patch(f"/api/tickets/{tid}", json={"ceiling": "needs_approach"})
         assert scoped.status_code == 400, scoped.json()
         missing_holder = client.post(
             f"/api/tickets/{tid}/accept/kickoff",
-            json={"next_ceiling": "needs_approach", "at_cap": "stop"},
+            json={"next_ceiling": "needs_approach"},
         )
         assert missing_holder.status_code == 400, missing_holder.json()
         assert missing_holder.json()["error"]["code"] == "scope_missing"
@@ -93,7 +90,6 @@ def test_coding_ticket_accepts_coding_field_and_ceiling(
             f"/api/tickets/{tid}/accept/kickoff",
             json={
                 "next_ceiling": "needs_approach",
-                "at_cap": "stop",
                 "next_holder": {"kind": "ticket", "id": tid},
             },
         )
@@ -103,7 +99,6 @@ def test_coding_ticket_accepts_coding_field_and_ceiling(
             f"/api/tickets/{tid}/accept/kickoff",
             json={
                 "next_ceiling": "needs_approach",
-                "at_cap": "stop",
                 "next_holder": OWNER,
             },
         )
@@ -129,7 +124,6 @@ def test_worker_api_cannot_decide_a_corrupted_self_held_proposal(app_db: AppDb) 
             headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
             json={
                 "next_ceiling": "needs_success",
-                "at_cap": "propose",
                 "next_holder": OWNER,
             },
         )
@@ -148,7 +142,7 @@ def test_accept_rejects_foreign_field_and_foreign_next_ceiling(
         tid = _create(client, "probe")
         bad_field = client.post(
             f"/api/tickets/{tid}/accept/success",
-            json={"next_ceiling": "none", "at_cap": "stop"},
+            json={"next_ceiling": "none"},
         )
         assert bad_field.status_code == 400
         assert bad_field.json()["error"]["code"] == "validation"
@@ -160,7 +154,7 @@ def test_accept_rejects_foreign_field_and_foreign_next_ceiling(
         # rejected against probe's ceiling range.
         bad_ceiling = client.post(
             f"/api/tickets/{tid}/accept/kickoff",
-            json={"next_ceiling": "needs_plan", "at_cap": "stop"},
+            json={"next_ceiling": "needs_plan"},
         )
         assert bad_ceiling.status_code == 400
         assert bad_ceiling.json()["error"]["code"] == "scope_invalid"
@@ -177,12 +171,11 @@ def test_probe_proposal_parks_on_registry_selected_field(
     with TestClient(app) as client:
         tid = _create(client, "probe")
         # kickoff already parked at create — accept it keeping ceiling at needs_alpha
-        # with at_cap=propose so the next propose parks.
+        # so the next answer parks at the ceiling.
         client.post(
             f"/api/tickets/{tid}/accept/kickoff",
             json={
                 "next_ceiling": "needs_alpha",
-                "at_cap": "propose",
                 "next_holder": OWNER,
             },
         )
@@ -207,7 +200,6 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(app_db: AppDb) -> Non
             f"/api/tickets/{target}/accept/kickoff",
             json={
                 "next_ceiling": "needs_success",
-                "at_cap": "propose",
                 "next_holder": {"kind": "ticket", "id": parent},
             },
         )
@@ -246,22 +238,26 @@ def test_ticket_note_routes_make_replace_and_append_explicit(app_db: AppDb) -> N
     with TestClient(app) as client:
         tid = _create(client, "coding")
 
-        replaced = client.put(f"/api/tickets/{tid}/guidance", json={"body": "first guidance"})
+        replaced = client.patch(f"/api/tickets/{tid}", json={"guidance": "first guidance"})
         assert replaced.status_code == 200, replaced.json()
 
-        appended = client.post(
-            f"/api/tickets/{tid}/guidance/append",
-            json={"body": "second guidance"},
+        appended = client.patch(
+            f"/api/tickets/{tid}", json={"guidance_append": "second guidance"}
         )
         assert appended.status_code == 200, appended.json()
         assert appended.json()["guidance"] == "first guidance\n\nsecond guidance"
 
-        cleared = client.put(f"/api/tickets/{tid}/guidance", json={"body": ""})
+        # One call, two intentions, and never both at once.
+        both = client.patch(
+            f"/api/tickets/{tid}", json={"guidance": "a", "guidance_append": "b"}
+        )
+        assert both.status_code == 400, both.json()
+
+        cleared = client.patch(f"/api/tickets/{tid}", json={"guidance": ""})
         assert cleared.status_code == 200, cleared.json()
 
-        appended_after_clear = client.post(
-            f"/api/tickets/{tid}/guidance/append",
-            json={"body": "new guidance"},
+        appended_after_clear = client.patch(
+            f"/api/tickets/{tid}", json={"guidance_append": "new guidance"}
         )
         assert appended_after_clear.status_code == 200, appended_after_clear.json()
         assert appended_after_clear.json()["guidance"] == "new guidance"
@@ -274,7 +270,7 @@ def test_arbitrary_stage_jump_route_is_removed(app_db: AppDb, probe_installed: N
         tid = _create(client, "probe")
         client.post(
             f"/api/tickets/{tid}/accept/kickoff",
-            json={"next_ceiling": "done", "at_cap": "propose", "next_holder": OWNER},
+            json={"next_ceiling": "done", "next_holder": OWNER},
         )
         jumped = client.post(f"/api/tickets/{tid}/stage", json={"to_stage": "needs_beta"})
         assert jumped.status_code == 404, jumped.json()
@@ -300,7 +296,6 @@ def test_stage_filter_non_reserved_needs_no_worker_type(
             f"/api/tickets/{tid}/accept/kickoff",
             json={
                 "next_ceiling": "needs_success",
-                "at_cap": "stop",
                 "next_holder": OWNER,
             },
         )
@@ -317,26 +312,26 @@ def test_guidance_round_trip_validation_and_retired_field_routes(app_db: AppDb) 
     app, _db = app_db
     with TestClient(app) as client:
         ticket_id = _create(client, "coding")
-        path = f"/api/tickets/{ticket_id}/guidance"
+        path = f"/api/tickets/{ticket_id}"
         original = "  Scope boundary\n\nKeep this.  "
-        saved = client.put(path, json={"body": original})
+        saved = client.patch(path, json={"guidance": original})
         assert saved.status_code == 200
         assert saved.json()["guidance"] == original
         assert saved.json()["field_values"] == {}
         assert saved.json()["pending_proposal"]["field"] == "kickoff"
         for body in (
             {},
-            {"body": None},
-            {"body": 3},
-            {"body": "lost", "field": "plan"},
-            {"key": "plan", "body": "lost"},
+            {"guidance": None},
+            {"guidance": 3},
+            {"guidance": "lost", "key": "plan"},
+            {"key": "plan"},
         ):
-            assert client.put(path, json=body).status_code == 400
-            assert client.get(f"/api/tickets/{ticket_id}").json()["guidance"] == original
-        assert client.post(path + "/append", json={"body": ""}).json() == saved.json()
-        appended = client.post(path + "/append", json={"body": "\nNew direction  "})
+            assert client.patch(path, json=body).status_code == 400
+            assert client.get(path).json()["guidance"] == original
+        assert client.patch(path, json={"guidance_append": ""}).json() == saved.json()
+        appended = client.patch(path, json={"guidance_append": "\nNew direction  "})
         assert appended.json()["guidance"] == original + "\n\n\nNew direction  "
-        assert client.put(path, json={"body": ""}).json()["guidance"] == ""
+        assert client.patch(path, json={"guidance": ""}).json()["guidance"] == ""
         assert (
             client.put(f"/api/tickets/{ticket_id}/notes/plan", json={"body": "old"}).status_code
             == 404

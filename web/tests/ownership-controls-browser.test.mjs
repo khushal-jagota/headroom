@@ -18,7 +18,7 @@ let server;
 try {
   await writeFile(host, `<script lang="ts">
 import { QueryClient, QueryClientProvider } from "@tanstack/svelte-query";
-import ScopePairPicker from "../src/components/ScopePairPicker.svelte";
+import CeilingPicker from "../src/components/CeilingPicker.svelte";
 import ConfigRoute from "../src/routes/ConfigRoute.svelte";
 import { buildLifecycle, type WorkerTypeManifest } from "../src/lib/lifecycle";
 
@@ -47,14 +47,14 @@ const manifest: WorkerTypeManifest = {
   default_reasoning_effort: null
 };
 const lifecycle = buildLifecycle(manifest);
-let scope = $state<{ next_ceiling: string; at_cap: "stop" | "propose" } | null>(null);
+let ceiling = $state<string | null>(null);
 </script>
 
 <QueryClientProvider {client}>
   <ConfigRoute roleKind="worker" roleId="coding" />
 </QueryClientProvider>
 <div data-scope-proof>
-  <ScopePairPicker newStage="needs_approach" {lifecycle} bind:scope />
+  <CeilingPicker newStage="needs_approach" {lifecycle} bind:ceiling />
 </div>
 `, "utf8");
   await writeFile(

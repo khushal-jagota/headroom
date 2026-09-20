@@ -66,7 +66,7 @@ describe("Ticket status groups", () => {
     expect(ticketStatusGroupKey(ticketWithFiledProposal({ assigned: true }))).toBe(
       "current-assigned"
     );
-    expect(ticketStatusGroupKey(ticket({ agent_state: "working" }))).toBe("current-running");
+    expect(ticketStatusGroupKey(ticket({ ticket_status: "agent" }))).toBe("current-running");
     // Errored and blocked are two states, and each names its own group.
     expect(ticketStatusGroupKey(ticket({ ticket_status: "errored" }))).toBe("errored");
     expect(ticketStatusGroupKey(ticket({ ticket_status: "blocked" }))).toBe("blocked");
@@ -81,7 +81,7 @@ describe("Ticket status groups", () => {
     ).toBe("waiting-for-kickoff");
     // The gating field only splits Tickets that are awaiting approval.
     expect(
-      ticketStatusGroupKey(ticket({ agent_state: "working", gating_field: "kickoff" }))
+      ticketStatusGroupKey(ticket({ ticket_status: "agent", gating_field: "kickoff" }))
     ).toBe("current-running");
     expect(
       ticketStatusGroupKey(
@@ -92,12 +92,31 @@ describe("Ticket status groups", () => {
 
   it("reads a group from facts a screen may not carry", () => {
     // A row that knows nothing about gating still lands somewhere sane.
-    expect(ticketStatusGroupKey(ticket({ stage: "needs_plan", agent_state: "working" }))).toBe(
+    expect(ticketStatusGroupKey(ticket({ stage: "needs_plan", ticket_status: "agent" }))).toBe(
       "current-running"
     );
     expect(ticketStatusGroupKey(ticket({ stage: "needs_plan", awaiting_approval: true }))).toBe(
       "current-awaiting-approval"
     );
+  });
+
+  // Two screens, one answer. Both of these split the same Ticket two ways before this
+  // Ticket: the rail read the dispatch status while the page read the live turn, and the
+  // page read the failed turn while the rail read a status nothing writes.
+  it("names a dispatched Ticket Agent on both screens, with no turn in process", () => {
+    const facts = { ticket_status: "agent", agent_state: "idle" } as const;
+    const railGroups = workspaceGroups([boardCard("t_dispatched", facts)]);
+    const pageKey = ticketStatusGroupKey(ticket(facts));
+    expect(railGroups.map((group) => group.label)).toEqual(["Agent"]);
+    expect(TICKET_STATUS_GROUPS.find((group) => group.key === pageKey)?.label).toBe("Agent");
+  });
+
+  it("names a worker that broke Errored on both screens, from its failed last turn", () => {
+    const facts = { ticket_status: "agent", agent_state: "errored" } as const;
+    const railGroups = workspaceGroups([boardCard("t_failed", facts)]);
+    const pageKey = ticketStatusGroupKey(ticket(facts));
+    expect(railGroups.map((group) => group.label)).toEqual(["Errored"]);
+    expect(TICKET_STATUS_GROUPS.find((group) => group.key === pageKey)?.label).toBe("Errored");
   });
 
   it("uses the Workspace's owner-facing Assigned label for an assigned Ticket", () => {

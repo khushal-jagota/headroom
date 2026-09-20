@@ -25,7 +25,6 @@ from planner.runtime import worker_step_readiness
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     NO_FURTHER,
-    AtCap,
 )
 from planner.worker_types.configuration import load_worker_runtime_definitions
 
@@ -86,7 +85,6 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
             principal=OWNER_PRINCIPAL,
             now=1,
             next_ceiling=NO_FURTHER,
-            at_cap=AtCap.propose,
             next_holder=OWNER_PRINCIPAL,
         )
         return ticket.id

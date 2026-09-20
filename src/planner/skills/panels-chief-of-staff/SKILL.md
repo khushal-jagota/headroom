@@ -49,7 +49,7 @@ verification.
 
 Record completed external work through ordinary Ticket operations. Search current Tickets first, and update an aligned Ticket instead of creating a duplicate.
 
-If no aligned Ticket exists, load and follow `panels-ticket-creation`. Create the Ticket with `panels ticket create`, then use ordinary field, recap, placement, scope, and Day operations. Use `panels ticket set-value <ticket-id> <field>` only for the unset gate of the current user-owned Stage or a settled earlier value. Panels does not support bulk field prefixes or arbitrary Stage jumps.
+If no aligned Ticket exists, load and follow `panels-ticket-creation`. Create the Ticket with `panels ticket create`, then use ordinary field, recap, placement, scope, and Day operations. Use `panels ticket complete <ticket-id> <field>` for the unset gate of the current user-owned Stage, and `panels ticket set-value <ticket-id> <field>` to correct a settled earlier value. Panels does not support bulk field prefixes or arbitrary Stage jumps.
 
 Preserve the user's report in Kickoff and recap text. If an existing Worker type no longer contains a live Ticket's Stage, use an explicit repository migration with that Worker change. Do not repair it through the product API.
 

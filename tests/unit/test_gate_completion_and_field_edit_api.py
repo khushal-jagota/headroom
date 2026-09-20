@@ -1,4 +1,4 @@
-"""API tests for the distinct saved-value and pending-proposal edit routes."""
+"""API tests for completing a user-owned gate and for editing a settled value."""
 
 from __future__ import annotations
 
@@ -14,12 +14,12 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets import actions as tickets_actions
-from planner.tickets.contracts import NO_FURTHER, AtCap
+from planner.tickets.contracts import NO_FURTHER, TicketEdit
 from planner.tickets.data import (
     accept_proposal,
-    change_scope,
     create_ticket,
-    file_current_proposal_with_recap,
+    edit_ticket,
+    file_current_proposal,
 )
 
 
@@ -62,30 +62,27 @@ def _passed_ticket(db_path: Path) -> str:
             principal=OWNER_PRINCIPAL,
             now=0,
             next_ceiling=NO_FURTHER,
-            at_cap=AtCap.propose,
             next_holder=OWNER_PRINCIPAL,
         )
-        change_scope(
+        edit_ticket(
             conn,
             ticket.id,
-            ceiling="needs_plan",
-            at_cap=AtCap.propose,
+            edit=TicketEdit(ceiling="needs_plan"),
+            title_max_chars=200,
             principal=OWNER_PRINCIPAL,
             now=0,
         )
-        file_current_proposal_with_recap(
+        file_current_proposal(
             conn,
             ticket.id,
             body="success v1",
-            recap="r",
             principal=ticket_principal(ticket.id),
             now=0,
         )
-        file_current_proposal_with_recap(
+        file_current_proposal(
             conn,
             ticket.id,
             body="approach v1",
-            recap="r",
             principal=ticket_principal(ticket.id),
             now=0,
         )
@@ -94,21 +91,34 @@ def _passed_ticket(db_path: Path) -> str:
     return ticket.id
 
 
-def test_put_value_human_edits_settled_field(tmp_path: Path) -> None:
+def test_the_one_edit_corrects_a_settled_field(tmp_path: Path) -> None:
+    """A settled value is a Ticket field, so it changes the way every field changes."""
     app, db_path = _make_app(tmp_path)
     tid = _passed_ticket(db_path)
     with TestClient(app) as client:
-        response = client.put(
-            f"/api/tickets/{tid}/value/success", json={"body": "edited success"}
+        response = client.patch(
+            f"/api/tickets/{tid}", json={"field_values": {"success": "edited success"}}
         )
     assert response.status_code == 200, response.json()
     body = response.json()
     assert body["field_values"]["success"] == "edited success"
-    assert body["stage"] == "needs_plan"  # value edit leaves state untouched
+    assert body["stage"] == "needs_plan"  # the correction moves nothing
     assert body["ceiling"] == "needs_plan"
 
 
-def test_put_value_completes_current_user_owned_gate_and_advances(
+def test_the_one_edit_refuses_to_fill_a_blank(tmp_path: Path) -> None:
+    """Filling the current gate is completion, an operation, and not this door."""
+    app, db_path = _make_app(tmp_path)
+    tid = _passed_ticket(db_path)
+    with TestClient(app) as client:
+        response = client.patch(f"/api/tickets/{tid}", json={"field_values": {"plan": "draft"}})
+        after = client.get(f"/api/tickets/{tid}").json()
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation"
+    assert "plan" not in after["field_values"]
+
+
+def test_completing_a_user_owned_gate_advances_the_ticket(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
@@ -127,8 +137,8 @@ def test_put_value_completes_current_user_owned_gate_and_advances(
         conn.close()
 
     with TestClient(app) as client:
-        response = client.put(
-            f"/api/tickets/{ticket.id}/value/kickoff",
+        response = client.post(
+            f"/api/tickets/{ticket.id}/complete/kickoff",
             json={"body": "User context"},
         )
 
@@ -142,7 +152,7 @@ def test_put_value_completes_current_user_owned_gate_and_advances(
     assert body["pending_proposal"] is None
 
 
-def test_put_value_rejects_unset_worker_owned_gate_without_changing_ticket(
+def test_completion_rejects_a_worker_owned_gate_without_changing_the_ticket(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
@@ -161,8 +171,8 @@ def test_put_value_rejects_unset_worker_owned_gate_without_changing_ticket(
         conn.close()
 
     with TestClient(app) as client:
-        response = client.put(
-            f"/api/tickets/{ticket.id}/value/kickoff",
+        response = client.post(
+            f"/api/tickets/{ticket.id}/complete/kickoff",
             json={"body": "Not allowed"},
         )
         after = client.get(f"/api/tickets/{ticket.id}").json()
@@ -202,8 +212,8 @@ def test_user_completion_enters_blocked_when_a_live_blocker_exists(
         conn.close()
 
     with TestClient(app) as client:
-        response = client.put(
-            f"/api/tickets/{ticket.id}/value/kickoff",
+        response = client.post(
+            f"/api/tickets/{ticket.id}/complete/kickoff",
             json={"body": "User context"},
         )
 
@@ -212,21 +222,20 @@ def test_user_completion_enters_blocked_when_a_live_blocker_exists(
     assert response.json()["ticket_status"] == "blocked"
 
 
-def test_put_proposal_agent_edits_pending_proposal_in_place(tmp_path: Path) -> None:
+def test_a_parked_proposal_has_no_edit_door(tmp_path: Path) -> None:
+    """Approve it, or send it back. There is no third thing to do with a proposal."""
     app, db_path = _make_app(tmp_path)
     tid = _passed_ticket(db_path)
     conn = connect(str(db_path))
     try:
-        ticket = file_current_proposal_with_recap(
+        ticket = file_current_proposal(
             conn,
             tid,
             body="plan draft",
-            recap="r",
             principal=ticket_principal(tid),
             now=23,
         )
-        original = ticket.pending_proposal
-        assert original is not None
+        assert ticket.pending_proposal is not None
     finally:
         conn.close()
 
@@ -236,28 +245,16 @@ def test_put_proposal_agent_edits_pending_proposal_in_place(tmp_path: Path) -> N
             json={"field": "plan", "body": "edited plan draft"},
             headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": tid},
         )
+        after = client.get(f"/api/tickets/{tid}").json()
 
-    assert response.status_code == 200, response.json()
-    body = response.json()
-    proposal = body["pending_proposal"]
-    assert proposal == {
-        "field": "plan",
-        "body": "edited plan draft",
-        "proposed_by": original.proposed_by,
-        "created_at": original.created_at,
-    }
-    assert "plan" not in body["field_values"]
-    assert body["guidance"] == ""
-    assert body["stage"] == "needs_plan"
-    assert body["ceiling"] == "needs_plan"
-    assert body["at_cap"] == "propose"
-    assert body["ticket_status"] == "awaiting_approval"
+    assert response.status_code == 404
+    assert after["pending_proposal"]["body"] == "plan draft"
 
 
-def test_put_value_bad_field_is_validation_error(tmp_path: Path) -> None:
+def test_completing_an_unknown_field_is_a_validation_error(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _passed_ticket(db_path)
     with TestClient(app) as client:
-        response = client.put(f"/api/tickets/{tid}/value/bogus", json={"body": "x"})
+        response = client.post(f"/api/tickets/{tid}/complete/bogus", json={"body": "x"})
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "validation"

@@ -45,8 +45,6 @@ def test_review_shortcuts_do_not_escape_editable_controls(
             server,
             "worker",
             "propose",
-            "--recap",
-            f"Recap {index}.",
             ticket_id=ticket,
             stdin=f"# Proposal {index}\n\n- item",
         )

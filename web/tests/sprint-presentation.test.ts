@@ -61,6 +61,19 @@ describe("Sprint ticket conditions", () => {
   ])("maps %o to %s and %s", (input, mark, word) => {
     expect(sprintTicketCondition(input)).toEqual({ mark, word });
   });
+
+  // The regression this branch exists to prevent. `agent` is written when the wakeup
+  // system sends a worker its step, and it holds while the worker waits on a long job
+  // with no turn in process. A live turn on a resting Ticket is not the same fact and
+  // never stands in for it.
+  it("reads Agent from the dispatch status, not from a live turn", () => {
+    expect(
+      sprintTicketCondition(ticket({ ticket_status: "agent", agent_state: "idle" }))
+    ).toEqual({ mark: "current-running", word: "working" });
+    expect(
+      sprintTicketCondition(ticket({ ticket_status: "empty", agent_state: "working" }))
+    ).toEqual({ mark: "upcoming", word: "to do" });
+  });
 });
 
 describe("Outcome presentation", () => {
