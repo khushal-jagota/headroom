@@ -9,9 +9,9 @@ import sqlite3
 from collections.abc import Callable
 from datetime import date
 from functools import partial
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 
 from planner.conversation.api import OwnerSendBody, conversation_message_content, delivery_fate_json
 from planner.conversation.contracts import require_conversation_backend_key
@@ -28,6 +28,12 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import planning_date, resolve_day_id
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
+from planner.list_reads.detail import (
+    ReadDetail,
+    parse_read_detail,
+    reject_parameters,
+    require_full_for_one,
+)
 from planner.message_delivery import service as message_delivery_service
 from planner.projects import data as projects_data
 from planner.runtime import conversation_start
@@ -156,58 +162,50 @@ async def create_item(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
 
 
 @router.get("/items")
-async def list_items(
+async def read_items(
     conn: DbConn,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
-    project: str | None = None,
-    project_id: str | None = None,
-) -> JsonDict:
-    resolved_project = projects_data.resolve_project(
-        conn, project_id=project_id, project_name=project
-    )
-    rows = sprints_views.list_items(
-        conn,
-        project_id=resolved_project.id if resolved_project is not None else None,
-    )
-    await add_work_attention(conn, conversations, conversation_record, sprint_items=rows)
-    return {"items": rows}
-
-
-@router.get("/sprint-item-summaries")
-async def list_item_summaries(
-    conn: DbConn,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
+    detail: str | None = None,
+    object_id: Annotated[str | None, Query(alias="id")] = None,
     search: str | None = None,
     project: str | None = None,
     project_id: str | None = None,
-    limit: int = DEFAULT_LIST_LIMIT,
-    offset: int = 0,
+    limit: int | None = None,
+    offset: int | None = None,
 ) -> JsonDict:
+    """Read Outcomes at the level the caller asks for, or one Outcome by id."""
+    level = parse_read_detail(detail)
+    if object_id is not None:
+        require_full_for_one(level)
+        reject_parameters(
+            "id",
+            {
+                "search": search,
+                "project": project,
+                "project_id": project_id,
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+        return sprints_views.item_detail(conn, object_id)
     resolved_project = projects_data.resolve_project(
         conn, project_id=project_id, project_name=project
     )
+    resolved_project_id = resolved_project.id if resolved_project is not None else None
+    if level is ReadDetail.full:
+        reject_parameters(
+            "detail=full", {"search": search, "limit": limit, "offset": offset}
+        )
+        return {"items": sprints_views.list_items(conn, project_id=resolved_project_id)}
     page = sprints_views.list_item_summaries(
         conn,
-        page_request=ListPageRequest(limit=limit, offset=offset),
-        project_id=resolved_project.id if resolved_project is not None else None,
+        page_request=ListPageRequest(
+            limit=DEFAULT_LIST_LIMIT if limit is None else limit,
+            offset=0 if offset is None else offset,
+        ),
+        project_id=resolved_project_id,
         search=search,
     )
-    await add_work_attention(conn, conversations, conversation_record, sprint_items=page.rows)
     return page.response("items")
-
-
-@router.get("/items/{item_id}")
-async def get_item(
-    item_id: str,
-    conn: DbConn,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
-) -> JsonDict:
-    item = sprints_views.item_detail(conn, item_id)
-    await add_work_attention(conn, conversations, conversation_record, sprint_items=(item,))
-    return item
 
 
 @router.get("/items/{item_id}/workspace")
@@ -762,23 +760,30 @@ async def create_sprint(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -
 
 
 @router.get("/sprints")
-async def list_sprints(conn: DbConn) -> JsonDict:
-    return {"sprints": sprints_views.list_sprints(conn)}
-
-
-@router.get("/sprint-summaries")
-async def list_sprint_summaries(
-    conn: DbConn, limit: int = DEFAULT_LIST_LIMIT, offset: int = 0
+async def read_sprints(
+    conn: DbConn,
+    detail: str | None = None,
+    object_id: Annotated[str | None, Query(alias="id")] = None,
+    limit: int | None = None,
+    offset: int | None = None,
 ) -> JsonDict:
+    """Read Sprints at the level the caller asks for, or one Sprint by id."""
+    level = parse_read_detail(detail)
+    if object_id is not None:
+        require_full_for_one(level)
+        reject_parameters("id", {"limit": limit, "offset": offset})
+        return dict(sprints_views.sprint_json(sprints_data.read_sprint(conn, object_id)))
+    if level is ReadDetail.full:
+        reject_parameters("detail=full", {"limit": limit, "offset": offset})
+        return {"sprints": sprints_views.list_sprints(conn)}
     page = sprints_views.list_sprint_summaries(
-        conn, page_request=ListPageRequest(limit=limit, offset=offset)
+        conn,
+        page_request=ListPageRequest(
+            limit=DEFAULT_LIST_LIMIT if limit is None else limit,
+            offset=0 if offset is None else offset,
+        ),
     )
     return page.response("sprints")
-
-
-@router.get("/sprints/{sprint_id}")
-async def get_sprint(sprint_id: str, conn: DbConn) -> JsonDict:
-    return dict(sprints_views.sprint_json(sprints_data.read_sprint(conn, sprint_id)))
 
 
 @router.patch("/sprints/{sprint_id}")
