@@ -41,6 +41,7 @@ _TICKET_A = Principal(PrincipalKind.ticket, "t_a")
 _TICKET_B = Principal(PrincipalKind.ticket, "t_b")
 
 _NO_FACTS = ChainFacts()
+_IS_A_PRINCIPAL = ChainFacts(target_is_itself_a_principal=True)
 _A_PARENTS_TICKET_A = ChainFacts(target_parent_outcome_id="si_a")
 
 
@@ -77,9 +78,9 @@ def test_an_outcome_stands_above_nothing_but_tickets() -> None:
 
 def test_an_outcome_is_not_above_itself_but_is_itself() -> None:
     own = targets.outcome("si_a")
-    assert is_self(_OUTCOME_A, own) is True
-    assert stands_above(_OUTCOME_A, own, _NO_FACTS) is False
-    assert stands_above_or_is_self(_OUTCOME_A, own, _NO_FACTS) is True
+    assert is_self(_OUTCOME_A, own, _IS_A_PRINCIPAL) is True
+    assert stands_above(_OUTCOME_A, own, _IS_A_PRINCIPAL) is False
+    assert stands_above_or_is_self(_OUTCOME_A, own, _IS_A_PRINCIPAL) is True
 
 
 def test_an_ordinary_ticket_stands_above_nothing_including_itself() -> None:
@@ -89,12 +90,12 @@ def test_an_ordinary_ticket_stands_above_nothing_including_itself() -> None:
     assert stands_above(_TICKET_A, targets.plan("day", "focus"), _NO_FACTS) is False
     assert stands_above(_TICKET_A, targets.owner_only("projects"), _NO_FACTS) is False
     # "Strictly below" is what refuses a worker its own proposal. No exception states it.
-    assert is_self(_TICKET_A, own) is True
-    assert stands_above_or_is_self(_TICKET_A, own, _NO_FACTS) is True
+    assert is_self(_TICKET_A, own, _IS_A_PRINCIPAL) is True
+    assert stands_above_or_is_self(_TICKET_A, own, _IS_A_PRINCIPAL) is True
 
 
 def test_a_ticket_is_never_the_self_of_another_ticket() -> None:
-    assert is_self(_TICKET_A, targets.ticket("t_b")) is False
+    assert is_self(_TICKET_A, targets.ticket("t_b"), _IS_A_PRINCIPAL) is False
 
 
 def test_a_declared_plan_reach_admits_exactly_the_declared_fields() -> None:
@@ -218,3 +219,36 @@ def test_every_declared_worker_type_is_a_registered_one(db: Connection) -> None:
     registered = set(configured_worker_type_registry().registered_worker_types())
     assert registered, "the registry must be loaded from the opened database"
     assert set(STANDS_ABOVE_BY_WORKER_TYPE) <= registered
+
+
+def test_nobody_can_be_a_target_that_is_not_a_live_principal() -> None:
+    """A claim to be a Sprint Item that does not exist, or an ``other`` bucket, is a claim
+    to be nobody. Without this the id match alone would admit it."""
+    missing = targets.outcome("si_missing")
+    assert is_self(_OUTCOME_A, targets.outcome("si_a"), _NO_FACTS) is False
+    assert stands_above_or_is_self(_OUTCOME_A, missing, _NO_FACTS) is False
+    assert stands_above_or_is_self(_TICKET_A, targets.ticket("t_a"), _NO_FACTS) is False
+    # Khushal and the Chief still get through, so the handler answers with not_found
+    # rather than authority leaking whether the thing exists.
+    assert stands_above(OWNER_PRINCIPAL, missing, _NO_FACTS) is True
+
+
+def test_an_other_kind_sprint_item_is_nobody(db: Connection) -> None:
+    item_id = _item(db, "Normal outcome")
+    # An "other" bucket holds no supervisor identity at all; a trigger enforces the pair.
+    db.execute(
+        "UPDATE sprint_items SET kind='other', supervisor_agent_key=NULL, "
+        "supervisor_backend=NULL, supervisor_model=NULL, supervisor_reasoning_effort=NULL "
+        "WHERE id=?",
+        (item_id,),
+    )
+    db.commit()
+    claimed = Principal(PrincipalKind.sprint_item, item_id)
+
+    assert is_above_or_self(db, claimed, targets.outcome(item_id)) is False
+    assert is_above_or_self(db, OWNER_PRINCIPAL, targets.outcome(item_id)) is True
+
+
+def test_a_claimed_outcome_that_does_not_exist_is_nobody(db: Connection) -> None:
+    claimed = Principal(PrincipalKind.sprint_item, "si_nope")
+    assert is_above_or_self(db, claimed, targets.outcome("si_nope")) is False

@@ -8,7 +8,9 @@ import re
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse
 
-from planner.core.authctx import request_context, require_sprint_item_supervisor_read
+from planner.core import authority
+from planner.core.authctx import request_context
+from planner.core.authority import require_above_or_self
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files.logic.paths import resolve_sprint_item_file, resolve_ticket_file
@@ -73,7 +75,9 @@ async def get_sprint_item_file(
 ) -> FileResponse:
     _reject_raw_encoded_unsafe_path(request, "Sprint Item file not found")
     with connect(request.app.state.config.db_path) as conn:
-        require_sprint_item_supervisor_read(conn, request_context(request), sprint_item_id)
+        require_above_or_self(
+            conn, request_context(request).principal, authority.outcome(sprint_item_id)
+        )
     try:
         managed_file = resolve_sprint_item_file(
             request.app.state.config.db_path, sprint_item_id, file_path

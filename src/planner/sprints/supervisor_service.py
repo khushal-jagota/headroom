@@ -16,7 +16,9 @@ from planner.conversation.contracts import (
     PromptDeliveryQueued,
     PromptDeliveryRefused,
 )
+from planner.core import authority
 from planner.core.authctx import RequestContext, require_sprint_item_supervisor_ticket_write
+from planner.core.authority import require_above_or_self
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
@@ -445,9 +447,7 @@ def _event_json(row: sqlite3.Row) -> dict[str, object]:
 
 
 def _require_item(conn: sqlite3.Connection, ctx: RequestContext, sprint_item_id: str) -> None:
-    from planner.core.authctx import require_sprint_item_supervisor_read
-
-    require_sprint_item_supervisor_read(conn, ctx, sprint_item_id)
+    require_above_or_self(conn, ctx.principal, authority.outcome(sprint_item_id))
 
 
 def _artifact_root(db_path: str, sprint_item_id: str, *, create: bool) -> Path | None:

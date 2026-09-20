@@ -21,7 +21,7 @@ import sqlite3
 
 from planner.core.authority.contracts import Target, TargetKind
 from planner.core.authority.declarations import stands_above_for_worker_type
-from planner.core.authority.logic import ChainFacts, is_self, stands_above
+from planner.core.authority.logic import ChainFacts, stands_above, stands_above_or_is_self
 from planner.core.contracts import (
     ErrorCode,
     PlannerError,
@@ -62,10 +62,28 @@ def _caller_declared_targets(conn: sqlite3.Connection, caller: Principal) -> tup
     return stands_above_for_worker_type(str(row["worker_type"]))
 
 
+def _target_is_itself_a_principal(conn: sqlite3.Connection, target: Target) -> bool:
+    """Whether the target is a thing that can act: a real Ticket, or a ``normal`` Outcome.
+
+    An ``other`` Sprint Item is a per-project bucket. Its supervisor columns are held NULL
+    by a trigger, so it has no identity and nothing can claim to be it.
+    """
+    if target.kind is TargetKind.ticket:
+        row = conn.execute("SELECT 1 FROM tickets WHERE id = ?", (target.id,)).fetchone()
+        return row is not None
+    if target.kind is TargetKind.outcome:
+        row = conn.execute(
+            "SELECT 1 FROM sprint_items WHERE id = ? AND kind = 'normal'", (target.id,)
+        ).fetchone()
+        return row is not None
+    return False
+
+
 def chain_facts(conn: sqlite3.Connection, caller: Principal, target: Target) -> ChainFacts:
     return ChainFacts(
         target_parent_outcome_id=_target_parent_outcome_id(conn, target),
         caller_declared_targets=_caller_declared_targets(conn, caller),
+        target_is_itself_a_principal=_target_is_itself_a_principal(conn, target),
     )
 
 
@@ -74,7 +92,8 @@ def is_above(conn: sqlite3.Connection, caller: Principal, target: Target) -> boo
 
 
 def is_above_or_self(conn: sqlite3.Connection, caller: Principal, target: Target) -> bool:
-    return is_self(caller, target) or is_above(conn, caller, target)
+    facts = chain_facts(conn, caller, target)
+    return stands_above_or_is_self(caller, target, facts)
 
 
 def _refuse(caller: Principal, target: Target) -> None:

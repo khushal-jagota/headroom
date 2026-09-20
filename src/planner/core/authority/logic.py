@@ -37,14 +37,26 @@ class ChainFacts:
     ``caller_declared_targets`` are the targets the caller's Worker type declares it
     stands above. It is empty for every caller that is not a Ticket, and for every
     Ticket whose Worker type declares nothing.
+
+    ``target_is_itself_a_principal`` is whether the target is a thing that can act at all:
+    a Ticket row that exists, or a Sprint Item that exists and is ``normal``. An ``other``
+    Sprint Item is a per-project bucket with no supervisor, and a claim to be one is a
+    claim to be nobody. Without this a caller could name a Sprint Item that does not exist
+    and be admitted as it.
     """
 
     target_parent_outcome_id: str | None = None
     caller_declared_targets: tuple[Target, ...] = field(default_factory=tuple)
+    target_is_itself_a_principal: bool = False
 
 
-def is_self(caller: Principal, target: Target) -> bool:
-    """Whether the caller *is* the target, rather than standing above it."""
+def is_self(caller: Principal, target: Target, facts: ChainFacts) -> bool:
+    """Whether the caller *is* the target, rather than standing above it.
+
+    A target that is not a live principal is nobody, so nobody is it.
+    """
+    if not facts.target_is_itself_a_principal:
+        return False
     if caller.kind is PrincipalKind.ticket:
         return target.kind is TargetKind.ticket and caller.id == target.id
     if caller.kind is PrincipalKind.sprint_item:
@@ -56,7 +68,7 @@ def stands_above(caller: Principal, target: Target, facts: ChainFacts) -> bool:
     """Whether the caller stands strictly above the target."""
     if caller.kind in _ABOVE_EVERYTHING:
         return True
-    if is_self(caller, target):
+    if is_self(caller, target, facts):
         return False
     if caller.kind is PrincipalKind.sprint_item:
         return target.kind is TargetKind.ticket and facts.target_parent_outcome_id == caller.id
@@ -67,7 +79,7 @@ def stands_above(caller: Principal, target: Target, facts: ChainFacts) -> bool:
 
 def stands_above_or_is_self(caller: Principal, target: Target, facts: ChainFacts) -> bool:
     """The rule, or the caller acting on its own record."""
-    return is_self(caller, target) or stands_above(caller, target, facts)
+    return is_self(caller, target, facts) or stands_above(caller, target, facts)
 
 
 __all__ = ["ChainFacts", "is_self", "stands_above", "stands_above_or_is_self"]

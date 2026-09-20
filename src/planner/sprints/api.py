@@ -19,10 +19,9 @@ from planner.core import authority
 from planner.core.authctx import (
     reject_agent_fields,
     require_planning_write,
-    require_sprint_item_supervisor_read,
     require_sprint_item_supervisor_ticket_write,
 )
-from planner.core.authority import require_above
+from planner.core.authority import require_above, require_above_or_self
 from planner.core.contracts import JsonDict, Principal, PrincipalKind, Priority
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
@@ -227,7 +226,7 @@ async def get_item_workspace(
     conversation_record: ConversationRecord,
 ) -> JsonDict:
     """Return the page facts without creating a second action surface."""
-    require_sprint_item_supervisor_read(conn, ctx, item_id)
+    require_above_or_self(conn, ctx.principal, authority.outcome(item_id))
     planning_day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
     result = sprints_views.item_workspace(conn, item_id, planning_day_id)
     await add_work_attention(
@@ -260,7 +259,7 @@ def _supervisor_json(conn: DbConn, item_id: str) -> JsonDict:
 
 @router.get("/items/{item_id}/supervisor")
 async def get_item_supervisor(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
-    require_sprint_item_supervisor_read(conn, ctx, item_id)
+    require_above_or_self(conn, ctx.principal, authority.outcome(item_id))
     return _supervisor_json(conn, item_id)
 
 
@@ -274,7 +273,7 @@ async def get_item_supervisor_context(
 ) -> JsonDict:
     """The Item overview: the Item, its supervisor, and one line per child Ticket. The
     supervisor drills into a Ticket through its own ticket-context route."""
-    require_sprint_item_supervisor_read(conn, ctx, item_id)
+    require_above_or_self(conn, ctx.principal, authority.outcome(item_id))
     item = sprints_data.read_item(conn, item_id).item
     tickets = sprints_views.item_ticket_overview(conn, item_id)
     response = {
@@ -436,7 +435,7 @@ async def supervisor_update_item(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    require_sprint_item_supervisor_read(conn, ctx, item_id)
+    require_above_or_self(conn, ctx.principal, authority.outcome(item_id))
     if len(raw) != 1:
         raise PlannerError(ErrorCode.validation, "set exactly one Sprint Item field", {})
     field, raw_value = next(iter(raw.items()))
@@ -527,7 +526,7 @@ async def supervisor_delete_artifact(
 
 @router.get("/items/{item_id}/supervisor/conversation/start-values")
 async def get_item_supervisor_start_values(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
-    require_sprint_item_supervisor_read(conn, ctx, item_id)
+    require_above_or_self(conn, ctx.principal, authority.outcome(item_id))
     values = conversation_start.sprint_item_supervisor_resolve(
         sprints_data.read_item(conn, item_id).item
     )
