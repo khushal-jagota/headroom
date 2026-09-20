@@ -9,7 +9,8 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from planner.core.authctx import require_direct_write, require_planning_write
+from planner.core import authority
+from planner.core.authority import require_above
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
@@ -126,15 +127,11 @@ async def patch_day(
         raise PlannerError(ErrorCode.validation, "no day fields to update", {})
     # Validate the complete request above, then keep every field in one write transaction.
     with txn(conn):
-        fields = set(edits)
-        morning_fields = {"focus", "brief_take", "watchout", "if_today_lands"}
-        if fields <= morning_fields:
-            require_planning_write(conn, ctx, "planning-day")
-        elif fields == {"midday_reconciliation"}:
-            require_planning_write(conn, ctx, "planning-midday-check")
-        else:
-            # Notes and mixed-capability requests stay direct-only.
-            require_direct_write(ctx)
+        # Which Day fields a planning Worker type may write is that type's own
+        # declaration, in planner.core.authority.declarations, not a branch here. A
+        # request mixing a declared field with an undeclared one was never a planning
+        # request and is refused as a whole, exactly as the branches did.
+        require_above(conn, ctx.principal, authority.plan("day", *sorted(edits)))
         for field, value in edits.items():
             days_data.set_day_field(conn, did, field, value, now)
     return await _day_view(conn, did, now, conversations, conversation_record)

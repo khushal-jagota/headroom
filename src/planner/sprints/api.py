@@ -761,7 +761,7 @@ async def create_sprint(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -
         checkpoint=body["checkpoint"],
         review=body["review"],
         clock=clk,
-        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
+        admit=lambda: require_above(conn, ctx.principal, authority.plan("sprint")),
     )
     return dict(sprints_views.sprint_json(sprint))
 
@@ -820,7 +820,7 @@ async def patch_sprint(
         date_start=body_opt_str(body, "date_start"),
         date_end=body_opt_str(body, "date_end"),
         clock=clk,
-        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
+        admit=lambda: require_above(conn, ctx.principal, authority.plan("sprint")),
     )
     return dict(sprints_views.sprint_json(sprint))
 
@@ -890,7 +890,9 @@ async def carry_outcome(
             body_str_list(body, "ticket_ids"),
             principal=ctx.principal,
             now=clk.now_unix(),
-            admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
+            admit=lambda: require_above(
+                conn, ctx.principal, authority.plan("sprint_outcomes")
+            ),
         )
     )
 

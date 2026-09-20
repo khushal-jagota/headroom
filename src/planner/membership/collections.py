@@ -12,12 +12,13 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from planner.core import authority
 from planner.core.authctx import (
     RequestContext,
-    require_planning_write,
     require_sprint_item_supervisor_ticket_write,
     require_ticket_worker_write,
 )
+from planner.core.authority import require_above
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.contracts import Principal
@@ -142,7 +143,7 @@ def _ticket_worker_rule(
 def _sprint_planning_rule(
     conn: sqlite3.Connection, ctx: RequestContext, container_id: str, member_id: str
 ) -> None:
-    require_planning_write(conn, ctx, "planning-sprint")
+    require_above(conn, ctx.principal, authority.plan("sprint_outcomes"))
 
 
 def _supervisor_day_rule(
