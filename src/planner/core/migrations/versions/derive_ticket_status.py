@@ -16,7 +16,7 @@ differs from its stored one. Those rows are the drift the duplication allowed, a
 naming them is the point of doing this once rather than repairing it forever.
 
 Revision ID: derive_ticket_status
-Revises: one_ticket_ending
+Revises: settled_stage_names
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from sqlalchemy import (
 )
 
 revision = "derive_ticket_status"
-down_revision = "one_ticket_ending"
+down_revision = "settled_stage_names"
 branch_labels = None
 depends_on = None
 

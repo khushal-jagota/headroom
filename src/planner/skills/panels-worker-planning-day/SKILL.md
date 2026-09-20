@@ -1,6 +1,6 @@
 ---
 name: panels-worker-planning-day
-description: Review the previous day, agree today's direction, show exact Day changes, and commit the approved Day.
+description: Review the previous day, agree Today's Direction, show exact Day changes, and commit the approved Day.
 ---
 
 # Planning the day

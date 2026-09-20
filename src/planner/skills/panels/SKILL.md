@@ -32,10 +32,11 @@ multi-Ticket change as one result and creating agreed follow-up work), `product_
 sprint and planning the next at the boundary). New Worker types are added here as they ship.
 
 Each Worker type defines its own ordered lifecycle and one canonical field for each
-non-terminal Stage. For example, coding uses **Kickoff → Success → Approach → Plan →
-Implementation → Closeout → Done**, while `planning-day` uses **Kickoff → Gather →
-Planning → Closeout → Done**, `planning-midday-check` uses **Kickoff → Action → Closeout
-→ Done**, and `planning-sprint` uses **Kickoff → Review → Next Sprint → Closeout → Done**.
+non-terminal Stage. For example, coding uses **Brief → Success Condition → What Changes →
+Plan → Implementation → Consequences → Done**, while `planning-day` uses **Brief → Gather
+→ Planning → Consequences → Done**, `planning-midday-check` uses **Brief → Agreed
+Intervention → Consequences → Done**, and `planning-sprint` uses **Brief → Review → Next
+Sprint → Consequences → Done**.
 
 ## Communication
 

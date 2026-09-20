@@ -12,8 +12,8 @@ planning and implementation each Ticket owns.
 
 ### The stages
 
-The sequence is **Kickoff → Rough Shape → Question Tree → Question Answers → Ticket
-Outlines → Closeout → Done**.
+The sequence is **Brief → Rough Split into Parts → Question Tree → Question Answers →
+Proposed Tickets → Consequences → Done**.
 
 - **needs_kickoff** — preserve the confirmed direction and source context.
 - **needs_rough_shape** — section the initiative into its important parts.
@@ -48,9 +48,9 @@ sprint item or project context, and explicit boundaries. State what is confirmed
 what still needs top-level planning without turning uncertainty about *how* into
 uncertainty about *whether* to pursue the direction.
 
-A good **kickoff** lets the Rough Shape begin without reconstructing the intake or
-mistaking an agent assumption for settled direction. It does not contain a guessed
-solution or premature Ticket list.
+A good **Brief** lets the Rough Split into Parts begin without reconstructing the
+intake or mistaking an agent assumption for settled direction. It does not contain a
+guessed solution or premature Ticket list.
 
 ### needs_rough_shape — section the work
 
@@ -63,7 +63,7 @@ Do not use generic project phases merely to fill the field. Do not assume the in
 is software architecture. Do not turn the parts into Tickets yet: later answers may
 change where Ticket boundaries belong.
 
-A good **rough shape**:
+A good **Rough Split into Parts**:
 
 - covers the confirmed direction without adding a second direction;
 - uses domain-specific parts rather than generic headings;
@@ -72,10 +72,10 @@ A good **rough shape**:
 
 ### needs_question_tree — expose the cross-cutting decisions
 
-Build a prioritized, nested tree under the Rough Shape's parts. Start with the questions
-whose answers constrain later branches. Show subordinate questions only where an answer
-creates a real follow-on choice. Distinguish questions that block coherent Ticket
-outlines from questions that can safely be carried into downstream work.
+Build a prioritized, nested tree under the parts from Rough Split into Parts. Start with
+the questions whose answers constrain later branches. Show subordinate questions only
+where an answer creates a real follow-on choice. Distinguish questions that block
+coherent Ticket outlines from questions that can safely be carried into downstream work.
 
 For every question, be able to name what other part, Ticket boundary, dependency, or
 interface its answer affects. Remove questions that fail the scope test. Do not pad the
@@ -111,8 +111,9 @@ As the conversation proceeds:
 If a living question-tree artifact exists, update it as branches change. Otherwise keep
 the working state in the collaborative conversation and make the final field the durable
 result. The formal **question answers** field is a synthesis, not a transcript: group the
-settled answers by the Rough Shape, preserve the implications that downstream Tickets
-need, and list only unresolved questions that can safely be deferred with a clear owner.
+settled answers by the parts from Rough Split into Parts, preserve the implications that
+downstream Tickets need, and list only unresolved questions that can safely be deferred
+with a clear owner.
 
 Do not propose until every question that blocks coherent Ticket boundaries is answered
 or the user has explicitly chosen a safe deferral. A strong result makes the shared
@@ -135,14 +136,14 @@ Each outline should give only what creation and later Ticket work need:
 - **destination** — the initiative's Project and Sprint, plus its Sprint Item when that
   classification still applies.
 
-Check the package against the Rough Shape. Every important part should be owned, no two
-Tickets should silently own the same decision, and dependencies should not conceal an
-unanswered cross-cutting question. Do not copy the entire planning record into every
-outline, specify local implementation, or create records during this stage.
+Check the package against the Rough Split into Parts. Every important part should be
+owned, no two Tickets should silently own the same decision, and dependencies should not
+conceal an unanswered cross-cutting question. Do not copy the entire planning record
+into every outline, specify local implementation, or create records during this stage.
 
 If outlining exposes a consequential question that should have been answered earlier,
 do not bury a guess inside one Ticket. Surface the gap for user decision before treating
-the outlines as final. A good **ticket outlines** proposal is concise enough to scan and
+the outlines as final. A good **Proposed Tickets** field is concise enough to scan and
 complete enough to approve as the exact creation package.
 
 ### needs_closeout — create the approved Tickets
@@ -168,15 +169,15 @@ Read every created Ticket back and verify:
 - kickoff context and scope boundary; and
 - approved blocking relationships.
 
-A good **closeout** lists the created Ticket ids and destinations and states what was
+A good **Consequences** lists the created Ticket ids and destinations and states what was
 verified. It performs no downstream implementation and ends once the approved records
 are correct.
 
 ### Initiative Planning disciplines
 
-- Keep the sequence honest: Rough Shape identifies parts; Question Tree exposes shared
-  decisions; Question Answers settles them; Ticket Outlines derives the work; Closeout
-  creates it.
+- Keep the sequence honest: Rough Split into Parts identifies the parts; Question Tree
+  exposes shared decisions; Question Answers settles them; Proposed Tickets derives the
+  work; Consequences creates it.
 - Apply the scope test repeatedly. A large initiative does not justify absorbing local
   Ticket decisions.
 - Prefer one clear shared decision over copied context everywhere. The planning Ticket

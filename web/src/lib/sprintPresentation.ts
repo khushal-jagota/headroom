@@ -112,7 +112,7 @@ export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicke
   // and `awaiting_reply` above both do — but it must never be the only thing carrying a
   // durable state, or the group empties the moment the process stops.
   if (ticket.ticket_status === "agent") return { mark: "current-running", word: "working" };
-  if (ticket.waiting_to_closeout) return { mark: "current-waiting", word: "waiting for closeout" };
+  if (ticket.waiting_to_closeout) return { mark: "current-waiting", word: "waiting on consequences" };
   return { mark: "upcoming", word: "to do" };
 }
 
