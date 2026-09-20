@@ -577,6 +577,12 @@ offers skills. An at sign offers apps and plugins. Leading whitespace, an empty 
 line, or a trigger on a later line does not open the menu. The composer narrows that
 eligible list as text is typed.
 
+The keyboard owns the highlight. It starts at the top of the list and moves with the
+arrow keys. A row takes the highlight when the pointer really moves onto it. A menu that
+opens or changes size under a pointer standing still does not move the highlight, because
+the browser reports the pointer's resting place at those moments and no person chose
+anything.
+
 A choice replaces the active token with the entry's exact insertion text. That result is
 still an ordinary draft. The backend adapter resolves a live catalog command from the
 sender's original draft and keeps the exact slash command for native dispatch. Other

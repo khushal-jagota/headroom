@@ -7,13 +7,15 @@
     activeIndex = 0,
     anyEntriesAtAll = false,
     onChoose,
-    onHighlight
+    onHighlight,
+    pointerReallyMoved
   }: {
     entries: readonly ComposerCatalogEntry[];
     activeIndex?: number;
     anyEntriesAtAll?: boolean;
     onChoose: (entry: ComposerCatalogEntry) => void;
     onHighlight: (index: number) => void;
+    pointerReallyMoved: () => boolean;
   } = $props();
 
   let menuElement = $state<HTMLDivElement | null>(null);
@@ -58,7 +60,7 @@
         data-conversation-command-active={entry.kind === "command" && index === activeIndex
           ? "true"
           : undefined}
-        onmouseenter={() => onHighlight(index)}
+        onmousemove={() => { if (pointerReallyMoved()) onHighlight(index); }}
         onmousedown={(event) => event.preventDefault()}
         onclick={() => onChoose(entry)}
       >
