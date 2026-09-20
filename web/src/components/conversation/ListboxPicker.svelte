@@ -73,6 +73,9 @@
   let typeahead = "";
   let typeaheadTimer: ReturnType<typeof setTimeout> | undefined;
   let returnFocusWhenEnabled = false;
+  // Hover bookkeeping. Plain locals: this must never re-render the list.
+  let pointerSpot: { x: number; y: number } | null = null;
+  let pointerReallyMoved = false;
 
   let active = $derived(items.length === 0 ? 0 : Math.min(activeIndex, items.length - 1));
 
@@ -109,6 +112,21 @@
     const focusRemainsInside = root?.contains(document.activeElement) ?? false;
     returnFocusWhenEnabled = false;
     if (focusRemainsInside) trigger?.focus();
+  });
+
+  /* A panel that mounts or reflows under a still pointer receives a mouse move at the
+   * pointer's resting place. The browser is reporting geometry there, not a person
+   * choosing a row, and acting on it takes the active option away from the keyboard.
+   * This capture listener runs on the same event, just before the option's own handler,
+   * so the handler can tell the two apart by whether the pointer changed place. */
+  $effect(() => {
+    function trackPointer(event: MouseEvent): void {
+      pointerReallyMoved =
+        pointerSpot !== null && (event.clientX !== pointerSpot.x || event.clientY !== pointerSpot.y);
+      pointerSpot = { x: event.clientX, y: event.clientY };
+    }
+    document.addEventListener("mousemove", trackPointer, { capture: true, passive: true });
+    return () => document.removeEventListener("mousemove", trackPointer, true);
   });
 
   $effect(() => {
@@ -292,7 +310,7 @@
             disabled={selectionDisabled}
             data-listbox-picker-value={item.value}
             data-listbox-picker-active={index === active ? "true" : undefined}
-            onmouseenter={() => (activeIndex = index)}
+            onmousemove={() => { if (pointerReallyMoved) activeIndex = index; }}
             onmousedown={(event) => event.preventDefault()}
             onclick={() => choose(item.value)}
             {...optionAttributes?.(item, index === active, item.value === selectedValue)}

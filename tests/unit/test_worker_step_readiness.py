@@ -282,15 +282,16 @@ def _to_closeout(conn: sqlite3.Connection, ticket_id: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "occupying_status",
+    "occupy",
     [
-        TicketStatus.agent,
-        TicketStatus.awaiting_approval,
-        TicketStatus.errored,
+        "UPDATE tickets SET worker_step_claim = 'out' WHERE id = ?",
+        "UPDATE tickets SET pending_proposal = '{}' WHERE id = ?",
+        "UPDATE tickets SET worker_step_claim = 'errored' WHERE id = ?",
     ],
+    ids=["agent", "awaiting_approval", "errored"],
 )
 def test_a_closeout_waiter_is_not_ready_while_its_lane_is_occupied(
-    tmp_path: Path, occupying_status: TicketStatus
+    tmp_path: Path, occupy: str
 ) -> None:
     conn = _db(tmp_path)
     try:
@@ -298,10 +299,7 @@ def test_a_closeout_waiter_is_not_ready_while_its_lane_is_occupied(
         waiting = _ticket(conn)
         _to_closeout(conn, occupying.id)
         _to_closeout(conn, waiting.id)
-        conn.execute(
-            "UPDATE tickets SET ticket_status = ? WHERE id = ?",
-            (occupying_status.value, occupying.id),
-        )
+        conn.execute(occupy, (occupying.id,))
         assert not _ready(conn, waiting)
     finally:
         conn.close()
@@ -318,8 +316,8 @@ def test_lanes_in_different_projects_or_worker_types_are_independent(tmp_path: P
         _to_closeout(conn, occupying.id)
         _to_closeout(conn, other_project.id)
         conn.execute(
-            "UPDATE tickets SET ticket_status = ? WHERE id = ?",
-            (TicketStatus.agent.value, occupying.id),
+            "UPDATE tickets SET worker_step_claim = 'out' WHERE id = ?",
+            (occupying.id,),
         )
         assert _ready(conn, other_project)
     finally:

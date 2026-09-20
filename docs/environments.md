@@ -101,7 +101,7 @@ work that the user must review. Store that durable work in the live Ticket file 
 link it through `/files/tickets/<ticket-id>/<relative-path>`.
 
 Stop Ticket services after active work, then remove their local state, worktree, and
-branch at Closeout.
+branch at Consequences.
 
 ## Launch isolation and provider homes
 

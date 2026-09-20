@@ -7,11 +7,11 @@ description: Stage-by-stage guidance for an exploration Worker type Panels Ticke
 
 An exploration is a worker for exploring something undefined and making it clearer. It investigates the underlying mechanism rather than rushing toward the current implementation or deciding on the user's behalf.
 
-Adjust the depth of Understanding, Research, and Answer to the ticket. Keep discussion top-down, concise, and proportionate; do not overwhelm the user.
+Adjust the depth of Understanding, Findings, and Answer to the ticket. Keep discussion top-down, concise, and proportionate; do not overwhelm the user.
 
 ### The stages
 
-The sequence is **Kickoff → Understanding → Research Plan → Research → Answer → Follow-up → Closeout → Done**.
+The sequence is **Brief → Understanding → Research Plan → Findings → Answer → Proposed Follow-up → Consequences → Done**.
 
 - **needs_brief** — preserve the premise and intake context without inventing the solution.
 - **needs_understanding** — establish the shared frame and purpose through collaborative discussion.
@@ -24,7 +24,7 @@ The sequence is **Kickoff → Understanding → Research Plan → Research → A
 
 ### needs_brief — preserve the premise
 
-A good **kickoff** keeps the user's wording, source context, boundaries, and uncertainty intact. State what prompted the exploration and why it matters, but do not silently narrow an ambiguous question, assume a preferred route, or manufacture a solution. The premise is ready when a later discussion can begin from it without mistaking an agent guess for user intent.
+A good **Brief** keeps the user's wording, source context, boundaries, and uncertainty intact. State what prompted the exploration and why it matters, but do not silently narrow an ambiguous question, assume a preferred route, or manufacture a solution. The premise is ready when a later discussion can begin from it without mistaking an agent guess for user intent.
 
 ### needs_understanding — establish the shared frame
 
@@ -35,7 +35,7 @@ This is user-owned collaborative work. Use a small, purposeful set of questions 
 - the important known unknowns; and
 - enough shared frame to plan research without pretending all ambiguity is resolved.
 
-Work top-down and one question at a time. Let each answer shape the next question rather than asking everything at once. If a question needs research to answer well, leave it for Answer after Research.
+Work top-down and one question at a time. Let each answer shape the next question rather than asking everything at once. If a question needs research to answer well, leave it for Answer after Findings.
 
 Ask only questions whose answers materially change the exploration. Reflect corrections and distinguish user facts from tentative interpretations. A good **understanding** is a concise statement of the agreed frame, including unresolved uncertainty that research must address; it is not an early answer.
 
@@ -52,11 +52,11 @@ Abstract from the current implementation to the underlying mechanism so the rese
 
 ### needs_findings — discover, vet, and synthesize
 
-Execute the approved plan, adapting the search when evidence exposes a real gap. Research owns source discovery, corpus curation, provenance, and synthesis together; do not invent a separate corpus step.
+Execute the approved plan, adapting the search when evidence exposes a real gap. The Findings stage owns source discovery, corpus curation, provenance, and synthesis together; do not invent a separate corpus step.
 
 Prefer first-hand evidence and mechanism-relevant comparables. Preserve where each important claim came from, what could not be confirmed, and meaningful source limitations. Separate **fact**, **inference**, and **hypothesis**. Synthesize rather than inventory: surface patterns, counterexamples, implications, contradictions, new unknowns, viable options, and useful decomposition of the problem.
 
-Use sketches, prototypes, or tests only when the plan calls for them as evidence. They are investigative probes, not permission to implement downstream work. A good **research** field leaves the answer discussion with traceable evidence, explicit gaps, and the real tradeoffs exposed.
+Use sketches, prototypes, or tests only when the plan calls for them as evidence. They are investigative probes, not permission to implement downstream work. A good **Findings** field leaves the answer discussion with traceable evidence, explicit gaps, and the real tradeoffs exposed.
 
 ### needs_answer — reach the durable answer
 
@@ -77,7 +77,7 @@ The formal answer must be durable enough to guide later work without reconstruct
 
 Derive follow-up only from the approved answer. It may propose tickets, durable files, record updates, another exploration, or no action. Give each proposed consequence enough destination and scope to approve, and explain how it follows from the answer. Do not create records, modify destinations, publish artifacts, or take any other side effect before approval.
 
-A good **follow-up** is the smallest complete, answer-supported package of consequences; it does not turn every interesting observation into work.
+A good **Proposed Follow-up** is the smallest complete, answer-supported package of consequences; it does not turn every interesting observation into work.
 
 ### needs_consequences — apply the approved follow-up
 
@@ -87,11 +87,11 @@ When the approved follow-up creates a Ticket, load and follow
 `panels-ticket-creation`. The approved answer and follow-up remain the authority for
 what may be created, its provenance, and its destination.
 
-Closeout is application and bookkeeping, not a hidden implementation stage. Do not perform substantive downstream work inside this ticket; create or route that work through the approved destination instead.
+The Consequences stage is application and bookkeeping, not a hidden implementation stage. Do not perform substantive downstream work inside this ticket; create or route that work through the approved destination instead.
 
 ### Exploration disciplines
 
-- Keep the stages distinct: Understanding frames the problem, Research Plan chooses the evidence path, Research produces the evidence, and Answer records the user's decision.
+- Keep the stages distinct: Understanding frames the problem, Research Plan chooses the evidence path, Findings produces the evidence, and Answer records the user's decision.
 - Preserve uncertainty when evidence does not resolve it; confidence must not outrun provenance.
 - Do not let a familiar implementation, a large source list, or a polished prototype substitute for mechanism-level understanding.
 - Follow `panels-worker` for shared ownership, proposal, approval, Chat, scope, and reconciliation mechanics; this skill only defines exploration-specific work.

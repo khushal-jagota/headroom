@@ -215,8 +215,8 @@ def test_a_release_does_not_fire_once_the_status_has_been_written_again(
         assert tickets_data.release_worker_step_claim(
             conn,
             ticket_id,
-            expected_status=claimed.ticket_status,
-            expected_status_revision=claimed.ticket_status_revision,
+            expected_claim=claimed.worker_step_claim,
+            expected_claim_revision=claimed.worker_step_claim_revision,
             now=100,
         )
         reclaimed = tickets_data.claim_ticket_for_worker_step(
@@ -228,16 +228,16 @@ def test_a_release_does_not_fire_once_the_status_has_been_written_again(
         )
         assert reclaimed is not None
         assert reclaimed.ticket_status is claimed.ticket_status
-        assert reclaimed.ticket_status_changed_at == claimed.ticket_status_changed_at
-        assert reclaimed.ticket_status_revision > claimed.ticket_status_revision
+        assert reclaimed.worker_step_claim_changed_at == claimed.worker_step_claim_changed_at
+        assert reclaimed.worker_step_claim_revision > claimed.worker_step_claim_revision
 
         # The first claim's late release finds a different revision despite the same clock.
         assert (
             tickets_data.release_worker_step_claim(
                 conn,
                 ticket_id,
-                expected_status=claimed.ticket_status,
-                expected_status_revision=claimed.ticket_status_revision,
+                expected_claim=claimed.worker_step_claim,
+                expected_claim_revision=claimed.worker_step_claim_revision,
                 now=100,
             )
             is False
@@ -369,8 +369,8 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
         assert tickets_data.release_worker_step_claim(
             conn,
             ticket_id,
-            expected_status=claimed.ticket_status,
-            expected_status_revision=claimed.ticket_status_revision,
+            expected_claim=claimed.worker_step_claim,
+            expected_claim_revision=claimed.worker_step_claim_revision,
             now=2,
         )
     finally:

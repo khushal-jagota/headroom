@@ -160,7 +160,7 @@ describe("Sprint Item workspace presentation", () => {
     ).toEqual(["Empty"]);
   });
 
-  it("labels a closeout-ready Ticket as waiting for closeout, not Empty", () => {
+  it("labels a closeout-ready Ticket as waiting on Consequences, not Empty", () => {
     const value = workspace();
     const readyForCloseout = {
       ...value.tickets[0],
@@ -176,14 +176,14 @@ describe("Sprint Item workspace presentation", () => {
         today_ticket_ids: ["t_ready"],
         tickets: [readyForCloseout]
       }).map((group) => group.label)
-    ).toEqual(["Waiting for closeout"]);
+    ).toEqual(["Waiting on Consequences"]);
     expect(
       remainingWorkspaceTicketGroups({
         ...value,
         today_ticket_ids: [],
         tickets: [readyForCloseout]
       }).map((group) => group.label)
-    ).toEqual(["Waiting for closeout"]);
+    ).toEqual(["Waiting on Consequences"]);
   });
 
   it("names a kickoff-gated Ticket on its own, as the rail does", () => {
@@ -200,7 +200,7 @@ describe("Sprint Item workspace presentation", () => {
         today_ticket_ids: ["t_kickoff", "t_review"],
         tickets: [kickoff, value.tickets[0]]
       }).map((group) => group.label)
-    ).toEqual(["Waiting for kickoff", "Awaiting approval"]);
+    ).toEqual(["Waiting for Brief", "Awaiting approval"]);
   });
 
   it("reads Errored and Blocked apart, each from the Ticket's own status", () => {

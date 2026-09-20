@@ -58,13 +58,15 @@ def test_ticket_summary_filters_search_and_bounds_before_selection(
     )
     tmp_db.execute("UPDATE tickets SET guidance = ? WHERE id = ?", ("Note Needle", note_id))
     tmp_db.execute(
-        "UPDATE tickets SET stage = 'done', ticket_status = 'empty' WHERE id = ?",
+        "UPDATE tickets SET stage = 'done' WHERE id = ?",
         (terminal_id,),
     )
     tmp_db.execute(
         "UPDATE tickets SET stage = 'needs_success_condition' WHERE id = ?", (proposal_id,)
     )
-    tmp_db.execute("UPDATE tickets SET ticket_status = 'errored' WHERE id = ?", (note_id,))
+    tmp_db.execute(
+        "UPDATE tickets SET worker_step_claim = 'errored' WHERE id = ?", (note_id,)
+    )
 
     for needle, expected in (
         ("title needle", title_id),

@@ -34,12 +34,12 @@ Fourteen Worker types are seeded into a new database:
 - **`planning-midday-check`** compares the morning intent with current execution at
   14:30, agrees any useful intervention, carries it out, and records the result.
 - **`planning-sprint`** reviews the current sprint and plans the next at the final-day
-  boundary, with canonical writes deferred until Closeout.
+  boundary, with canonical writes deferred until Consequences.
 - **`personal`** represents user-owned work, with optional explicit agent support.
 
 Tests also declare **`probe`**. Its Stage and field names are deliberately unfamiliar,
 apart from the two the rules fix: the `brief` field it opens with and the `consequences`
-field every Worker type declares. Even the Stage that gates its Closeout carries a name
+field every Worker type declares. Even the Stage that gates its Consequences carries a name
 of its own. So the test suite catches code that still assumes every Ticket is
 coding-shaped. It is not a shipped Worker type.
 
@@ -71,27 +71,28 @@ working Stage, and validate a Ticket position.
 
 The shipped `coding` and `debugging` definitions assign every non-terminal Stage to
 worker ownership.
-`general` does the same: its Kickoff, Execution, and Closeout are all worker-owned.
+`general` does the same: its Brief, Work Done, and Consequences are all worker-owned.
 `amend_worker` uses user ownership for Amendment, the one Stage with a decision in it:
 what changes, and what that does to the live Tickets of the Worker being amended. Its
-Drafting and Closeout are worker-owned.
-`new_worker` starts with worker-owned Kickoff,
-then uses user
-ownership for Understanding before worker-owned Stages and Thinking, assigns the user again for
-Runtime Defaults, then returns to worker-owned Drafting and Closeout. `research` keeps all four of its non-terminal Stages worker-owned, because its question
+Drafting and Consequences are worker-owned.
+`new_worker` starts with a worker-owned Brief,
+then uses user ownership for Purpose and Boundaries before the worker-owned Stages and
+What Good Looks Like at Each Stage, assigns the user again for Model and Effort, then
+returns to worker-owned Drafting and Consequences. `research` keeps all four of its non-terminal Stages worker-owned, because its question
 arrives already framed and it runs unattended. `exploration`
 uses user ownership for Understanding and Answer, where the user and worker establish
 the frame and reach the decision together; its other non-terminal Stages use worker
 ownership. `initiative_planning` uses user ownership for Question Answers, where
 consequential cross-Ticket choices are settled with the user; its other non-terminal
 Stages use worker ownership. `product_design` uses user ownership for Wireframe
-and Design, while its Direction and handoff are worker-owned. `planning-day` uses user
-ownership for Direction, where the Worker and user agree on the most important work.
-Previous Day Review, Day Changes, and Closeout are worker-owned. The Worker derives Day
+and Design, while its Best Guess and Open Options Stage and its handoff are
+worker-owned. `planning-day` uses user ownership for Today's Direction, where the Worker
+and user agree on the most important work.
+Previous Day Review, Day Changes, and Consequences are worker-owned. The Worker derives Day
 overview fields without user input. `planning-midday-check` keeps its Stages worker-owned,
-but
-Action deliberately pauses through user-help before any approved intervention is
-performed in Closeout. `planning-sprint` also keeps its four non-terminal Stages
+but its
+Agreed Intervention Stage deliberately pauses through user-help before any approved
+intervention is performed in Consequences. `planning-sprint` also keeps its four non-terminal Stages
 worker-owned, but Review and Next Sprint deliberately pause through user-help until the
 user explicitly releases the conversation. Every Worker type chooses deliberately for
 each Stage; it does not inherit that choice from registry order or another definition.
@@ -114,7 +115,7 @@ when the modules were imported.
 
 `WorkerTypeRegistry` validates every definition when the registry is built, and the store
 runs those same rules before a row is written. They check the
-shared structural rules: an optional Kickoff stage and field appear together first,
+shared structural rules: an optional Brief stage and field appear together first,
 `done` is the one terminal, every non-terminal Stage gates one declared field, every
 field is gated once, every type declares a `consequences`, every non-terminal Stage declares
 a valid ownership mode,
@@ -133,7 +134,7 @@ neither is the kind of thing to discover afterwards. Adding Stages, reordering t
 changing labels are all free. A finished Ticket's text in a removed field goes dark; that
 is accepted loss, and history is not rewritten.
 
-### Every Worker type declares a Closeout
+### Every Worker type declares a Consequences Stage
 
 A Worker type ends by landing what it produced, so every Worker type declares a `consequences`
 field. A type that declares none has nowhere to land its work, and nobody learns that
@@ -147,7 +148,7 @@ The seeded types all put it last before `done` and all call it `needs_consequenc
 neither is required.
 
 The other names the runtime fixes are the `done` terminal and, for a type that opens with
-a Kickoff, a `brief` field paired with a first `needs_brief` Stage. They are in the
+a Brief, a `brief` field paired with a first `needs_brief` Stage. They are in the
 rules above. Nothing else is a well-known name. The probe Worker type in the test suite
 names its other Stages and fields unfamiliarly, and that is what keeps the rest of Panels
 from assuming coding's shape.
@@ -255,10 +256,10 @@ Ticket against the entry matching the Ticket's stored `worker_type`. Every store
 including `general` and `personal`, therefore shows its own Stage spine without frontend
 type tables, and a type declared today shows one without a frontend change.
 
-During pristine Kickoff, one launch picker shows the Ticket's backend, model, and Reasoning
+During a pristine Brief, one launch picker shows the Ticket's backend, model, and Reasoning
 choice beside its approval flow. The picker starts with the values already copied onto the
 Ticket. Its model and reasoning choices come from the backend catalogue, not from a frontend
-list. Once a conversation exists, or the Ticket moves beyond Kickoff, the control
+list. Once a conversation exists, or the Ticket moves beyond the Brief, the control
 disappears. It does not move into the header or become a display of current worker settings.
 
 _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
@@ -352,13 +353,13 @@ Ticket. Creation copies the trio once. From then on, the Ticket owns it; changin
 Worker type's defaults later does not change existing Tickets, and switching a Ticket's
 Worker does not restore an earlier set of choices.
 
-The complete trio may be edited in the Kickoff controls only while the Ticket is still
-at pristine Kickoff and has no conversation yet. One save replaces the whole setup.
+The complete trio may be edited in the Brief controls only while the Ticket is still
+at a pristine Brief and has no conversation yet. One save replaces the whole setup.
 Changing Worker names the new backend's own model in the same save, because a model name
 belongs to the backend that gave it and means nothing to another one; Reasoning is cleared,
 since it belonged to the model being replaced. Changing Model retains an explicit Reasoning
 choice only when the new model still supports it. Starting the Ticket's first conversation,
-or any move past Kickoff, removes those controls.
+or any move past the Brief, removes those controls.
 
 A backend this machine reported no models for has no model to name, so a save that switches
 to it names none and is refused. That is the honest end of it: the alternative is a Ticket
@@ -399,7 +400,7 @@ adapter and appears nowhere else.
 _Code paths:_ `src/planner/conversation/production_backends.py` composes the three real
 agents; `src/planner/worker_types/configuration.py` joins them to the Worker-type
 registry; `src/planner/tickets/data.py` stores and freezes the Ticket setup; and
-`web/src/components/WorkerConfigurationSetup.svelte` renders the Kickoff controls.
+`web/src/components/WorkerConfigurationSetup.svelte` renders the Brief controls.
 
 ## How a worker finds its specialist
 
@@ -432,13 +433,14 @@ process is started again under it when there is a reason to.
 - `panels-worker-planning-sprint` guides `planning-sprint` Tickets.
 - `panels-worker-personal-task` guides `personal` Tickets.
 
-For `new_worker`, the visible lifecycle after universal Kickoff is
-Understanding, Stages, Thinking, Runtime Defaults, Drafting, Closeout, Done. Understanding
-and Runtime Defaults are user-owned. Runtime Defaults approves an explicit registered backend,
-advertised model, and supported reasoning effort before Drafting records them in the
-Worker profile. At Understanding, Panels sends one automatic opening turn into the Ticket's conversation. Human
-conversation continues in that same conversation, and an Understanding proposal waits for
-approval before the Ticket advances to Stages.
+For `new_worker`, the visible lifecycle after the universal Brief is
+Purpose and Boundaries, Stages, What Good Looks Like at Each Stage, Model and Effort,
+Drafting, Consequences, Done. Purpose and Boundaries is user-owned, and so is Model and
+Effort, which approves an explicit registered backend, advertised model, and supported
+reasoning effort before Drafting records them in the Worker profile. At Purpose and
+Boundaries, Panels sends one automatic opening turn into the Ticket's conversation. Human
+conversation continues in that same conversation, and a Purpose and Boundaries proposal
+waits for approval before the Ticket advances to Stages.
 
 The packaged skill tree seeds missing entries in the managed `data/skills` home. That
 managed home remains authoritative after seeding. Codex and Claude provisioning links
@@ -476,7 +478,7 @@ One new Worker type needs one definition and one production registration path:
 6. Restart Panels and provision the production skill homes. Composition validates the
    registry before the Worker type becomes live.
 
-The shared brief and completion ids are structural rules, not imported lifecycle
+The shared kickoff and completion ids are structural rules, not imported lifecycle
 constants. The new definition still declares them directly: `needs_brief` gating
 `brief`, and terminal `done`.
 

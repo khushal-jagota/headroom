@@ -9,55 +9,55 @@ door — the proposal resolver.
 The Stage set is not fixed for all Tickets — it is declared by the Ticket's **Worker
 type** (see `worker-types.md`). The lifecycle below is the **`coding`** Worker type's,
 shown here as one concrete example; another Worker type walks its own Stages the same
-way. Every Worker type shares the leading Kickoff, the `done` ending, and the
+way. Every Worker type shares the leading Brief, the `done` ending, and the
 single-door rule.
 
 ```
    THE CODING STAGES
 
-   kickoff ──► success   ──►  approach  ──►  plan     ──►  implementation ──►  closeout ──► done
-   approve     condition      (how,          (step-        (do the work,       (merge,
-   intake      (what is        roughly)       by-step)      propose a           deploy,
-   context      "done"?)                                    reviewable          follow-up,
-   field                                                     package)            report)
+   Brief   ──► Success   ──► What     ──► Plan     ──► Implementation ──► Consequences ──► Done
+   approve     Condition     Changes      (step-       (do the work,      (merge,
+   intake      (what is      (how,        by-step)     propose a          deploy,
+   context      "done"?)     roughly)                  reviewable         follow-up,
+   field                                               package)           report)
 ```
 
 ## The Stages (the coding Worker type)
 
-Every Worker type starts with **Kickoff** and ends at **done**; the
+Every Worker type starts with a **Brief** and ends at **done**; the
 Stages between are the Worker type's own. What follows is the `coding` lifecycle.
 
-A ticket starts with **Kickoff**. Kickoff is the first ordinary Ticket field: the
+A ticket starts with its **Brief**. The Brief is the first ordinary Ticket field: the
 human-approved intake context. The title is separate editable Ticket metadata, not
-part of the Kickoff proposal. A new ordinary ticket parks a Kickoff field proposal
-for review before any worker turn can start. Approving Kickoff settles the Kickoff
+part of the Brief proposal. A new ordinary ticket parks a Brief field proposal
+for review before any worker turn can start. Approving the Brief settles the Brief
 field, then the ticket enters the worker stages.
 
 The Ticket also stores the Worker, Model, and Reasoning its conversation runs on.
 Creation copies the Worker type's three starting values, and they are kept up to date
-afterwards, so a fresh conversation starts from where the last one ended. The Kickoff
-section shows the editable controls beside approval only while Kickoff is pristine and
+afterwards, so a fresh conversation starts from where the last one ended. The Brief
+section shows the editable controls beside approval only while the Brief is pristine and
 no conversation exists yet. Hermes has no Reasoning control; Codex and Claude Code show
-the Reasoning values supported by the selected model. Advancing Kickoff or starting the
+the Reasoning values supported by the selected model. Advancing the Brief or starting the
 Ticket's first conversation removes the controls.
 
-After Kickoff, a ticket fills its blanks in order: a **success condition** (what
-does done mean?), an **approach** (how, roughly?), a **plan** (concretely, step by
+After the Brief, a ticket fills its blanks in order: a **Success Condition** (what
+does done mean?), **What Changes** (how, roughly?), a **Plan** (concretely, step by
 step), then
-**implementation** (the plan is carried out and a reviewable work package is
-proposed), then **closeout** (only the applicable merge, deploy, follow-up, and
+**Implementation** (the plan is carried out and a reviewable work package is
+proposed), then **Consequences** (only the applicable merge, deploy, follow-up, and
 bookkeeping happen, and a verified report is proposed), and finally it is **done**.
 Each stage has exactly one blank to fill; filling it — and having that accepted — is
 what moves the ticket one stage forward. **done** is the only ending a Ticket has.
 Stages advance through approval or direct completion of a current user-owned gate;
 there is no arbitrary Stage jump.
 
-The **Kickoff field** preserves intake context: the user's original wording, source
+The **Brief field** preserves intake context: the user's original wording, source
 context, boundaries, and advice. It stays readable beside the work so agents can
-honor the user's direction without mixing that direction into success, approach,
-plan, implementation, or closeout. After Kickoff is settled, later direct title edits
-remain ordinary Ticket metadata edits, and Kickoff text edits use the ordinary field
-value path.
+honor the user's direction without mixing that direction into Success Condition,
+What Changes, Plan, Implementation, or Consequences. After the Brief is settled, later
+direct title edits remain ordinary Ticket metadata edits, and Brief text edits use the
+ordinary field value path.
 
 _Code paths:_ `src/planner/tickets/` (the Ticket Stage and its fields).
 
@@ -110,35 +110,34 @@ invalid, or repeated blocker rejects the whole create with a structured error. N
 once, so readiness is nudged once.
 
 A blocker is **live** while the Ticket doing the blocking is not done.
-Blocking shows up in exactly one place: the dependent Ticket's status. When a Ticket
-comes to rest with nothing running, it lands on **blocked** instead of **empty** if a
-live blocker remains. `blocked` only ever stands in for `empty`, so a Ticket that is
-running a step, waiting for approval, asking for help, or held by the user keeps that
-status untouched. Blocking still writes no Blocked Stage and changes nothing about the
-Ticket's real Stage, ownership, scope, proposal, or direct user controls. It only keeps
-automatic work from starting, because the runtime starts `empty` Tickets and nothing
-else.
+Blocking shows up in exactly one place: the dependent Ticket's status. When a Ticket is
+at rest with nothing running, it reads as **blocked** instead of **empty** if a live
+blocker remains. Only rest is called blocked, so a Ticket that is running a step or
+waiting for approval reads as that instead. Blocking still writes no Blocked Stage and
+changes nothing about the Ticket's real Stage, ownership, scope, proposal, or direct
+user controls. It only keeps automatic work from starting, because the runtime starts
+resting Tickets and nothing else.
 
-Clearing happens inside the action that removes the cause. When a blocking Ticket is
-finished or deleted, or a Ticket block is removed, that same write deletes
-the blocks it held and rewrites every Ticket it was blocking in the same transaction —
-back to `empty`, or left on `blocked` when another live blocker remains. A Ticket that
-stays blocked is not rewritten at all, so nothing is announced for a change that did
-not happen.
+Nothing is written to clear it. When a blocking Ticket is finished or deleted, or a
+Ticket block is removed, that same write removes the blocks it held, and
+every Ticket it was blocking stops reading as blocked from that moment. A Ticket that
+another live blocker still holds keeps reading as blocked. There is no stored value to
+repair, because the answer is worked out each time it is asked for.
 
-A newly created dependent Ticket parks its Kickoff proposal first, so it waits for
+A newly created dependent Ticket parks its Brief proposal first, so it waits for
 approval before it can rest anywhere. It becomes `blocked` the first time it comes to
 rest with its blockers still live. On the Workspace screen a blocked Ticket then sits
 in the **Blocked** group, which starts collapsed.
 
 Ticket detail shows only direct blockers that are active now. Each row links to the
-blocker and can remove that Ticket block, during Kickoff or later. The section is
+blocker and can remove that Ticket block, during the Brief or later. The section is
 absent when no active blocker remains. Panels does not show reverse, cleared, transitive, or
 graph views.
 
 Any Ticket worker can add or remove Ticket blocks. The worker must send its own
-existing Ticket id with its worker identity. Direct callers keep the same access. The Ticket block writer validates both Tickets, rejects active cycles, updates
-blocked Ticket status, and commits the complete change once.
+existing Ticket id with its worker identity. Direct callers keep the same access. The Ticket block writer validates both Tickets, rejects active cycles, and commits the
+complete change once. It writes nothing to the blocked Ticket, because what that Ticket
+reads as is worked out from the block itself.
 
 ### Ordinary Ticket edits
 
@@ -230,20 +229,42 @@ ceiling says nothing about who owns a Stage: user-owned Stages still do not
 dispatch automatically after their opening turn. They rest at `empty` with their opener fact,
 and their answer always parks.
 New tickets start leashed right at
-**Kickoff**: the ceiling is `needs_brief` for every Worker type, so nothing advances past
+the **Brief**: the ceiling is `needs_brief` for every Worker type, so nothing advances past
 the human-approved intake until the human grants scope onward — review before agents
 start.
 
 A creator can state the ceiling instead, at creation, with `ticket create --ceiling`.
+The same breath names who holds it, with `ticket create --holder`. A creator can name any
+holder, including the user, without holding anything itself — that is how a Ticket is
+opened for somebody else to review. Name nobody and the creator holds it, which is the
+ordinary case: a Sprint Item that opens a Ticket holds it.
 Whoever was given the authority to grant scope says so in the same breath as
 the Ticket, so work the user has already authorized does not sit waiting for a second
-approval. The kickoff is then judged by the stated scope exactly as a later proposal is:
+approval. The Brief is then judged by the stated scope exactly as a later proposal is:
 it settles and the Ticket starts at the next Stage when the stated ceiling is past
-kickoff, and it parks for approval otherwise. State nothing and the default leash holds,
+the Brief, and it parks for approval otherwise. State nothing and the default leash holds,
 which is the ordinary case for intake the human wants to sense-check.
 
+### Changing a ceiling on a running Ticket
+
+Both halves can change later, and they change separately.
+
+- **How far it may go** — `ticket set <id> ceiling`. This is refused while a proposal is
+  parked, because moving the ceiling under a filed proposal changes what was proposed.
+  Setting it never moves the holder: raising or lowering a ceiling must not move a Ticket
+  into somebody else's queue.
+- **Who is asked** — `ticket set <id> ceiling-holder`. This is allowed while a proposal is
+  parked. Pointing a parked proposal at a different reviewer does not change what was
+  proposed, only who decides it, so it is the way a proposal sitting in the wrong queue
+  reaches the right one. Only the current holder or the user can do it, so no third agent
+  can pull a parked proposal out of a queue it was filed into.
+
+Everywhere tooling takes a holder — creation, either change, and both approve commands —
+it takes one `--holder`, and reads the kind from what it is given: `me`, `chief`, a Sprint
+Item id, or a Ticket id.
+
 Every later stage behaves the same way, including the last two: an accepted
-implementation advances to **needs closeout**, and an accepted closeout advances
+**Implementation** advances to **Consequences**, and accepting Consequences advances
 straight to **done**. (The threshold used by sprint-in-progress behavior is the
 *second* stage, held distinct from this start ceiling; see `worker-types.md`.)
 
@@ -251,12 +272,20 @@ straight to **done**. (The threshold used by sprint-in-progress behavior is the
 
 The addressed holder or the owner can decide a parked proposal. Whenever either approves
 a step, they must name the next ceiling and holder. The system refuses an approval
-that omits either. The Ticket details disclosure shows
-the same permission as a readable leash: "approved until [a stage]." The disclosure
-includes only the ceiling select. The worker runs to the new ceiling and parks there for
-the named holder. At Kickoff, an unchosen
-ceiling starts from that Worker type's managed suggestion. Other approvals start from
-their normal next Stage. `No further` remains a one-off choice. The stages it offers
+that omits either. Approving is a ceiling-setting moment like any other, so the approve
+row carries the same control the Ticket page does, and the approver can hand the Ticket
+onward rather than only keeping it.
+
+The Ticket details disclosure shows the same permission as a readable leash:
+"Until [a stage] · then [who]", where who reads `me`, `Chief`, or the Ticket's Sprint Item
+by its name. The stage name is the Worker type's own label, so a renamed stage reads
+correctly with no code change. While a proposal is parked the disclosure drops its stage
+select and keeps the holder one, which is the split refusal made visible. A Ticket can hold
+another Ticket's ceiling and tooling can set that; it is not offered on screen.
+
+The worker runs to the new ceiling and parks there for the named holder. At the Brief, an
+unchosen ceiling starts from that Worker type's managed suggestion. Other approvals start
+from their normal next Stage. `No further` remains a one-off choice. The stages it offers
 are always the current one and the
 ones after it, never an earlier one, so you can't hand back ground the ticket has
 already covered. One shared source of the allowed stages feeds both the Ticket leash

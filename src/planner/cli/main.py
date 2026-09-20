@@ -31,7 +31,6 @@ from planner.cli.record_projection import (
     project_record,
     render_text,
 )
-from planner.core.contracts import PrincipalKind
 from planner.environments.cli import environment as environment_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.message_delivery.contracts import MessageDeliveryMode
@@ -50,8 +49,35 @@ _DAY_FIELDS = {
 }
 
 
+# One way to name who holds a ceiling, wherever tooling takes one. The kind follows from
+# the id, so the common case — hand this to Khushal — is `--holder me`.
+_HOLDER_ALIASES = {
+    "me": ("owner", "owner"),
+    "owner": ("owner", "owner"),
+    "chief": ("chief", "chief"),
+}
+
+
+def resolve_holder(raw: str, as_json: bool) -> dict[str, str]:
+    """Turn a holder word or id into the principal object the API takes."""
+    holder = raw.strip()
+    alias = _HOLDER_ALIASES.get(holder.lower())
+    if alias is not None:
+        return {"kind": alias[0], "id": alias[1]}
+    if holder.startswith("si_"):
+        return {"kind": "sprint_item", "id": holder}
+    if holder.startswith("t_"):
+        return {"kind": "ticket", "id": holder}
+    http.fail_validation(
+        "holder must be me, chief, a Sprint Item id, or a Ticket id",
+        as_json,
+    )
+    raise AssertionError("unreachable")
+
+
 _TICKET_SET_FIELDS = {
     "ceiling": "ceiling",
+    "ceiling-holder": "ceiling_holder",
     "title": "title",
     "kickoff-note": "brief",
     "priority": "priority",
@@ -88,6 +114,7 @@ _SUPERVISOR_ITEM_FIELDS = {
 
 _SUPERVISOR_TICKET_FIELDS = {
     "ceiling": "ceiling",
+    "ceiling-holder": "ceiling_holder",
     "title": "title",
     "priority": "priority",
     "deadline": "deadline",
@@ -1176,6 +1203,12 @@ def ticket() -> None:
     default=None,
     help="Initial ceiling, as a stage name or the plain field name that stage needs.",
 )
+@click.option(
+    "--holder",
+    default=None,
+    help="Who holds the ceiling: me, chief, a Sprint Item id, or a Ticket id. "
+    "Absent, the creator holds it.",
+)
 @json_option
 def ticket_create(
     title: str,
@@ -1193,11 +1226,14 @@ def ticket_create(
     kickoff_note: str | None,
     kickoff_note_file: str | None,
     ceiling: str | None,
+    holder: str | None,
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {"title": title, "worker_type": worker_type}
     if ceiling is not None:
         body["ceiling"] = ceiling
+    if holder is not None:
+        body["ceiling_holder"] = resolve_holder(holder, as_json)
     if employee_backend is not None:
         body["employee_backend"] = employee_backend
     if employee_launch_model is not None:
@@ -1367,17 +1403,19 @@ def ticket_set(
 ) -> None:
     api_field = _TICKET_SET_FIELDS[field]
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field in {"title", "priority", "ceiling"} and new_value is None:
+    if field in {"title", "priority", "ceiling", "ceiling-holder"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
     if field == "priority" and new_value not in _PRIORITIES:
         http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
     if field == "kickoff-note" and new_value is None:
         new_value = ""
-    body: dict[str, Any] = (
-        {"field_values": {"brief": new_value}}
-        if field == "kickoff-note"
-        else {api_field: new_value}
-    )
+    body: dict[str, Any]
+    if field == "kickoff-note":
+        body = {"field_values": {BRIEF_FIELD_ID: new_value}}
+    elif field == "ceiling-holder":
+        body = {api_field: resolve_holder(str(new_value), as_json)}
+    else:
+        body = {api_field: new_value}
     data = http.send(
         "PATCH",
         f"/api/tickets/{ticket_id}",
@@ -1532,12 +1570,10 @@ def ticket_employee_configuration(
 @click.option("--ceiling", default=None, help="Next ceiling stage or none.")
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @click.option(
-    "--holder-kind",
-    default="owner",
-    type=click.Choice([kind.value for kind in PrincipalKind]),
-    help="Principal kind for the next ceiling holder.",
+    "--holder",
+    default="me",
+    help="Who holds the next ceiling: me, chief, a Sprint Item id, or a Ticket id.",
 )
-@click.option("--holder-id", default=None, help="Principal id for the next ceiling holder.")
 @click.option("--kickoff-title", default=None, help="Edited Kickoff title.")
 @click.option("--kickoff-note-file", default=None, help="Edited Kickoff note, or - for stdin.")
 @json_option
@@ -1545,8 +1581,7 @@ def ticket_approve(
     ticket_id: str | None,
     ceiling: str | None,
     edit_file: str | None,
-    holder_kind: str,
-    holder_id: str | None,
+    holder: str,
     kickoff_title: str | None,
     kickoff_note_file: str | None,
     as_json: bool,
@@ -1573,10 +1608,9 @@ def ticket_approve(
             json_body={"title": kickoff_title},
             request_actor="ordinary",
         )
-    resolved_holder_id = holder_id or holder_kind
     field_payload: dict[str, Any] = {
         "next_ceiling": ceiling,
-        "next_holder": {"kind": holder_kind, "id": resolved_holder_id},
+        "next_holder": resolve_holder(holder, as_json),
     }
     if edit_file is not None:
         field_payload["edited_body"] = _read_source(edit_file, as_json)
@@ -2138,13 +2172,16 @@ def sprint_item_supervisor_set_ticket(
     as_json: bool,
 ) -> None:
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field in {"title", "priority", "ceiling"} and new_value is None:
+    if field in {"title", "priority", "ceiling", "ceiling-holder"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
+    sent: Any = (
+        resolve_holder(str(new_value), as_json) if field == "ceiling-holder" else new_value
+    )
     data = http.send(
         "PATCH",
         f"/api/items/{item_id}/supervisor/tickets/{ticket_id}",
         as_json=as_json,
-        json_body={_SUPERVISOR_TICKET_FIELDS[field]: new_value},
+        json_body={_SUPERVISOR_TICKET_FIELDS[field]: sent},
     )
     http.emit(data, as_json, f"{ticket_id} {field} set")
 
@@ -2234,29 +2271,28 @@ def sprint_item_supervisor_reset(item_id: str, as_json: bool) -> None:
 @click.option("--ceiling", required=True, help="Next ceiling Stage or none.")
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @click.option(
-    "--holder-kind",
-    default="sprint_item",
-    type=click.Choice([kind.value for kind in PrincipalKind]),
-    help="Principal kind for the next ceiling holder.",
+    "--holder",
+    default=None,
+    help="Who holds the next ceiling: me, chief, a Sprint Item id, or a Ticket id. "
+    "Absent, this Sprint Item keeps it.",
 )
-@click.option("--holder-id", default=None, help="Principal id for the next ceiling holder.")
 @json_option
 def sprint_item_supervisor_approve(
     item_id: str,
     ticket_id: str,
     ceiling: str,
     edit_file: str | None,
-    holder_kind: str,
-    holder_id: str | None,
+    holder: str | None,
     as_json: bool,
 ) -> None:
     """Approve one parked proposal for this Sprint Item."""
     body: dict[str, Any] = {
         "next_ceiling": ceiling,
-        "next_holder": {
-            "kind": holder_kind,
-            "id": holder_id or (item_id if holder_kind == "sprint_item" else holder_kind),
-        },
+        "next_holder": (
+            resolve_holder(holder, as_json)
+            if holder is not None
+            else {"kind": "sprint_item", "id": item_id}
+        ),
     }
     if edit_file is not None:
         body["edited_body"] = _read_source(edit_file, as_json)

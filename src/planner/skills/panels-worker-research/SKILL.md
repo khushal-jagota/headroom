@@ -11,7 +11,7 @@ This worker runs unattended. The user reviews at each approval gate, not in conv
 
 ### The stages
 
-The sequence is **Kickoff → Research Plan → Research → Closeout → Done**.
+The sequence is **Brief → Research Plan → Findings → Consequences → Done**.
 
 - **needs_brief** — the question as asked, its boundaries, and what the answer is for.
 - **needs_research_plan** — the transferable problem, the questions, the search angles, and the stop conditions.
@@ -59,7 +59,7 @@ If coverage was cut, say what was dropped and why. Silent truncation reads as fu
 
 ### needs_consequences — land the deliverable
 
-Write the substance as a ticket artifact and link it. Keep the **closeout** field to a short report: what was found, what stayed open, and where the artifact is.
+Write the substance as a ticket artifact and link it. Keep the **Consequences** field to a short report: what was found, what stayed open, and where the artifact is.
 
 The reader did not do the research and did not read the research plan. Write the artifact as a standalone document. Include only the information that is valuable, and the context needed to understand that information. Nothing else earns space: not the search process, not the sources that led nowhere, not a record of the work. A person who was not here must be able to read it once and act.
 

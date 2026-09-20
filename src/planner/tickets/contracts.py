@@ -42,9 +42,21 @@ class ResolvedTicketPriorityAnchors:
     project: ProjectPriorityAnchor | None
 
 
-class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer transitions
+class WorkerStepClaim(StrEnum):
+    """The one state-of-control fact a Ticket stores, written by data-layer transitions.
+
+    ``out`` means the wakeup system has sent this Ticket's worker its step. It says
+    nothing about whether a turn is live right now: that is a conversation fact.
+    """
+
+    none = "none"
+    out = "out"
+    errored = "errored"
+
+
+class TicketStatus(StrEnum):  # derived at the moment of a read; never stored
     empty = "empty"
-    blocked = "blocked"  # empty's stand-in while a live blocker exists
+    blocked = "blocked"  # what rest is called while a live blocker exists
     agent = "agent"
     awaiting_approval = "awaiting_approval"
     errored = "errored"
@@ -155,6 +167,10 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     # states scope creates the Ticket already scoped. Omission keeps the default leash:
     # the kickoff parks for approval.
     ceiling: str | None
+    # Who the ceiling is held for. Absent, the creator holds it, as before. A creator can
+    # name any holder here without holding anything first: this is how a Ticket is opened
+    # for somebody else to review.
+    ceiling_holder: object  # full Principal
 
 
 class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
@@ -175,7 +191,8 @@ class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     guidance: str  # replaces the document
     guidance_append: str  # adds to it; naming both in one call is refused
     field_values: Mapping[str, str]  # settled values only, by field id
-    ceiling: str
+    ceiling: str  # how far the Ticket may go; refused while a proposal is parked
+    ceiling_holder: Principal  # who is asked; allowed while a proposal is parked
 
 
 class ProposalBody(TypedDict, total=False):  # POST /tickets/{id}/propose
@@ -231,12 +248,16 @@ class Ticket:  # §3.3 — column names match exactly
     guidance: str = field(default="", kw_only=True)  # durable instructions for the Ticket
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     ceiling_holder: Principal = field(kw_only=True)
-    ticket_status: TicketStatus  # durable state-of-control; transition functions write it
-    # When ticket_status last actually changed, for display and elapsed-time facts.
-    ticket_status_changed_at: int
-    # Monotonic status-transition identity used by notifications and worker claims.
+    # Derived when the row is read, never stored. Kept on the Ticket because almost
+    # every reader wants the answer, not the facts behind it.
+    ticket_status: TicketStatus
+    # The one stored state-of-control fact: whether this Ticket's worker step is out.
+    worker_step_claim: WorkerStepClaim
+    # When the claim last actually changed, for display and elapsed-time facts.
+    worker_step_claim_changed_at: int
+    # Monotonic claim-transition identity used by notifications and worker claims.
     # Unlike the timestamp, it cannot collide when two transitions share a second.
-    ticket_status_revision: int
+    worker_step_claim_revision: int
     conversation_id: str | None  # the Ticket's conversation link (column name is frozen)
     field_values: TicketFieldValues
     pending_proposal: PendingTicketProposal | None

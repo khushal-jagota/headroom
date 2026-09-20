@@ -19,13 +19,13 @@ suitable checkout when one is not available.
 
 ### needs_brief — receive the bug report
 
-The Kickoff should describe the reported bug, its context, and any evidence already
+The Brief should describe the reported bug, its context, and any evidence already
 available. Treat it as the starting point to interpret, not necessarily a complete
 description and not as the diagnosis.
 
 ### needs_problem_understanding — understand the reported problem
 
-Work from the Kickoff to understand what problem the user means. Resolve unclear references
+Work from the Brief to understand what problem the user means. Resolve unclear references
 or missing context; inspect code, dogfood, or reproduce only where that helps clarify the
 report. If essential information is unavailable, request it with a bounded question.
 
@@ -50,5 +50,5 @@ implement the fix or add unrelated redesign.
 
 ### needs_consequences — hand off
 
-Leave a short orientation to the diagnosis, solution, outstanding implementation work,
-and any residual uncertainty.
+Leave a short orientation to the Root Cause, the Proposed Fix, outstanding implementation
+work, and any residual uncertainty.

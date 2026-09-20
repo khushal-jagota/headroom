@@ -102,6 +102,12 @@ def test_cutover_keeps_current_saved_value_and_draft_and_archives_raw_metadata(
         before.pop("alias")
         before.pop("backend_error")
         before.pop("at_cap")
+        # The stored status and its two companions became the claim, which carries their
+        # values across unchanged.
+        assert before.pop("ticket_status") == "awaiting_approval"
+        assert after.pop("worker_step_claim") == "none"
+        assert after.pop("worker_step_claim_changed_at") == before.pop("ticket_status_changed_at")
+        assert after.pop("worker_step_claim_revision") == before.pop("ticket_status_revision")
         assert before == after
         blank = conn.execute("SELECT pending_proposal FROM tickets WHERE id='b'").fetchone()[0]
         assert json.loads(blank)["body"] == ""

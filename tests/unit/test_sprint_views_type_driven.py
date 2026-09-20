@@ -96,8 +96,8 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
         title_max_chars=200,
         sprint_item_id=item.id,
     )
-    # Accept brief (default ceiling is now needs_brief, so brief parks until accepted),
-    # expanding the ceiling to needs_success_condition; that proposal then parks.
+    # Accept kickoff (default ceiling is now needs_brief, so kickoff parks until
+    # accepted), expanding the ceiling to needs_success_condition; a success proposal then parks.
     file_current_proposal(
         tmp_db,
         child.id,
@@ -167,18 +167,18 @@ def test_item_tickets_carries_the_two_facts_the_status_group_rule_needs(
 
 
 @pytest.mark.parametrize(
-    ("stage", "ticket_status", "ceiling", "expected"),
+    ("stage", "worker_step_claim", "ceiling", "expected"),
     [
-        ("needs_consequences", "empty", "needs_consequences", True),
-        ("needs_consequences", "empty", "done", True),
-        ("needs_success_condition", "empty", "done", False),
-        ("needs_consequences", "agent", "done", False),
+        ("needs_consequences", "none", "needs_consequences", True),
+        ("needs_consequences", "none", "done", True),
+        ("needs_success_condition", "none", "done", False),
+        ("needs_consequences", "out", "done", False),
     ],
 )
 def test_item_tickets_identifies_only_runnable_empty_closeout_tickets(
     tmp_db: Connection,
     stage: str,
-    ticket_status: str,
+    worker_step_claim: str,
     ceiling: str,
     expected: bool,
 ) -> None:
@@ -195,9 +195,12 @@ def test_item_tickets_identifies_only_runnable_empty_closeout_tickets(
         title_max_chars=200,
         sprint_item_id=item.id,
     )
+    # No parked proposal: this case is about a Ticket at rest, and a parked proposal is
+    # one of the things that means it is not.
     tmp_db.execute(
-        "UPDATE tickets SET stage = ?, ticket_status = ?, ceiling = ? WHERE id = ?",
-        (stage, ticket_status, ceiling, child.id),
+        "UPDATE tickets SET stage = ?, worker_step_claim = ?, ceiling = ?, "
+        "pending_proposal = NULL WHERE id = ?",
+        (stage, worker_step_claim, ceiling, child.id),
     )
 
     rows = item_tickets(tmp_db, item.id)

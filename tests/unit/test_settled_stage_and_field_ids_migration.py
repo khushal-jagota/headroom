@@ -20,7 +20,7 @@ from planner.core.db import connect, create_schema
 from planner.core.migrations.versions.settled_stage_and_field_ids import moved_skill_text
 from planner.worker_types.store import read_definition
 
-PREVIOUS_REVISION = "one_ticket_ending"
+PREVIOUS_REVISION = "one_notification_path"
 
 # A coding Ticket part-way through, with a settled value, a blank, and a parked proposal.
 # Three of these four keys move and `plan` does not, so the count is the same either way

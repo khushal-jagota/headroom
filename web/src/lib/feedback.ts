@@ -132,7 +132,7 @@ export function feedbackTicketStateLabel(ticket: FeedbackTicket): string {
   if (ticket.agent_state === "errored") return "Errored";
   const labels: Record<string, string> = { errored: "Errored", blocked: "Blocked" };
   if (ticket.ticket_status === "empty" && ticket.stage === "needs_consequences") {
-    return "Waiting for closeout";
+    return "Waiting on Consequences";
   }
   const stage = ticket.stage.replace(/_/g, " ");
   return labels[ticket.ticket_status] || `${stage.charAt(0).toUpperCase()}${stage.slice(1)}`;

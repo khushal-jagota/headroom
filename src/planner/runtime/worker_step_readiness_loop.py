@@ -93,8 +93,8 @@ async def start_ready_worker_step(
         )
         if claimed is None:
             return False
-        departure_status = claimed.ticket_status
-        departure_status_revision = claimed.ticket_status_revision
+        taken_claim = claimed.worker_step_claim
+        taken_claim_revision = claimed.worker_step_claim_revision
         paired_opener = (
             conn.execute(
                 "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
@@ -108,8 +108,8 @@ async def start_ready_worker_step(
             released = tickets_data.release_worker_step_claim(
                 conn,
                 ticket_id,
-                expected_status=departure_status,
-                expected_status_revision=departure_status_revision,
+                expected_claim=taken_claim,
+                expected_claim_revision=taken_claim_revision,
                 now=now(),
             )
             if released and paired_opener and not opener_succeeded:

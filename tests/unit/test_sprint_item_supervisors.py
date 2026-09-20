@@ -747,7 +747,7 @@ def _stranded_child(
     item_id: str,
     *,
     conversation_id: str = "conv-dead-worker",
-    ticket_status_changed_at: int = 1,
+    worker_step_claim_changed_at: int = 1,
     worker_type: str = "coding",
 ) -> str:
     """A child Ticket exactly as a dead Worker leaves one: at `agent`, holding nothing.
@@ -784,9 +784,9 @@ def _stranded_child(
             (conversation_id,),
         )
         conn.execute(
-            "UPDATE tickets SET conversation_id = ?, ticket_status = 'agent', "
-            "ticket_status_changed_at = ? WHERE id = ?",
-            (conversation_id, ticket_status_changed_at, ticket["id"]),
+            "UPDATE tickets SET conversation_id = ?, worker_step_claim = 'out', "
+            "worker_step_claim_changed_at = ? WHERE id = ?",
+            (conversation_id, worker_step_claim_changed_at, ticket["id"]),
         )
         conn.commit()
     return str(ticket["id"])

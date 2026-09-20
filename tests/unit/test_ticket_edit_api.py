@@ -378,7 +378,8 @@ def test_employee_configuration_endpoint_allows_pristine_statuses(
     awaiting_id = _create_pristine_ticket(db_path)
     empty_id = _create_pristine_ticket(db_path)
     conn = connect(str(db_path))
-    conn.execute("UPDATE tickets SET ticket_status = 'empty' WHERE id = ?", (empty_id,))
+    # No parked proposal, so this one reads as `empty` rather than awaiting approval.
+    conn.execute("UPDATE tickets SET pending_proposal = NULL WHERE id = ?", (empty_id,))
     conn.close()
 
     with TestClient(app) as client:

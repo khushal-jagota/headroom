@@ -13,11 +13,11 @@ from planner.notifications import data as notifications_data
 PREVIOUS_REVISION = "notifications"
 
 
-def _upgrade_to_previous_revision(path: Path) -> None:
+def _upgrade_to(path: Path, revision: str) -> None:
     engine = db_module._migration_engine(str(path), 5000)
     with engine.connect() as connection:
         with connection.begin():
-            command.upgrade(db_module._alembic_config(connection), PREVIOUS_REVISION)
+            command.upgrade(db_module._alembic_config(connection), revision)
     engine.dispose()
 
 
@@ -25,7 +25,7 @@ def test_upgrade_preserves_delivery_graph_and_seeds_agent_no_history_cursor(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "notification-subjects.db"
-    _upgrade_to_previous_revision(db_path)
+    _upgrade_to(db_path, PREVIOUS_REVISION)
     conn = connect(str(db_path))
     ticket_id = "t_existing"
     conn.execute(
@@ -90,8 +90,10 @@ def test_upgrade_preserves_delivery_graph_and_seeds_agent_no_history_cursor(
     )
     conn.close()
 
+    # The assertions run at the last revision that still has the fact tables this
+    # migration rewrites. one_notification_path drops them after it.
+    _upgrade_to(db_path, "derive_ticket_status")
     upgraded = connect(str(db_path))
-    create_schema(upgraded)
 
     assert [
         (row["fact_id"], row["subject_kind"], row["subject_id"], row["payload"])
@@ -130,8 +132,12 @@ def test_upgrade_preserves_delivery_graph_and_seeds_agent_no_history_cursor(
         ).fetchone()[0]
         == 1
     )
-    notifications_data.project_facts(upgraded)
-    assert upgraded.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 1
-    assert notifications_data.apply_policy(upgraded, 6) == 0
     assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
     upgraded.close()
+
+    # And the rest of the chain still runs over those same rows.
+    head = connect(str(db_path))
+    create_schema(head)
+    assert notifications_data.queue_deliveries(head, 6) == 0
+    assert head.execute("PRAGMA foreign_key_check").fetchall() == []
+    head.close()

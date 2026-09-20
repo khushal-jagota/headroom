@@ -8,7 +8,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - Python ≥ 3.12 backend in `src/planner/`, with FastAPI wiring in `src/planner/core/server.py` and SQLite schema/migrations in `src/planner/core/db.py`.
 - Domain code is grouped by system: `tickets/`, `sprints/`, `days/`, and `projects/`. Contracts live in each domain's `contracts.py`; framework-free rules live in `logic/`; HTTP routes live in `api.py`.
 - `panels` is the CLI entry point (`planner.cli.main:main`); `python -m planner` delegates to it. Important command groups are `serve`, `project`, `day`, `ticket`, `sprint`, `sprint item`, `worker`, and `chief`.
-- Worker orchestration lives in `runtime/`. `worker_step_readiness.py` is the whole readiness decision — read-only, no writes. `worker_step_readiness_loop.py` holds both the poll thread and `start_ready_worker_step`, the per-Ticket flow: occupancy check, one guarded status flip out of `empty` (the claim — no claim stamp, no run row), start or reuse the Ticket's conversation, compose the opener, send. Started and queued are both success; only a refusal releases the claim. Nothing watches a turn end. `conversation_start.py` owns resolve/start/send/reset against the conversation contract.
+- Worker orchestration lives in `runtime/`. `worker_step_readiness.py` is the whole readiness decision — read-only, no writes. `worker_step_readiness_loop.py` holds both the poll thread and `start_ready_worker_step`, the per-Ticket flow: occupancy check, one guarded write that takes the worker-step claim (the only state of control a Ticket stores — no claim stamp, no run row), start or reuse the Ticket's conversation, compose the opener, send. Started and queued are both success; only a refusal releases the claim. Nothing watches a turn end. `conversation_start.py` owns resolve/start/send/reset against the conversation contract.
 - Generic exact-time Ticket supply lives in `scheduled_tickets/`. Its sibling poll loop shares the server lifespan and single-machine lock, evaluates only the current local minute, and transactionally records a created, suppressed, or failed occurrence. It stops at ordinary Ticket creation and day placement; the change signal and readiness loop own the Worker handoff.
 - `core/change_signal.py` is the payload-free, best-effort "something was written" signal. Every connection from `core/db.connect` announces its own commits, so no domain action carries wake or invalidation calls. The one way past it is `core/db.commit_without_change_signal`, used where the writer has established that no screen is waiting for its rows: managed skill history, and the conversation rows only an open conversation shows, which the live tail hands over directly. While the polling-lock owner's readiness loop runs it is subscribed to the signal; SQLite and the periodic timer remain canonical. The browser hears the same signal over `GET /api/changes` (`core/sse.py`).
 - Conversation code lives in `conversation/`, and it is the only one: contract, core, record, live tail, backend snapshots, and one adapter per backend under `backends/`. Every screen that shows a conversation and every worker step goes through it. The backends are a closed set of exactly `hermes`, `codex`, and `claude`, stated in the contract, and one door turns untrusted text into a member of it.
@@ -75,14 +75,14 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   services, and stop them when that active work is finished. If a port is taken during
   startup, select another and retry.
 - The worktree's database and other local state may remain for later use until
-  Closeout.
-- At Closeout, complete integration: bring current `staging` into the Ticket branch,
+  Consequences.
+- At Consequences, complete integration: bring current `staging` into the Ticket branch,
   repair and verify the resulting revision, advance `staging` when it is green, push
   that exact revision to `origin/staging`, and verify the remote ref matches before
   removing the Ticket's services, local runtime state, worktree, and branch.
 - Always keep a single rolling `staging` → `main` pull request open. After the
   `origin/staging` push, check whether one already exists; if not, create one. It
-  updates on its own as later Closeouts advance `staging`, so there is nothing to do
+  updates on its own as later Consequences Stages advance `staging`, so there is nothing to do
   when one is already open.
 - Deployment from `main` remains a later user action. It is not part of Ticket
   integration.

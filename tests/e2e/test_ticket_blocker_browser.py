@@ -57,6 +57,7 @@ def test_ticket_detail_removes_a_blocker_and_settles_status(
             "AND blocked_ticket_id = ?",
             (blocker_id, blocked_id),
         ).fetchone()[0] == 0
+        # Nothing was written to un-block it. The row is gone, so the answer changed.
         assert conn.execute(
-            "SELECT ticket_status FROM tickets WHERE id = ?", (blocked_id,)
-        ).fetchone()[0] == "empty"
+            "SELECT worker_step_claim FROM tickets WHERE id = ?", (blocked_id,)
+        ).fetchone()[0] == "none"

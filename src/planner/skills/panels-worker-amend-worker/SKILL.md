@@ -11,7 +11,7 @@ Structural change is the normal case: a Stage is removed, or added, or an owners
 
 Small skill-text edits are not this worker's job. The user makes those directly.
 
-**Stages: Kickoff → Amendment → Drafting → Closeout → Done.**
+**Stages: Brief → Amendment → Drafting → Consequences → Done.**
 
 ## Where a Worker lives
 
@@ -53,7 +53,7 @@ Skill text is instruction for a capable agent, not documentation. Amending a ski
 5. Update `src/planner/skills/panels-worker-<name>/SKILL.md` in the repository when the skill text changed, so a fresh install is seeded with the current text. This is a repository change with no effect on this Panels, and it goes through the ordinary branch and staging route.
 6. Update `docs/worker-types.md` when the set of types or their shape changed.
 
-A good closeout is short and verified: what changed, what `panels worker-type show` reports now, and what if anything is waiting on a repository change.
+A good Consequences is short and verified: what changed, what `panels worker-type show` reports now, and what if anything is waiting on a repository change.
 
 ## Boundaries
 

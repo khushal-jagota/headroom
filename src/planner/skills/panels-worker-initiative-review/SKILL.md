@@ -11,7 +11,7 @@ Use it selectively. It complements Sprint Item supervisors, Initiative Planning,
 
 ## The stages
 
-The sequence is **Kickoff → Review → Feedback → Follow-ups → Closeout → Done**.
+The sequence is **Brief → Review → Feedback → Follow-ups → Consequences → Done**.
 
 - **needs_brief** — identify the intended outcome, combined change, source context, target base, and integration route.
 - **needs_review** — inspect the combined result, run proportionate checks, and create the HTML review for an exact commit.
@@ -34,7 +34,7 @@ Name the intended outcome, the combined branch or change set, and the source rec
 
 Confirm that the review target and its source context exist. Do not assume that the result is ready.
 
-A good **kickoff** lets another worker identify the exact review surface without reconstructing the initiative.
+A good **Brief** lets another worker identify the exact review surface without reconstructing the initiative.
 
 ## needs_review — review the combined result
 
@@ -98,7 +98,7 @@ If integration introduces a material source or behavior change, stop. Return the
 
 Do not deploy or publish without explicit authority. If approval does not exist or a blocker remains, leave the target unchanged.
 
-A good **closeout** states the reviewed result, the target state, and the verification. If integration did not occur, it states the blocker, handoff, and next review point.
+A good **Consequences** states the reviewed result, the target state, and the verification. If integration did not occur, it states the blocker, handoff, and next review point.
 
 ## Initiative Review disciplines
 

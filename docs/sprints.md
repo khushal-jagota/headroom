@@ -32,7 +32,7 @@ At 17:00 local time on day four, the internal schedule creates a personal Checkp
 Ticket in the current sprint. At 17:00 on the final day, it creates a `planning-sprint`
 Ticket in the Personal Project and current Sprint. Its specialist Worker reviews
 the current sprint first, plans the next sprint with the user, and writes only the
-approved result at Closeout. A matching pre-laid Ticket suppresses each scheduled
+approved result at Consequences. A matching pre-laid Ticket suppresses each scheduled
 duplicate. If a run is missed, recovery uses ordinary Ticket creation. Neither schedule
 backfills a missed occurrence, and Planning Sprint stays on the final day.
 
@@ -115,7 +115,7 @@ identity carries the same authority. A write aimed at another Item, or at a Tick
 is not a current child, is refused.
 
 A supervisor creates its own child Tickets with the ordinary Ticket creation route. A
-Ticket it creates is scoped like any other: the kickoff parks for the user's approval
+Ticket it creates is scoped like any other: the Brief parks for the user's approval
 unless the supervisor states a wider scope it was given.
 
 A supervisor also deletes a current child Ticket, through the ordinary deletion route.

@@ -11,7 +11,6 @@ from typing import assert_type
 from planner.tickets.contracts import (
     StageOwnershipMode,
     Ticket,
-    TicketStatus,
 )
 from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -47,8 +46,4 @@ def _cases(
             worker_type_definition=definition,
         ),
         StageOwnershipMode | None,
-    )
-    assert_type(
-        machine.resting_ticket_status(StageOwnershipMode.worker),
-        TicketStatus,
     )

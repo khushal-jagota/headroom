@@ -4,10 +4,11 @@
   import StageMark from "./StageMark.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
-  import { labelize, type FieldStageVisualState } from "../lib/ui";
+  import { type FieldStageVisualState } from "../lib/ui";
   import {
     advanceTargetFor,
     fieldIsPassedFor,
+    fieldLabelFor,
     gatingFieldFor,
     type Lifecycle
   } from "../lib/lifecycle";
@@ -21,6 +22,7 @@
     ticketStage,
     ceiling,
     lifecycle = null,
+    sprintItem = null,
     stageState = "upcoming",
     variant = "ticket",
     emptyText = "Not written yet.",
@@ -40,6 +42,7 @@
     ticketStage: string;
     ceiling: string;
     lifecycle?: Lifecycle | null;
+    sprintItem?: { id: string; title: string } | null;
     stageState?: FieldStageVisualState;
     variant?: "ticket" | "review";
     emptyText?: string;
@@ -55,7 +58,7 @@
   } = $props();
 
   let reviewVariant = $derived(variant === "review");
-  let fieldLabel = $derived(labelize(name));
+  let fieldLabel = $derived(fieldLabelFor(lifecycle, name));
   let isGating = $derived(gatingFieldFor(lifecycle, ticketStage) === name);
   let passed = $derived(fieldIsPassedFor(lifecycle, name, ticketStage));
   let hasProposal = $derived(pendingProposal?.field === name);
@@ -76,6 +79,7 @@
       proposedBy={pendingProposal?.proposed_by || ""}
       newStage={nextStage}
       {lifecycle}
+      {sprintItem}
       {contextRow}
       disabled={approvalDisabled}
       onApprove={onAccept}
@@ -110,7 +114,7 @@
   >
     {#snippet summary()}
       <StageMark state={stageState} />
-      <span class="disclosure-stage-name">{name}</span>
+      <span class="disclosure-stage-name">{fieldLabel}</span>
       {#if runLabel}
         <span
           class="ticket-stage-run"

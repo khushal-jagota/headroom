@@ -88,6 +88,16 @@
     typeof detail.data?.worker_type === "string" ? (detail.data.worker_type as string) : null
   );
   let lc = $derived(lifecycleFor(manifest.data, detailWorkerType));
+  // Approving here sets the next ceiling, so the reviewer gets the same choice of holder
+  // the Ticket page offers, including handing the Ticket back to its own Sprint Item.
+  let reviewSprintItem = $derived(
+    detail.data?.sprint_item_id
+      ? {
+          id: detail.data.sprint_item_id,
+          title: detail.data.resolved_priority_anchors?.sprint_item?.title || "Sprint Item"
+        }
+      : null
+  );
   let voiceAvailable = $derived(voiceCaptureAvailable(voiceSupported, true));
 
   let manifestMissingWorkerType = $derived(
@@ -312,6 +322,7 @@
             lifecycle={lc}
             ticketStage={ticketDetail.stage}
             ceiling={ticketDetail.ceiling}
+            sprintItem={reviewSprintItem}
             stageState={fieldStageVisualStateFor(lc, ticketDetail, acceptField)}
             approvalDisabled={acceptField === "brief" && priorityBusy}
             onAccept={(payload) => accept(payload)}

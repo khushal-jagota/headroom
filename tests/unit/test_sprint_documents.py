@@ -156,6 +156,16 @@ def test_sprint_migration_preserves_all_prose_and_references(tmp_path: Path) -> 
         ticket_before.pop("alias")
         ticket_before.pop("backend_error")
         ticket_before.pop("at_cap")
+        # The stored status and its two companions became the claim, which carries their
+        # values. A Ticket parked at `awaiting_approval` had no claim out.
+        assert ticket_before.pop("ticket_status") == "awaiting_approval"
+        assert ticket_after.pop("worker_step_claim") == "none"
+        assert ticket_after.pop("worker_step_claim_changed_at") == ticket_before.pop(
+            "ticket_status_changed_at"
+        )
+        assert ticket_after.pop("worker_step_claim_revision") == ticket_before.pop(
+            "ticket_status_revision"
+        )
         assert ticket_after.pop("ceiling_holder") == '{"id":"owner","kind":"owner"}'
         # A later revision moves the ids to the settled labels, so the Stage this row was
         # written with reaches head under its new name, in every column that holds one.

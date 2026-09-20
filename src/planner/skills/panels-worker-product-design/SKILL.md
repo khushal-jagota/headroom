@@ -13,21 +13,21 @@ Simplicity can help, but is not the definition of usability.
 ### needs_brief
 
 Capture the product problem, intended outcome, relevant surface, and known constraints.
-Keep this outcome-level; do not hide an assumed solution inside the kickoff.
+Keep this outcome-level; do not hide an assumed solution inside the Brief.
 
 ### needs_best_guess_and_open_options
 
 Inspect the real product, then make a concise first best guess from that evidence and
-the kickoff. Note the top-level issues, the intended flow, and consequential assumptions.
+the Brief. Note the top-level issues, the intended flow, and consequential assumptions.
 Be opinionated but easy for the user to correct; this is not yet a specification or
 wireframe.
 
 ### needs_wireframe
 
-Work with the user to make the approved direction tangible at low fidelity. Use a
-ticket-owned interactive HTML wireframe where behavior matters. Validate structure,
-hierarchy, interactions, and important states before polish. Alternatives should differ
-meaningfully, not cosmetically.
+Work with the user to make the approved Best Guess and Open Options tangible at low
+fidelity. Use a ticket-owned interactive HTML wireframe where behavior matters. Validate
+structure, hierarchy, interactions, and important states before polish. Alternatives
+should differ meaningfully, not cosmetically.
 
 ### needs_design
 

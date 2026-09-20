@@ -1,7 +1,7 @@
 """Move the stage and field ids to the settled names.
 
 Revision ID: settled_stage_and_field_ids
-Revises: one_ticket_ending
+Revises: one_notification_path
 
 The labels were settled first and a separate change moved them. An id is not a label: two
 of these are behaviour. `closeout` is the field every Worker type must declare, the one
@@ -38,7 +38,7 @@ from typing import Any
 from alembic import op
 
 revision = "settled_stage_and_field_ids"
-down_revision = "one_ticket_ending"
+down_revision = "one_notification_path"
 branch_labels = None
 depends_on = None
 

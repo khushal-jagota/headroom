@@ -11,7 +11,7 @@ move without creating a second plan.
 ### needs_brief
 
 Identify the planning date and the 14:30 checkpoint plainly. Orient to the morning intent;
-do not pre-decide the action.
+do not pre-decide the Agreed Intervention.
 
 ### needs_agreed_intervention
 
@@ -34,5 +34,5 @@ what changed or did not need changing. Keep it truthful and brief.
 
 ### done and dropped
 
-Done means approved action and the reconciliation match reality. A missed or dropped
-check creates no invented record or catch-up ceremony.
+Done means the approved Agreed Intervention and the reconciliation match reality. A
+missed or dropped check creates no invented record or catch-up ceremony.

@@ -30,7 +30,7 @@ def _insert_ticket(
     stage: str,
     *,
     sprint_item_id: str | None = None,
-    ticket_status: str = "empty",
+    worker_step_claim: str = "none",
 ) -> None:
     # T04 owns ticket writers; a direct INSERT is the sanctioned test-fixture
     # shortcut for setting child/blocker ticket-states (only NOT-NULL non-defaulted
@@ -38,9 +38,9 @@ def _insert_ticket(
     conn.execute(
         "INSERT INTO tickets (id, title, worker_type, employee_backend, stage, "
         "sprint_item_id, ceiling, "
-        "ticket_status, field_values, created_at, updated_at) "
-        "VALUES (?, ?, 'coding', 'hermes', ?, ?, 'needs_success_condition', ?, ?, 0, 0)",
-        (ticket_id, "child", stage, sprint_item_id, ticket_status, _EMPTY_CODING_FIELDS),
+        "worker_step_claim, field_values, created_at, updated_at) "
+        "VALUES (?, ?, 'coding', 'hermes', ?, ?, 'needs_success', ?, ?, 0, 0)",
+        (ticket_id, "child", stage, sprint_item_id, worker_step_claim, _EMPTY_CODING_FIELDS),
     )
 
 
@@ -215,7 +215,7 @@ def test_planning_claim_and_sprint_write_share_one_write_lock(
     sprint = create_sprint(
         tmp_db, name="A", date_start="2026-07-01", date_end="2026-07-14", clock=fake_clock
     )
-    _insert_ticket(tmp_db, "t_planning_sprint", "needs_success_condition")
+    _insert_ticket(tmp_db, "t_planning_sprint", "needs_success")
     tmp_db.execute(
         "UPDATE tickets SET worker_type = 'planning-sprint' WHERE id = 't_planning_sprint'"
     )

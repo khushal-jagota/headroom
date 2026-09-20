@@ -96,12 +96,17 @@ def _insert_status_event(
     )
 
 
-def _status_changed_at(conn: sqlite3.Connection, ticket_id: str) -> int:
+def _state_changed_at(conn: sqlite3.Connection, ticket_id: str) -> int:
+    """When this Ticket's state of control last moved.
+
+    A later revision stopped storing the status and kept the claim, which inherited this
+    column. The question the revision under test answers is the same one.
+    """
     row = conn.execute(
-        "SELECT ticket_status_changed_at FROM tickets WHERE id = ?", (ticket_id,)
+        "SELECT worker_step_claim_changed_at FROM tickets WHERE id = ?", (ticket_id,)
     ).fetchone()
     assert row is not None
-    return int(row["ticket_status_changed_at"])
+    return int(row["worker_step_claim_changed_at"])
 
 
 def _revision(conn: sqlite3.Connection) -> str:
@@ -163,8 +168,8 @@ def test_each_ticket_keeps_the_time_of_its_latest_recorded_status_change(
     upgraded: sqlite3.Connection,
 ) -> None:
     stored = {
-        str(row["id"]): int(row["ticket_status_changed_at"])
-        for row in upgraded.execute("SELECT id, ticket_status_changed_at FROM tickets")
+        str(row["id"]): int(row["worker_step_claim_changed_at"])
+        for row in upgraded.execute("SELECT id, worker_step_claim_changed_at FROM tickets")
     }
 
     assert stored["t_needs_user"] == 3_000  # the newest of its three transitions
@@ -182,7 +187,7 @@ def test_review_serves_the_backfilled_time_as_the_wait(
     assert review["items"] == []
 
 
-def test_a_new_ticket_and_a_status_change_keep_the_column_current(
+def test_a_new_ticket_and_a_state_change_keep_the_column_current(
     upgraded: sqlite3.Connection,
 ) -> None:
     created = tickets_data.create_ticket(
@@ -193,8 +198,10 @@ def test_a_new_ticket_and_a_status_change_keep_the_column_current(
         now=10_000,
         title_max_chars=200,
     )
-    assert _status_changed_at(upgraded, created.id) == 10_000
+    assert _state_changed_at(upgraded, created.id) == 10_000
 
+    # Approving a parked proposal moves the derived status but takes no claim, so the
+    # column stays where it was. It answers for the claim, and only the claim.
     settled = tickets_data.accept_proposal(
         upgraded,
         created.id,
@@ -205,11 +212,11 @@ def test_a_new_ticket_and_a_status_change_keep_the_column_current(
         next_holder=OWNER_PRINCIPAL,
     )
     assert settled.ticket_status is not created.ticket_status
-    assert _status_changed_at(upgraded, created.id) == 11_000
+    assert _state_changed_at(upgraded, created.id) == 10_000
 
     tickets_data.mark_ticket_errored(upgraded, created.id, now=12_000)
-    assert _status_changed_at(upgraded, created.id) == 12_000
+    assert _state_changed_at(upgraded, created.id) == 12_000
 
-    # Recording the same status again changes no status, so the time stays where it was.
+    # Recording the same claim again changes no claim, so the time stays where it was.
     tickets_data.mark_ticket_errored(upgraded, created.id, now=13_000)
-    assert _status_changed_at(upgraded, created.id) == 12_000
+    assert _state_changed_at(upgraded, created.id) == 12_000

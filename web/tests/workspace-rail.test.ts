@@ -106,7 +106,7 @@ describe("Workspace rail", () => {
       "Messages",
       "Errored",
       "Agent",
-      "Waiting to Closeout",
+      "Waiting on Consequences",
       "Awaiting an agent's approval",
       "Empty",
       "Blocked",
