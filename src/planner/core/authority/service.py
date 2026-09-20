@@ -77,33 +77,39 @@ def is_above_or_self(conn: sqlite3.Connection, caller: Principal, target: Target
     return is_self(caller, target) or is_above(conn, caller, target)
 
 
-def _refuse(caller: Principal, target: Target, action: str) -> None:
+def _refuse(caller: Principal, target: Target) -> None:
+    """Refuse, naming both sides.
+
+    There is no hand-written action string. The detail names the principal and the thing
+    it asked to act on, and the request itself names the operation, so a label repeated at
+    every call site would add nothing and drift.
+    """
     raise PlannerError(
         ErrorCode.agent_forbidden,
-        f"{action} is not available to this principal",
+        "this principal does not stand above what it asked to act on",
         {
             "actor": principal_legacy_actor(caller),
             "principal_kind": caller.kind.value,
             "principal_id": caller.id,
             "target_kind": target.kind.value,
             "target_id": target.id,
-            "action": action,
+            "target_fields": sorted(target.fields),
         },
     )
 
 
-def require_above(conn: sqlite3.Connection, caller: Principal, target: Target, action: str) -> None:
+def require_above(conn: sqlite3.Connection, caller: Principal, target: Target) -> None:
     """Admit a caller that stands strictly above the target. Refuse everything else."""
     if not is_above(conn, caller, target):
-        _refuse(caller, target, action)
+        _refuse(caller, target)
 
 
 def require_above_or_self(
-    conn: sqlite3.Connection, caller: Principal, target: Target, action: str
+    conn: sqlite3.Connection, caller: Principal, target: Target
 ) -> None:
     """Admit the target's own principal as well, for an operation on its own record."""
     if not is_above_or_self(conn, caller, target):
-        _refuse(caller, target, action)
+        _refuse(caller, target)
 
 
 __all__ = [

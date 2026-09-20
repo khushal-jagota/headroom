@@ -205,7 +205,7 @@ def test_a_refusal_names_the_principal_and_the_target(db: Connection) -> None:
     ticket_id = _ticket(db, item_id=None)
     with pytest.raises(PlannerError) as raised:
         require_above(
-            db, Principal(PrincipalKind.ticket, ticket_id), targets.owner_only("projects"), "create"
+            db, Principal(PrincipalKind.ticket, ticket_id), targets.owner_only("projects")
         )
 
     assert raised.value.code is ErrorCode.agent_forbidden

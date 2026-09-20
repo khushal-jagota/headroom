@@ -93,7 +93,7 @@ async def read_projects(
 async def create_project(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("projects"), "creating a project")
+    require_above(conn, ctx.principal, owner_only("projects"))
     body = _marshal_create_project(raw)
     project = projects_data.create_project(
         conn,
@@ -110,7 +110,7 @@ async def create_project(
 async def update_project(
     project_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("projects"), "editing a project")
+    require_above(conn, ctx.principal, owner_only("projects"))
     body = _marshal_update_project(raw)
     folder_path: dict[str, Any] = {}
     if "folder_path" in body:

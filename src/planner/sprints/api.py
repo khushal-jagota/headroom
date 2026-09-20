@@ -15,13 +15,14 @@ from fastapi import APIRouter, Query, Request
 
 from planner.conversation.api import OwnerSendBody, conversation_message_content, delivery_fate_json
 from planner.conversation.contracts import require_conversation_backend_key
+from planner.core import authority
 from planner.core.authctx import (
     reject_agent_fields,
-    require_direct_write,
     require_planning_write,
     require_sprint_item_supervisor_read,
     require_sprint_item_supervisor_ticket_write,
 )
+from planner.core.authority import require_above
 from planner.core.contracts import JsonDict, Principal, PrincipalKind, Priority
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
@@ -612,7 +613,7 @@ async def send_to_item_supervisor(
     message_files: MessageFiles,
     clk: Clk,
 ) -> JsonDict:
-    require_direct_write(ctx)
+    require_above(conn, ctx.principal, authority.outcome(item_id))
     return await _send_to_item_supervisor(
         item_id, body, conn, ctx, conversations, message_files, clk
     )
@@ -668,7 +669,7 @@ async def _send_to_item_supervisor(
 async def reset_item_supervisor(
     item_id: str, conn: DbConn, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
-    require_direct_write(ctx)
+    require_above(conn, ctx.principal, authority.outcome(item_id))
     async with sprints_service.supervisor_lifecycle_lock(item_id):
         item = sprints_data.read_item(conn, item_id).item
         await conversation_start.reset_agent_conversation(
@@ -681,7 +682,7 @@ async def reset_item_supervisor(
 async def delete_item(
     item_id: str, conn: DbConn, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
-    require_direct_write(ctx)
+    require_above(conn, ctx.principal, authority.outcome(item_id))
     deleted = await sprints_service.delete_item(
         conversations, conn, item_id, principal=ctx.principal
     )

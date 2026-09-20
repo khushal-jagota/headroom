@@ -231,7 +231,7 @@ def _refuse_a_worker_type_skill(skill_name: str) -> None:
 async def patch_skill(
     skill_name: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("skills"), "editing a skill")
+    require_above(conn, ctx.principal, owner_only("skills"))
     if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
         raise PlannerError(ErrorCode.validation, "skill patch requires exactly one field", {})
     _refuse_a_worker_type_skill(skill_name)
@@ -254,7 +254,7 @@ async def get_chief_settings(conn: DbConn) -> JsonDict:
 async def put_chief_launch_defaults(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("worker_settings"), "editing launch defaults")
+    require_above(conn, ctx.principal, owner_only("worker_settings"))
     del config
     _reject_disabled_launch_model(conn, raw)
     return _chief_json(service.update_chief_launch_defaults(conn, raw))
@@ -264,7 +264,7 @@ async def put_chief_launch_defaults(
 async def put_chief_skill(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("worker_settings"), "editing a skill")
+    require_above(conn, ctx.principal, owner_only("worker_settings"))
     settings = service.save_chief_skill(
         conn, raw, now=clk.now_unix(), database_parent=_database_parent(config)
     )
@@ -275,7 +275,7 @@ async def put_chief_skill(
 async def patch_chief_skill(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("worker_settings"), "editing a skill")
+    require_above(conn, ctx.principal, owner_only("worker_settings"))
     if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
         raise PlannerError(ErrorCode.validation, "Chief skill patch requires exactly one field", {})
     settings = service.save_chief_skill(
@@ -292,7 +292,7 @@ async def put_worker_launch_defaults(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("worker_settings"), "editing launch defaults")
+    require_above(conn, ctx.principal, owner_only("worker_settings"))
     _reject_disabled_launch_model(conn, raw)
     registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.update_worker_launch_defaults(
@@ -316,7 +316,7 @@ async def put_worker_skill(
     config: Cfg,
     clk: Clk,
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("worker_settings"), "editing a skill")
+    require_above(conn, ctx.principal, owner_only("worker_settings"))
     registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.save_specialist_skill(
         conn,
@@ -338,7 +338,7 @@ async def patch_worker_skill(
     config: Cfg,
     clk: Clk,
 ) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("worker_settings"), "editing a skill")
+    require_above(conn, ctx.principal, owner_only("worker_settings"))
     if set(raw) not in ({"description"}, {"markdown_body"}):
         raise PlannerError(
             ErrorCode.validation,
@@ -382,7 +382,7 @@ async def post_worker_type(
     block carries the specialist skill, so declaring a new Worker and declaring the skill
     it names are one act.
     """
-    require_above(conn, ctx.principal, owner_only("worker_types"), "creating a Worker type")
+    require_above(conn, ctx.principal, owner_only("worker_types"))
     record = dict(raw)
     skill = record.pop("skill", None)
     definition = store.definition_from_json(json.dumps(record))

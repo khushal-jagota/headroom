@@ -40,14 +40,15 @@ from planner.conversation.contracts import (
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.snapshot import BackendSnapshotService
 from planner.conversation.storage import ConversationStore
+from planner.core import authority
 from planner.core.authctx import (
     RequestContext,
     reject_agent_fields,
     request_context,
-    require_direct_write,
     require_ticket_delete,
     require_ticket_worker_write,
 )
+from planner.core.authority import require_above
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.contracts import (
@@ -814,7 +815,7 @@ async def put_ticket_employee_configuration(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    require_direct_write(ctx)
+    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     required_keys = {
         "employee_backend",
         "employee_launch_model",
@@ -1110,7 +1111,7 @@ async def send_to_chief_conversation(
     — which it can only recognise by the name it minted. A door that takes the name and
     does not pass it on leaves that browser drawing a message the record already has.
     """
-    require_direct_write(ctx)
+    require_above(conn, ctx.principal, authority.owner_only("chief conversation"))
     created_conversation_id = conversation_start.new_conversation_id()
     runs_under = _what_this_message_runs_under(body)
     delivered = await message_delivery_service.send_message(
@@ -1135,7 +1136,7 @@ async def reset_chief_conversation(
     conn: DbConn, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
     """Cut the Chief loose from its conversation. This is what New does."""
-    require_direct_write(ctx)
+    require_above(conn, ctx.principal, authority.owner_only("chief conversation"))
     await conversation_start.reset_agent_conversation(conversations, conn, CHIEF_SETTINGS_KEY)
     return {"conversation_id": None}
 
@@ -1174,7 +1175,7 @@ async def send_to_ticket_conversation(
     Chief's door gives: a browser recognises its own message coming back by the name it
     minted, and a name this door drops is one the record can never hand back.
     """
-    require_direct_write(ctx)
+    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     created_conversation_id = conversation_start.new_conversation_id()
     delivered = await message_delivery_service.send_message(
         conversations,
@@ -1208,7 +1209,7 @@ async def reset_ticket_conversation(
     is started here: the Ticket now has no conversation, which is the state the start door
     above already knows how to answer.
     """
-    require_direct_write(ctx)
+    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     now = clk.now_unix()
     await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
     return tickets_views.ticket_json(tickets_data.read_ticket(conn, ticket_id), now)

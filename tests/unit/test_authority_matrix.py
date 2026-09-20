@@ -514,27 +514,32 @@ def test_the_authority_matrix_has_not_moved(seeded: tuple[Path, Seed], tmp_path:
         pytest.fail(_diff(expected, rendered))
 
 
+def _cells(text: str) -> dict[tuple[str, str], str]:
+    """Read a rendered matrix back, using the header to find where the columns start."""
+    lines = text.splitlines()
+    header = lines[0]
+    name_width = header.index(PRINCIPALS[0])
+    out: dict[tuple[str, str], str] = {}
+    for line in lines[2:]:
+        if not line.strip():
+            continue
+        name = line[:name_width].strip()
+        answers = line[name_width:].split()
+        assert len(answers) == len(PRINCIPALS), f"unreadable row: {line!r}"
+        for principal, answer in zip(PRINCIPALS, answers, strict=True):
+            out[(name, principal)] = answer
+    return out
+
+
 def _diff(expected: str, actual: str) -> str:
     """Name every cell that moved, and in which direction."""
-
-    def cells(text: str) -> dict[tuple[str, str], str]:
-        lines = text.splitlines()[2:]
-        out: dict[tuple[str, str], str] = {}
-        for line in lines:
-            if not line.strip():
-                continue
-            parts = line.split()
-            answers = parts[-len(PRINCIPALS) :]
-            name = line[: len(line) - len("  ".join(answers))].strip()
-            for principal, answer in zip(PRINCIPALS, answers, strict=True):
-                out[(name, principal)] = answer
-        return out
-
-    before, after = cells(expected), cells(actual)
+    before, after = _cells(expected), _cells(actual)
     moved = [
-        f"  {name} [{principal}]: {before[key]} -> {after[key]}"
+        f"  {name} [{principal}]: {before.get(key, '-')} -> {after.get(key, '-')}"
         for key in sorted(set(before) | set(after))
         for name, principal in [key]
         if before.get(key) != after.get(key)
     ]
-    return "the authority matrix moved:\n" + "\n".join(moved or ["  (row set changed)"])
+    return f"the authority matrix moved in {len(moved)} cells:\n" + "\n".join(
+        moved or ["  (the row set changed)"]
+    )

@@ -53,7 +53,7 @@ async def feedback_count(conn: DbConn) -> JsonDict:
 
 @router.post("/feedback")
 async def create_feedback(raw: dict[str, Any], conn: DbConn, clk: Clk, ctx: Ctx) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("feedback"), "recording feedback")
+    require_above(conn, ctx.principal, owner_only("feedback"))
     _reject_unknown(raw, frozenset({"text", "page_address", "page_label"}))
     note = actions.create_feedback(
         conn,
@@ -67,13 +67,13 @@ async def create_feedback(raw: dict[str, Any], conn: DbConn, clk: Clk, ctx: Ctx)
 
 @router.post("/feedback/{feedback_id}/dismiss")
 async def dismiss_feedback(feedback_id: str, conn: DbConn, clk: Clk, ctx: Ctx) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("feedback"), "dismissing feedback")
+    require_above(conn, ctx.principal, owner_only("feedback"))
     return views.note_json(actions.dismiss_feedback(conn, feedback_id, now=clk.now_unix()))
 
 
 @router.post("/feedback/{feedback_id}/reopen")
 async def reopen_feedback(feedback_id: str, conn: DbConn, clk: Clk, ctx: Ctx) -> JsonDict:
-    require_above(conn, ctx.principal, owner_only("feedback"), "reopening feedback")
+    require_above(conn, ctx.principal, owner_only("feedback"))
     return views.note_json(actions.reopen_feedback(conn, feedback_id, now=clk.now_unix()))
 
 

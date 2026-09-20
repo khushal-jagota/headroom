@@ -11,9 +11,9 @@ PATCH  /tickets/{t} recap                                allow   allow   refuse 
 DELETE /tickets/{t}                                      allow   allow   allow           refuse            refuse       refuse           refuse             
 POST   /tickets/{t}/propose                              refuse  refuse  refuse          refuse            allow        refuse           refuse             
 POST   /tickets/{t}/request-help                         refuse  refuse  refuse          refuse            allow        refuse           refuse             
-PUT    /tickets/{t}/employee-configuration               allow   allow   refuse          refuse            refuse       refuse           refuse             
-POST   /tickets/{t}/conversation/send                    allow   allow   refuse          refuse            refuse       refuse           refuse             
-POST   /tickets/{t}/conversation/reset                   allow   allow   refuse          refuse            refuse       refuse           refuse             
+PUT    /tickets/{t}/employee-configuration               allow   allow   allow           refuse            refuse       refuse           refuse             
+POST   /tickets/{t}/conversation/send                    allow   allow   allow           refuse            refuse       refuse           refuse             
+POST   /tickets/{t}/conversation/reset                   allow   allow   allow           refuse            refuse       refuse           refuse             
 GET    /tickets/{t}/worker-self                          allow   allow   allow           allow             allow        allow            allow              
 POST   /tickets/{t}/reject                               allow   refuse  refuse          refuse            refuse       refuse           refuse             
 GET    /items/{i}/supervisor                             allow   allow   allow           refuse            refuse       refuse           refuse             
