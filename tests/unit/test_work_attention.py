@@ -198,16 +198,37 @@ def test_setting_the_ceiling_re_derives_who_the_ticket_is_waiting_on(tmp_path: P
         now=3,
     )
     assert edited.ceiling == "needs_approach"
-    assert edited.ceiling_holder == OWNER_PRINCIPAL
-    # The holder moved from the Chief to Khushal, and the projection says so again.
+    # How far the Ticket may go moved. Who holds it did not.
+    assert edited.ceiling_holder == CHIEF_PRINCIPAL
     assert _attention(conn, ticket.id, "assigned") is False
     assert _attention(conn, ticket.id, "awaiting_approval") is False
-    assert (
+    assert _captured_rows(conn, ticket.id) > 0
+
+    # Forget it again, so only the holder edit can write it back.
+    conn.execute(
+        "DELETE FROM notification_attention_state WHERE subject_kind='ticket' AND subject_id=?",
+        (ticket.id,),
+    )
+    handed: TicketEdit = {"ceiling_holder": OWNER_PRINCIPAL}
+    moved = tickets_data.edit_ticket(
+        conn,
+        ticket.id,
+        edit=handed,
+        title_max_chars=TITLE_MAX_CHARS,
+        principal=OWNER_PRINCIPAL,
+        now=4,
+    )
+    assert moved.ceiling_holder == OWNER_PRINCIPAL
+    assert moved.ceiling == "needs_approach"
+    assert _captured_rows(conn, ticket.id) > 0
+    conn.close()
+
+
+def _captured_rows(conn: sqlite3.Connection, ticket_id: str) -> int:
+    return int(
         conn.execute(
             "SELECT COUNT(*) AS rows FROM notification_attention_state "
             "WHERE subject_kind='ticket' AND subject_id=?",
-            (ticket.id,),
+            (ticket_id,),
         ).fetchone()["rows"]
-        > 0
     )
-    conn.close()

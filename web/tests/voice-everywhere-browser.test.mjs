@@ -135,7 +135,6 @@ MANIFEST = {
       {"id": "needs_closeout", "label": "Closeout", "gating_field": "closeout", "is_terminal": False, "ownership_mode": "worker"},
       {"id": "done", "label": "Done", "gating_field": None, "is_terminal": True, "ownership_mode": None}
     ],
-    "dropped": {"id": "dropped", "label": "Dropped", "gating_field": None, "is_terminal": True, "ownership_mode": None},
     "advance": {"needs_implementation": "needs_closeout", "needs_closeout": "done"},
     "fields": [{"id": "implementation", "label": "Implementation"}, {"id": "closeout", "label": "Closeout"}],
     "ceiling_range": ["needs_implementation", "needs_closeout", "done"],
@@ -151,7 +150,7 @@ TICKET = {
   "priority": "P2",
   "resolved_priority_anchors": {"sprint_item": None, "project": None},
   "ticket_status": "awaiting_approval", "conversation_id": None,
-  "conversation_history": [], "verdict": None, "trouble_notes": [],
+  "conversation_history": [],
   "guidance": "", "field_values": {},
   "pending_proposal": {"field": "implementation", "body": "Done", "proposed_by": "worker", "created_at": 1}
 }

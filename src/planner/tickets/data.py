@@ -495,7 +495,7 @@ def _require_current_supervisor_parent(
 
 
 def _active_blocker_stage(stage: str) -> bool:
-    return stage not in {"done", "dropped"}
+    return stage != "done"
 
 
 def _blocked_ticket_ids(conn: sqlite3.Connection, ticket_id: str) -> tuple[str, ...]:
@@ -527,7 +527,7 @@ def _apply_decision(
     new_ceiling = decision.ceiling
     _validate_ceiling_holder(conn, decision.ceiling_holder, ticket_id=ticket.id)
     # Pre-persist door: the prospective (stage, ceiling) must be registry-valid for
-    # this ticket's type before any SQL — the enforcement the dropped DB CHECKs gave.
+    # this ticket's type before any SQL — the enforcement the removed DB CHECKs gave.
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
     worker_type_definition.validate_ticket_position(str(new_stage), str(new_ceiling))
     fields_codec.validate_state(
@@ -865,6 +865,7 @@ def create_ticket(
     blocked_by_ticket_ids: list[str] | None = None,
     day_id: str | None = None,
     stated_ceiling: str | None = None,
+    stated_holder: Principal | None = None,
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
@@ -885,8 +886,11 @@ def create_ticket(
     initial_stage = worker_type_definition.default_ceiling()
     default_ceiling = worker_type_definition.default_ceiling()
     ticket_id = new_id(ID_PREFIXES["ticket"])
+    # A creator can open a Ticket for somebody else to hold without holding anything
+    # first. Unstated, the creator holds it, which is the ordinary case.
+    ceiling_holder = principal if stated_holder is None else stated_holder
     with _txn(conn):
-        _validate_ceiling_holder(conn, principal, ticket_id=ticket_id)
+        _validate_ceiling_holder(conn, ceiling_holder, ticket_id=ticket_id)
         if sprint_item_id is not None and project_id is None:
             item = conn.execute(
                 "SELECT project_id FROM sprint_items WHERE id = ?",
@@ -943,7 +947,7 @@ def create_ticket(
                 sprint_id,
                 sprint_item_id,
                 ceiling,
-                _principal_to_json(principal),
+                _principal_to_json(ceiling_holder),
                 values_json,
                 fields_codec.proposal_to_json(initial_proposal),
                 now,
@@ -1303,19 +1307,6 @@ def reject_proposal(
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def drop_ticket(
-    conn: sqlite3.Connection, ticket_id: str, *, principal: Principal, now: int
-) -> Ticket:
-    with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
-        )
-        decision = resolution.decide_drop(ticket, principal)
-        updated = _apply_decision(conn, ticket, decision, now)
-        _give_back_worker_step_claim(conn, updated, now=now)
-        return _load_ticket_for_write(conn, ticket_id)
-
-
 def delete_ticket(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -1508,6 +1499,8 @@ def edit_ticket(
                 )
             )
 
+        # The two halves of a ceiling are set independently, and either may arrive alone.
+        # How far the Ticket may go is frozen under a parked proposal; who is asked is not.
         if "ceiling" in edit:
             ceiling_decision = resolution.decide_set_ceiling(
                 ticket,
@@ -1515,20 +1508,24 @@ def edit_ticket(
                 principal,
                 worker_type_definition=worker_type_definition,
             )
-            if ceiling_decision.ceiling != ticket.ceiling or (
-                ceiling_decision.ceiling_holder != ticket.ceiling_holder
-            ):
-                _validate_ceiling_holder(conn, ceiling_decision.ceiling_holder, ticket_id=ticket.id)
+            if ceiling_decision.ceiling != ticket.ceiling:
                 worker_type_definition.validate_ticket_position(
                     ticket.stage, ceiling_decision.ceiling
                 )
                 changes.append(("ceiling", "ceiling", ticket.ceiling, ceiling_decision.ceiling))
+
+        if "ceiling_holder" in edit:
+            holder_decision = resolution.decide_set_ceiling_holder(
+                ticket, edit["ceiling_holder"], principal
+            )
+            if holder_decision.ceiling_holder != ticket.ceiling_holder:
+                _validate_ceiling_holder(conn, holder_decision.ceiling_holder, ticket_id=ticket.id)
                 changes.append(
                     (
                         "ceiling_holder",
                         "ceiling_holder",
                         _principal_to_json(ticket.ceiling_holder),
-                        _principal_to_json(ceiling_decision.ceiling_holder),
+                        _principal_to_json(holder_decision.ceiling_holder),
                     )
                 )
 
@@ -1543,7 +1540,7 @@ def edit_ticket(
         )
         # Who holds the ceiling decides whether the user is waiting on this Ticket, so a
         # new holder re-derives its attention.
-        if "ceiling" in edit:
+        if "ceiling" in edit or "ceiling_holder" in edit:
             capture_ticket_attention(conn, ticket_id, now)
         return _load_ticket_for_write(conn, ticket_id)
 

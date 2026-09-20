@@ -19,7 +19,6 @@ The sequence is **Kickoff → Review → Feedback → Follow-ups → Closeout �
 - **needs_followups** — convert agreed feedback into separate Tickets or other scoped work, with clear integration effects.
 - **needs_closeout** — integrate the approved result when no blocker remains, or preserve the target and report the handoff.
 - **done** — finished.
-- **dropped** — abandoned.
 
 ## Review identity
 

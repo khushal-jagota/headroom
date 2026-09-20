@@ -10,7 +10,6 @@ from dataclasses import asdict
 
 from planner.core import ticket_blocks
 from planner.core.contracts import BlockerSummary, JsonDict
-from planner.judgments import data as judgments_data
 from planner.list_reads.configuration import TICKET_RECAP_PREVIEW_CHARS
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.runtime import conversation_start
@@ -315,7 +314,6 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
         "ORDER BY conversations.created_at, ticket_conversations.conversation_id",
         (ticket_id,),
     ).fetchall()
-    judgment = judgments_data.read_ticket_judgment(conn, ticket_id)
     detail.update(
         {
             "blocked": blocker_summary.blocked,
@@ -327,23 +325,6 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
                     "created_at": int(row["created_at"]),
                 }
                 for row in conversation_rows
-            ],
-            "verdict": (
-                {
-                    "rating": judgment.verdict_rating,
-                    "text": judgment.verdict_text,
-                }
-                if judgment is not None
-                and (judgment.verdict_rating is not None or judgment.verdict_text is not None)
-                else None
-            ),
-            "trouble_notes": [
-                {
-                    "sequence": note.sequence,
-                    "body": note.body,
-                    "created_at": note.created_at,
-                }
-                for note in (judgment.trouble_notes if judgment is not None else ())
             ],
         }
     )
@@ -425,7 +406,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects AS parent_projects ON parent_projects.id = sprint_items.project_id "
         "JOIN day_tickets ON day_tickets.ticket_id = tickets.id "
-        "WHERE day_tickets.day_id = ? AND tickets.stage != 'dropped'",
+        "WHERE day_tickets.day_id = ?",
         (day_id,),
     ).fetchall()
     registry = configured_worker_type_registry()
@@ -482,7 +463,6 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "gating_field": gating_field_id,
             "gating_field_label": gating_field_label,
             "is_done": stage == worker_type_definition.completed_stage(),
-            "is_dropped": stage == worker_type_definition.dropped_stage.id,
             "blocked": facts.blocked,
             "conversation_id": (
                 str(row["conversation_id"]) if row["conversation_id"] is not None else None

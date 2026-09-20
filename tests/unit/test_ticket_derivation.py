@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
+from tests.support.ticket_progress import advance_ticket
 
 from planner.core import ticket_blocks
 from planner.core.db import connect, create_schema
@@ -216,7 +217,9 @@ def test_completing_a_blocker_is_activity_on_every_ticket_it_frees(tmp_path: Pat
     ticket_blocks.add_ticket_block(conn, blocker_id, blocked_id, 2)
     settled = _updated_at(conn, blocked_id)
 
-    tickets_data.drop_ticket(conn, blocker_id, principal=OWNER_PRINCIPAL, now=settled + 500)
+    advance_ticket(
+        conn, blocker_id, new_stage="done", principal=OWNER_PRINCIPAL, now=settled + 500
+    )
 
     assert _updated_at(conn, blocked_id) == settled + 500
     assert (

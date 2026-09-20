@@ -81,6 +81,7 @@ def create_ticket(
     sprint_item_id_explicit: bool = False,
     sprint_id_explicit: bool = False,
     stated_ceiling: str | None = None,
+    stated_holder: Principal | None = None,
 ) -> Ticket:
     if planning_now is None:
         day_id = None
@@ -113,6 +114,7 @@ def create_ticket(
         employee_launch_model=employee_launch_model,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
         stated_ceiling=stated_ceiling,
+        stated_holder=stated_holder,
     )
 
 

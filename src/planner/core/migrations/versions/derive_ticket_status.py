@@ -16,7 +16,7 @@ differs from its stored one. Those rows are the drift the duplication allowed, a
 naming them is the point of doing this once rather than repairing it forever.
 
 Revision ID: derive_ticket_status
-Revises: drop_ticket_archived_field_content
+Revises: one_ticket_ending
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from sqlalchemy import (
 )
 
 revision = "derive_ticket_status"
-down_revision = "drop_ticket_archived_field_content"
+down_revision = "one_ticket_ending"
 branch_labels = None
 depends_on = None
 
@@ -53,7 +53,7 @@ _DERIVED_STATUS = (
     "WHEN t.ticket_status = 'agent' THEN 'agent' "
     "WHEN EXISTS (SELECT 1 FROM ticket_blocks b JOIN tickets blocker "
     "ON blocker.id = b.blocking_ticket_id WHERE b.blocked_ticket_id = t.id "
-    "AND blocker.stage NOT IN ('done','dropped')) THEN 'blocked' "
+    "AND blocker.stage != 'done') THEN 'blocked' "
     "ELSE 'empty' END"
 )
 

@@ -69,13 +69,6 @@ const codingManifest = {
       ownership_mode: null
     }
   ],
-  dropped: {
-    id: "dropped",
-    label: "Dropped",
-    gating_field: null,
-    is_terminal: true,
-    ownership_mode: null
-  },
   advance: {
     needs_kickoff: "needs_success",
     needs_success: "needs_approach",
@@ -140,13 +133,6 @@ const researchManifest = {
       ownership_mode: null
     }
   ],
-  dropped: {
-    id: "dropped",
-    label: "Dropped",
-    gating_field: null,
-    is_terminal: true,
-    ownership_mode: null
-  },
   advance: {
     needs_brief: "needs_findings",
     needs_findings: "needs_writeup",
@@ -190,8 +176,6 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     },
     conversation_id: null,
     conversation_history: [],
-    verdict: null,
-    trouble_notes: [],
     field_values: {},
     pending_proposal: null,
     guidance: "",
@@ -255,20 +239,22 @@ describe("coding lifecycle", () => {
     });
   });
 
+  // The leash reads "Until Approach", so an option carries the manifest's own stage
+  // label. A stage rename lands in the control with no code change.
   it("offers scope options from the beginning and middle of the range", () => {
     expect(ceilingOptionsFor(codingLifecycle, "needs_success")).toEqual([
-      { value: "needs_success", label: "needs success" },
-      { value: "needs_approach", label: "needs approach" },
-      { value: "needs_plan", label: "needs plan" },
-      { value: "needs_implementation", label: "needs implementation" },
-      { value: "needs_closeout", label: "needs closeout" },
-      { value: "done", label: "done" }
+      { value: "needs_success", label: "Success" },
+      { value: "needs_approach", label: "Approach" },
+      { value: "needs_plan", label: "Plan" },
+      { value: "needs_implementation", label: "Implementation" },
+      { value: "needs_closeout", label: "Closeout" },
+      { value: "done", label: "Done" }
     ]);
     expect(ceilingOptionsFor(codingLifecycle, "needs_plan")).toEqual([
-      { value: "needs_plan", label: "needs plan" },
-      { value: "needs_implementation", label: "needs implementation" },
-      { value: "needs_closeout", label: "needs closeout" },
-      { value: "done", label: "done" }
+      { value: "needs_plan", label: "Plan" },
+      { value: "needs_implementation", label: "Implementation" },
+      { value: "needs_closeout", label: "Closeout" },
+      { value: "done", label: "Done" }
     ]);
   });
 
@@ -359,9 +345,9 @@ describe("manifest-driven Worker types", () => {
     expect(advanceTargetFor(lifecycle, "needs_brief", "done")).toBe("needs_findings");
     expect(advanceTargetFor(lifecycle, "needs_writeup", "done")).toBe("done");
     expect(ceilingOptionsFor(lifecycle, "needs_findings")).toEqual([
-      { value: "needs_findings", label: "needs findings" },
-      { value: "needs_writeup", label: "needs writeup" },
-      { value: "done", label: "done" }
+      { value: "needs_findings", label: "Findings" },
+      { value: "needs_writeup", label: "Writeup" },
+      { value: "done", label: "Done" }
     ]);
     expect(fieldIsPassedFor(lifecycle, "brief", "needs_findings")).toBe(true);
     expect(fieldIsPassedFor(lifecycle, "findings", "needs_findings")).toBe(false);

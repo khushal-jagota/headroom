@@ -40,12 +40,12 @@ backfills a missed occurrence, and Planning Sprint stays on the final day.
 
 Sprint tracking shows committed Outcomes under Projects, including Outcomes with no
 Tickets. Each Outcome row links to its workspace. One collapsed **No Outcome** row follows
-all Project groups when the Sprint contains non-dropped unclassified Tickets. It combines
+all Project groups when the Sprint contains unclassified Tickets. It combines
 those Tickets across Projects and reveals their canonical links when opened.
 
-The progress count says how many Tickets are done, excluding dropped Tickets. It does
+The progress count says how many Tickets are done. It does
 not claim that the Outcome has been achieved. It always uses `done/total`, including
-`0/0` for an Outcome with no non-dropped Tickets.
+`0/0` for an Outcome with no Tickets.
 The Sprint review records the user's judgment about actual outcomes.
 
 Add outcome lets the user search and reuse an existing Outcome or create one with a
@@ -56,7 +56,7 @@ the Outcome list.
 Carry forward adds the existing Outcome to a target Sprint and moves only the exact
 unfinished Tickets the user checks. No Ticket is preselected. An empty selection carries
 only the commitment. The whole change validates and commits together. A reclassified,
-newly completed, dropped, or differently scheduled Ticket rejects the request without
+newly completed, or differently scheduled Ticket rejects the request without
 moving the remaining selection. Repeating an unchanged successful request is safe.
 The source commitment and unselected Tickets remain. Completed history never moves as
 a side effect of carrying an Outcome.

@@ -26,8 +26,11 @@ NEEDS_BETA = "".join(("needs_", "beta"))
 FIELD_ALPHA = "".join(("al", "pha"))
 FIELD_BETA = "".join(("be", "ta"))
 
+# The rule requires the field named ``closeout``. It says nothing about the Stage id,
+# so the probe gives its Closeout Stage a name of its own, like every other Stage here.
+NEEDS_LANDING = "".join(("needs_", "landing"))
+
 PROBE_SPECIALIST_SKILL = "probe-worker"
-PROBE_FIELD_IDS: tuple[str, ...] = ("kickoff", FIELD_ALPHA, FIELD_BETA)
 
 PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     worker_type="probe",
@@ -36,13 +39,14 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         StageDefinition("needs_kickoff", "Kickoff", "kickoff", False, StageOwnershipMode.worker),
         StageDefinition(NEEDS_ALPHA, "Alpha", FIELD_ALPHA, False, StageOwnershipMode.worker),
         StageDefinition(NEEDS_BETA, "Beta", FIELD_BETA, False, StageOwnershipMode.user),
+        StageDefinition(NEEDS_LANDING, "Landing", "closeout", False, StageOwnershipMode.worker),
         StageDefinition("done", "Done", None, True, None),
     ),
-    dropped_stage=StageDefinition("dropped", "Dropped", None, True, None),
     fields=(
         FieldDefinition("kickoff", "Kickoff"),
         FieldDefinition(FIELD_ALPHA, "Alpha"),
         FieldDefinition(FIELD_BETA, "Beta"),
+        FieldDefinition("closeout", "Closeout"),
     ),
     worker_profile=WorkerProfile(
         specialist_skill=PROBE_SPECIALIST_SKILL,
@@ -55,8 +59,11 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     ),
 )
 
+# The migration carries a frozen copy of what shipped, so it still names the `dropped`
+# stage the one_ticket_ending migration removes. A stored record no longer has that key.
 SHIPPED_DEFINITIONS: tuple[WorkerTypeDefinition, ...] = tuple(
-    definition_from_json(json.dumps(shipped)) for shipped in SHIPPED_WORKER_TYPES
+    definition_from_json(json.dumps({k: v for k, v in shipped.items() if k != "dropped"}))
+    for shipped in SHIPPED_WORKER_TYPES
 )
 PROBE_KNOWN_SKILLS: frozenset[str] = frozenset(
     {definition.worker_profile.specialist_skill for definition in SHIPPED_DEFINITIONS}

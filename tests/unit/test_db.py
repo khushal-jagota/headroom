@@ -45,7 +45,7 @@ RESHAPE_REVISION = "ticket_status_reshape"
 HEAD_REVISION = "derive_ticket_status"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
-CURRENT_SCHEMA_OBJECT_COUNT = 62
+CURRENT_SCHEMA_OBJECT_COUNT = 60
 
 # The one state-of-control value this build stores, as the CHECK constraint renders it.
 FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"

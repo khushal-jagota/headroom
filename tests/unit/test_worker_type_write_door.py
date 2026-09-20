@@ -92,6 +92,28 @@ def test_a_worker_type_naming_a_skill_that_does_not_exist_is_refused(
     assert "unknown skill" in response.text
 
 
+def test_a_type_that_declares_no_closeout_is_refused_at_the_door(
+    client: tuple[TestClient, Path],
+) -> None:
+    """A Worker type with no Closeout is not stored and does not become runnable.
+
+    The gap used to surface only when a Ticket ran out of Stages with nothing to land
+    its work. Now it surfaces here, when somebody saves the type.
+    """
+    test_client, _db_path = client
+    coding = test_client.get("/api/worker-types/coding").json()
+    record = _arrival_record(coding)
+    record["stages"] = [stage for stage in record["stages"] if stage["id"] != "needs_closeout"]
+    record["fields"] = [field for field in record["fields"] if field["id"] != "closeout"]
+
+    response = test_client.post("/api/worker-types", json=record)
+
+    assert response.status_code == 400, response.text
+    assert "every worker type must declare a closeout field" in response.text
+    assert test_client.get("/api/worker-types/arrival").status_code == 404
+    assert "arrival" not in configured_worker_type_registry().registered_worker_types()
+
+
 def test_a_malformed_record_is_refused_and_changes_nothing(
     client: tuple[TestClient, Path],
 ) -> None:
