@@ -16,6 +16,7 @@ from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 from tests.support.ticket_progress import advance_ticket
 
+from planner.core import ticket_blocks
 from planner.core.contracts import Principal, PrincipalKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
@@ -105,6 +106,10 @@ def _claim_ready_worker_step(conn: Connection, ticket_id: str, *, now: int) -> T
         readiness_check=worker_step_readiness.is_ready_for_worker_step,
         now=now,
     )
+
+
+def _ticket_count(conn: Connection) -> int:
+    return int(conn.execute("SELECT COUNT(*) FROM tickets").fetchone()[0])
 
 
 def _ticket_row(conn: Connection, ticket_id: str) -> tuple[object, ...]:
@@ -1228,6 +1233,16 @@ def test_completing_a_blocker_releases_its_blocks_and_frees_the_target(
     assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
 
 
+def _on_the_automatic_day(conn: Connection, ticket_id: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
+            (_AUTOMATIC_PLANNING_DAY_ID, ticket_id),
+        ).fetchone()
+        is not None
+    )
+
+
 def _created_with_blockers(
     conn: Connection,
     cfg: Config,
@@ -1236,9 +1251,10 @@ def _created_with_blockers(
     title: str,
     blocker_ids: list[str],
 ) -> Ticket:
-    """Create a dependent Ticket the way the incident did: on the Day, with its blockers,
-    and with a ceiling that accepts the Brief inside the create itself. Nothing writes to
-    the Ticket after creation, so this is the one act the readiness loop then sees."""
+    """Create a dependent Ticket the way the incident did.
+
+    On the Day, with its blockers, and with a ceiling that accepts the Brief inside the
+    create itself, so the create is the only write the Ticket receives."""
     return _create(
         conn,
         cfg,
@@ -1262,6 +1278,7 @@ def test_a_ticket_created_with_a_live_blocker_never_starts_until_it_clears(
 
     assert created.stage == "needs_success_condition"
     assert created.ticket_status is TicketStatus.blocked
+    assert _on_the_automatic_day(tmp_db, created.id)
     assert _claim_ready_worker_step(tmp_db, created.id, now=now) is None
 
     advance_ticket(tmp_db, blocker.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
@@ -1282,18 +1299,100 @@ def test_every_creation_blocker_holds_until_the_last_one_is_done(
     )
 
     assert created.ticket_status is TicketStatus.blocked
+    # Every named blocker, not just the last one the create happened to write.
+    assert [_blocked_tickets(tmp_db, blocker_id) for blocker_id in blockers] == [
+        [created.id] for _ in blockers
+    ]
     assert _claim_ready_worker_step(tmp_db, created.id, now=now) is None
 
-    for blocker_id in blockers[:-1]:
+    # Cleared in an order other than the one they were named in, so no single blocker
+    # can be the one that happens to hold it.
+    clearing_order = [blockers[2], blockers[0], blockers[3], blockers[1]]
+    for blocker_id in clearing_order[:-1]:
         advance_ticket(tmp_db, blocker_id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
         assert data.read_ticket(tmp_db, created.id).ticket_status is TicketStatus.blocked
         assert _claim_ready_worker_step(tmp_db, created.id, now=now) is None
 
-    advance_ticket(tmp_db, blockers[-1], new_stage="done", principal=OWNER_PRINCIPAL, now=now)
+    advance_ticket(tmp_db, clearing_order[-1], new_stage="done", principal=OWNER_PRINCIPAL, now=now)
 
     claimed = _claim_ready_worker_step(tmp_db, created.id, now=now + 1)
     assert claimed is not None
     assert claimed.ticket_status is TicketStatus.agent
+
+
+def test_a_parked_brief_outranks_a_creation_blocker_until_it_is_settled(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    # The other path through creation: the Brief parks instead of being accepted inside
+    # the create. A parked proposal outranks a blocker, so the Ticket reads as waiting on
+    # the user first and as blocked from the moment that is settled.
+    now = fake_clock.now_unix()
+    blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
+    created = _create(
+        tmp_db,
+        cfg,
+        fake_clock,
+        title="Parked and blocked",
+        settle_kickoff=False,
+        day_id=_AUTOMATIC_PLANNING_DAY_ID,
+        blocked_by_ticket_ids=[blocker.id],
+    )
+
+    assert created.stage == "needs_brief"
+    assert created.ticket_status is TicketStatus.awaiting_approval
+
+    settled = data.accept_proposal(
+        tmp_db,
+        created.id,
+        field="brief",
+        principal=OWNER_PRINCIPAL,
+        now=now,
+        next_ceiling="needs_success_condition",
+        next_holder=OWNER_PRINCIPAL,
+    )
+
+    assert settled.ticket_status is TicketStatus.blocked
+    assert _claim_ready_worker_step(tmp_db, created.id, now=now) is None
+
+
+def test_a_failed_creation_block_rolls_the_whole_create_back(
+    tmp_db: Connection,
+    cfg: Config,
+    fake_clock: TestClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The Ticket row, its Day row, and its blocks are one transaction. A second reader
+    # must never find the Ticket without the blockers it was created with, so a failure
+    # partway through the blocks has to take the Ticket with it.
+    first = _create(tmp_db, cfg, fake_clock, title="First blocker")
+    second = _create(tmp_db, cfg, fake_clock, title="Second blocker")
+    tickets_before = _ticket_count(tmp_db)
+    write_block = ticket_blocks.add_ticket_block
+    written: list[str] = []
+
+    def fail_on_the_second(
+        conn: Connection, blocking_ticket_id: str, blocked_ticket_id: str, now: int
+    ) -> None:
+        written.append(blocking_ticket_id)
+        if len(written) == 2:
+            raise RuntimeError("block write failed mid-create")
+        write_block(conn, blocking_ticket_id, blocked_ticket_id, now)
+
+    monkeypatch.setattr(ticket_blocks, "add_ticket_block", fail_on_the_second)
+    with pytest.raises(RuntimeError, match="mid-create"):
+        _created_with_blockers(
+            tmp_db, cfg, fake_clock, title="Never existed", blocker_ids=[first.id, second.id]
+        )
+
+    assert written == [first.id, second.id]
+    assert _ticket_count(tmp_db) == tickets_before
+    assert _blocked_tickets(tmp_db, first.id) == []
+    assert (
+        tmp_db.execute(
+            "SELECT COUNT(*) FROM day_tickets WHERE day_id = ?", (_AUTOMATIC_PLANNING_DAY_ID,)
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_a_blocker_already_done_at_creation_holds_nothing(
