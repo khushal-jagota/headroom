@@ -958,17 +958,17 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
             next_holder=OWNER_PRINCIPAL,
         )
     assert e_before.value.code is ErrorCode.scope_invalid
-    with pytest.raises(PlannerError) as e_dropped:
+    with pytest.raises(PlannerError) as e_unknown:
         data.accept_proposal(
             tmp_db,
             t.id,
             field="success",
             principal=OWNER_PRINCIPAL,
             now=now,
-            next_ceiling="dropped",
+            next_ceiling="needs_nothing",
             next_holder=OWNER_PRINCIPAL,
         )
-    assert e_dropped.value.code is ErrorCode.scope_invalid
+    assert e_unknown.value.code is ErrorCode.scope_invalid
     assert data.read_ticket(tmp_db, t.id).stage == "needs_success"
     assert _ticket_row(tmp_db, t.id) == row_before
 

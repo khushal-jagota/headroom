@@ -232,8 +232,6 @@ def decide_edit_settled_field(
     """Correct a value the Ticket has already passed. It changes nothing else."""
     admission.validate_body(new_body, "field value")
     admission.require_direct_principal(principal, "edit_settled_field")
-    if ticket.stage == "dropped":
-        raise PlannerError(ErrorCode.validation, "dropped tickets cannot be edited")
     if (
         fields_codec.field_value(
             ticket.field_values, field, worker_type_definition=worker_type_definition
