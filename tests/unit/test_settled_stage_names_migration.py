@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +57,7 @@ KEPT = {
 
 
 @pytest.fixture
-def conn(tmp_path: Path) -> sqlite3.Connection:
+def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     connection = connect(str(tmp_path / "planner.db"))
     create_schema(connection)
     yield connection
