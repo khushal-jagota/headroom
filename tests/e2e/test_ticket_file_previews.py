@@ -429,9 +429,19 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
     attempts: list[str] = []
 
     def fail_first_save(route: Route) -> None:
+        # This URL is the whole Ticket: the detail the screen reads, the recap write and
+        # the scope write all share it. Handle only the field save under test, and let
+        # every other request through, or a refetch arrives here with no body at all.
+        if route.request.method != "PATCH":
+            route.continue_()
+            return
         post_data_json = route.request.post_data_json
         assert post_data_json is not None
-        attempts.append(post_data_json["field_values"]["success"])
+        saved = post_data_json.get("field_values", {}).get("success")
+        if saved is None:
+            route.continue_()
+            return
+        attempts.append(saved)
         if len(attempts) == 1:
             route.fulfill(
                 status=500,
