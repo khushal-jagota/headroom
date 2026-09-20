@@ -2106,9 +2106,9 @@ def sprint_item_supervisor_message_worker(
     text = message if message is not None else _read_source(body_file or "", as_json)
     data = http.send(
         "POST",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/message",
+        "/api/messages/send",
         as_json=as_json,
-        json_body={"message": text},
+        json_body={"target": {"kind": "ticket", "id": ticket_id}, "message": text},
     )
     http.emit(data, as_json, f"Worker message {data['fate']}")
 

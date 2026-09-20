@@ -12,20 +12,13 @@ from uuid import uuid4
 
 from planner.conversation.contracts import (
     ConversationSystem,
-    PromptDeliveryInjected,
-    PromptDeliveryQueued,
-    PromptDeliveryRefused,
 )
 from planner.core import authority
 from planner.core.authctx import RequestContext
 from planner.core.authority import require_above, require_above_or_self
-from planner.core.clock import Clock
-from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files.logic.paths import sprint_item_files_root
-from planner.message_delivery import service as message_delivery_service
 from planner.runtime import conversation_start, worker_step_readiness
-from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
 from planner.tickets.contracts import StageOwnershipMode, Ticket, WorkerStepClaim
@@ -327,52 +320,6 @@ async def restart_worker(
         ),
     }
 
-
-async def message_current_worker(
-    conversations: ConversationSystem,
-    conn: sqlite3.Connection,
-    ctx: RequestContext,
-    sprint_item_id: str,
-    ticket_id: str,
-    *,
-    message: str,
-    clock: Clock,
-) -> dict[str, object]:
-    if not message.strip():
-        raise PlannerError(ErrorCode.validation, "Worker message must be non-empty", {})
-    require_current_child(conn, ctx, sprint_item_id, ticket_id)
-    item = sprints_data.read_item(conn, sprint_item_id).item
-    delivered = await message_delivery_service.send_message(
-        conversations,
-        conn,
-        clock,
-        ctx,
-        Principal(PrincipalKind.ticket, ticket_id),
-        message.strip(),
-        required_sprint_item_id=sprint_item_id,
-    )
-    if isinstance(delivered.fate, PromptDeliveryRefused):
-        raise PlannerError(
-            ErrorCode.gateway_offline,
-            "the Worker message could not be delivered",
-            {
-                "ticket_id": ticket_id,
-                "refusal_reason": delivered.fate.refusal_reason.value,
-            },
-        )
-    return {
-        "sprint_item_id": sprint_item_id,
-        "ticket_id": ticket_id,
-        "conversation_id": delivered.conversation_id,
-        "sender": item.supervisor_agent_key,
-        "fate": (
-            "queued"
-            if isinstance(delivered.fate, PromptDeliveryQueued)
-            else "injected"
-            if isinstance(delivered.fate, PromptDeliveryInjected)
-            else "started"
-        ),
-    }
 
 
 def list_artifacts(

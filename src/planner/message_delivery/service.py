@@ -182,7 +182,6 @@ async def send_message(
     runs_under: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
-    required_sprint_item_id: str | None = None,
 ) -> MessageDeliveryResult:
     """Send one text message to one resolved Panels conversation owner."""
     label = sender_label(ctx)
@@ -254,7 +253,6 @@ async def send_message(
                 recipient=recipient,
                 reply_requested=not is_reply,
                 now=clock.now_unix(),
-                required_sprint_item_id=required_sprint_item_id,
             )
     elif recipient.kind is PrincipalKind.chief:
         async with conversation_start.conversation_link_lock(f"agent:{CHIEF_SETTINGS_KEY}"):

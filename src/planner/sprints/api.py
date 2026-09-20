@@ -322,27 +322,6 @@ async def get_supervisor_ticket_history(
     )
 
 
-@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/message")
-async def supervisor_message_worker(
-    item_id: str,
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    conversations: Conversations,
-) -> JsonDict:
-    return await supervisor_service.message_current_worker(
-        conversations,
-        conn,
-        ctx,
-        item_id,
-        ticket_id,
-        message=body_str(raw, "message"),
-        clock=clk,
-    )
-
-
 @router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/restart-worker")
 async def supervisor_restart_worker(
     item_id: str,

@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from planner.conversation.api import delivery_fate_json
+from planner.core import authority
 from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.message_delivery import service
@@ -88,6 +89,20 @@ def _result_json(result: MessageDeliveryResult) -> JsonDict:
     }
 
 
+def _require_reach(conn: DbConn, caller: Principal, recipient: Principal) -> None:
+    """Sending down the chain is acting on the recipient. Sending up is only speaking.
+
+    A Ticket's worker conversation and an Outcome manager's conversation belong to
+    something the caller stands above, or they do not. Khushal and the Chief are above
+    everything, so nobody reaches them by position and a message addressed to either of
+    them asks no authority question.
+    """
+    if recipient.kind is PrincipalKind.ticket:
+        authority.require_above(conn, caller, authority.ticket(recipient.id))
+    elif recipient.kind is PrincipalKind.sprint_item:
+        authority.require_above(conn, caller, authority.outcome(recipient.id))
+
+
 @router.post("/messages/send")
 async def send_message(
     body: JsonDict,
@@ -97,6 +112,7 @@ async def send_message(
     conversations: Conversations,
 ) -> JsonDict:
     recipient = _principal(body.get("target"))
+    _require_reach(conn, ctx.principal, recipient)
     message = _message_text(body.get("message"))
     mode = _message_delivery_mode(body.get("mode", _MISSING))
     result = await service.send_message(conversations, conn, clock, ctx, recipient, message, mode)

@@ -428,8 +428,9 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
         )
         before = client.get(f"/api/tickets?detail=full&id={ticket['id']}").json()
         sent = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/message",
+            "/api/messages/send",
             json={
+                "target": {"kind": "ticket", "id": ticket["id"]},
                 "message": "Check the acceptance evidence.",
             },
             headers=_supervisor_headers(str(item["id"])),
@@ -437,7 +438,7 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
         after = client.get(f"/api/tickets?detail=full&id={ticket['id']}").json()
 
     assert sent.status_code == 200, sent.text
-    assert sent.json()["sender"] == item["supervisor"]["agent_key"]
+    assert sent.json()["target"] == {"kind": "ticket", "id": ticket["id"]}
     for field in ("stage", "ceiling", "ticket_status", "day_ids"):
         assert after[field] == before[field]
     write = cast(InMemoryConversationSystem, app.state.conversation_system).backend_prompt_writes(

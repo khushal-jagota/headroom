@@ -309,14 +309,6 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
         lambda s: Call("GET", f"/api/items/{s.item_a}/supervisor/tickets/{s.ticket_a}/history"),
     ),
     (
-        "POST   /items/{i}/supervisor/tickets/{t}/message",
-        lambda s: Call(
-            "POST",
-            f"/api/items/{s.item_a}/supervisor/tickets/{s.ticket_a}/message",
-            {"message": "Look at this."},
-        ),
-    ),
-    (
         "POST   /items/{i}/supervisor/tickets/{t}/restart-worker",
         lambda s: Call(
             "POST", f"/api/items/{s.item_a}/supervisor/tickets/{s.ticket_a}/restart-worker", {}
@@ -432,8 +424,6 @@ UNGUARDED_OPERATIONS: Final = frozenset(
         "GET    /tickets (detail=full)",
         # No guard, despite the name: the Ticket is named in the path, not by the caller.
         "GET    /tickets/{t}/worker-self",
-        # No guard function. Any principal may send to any Ticket's worker on this revision.
-        "POST   /messages/send",
     }
 )
 
