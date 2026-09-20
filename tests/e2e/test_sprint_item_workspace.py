@@ -139,7 +139,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     )
     assert proposed.status_code < 300, proposed.text
     artifact = httpx.put(
-        f"{server.base}/api/items/{item['id']}/supervisor/artifacts/proof.md",
+        f"{server.base}/files/sprint-items/{item['id']}/artifacts/proof.md",
         headers={
             "X-Plan-Actor": "sprint_item_supervisor",
             "X-Plan-Sprint-Item-ID": str(item["id"]),
@@ -150,7 +150,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     assert artifact.status_code < 300, artifact.text
     for index in range(6):
         extra = httpx.put(
-            f"{server.base}/api/items/{item['id']}/supervisor/artifacts/evidence-{index}.txt",
+            f"{server.base}/files/sprint-items/{item['id']}/artifacts/evidence-{index}.txt",
             headers={
                 "X-Plan-Actor": "sprint_item_supervisor",
                 "X-Plan-Sprint-Item-ID": str(item["id"]),

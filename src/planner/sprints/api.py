@@ -18,6 +18,7 @@ from planner.core.authority import require_above, require_above_or_self
 from planner.core.contracts import JsonDict, Principal, PrincipalKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import planning_date, resolve_day_id
+from planner.files import sprint_item_files
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
 from planner.list_reads.detail import (
@@ -216,7 +217,7 @@ async def get_item_workspace(
         tickets=result["tickets"],
         sprint_items=(result,),
     )
-    result["artifacts"] = supervisor_service.list_artifact_details(conn, ctx, item_id, cfg.db_path)
+    result["artifacts"] = sprint_item_files.list_files(conn, ctx.principal, item_id, cfg.db_path)
     return result
 
 
@@ -313,36 +314,6 @@ async def get_supervisor_ticket_history(
         limit=limit,
         before_sequence=before_sequence,
     )
-
-
-@router.get("/items/{item_id}/supervisor/artifacts")
-async def supervisor_list_artifacts(item_id: str, conn: DbConn, ctx: Ctx, cfg: Cfg) -> JsonDict:
-    return supervisor_service.list_artifacts(conn, ctx, item_id, cfg.db_path)
-
-
-@router.put("/items/{item_id}/supervisor/artifacts/{artifact_path:path}")
-async def supervisor_write_artifact(
-    item_id: str,
-    artifact_path: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    cfg: Cfg,
-) -> JsonDict:
-    return supervisor_service.write_artifact(
-        conn, ctx, item_id, cfg.db_path, artifact_path, body_str(raw, "content")
-    )
-
-
-@router.delete("/items/{item_id}/supervisor/artifacts/{artifact_path:path}")
-async def supervisor_delete_artifact(
-    item_id: str,
-    artifact_path: str,
-    conn: DbConn,
-    ctx: Ctx,
-    cfg: Cfg,
-) -> JsonDict:
-    return supervisor_service.delete_artifact(conn, ctx, item_id, cfg.db_path, artifact_path)
 
 
 @router.get("/items/{item_id}/conversation/start-values")

@@ -2226,12 +2226,23 @@ def sprint_item_supervisor_set_ticket(
     http.emit(data, as_json, f"{ticket_id} {field} set")
 
 
+# The Outcome's own subdirectory of its managed files. These commands count paths from
+# it, while the route counts from the Outcome's root, so the prefix is added here.
+_ARTIFACTS_DIRECTORY = "artifacts"
+
+
 @sprint_item_supervisor.command("artifact-list")
 @click.argument("item_id")
 @json_option
 def sprint_item_supervisor_artifact_list(item_id: str, as_json: bool) -> None:
-    data = http.send("GET", f"/api/items/{item_id}/supervisor/artifacts", as_json=as_json)
-    http.emit(data, as_json, _lines(data["artifacts"], str))
+    data = http.send("GET", f"/api/items/{item_id}/workspace", as_json=as_json)
+    prefix = f"{_ARTIFACTS_DIRECTORY}/"
+    artifacts = sorted(
+        str(entry["path"])[len(prefix) :]
+        for entry in data["artifacts"]
+        if str(entry["path"]).startswith(prefix)
+    )
+    http.emit({"sprint_item_id": item_id, "artifacts": artifacts}, as_json, _lines(artifacts, str))
 
 
 @sprint_item_supervisor.command("artifact-write")
@@ -2244,7 +2255,7 @@ def sprint_item_supervisor_artifact_write(
 ) -> None:
     data = http.send(
         "PUT",
-        f"/api/items/{item_id}/supervisor/artifacts/{artifact_path}",
+        f"/files/sprint-items/{item_id}/{_ARTIFACTS_DIRECTORY}/{artifact_path}",
         as_json=as_json,
         json_body={"content": _read_source(body_file, as_json)},
     )
@@ -2258,7 +2269,7 @@ def sprint_item_supervisor_artifact_write(
 def sprint_item_supervisor_artifact_delete(item_id: str, artifact_path: str, as_json: bool) -> None:
     data = http.send(
         "DELETE",
-        f"/api/items/{item_id}/supervisor/artifacts/{artifact_path}",
+        f"/files/sprint-items/{item_id}/{_ARTIFACTS_DIRECTORY}/{artifact_path}",
         as_json=as_json,
     )
     http.emit(data, as_json, f"{artifact_path} deleted")

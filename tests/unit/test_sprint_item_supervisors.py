@@ -119,12 +119,12 @@ def test_workspace_artifacts_include_each_file_modified_time(tmp_path: Path) -> 
         item = _create_item(client)
         headers = _supervisor_headers(str(item["id"]))
         first = client.put(
-            f"/api/items/{item['id']}/supervisor/artifacts/old/proof.md",
+            f"/files/sprint-items/{item['id']}/artifacts/old/proof.md",
             headers=headers,
             json={"content": "old"},
         )
         second = client.put(
-            f"/api/items/{item['id']}/supervisor/artifacts/new/proof.png",
+            f"/files/sprint-items/{item['id']}/artifacts/new/proof.png",
             headers=headers,
             json={"content": "new"},
         )

@@ -313,18 +313,16 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
         lambda s: Call("POST", f"/api/tickets/{s.ticket_a}/restart-worker", {}),
     ),
     (
-        "GET    /items/{i}/supervisor/artifacts",
-        lambda s: Call("GET", f"/api/items/{s.item_a}/supervisor/artifacts"),
-    ),
-    (
-        "PUT    /items/{i}/supervisor/artifacts/{p}",
+        "PUT    /files/sprint-items/{i}/{p}",
         lambda s: Call(
-            "PUT", f"/api/items/{s.item_a}/supervisor/artifacts/note.md", {"content": "# Note"}
+            "PUT",
+            f"/files/sprint-items/{s.item_a}/artifacts/note.md",
+            {"content": "# Note"},
         ),
     ),
     (
-        "DELETE /items/{i}/supervisor/artifacts/{p}",
-        lambda s: Call("DELETE", f"/api/items/{s.item_a}/supervisor/artifacts/note.md"),
+        "DELETE /files/sprint-items/{i}/{p}",
+        lambda s: Call("DELETE", f"/files/sprint-items/{s.item_a}/artifacts/note.md"),
     ),
     (
         "GET    /items/{i}/conversation/start-values",

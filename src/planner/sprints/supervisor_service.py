@@ -3,24 +3,19 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path, PurePosixPath
-from uuid import uuid4
 
 from planner.core import authority
 from planner.core.authctx import RequestContext
-from planner.core.authority import require_above, require_above_or_self
+from planner.core.authority import require_above
 from planner.core.errors import ErrorCode, PlannerError
-from planner.files.logic.paths import sprint_item_files_root
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
 from planner.tickets.contracts import Ticket
 
 MAXIMUM_HISTORY_EVENTS = 100
-SUPERVISOR_ARTIFACTS_DIRECTORY = "artifacts"
 # A worker step gets this long to prove it is alive before anyone may restart it.
 WORKER_STEP_RESTART_FLOOR_SECONDS = 300
 
@@ -169,89 +164,6 @@ def _coherent_read(conn: sqlite3.Connection) -> Iterator[None]:
             conn.execute("ROLLBACK")
 
 
-def list_artifacts(
-    conn: sqlite3.Connection, ctx: RequestContext, sprint_item_id: str, db_path: str
-) -> dict[str, object]:
-    _require_item(conn, ctx, sprint_item_id)
-    root = _artifact_root(db_path, sprint_item_id, create=False)
-    paths = (
-        []
-        if root is None
-        else sorted(
-            path.relative_to(root).as_posix()
-            for path in root.rglob("*")
-            if path.is_file() and not path.is_symlink()
-        )
-    )
-    return {"sprint_item_id": sprint_item_id, "artifacts": paths}
-
-
-def list_artifact_details(
-    conn: sqlite3.Connection, ctx: RequestContext, sprint_item_id: str, db_path: str
-) -> list[dict[str, object]]:
-    """Return read-only file facts for the Sprint Item workspace."""
-    _require_item(conn, ctx, sprint_item_id)
-    root = _artifact_root(db_path, sprint_item_id, create=False)
-    if root is None:
-        return []
-    return [
-        {
-            "path": f"{SUPERVISOR_ARTIFACTS_DIRECTORY}/{path.relative_to(root).as_posix()}",
-            "modified_at": path.stat().st_mtime,
-        }
-        for path in root.rglob("*")
-        if path.is_file() and not path.is_symlink()
-    ]
-
-
-def write_artifact(
-    conn: sqlite3.Connection,
-    ctx: RequestContext,
-    sprint_item_id: str,
-    db_path: str,
-    relative_path: str,
-    content: str,
-) -> dict[str, object]:
-    _require_item(conn, ctx, sprint_item_id)
-    root = _artifact_root(db_path, sprint_item_id, create=True)
-    assert root is not None
-    target = _safe_artifact_target(root, relative_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    _reject_symlink_ancestors(root, target)
-    temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
-    try:
-        temporary.write_text(content, encoding="utf-8")
-        os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return {
-        "sprint_item_id": sprint_item_id,
-        "path": f"{SUPERVISOR_ARTIFACTS_DIRECTORY}/{relative_path}",
-        "url": (
-            f"/files/sprint-items/{sprint_item_id}/{SUPERVISOR_ARTIFACTS_DIRECTORY}/{relative_path}"
-        ),
-    }
-
-
-def delete_artifact(
-    conn: sqlite3.Connection,
-    ctx: RequestContext,
-    sprint_item_id: str,
-    db_path: str,
-    relative_path: str,
-) -> dict[str, object]:
-    _require_item(conn, ctx, sprint_item_id)
-    root = _artifact_root(db_path, sprint_item_id, create=False)
-    if root is None:
-        raise PlannerError(ErrorCode.not_found, "Sprint Item artifact not found", {})
-    target = _safe_artifact_target(root, relative_path)
-    _reject_symlink_ancestors(root, target)
-    if not target.is_file() or target.is_symlink():
-        raise PlannerError(ErrorCode.not_found, "Sprint Item artifact not found", {})
-    target.unlink()
-    return {"ok": True, "sprint_item_id": sprint_item_id, "path": relative_path}
-
-
 def _event_json(row: sqlite3.Row) -> dict[str, object]:
     return {
         "sequence": int(row["sequence"]),
@@ -259,51 +171,3 @@ def _event_json(row: sqlite3.Row) -> dict[str, object]:
         "payload": json.loads(str(row["payload"])),
         "created_at": int(row["created_at"]),
     }
-
-
-def _require_item(conn: sqlite3.Connection, ctx: RequestContext, sprint_item_id: str) -> None:
-    require_above_or_self(conn, ctx.principal, authority.outcome(sprint_item_id))
-
-
-def _artifact_root(db_path: str, sprint_item_id: str, *, create: bool) -> Path | None:
-    files_root = sprint_item_files_root(db_path)
-    if files_root.is_symlink():
-        raise PlannerError(ErrorCode.validation, "unsafe Sprint Item artifact path", {})
-    item_root = files_root / sprint_item_id
-    if create:
-        item_root.mkdir(parents=True, exist_ok=True)
-    elif not item_root.is_dir() or item_root.is_symlink():
-        return None
-    root = item_root / SUPERVISOR_ARTIFACTS_DIRECTORY
-    if create:
-        if item_root.is_symlink() or root.is_symlink():
-            raise PlannerError(ErrorCode.validation, "unsafe Sprint Item artifact path", {})
-        root.mkdir(exist_ok=True)
-    elif not root.is_dir() or root.is_symlink():
-        return None
-    return root.resolve()
-
-
-def _safe_artifact_target(root: Path, relative_path: str) -> Path:
-    parsed = PurePosixPath(relative_path)
-    if (
-        not relative_path
-        or parsed.is_absolute()
-        or "\\" in relative_path
-        or any(part in {"", ".", ".."} for part in parsed.parts)
-    ):
-        raise PlannerError(ErrorCode.validation, "unsafe Sprint Item artifact path", {})
-    target = root.joinpath(*parsed.parts)
-    try:
-        target.parent.resolve().relative_to(root)
-    except (OSError, ValueError) as exc:
-        raise PlannerError(ErrorCode.validation, "unsafe Sprint Item artifact path", {}) from exc
-    return target
-
-
-def _reject_symlink_ancestors(root: Path, target: Path) -> None:
-    current = target.parent
-    while current != root:
-        if current.is_symlink():
-            raise PlannerError(ErrorCode.validation, "unsafe Sprint Item artifact path", {})
-        current = current.parent
