@@ -1045,6 +1045,7 @@ class ClaudeAgentSdkBackendChild:
         self._turn = None
         self._last_ended_turn = None
         if turn is not None:
+            self._stop_waiting_for_steers(turn)
             self._settle_parked_asks(turn)
         reader = self._reader
         self._reader = None
@@ -1512,14 +1513,21 @@ class ClaudeAgentSdkBackendChild:
         waiting_for = frozenset(turn.owned_steer_uuids)
 
         async def end_when_they_are_settled() -> None:
-            for user_message_uuid in waiting_for:
-                await client.wait_for_user_message_settlement(user_message_uuid)
-            if turn.ended.is_set() or turn.held_result is None:
-                return
-            self._forget_the_settled_steers(turn, client)
-            if turn.owned_steer_uuids:
-                return
-            await self._end_turn_from_result(turn, turn.held_result)
+            try:
+                for user_message_uuid in waiting_for:
+                    await client.wait_for_user_message_settlement(user_message_uuid)
+                if turn.ended.is_set() or turn.held_result is None:
+                    return
+                self._forget_the_settled_steers(turn, client)
+                if turn.owned_steer_uuids:
+                    return
+                await self._end_turn_from_result(turn, turn.held_result)
+            except asyncio.CancelledError:
+                raise
+            except Exception as settling_failed:
+                # Nothing awaits this task, so a failure here would be a turn that quietly
+                # never ends — the thing being fixed. It ends the turn instead.
+                await self._fail_the_running_turn(str(settling_failed))
 
         previous = turn.steer_settlement_watch
         if previous is not None and not previous.done():
