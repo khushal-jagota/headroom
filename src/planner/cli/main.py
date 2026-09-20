@@ -361,6 +361,26 @@ def _gating_field_for_stage(manifest: dict[str, Any], stage: str) -> str | None:
     return None
 
 
+def _current_gating_field(ticket_id: str, as_json: bool) -> str:
+    """The field this Ticket is parked on right now, read from its own Worker type.
+
+    The supervisor approve route used to resolve this server-side. The ordinary accept
+    route names the field in its path, so the caller resolves it the same way
+    `ticket approve` already does.
+    """
+    detail = http.send(
+        "GET",
+        "/api/tickets",
+        as_json=as_json,
+        params={"detail": "full", "id": ticket_id},
+    )
+    stage = str(detail["stage"])
+    field = _gating_field_for_stage(_worker_type(str(detail["worker_type"]), as_json), stage)
+    if field is None:
+        http.fail_validation(f"ticket in {stage} has nothing to approve", as_json)
+    return str(field)
+
+
 def sprint_value_for_write(raw: str | None, as_json: bool) -> str | None:
     if raw is None:
         return None
@@ -2167,7 +2187,7 @@ def sprint_item_supervisor_set_item(
         http.fail_validation(f"{field} cannot be cleared", as_json)
     data = http.send(
         "PATCH",
-        f"/api/items/{item_id}/supervisor/item",
+        f"/api/items/{item_id}",
         as_json=as_json,
         json_body={_SUPERVISOR_ITEM_FIELDS[field]: new_value},
     )
@@ -2199,7 +2219,7 @@ def sprint_item_supervisor_set_ticket(
     )
     data = http.send(
         "PATCH",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}",
+        f"/api/tickets/{ticket_id}",
         as_json=as_json,
         json_body={_SUPERVISOR_TICKET_FIELDS[field]: sent},
     )
@@ -2306,6 +2326,7 @@ def sprint_item_supervisor_approve(
     as_json: bool,
 ) -> None:
     """Approve one parked proposal for this Sprint Item."""
+    field = _current_gating_field(ticket_id, as_json)
     body: dict[str, Any] = {
         "next_ceiling": ceiling,
         "next_holder": (
@@ -2318,7 +2339,7 @@ def sprint_item_supervisor_approve(
         body["edited_body"] = _read_source(edit_file, as_json)
     data = http.send(
         "POST",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/approve",
+        f"/api/tickets/{ticket_id}/accept/{field}",
         as_json=as_json,
         json_body=body,
     )
@@ -2344,7 +2365,7 @@ def sprint_item_supervisor_reject(
     text = message if message is not None else _read_source(body_file or "", as_json)
     data = http.send(
         "POST",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/reject",
+        f"/api/tickets/{ticket_id}/reject",
         as_json=as_json,
         json_body={"message": text},
     )

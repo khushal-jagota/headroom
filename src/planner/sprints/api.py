@@ -44,9 +44,6 @@ from planner.sprints.contracts import (
     CreateItemBody,
     CreateSprintBody,
 )
-from planner.tickets import actions as tickets_actions
-from planner.tickets import data as tickets_data
-from planner.tickets import views as tickets_views
 from planner.tickets.api import (
     Cfg,
     Clk,
@@ -55,10 +52,6 @@ from planner.tickets.api import (
     Ctx,
     DbConn,
     MessageFiles,
-    _marshal_accept,
-    _parse_next_ceiling,
-    _parse_required_principal,
-    _parse_stated_holder,
     body_opt_str,
     body_str,
     body_str_list,
@@ -66,7 +59,6 @@ from planner.tickets.api import (
     resolve_employee_configuration,
     write_resolved_employee_configuration,
 )
-from planner.tickets.contracts import TITLE_MAX_CHARS, TicketEdit
 from planner.work_attention import add_work_attention
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -422,72 +414,6 @@ async def supervisor_restart_worker(
     )
 
 
-@router.patch("/items/{item_id}/supervisor/item")
-async def supervisor_update_item(
-    item_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    require_above_or_self(conn, ctx.principal, authority.outcome(item_id))
-    if len(raw) != 1:
-        raise PlannerError(ErrorCode.validation, "set exactly one Sprint Item field", {})
-    field, raw_value = next(iter(raw.items()))
-    if field not in _ITEM_PLAIN_FIELDS:
-        raise PlannerError(ErrorCode.validation, "unknown item field", {"field": field})
-    if raw_value is not None and not isinstance(raw_value, str):
-        raise PlannerError(ErrorCode.validation, "invalid item field value", {"field": field})
-    if field in {"title", "body", "priority", "project_id"} and raw_value is None:
-        raise PlannerError(
-            ErrorCode.validation, "Sprint Item field cannot be cleared", {"field": field}
-        )
-    if field == "title" and raw_value == "":
-        raise PlannerError(ErrorCode.validation, "item title is required", {})
-    if field == "deadline":
-        _marshal_item_deadline(raw_value)
-    item = sprints_data.update_item_field(conn, item_id, field, raw_value, clock=clk)
-    return sprints_views.item_detail(conn, item.id)
-
-
-@router.patch("/items/{item_id}/supervisor/tickets/{ticket_id}")
-async def supervisor_update_ticket(
-    item_id: str,
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    supervisor_service.require_current_child(conn, ctx, item_id, ticket_id)
-    if len(raw) != 1:
-        raise PlannerError(ErrorCode.validation, "set exactly one Ticket field", {})
-    field, value = next(iter(raw.items()))
-    edit = TicketEdit()
-    if field == "title":
-        edit["title"] = body_str(raw, field)
-    elif field == "priority":
-        edit["priority"] = parse_enum(Priority, body_str(raw, field), field)
-    elif field == "deadline":
-        edit["deadline"] = body_opt_str(raw, field)
-    elif field == "ceiling":
-        edit["ceiling"] = body_str(raw, field)
-    elif field == "ceiling_holder":
-        edit["ceiling_holder"] = _parse_stated_holder(value, field)
-    else:
-        raise PlannerError(ErrorCode.validation, "unknown Ticket field", {"field": field})
-    ticket = tickets_data.edit_ticket(
-        conn,
-        ticket_id,
-        edit=edit,
-        title_max_chars=TITLE_MAX_CHARS,
-        principal=ctx.principal,
-        now=clk.now_unix(),
-    )
-    return tickets_views.ticket_json(ticket, clk.now_unix())
-
-
-
 @router.get("/items/{item_id}/supervisor/artifacts")
 async def supervisor_list_artifacts(item_id: str, conn: DbConn, ctx: Ctx, cfg: Cfg) -> JsonDict:
     return supervisor_service.list_artifacts(conn, ctx, item_id, cfg.db_path)
@@ -529,69 +455,6 @@ async def get_item_supervisor_start_values(item_id: str, conn: DbConn, ctx: Ctx)
         "model": values.model,
         "reasoning_effort": values.reasoning_effort,
     }
-
-
-def _supervisor_ticket_field(conn: DbConn, ticket_id: str) -> tuple[str, Any]:
-    ticket = tickets_data.read_ticket(conn, ticket_id)
-    worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
-    field = worker_type_definition.gating_field(ticket.stage)
-    if field is None:
-        raise PlannerError(
-            ErrorCode.validation,
-            "ticket has no review field",
-            {"ticket_id": ticket_id, "stage": ticket.stage},
-        )
-    return field, worker_type_definition
-
-
-@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/approve")
-async def supervisor_approve_ticket(
-    item_id: str,
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
-    body = _marshal_accept(raw)
-    field, worker_type_definition = _supervisor_ticket_field(conn, ticket_id)
-    now = clk.now_unix()
-    ticket = tickets_data.accept_proposal(
-        conn,
-        ticket_id,
-        field=field,
-        principal=ctx.principal,
-        now=now,
-        edited_body=body["edited_body"],
-        next_ceiling=_parse_next_ceiling(body["next_ceiling"], worker_type_definition),
-        next_holder=_parse_required_principal(body["next_holder"], "next_holder"),
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/reject")
-async def supervisor_reject_ticket(
-    item_id: str,
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    conversations: Conversations,
-) -> JsonDict:
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
-    message = body_opt_str(raw, "message")
-    now = clk.now_unix()
-    ticket = await tickets_actions.reject_ticket_proposal(
-        conversations,
-        conn,
-        ticket_id,
-        message=message,
-        ctx=ctx,
-        clock=clk,
-    )
-    return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/items/{item_id}/supervisor/conversation/send")

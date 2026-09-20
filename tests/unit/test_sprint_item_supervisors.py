@@ -455,7 +455,7 @@ def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> Non
         first = _create_item(client, "First")
         second = _create_item(client, "Second")
         ticket = _park_a_proposal(client, str(first["id"]))
-        path = f"/api/items/{first['id']}/supervisor/tickets/{ticket['id']}/approve"
+        path = f"/api/tickets/{ticket['id']}/accept/success_condition"
         cross = client.post(
             path,
             json={
@@ -501,7 +501,7 @@ def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
             )
         )
         system = cast(InMemoryConversationSystem, app.state.conversation_system)
-        path = f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/reject"
+        path = f"/api/tickets/{ticket['id']}/reject"
         cross = client.post(
             path,
             json={"message": "Not your Ticket."},
@@ -679,7 +679,7 @@ def test_supervisor_creates_and_approves_a_ticket_under_its_own_item(
         assert created.status_code == 200, created.text
         ticket_id = str(created.json()["id"])
         approved = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/approve",
+            f"/api/tickets/{ticket_id}/accept/brief",
             json={
                 "next_ceiling": "needs_what_changes",
                 "next_holder": _OWNER_HOLDER,

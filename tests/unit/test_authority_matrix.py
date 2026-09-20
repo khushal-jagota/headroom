@@ -301,10 +301,6 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
         lambda s: Call("GET", f"/api/items/{s.item_a}/supervisor/context"),
     ),
     (
-        "PATCH  /items/{i}/supervisor/item",
-        lambda s: Call("PATCH", f"/api/items/{s.item_a}/supervisor/item", {"title": "A renamed"}),
-    ),
-    (
         "GET    /items/{i}/supervisor/tickets/{t}/context",
         lambda s: Call("GET", f"/api/items/{s.item_a}/supervisor/tickets/{s.ticket_a}/context"),
     ),
@@ -324,20 +320,6 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
         "POST   /items/{i}/supervisor/tickets/{t}/restart-worker",
         lambda s: Call(
             "POST", f"/api/items/{s.item_a}/supervisor/tickets/{s.ticket_a}/restart-worker", {}
-        ),
-    ),
-    (
-        "PATCH  /items/{i}/supervisor/tickets/{t}",
-        lambda s: Call(
-            "PATCH", f"/api/items/{s.item_a}/supervisor/tickets/{s.ticket_a}", {"priority": "P2"}
-        ),
-    ),
-    (
-        "POST   /items/{i}/supervisor/tickets/{t}/reject",
-        lambda s: Call(
-            "POST",
-            f"/api/items/{s.item_a}/supervisor/tickets/{s.ticket_a}/reject",
-            {"message": "Revise."},
         ),
     ),
     (
