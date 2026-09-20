@@ -17,7 +17,7 @@ from planner.tickets.contracts import (
     PendingTicketProposal,
     StageOwnershipMode,
     Ticket,
-    TicketStatus,
+    WorkerStepClaim,
 )
 from planner.tickets.logic import admission, fields_codec, machine
 from planner.tickets.logic.decisions import Decision
@@ -202,11 +202,11 @@ def decide_complete_user_owned_gate(
             "a pending proposal must be resolved before direct completion",
             {"field": field},
         )
-    if ticket.ticket_status in (TicketStatus.agent, TicketStatus.awaiting_approval):
+    if ticket.worker_step_claim is WorkerStepClaim.out:
         raise PlannerError(
             ErrorCode.already_running,
             "ticket control is active",
-            {"ticket_id": ticket.id, "ticket_status": ticket.ticket_status.value},
+            {"ticket_id": ticket.id, "worker_step_claim": ticket.worker_step_claim.value},
         )
     target = worker_type_definition.advance_target(ticket.stage)
     if target is None:
@@ -269,7 +269,7 @@ def decide_reject(
     applies when there is guidance to deliver into one.
     """
     _require_proposal_decider(ticket, principal, "reject")
-    if ticket.ticket_status is TicketStatus.agent:
+    if ticket.worker_step_claim is WorkerStepClaim.out:
         raise PlannerError(
             ErrorCode.already_running,
             "the ticket worker is already revising this proposal",

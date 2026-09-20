@@ -20,7 +20,7 @@ from planner.sprints.contracts import (
     SprintWireBody,
 )
 from planner.sprints.logic import DateRange, current_sprint_id
-from planner.tickets.contracts import TicketStatus
+from planner.tickets import derivation
 from planner.worker_types.configuration import configured_worker_type_registry
 
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
@@ -113,12 +113,13 @@ def item_tickets(
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     for r in rows:
         stage = str(r["stage"])
-        ticket_status = str(r["ticket_status"])
+        facts = derivation.derive_ticket_facts(
+            derivation.stored_facts_from_row(
+                r, has_live_blocker=str(r["id"]) in blocked_ticket_ids
+            )
+        )
         worker_type_definition = registry.require(str(r["worker_type"]))
         gating_field = worker_type_definition.gating_field(stage)
-        waiting_to_closeout = (
-            gating_field == "closeout" and ticket_status == TicketStatus.empty.value
-        )
         result.append(
             {
                 "id": str(r["id"]),
@@ -130,10 +131,10 @@ def item_tickets(
                 "stage": stage,
                 "priority": str(r["priority"]),
                 "has_pending_proposal": r["pending_proposal"] is not None,
-                "ticket_status": ticket_status,
-                "waiting_to_closeout": waiting_to_closeout,
+                "ticket_status": facts.ticket_status.value,
+                "waiting_to_closeout": facts.waiting_to_closeout,
                 "gating_field": gating_field,
-                "blocked": str(r["id"]) in blocked_ticket_ids,
+                "blocked": facts.blocked,
                 "employee_backend": str(r["employee_backend"]),
                 "worker_type": str(r["worker_type"]),
                 "day_ids": [
@@ -158,10 +159,11 @@ def item_ticket_overview(conn: sqlite3.Connection, item_id: str) -> list[JsonDic
     into one Ticket at a time through ticket-context, so anything more per Ticket is
     weight it pays for and does not use."""
     rows = conn.execute(
-        "SELECT id, title, stage, ticket_status FROM tickets "
+        "SELECT id, title, stage, worker_type, worker_step_claim, pending_proposal FROM tickets "
         "WHERE sprint_item_id = ? ORDER BY created_at, id",
         (item_id,),
     ).fetchall()
+    facts_by_ticket = derivation.load_ticket_facts(conn, {str(row["id"]) for row in rows})
     day_ids_by_ticket: dict[str, list[str]] = {}
     for day_row in conn.execute(
         "SELECT day_tickets.ticket_id AS ticket_id, day_tickets.day_id AS day_id "
@@ -175,7 +177,7 @@ def item_ticket_overview(conn: sqlite3.Connection, item_id: str) -> list[JsonDic
             "id": str(row["id"]),
             "title": str(row["title"]),
             "stage": str(row["stage"]),
-            "ticket_status": str(row["ticket_status"]),
+            "ticket_status": facts_by_ticket[str(row["id"])].ticket_status.value,
             "day_ids": day_ids_by_ticket.get(str(row["id"]), []),
         }
         for row in rows

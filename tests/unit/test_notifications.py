@@ -30,7 +30,7 @@ from planner.notifications import data as notifications_data
 from planner.notifications.contracts import NOTIFICATION_SUBJECTS, NotificationFact
 from planner.notifications.logic.policy import decide_notification
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket
+from planner.tickets.contracts import NO_FURTHER, TITLE_MAX_CHARS, Ticket, TicketEdit
 
 
 def _ticket(conn: Connection, now: int) -> Ticket:
@@ -724,3 +724,71 @@ def test_notification_settings_api_serves_catalogue_and_persists_choice(
             json={"enabled": False},
         )
         assert invalid.status_code == 404
+
+
+def test_an_awaiting_approval_fact_is_dated_from_when_the_proposal_parked(
+    tmp_path: Path,
+) -> None:
+    """The wait is the proposal's own age, not the last time control moved.
+
+    A Ticket's status is no longer stored, so there is no status-change stamp for the
+    projector to read when it has to work a rising edge out for itself. The parked
+    proposal knows when it was parked, and that is the same number the review list
+    already shows as the wait.
+    """
+    conn = connect(str(tmp_path / "parked.db"))
+    create_schema(conn)
+    ticket = _ticket(conn, 100)
+    # Settle the kickoff the creation parked, so the next proposal is the one under test.
+    tickets_data.accept_proposal(
+        conn,
+        ticket.id,
+        field="kickoff",
+        principal=OWNER_PRINCIPAL,
+        now=200,
+        next_ceiling=NO_FURTHER,
+        next_holder=OWNER_PRINCIPAL,
+    )
+    # Filed without a claim out, so nothing moves the claim's own timestamp: it still
+    # says 100, the moment the Ticket was created.
+    tickets_data.file_current_proposal(
+        conn,
+        ticket.id,
+        body="What done means",
+        principal=Principal(PrincipalKind.ticket, ticket.id),
+        now=900,
+    )
+    assert (
+        int(
+            conn.execute(
+                "SELECT worker_step_claim_changed_at FROM tickets WHERE id = ?",
+                (ticket.id,),
+            ).fetchone()[0]
+        )
+        == 100
+    )
+    # Something unrelated touches the row afterwards, so `updated_at` is not the answer
+    # either.
+    tickets_data.edit_ticket(
+        conn,
+        ticket.id,
+        edit=TicketEdit(title="Phone-worthy work, retitled"),
+        principal=OWNER_PRINCIPAL,
+        now=1_500,
+        title_max_chars=TITLE_MAX_CHARS,
+    )
+    # Make the projector find the rising edge itself, the way it does after a restart.
+    conn.execute("DELETE FROM notification_attention_state WHERE subject_id = ?", (ticket.id,))
+    conn.execute("DELETE FROM notification_attention_edges WHERE subject_id = ?", (ticket.id,))
+    conn.execute("DELETE FROM notification_facts WHERE ticket_id = ?", (ticket.id,))
+
+    notifications_data.project_facts(conn)
+
+    fact = conn.execute(
+        "SELECT occurred_at FROM notification_facts "
+        "WHERE ticket_id = ? AND notification_type = 'awaiting_approval'",
+        (ticket.id,),
+    ).fetchone()
+    assert fact is not None
+    assert int(fact["occurred_at"]) == 900
+    conn.close()

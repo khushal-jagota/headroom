@@ -7,6 +7,7 @@ import sqlite3
 from planner.core.contracts import JsonDict
 from planner.feedback import data
 from planner.feedback.contracts import FeedbackNote, FeedbackState
+from planner.tickets import derivation
 
 
 def note_json(note: FeedbackNote) -> JsonDict:
@@ -34,10 +35,12 @@ def feedback_inbox_json(conn: sqlite3.Connection) -> JsonDict:
     open_notes = data.list_notes(conn, FeedbackState.open)
     handled_notes = data.list_notes(conn, FeedbackState.handled)
     rows = conn.execute(
-        "SELECT id, title, stage, ticket_status FROM tickets WHERE id IN "
+        "SELECT id, title, stage, worker_type, worker_step_claim, pending_proposal "
+        "FROM tickets WHERE id IN "
         "(SELECT ticket_id FROM feedback_notes WHERE state = 'handled' AND ticket_id IS NOT NULL)"
     ).fetchall()
     tickets = {str(row["id"]): row for row in rows}
+    facts = derivation.load_ticket_facts(conn, set(tickets))
     notes_by_ticket: dict[str, list[FeedbackNote]] = {}
     dismissed: list[FeedbackNote] = []
     for note in handled_notes:
@@ -62,7 +65,7 @@ def feedback_inbox_json(conn: sqlite3.Connection) -> JsonDict:
                     "id": ticket_id,
                     "title": str(ticket["title"]),
                     "stage": str(ticket["stage"]),
-                    "ticket_status": str(ticket["ticket_status"]),
+                    "ticket_status": facts[ticket_id].ticket_status.value,
                 },
                 "notes": [note_json(note) for note in notes_by_ticket[ticket_id]],
             }

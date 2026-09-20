@@ -61,7 +61,7 @@ def test_ticket_attention_combines_ownership_proposal_and_conversation_facts(
     )
     conn.execute(
         "UPDATE tickets SET conversation_id = 'c_attention', "
-        "ticket_status = 'awaiting_approval', pending_proposal = '{}' WHERE id = ?",
+        "pending_proposal = '{}' WHERE id = ?",
         (ticket.id,),
     )
     row: JsonDict = {"id": ticket.id}

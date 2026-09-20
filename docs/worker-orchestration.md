@@ -27,8 +27,9 @@ all of these hold right now:
 1. It is on today's planning day.
 2. Its Stage is not terminal and has a next blank to fill.
 3. The Stage's owner is not the user.
-4. Its status is `empty`. This fact keeps blocked work, parked approvals, active claims,
-   and errors out of the runnable set. User-owned Stages are already excluded by rule 3.
+4. It reads as `empty`. That one answer keeps blocked work, parked approvals, active
+   claims, and errors out of the runnable set. User-owned Stages are already excluded by
+   rule 3.
 5. Nothing is already parked on that blank waiting for approval.
 6. Scope permits work at the current ceiling.
 7. If the blank is Consequences, no other Ticket in the same project-and-Worker-type
@@ -39,8 +40,9 @@ Then one more question that the record cannot answer: **is this Ticket's worker 
 right now?** The conversation system is asked directly, and a busy worker is left alone
 for this pass.
 
-If everything says yes, Panels takes the Ticket from `empty` to `agent` in one guarded
-write. That flip **is** the claim. There is no claim stamp or general run record. For a
+If everything says yes, Panels takes the Ticket's worker-step claim in one guarded
+write. That claim is the only state of control Panels stores, and it is why the Ticket
+then reads as `agent`. There is no separate claim stamp or run record. For a
 user-owned Stage, the same transaction records a tentative opener fact for that Stage entry.
 Readiness checks that fact, not the Ticket status, to prevent a second opener. A refused
 send removes the fact. An accepted send keeps it and returns the Ticket to `empty`.
@@ -101,9 +103,9 @@ The conversation system reports one of three fates:
   step is done being started.
 - **Refused** — nothing was delivered. The claim is given back and one line is logged.
 
-Giving a claim back checks the status it wrote and the revision of that status change.
+Giving a claim back checks the claim it took and the revision of that claim change.
 Every actual change advances the revision, even when two changes share a second. An
-old release therefore cannot erase a newer claim that happens to use the same status.
+old release therefore cannot erase a newer claim that looks the same.
 
 Once a send reports started or queued, it cannot be taken back, so nothing after that
 point reverts. A failure to remove delivered revision feedback is logged and left alone;
@@ -119,12 +121,12 @@ _Code paths:_ `src/planner/runtime/conversation_start.py`,
 `src/planner/runtime/logic/worker_step_prompt.py`, and
 `src/planner/tickets/revision_feedback.py`.
 
-## Status is not liveness, and Panels says so
+## A claim is not liveness, and Panels says so
 
-A Ticket's status says what Panels last decided about it. Whether a worker is actually
+A Ticket's claim says that Panels sent its worker a step. Whether a worker is actually
 running is the conversation system's fact, and it is asked for it every time it
-matters. The two can disagree — a process that dies mid-flight leaves a Ticket sitting
-at `agent` with nothing running.
+matters. The two can disagree — a process that dies mid-flight leaves a Ticket reading
+`agent` with nothing running.
 
 That is the honest record, and there is no machinery that pretends otherwise: no
 recovery sweep at startup, no stranded-run cleanup, no correctness table to reconcile.
@@ -135,8 +137,8 @@ Picking it up is a real action rather than a repair. `sprint item supervisor
 restart-worker` clears the dead conversation, gives the claim back, and starts the step
 again, so a Sprint Item supervisor can recover its own child Ticket without the user.
 Both halves happen together because either one alone leaves the Ticket stuck: a Ticket
-with no conversation still reads as claimed, and a Ticket at `empty` still pointing at a
-dead conversation would talk into it.
+with no conversation still reads as claimed, and a Ticket with its claim back but still
+pointing at a dead conversation would talk into it.
 
 Nothing there asks whether the old Worker was alive, because nothing can answer. A
 Worker that dies without ending its turn goes on looking like one that is running, so a
