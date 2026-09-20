@@ -22,17 +22,19 @@ SYNTHETIC_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     worker_type="synthetic",
     label="Synthetic",
     stages=(
-        StageDefinition("needs_kickoff", "Kickoff", "kickoff", False, StageOwnershipMode.worker),
+        StageDefinition("needs_brief", "Kickoff", "brief", False, StageOwnershipMode.worker),
         StageDefinition(ALPHA, "Alpha", FIELD_ALPHA, False, StageOwnershipMode.worker),
         StageDefinition(BETA, "Beta", FIELD_BETA, False, StageOwnershipMode.worker),
-        StageDefinition("needs_closeout", "Closeout", "closeout", False, StageOwnershipMode.worker),
+        StageDefinition(
+            "needs_consequences", "Closeout", "consequences", False, StageOwnershipMode.worker
+        ),
         StageDefinition("done", "Done", None, True, None),
     ),
     fields=(
-        FieldDefinition("kickoff", "Kickoff"),
+        FieldDefinition("brief", "Kickoff"),
         FieldDefinition(FIELD_ALPHA, "Alpha"),
         FieldDefinition(FIELD_BETA, "Beta"),
-        FieldDefinition("closeout", "Closeout"),
+        FieldDefinition("consequences", "Closeout"),
     ),
     worker_profile=WorkerProfile("synthetic-worker", "a-model", None, "default", "hermes"),
 )
@@ -67,7 +69,7 @@ def test_foreign_definition_drives_machine_semantics() -> None:
 
 def test_sparse_decode_rejects_undeclared_values_instead_of_filtering_them() -> None:
     field_ids = SYNTHETIC_WORKER_TYPE_DEFINITION.field_ids()
-    assert dict(fields_codec.values_from_json('{"kickoff":"k"}', field_ids)) == {"kickoff": "k"}
+    assert dict(fields_codec.values_from_json('{"brief":"k"}', field_ids)) == {"brief": "k"}
     assert dict(fields_codec.values_from_json("{}", field_ids)) == {}
     with pytest.raises(PlannerError):
         fields_codec.values_from_json('{"legacy":"kept"}', field_ids)

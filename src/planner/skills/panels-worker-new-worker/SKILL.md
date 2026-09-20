@@ -15,16 +15,16 @@ Importantly, remember agents are really smart. You do not need to spell everythi
 
 **Purpose and Boundaries → Stages → What Good Looks Like at Each Stage → Model and Effort → Drafting → Consequences → Done**
 
-- **needs\_understanding** — the short collaborative conversation that captures what this worker is for, where the hard judgment lives, and the boundaries the lifecycle must respect.
+- **needs\_purpose\_and\_boundaries** — the short collaborative conversation that captures what this worker is for, where the hard judgment lives, and the boundaries the lifecycle must respect.
 - **needs\_stages** — the new worker's lifecycle: its ordered stages, what each one needs, and who owns each Stage.
-- **needs\_thinking** — the design substance: what a good result looks like, who does the work, the standard each stage holds.
-- **needs\_runtime\_defaults** — the collaborative choice of explicit backend, model, and reasoning effort used when this worker starts.
+- **needs\_what\_good\_looks\_like\_at\_each\_stage** — the design substance: what a good result looks like, who does the work, the standard each stage holds.
+- **needs\_model\_and\_effort** — the collaborative choice of explicit backend, model, and reasoning effort used when this worker starts.
 - **needs\_drafting** — the artifacts: the new worker's `SKILL.md` and its Worker type definition written as ticket artifacts for review\..
-- **needs\_closeout** — landing it: files placed, registered, provisioned; a restart makes it live.
+- **needs\_consequences** — landing it: files placed, registered, provisioned; a restart makes it live.
 
-(`needs_kickoff` and `done` are the universal bookends every worker shares.)
+(`needs_brief` and `done` are the universal bookends every worker shares.)
 
-### needs\_understanding — understand the worker before designing it
+### needs\_purpose\_and\_boundaries — understand the worker before designing it
 
 This is collaborative work. Do not recreate or restate panels-worker shared rules.
 
@@ -49,11 +49,11 @@ Decide the new worker's stages before touching any files. The work in Purpose an
 
 Match the stages to how the work actually breaks. Most work also splits **doing the core thing** from **making it live / its downstream effects** — this very ticket does: draft the artifacts, then register and provision them. That seam is usually a natural stage boundary; look for it in the worker you're designing.
 
-### needs\_thinking — the design substance (the crux)
+### needs\_what\_good\_looks\_like\_at\_each\_stage — the design substance (the crux)
 
 This is where the worker's value is decided; a thin pass here makes a worthless worker. Cover what is non-obvious, what the user determines makes good work here, preferences, things that make execution better or more aligned with what the user desires.
 
-### needs\_runtime\_defaults — choose how the worker starts
+### needs\_model\_and\_effort — choose how the worker starts
 
 Recommend one explicit runtime tuple from the approved design and runtime catalog:
 
@@ -66,11 +66,11 @@ Recommend one explicit runtime tuple from the approved design and runtime catalo
 From the approved What Good Looks Like at Each Stage, write the two files as artifacts:
 
 - The new worker's **`SKILL.md`** — front matter plus one guidance section per stage, mirroring this skill and `panels-worker-coding`.
-- Its **Worker type definition** — the `WorkerTypeDefinition`: Stages with an ownership mode on every non-terminal Stage, ordered fields, ceiling range, and worker profile. Novel ids are plain strings; reuse the shared `needs_kickoff`/`kickoff`, `needs_closeout`/`closeout`, and `done`.
+- Its **Worker type definition** — the `WorkerTypeDefinition`: Stages with an ownership mode on every non-terminal Stage, ordered fields, ceiling range, and worker profile. Novel ids are plain strings; reuse the shared `needs_brief`/`brief`, `needs_consequences`/`consequences`, and `done`.
 
 Copy the approved Model and Effort values into the record's `profile`.
 
-### needs\_closeout — land it
+### needs\_consequences — land it
 
 A worker is declared in the database, so landing one is a write, not a deployment.
 

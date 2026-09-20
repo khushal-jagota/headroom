@@ -14,7 +14,7 @@ from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 
 PREVIOUS_REVISION = "drop_ticket_archived_field_content"
-HEAD_REVISION = "derive_ticket_status"
+HEAD_REVISION = "settled_stage_and_field_ids"
 
 
 def _upgrade_to_previous_revision(path: Path) -> sqlite3.Connection:

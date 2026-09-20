@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from planner.core.migrations.versions.settled_stage_and_field_ids import renamed_definition
 from planner.core.migrations.versions.worker_types_in_database import SHIPPED_WORKER_TYPES
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.configuration import (
@@ -26,8 +27,8 @@ NEEDS_BETA = "".join(("needs_", "beta"))
 FIELD_ALPHA = "".join(("al", "pha"))
 FIELD_BETA = "".join(("be", "ta"))
 
-# The rule requires the field named ``closeout``. It says nothing about the Stage id,
-# so the probe gives its Closeout Stage a name of its own, like every other Stage here.
+# The rule requires the field named ``consequences``. It says nothing about the Stage id,
+# so the probe gives that Stage a name of its own, like every other Stage here.
 NEEDS_LANDING = "".join(("needs_", "landing"))
 
 PROBE_SPECIALIST_SKILL = "probe-worker"
@@ -36,17 +37,17 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     worker_type="probe",
     label="Probe",
     stages=(
-        StageDefinition("needs_kickoff", "Kickoff", "kickoff", False, StageOwnershipMode.worker),
+        StageDefinition("needs_brief", "Brief", "brief", False, StageOwnershipMode.worker),
         StageDefinition(NEEDS_ALPHA, "Alpha", FIELD_ALPHA, False, StageOwnershipMode.worker),
         StageDefinition(NEEDS_BETA, "Beta", FIELD_BETA, False, StageOwnershipMode.user),
-        StageDefinition(NEEDS_LANDING, "Landing", "closeout", False, StageOwnershipMode.worker),
+        StageDefinition(NEEDS_LANDING, "Landing", "consequences", False, StageOwnershipMode.worker),
         StageDefinition("done", "Done", None, True, None),
     ),
     fields=(
-        FieldDefinition("kickoff", "Kickoff"),
+        FieldDefinition("brief", "Brief"),
         FieldDefinition(FIELD_ALPHA, "Alpha"),
         FieldDefinition(FIELD_BETA, "Beta"),
-        FieldDefinition("closeout", "Closeout"),
+        FieldDefinition("consequences", "Consequences"),
     ),
     worker_profile=WorkerProfile(
         specialist_skill=PROBE_SPECIALIST_SKILL,
@@ -60,9 +61,14 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
 )
 
 # The migration carries a frozen copy of what shipped, so it still names the `dropped`
-# stage the one_ticket_ending migration removes. A stored record no longer has that key.
+# stage the one_ticket_ending migration removes and still spells the ids the
+# settled_stage_and_field_ids migration moves. A stored record has been through both.
 SHIPPED_DEFINITIONS: tuple[WorkerTypeDefinition, ...] = tuple(
-    definition_from_json(json.dumps({k: v for k, v in shipped.items() if k != "dropped"}))
+    definition_from_json(
+        json.dumps(
+            renamed_definition({k: v for k, v in shipped.items() if k != "dropped"})
+        )
+    )
     for shipped in SHIPPED_WORKER_TYPES
 )
 PROBE_KNOWN_SKILLS: frozenset[str] = frozenset(

@@ -205,7 +205,7 @@ def test_a_new_ticket_and_a_state_change_keep_the_column_current(
     settled = tickets_data.accept_proposal(
         upgraded,
         created.id,
-        field="kickoff",
+        field="brief",
         principal=OWNER_PRINCIPAL,
         now=11_000,
         next_ceiling=NO_FURTHER,

@@ -58,20 +58,20 @@ def test_sparse_values_codec_round_trip_and_declared_order(
     assert dict(values) == {A_FIELD: "A", B_FIELD: "B"}
     assert fields_codec.field_value(values, A_FIELD, worker_type_definition=probe_registry) == "A"
     with pytest.raises(PlannerError):
-        fields_codec.field_value(values, "success", worker_type_definition=probe_registry)
+        fields_codec.field_value(values, "success_condition", worker_type_definition=probe_registry)
 
 
 def test_proposal_codec_round_trip_is_strict() -> None:
-    proposal = PendingTicketProposal("success", "text", "worker", 4)
+    proposal = PendingTicketProposal("success_condition", "text", "worker", 4)
     assert fields_codec.proposal_from_json(fields_codec.proposal_to_json(proposal)) == proposal
     with pytest.raises(PlannerError):
-        fields_codec.proposal_from_json('{"field":"success"}')
+        fields_codec.proposal_from_json('{"field":"success_condition"}')
 
 
 def test_resolve_next_ceiling_distinguishes_unknown_from_too_early() -> None:
     with pytest.raises(PlannerError) as unknown:
         machine.resolve_next_ceiling(
-            "needs_approach",
+            "needs_what_changes",
             "bogus",
             worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
         )
@@ -79,10 +79,10 @@ def test_resolve_next_ceiling_distinguishes_unknown_from_too_early() -> None:
     with pytest.raises(PlannerError) as early:
         machine.resolve_next_ceiling(
             "needs_plan",
-            "needs_approach",
+            "needs_what_changes",
             worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
         )
-    assert early.value.detail == {"next_ceiling": "needs_approach", "new_stage": "needs_plan"}
+    assert early.value.detail == {"next_ceiling": "needs_what_changes", "new_stage": "needs_plan"}
 
 
 def _create(conn: Connection, now: int) -> str:
@@ -104,13 +104,13 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
     ticket = data.accept_proposal(
         tmp_db,
         tid,
-        field="kickoff",
+        field="brief",
         principal=OWNER_PRINCIPAL,
         now=now,
         next_ceiling=B,
         next_holder=OWNER_PRINCIPAL,
     )
-    assert ticket.stage == A and ticket.field_values == {"kickoff": ""}
+    assert ticket.stage == A and ticket.field_values == {"brief": ""}
     ticket = data.file_current_proposal(
         tmp_db, tid, body="alpha", principal=ticket_principal(tid), now=now
     )
@@ -147,7 +147,7 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
     ticket = data.accept_proposal(
         tmp_db,
         tid,
-        field="closeout",
+        field="consequences",
         principal=OWNER_PRINCIPAL,
         now=now,
         next_ceiling=NO_FURTHER,
@@ -155,7 +155,7 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
     )
     assert (
         ticket.stage == "done"
-        and ticket.field_values["closeout"] == "landed"
+        and ticket.field_values["consequences"] == "landed"
         and ticket.pending_proposal is None
     )
 
@@ -168,7 +168,7 @@ def test_the_proposal_writer_infers_the_probe_gate(
     data.accept_proposal(
         tmp_db,
         tid,
-        field="kickoff",
+        field="brief",
         principal=OWNER_PRINCIPAL,
         now=now,
         next_ceiling=NO_FURTHER,
@@ -196,4 +196,4 @@ def test_probe_survives_create_and_reload(
     tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkerTypeDefinition
 ) -> None:
     ticket = data.read_ticket(tmp_db, _create(tmp_db, fake_clock.now_unix()))
-    assert ticket.stage == "needs_kickoff" and type(ticket.stage) is str
+    assert ticket.stage == "needs_brief" and type(ticket.stage) is str

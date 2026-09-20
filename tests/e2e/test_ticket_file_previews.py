@@ -90,14 +90,14 @@ def _settle_success(server: ServerHandle, ticket_id: str, body: str) -> None:
             ticket = tickets_data.accept_proposal(
                 conn,
                 ticket_id,
-                field="success",
+                field="success_condition",
                 principal=OWNER_PRINCIPAL,
                 now=2,
                 next_ceiling="none",
                 next_holder=OWNER_PRINCIPAL,
             )
-        assert ticket.stage == "needs_approach"
-        assert ticket.field_values["success"] == body
+        assert ticket.stage == "needs_what_changes"
+        assert ticket.field_values["success_condition"] == body
         assert ticket.pending_proposal is None
 
 
@@ -165,7 +165,7 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     )
     ticket_selector = f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]'
     page = open_page(context_factory(), server, f"#/workspace/{ticket_id}", ticket_selector)
-    _open_ticket_field(page, "success")
+    _open_ticket_field(page, "success_condition")
     page.evaluate("window.__artifactInPlaceMarker = 'kept'")
     page.locator("a.file-preview-link:visible", has_text="Open index.html").first.click()
     artifact_address = (
@@ -235,8 +235,8 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
 
-    editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
-    _open_ticket_field(page, "success")
+    editable = '[data-field="success_condition"] .ticket-field-value [data-markdown-inline-edit]'
+    _open_ticket_field(page, "success_condition")
     page.locator(f"{editable} [data-markdown-atomic-slot='true']").first.wait_for(
         state="visible",
         timeout=WAIT_MS,
@@ -293,7 +293,9 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
         }"""
     )
     page.locator(editable).blur()
-    stored_body = _wait_for_field_text(api, server, ticket_id, "success", "Before preview")
+    stored_body = _wait_for_field_text(
+        api, server, ticket_id, "success_condition", "Before preview"
+    )
     assert "Before preview [Markdown](/files/tickets/" in stored_body
     assert "space%20name.md) after preview" in stored_body
     assert image_token in stored_body
@@ -307,7 +309,7 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     page.wait_for_selector(
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
     )
-    _open_ticket_field(page, "success")
+    _open_ticket_field(page, "success_condition")
     markdown_slot = page.locator(
         f"{editable} [data-markdown-source-token='{markdown_token}']"
     ).first
@@ -329,7 +331,7 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     page.locator(editable).blur()
     page.wait_for_function("f0 => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
     stored_after_delete = api.get(server, f"/api/tickets/{ticket_id}")["field_values"].get(
-        "success"
+        "success_condition"
     )
     assert markdown_token not in stored_after_delete
     assert image_token in stored_after_delete
@@ -338,7 +340,7 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     page.wait_for_selector(
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
     )
-    _open_ticket_field(page, "success")
+    _open_ticket_field(page, "success_condition")
     image_slot = page.locator(f"{editable} [data-markdown-source-token='{image_token}']").first
     page.locator(editable).focus()
     image_slot.locator(
@@ -358,7 +360,7 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     page.locator(editable).blur()
     page.wait_for_function("f0 => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
     stored_after_backspace = api.get(server, f"/api/tickets/{ticket_id}")["field_values"].get(
-        "success"
+        "success_condition"
     )
     assert image_token not in stored_after_backspace
     assert binary_token in stored_after_backspace
@@ -367,7 +369,7 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     page.wait_for_selector(
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
     )
-    _open_ticket_field(page, "success")
+    _open_ticket_field(page, "success_condition")
     binary_slot = page.locator(f"{editable} [data-markdown-source-token='{binary_token}']").first
     page.locator(editable).focus()
     binary_slot.evaluate(
@@ -384,7 +386,7 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     page.locator(editable).blur()
     page.wait_for_function("f0 => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
     stored_after_selected_delete = api.get(server, f"/api/tickets/{ticket_id}")["field_values"].get(
-        "success"
+        "success_condition"
     )
     assert binary_token not in stored_after_selected_delete
 
@@ -415,8 +417,8 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
         f"#/workspace/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
     )
-    editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
-    _open_ticket_field(page, "success")
+    editable = '[data-field="success_condition"] .ticket-field-value [data-markdown-inline-edit]'
+    _open_ticket_field(page, "success_condition")
     page.locator(f"{editable} [data-file-preview-kind='image'] img").wait_for(
         state="visible", timeout=WAIT_MS
     )
@@ -432,7 +434,7 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
             return
         post_data_json = route.request.post_data_json
         assert post_data_json is not None
-        saved = post_data_json.get("field_values", {}).get("success")
+        saved = post_data_json.get("field_values", {}).get("success_condition")
         if saved is None:
             route.continue_()
             return
@@ -486,19 +488,19 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
     ):
         page.locator(editable).focus()
         page.locator(editable).blur()
-    _wait_for_field_text(api, server, ticket_id, "success", "Retry me exactly.")
+    _wait_for_field_text(api, server, ticket_id, "success_condition", "Retry me exactly.")
     assert attempts == [attempted_source, attempted_source]
 
     page.reload()
     page.wait_for_selector(
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
     )
-    _open_ticket_field(page, "success")
+    _open_ticket_field(page, "success_condition")
     page.locator(f"{editable} [data-file-preview-kind='image'] img").wait_for(
         state="visible", timeout=WAIT_MS
     )
     assert (
-        api.get(server, f"/api/tickets/{ticket_id}")["field_values"].get("success")
+        api.get(server, f"/api/tickets/{ticket_id}")["field_values"].get("success_condition")
         == attempted_source
     )
 
@@ -542,7 +544,8 @@ def test_loaded_preview_proposal_approves_without_edited_body(
     approval_payloads: list[JsonObject] = []
 
     def capture_accept(request: Request) -> None:
-        if request.method == "POST" and f"/api/tickets/{ticket_id}/accept/success" in request.url:
+        accept_url = f"/api/tickets/{ticket_id}/accept/success_condition"
+        if request.method == "POST" and accept_url in request.url:
             post_data_json = request.post_data_json
             assert post_data_json is not None
             approval_payloads.append(post_data_json)
@@ -558,5 +561,5 @@ def test_loaded_preview_proposal_approves_without_edited_body(
     assert len(approval_payloads) == 1
     assert "edited_body" not in approval_payloads[0]
     ticket = api.get(server, f"/api/tickets/{ticket_id}")
-    assert ticket["field_values"].get("success") == body
+    assert ticket["field_values"].get("success_condition") == body
     assert ticket["pending_proposal"] is None

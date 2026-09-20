@@ -54,6 +54,6 @@ describe("feedback presentation", () => {
     expect(feedbackTicketStateLabel({ ...ticket, ticket_status: "blocked" })).toBe("Blocked");
     expect(feedbackTicketStageState({ ...ticket, awaiting_reply: true })).toBe("needs-me");
     expect(feedbackTicketStageState({ ...ticket, ticket_status: "empty", agent_state: "idle" })).toBe("upcoming");
-    expect(feedbackTicketStageState({ ...ticket, stage: "needs_closeout", ticket_status: "empty", agent_state: "idle" })).toBe("current-waiting");
+    expect(feedbackTicketStageState({ ...ticket, stage: "needs_consequences", ticket_status: "empty", agent_state: "idle" })).toBe("current-waiting");
   });
 });

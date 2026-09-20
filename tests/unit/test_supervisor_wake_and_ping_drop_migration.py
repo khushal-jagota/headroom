@@ -75,7 +75,9 @@ def _database_with_a_ping_behind_it(tmp_path: Path, name: str) -> Path:
 def test_upgrade_drops_the_watch_switch_and_both_ping_columns(tmp_path: Path) -> None:
     db_path = _database_with_a_ping_behind_it(tmp_path, "wake-and-ping-columns.db")
 
-    _upgrade_to(db_path, "head")
+    # The drop revision is what this test is about. The fact tables it clears are
+    # dropped later in the chain, by one_notification_path.
+    _upgrade_to(db_path, "drop_supervisor_wake_and_ping")
 
     conn = connect(str(db_path))
     ticket_columns = {row[1] for row in conn.execute("PRAGMA table_info(tickets)")}
@@ -91,7 +93,9 @@ def test_upgrade_clears_the_ping_ahead_of_the_loop_and_keeps_the_decided_one(
 ) -> None:
     db_path = _database_with_a_ping_behind_it(tmp_path, "wake-and-ping-facts.db")
 
-    _upgrade_to(db_path, "head")
+    # The drop revision is what this test is about. The fact tables it clears are
+    # dropped later in the chain, by one_notification_path.
+    _upgrade_to(db_path, "drop_supervisor_wake_and_ping")
 
     conn = connect(str(db_path))
     # The decided ping is finished business and stays, with its decision and its push.
@@ -127,7 +131,21 @@ def test_upgrade_clears_the_ping_ahead_of_the_loop_and_keeps_the_decided_one(
     )
     preferences = notifications_data.resolved_preferences(conn)
     assert ("sprint_item_supervisors", "sprint_item_ping") not in preferences
-    assert preferences[("sprint_item_supervisors", "errored")] is False
-    # Deciding the remaining facts is the loop's real move, and it no longer raises.
-    notifications_data.apply_policy(conn, now=20)
     conn.close()
+
+    # And the rest of the chain runs over those same rows, after which the loop's real
+    # move no longer raises.
+    _upgrade_to(db_path, "head")
+    head = connect(str(db_path))
+    assert (
+        head.execute(
+            "SELECT count(*) AS total FROM notification_preferences "
+            "WHERE notification_type = 'sprint_item_ping'"
+        ).fetchone()["total"]
+        == 0
+    )
+    preferences = notifications_data.resolved_preferences(head)
+    assert ("sprint_item_supervisors", "sprint_item_ping") not in preferences
+    assert preferences[("sprint_item_supervisors", "errored")] is False
+    notifications_data.queue_deliveries(head, now=20)
+    head.close()

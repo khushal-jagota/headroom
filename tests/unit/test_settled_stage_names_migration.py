@@ -14,8 +14,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from alembic import command
 
-from planner.core.db import connect, create_schema
+from planner.core import db as db_module
+from planner.core.db import connect
 from planner.core.migrations.versions.settled_stage_names import RENAMES, _rewrite_labels
 from planner.core.migrations.versions.worker_types_in_database import SHIPPED_WORKER_TYPES
 from planner.worker_types.store import read_definition, read_definitions
@@ -58,8 +60,24 @@ KEPT = {
 
 @pytest.fixture
 def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    connection = connect(str(tmp_path / "planner.db"))
-    create_schema(connection)
+    """Stop at this revision rather than at head.
+
+    Every claim in this file is about what *this* migration does, and the strongest of
+    them is that no id moves. A later revision, `settled_stage_and_field_ids`, moves the
+    ids so that they follow these labels. Running to head would test the two together,
+    and it would make `test_no_id_moves` read as false when it is simply a statement
+    about an earlier rung of the ladder.
+    """
+    path = tmp_path / "planner.db"
+    engine = db_module._migration_engine(str(path), 5000)
+    try:
+        with engine.begin() as migration_connection:
+            command.upgrade(
+                db_module._alembic_config(migration_connection), "settled_stage_names"
+            )
+    finally:
+        engine.dispose()
+    connection = connect(str(path))
     yield connection
     connection.close()
 

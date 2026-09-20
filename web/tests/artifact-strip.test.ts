@@ -28,9 +28,9 @@ describe("shared artifact strip", () => {
 
   it("reads the pending proposal first, then fields from latest to earliest, without duplicates", () => {
     const rows = ticketArtifactStripItems(
-      ["kickoff", "success", "implementation"],
+      ["brief", "success", "implementation"],
       {
-        kickoff: "[old](/files/tickets/t_one/artifacts/old.md)",
+        brief: "[old](/files/tickets/t_one/artifacts/old.md)",
         success: "[item](/files/sprint-items/si_one/artifacts/shared.pdf)",
         implementation: "[latest](/files/tickets/t_one/artifacts/latest.png) [old again](/files/tickets/t_one/artifacts/old.md)"
       },

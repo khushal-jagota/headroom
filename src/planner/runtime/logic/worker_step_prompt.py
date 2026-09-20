@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from planner.tickets.contracts import StageOwnershipMode, Ticket
 from planner.tickets.logic import machine
 from planner.tickets.revision_feedback import PendingRevisionFeedback
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import BRIEF_FIELD_ID, WorkerTypeDefinition
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,9 +67,9 @@ def compose_worker_step_prompt(
     inputs = [WorkerStepInput("stage instruction", step_instruction)]
     if ticket.guidance:
         inputs.append(WorkerStepInput("Ticket guidance", ticket.guidance))
-    kickoff = ticket.field_values.get("kickoff")
-    if kickoff:
-        inputs.append(WorkerStepInput("Ticket kickoff", kickoff))
+    brief = ticket.field_values.get(BRIEF_FIELD_ID)
+    if brief:
+        inputs.append(WorkerStepInput("Ticket brief", brief))
     if revision_feedback is not None:
         inputs.append(WorkerStepInput("Ticket revision feedback", revision_feedback.text))
     return WorkerStepPrompt(inputs=tuple(inputs))

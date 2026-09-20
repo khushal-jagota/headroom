@@ -84,7 +84,8 @@ def test_cutover_keeps_current_saved_value_and_draft_and_archives_raw_metadata(
         after = dict(conn.execute("SELECT * FROM tickets WHERE id='a'").fetchone())
         assert json.loads(after.pop("field_values")) == {
             "plan": "previous settled value",
-            "success": "",
+            # The later rename moves coding's `success` key on the way to head.
+            "success_condition": "",
         }
         assert json.loads(after.pop("pending_proposal")) == {
             "field": "plan",

@@ -286,7 +286,7 @@
             </div>
           {/if}
         </div>
-        {#if acceptField === "kickoff"}
+        {#if acceptField === "brief"}
           <div class="review-kickoff-priority">
             <TicketPriorityControl
               priority={ticketDetail.priority}
@@ -324,13 +324,13 @@
             ceiling={ticketDetail.ceiling}
             sprintItem={reviewSprintItem}
             stageState={fieldStageVisualStateFor(lc, ticketDetail, acceptField)}
-            approvalDisabled={acceptField === "kickoff" && priorityBusy}
+            approvalDisabled={acceptField === "brief" && priorityBusy}
             onAccept={(payload) => accept(payload)}
           />
         {/if}
       </div>
 
-      {#if acceptField !== "kickoff"}
+      {#if acceptField !== "brief"}
         <div class="review-revise review-arrive review-arrive--4" data-review-revision>
           <div class="review-revision-box" data-review-voice={voiceState.phase}>
             {#if voiceState.phase !== "idle"}

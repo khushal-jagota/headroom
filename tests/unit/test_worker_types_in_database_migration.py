@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from planner.core.db import connect, create_schema
+from planner.core.migrations.versions.settled_stage_and_field_ids import renamed_definition
 from planner.core.migrations.versions.worker_types_in_database import SHIPPED_WORKER_TYPES
 from planner.managed_skills import read_all_skill_sources, read_skill_source
 from planner.skill_sources import panels_skill_root
@@ -52,7 +53,11 @@ def test_every_shipped_type_arrives_with_its_stages_fields_and_profile(parent: P
     try:
         stored = {definition.worker_type: definition for definition in read_definitions(conn)}
         assert len(stored) == len(SHIPPED_WORKER_TYPES)
-        for shipped in SHIPPED_WORKER_TYPES:
+        for frozen in SHIPPED_WORKER_TYPES:
+            # The seed is frozen at what shipped, so it still spells the old ids. A stored
+            # record has been through the rename, which is composed here the same way the
+            # test support does it.
+            shipped = renamed_definition(frozen)
             definition = stored[str(shipped["worker_type"])]
             assert definition.label == shipped["label"]
             assert [stage.id for stage in definition.stages] == [

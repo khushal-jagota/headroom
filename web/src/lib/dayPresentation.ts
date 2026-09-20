@@ -25,7 +25,7 @@ function groupKeyFor(ticket: DayTicket): string {
     awaiting_approval: Boolean(ticket.awaiting_approval),
     assigned: Boolean(ticket.assigned)
   });
-  if (attention === "awaiting_approval" && ticket.gating_field === "kickoff") {
+  if (attention === "awaiting_approval" && ticket.gating_field === "brief") {
     return "waiting_for_kickoff";
   }
   if (attention !== null) return attention;

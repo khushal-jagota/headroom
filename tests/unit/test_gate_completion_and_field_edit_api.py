@@ -58,7 +58,7 @@ def _passed_ticket(db_path: Path) -> str:
         ticket = accept_proposal(
             conn,
             ticket.id,
-            field="kickoff",
+            field="brief",
             principal=OWNER_PRINCIPAL,
             now=0,
             next_ceiling=NO_FURTHER,
@@ -97,11 +97,11 @@ def test_the_one_edit_corrects_a_settled_field(tmp_path: Path) -> None:
     tid = _passed_ticket(db_path)
     with TestClient(app) as client:
         response = client.patch(
-            f"/api/tickets/{tid}", json={"field_values": {"success": "edited success"}}
+            f"/api/tickets/{tid}", json={"field_values": {"success_condition": "edited success"}}
         )
     assert response.status_code == 200, response.json()
     body = response.json()
-    assert body["field_values"]["success"] == "edited success"
+    assert body["field_values"]["success_condition"] == "edited success"
     assert body["stage"] == "needs_plan"  # the correction moves nothing
     assert body["ceiling"] == "needs_plan"
 
@@ -138,13 +138,13 @@ def test_completing_a_user_owned_gate_advances_the_ticket(
 
     with TestClient(app) as client:
         response = client.post(
-            f"/api/tickets/{ticket.id}/complete/kickoff",
+            f"/api/tickets/{ticket.id}/complete/brief",
             json={"body": "User context"},
         )
 
     assert response.status_code == 200, response.json()
     body = response.json()
-    assert body["field_values"] == {"kickoff": "User context"}
+    assert body["field_values"] == {"brief": "User context"}
     assert body["stage"] == "needs_outcome"
     assert body["ceiling"] == "needs_outcome"
     assert body["ceiling_holder"] == {"kind": "owner", "id": "owner"}
@@ -172,7 +172,7 @@ def test_completion_rejects_a_worker_owned_gate_without_changing_the_ticket(
 
     with TestClient(app) as client:
         response = client.post(
-            f"/api/tickets/{ticket.id}/complete/kickoff",
+            f"/api/tickets/{ticket.id}/complete/brief",
             json={"body": "Not allowed"},
         )
         after = client.get(f"/api/tickets/{ticket.id}").json()
@@ -213,7 +213,7 @@ def test_user_completion_enters_blocked_when_a_live_blocker_exists(
 
     with TestClient(app) as client:
         response = client.post(
-            f"/api/tickets/{ticket.id}/complete/kickoff",
+            f"/api/tickets/{ticket.id}/complete/brief",
             json={"body": "User context"},
         )
 

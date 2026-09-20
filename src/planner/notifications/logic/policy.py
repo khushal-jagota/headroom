@@ -1,11 +1,11 @@
-"""The one fact-to-notification decision door."""
+"""The one edge-to-notification decision door."""
 
 from __future__ import annotations
 
 from planner.core.contracts import PrincipalKind
 from planner.notifications.contracts import (
     NOTIFICATION_TYPE_BY_ID,
-    NotificationFact,
+    AttentionEdge,
     NotificationIntent,
 )
 
@@ -17,45 +17,44 @@ _REASONS = {
 }
 
 
-def _subject_route(fact: NotificationFact) -> str:
-    if fact.subject.kind is PrincipalKind.ticket:
-        return f"/#/workspace/{fact.subject.id}"
-    if fact.subject.kind is PrincipalKind.chief:
+def _subject_route(edge: AttentionEdge) -> str:
+    if edge.subject.kind is PrincipalKind.ticket:
+        return f"/#/workspace/{edge.subject.id}"
+    if edge.subject.kind is PrincipalKind.chief:
         return "/#/agents/chief-of-staff"
-    if fact.subject.kind is PrincipalKind.sprint_item:
-        return f"/#/workspace/item/{fact.subject.id}"
-    raise ValueError(f"unknown notification subject kind: {fact.subject.kind.value}")
+    if edge.subject.kind is PrincipalKind.sprint_item:
+        return f"/#/workspace/item/{edge.subject.id}"
+    raise ValueError(f"unknown notification subject kind: {edge.subject.kind.value}")
 
 
-def _subject_tag(fact: NotificationFact) -> str:
+def _subject_tag(edge: AttentionEdge) -> str:
     """Keep the existing OS replacement key while policy uses Principals."""
-    if fact.subject.kind is PrincipalKind.chief:
+    if edge.subject.kind is PrincipalKind.chief:
         return "panels-agent-chief_of_staff"
-    return f"panels-{fact.subject.kind.value}-{fact.subject.id}"
+    return f"panels-{edge.subject.kind.value}-{edge.subject.id}"
 
 
-def decide_notification(fact: NotificationFact, *, enabled: bool) -> NotificationIntent | None:
-    """Apply saved policy to one normalized fact.
+def decide_notification(edge: AttentionEdge, *, enabled: bool) -> NotificationIntent | None:
+    """Apply saved policy to one attention edge.
 
-    Sources never call delivery and delivery never interprets source facts. Every
+    Sources never call delivery and delivery never interprets source state. Every
     notification must pass through this function.
     """
-    if fact.notification_type not in NOTIFICATION_TYPE_BY_ID:
-        raise ValueError(f"unknown notification type: {fact.notification_type}")
-    if fact.subject.kind not in {
+    if edge.notification_type not in NOTIFICATION_TYPE_BY_ID:
+        raise ValueError(f"unknown notification type: {edge.notification_type}")
+    if edge.subject.kind not in {
         PrincipalKind.ticket,
         PrincipalKind.chief,
         PrincipalKind.sprint_item,
     }:
-        raise ValueError(f"unknown notification subject kind: {fact.subject.kind.value}")
+        raise ValueError(f"unknown notification subject kind: {edge.subject.kind.value}")
     if not enabled:
         return None
-    reason = _REASONS[fact.notification_type]
+    reason = _REASONS[edge.notification_type]
     return NotificationIntent(
-        fact_id=fact.fact_id,
         title="Panels",
-        body=f"{fact.subject_label} {reason}.",
-        route=_subject_route(fact),
+        body=f"{edge.subject_label} {reason}.",
+        route=_subject_route(edge),
         # OS notification replacement is the final overlap coalescing boundary.
-        tag=_subject_tag(fact),
+        tag=_subject_tag(edge),
     )

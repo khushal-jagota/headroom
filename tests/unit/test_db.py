@@ -42,10 +42,10 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "derive_ticket_status"
+HEAD_REVISION = "settled_stage_and_field_ids"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
-CURRENT_SCHEMA_OBJECT_COUNT = 60
+CURRENT_SCHEMA_OBJECT_COUNT = 55
 
 # The one state-of-control value this build stores, as the CHECK constraint renders it.
 FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"
@@ -517,8 +517,10 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
             "SELECT ticket_id, stage FROM ticket_paired_stage_openers ORDER BY ticket_id"
         )
     ] == [
-        ("t_discussion", "needs_kickoff"),
-        ("t_paired", "needs_kickoff"),
+        # Seeded as `needs_kickoff` far down the ladder; a later revision moves the ids to
+        # the settled labels, and an opener row carries a Stage id like any other store.
+        ("t_discussion", "needs_brief"),
+        ("t_paired", "needs_brief"),
     ]
 
     # Two rebuilds dropped and recreated the table the children hang off. With foreign keys

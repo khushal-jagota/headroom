@@ -137,11 +137,11 @@ def test_sprint_migration_preserves_all_prose_and_references(tmp_path: Path) -> 
         ticket_after = dict(conn.execute("SELECT * FROM tickets WHERE id = 't_kept'").fetchone())
         assert ticket_after.pop("guidance") == ""
         assert json.loads(ticket_after.pop("field_values")) == {
-            "kickoff": "Saved intake",
-            "success": "Saved result",
+            "brief": "Saved intake",
+            "success_condition": "Saved result",
         }
         assert json.loads(ticket_after.pop("pending_proposal")) == {
-            "field": "kickoff",
+            "field": "brief",
             "body": "Current kickoff",
             "proposed_by": "human",
             "created_at": 56,
@@ -167,6 +167,12 @@ def test_sprint_migration_preserves_all_prose_and_references(tmp_path: Path) -> 
             "ticket_status_revision"
         )
         assert ticket_after.pop("ceiling_holder") == '{"id":"owner","kind":"owner"}'
+        # A later revision moves the ids to the settled labels, so the Stage this row was
+        # written with reaches head under its new name, in every column that holds one.
+        assert ticket_after.pop("stage") == "needs_brief"
+        assert ticket_after.pop("ceiling") == "needs_brief"
+        assert ticket_before.pop("stage") == "needs_kickoff"
+        assert ticket_before.pop("ceiling") == "needs_kickoff"
         assert ticket_after == ticket_before
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:

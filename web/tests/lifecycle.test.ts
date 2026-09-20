@@ -22,23 +22,23 @@ const codingManifest = {
   label: "Coding",
   stages: [
     {
-      id: "needs_kickoff",
+      id: "needs_brief",
       label: "Brief",
-      gating_field: "kickoff",
+      gating_field: "brief",
       is_terminal: false,
       ownership_mode: "worker"
     },
     {
-      id: "needs_success",
+      id: "needs_success_condition",
       label: "Success Condition",
-      gating_field: "success",
+      gating_field: "success_condition",
       is_terminal: false,
       ownership_mode: "worker"
     },
     {
-      id: "needs_approach",
+      id: "needs_what_changes",
       label: "What Changes",
-      gating_field: "approach",
+      gating_field: "what_changes",
       is_terminal: false,
       ownership_mode: "user"
     },
@@ -57,9 +57,9 @@ const codingManifest = {
       ownership_mode: "worker"
     },
     {
-      id: "needs_closeout",
+      id: "needs_consequences",
       label: "Consequences",
-      gating_field: "closeout",
+      gating_field: "consequences",
       is_terminal: false,
       ownership_mode: "worker"
     },
@@ -72,30 +72,30 @@ const codingManifest = {
     }
   ],
   advance: {
-    needs_kickoff: "needs_success",
-    needs_success: "needs_approach",
-    needs_approach: "needs_plan",
+    needs_brief: "needs_success_condition",
+    needs_success_condition: "needs_what_changes",
+    needs_what_changes: "needs_plan",
     needs_plan: "needs_implementation",
-    needs_implementation: "needs_closeout",
-    needs_closeout: "done"
+    needs_implementation: "needs_consequences",
+    needs_consequences: "done"
   },
   fields: [
-    { id: "kickoff", label: "Brief" },
-    { id: "success", label: "Success Condition" },
-    { id: "approach", label: "What Changes" },
+    { id: "brief", label: "Brief" },
+    { id: "success_condition", label: "Success Condition" },
+    { id: "what_changes", label: "What Changes" },
     { id: "plan", label: "Plan" },
     { id: "implementation", label: "Implementation" },
-    { id: "closeout", label: "Consequences" }
+    { id: "consequences", label: "Consequences" }
   ],
   ceiling_range: [
-    "needs_success",
-    "needs_approach",
+    "needs_success_condition",
+    "needs_what_changes",
     "needs_plan",
     "needs_implementation",
-    "needs_closeout",
+    "needs_consequences",
     "done"
   ],
-  default_ceiling: "needs_success",
+  default_ceiling: "needs_success_condition",
   worker_profile_id: "panels-worker-coding",
   default_backend: "hermes",
   default_model: null,
@@ -168,7 +168,7 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     employee_launch_model: null,
     employee_launch_reasoning_effort: null,
     employee_configuration_editable: true,
-    stage: "needs_success",
+    stage: "needs_success_condition",
     ceiling: "done",
     ceiling_holder: { kind: "owner", id: "owner" },
     priority: "P1",
@@ -190,53 +190,53 @@ describe("coding lifecycle", () => {
     expect(codingLifecycle.workerType).toBe("coding");
     expect(codingLifecycle.workerTypeLabel).toBe("Coding");
     expect(codingLifecycle.fieldIds).toEqual([
-      "kickoff",
-      "success",
-      "approach",
+      "brief",
+      "success_condition",
+      "what_changes",
       "plan",
       "implementation",
-      "closeout"
+      "consequences"
     ]);
     expect(codingLifecycle.stageOrder).toEqual([
-      "needs_kickoff",
-      "needs_success",
-      "needs_approach",
+      "needs_brief",
+      "needs_success_condition",
+      "needs_what_changes",
       "needs_plan",
       "needs_implementation",
-      "needs_closeout",
+      "needs_consequences",
       "done"
     ]);
     expect(codingLifecycle.gatingField).toEqual({
-      needs_kickoff: "kickoff",
-      needs_success: "success",
-      needs_approach: "approach",
+      needs_brief: "brief",
+      needs_success_condition: "success_condition",
+      needs_what_changes: "what_changes",
       needs_plan: "plan",
       needs_implementation: "implementation",
-      needs_closeout: "closeout"
+      needs_consequences: "consequences"
     });
     expect(codingLifecycle.gatedStage).toEqual({
-      kickoff: "needs_kickoff",
-      success: "needs_success",
-      approach: "needs_approach",
+      brief: "needs_brief",
+      success_condition: "needs_success_condition",
+      what_changes: "needs_what_changes",
       plan: "needs_plan",
       implementation: "needs_implementation",
-      closeout: "needs_closeout"
+      consequences: "needs_consequences"
     });
     expect(codingLifecycle.advance).toEqual({
-      needs_kickoff: "needs_success",
-      needs_success: "needs_approach",
-      needs_approach: "needs_plan",
+      needs_brief: "needs_success_condition",
+      needs_success_condition: "needs_what_changes",
+      needs_what_changes: "needs_plan",
       needs_plan: "needs_implementation",
-      needs_implementation: "needs_closeout",
-      needs_closeout: "done"
+      needs_implementation: "needs_consequences",
+      needs_consequences: "done"
     });
     expect(codingLifecycle.stageOwnershipMode).toEqual({
-      needs_kickoff: "worker",
-      needs_success: "worker",
-      needs_approach: "user",
+      needs_brief: "worker",
+      needs_success_condition: "worker",
+      needs_what_changes: "user",
       needs_plan: "user",
       needs_implementation: "worker",
-      needs_closeout: "worker",
+      needs_consequences: "worker",
       done: null
     });
   });
@@ -244,32 +244,32 @@ describe("coding lifecycle", () => {
   // The leash reads "Until Approach", so an option carries the manifest's own stage
   // label. A stage rename lands in the control with no code change.
   it("offers scope options from the beginning and middle of the range", () => {
-    expect(ceilingOptionsFor(codingLifecycle, "needs_success")).toEqual([
-      { value: "needs_success", label: "Success Condition" },
-      { value: "needs_approach", label: "What Changes" },
+    expect(ceilingOptionsFor(codingLifecycle, "needs_success_condition")).toEqual([
+      { value: "needs_success_condition", label: "Success Condition" },
+      { value: "needs_what_changes", label: "What Changes" },
       { value: "needs_plan", label: "Plan" },
       { value: "needs_implementation", label: "Implementation" },
-      { value: "needs_closeout", label: "Consequences" },
+      { value: "needs_consequences", label: "Consequences" },
       { value: "done", label: "Done" }
     ]);
     expect(ceilingOptionsFor(codingLifecycle, "needs_plan")).toEqual([
       { value: "needs_plan", label: "Plan" },
       { value: "needs_implementation", label: "Implementation" },
-      { value: "needs_closeout", label: "Consequences" },
+      { value: "needs_consequences", label: "Consequences" },
       { value: "done", label: "Done" }
     ]);
   });
 
   it("names a Stage and a field from the Worker type, and falls back to the id", () => {
-    expect(fieldLabelFor(codingLifecycle, "closeout")).toBe("Consequences");
-    expect(stageLabelFor(codingLifecycle, "needs_closeout")).toBe("Consequences");
-    expect(fieldLabelFor(codingLifecycle, "success")).toBe("Success Condition");
-    expect(stageLabelFor(codingLifecycle, "needs_approach")).toBe("What Changes");
+    expect(fieldLabelFor(codingLifecycle, "consequences")).toBe("Consequences");
+    expect(stageLabelFor(codingLifecycle, "needs_consequences")).toBe("Consequences");
+    expect(fieldLabelFor(codingLifecycle, "success_condition")).toBe("Success Condition");
+    expect(stageLabelFor(codingLifecycle, "needs_what_changes")).toBe("What Changes");
 
     // Before the manifest arrives there is no label to read, so the id is spelled out.
-    // This is the only window in which a reader sees anything but the settled name.
-    expect(fieldLabelFor(null, "closeout")).toBe("Closeout");
-    expect(stageLabelFor(null, "needs_closeout")).toBe("needs closeout");
+    // Now that the id follows the label, that window reads the settled word too.
+    expect(fieldLabelFor(null, "consequences")).toBe("Consequences");
+    expect(stageLabelFor(null, "needs_consequences")).toBe("needs consequences");
 
     // A field or Stage the loaded type does not declare falls back the same way.
     expect(fieldLabelFor(codingLifecycle, "research")).toBe("Research");
@@ -277,7 +277,7 @@ describe("coding lifecycle", () => {
   });
 
   it("derives the approval ceiling from the stage after the newly entered Stage", () => {
-    expect(preferredScopeCeilingFor(codingLifecycle, "needs_success")).toBe("needs_approach");
+    expect(preferredScopeCeilingFor(codingLifecycle, "needs_success_condition")).toBe("needs_what_changes");
     expect(preferredScopeCeilingFor(codingLifecycle, "done")).toBe("done");
   });
 
@@ -287,13 +287,13 @@ describe("coding lifecycle", () => {
         codingLifecycle,
         ticketDetail({
           pending_proposal: {
-            field: "success",
+            field: "success_condition",
             body: "Proposed success",
             proposed_by: "worker",
             created_at: 1
           }
         }),
-        "success"
+        "success_condition"
       )
     ).toBe("current-awaiting-approval");
   });
@@ -306,15 +306,15 @@ describe("coding lifecycle", () => {
 
 describe("fallbacks before lifecycle data is available", () => {
   it("returns the public null defaults", () => {
-    expect(gatingFieldFor(null, "needs_success")).toBeNull();
+    expect(gatingFieldFor(null, "needs_success_condition")).toBeNull();
     expect(advanceTargetFor(null, "needs_plan", "done")).toBeNull();
-    expect(ceilingOptionsFor(null, "needs_success")).toEqual([]);
-    expect(fieldIsPassedFor(null, "success", "needs_approach")).toBe(false);
+    expect(ceilingOptionsFor(null, "needs_success_condition")).toEqual([]);
+    expect(fieldIsPassedFor(null, "success_condition", "needs_what_changes")).toBe(false);
     expect(
       ticketStageVisualStateFor(null, {
-        ticketStage: "needs_success",
+        ticketStage: "needs_success_condition",
         ticketStatus: "agent",
-        fieldName: "success"
+        fieldName: "success_condition"
       })
     ).toBe("upcoming");
   });

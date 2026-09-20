@@ -17,6 +17,7 @@ from planner.tickets.contracts import StageOwnershipMode, TicketStatus
 from planner.tickets.derivation import AgentState, TicketFacts
 from planner.tickets.logic import machine
 from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.contracts import NEEDS_BRIEF_STAGE_ID
 
 
 class WorkAttention(TypedDict):
@@ -119,7 +120,7 @@ def ticket_is_assigned(
 ) -> bool:
     """Whether the current Ticket stage is Khushal's work."""
     return ownership is StageOwnershipMode.user or (
-        stage == "needs_kickoff" and owner_holds_ceiling
+        stage == NEEDS_BRIEF_STAGE_ID and owner_holds_ceiling
     )
 
 

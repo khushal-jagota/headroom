@@ -199,7 +199,7 @@ def _create_tickets(
         sprint_item_id=sprint_item_ids[0],
         sprint_id=sprint_id,
         worker_type="coding",
-        stated_ceiling="needs_approach",
+        stated_ceiling="needs_what_changes",
     )
     coding = tickets_data.file_current_proposal(
         conn,

@@ -10,12 +10,12 @@ usability: guide people toward the intended actions with effective hierarchy, ma
 the product and its behavior understandable, and let the design reflect its purpose.
 Simplicity can help, but is not the definition of usability.
 
-### needs_kickoff
+### needs_brief
 
 Capture the product problem, intended outcome, relevant surface, and known constraints.
 Keep this outcome-level; do not hide an assumed solution inside the Brief.
 
-### needs_direction
+### needs_best_guess_and_open_options
 
 Inspect the real product, then make a concise first best guess from that evidence and
 the Brief. Note the top-level issues, the intended flow, and consequential assumptions.
@@ -40,7 +40,7 @@ Use representative content and states, exercise the important interactions, and 
 the result in a browser at relevant viewport sizes. If polish exposes a flow problem,
 correct it. Render Markdown on a recessed—not flat or raised—surface.
 
-### needs_closeout
+### needs_consequences
 
 Write a concise implementation bar for the approved artifact and create the downstream
 `coding` Ticket with the artifact link, bar, and applicable product context. Load and

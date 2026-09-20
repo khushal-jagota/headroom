@@ -9,6 +9,9 @@ from planner.conversation.contracts import require_conversation_backend_key
 from planner.core.contracts import ErrorCode, JsonDict, PlannerError
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.contracts import (
+    BRIEF_FIELD_ID,
+    CONSEQUENCES_FIELD_ID,
+    NEEDS_BRIEF_STAGE_ID,
     WorkerTypeDefinition,
     WorkerTypeManifest,
     WorkerTypeManifestField,
@@ -16,11 +19,6 @@ from planner.worker_types.contracts import (
 )
 
 KNOWN_TOOLSET_PROFILES = frozenset({"default"})
-
-# Every Worker type ends by landing what it produced, so every Worker type declares
-# this field. The rules below make a declared field gate exactly one Stage, so
-# requiring the name is enough to require the Closeout Stage.
-CLOSEOUT_FIELD_ID = "closeout"
 
 
 def validate_definition(
@@ -60,20 +58,20 @@ def validate_definition(
     first = definition.stages[0]
     last = definition.stages[-1]
 
-    kickoff_stage_indexes = [
-        index for index, stage in enumerate(definition.stages) if stage.id == "needs_kickoff"
+    brief_stage_indexes = [
+        index for index, stage in enumerate(definition.stages) if stage.id == NEEDS_BRIEF_STAGE_ID
     ]
-    kickoff_field_indexes = [
-        index for index, field in enumerate(definition.fields) if field.id == "kickoff"
+    brief_field_indexes = [
+        index for index, field in enumerate(definition.fields) if field.id == BRIEF_FIELD_ID
     ]
     if (
-        kickoff_stage_indexes not in ([], [0])
-        or kickoff_field_indexes not in ([], [0])
-        or bool(kickoff_stage_indexes) != bool(kickoff_field_indexes)
-        or (kickoff_stage_indexes and first.gating_field != "kickoff")
+        brief_stage_indexes not in ([], [0])
+        or brief_field_indexes not in ([], [0])
+        or bool(brief_stage_indexes) != bool(brief_field_indexes)
+        or (brief_stage_indexes and first.gating_field != BRIEF_FIELD_ID)
     ):
         raise fail(
-            "kickoff stage and field must be paired first",
+            "brief stage and field must be paired first",
             {"worker_type": worker_type},
         )
 
@@ -167,10 +165,10 @@ def validate_definition(
                 {"worker_type": worker_type, "field": field.id},
             )
 
-    if CLOSEOUT_FIELD_ID not in declared_field_ids:
+    if CONSEQUENCES_FIELD_ID not in declared_field_ids:
         raise fail(
-            f"every worker type must declare a {CLOSEOUT_FIELD_ID} field",
-            {"worker_type": worker_type, "field": CLOSEOUT_FIELD_ID},
+            f"every worker type must declare a {CONSEQUENCES_FIELD_ID} field",
+            {"worker_type": worker_type, "field": CONSEQUENCES_FIELD_ID},
         )
 
     if definition.worker_profile.specialist_skill not in known_skills:

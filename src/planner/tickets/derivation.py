@@ -23,6 +23,7 @@ from enum import StrEnum
 from planner.core import ticket_blocks
 from planner.tickets.contracts import TicketStatus, WorkerStepClaim
 from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +96,7 @@ def derive_ticket_facts(stored: StoredTicketFacts) -> TicketFacts:
         ticket_status=ticket_status,
         blocked=stored.has_live_blocker,
         waiting_to_closeout=(
-            gating_field == "closeout" and ticket_status is TicketStatus.empty
+            gating_field == CONSEQUENCES_FIELD_ID and ticket_status is TicketStatus.empty
         ),
     )
 

@@ -22,7 +22,7 @@ def _stored(
     claim: WorkerStepClaim = WorkerStepClaim.none,
     proposal: bool = False,
     blocker: bool = False,
-    stage: str = "needs_success",
+    stage: str = "needs_success_condition",
 ) -> StoredTicketFacts:
     return StoredTicketFacts(
         ticket_id="t_rule",
@@ -72,11 +72,11 @@ def test_waiting_to_closeout_is_a_resting_ticket_on_its_closeout_stage(
 ) -> None:
     # The Worker types come from a database, and this fact asks one which Stage it gates.
     _db(tmp_path).close()
-    assert derivation.derive_ticket_facts(_stored(stage="needs_closeout")).waiting_to_closeout
+    assert derivation.derive_ticket_facts(_stored(stage="needs_consequences")).waiting_to_closeout
     assert not derivation.derive_ticket_facts(_stored(stage="needs_plan")).waiting_to_closeout
     # A claim out is not resting, so there is nothing waiting.
     assert not derivation.derive_ticket_facts(
-        _stored(stage="needs_closeout", claim=WorkerStepClaim.out)
+        _stored(stage="needs_consequences", claim=WorkerStepClaim.out)
     ).waiting_to_closeout
 
 

@@ -305,7 +305,7 @@ def _past_kickoff(db_path: Path, ticket_id: str) -> None:
         tickets_data.accept_proposal(
             conn,
             ticket_id,
-            field="kickoff",
+            field="brief",
             principal=OWNER_PRINCIPAL,
             now=1,
             next_ceiling=NO_FURTHER,

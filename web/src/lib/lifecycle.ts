@@ -146,7 +146,7 @@ export function preferredScopeCeilingFor(
   newStage: string | null
 ): string | null {
   if (!lc) return null;
-  const options = ceilingOptionsFor(lc, newStage || lc.ceilingRange[0] || "needs_success");
+  const options = ceilingOptionsFor(lc, newStage || lc.ceilingRange[0] || "needs_success_condition");
   const advanced = newStage ? lc.advance[newStage] : null;
   if (advanced && options.some((option) => option.value === advanced)) return advanced;
   const terminal = [...options].reverse().find((option) =>

@@ -1,4 +1,4 @@
-"""SQLite record for facts, policy decisions, subscriptions, and delivery."""
+"""SQLite record for attention edges, subscriptions, and delivery."""
 
 from __future__ import annotations
 
@@ -20,7 +20,8 @@ from planner.notifications.contracts import (
     NOTIFICATION_TYPE_BY_ID,
     SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY,
     TICKET_NOTIFICATION_SUBJECT_KEY,
-    NotificationFact,
+    AttentionEdge,
+    EdgeKey,
     NotificationIntent,
     PendingDelivery,
     PushSubscription,
@@ -177,57 +178,6 @@ def active_subscription_ids(conn: sqlite3.Connection) -> tuple[str, ...]:
     )
 
 
-def _insert_fact(
-    conn: sqlite3.Connection,
-    *,
-    fact_id: str,
-    notification_type: str,
-    subject: Principal,
-    subject_label: str,
-    source_kind: str,
-    source_id: str,
-    source_sequence: int,
-    occurred_at: int,
-) -> None:
-    stored_kind, stored_id = _stored_notification_subject(subject)
-    payload = json.dumps(
-        {"subject_label": subject_label},
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
-    conn.execute(
-        "INSERT OR IGNORE INTO notification_facts"
-        "(fact_id, notification_type, subject_kind, ticket_id, agent_key, sprint_item_id, "
-        "source_kind, source_id, source_sequence, occurred_at, payload) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            fact_id,
-            notification_type,
-            stored_kind,
-            stored_id if stored_kind == "ticket" else None,
-            stored_id if stored_kind == "agent" else None,
-            stored_id if stored_kind == "sprint_item" else None,
-            source_kind,
-            source_id,
-            source_sequence,
-            occurred_at,
-            payload,
-        ),
-    )
-
-
-def _stored_notification_subject(subject: Principal) -> tuple[str, str]:
-    """Translate a Principal to the unchanged notification table columns."""
-    if subject.kind is PrincipalKind.ticket:
-        return "ticket", subject.id
-    if subject.kind is PrincipalKind.sprint_item:
-        return "sprint_item", subject.id
-    if subject.kind is PrincipalKind.chief:
-        return "agent", CHIEF_SETTINGS_KEY
-    raise ValueError(f"unsupported notification subject: {subject.kind.value}")
-
-
 def _principal_from_stored_subject(subject_kind: str, subject_id: str) -> Principal:
     """Translate unchanged notification rows to the shared identity contract."""
     if subject_kind == "ticket":
@@ -239,21 +189,21 @@ def _principal_from_stored_subject(subject_kind: str, subject_id: str) -> Princi
     raise ValueError(f"unknown notification subject: {subject_kind}/{subject_id}")
 
 
-def _preference_subject_key(fact: NotificationFact) -> str:
-    """Which saved switch decides this fact.
+def _preference_subject_key(edge: AttentionEdge) -> str:
+    """Which saved switch decides this edge.
 
     Every Ticket shares one switch, and every Sprint Item shares one: a sprint holds
     twenty or thirty Items and they are replaced each sprint, so a switch per Item would
     be a screen of rows that die. An agent is its own subject, because there is one of
     each.
     """
-    if fact.subject.kind is PrincipalKind.ticket:
+    if edge.subject.kind is PrincipalKind.ticket:
         return TICKET_NOTIFICATION_SUBJECT_KEY
-    if fact.subject.kind is PrincipalKind.sprint_item:
+    if edge.subject.kind is PrincipalKind.sprint_item:
         return SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY
-    if fact.subject.kind is PrincipalKind.chief:
+    if edge.subject.kind is PrincipalKind.chief:
         return CHIEF_SETTINGS_KEY
-    raise ValueError(f"unsupported notification subject: {fact.subject.kind.value}")
+    raise ValueError(f"unsupported notification subject: {edge.subject.kind.value}")
 
 
 def _owner_holds_ticket_ceiling(raw_holder: str) -> bool:
@@ -273,27 +223,30 @@ def _agent_label(agent_key: str) -> str:
     return agent_key.replace("_", " ").title()
 
 
-def _project_attention_facts(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        "DELETE FROM notification_attention_edges WHERE "
-        "(subject_kind = 'ticket' AND NOT EXISTS ("
-        "SELECT 1 FROM tickets WHERE tickets.id = notification_attention_edges.subject_id)) "
-        "OR (subject_kind = 'sprint_item' AND NOT EXISTS ("
-        "SELECT 1 FROM sprint_items "
-        "WHERE sprint_items.id = notification_attention_edges.subject_id)) "
-        "OR (subject_kind = 'agent' AND NOT EXISTS ("
-        "SELECT 1 FROM agents WHERE agents.agent_key = notification_attention_edges.subject_id))"
-    )
-    conn.execute(
-        "DELETE FROM notification_attention_state WHERE "
-        "(subject_kind = 'ticket' AND NOT EXISTS ("
-        "SELECT 1 FROM tickets WHERE tickets.id = notification_attention_state.subject_id)) "
-        "OR (subject_kind = 'sprint_item' AND NOT EXISTS ("
-        "SELECT 1 FROM sprint_items "
-        "WHERE sprint_items.id = notification_attention_state.subject_id)) "
-        "OR (subject_kind = 'agent' AND NOT EXISTS ("
-        "SELECT 1 FROM agents WHERE agents.agent_key = notification_attention_state.subject_id))"
-    )
+_SUBJECT_TABLES = (
+    "notification_attention_edges",
+    "notification_attention_state",
+    "notification_deliveries",
+)
+
+
+def _prune_missing_subjects(conn: sqlite3.Connection) -> None:
+    """Nothing survives its subject. The row used to go by foreign key cascade."""
+    for table in _SUBJECT_TABLES:
+        conn.execute(
+            f"DELETE FROM {table} WHERE "
+            "(subject_kind = 'ticket' AND NOT EXISTS ("
+            f"SELECT 1 FROM tickets WHERE tickets.id = {table}.subject_id)) "
+            "OR (subject_kind = 'sprint_item' AND NOT EXISTS ("
+            "SELECT 1 FROM sprint_items "
+            f"WHERE sprint_items.id = {table}.subject_id)) "
+            "OR (subject_kind = 'agent' AND NOT EXISTS ("
+            f"SELECT 1 FROM agents WHERE agents.agent_key = {table}.subject_id))"
+        )
+
+
+def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
+    _prune_missing_subjects(conn)
     conversations = attention_data.conversation_attention(conn)
     desired: dict[tuple[str, str, str], tuple[bool, Principal, str, int]] = {}
     ticket_rows = conn.execute(
@@ -370,139 +323,113 @@ def _project_attention_facts(conn: sqlite3.Connection) -> None:
         conn,
         {key: (active, occurred_at) for key, (active, _, _, occurred_at) in desired.items()},
     )
+    preferences = resolved_preferences(conn)
+    subscriptions = active_subscription_ids(conn)
+    decided = 0
     for row in conn.execute(
         "SELECT subject_kind, subject_id, notification_type, generation, occurred_at "
-        "FROM notification_attention_edges WHERE projected=0 "
+        "FROM notification_attention_edges WHERE decided=0 "
         "ORDER BY occurred_at, subject_kind, subject_id, "
         "notification_type, generation"
-    ):
-        key = (
+    ).fetchall():
+        subject_key = (
             str(row["subject_kind"]),
             str(row["subject_id"]),
             str(row["notification_type"]),
         )
-        current = desired.get(key)
+        current = desired.get(subject_key)
         if current is None:
             continue
         _, subject, label, _ = current
-        generation = int(row["generation"])
-        _insert_fact(
-            conn,
-            fact_id=f"attention:{key[0]}:{key[1]}:{key[2]}:{generation}",
-            notification_type=key[2],
+        key = EdgeKey(*subject_key, int(row["generation"]))
+        edge = AttentionEdge(
+            key=key,
             subject=subject,
             subject_label=label,
-            source_kind="ticket" if subject.kind is PrincipalKind.ticket else "conversation",
-            source_id=f"{key[0]}:{key[1]}:{key[2]}",
-            source_sequence=generation,
             occurred_at=int(row["occurred_at"]),
         )
-        conn.execute(
-            "UPDATE notification_attention_edges SET projected=1 WHERE subject_kind=? "
-            "AND subject_id=? AND notification_type=? AND generation=?",
-            (*key, generation),
+        intent = decide_notification(
+            edge,
+            enabled=preferences.get(
+                (_preference_subject_key(edge), edge.notification_type), False
+            ),
         )
-
-
-def project_facts(conn: sqlite3.Connection) -> int:
-    """Materialize one fact for each false-to-true attention transition."""
-    inserted_before = conn.total_changes
-    with _txn(conn):
-        _project_attention_facts(conn)
-    return conn.total_changes - inserted_before
-
-
-def apply_policy(conn: sqlite3.Connection, now: int) -> int:
-    """Decide every undecided fact through the one policy door."""
-    decisions = 0
-    with _txn(conn):
-        preferences = resolved_preferences(conn)
-        rows = conn.execute(
-            "SELECT f.fact_id, f.notification_type, f.subject_kind, "
-            "COALESCE(f.ticket_id, f.agent_key, f.sprint_item_id) AS subject_id, "
-            "f.occurred_at, f.payload "
-            "FROM notification_facts f LEFT JOIN notification_decisions d "
-            "ON d.fact_id = f.fact_id WHERE d.fact_id IS NULL "
-            "ORDER BY f.occurred_at, f.fact_id"
-        ).fetchall()
-        subscriptions = active_subscription_ids(conn)
-        for row in rows:
-            payload = json.loads(str(row["payload"]))
-            fact_id = str(row["fact_id"])
-            try:
-                subject = _principal_from_stored_subject(
-                    str(row["subject_kind"]), str(row["subject_id"])
-                )
-            except ValueError:
-                # Old arbitrary-agent facts have no Principal in the closed vocabulary.
-                # They never matched a saved preference, so preserve that suppression.
+        if intent is not None:
+            for subscription_id in subscriptions:
                 conn.execute(
-                    "INSERT INTO notification_decisions(fact_id, outcome, decided_at) "
-                    "VALUES (?, 'suppress', ?)",
-                    (fact_id, now),
-                )
-                decisions += 1
-                continue
-            fact = NotificationFact(
-                fact_id=fact_id,
-                notification_type=str(row["notification_type"]),
-                subject=subject,
-                # Facts copied by notification_subjects retain their original payload
-                # so an undecided pre-upgrade fact remains usable without rewriting history.
-                subject_label=str(
-                    payload.get("subject_label", payload.get("ticket_title", "Panels"))
-                ),
-                occurred_at=int(row["occurred_at"]),
-            )
-            subject_key = _preference_subject_key(fact)
-            intent = decide_notification(
-                fact,
-                enabled=preferences.get((subject_key, fact.notification_type), False),
-            )
-            outcome = "notify" if intent is not None else "suppress"
-            conn.execute(
-                "INSERT INTO notification_decisions(fact_id, outcome, decided_at) VALUES (?, ?, ?)",
-                (fact.fact_id, outcome, now),
-            )
-            if intent is not None:
-                conn.execute(
-                    "INSERT INTO notification_intents"
-                    "(fact_id, title, body, route, tag, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT OR IGNORE INTO notification_deliveries"
+                    "(subject_kind, subject_id, notification_type, generation, subscription_id, "
+                    "title, body, route, tag, created_at, status, attempts, next_attempt_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)",
                     (
-                        intent.fact_id,
+                        key.subject_kind,
+                        key.subject_id,
+                        key.notification_type,
+                        key.generation,
+                        subscription_id,
                         intent.title,
                         intent.body,
                         intent.route,
                         intent.tag,
                         now,
+                        now,
                     ),
                 )
-                for subscription_id in subscriptions:
-                    conn.execute(
-                        "INSERT INTO notification_deliveries"
-                        "(fact_id, subscription_id, status, attempts, next_attempt_at) "
-                        "VALUES (?, ?, 'pending', 0, ?)",
-                        (intent.fact_id, subscription_id, now),
-                    )
-            decisions += 1
-    return decisions
+        # A suppressed edge is decided too, and leaves nothing behind.
+        conn.execute(
+            "UPDATE notification_attention_edges SET decided=1 WHERE subject_kind=? "
+            "AND subject_id=? AND notification_type=? AND generation=?",
+            (*subject_key, key.generation),
+        )
+        decided += 1
+    return decided
+
+
+def queue_deliveries(conn: sqlite3.Connection, now: int) -> int:
+    """Turn every undecided rising edge into the deliveries it earns.
+
+    One step. The saved preference decides the edge, the one policy door writes the
+    words, and an enabled edge becomes one delivery row per registered device.
+    """
+    with _txn(conn):
+        return _queue_attention_deliveries(conn, now)
+
+
+_SUBJECT_STILL_EXISTS = (
+    "((d.subject_kind = 'ticket' "
+    "AND EXISTS (SELECT 1 FROM tickets WHERE tickets.id = d.subject_id)) "
+    "OR (d.subject_kind = 'sprint_item' "
+    "AND EXISTS (SELECT 1 FROM sprint_items WHERE sprint_items.id = d.subject_id)) "
+    "OR (d.subject_kind = 'agent' "
+    "AND EXISTS (SELECT 1 FROM agents WHERE agents.agent_key = d.subject_id)))"
+)
 
 
 def pending_deliveries(
     conn: sqlite3.Connection, now: int, *, limit: int = 50
 ) -> tuple[PendingDelivery, ...]:
     rows = conn.execute(
-        "SELECT d.fact_id, d.attempts, s.subscription_id, s.endpoint, s.p256dh, s.auth, "
-        "i.title, i.body, i.route, i.tag FROM notification_deliveries d "
+        "SELECT d.subject_kind, d.subject_id, d.notification_type, d.generation, d.attempts, "
+        "d.title, d.body, d.route, d.tag, "
+        "s.subscription_id, s.endpoint, s.p256dh, s.auth FROM notification_deliveries d "
         "JOIN notification_push_subscriptions s ON s.subscription_id = d.subscription_id "
-        "JOIN notification_intents i ON i.fact_id = d.fact_id "
         "WHERE d.status IN ('pending','retry') AND d.next_attempt_at <= ? "
-        "AND s.disabled_at IS NULL ORDER BY d.next_attempt_at, d.fact_id LIMIT ?",
+        "AND s.disabled_at IS NULL "
+        # The log holds no foreign key to its subject, so a Ticket deleted after the
+        # queue step's prune would otherwise still be pushed about.
+        f"AND {_SUBJECT_STILL_EXISTS} "
+        "ORDER BY d.next_attempt_at, d.subject_kind, d.subject_id, "
+        "d.notification_type, d.generation LIMIT ?",
         (now, limit),
     ).fetchall()
     return tuple(
         PendingDelivery(
-            fact_id=str(row["fact_id"]),
+            edge=EdgeKey(
+                str(row["subject_kind"]),
+                str(row["subject_id"]),
+                str(row["notification_type"]),
+                int(row["generation"]),
+            ),
             attempts=int(row["attempts"]),
             subscription=PushSubscription(
                 str(row["subscription_id"]),
@@ -511,7 +438,6 @@ def pending_deliveries(
                 str(row["auth"]),
             ),
             intent=NotificationIntent(
-                fact_id=str(row["fact_id"]),
                 title=str(row["title"]),
                 body=str(row["body"]),
                 route=str(row["route"]),
@@ -520,6 +446,22 @@ def pending_deliveries(
         )
         for row in rows
     )
+
+
+def _delivery_row(delivery: PendingDelivery) -> tuple[str, str, str, int, str]:
+    return (
+        delivery.edge.subject_kind,
+        delivery.edge.subject_id,
+        delivery.edge.notification_type,
+        delivery.edge.generation,
+        delivery.subscription.subscription_id,
+    )
+
+
+_DELIVERY_ROW_WHERE = (
+    " WHERE subject_kind = ? AND subject_id = ? AND notification_type = ? "
+    "AND generation = ? AND subscription_id = ?"
+)
 
 
 def record_delivery_result(
@@ -535,8 +477,8 @@ def record_delivery_result(
     if delivered:
         conn.execute(
             "UPDATE notification_deliveries SET status = 'delivered', attempts = ?, "
-            "last_error = NULL, delivered_at = ? WHERE fact_id = ? AND subscription_id = ?",
-            (attempts, now, delivery.fact_id, delivery.subscription.subscription_id),
+            "last_error = NULL, delivered_at = ?" + _DELIVERY_ROW_WHERE,
+            (attempts, now, *_delivery_row(delivery)),
         )
         return
     if expired:
@@ -548,25 +490,14 @@ def record_delivery_result(
             )
             conn.execute(
                 "UPDATE notification_deliveries SET status = 'expired', attempts = ?, "
-                "last_error = ? WHERE fact_id = ? AND subscription_id = ?",
-                (
-                    attempts,
-                    error,
-                    delivery.fact_id,
-                    delivery.subscription.subscription_id,
-                ),
+                "last_error = ?" + _DELIVERY_ROW_WHERE,
+                (attempts, error, *_delivery_row(delivery)),
             )
         return
     # 30s, 60s, 120s... capped at one hour.
     next_attempt_at = now + min(3600, 30 * (2 ** min(attempts - 1, 7)))
     conn.execute(
         "UPDATE notification_deliveries SET status = 'retry', attempts = ?, "
-        "next_attempt_at = ?, last_error = ? WHERE fact_id = ? AND subscription_id = ?",
-        (
-            attempts,
-            next_attempt_at,
-            error,
-            delivery.fact_id,
-            delivery.subscription.subscription_id,
-        ),
+        "next_attempt_at = ?, last_error = ?" + _DELIVERY_ROW_WHERE,
+        (attempts, next_attempt_at, error, *_delivery_row(delivery)),
     )

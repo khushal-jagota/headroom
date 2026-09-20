@@ -26,7 +26,7 @@ let ticketId = $state('t_guidance');
 (window as any).__showTicket = (id: string) => { review = false; ticketId = id; };
 </script>
 <QueryClientProvider {client}>
-{#if review}<ReviewProposalCard ticketId="t_guidance" field="success" />
+{#if review}<ReviewProposalCard ticketId="t_guidance" field="success_condition" />
 {:else}{#key ticketId}<TicketRoute id={ticketId} />{/key}{/if}
 </QueryClientProvider>`);
   await writeFile(main, `import { mount } from 'svelte'; import Host from './${stem}.svelte'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host, {target: document.getElementById('app')!});`);
@@ -39,10 +39,10 @@ let ticketId = $state('t_guidance');
 import json, sys
 from playwright.sync_api import sync_playwright, expect
 
-ticket = dict(project_id='project_one', project='One', sprint_id='sp_old', sprint_item_id='outcome_kept', id='t_guidance', title='Guidance ticket', worker_type='coding', employee_backend='codex', employee_launch_model=None, employee_launch_reasoning_effort=None, employee_configuration_editable=False, stage='needs_success', ceiling='needs_success', priority='P2', resolved_priority_anchors={'project': {'id': 'project_one', 'name': 'One', 'priority': 'P2'}, 'sprint_item': {'id': 'outcome_kept', 'title': 'Kept outcome', 'priority': 'P2'}}, ticket_status='awaiting_approval', ceiling_holder={'kind': 'chief', 'id': 'chief'}, conversation_id=None, conversation_history=[], day_ids=[], blocked=False, blocker_summary={'blocked_by': [], 'is_blocked': False}, recap='Orientation', guidance='Original **constraint**', field_values={'kickoff': 'Request'}, pending_proposal={'field': 'success', 'body': 'A result', 'proposed_by': 'agent', 'created_at': 1})
-stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, ownership_mode='worker' if f else None) for s,l,f in [('needs_kickoff','Kickoff','kickoff'),('needs_success','Success','success'),('done','Done',None)]]
-personal_stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, ownership_mode=o) for s,l,f,o in [('needs_kickoff','Kickoff','kickoff','user'),('needs_outcome','Outcome','outcome','user'),('needs_closeout','Closeout','closeout','worker'),('done','Done',None,None)]]
-manifest = {'worker_types': [dict(worker_type='coding', label='Coding', stages=stages, advance={'needs_kickoff': 'needs_success', 'needs_success': 'done'}, ceiling_range=['needs_kickoff','needs_success','done'], default_ceiling='needs_success', worker_profile_id='panels-worker-coding', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'kickoff','label':'Kickoff'}, {'id':'success','label':'Success'}]), dict(worker_type='personal', label='Personal', stages=personal_stages, advance={'needs_kickoff':'needs_outcome','needs_outcome':'needs_closeout','needs_closeout':'done'}, ceiling_range=['needs_kickoff','needs_outcome','needs_closeout','done'], default_ceiling='needs_kickoff', worker_profile_id='panels-worker-personal-task', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'kickoff','label':'Kickoff'},{'id':'outcome','label':'Outcome'},{'id':'closeout','label':'Closeout'}])]}
+ticket = dict(project_id='project_one', project='One', sprint_id='sp_old', sprint_item_id='outcome_kept', id='t_guidance', title='Guidance ticket', worker_type='coding', employee_backend='codex', employee_launch_model=None, employee_launch_reasoning_effort=None, employee_configuration_editable=False, stage='needs_success_condition', ceiling='needs_success_condition', priority='P2', resolved_priority_anchors={'project': {'id': 'project_one', 'name': 'One', 'priority': 'P2'}, 'sprint_item': {'id': 'outcome_kept', 'title': 'Kept outcome', 'priority': 'P2'}}, ticket_status='awaiting_approval', ceiling_holder={'kind': 'chief', 'id': 'chief'}, conversation_id=None, conversation_history=[], day_ids=[], blocked=False, blocker_summary={'blocked_by': [], 'is_blocked': False}, recap='Orientation', guidance='Original **constraint**', field_values={'brief': 'Request'}, pending_proposal={'field': 'success_condition', 'body': 'A result', 'proposed_by': 'agent', 'created_at': 1})
+stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, ownership_mode='worker' if f else None) for s,l,f in [('needs_brief','Kickoff','brief'),('needs_success_condition','Success','success_condition'),('done','Done',None)]]
+personal_stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, ownership_mode=o) for s,l,f,o in [('needs_brief','Kickoff','brief','user'),('needs_outcome','Outcome','outcome','user'),('needs_consequences','Closeout','consequences','worker'),('done','Done',None,None)]]
+manifest = {'worker_types': [dict(worker_type='coding', label='Coding', stages=stages, advance={'needs_brief': 'needs_success_condition', 'needs_success_condition': 'done'}, ceiling_range=['needs_brief','needs_success_condition','done'], default_ceiling='needs_success_condition', worker_profile_id='panels-worker-coding', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'brief','label':'Kickoff'}, {'id':'success_condition','label':'Success'}]), dict(worker_type='personal', label='Personal', stages=personal_stages, advance={'needs_brief':'needs_outcome','needs_outcome':'needs_consequences','needs_consequences':'done'}, ceiling_range=['needs_brief','needs_outcome','needs_consequences','done'], default_ceiling='needs_brief', worker_profile_id='panels-worker-personal-task', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'brief','label':'Kickoff'},{'id':'outcome','label':'Outcome'},{'id':'consequences','label':'Closeout'}])]}
 writes=[]
 placement_writes=[]
 ceiling_writes=[]
@@ -70,16 +70,16 @@ def respond(route):
         assert route.request.method == 'POST'
         body=route.request.post_data_json
         writes.append({'personal_outcome': body})
-        result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_closeout', 'ceiling':'needs_closeout', 'field_values':{'kickoff':'Context','outcome':body['body']}, 'pending_proposal':None, 'ticket_status':'empty'}
+        result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_consequences', 'ceiling':'needs_consequences', 'field_values':{'brief':'Context','outcome':body['body']}, 'pending_proposal':None, 'ticket_status':'empty'}
     elif path == 'tickets/t_personal':
-        result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_outcome', 'ceiling':'needs_outcome', 'field_values':{'kickoff':'Context'}, 'pending_proposal':None, 'ticket_status':'empty'}
+        result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_outcome', 'ceiling':'needs_outcome', 'field_values':{'brief':'Context'}, 'pending_proposal':None, 'ticket_status':'empty'}
     elif path == 'tickets/t_kickoff':
-        result={**ticket, 'id': 't_kickoff', 'stage': 'needs_kickoff', 'ceiling': 'needs_kickoff', 'ceiling_holder': {'kind': 'chief', 'id': 'chief'}, 'sprint_item_id': None, 'resolved_priority_anchors': {**ticket['resolved_priority_anchors'], 'sprint_item': None}, 'pending_proposal': {'field': 'kickoff', 'body': 'Opened for somebody else', 'proposed_by': 'chief', 'created_at': 1}, 'field_values': {}}
+        result={**ticket, 'id': 't_kickoff', 'stage': 'needs_brief', 'ceiling': 'needs_brief', 'ceiling_holder': {'kind': 'chief', 'id': 'chief'}, 'sprint_item_id': None, 'resolved_priority_anchors': {**ticket['resolved_priority_anchors'], 'sprint_item': None}, 'pending_proposal': {'field': 'brief', 'body': 'Opened for somebody else', 'proposed_by': 'chief', 'created_at': 1}, 'field_values': {}}
     elif path == 'tickets/t_open':
         result={**ticket, 'id': 't_open', 'ticket_status': 'empty', 'pending_proposal': None, 'ceiling_holder': {'kind': 'owner', 'id': 'owner'}}
     elif path == 'tickets/t_done':
         result={**ticket, 'id': 't_done', 'stage': 'done', 'ticket_status': 'empty', 'pending_proposal': None}
-    elif path.endswith('/accept/success'):
+    elif path.endswith('/accept/success_condition'):
         assert route.request.method == 'POST'
         approvals.append(route.request.post_data_json)
         result={**ticket, 'pending_proposal': None, 'ticket_status': 'empty'}
@@ -150,14 +150,14 @@ with sync_playwright() as p:
     page.evaluate("window.__showTicket('t_guidance')")
     page.locator('[data-ticket-id="t_guidance"]').wait_for()
     assert page.locator('[data-accept]').count() == 1
-    proposal=page.locator('[data-field="success"] [contenteditable]')
+    proposal=page.locator('[data-field="success_condition"] [contenteditable]')
     proposal.click()
     proposal.fill('Edited pending result')
-    page.locator('[data-field="success"] summary').click()
+    page.locator('[data-field="success_condition"] summary').click()
     page.wait_for_function("document.body.textContent.includes('Edited pending result')")
     page.locator('[data-stage-fold]').evaluate('(element) => element.open = true')
-    page.locator('[data-field="kickoff"]').evaluate('(element) => element.open = true')
-    saved=page.locator('[data-field="kickoff"] [contenteditable]')
+    page.locator('[data-field="brief"]').evaluate('(element) => element.open = true')
+    saved=page.locator('[data-field="brief"] [contenteditable]')
     saved.click()
     saved.fill('Edited saved kickoff')
     saved.press('Tab')
@@ -165,12 +165,12 @@ with sync_playwright() as p:
     assert page.locator('summary').filter(has_text='Notes').count() == 0
     # The proposal edit stays in the browser until it is approved: a proposal has two
     # outcomes and no third door, so nothing is written back over the author's text.
-    assert writes == [{'value': {'kickoff': 'Edited saved kickoff'}}]
+    assert writes == [{'value': {'brief': 'Edited saved kickoff'}}]
     page.evaluate("window.__showTicket('t_personal')")
     page.locator('[data-ticket-id="t_personal"]').wait_for()
     personal_outcome=page.locator('[data-field="outcome"] [contenteditable]')
     expect(personal_outcome).to_have_count(1)
-    assert page.locator('[data-field="closeout"] [contenteditable]').count() == 0
+    assert page.locator('[data-field="consequences"] [contenteditable]').count() == 0
     personal_outcome.fill('Completed by user')
     personal_outcome.press('Tab')
     page.wait_for_function("document.body.textContent.includes('Completed by user')")
@@ -202,12 +202,12 @@ with sync_playwright() as p:
     assert guidance.locator('[contenteditable]').count() == 0
     # Review shows what the author wrote. The edit on the Ticket page was never saved
     # over it, because an edited proposal is approved as the edit or it is nothing.
-    expect(page.locator('[data-approval-block][data-field="success"]')).to_contain_text('A result')
+    expect(page.locator('[data-approval-block][data-field="success_condition"]')).to_contain_text('A result')
     assert page.locator('[data-accept]').count() == 1
     # Approving sets the next ceiling, so it offers the same two choices the leash does.
     # The holder used to be hard-coded to the user here, so a proposal approved in the
     # browser could only ever stay in Khushal's own queue.
-    approve_row=page.locator('[data-approval-block][data-field="success"] .approval-control-group')
+    approve_row=page.locator('[data-approval-block][data-field="success_condition"] .approval-control-group')
     assert approve_row.locator('[data-scope-ceiling]').count() == 1
     holder_select=approve_row.locator('[data-scope-holder]')
     assert holder_select.input_value() == 'owner'
@@ -215,7 +215,7 @@ with sync_playwright() as p:
         'me', 'Chief', 'Kept outcome'
     ]
     holder_select.select_option('chief')
-    page.locator('[data-approval-block][data-field="success"] [data-accept]').click()
+    page.locator('[data-approval-block][data-field="success_condition"] [data-accept]').click()
     for _ in range(100):
         if approvals: break
         page.wait_for_timeout(50)

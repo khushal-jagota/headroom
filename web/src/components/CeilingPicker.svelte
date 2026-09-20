@@ -31,7 +31,7 @@
 
   let options = $derived([
     { value: "none", label: "No further" },
-    ...ceilingOptionsFor(lifecycle, newStage || lifecycle?.ceilingRange[0] || "needs_success")
+    ...ceilingOptionsFor(lifecycle, newStage || lifecycle?.ceilingRange[0] || "needs_success_condition")
   ]);
 
   let whoOptions = $derived(holderOptionsFor(sprintItem, holder));

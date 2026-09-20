@@ -218,7 +218,7 @@ def test_worker_selection_persists_from_kickoff_card_context_row(
     )
     page = open_page(context, server, f"#/workspace/{ticket}", ready)
 
-    row = '[data-approval-block][data-field="kickoff"] [data-approval-context-row]'
+    row = '[data-approval-block][data-field="brief"] [data-approval-context-row]'
     picker = page.locator(f"{row} [data-employee-configuration-picker]")
     trigger = picker.locator("[data-conversation-picker-trigger]")
     trigger.wait_for(state="visible", timeout=WAIT_MS)

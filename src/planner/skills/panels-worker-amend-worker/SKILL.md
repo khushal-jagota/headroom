@@ -44,7 +44,7 @@ The point is that the exact stages get read before they take effect, not after. 
 
 Skill text is instruction for a capable agent, not documentation. Amending a skill is more often deleting than adding.
 
-## needs_closeout — save it
+## needs_consequences — save it
 
 1. Move any Ticket the user agreed to move, before the save. Panels refuses a save that would strand one.
 2. `panels worker-type save`, with the approved record on stdin. A refusal is the guard doing its job: read what it names, fix that, and save again.
