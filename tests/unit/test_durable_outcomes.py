@@ -5,10 +5,12 @@ from __future__ import annotations
 from sqlite3 import Connection
 
 import pytest
-from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
+from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.ticket_progress import advance_ticket
 
-from planner.core.authctx import _classify, require_planning_write, require_ticket_worker_write
+from planner.core import authority
+from planner.core.authctx import _classify
+from planner.core.authority import require_above, require_above_or_self
 from planner.core.clock import TestClock as Clock
 from planner.core.db import connect
 from planner.core.errors import PlannerError
@@ -169,23 +171,38 @@ def test_carry_rejects_entire_stale_selection_and_preserves_existing_authority(
         is None
     )
     worker = _classify("worker", valid.id)
-    require_ticket_worker_write(tmp_db, worker)
     with pytest.raises(PlannerError):
         commitments.set_commitment(
             tmp_db,
             second.id,
             outcome.id,
             committed=True,
-            admit=lambda: require_planning_write(tmp_db, worker, "planning-sprint"),
+            admit=lambda: require_above(
+                tmp_db, worker.principal, authority.plan("sprint_outcomes")
+            ),
         )
-    # Classification retains the existing broad Ticket-backed Worker authority.
+    # A Ticket classifies itself, and no longer any Ticket that happens to exist.
+    stale_worker = _classify("worker", stale.id)
+    with pytest.raises(PlannerError):
+        tickets.classify_ticket(
+            tmp_db,
+            stale.id,
+            sprint_item_id=other.id,
+            principal=worker.principal,
+            now=3,
+            admit=lambda: require_above_or_self(
+                tmp_db, worker.principal, authority.ticket(stale.id)
+            ),
+        )
     tickets.classify_ticket(
         tmp_db,
         stale.id,
         sprint_item_id=other.id,
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=stale_worker.principal,
         now=3,
-        admit=lambda: require_ticket_worker_write(tmp_db, worker),
+        admit=lambda: require_above_or_self(
+            tmp_db, stale_worker.principal, authority.ticket(stale.id)
+        ),
     )
     assert tickets.read_ticket(tmp_db, stale.id).sprint_item_id == other.id
     supervisor = _classify("sprint_item_supervisor", None, outcome.id)

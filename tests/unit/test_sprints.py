@@ -8,7 +8,9 @@ from threading import Barrier, Event
 
 import pytest
 
-from planner.core.authctx import _classify, require_planning_write
+from planner.core import authority
+from planner.core.authctx import _classify
+from planner.core.authority import require_above
 from planner.core.clock import TestClock
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
@@ -230,7 +232,7 @@ def test_planning_claim_and_sprint_write_share_one_write_lock(
         try:
 
             def admit() -> None:
-                require_planning_write(conn, ctx, "planning-sprint")
+                require_above(conn, ctx.principal, authority.plan("sprint"))
                 admitted.set()
                 assert deletion_attempted.wait(timeout=5)
                 assert not deletion_done.is_set()

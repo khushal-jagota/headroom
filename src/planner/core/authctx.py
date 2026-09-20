@@ -1,16 +1,18 @@
-"""Truthful request identity and the direct-write authority boundary.
+"""Truthful request identity: who is asking, before anything asks what they may do.
 
 The request boundary translates transport headers into one shared Principal. An
 unattributed browser or ordinary CLI request is the owner. Employee requests name
 the Chief, a Ticket, or a Sprint Item. Header names stay private to this adapter.
+
+Whether that principal may act on a given thing is planner.core.authority, which asks
+one question. The guards that used to live here each named their own set of principal
+kinds, and the sets were the two-doors shape written down.
 """
 
 from __future__ import annotations
 
-import sqlite3
-from collections.abc import Collection, Iterable
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import Final
 
 from fastapi import Request
 
@@ -29,15 +31,6 @@ X_PLAN_SPRINT_ITEM_ID: Final = "X-Plan-Sprint-Item-ID"
 PLAN_ACTOR_SCOPE_KEY: Final = "planner.request_actor"
 PLAN_TICKET_ID_SCOPE_KEY: Final = "planner.request_ticket_id"
 PLAN_SPRINT_ITEM_ID_SCOPE_KEY: Final = "planner.request_sprint_item_id"
-
-PlanningCapability = Literal[
-    "planning-day",
-    "planning-midday-check",
-    "planning-sprint",
-]
-PLANNING_CAPABILITIES: Final[frozenset[str]] = frozenset(
-    {"planning-day", "planning-midday-check", "planning-sprint"}
-)
 
 
 @dataclass(frozen=True)
@@ -95,111 +88,13 @@ def request_context(request: Request) -> RequestContext:
     return _classify(_normalize(actor), _normalize(ticket_id), _normalize(sprint_item_id))
 
 
-def require_sprint_item_supervisor_read(
-    conn: sqlite3.Connection, ctx: RequestContext, sprint_item_id: str
-) -> None:
-    """Permit direct readers or the exact durable supervisor for this normal item."""
-    row = conn.execute(
-        "SELECT 1 FROM sprint_items WHERE id=? AND kind='normal'", (sprint_item_id,)
-    ).fetchone()
-    if row is None:
-        if ctx.principal.kind is PrincipalKind.sprint_item:
-            _reject_sprint_item_supervisor_read(ctx, sprint_item_id)
-        raise PlannerError(ErrorCode.not_found, "sprint item not found", {"id": sprint_item_id})
-    if ctx.principal.kind in {PrincipalKind.owner, PrincipalKind.chief}:
-        return
-    if ctx.principal != Principal(PrincipalKind.sprint_item, sprint_item_id):
-        _reject_sprint_item_supervisor_read(ctx, sprint_item_id)
-
-
-def require_sprint_item_supervisor_ticket_write(
-    conn: sqlite3.Connection,
-    ctx: RequestContext,
-    sprint_item_id: str,
-    ticket_id: str,
-) -> None:
-    """Permit only the exact durable supervisor and its direct child Ticket."""
-    if ctx.principal != Principal(PrincipalKind.sprint_item, sprint_item_id):
-        _reject_sprint_item_supervisor_write(ctx, sprint_item_id, ticket_id)
-    if not _is_current_child_ticket(conn, sprint_item_id, ticket_id):
-        _reject_sprint_item_supervisor_write(ctx, sprint_item_id, ticket_id)
-
-
-def _is_current_child_ticket(conn: sqlite3.Connection, sprint_item_id: str, ticket_id: str) -> bool:
-    """Whether this Ticket is right now a child of that normal Sprint Item."""
-    row = conn.execute(
-        "SELECT 1 FROM sprint_items AS item "
-        "JOIN tickets AS ticket ON ticket.sprint_item_id = item.id "
-        "WHERE item.id = ? AND item.kind = 'normal' AND ticket.id = ?",
-        (sprint_item_id, ticket_id),
-    ).fetchone()
-    return row is not None
-
-
-def require_ticket_delete(
-    conn: sqlite3.Connection, ctx: RequestContext, ticket_id: str
-) -> str | None:
-    """Admit one permanent Ticket deletion, and name the supervisor Item behind it.
-
-    A direct caller deletes any Ticket and has no Item, so this returns ``None`` for one.
-    A Sprint Item supervisor deletes only a current child of the Item its own request
-    identity names, and that Item id comes back for the writer to recheck under its
-    transaction. Every other actor is refused.
-    """
-    if ctx.principal.kind in {PrincipalKind.owner, PrincipalKind.chief}:
-        return None
-    if ctx.principal.kind is not PrincipalKind.sprint_item or not _is_current_child_ticket(
-        conn, ctx.principal.id, ticket_id
-    ):
-        raise PlannerError(
-            ErrorCode.agent_forbidden,
-            "Ticket deletion is not available to this actor",
-            {
-                "actor": principal_legacy_actor(ctx.principal),
-                "sprint_item_id": (
-                    ctx.principal.id if ctx.principal.kind is PrincipalKind.sprint_item else None
-                ),
-                "ticket_id": ticket_id,
-            },
-        )
-    return ctx.principal.id
-
-
-def _reject_sprint_item_supervisor_write(
-    ctx: RequestContext, sprint_item_id: str, ticket_id: str
-) -> None:
-    raise PlannerError(
-        ErrorCode.agent_forbidden,
-        "Ticket review is not available to this Sprint Item supervisor",
-        {
-            "actor": principal_legacy_actor(ctx.principal),
-            "sprint_item_id": sprint_item_id,
-            "ticket_id": ticket_id,
-        },
-    )
-
-
-def _reject_sprint_item_supervisor_read(ctx: RequestContext, sprint_item_id: str) -> None:
-    raise PlannerError(
-        ErrorCode.agent_forbidden,
-        "Sprint Item read is not available to this supervisor",
-        {"actor": principal_legacy_actor(ctx.principal), "sprint_item_id": sprint_item_id},
-    )
-
-
-def require_direct_write(ctx: RequestContext) -> None:
-    """Permit unattributed or explicit Chief direct operations."""
-    if ctx.principal.kind in {PrincipalKind.owner, PrincipalKind.chief}:
-        return
-    raise PlannerError(
-        ErrorCode.agent_forbidden,
-        "direct operation is not available to this actor",
-        {"actor": principal_legacy_actor(ctx.principal)},
-    )
-
-
 def require_owner(ctx: RequestContext) -> None:
-    """Permit only Khushal's direct principal."""
+    """Permit only Khushal's direct principal.
+
+    Not authority over anything, which is why it is not the one rule. It marks the two
+    places that record that *the owner* did something: the owner's own conversation read,
+    and the owner's own send. Nobody stands above those by being above a Ticket.
+    """
     if ctx.principal.kind is PrincipalKind.owner:
         return
     raise PlannerError(
@@ -207,101 +102,3 @@ def require_owner(ctx: RequestContext) -> None:
         "this operation is available only to the owner",
         {"actor": principal_legacy_actor(ctx.principal)},
     )
-
-
-def require_feedback_use(conn: sqlite3.Connection, ctx: RequestContext, ticket_id: str) -> None:
-    """Permit direct callers, an exact Ticket worker, or its Item supervisor."""
-    if ctx.principal.kind in {PrincipalKind.owner, PrincipalKind.chief}:
-        return
-    if ctx.principal == Principal(PrincipalKind.ticket, ticket_id):
-        if conn.execute("SELECT 1 FROM tickets WHERE id = ?", (ticket_id,)).fetchone():
-            return
-    if ctx.principal.kind is PrincipalKind.sprint_item and _is_current_child_ticket(
-        conn, ctx.principal.id, ticket_id
-    ):
-        return
-    raise PlannerError(
-        ErrorCode.agent_forbidden,
-        "feedback use is not available to this actor",
-        {"actor": principal_legacy_actor(ctx.principal), "ticket_id": ticket_id},
-    )
-
-
-def require_ticket_worker_write(
-    conn: sqlite3.Connection,
-    ctx: RequestContext,
-) -> None:
-    """Permit a direct caller or any exact Ticket-backed Worker."""
-    if ctx.principal.kind in {PrincipalKind.owner, PrincipalKind.chief}:
-        return
-    if ctx.principal.kind is not PrincipalKind.ticket:
-        _reject_ticket_worker_write(ctx)
-
-    row = conn.execute(
-        "SELECT 1 FROM tickets WHERE id = ?",
-        (ctx.principal.id,),
-    ).fetchone()
-    if row is None:
-        _reject_ticket_worker_write(ctx)
-
-
-def _reject_ticket_worker_write(ctx: RequestContext) -> None:
-    raise PlannerError(
-        ErrorCode.agent_forbidden,
-        "ticket operation is not available to this worker",
-        {"actor": principal_legacy_actor(ctx.principal)},
-    )
-
-
-def require_planning_write(
-    conn: sqlite3.Connection,
-    ctx: RequestContext,
-    capability: PlanningCapability,
-) -> None:
-    """Permit a direct caller or one exact Ticket-backed planning Worker.
-
-    ``X-Plan-Ticket-ID`` is a truthful local claim, parallel to ``X-Plan-Actor``.
-    It is not a token and provides no cryptographic authentication. The stored
-    Ticket resolves which planning capability the worker actually has.
-    """
-    if capability not in PLANNING_CAPABILITIES:
-        raise ValueError(f"unknown planning capability: {capability}")
-    if ctx.principal.kind in {PrincipalKind.owner, PrincipalKind.chief}:
-        return
-    if ctx.principal.kind is not PrincipalKind.ticket:
-        _reject_planning_write(ctx, capability)
-
-    row = conn.execute(
-        "SELECT worker_type FROM tickets WHERE id = ?",
-        (ctx.principal.id,),
-    ).fetchone()
-    if row is None or str(row["worker_type"]) != capability:
-        _reject_planning_write(ctx, capability)
-
-
-def _reject_planning_write(
-    ctx: RequestContext,
-    capability: PlanningCapability,
-) -> None:
-    raise PlannerError(
-        ErrorCode.agent_forbidden,
-        "planning operation is not available to this worker",
-        {"actor": principal_legacy_actor(ctx.principal), "capability": capability},
-    )
-
-
-def reject_agent_fields(
-    ctx: RequestContext,
-    body_keys: Iterable[str],
-    direct_only_keys: Collection[str],
-) -> None:
-    """Reject direct-only fields for attributed non-Chief agents."""
-    if ctx.principal.kind in {PrincipalKind.owner, PrincipalKind.chief}:
-        return
-    for key in body_keys:
-        if key in direct_only_keys:
-            raise PlannerError(
-                ErrorCode.agent_forbidden,
-                "direct-only field",
-                {"field": key, "actor": principal_legacy_actor(ctx.principal)},
-            )

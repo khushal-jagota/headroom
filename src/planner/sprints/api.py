@@ -16,9 +16,6 @@ from fastapi import APIRouter, Query, Request
 from planner.conversation.api import OwnerSendBody, conversation_message_content, delivery_fate_json
 from planner.conversation.contracts import require_conversation_backend_key
 from planner.core import authority
-from planner.core.authctx import (
-    require_sprint_item_supervisor_ticket_write,
-)
 from planner.core.authority import require_above, require_above_or_self
 from planner.core.contracts import JsonDict, Principal, PrincipalKind, Priority
 from planner.core.db import connect
@@ -556,7 +553,7 @@ async def supervisor_approve_ticket(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, ticket_id)
+    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     body = _marshal_accept(raw)
     field, worker_type_definition = _supervisor_ticket_field(conn, ticket_id)
     now = clk.now_unix()
@@ -583,7 +580,7 @@ async def supervisor_reject_ticket(
     clk: Clk,
     conversations: Conversations,
 ) -> JsonDict:
-    require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, ticket_id)
+    require_above(conn, ctx.principal, authority.ticket(ticket_id))
     message = body_opt_str(raw, "message")
     now = clk.now_unix()
     ticket = await tickets_actions.reject_ticket_proposal(
