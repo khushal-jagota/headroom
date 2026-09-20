@@ -37,6 +37,7 @@ let ticketId = $state('t_guidance');
   assert.ok(address && typeof address === 'object');
   const script = String.raw`
 import json, sys
+from urllib.parse import parse_qs
 from playwright.sync_api import sync_playwright, expect
 
 ticket = dict(project_id='project_one', project='One', sprint_id='sp_old', sprint_item_id='outcome_kept', id='t_guidance', title='Guidance ticket', worker_type='coding', employee_backend='codex', employee_launch_model=None, employee_launch_reasoning_effort=None, employee_configuration_editable=False, stage='needs_success', ceiling='needs_success', priority='P2', resolved_priority_anchors={'project': {'id': 'project_one', 'name': 'One', 'priority': 'P2'}, 'sprint_item': {'id': 'outcome_kept', 'title': 'Kept outcome', 'priority': 'P2'}}, ticket_status='awaiting_approval', ceiling_holder={'kind': 'chief', 'id': 'chief'}, conversation_id=None, conversation_history=[], day_ids=[], blocked=False, blocker_summary={'blocked_by': [], 'is_blocked': False}, recap='Orientation', guidance='Original **constraint**', field_values={'kickoff': 'Request'}, pending_proposal={'field': 'success', 'body': 'A result', 'proposed_by': 'agent', 'created_at': 1})
@@ -49,6 +50,9 @@ ceiling_writes=[]
 approvals=[]
 def respond(route):
     path=route.request.url.split('/api/',1)[1]
+    # A single object is read through its collection address now: tickets?detail=full&id=X.
+    if path.startswith('tickets?'):
+        path='tickets/'+parse_qs(path.split('?',1)[1])['id'][0]
     if path == 'tickets/t_guidance':
         if route.request.method == 'PATCH':
             body=route.request.post_data_json
