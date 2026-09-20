@@ -33,7 +33,7 @@ export const TICKET_STATUS_GROUPS: readonly TicketStatusGroupDefinition[] = [
   { key: "current-assigned", label: "Yours", quiet: false },
   { key: "needs-me", label: "Messages", quiet: false },
   { key: "errored", label: "Errored", quiet: false },
-  { key: "waiting-for-kickoff", label: "Waiting for Brief", quiet: false },
+  { key: "waiting-for-kickoff", label: "Awaiting kickoff", quiet: false },
   { key: "current-running", label: "Agent", quiet: false },
   { key: "status_awaiting_approval", label: "Awaiting an agent's approval", quiet: true },
   { key: "current-waiting", label: "Waiting on Consequences", quiet: true },
@@ -57,7 +57,9 @@ export type TicketStatusGroupFacts = TicketConditionFacts & {
 // something owns its own status. Then two marks split, each because the rail splits
 // them and the two screens name the same Tickets the same way: a Ticket waiting on the
 // user is not a Ticket that is the user's own to do, and a Ticket gated on its kickoff
-// is worth naming apart from later approvals.
+// is worth naming apart from later approvals. Awaiting kickoff is the one case of
+// awaiting approval that sets the Ticket going, so it is its own group and it keeps its
+// place in the order.
 export function ticketStatusGroupKey(ticket: TicketStatusGroupFacts): string {
   if (ticket.stage === "done") return "completed";
   if (ticket.ticket_status === "errored") return "errored";

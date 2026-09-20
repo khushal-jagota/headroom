@@ -38,7 +38,7 @@ describe("Ticket status groups", () => {
       "Yours",
       "Messages",
       "Errored",
-      "Waiting for Brief",
+      "Awaiting kickoff",
       "Agent",
       "Awaiting an agent's approval",
       "Waiting on Consequences",
@@ -55,7 +55,7 @@ describe("Ticket status groups", () => {
       "Yours",
       "Messages",
       "Errored",
-      "Waiting for Brief",
+      "Awaiting kickoff",
       "Agent"
     ]);
   });

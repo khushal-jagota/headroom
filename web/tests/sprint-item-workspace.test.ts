@@ -204,7 +204,7 @@ describe("Sprint Item workspace presentation", () => {
         today_ticket_ids: ["t_kickoff", "t_review"],
         tickets: [kickoff, value.tickets[0]]
       }).map((group) => group.label)
-    ).toEqual(["Needs your approval", "Waiting for Brief"]);
+    ).toEqual(["Needs your approval", "Awaiting kickoff"]);
   });
 
   it("reads Errored and Blocked apart, each from the Ticket's own status", () => {

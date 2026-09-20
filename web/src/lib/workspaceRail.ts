@@ -38,7 +38,7 @@ const GROUP_LABELS: Readonly<Record<string, string>> = {
   awaiting_reply: "Messages",
   status_awaiting_approval: "Awaiting an agent's approval",
   waiting_to_closeout: "Waiting on Consequences",
-  waiting_for_kickoff: "Waiting for Brief"
+  waiting_for_kickoff: "Awaiting kickoff"
 };
 
 export type WorkspaceTicketGroup = {
