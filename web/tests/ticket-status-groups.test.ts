@@ -38,6 +38,7 @@ describe("Ticket status groups", () => {
       "Awaiting approval",
       "Assigned",
       "Agent",
+      "Awaiting an agent's approval",
       "Waiting for closeout",
       "Empty",
       "Blocked",
@@ -117,6 +118,42 @@ describe("Ticket status groups", () => {
     const pageKey = ticketStatusGroupKey(ticket(facts));
     expect(railGroups.map((group) => group.label)).toEqual(["Errored"]);
     expect(TICKET_STATUS_GROUPS.find((group) => group.key === pageKey)?.label).toBe("Errored");
+  });
+
+  it("names a proposal held by an agent the same on both screens", () => {
+    // The viewer does not hold this ceiling, so no attention fact is set. This Ticket
+    // used to fall into Empty on the page while the rail named it.
+    const facts = { ticket_status: "awaiting_approval" } as const;
+    const railGroups = workspaceGroups([boardCard("t_agent_held", facts)]);
+    const pageKey = ticketStatusGroupKey(ticketWithFiledProposal(facts));
+    expect(railGroups.map((group) => group.label)).toEqual(["Awaiting an agent's approval"]);
+    expect(TICKET_STATUS_GROUPS.find((group) => group.key === pageKey)?.label).toBe(
+      "Awaiting an agent's approval"
+    );
+  });
+
+  it("lets a broken worker and the user's own work outrank a proposal held by an agent", () => {
+    // Both facts hold at once: a worker filed for its supervisor and then its last turn
+    // failed. Errored leads on both screens, and a parked proposal never renames it.
+    const brokenFacts = { ticket_status: "awaiting_approval", agent_state: "errored" } as const;
+    expect(
+      workspaceGroups([boardCard("t_broken", brokenFacts)]).map((group) => group.label)
+    ).toEqual(["Errored"]);
+    expect(
+      TICKET_STATUS_GROUPS.find(
+        (group) => group.key === ticketStatusGroupKey(ticketWithFiledProposal(brokenFacts))
+      )?.label
+    ).toBe("Errored");
+
+    const mineFacts = { ticket_status: "awaiting_approval", assigned: true } as const;
+    expect(
+      workspaceGroups([boardCard("t_mine", mineFacts)]).map((group) => group.label)
+    ).toEqual(["Assigned"]);
+    expect(
+      TICKET_STATUS_GROUPS.find(
+        (group) => group.key === ticketStatusGroupKey(ticketWithFiledProposal(mineFacts))
+      )?.label
+    ).toBe("Assigned");
   });
 
   it("uses the Workspace's owner-facing Assigned label for an assigned Ticket", () => {
