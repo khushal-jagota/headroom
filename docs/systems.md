@@ -108,8 +108,10 @@ gets one automatic opening turn, then continues collaboratively in the same conv
 
 Ticket status is separate control state: `empty`, `blocked`, `agent`,
 `awaiting_approval`, or `errored`. One shared list projection derives whether work
-awaits Khushal's reply, awaits approval, is assigned to Khushal, and whether the agent
-is working, idle, or errored. Review contains today's owner-addressed proposals. Non-owner
+awaits Khushal's reply, awaits his approval, awaits an agent's approval, is assigned to
+Khushal, and whether the agent is working, idle, or errored. A parked proposal is split
+by who holds the ceiling there, once, so no route decides whose approval "awaiting
+approval" means. Review contains today's owner-addressed proposals. Non-owner
 holders inspect canonical Ticket state through the normal Chief, Sprint Item, and Ticket
 views; no proposal wake, retry, failure surfacing, or owner fallback remains.
 Addressed help messages stay in conversation and appear through the same attention facts.

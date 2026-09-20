@@ -125,9 +125,11 @@ export function feedbackTicketStateLabel(ticket: FeedbackTicket): string {
   if (ticket.stage === "done") return "Done";
   if (ticket.ticket_status === "blocked") return "Blocked";
   const attention = primaryWorkAttention(ticket);
-  if (attention === "awaiting_approval") return "Awaiting approval";
-  if (attention === "assigned") return "Assigned";
-  if (attention === "awaiting_reply") return "Needs you";
+  // The same three facts the Workspace rail and the Sprint Item page head their groups
+  // with, in the same words. One fact is named one way wherever it is read.
+  if (attention === "awaiting_approval") return "Needs your approval";
+  if (attention === "assigned") return "Yours";
+  if (attention === "awaiting_reply") return "Messages";
   if (ticket.agent_state === "working") return "Running";
   if (ticket.agent_state === "errored") return "Errored";
   const labels: Record<string, string> = { errored: "Errored", blocked: "Blocked" };

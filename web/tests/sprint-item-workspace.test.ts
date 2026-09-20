@@ -22,6 +22,7 @@ function workspace(): SprintItemWorkspace {
     kind: "normal",
     awaiting_reply: false,
     awaiting_approval: false,
+    awaiting_agent_approval: false,
     assigned: false,
     agent_state: "idle",
     committed_sprints: [{ id: "sp_current", name: "Current", date_start: "2026-08-10", date_end: "2026-08-16" }],
@@ -45,6 +46,7 @@ function workspace(): SprintItemWorkspace {
         ticket_status: "awaiting_approval",
         awaiting_reply: false,
         awaiting_approval: true,
+        awaiting_agent_approval: false,
         assigned: false,
         agent_state: "idle",
         waiting_to_closeout: false,
@@ -62,6 +64,7 @@ function workspace(): SprintItemWorkspace {
         ticket_status: "empty",
         awaiting_reply: false,
         awaiting_approval: false,
+        awaiting_agent_approval: false,
         assigned: false,
         agent_state: "idle",
         waiting_to_closeout: false,
@@ -79,6 +82,7 @@ function workspace(): SprintItemWorkspace {
         ticket_status: "agent",
         awaiting_reply: false,
         awaiting_approval: false,
+        awaiting_agent_approval: false,
         assigned: false,
         agent_state: "working",
         waiting_to_closeout: false,
@@ -101,7 +105,7 @@ describe("Sprint Item workspace presentation", () => {
       groups.map((group) => [group.label, group.tickets.map((ticket) => ticket.id)]);
     // A Ticket finished today stays under Today, in Today's own Done group.
     expect(shape(todayWorkspaceTicketGroups(value))).toEqual([
-      ["Awaiting approval", ["t_review"]],
+      ["Needs your approval", ["t_review"]],
       ["Done", ["t_done"]]
     ]);
     expect(shape(remainingWorkspaceTicketGroups(value))).toEqual([["Agent", ["t_later"]]]);
@@ -126,7 +130,7 @@ describe("Sprint Item workspace presentation", () => {
     expect(workspaceProgress({ ...value, tickets: [{ ...value.tickets[0], stage: "done" }] })).toBe("All 1 done");
   });
 
-  it("gathers every parked proposal into the one Awaiting approval group", () => {
+  it("gathers every proposal the user holds into the one approval group", () => {
     const value = workspace();
     const parked = { ...value.tickets[0], id: "t_parked_one" };
     const alsoParked = { ...value.tickets[0], id: "t_parked_two" };
@@ -137,7 +141,7 @@ describe("Sprint Item workspace presentation", () => {
     });
     expect(
       groups.map((group) => [group.label, group.tickets.map((ticket) => ticket.id)])
-    ).toEqual([["Awaiting approval", ["t_parked_one", "t_parked_two"]]]);
+    ).toEqual([["Needs your approval", ["t_parked_one", "t_parked_two"]]]);
   });
 
   it("labels a resting Ticket with the word the rail uses", () => {
@@ -200,7 +204,7 @@ describe("Sprint Item workspace presentation", () => {
         today_ticket_ids: ["t_kickoff", "t_review"],
         tickets: [kickoff, value.tickets[0]]
       }).map((group) => group.label)
-    ).toEqual(["Waiting for Brief", "Awaiting approval"]);
+    ).toEqual(["Needs your approval", "Waiting for Brief"]);
   });
 
   it("reads Errored and Blocked apart, each from the Ticket's own status", () => {
@@ -238,7 +242,7 @@ describe("Sprint Item workspace presentation", () => {
     expect(
       todayWorkspaceTicketGroups(value).map((group) => [group.label, group.quiet])
     ).toEqual([
-      ["Awaiting approval", false],
+      ["Needs your approval", false],
       ["Done", true]
     ]);
   });

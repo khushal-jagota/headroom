@@ -287,13 +287,10 @@ async def get_item_supervisor_context(
         "supervisor": _supervisor_json(conn, item_id),
         "tickets": tickets,
     }
-    await add_work_attention(
-        conn,
-        conversations,
-        conversation_record,
-        tickets=tickets,
-        approval_holder=Principal(PrincipalKind.sprint_item, item_id),
-    )
+    # The projection says what the owner is being asked for, on this route as on every
+    # other. A proposal parked on this Item reads `awaiting_agent_approval`, and the row
+    # carries `ceiling_holder` so the supervisor can see the one it holds itself.
+    await add_work_attention(conn, conversations, conversation_record, tickets=tickets)
     return response
 
 

@@ -99,6 +99,7 @@ def test_capture_list_use_dismiss_reopen_and_ticket_deletion(
             "ticket_status": "awaiting_approval",
             "awaiting_reply": False,
             "awaiting_approval": True,
+            "awaiting_agent_approval": False,
             "assigned": True,
             "agent_state": "idle",
         }

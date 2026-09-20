@@ -44,8 +44,12 @@ One screen per part of the system:
   The Chief of Staff row leads, and under it a selector chooses one of two views
   over the same tickets: **Tickets** or **Sprint Items**.
 
-  The Tickets view starts with three owner-attention groups in this order: Awaiting
-  approval, Assigned, and Messages. A ticket appears in only its first applicable group.
+  The Tickets view starts with three owner-attention groups in this order: Needs your
+  approval, Yours, and Messages. Each name says whose the work is. Needs your approval
+  is a proposal the owner himself holds; a proposal parked on a supervisor or another
+  ticket is a different fact, named Awaiting an agent's approval, and it is never one of
+  the three. Yours is a stage the ticket's worker type gives to the user rather than to
+  a worker. A ticket appears in only its first applicable group.
   A ticket whose worker broke is named Errored before any of the three, because a broken
   worker wants the reader more than the request it was carrying. Broken means the ticket
   is errored, or its last turn ended failed. Otherwise approval takes precedence over
@@ -63,7 +67,7 @@ One screen per part of the system:
   newest first.
 
   The Sprint Items view is one box per Sprint Item with a ticket on today. Each Item
-  shows only its non-empty Awaiting approval, Assigned, and Messages child groups. Quiet
+  shows only its non-empty Needs your approval, Yours, and Messages child groups. Quiet
   child tickets remain available in the Tickets view and the Item workspace. An Item
   shows those groups, and their rows, whether or not it is the Item the reader has
   opened. The rail therefore says what needs the reader before anything is clicked, and

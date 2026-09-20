@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -151,16 +152,16 @@ def item_tickets(
 
 def item_ticket_overview(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
     """One line per Ticket on the Item, for the Sprint Item supervisor's own-Item read:
-    id, title, stage, ticket_status, and Day membership. Finished Tickets included,
-    ordered created_at, id.
+    id, title, stage, ticket_status, ceiling holder, and Day membership. Finished Tickets
+    included, ordered created_at, id.
 
     This is not item_tickets. That projection carries the board-card signals the Sprint
     Item page colours its rows off; the supervisor reads its answer in full and drills
     into one Ticket at a time through ticket-context, so anything more per Ticket is
     weight it pays for and does not use."""
     rows = conn.execute(
-        "SELECT id, title, stage, worker_type, worker_step_claim, pending_proposal FROM tickets "
-        "WHERE sprint_item_id = ? ORDER BY created_at, id",
+        "SELECT id, title, stage, worker_type, worker_step_claim, pending_proposal, "
+        "ceiling_holder FROM tickets WHERE sprint_item_id = ? ORDER BY created_at, id",
         (item_id,),
     ).fetchall()
     facts_by_ticket = derivation.load_ticket_facts(conn, {str(row["id"]) for row in rows})
@@ -178,6 +179,10 @@ def item_ticket_overview(conn: sqlite3.Connection, item_id: str) -> list[JsonDic
             "title": str(row["title"]),
             "stage": str(row["stage"]),
             "ticket_status": facts_by_ticket[str(row["id"])].ticket_status.value,
+            # Who holds the ceiling, so the supervisor can tell a proposal parked on
+            # itself from one parked on another agent. The shared attention projection
+            # answers only for the owner, on this route as on every other.
+            "ceiling_holder": json.loads(str(row["ceiling_holder"])),
             "day_ids": day_ids_by_ticket.get(str(row["id"]), []),
         }
         for row in rows

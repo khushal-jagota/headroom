@@ -65,14 +65,17 @@ def card(ticket_id, item_id, item_title, **values):
         "gating_field_label": "Implementation", "is_done": False, "blocked": False,
         "conversation_id": None, "waiting_to_closeout": False,
         "sprint_item_id": item_id, "sprint_item_title": item_title, "sprint_item_priority": "P1",
-        "awaiting_reply": False, "awaiting_approval": False, "assigned": False,
-        "agent_state": "idle",
+        "awaiting_reply": False, "awaiting_approval": False,
+        "awaiting_agent_approval": False, "assigned": False, "agent_state": "idle",
     }
     row.update(values)
     return row
 
 def item(item_id):
-    quiet = {"awaiting_reply": False, "awaiting_approval": False, "assigned": False, "agent_state": "idle"}
+    quiet = {
+        "awaiting_reply": False, "awaiting_approval": False,
+        "awaiting_agent_approval": False, "assigned": False, "agent_state": "idle",
+    }
     return {"id": item_id, "created_at": 0, "conversation_id": None, "ticket_rollup": dict(quiet), **quiet}
 
 # One Item holds all three of his groups plus a Ticket that is only an agent's to approve.
@@ -82,9 +85,10 @@ board = {
         card("t_approval", "si_needs_him", "Needs him", awaiting_approval=True),
         card("t_assigned", "si_needs_him", "Needs him", assigned=True),
         card("t_message", "si_needs_him", "Needs him", awaiting_reply=True),
-        card("t_agents_approval", "si_needs_him", "Needs him", ticket_status="awaiting_approval"),
+        card("t_agents_approval", "si_needs_him", "Needs him",
+             ticket_status="awaiting_approval", awaiting_agent_approval=True),
         # A broken worker still holding a proposal for him. It is his to approve, and the
-        # Item at rest keeps the three groups, so it belongs under Awaiting approval.
+        # Item at rest keeps the three groups, so it belongs under Needs your approval.
         card("t_broken", "si_needs_him", "Needs him", awaiting_approval=True, agent_state="errored"),
         card("t_quiet", "si_quiet", "Quiet", agent_state="working"),
     ]}],
@@ -123,7 +127,7 @@ with sync_playwright() as p:
     ]
     assert [
         headers.nth(i).locator(".board-workspace-bucket-label").inner_text() for i in range(3)
-    ] == ["Awaiting approval", "Assigned", "Messages"]
+    ] == ["Needs your approval", "Yours", "Messages"]
 
     # The rows are there too, one Ticket under one header.
     for ticket_id, key in [

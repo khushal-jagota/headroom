@@ -11,7 +11,7 @@ from typing import TypedDict
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.storage import ConversationAttentionFacts, ConversationStore
 from planner.core import ticket_blocks
-from planner.core.contracts import OWNER_PRINCIPAL, JsonDict, Principal
+from planner.core.contracts import OWNER_PRINCIPAL, JsonDict
 from planner.tickets import derivation
 from planner.tickets.contracts import StageOwnershipMode, TicketStatus
 from planner.tickets.derivation import AgentState, TicketFacts
@@ -20,9 +20,16 @@ from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import NEEDS_BRIEF_STAGE_ID
 
 
+# A parked proposal is split by who holds its ceiling, and the split is the projection's
+# to make. `awaiting_approval` is the owner's own queue and means that on every route;
+# `awaiting_agent_approval` is a proposal parked on a supervisor or another Ticket, which
+# is quiet work the owner is not being asked for. A caller that must know *which* agent
+# holds it reads the holder on its own rows: the two words here never change meaning with
+# the endpoint the reader came through.
 class WorkAttention(TypedDict):
     awaiting_reply: bool
     awaiting_approval: bool
+    awaiting_agent_approval: bool
     assigned: bool
     agent_state: str
 
@@ -31,6 +38,7 @@ def _empty_attention() -> WorkAttention:
     return {
         "awaiting_reply": False,
         "awaiting_approval": False,
+        "awaiting_agent_approval": False,
         "assigned": False,
         "agent_state": AgentState.idle.value,
     }
@@ -83,17 +91,15 @@ def _ticket_attention(
     conversation: tuple[bool, bool, bool] | None,
     *,
     facts: TicketFacts,
-    approval_holder: Principal,
 ) -> WorkAttention:
     holder = json.loads(str(row["ceiling_holder"]))
     owner_holds_ceiling = holder == {
         "kind": OWNER_PRINCIPAL.kind.value,
         "id": OWNER_PRINCIPAL.id,
     }
-    awaiting_approval = facts.ticket_status is TicketStatus.awaiting_approval and holder == {
-        "kind": approval_holder.kind.value,
-        "id": approval_holder.id,
-    }
+    parked = facts.ticket_status is TicketStatus.awaiting_approval
+    awaiting_approval = parked and owner_holds_ceiling
+    awaiting_agent_approval = parked and not owner_holds_ceiling
     awaiting_reply, running, last_turn_failed = conversation or (False, False, False)
     assigned = ticket_assignment_from_values(
         stage=str(row["stage"]),
@@ -108,6 +114,7 @@ def _ticket_attention(
     return {
         "awaiting_reply": awaiting_reply,
         "awaiting_approval": awaiting_approval,
+        "awaiting_agent_approval": awaiting_agent_approval,
         "assigned": assigned,
         "agent_state": agent_state.value,
     }
@@ -145,6 +152,7 @@ def _roll_up(children: Iterable[WorkAttention]) -> WorkAttention:
     return {
         "awaiting_reply": any(row["awaiting_reply"] for row in rows),
         "awaiting_approval": any(row["awaiting_approval"] for row in rows),
+        "awaiting_agent_approval": any(row["awaiting_agent_approval"] for row in rows),
         "assigned": any(row["assigned"] for row in rows),
         "agent_state": (
             AgentState.working.value
@@ -163,9 +171,8 @@ async def add_work_attention(
     *,
     tickets: Iterable[JsonDict] = (),
     sprint_items: Iterable[JsonDict] = (),
-    approval_holder: Principal = OWNER_PRINCIPAL,
 ) -> None:
-    """Attach attention for the viewing holder and shared agent-state facts."""
+    """Attach what the owner is being asked for, and the shared agent-state facts."""
     ticket_rows = tuple(tickets)
     item_rows = tuple(sprint_items)
     direct_ticket_ids = {str(row["id"]) for row in ticket_rows}
@@ -216,7 +223,6 @@ async def add_work_attention(
                     row, has_live_blocker=ticket_id in blocked_ticket_ids
                 )
             ),
-            approval_holder=approval_holder,
         )
         for ticket_id, row in stored_tickets.items()
     }
@@ -230,6 +236,7 @@ async def add_work_attention(
             {
                 "awaiting_reply": awaiting_reply,
                 "awaiting_approval": False,
+                "awaiting_agent_approval": False,
                 "assigned": False,
                 "agent_state": (
                     AgentState.working.value

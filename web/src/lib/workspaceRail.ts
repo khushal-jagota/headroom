@@ -27,9 +27,14 @@ const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set([
   "done"
 ]);
 
+// Each of the three says whose the work is, in the word the code already uses for it:
+// `awaiting_approval` is a proposal whose ceiling the owner holds, and `assigned` is a
+// stage whose ownership mode is `user`, meaning his own to do. A proposal parked on an
+// agent is a different fact and keeps its own quiet heading, so no label here can mean
+// two things depending on the screen it is read on.
 const GROUP_LABELS: Readonly<Record<string, string>> = {
-  awaiting_approval: "Awaiting approval",
-  assigned: "Assigned",
+  awaiting_approval: "Needs your approval",
+  assigned: "Yours",
   awaiting_reply: "Messages",
   status_awaiting_approval: "Awaiting an agent's approval",
   waiting_to_closeout: "Waiting on Consequences",
@@ -70,7 +75,9 @@ const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
 function workspaceRemainderGroupKey(card: BoardCard): string {
   if (card.is_done) return "done";
   if (card.waiting_to_closeout) return "waiting_to_closeout";
-  if (card.ticket_status === "awaiting_approval") return "status_awaiting_approval";
+  // The server says who holds a parked proposal. This reads that fact rather than the
+  // status, which says a proposal is parked and not whose it is.
+  if (card.awaiting_agent_approval) return "status_awaiting_approval";
   return String(card.ticket_status);
 }
 

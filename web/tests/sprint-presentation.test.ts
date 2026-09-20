@@ -35,13 +35,14 @@ const ticket = (overrides: Partial<SprintTicketSummary> = {}): SprintTicketSumma
   waiting_to_closeout: false,
   awaiting_reply: false,
   awaiting_approval: false,
+  awaiting_agent_approval: false,
   assigned: false,
   agent_state: "idle",
   ...overrides
 });
 
 const item = (overrides: Partial<SprintOutcomeGroup> = {}): SprintOutcomeGroup => ({
-  outcome: { id: "si_default", title: "Default outcome", priority: "P2", deadline: null, project_id: "project_panels", project: "Panels", created_at: 1, updated_at: 1, awaiting_reply: false, awaiting_approval: false, assigned: false, agent_state: "idle" },
+  outcome: { id: "si_default", title: "Default outcome", priority: "P2", deadline: null, project_id: "project_panels", project: "Panels", created_at: 1, updated_at: 1, awaiting_reply: false, awaiting_approval: false, awaiting_agent_approval: false, assigned: false, agent_state: "idle" },
   committed: true,
   tickets: [],
   ...overrides

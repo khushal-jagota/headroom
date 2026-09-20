@@ -15,17 +15,18 @@ import { boardCard } from "./boardCardFixture";
 
 const attention = {
   awaiting_approval: true,
+  awaiting_agent_approval: false,
   assigned: true,
   awaiting_reply: true
 };
 
-const ticketFacts: TicketConditionFacts = {
+const ticketFacts = {
   stage: "needs_implementation",
   ticket_status: "empty",
   waiting_to_closeout: false,
   agent_state: "idle",
   ...attention
-};
+} satisfies TicketConditionFacts;
 
 describe("shared work-attention precedence", () => {
   it("selects approval before assignment, and assignment before reply", () => {
@@ -63,7 +64,7 @@ describe("shared work-attention precedence", () => {
       state: "needs-me"
     });
     expect(feedbackTicketStageState(feedbackTicket)).toBe("current-awaiting-approval");
-    expect(feedbackTicketStateLabel(feedbackTicket)).toBe("Awaiting approval");
+    expect(feedbackTicketStateLabel(feedbackTicket)).toBe("Needs your approval");
   });
 
   it("keeps assignment above an unread reply on every Ticket grouping surface", () => {
@@ -92,7 +93,7 @@ describe("shared work-attention precedence", () => {
       state: "needs-me"
     });
     expect(feedbackTicketStageState(feedbackTicket)).toBe("current-assigned");
-    expect(feedbackTicketStateLabel(feedbackTicket)).toBe("Assigned");
+    expect(feedbackTicketStateLabel(feedbackTicket)).toBe("Yours");
   });
 
   it.each([

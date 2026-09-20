@@ -46,7 +46,7 @@ describe("feedback presentation", () => {
   });
 
   it("maps ticket workflow facts onto the shared stage mark", () => {
-    const ticket = { id: "t_1", title: "Fix focus", stage: "needs_implementation", ticket_status: "agent", awaiting_reply: false, awaiting_approval: false, assigned: false, agent_state: "working" as const };
+    const ticket = { id: "t_1", title: "Fix focus", stage: "needs_implementation", ticket_status: "agent", awaiting_reply: false, awaiting_approval: false, awaiting_agent_approval: false, assigned: false, agent_state: "working" as const };
     expect(feedbackTicketStageState(ticket)).toBe("current-running");
     expect(feedbackTicketStateLabel(ticket)).toBe("Running");
     expect(feedbackTicketStageState({ ...ticket, stage: "done", ticket_status: "empty" })).toBe("completed");
