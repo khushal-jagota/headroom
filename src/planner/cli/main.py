@@ -38,6 +38,8 @@ from planner.worker_types.contracts import BRIEF_FIELD_ID
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
 _TICKET_ID_ENV = "PLAN_TICKET_ID"
+_ACTOR_ENV = "PLAN_ACTOR"
+_SPRINT_ITEM_ID_ENV = "PLAN_SPRINT_ITEM_ID"
 
 _DAY_FIELDS = {
     "focus": "focus",
@@ -56,6 +58,25 @@ _HOLDER_ALIASES = {
     "owner": ("owner", "owner"),
     "chief": ("chief", "chief"),
 }
+
+
+def caller_principal() -> dict[str, str]:
+    """The principal this process is, as a holder object.
+
+    A caller who does not say where a ceiling goes next keeps it. Khushal keeps it as the
+    owner, and an Outcome or a Ticket keeps it as itself, which is what the two approval
+    doors each defaulted to before they became one.
+    """
+    actor = os.environ.get(_ACTOR_ENV, "").strip()
+    ticket_id = os.environ.get(_TICKET_ID_ENV, "").strip()
+    sprint_item_id = os.environ.get(_SPRINT_ITEM_ID_ENV, "").strip()
+    if actor == "chief":
+        return {"kind": "chief", "id": "chief"}
+    if actor == "worker" and ticket_id:
+        return {"kind": "ticket", "id": ticket_id}
+    if actor == "sprint_item_supervisor" and sprint_item_id:
+        return {"kind": "sprint_item", "id": sprint_item_id}
+    return {"kind": "owner", "id": "owner"}
 
 
 def resolve_holder(raw: str, as_json: bool) -> dict[str, str]:
@@ -305,10 +326,20 @@ def _sprint_item_record(
         "deadline",
         "kind",
     )
-    return (
-        {key: data[key] for key in header_keys if key in data},
-        {"body": part(data["body"])},
-    )
+    header = {key: data[key] for key in header_keys if key in data}
+    # The Outcome's agent is part of the Outcome's record. It used to be a read of its
+    # own, which returned these four values and nothing this read did not already carry.
+    supervisor = data.get("supervisor")
+    if supervisor is not None:
+        launch = supervisor["launch_configuration"]
+        header |= {
+            "supervisor_agent_key": supervisor["agent_key"],
+            "supervisor_conversation_id": supervisor["conversation_id"],
+            "employee_backend": launch["employee_backend"],
+            "employee_launch_model": launch["employee_launch_model"],
+            "employee_launch_reasoning_effort": launch["employee_launch_reasoning_effort"],
+        }
+    return (header, {"body": part(data["body"])})
 
 
 def _day_record(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, RecordPart]]:
@@ -1598,8 +1629,9 @@ def ticket_employee_configuration(
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @click.option(
     "--holder",
-    default="me",
-    help="Who holds the next ceiling: me, chief, a Sprint Item id, or a Ticket id.",
+    default=None,
+    help="Who holds the next ceiling: me, chief, a Sprint Item id, or a Ticket id. "
+    "Absent, you keep it.",
 )
 @click.option("--kickoff-title", default=None, help="Edited Kickoff title.")
 @click.option("--kickoff-note-file", default=None, help="Edited Kickoff note, or - for stdin.")
@@ -1608,7 +1640,7 @@ def ticket_approve(
     ticket_id: str | None,
     ceiling: str | None,
     edit_file: str | None,
-    holder: str,
+    holder: str | None,
     kickoff_title: str | None,
     kickoff_note_file: str | None,
     as_json: bool,
@@ -1643,7 +1675,9 @@ def ticket_approve(
         )
     field_payload: dict[str, Any] = {
         "next_ceiling": ceiling,
-        "next_holder": resolve_holder(holder, as_json),
+        "next_holder": (
+            resolve_holder(holder, as_json) if holder is not None else caller_principal()
+        ),
     }
     if edit_file is not None:
         field_payload["edited_body"] = _read_source(edit_file, as_json)
@@ -1663,6 +1697,127 @@ def ticket_approve(
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} approved {field}")
+
+
+@ticket.command("reject")
+@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
+@click.option("--message", default=None, help="Focused revision guidance.")
+@click.option("--body-file", default=None, help="Read revision guidance from this file, or -.")
+@json_option
+def ticket_reject(
+    ticket_id: str | None, message: str | None, body_file: str | None, as_json: bool
+) -> None:
+    """Reject the proposal parked on this Ticket, with focused guidance."""
+    tid = resolve_ticket_id(ticket_id, as_json)
+    if (message is None) == (body_file is None):
+        http.fail_validation("reject requires exactly one of --message or --body-file", as_json)
+    text = message if message is not None else _read_source(body_file or "", as_json)
+    data = http.send(
+        "POST",
+        f"/api/tickets/{tid}/reject",
+        as_json=as_json,
+        json_body={"message": text},
+    )
+    http.emit(data, as_json, f"{tid} proposal rejected")
+
+
+@ticket.command("history")
+@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
+@click.option("--limit", type=click.IntRange(1, 100), default=30, show_default=True)
+@click.option("--before", type=int, default=None, help="Read the page before this sequence.")
+@click.option(
+    "--after",
+    type=int,
+    default=None,
+    help="Read forwards from this sequence instead of back from the end.",
+)
+@json_option
+def ticket_history(
+    ticket_id: str | None, limit: int, before: int | None, after: int | None, as_json: bool
+) -> None:
+    """Read this Ticket's current Worker conversation."""
+    tid = resolve_ticket_id(ticket_id, as_json)
+    if after is not None and before is not None:
+        http.fail_validation("history reads one direction: --after or --before", as_json)
+    detail = http.send(
+        "GET",
+        "/api/tickets",
+        as_json=as_json,
+        params={"detail": "full", "id": tid},
+    )
+    conversation_id = detail["conversation_id"]
+    if not conversation_id:
+        http.fail_validation("the Ticket has no current Worker conversation", as_json)
+    params = (
+        {"after": after, "limit": limit}
+        if after is not None
+        else _drop_none({"limit": limit, "before": before})
+    )
+    page = http.send(
+        "GET",
+        f"/api/conversation/conversations/{conversation_id}/events",
+        as_json=as_json,
+        params=params,
+    )
+    data = {
+        "ticket_id": tid,
+        "conversation_id": conversation_id,
+        "events": page["events"],
+        "has_more": page["has_more"],
+    }
+    http.emit(data, as_json, f"{tid} {len(data['events'])} history events")
+
+
+@ticket.command("restart-worker")
+@click.argument("ticket_id")
+@click.option("--backend", default=None, help="Registered employee backend to restart on.")
+@click.option("--model", default=None, help="Model that backend runs this Ticket's worker on.")
+@click.option(
+    "--reasoning-effort",
+    default=None,
+    help="Reasoning effort for that model; leave it out for a model that takes none.",
+)
+@json_option
+def ticket_restart_worker(
+    ticket_id: str,
+    backend: str | None,
+    model: str | None,
+    reasoning_effort: str | None,
+    as_json: bool,
+) -> None:
+    """Start this Ticket's worker step again, on a dead Worker.
+
+    Leave the options out to restart on what the Ticket already launches. Naming a
+    configuration changes what this Ticket launches on from now on, so a Worker that died
+    on its backend does not come back on the same one. Backend and model go together,
+    because a model id belongs to the backend that named it.
+    """
+    if (backend is None) != (model is None):
+        http.fail_validation(
+            "restart-worker needs --backend and --model together, or neither", as_json
+        )
+    body: dict[str, Any] = {}
+    if backend is not None:
+        body = {
+            "employee_backend": backend,
+            "employee_launch_model": model,
+            "employee_launch_reasoning_effort": reasoning_effort,
+        }
+    data = http.send(
+        "POST",
+        f"/api/tickets/{ticket_id}/restart-worker",
+        as_json=as_json,
+        json_body=body,
+    )
+    configuration = data["employee_configuration"]
+    launch = f"{configuration['employee_backend']} {configuration['employee_launch_model']}"
+    http.emit(
+        data,
+        as_json,
+        f"{ticket_id} restarted on {launch}"
+        if data["started"]
+        else f"{ticket_id} did not start: {data['not_started_because']}",
+    )
 
 
 @ticket.command("block")
@@ -2008,6 +2163,102 @@ def sprint_item_remove_ticket(item_id: str, ticket_id: str, as_json: bool) -> No
     http.emit(data, as_json, f"{ticket_id} removed from {item_id}")
 
 
+@sprint_item.command("workspace")
+@click.argument("item_id")
+@json_option
+def sprint_item_workspace(item_id: str, as_json: bool) -> None:
+    """This Outcome, its artifacts, and one line per current child Ticket."""
+    data = http.send("GET", f"/api/items/{item_id}/workspace", as_json=as_json)
+    http.emit(data, as_json, f"{item_id} {len(data['tickets'])} current Tickets")
+
+
+# The Outcome's own subdirectory of its managed files. These commands count paths from
+# it, while the route counts from the Outcome's root, so the prefix is added here.
+_ARTIFACTS_DIRECTORY = "artifacts"
+
+
+@sprint_item.group("artifact")
+def sprint_item_artifact() -> None:
+    """Read and write an Outcome's own artifacts."""
+
+
+@sprint_item_artifact.command("list")
+@click.argument("item_id")
+@json_option
+def sprint_item_artifact_list(item_id: str, as_json: bool) -> None:
+    data = http.send("GET", f"/api/items/{item_id}/workspace", as_json=as_json)
+    prefix = f"{_ARTIFACTS_DIRECTORY}/"
+    artifacts = sorted(
+        str(entry["path"])[len(prefix) :]
+        for entry in data["artifacts"]
+        if str(entry["path"]).startswith(prefix)
+    )
+    http.emit({"sprint_item_id": item_id, "artifacts": artifacts}, as_json, _lines(artifacts, str))
+
+
+@sprint_item_artifact.command("write")
+@click.argument("item_id")
+@click.argument("artifact_path")
+@click.option("--body-file", required=True)
+@json_option
+def sprint_item_artifact_write(
+    item_id: str, artifact_path: str, body_file: str, as_json: bool
+) -> None:
+    data = http.send(
+        "PUT",
+        f"/files/sprint-items/{item_id}/{_ARTIFACTS_DIRECTORY}/{artifact_path}",
+        as_json=as_json,
+        json_body={"content": _read_source(body_file, as_json)},
+    )
+    http.emit(data, as_json, data["url"])
+
+
+@sprint_item_artifact.command("delete")
+@click.argument("item_id")
+@click.argument("artifact_path")
+@json_option
+def sprint_item_artifact_delete(item_id: str, artifact_path: str, as_json: bool) -> None:
+    data = http.send(
+        "DELETE",
+        f"/files/sprint-items/{item_id}/{_ARTIFACTS_DIRECTORY}/{artifact_path}",
+        as_json=as_json,
+    )
+    http.emit(data, as_json, f"{artifact_path} deleted")
+
+
+@sprint_item.group("conversation")
+def sprint_item_conversation() -> None:
+    """Khushal's own door to an Outcome's agent."""
+
+
+@sprint_item_conversation.command("send")
+@click.argument("item_id")
+@click.option("--message", default=None, help="Message text.")
+@click.option("--body-file", default=None, help="Read message text from this file, or -.")
+@json_option
+def sprint_item_conversation_send(
+    item_id: str, message: str | None, body_file: str | None, as_json: bool
+) -> None:
+    if (message is None) == (body_file is None):
+        http.fail_validation("send requires exactly one of --message or --body-file", as_json)
+    text = message if message is not None else _read_source(body_file or "", as_json)
+    data = http.send(
+        "POST",
+        f"/api/items/{item_id}/conversation/send",
+        as_json=as_json,
+        json_body={"content": [{"piece": "text", "text": text}], "sender_label": "You"},
+    )
+    http.emit(data, as_json, f"message {data['fate']}")
+
+
+@sprint_item_conversation.command("reset")
+@click.argument("item_id")
+@json_option
+def sprint_item_conversation_reset(item_id: str, as_json: bool) -> None:
+    data = http.send("POST", f"/api/items/{item_id}/conversation/reset", as_json=as_json)
+    http.emit(data, as_json, f"{item_id} supervisor conversation reset")
+
+
 @sprint_item.group("supervisor")
 def sprint_item_supervisor() -> None:
     """Inspect and talk to a Sprint Item supervisor."""
@@ -2278,11 +2529,6 @@ def sprint_item_supervisor_set_ticket(
         json_body={_SUPERVISOR_TICKET_FIELDS[field]: sent},
     )
     http.emit(data, as_json, f"{ticket_id} {field} set")
-
-
-# The Outcome's own subdirectory of its managed files. These commands count paths from
-# it, while the route counts from the Outcome's root, so the prefix is added here.
-_ARTIFACTS_DIRECTORY = "artifacts"
 
 
 @sprint_item_supervisor.command("artifact-list")

@@ -517,10 +517,30 @@ def test_ticket_set_ceiling_holder_patches_a_principal(
     assert calls[-1][2]["json_body"] == {"ceiling_holder": {"kind": "owner", "id": "owner"}}
 
 
-def test_ticket_approve_defaults_the_next_holder_to_the_user(
+@pytest.mark.parametrize(
+    ("environment", "expected_holder"),
+    (
+        ({}, {"kind": "owner", "id": "owner"}),
+        (
+            {"PLAN_ACTOR": "sprint_item_supervisor", "PLAN_SPRINT_ITEM_ID": "si_one"},
+            {"kind": "sprint_item", "id": "si_one"},
+        ),
+    ),
+)
+def test_ticket_approve_defaults_the_next_holder_to_the_caller(
     monkeypatch: pytest.MonkeyPatch,
+    environment: dict[str, str],
+    expected_holder: dict[str, str],
 ) -> None:
-    """Omitting `--holder` keeps what the direct command always did."""
+    """Omitting `--holder` keeps the ceiling where it is, for whoever approved.
+
+    One command replaces two, and each of the two defaulted to itself. Khushal keeps it
+    as the owner, and an Outcome keeps it as itself.
+    """
+    for name in ("PLAN_ACTOR", "PLAN_TICKET_ID", "PLAN_SPRINT_ITEM_ID"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
     calls: list[tuple[str, str, dict[str, Any]]] = []
 
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
@@ -542,4 +562,77 @@ def test_ticket_approve_defaults_the_next_holder_to_the_user(
         ["ticket", "approve", "t_child", "--ceiling", "needs_what_changes"],
     )
     assert result.exit_code == 0, result.output
-    assert calls[-1][2]["json_body"]["next_holder"] == {"kind": "owner", "id": "owner"}
+    assert calls[-1][2]["json_body"]["next_holder"] == expected_holder
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    (
+        (
+            ["ticket", "reject", "t_child", "--message", "Revise this."],
+            ("POST", "/api/tickets/t_child/reject"),
+        ),
+        (
+            ["ticket", "history", "t_child", "--limit", "5"],
+            ("GET", "/api/conversation/conversations/c_child/events"),
+        ),
+        (
+            ["ticket", "restart-worker", "t_child"],
+            ("POST", "/api/tickets/t_child/restart-worker"),
+        ),
+        (
+            ["sprint", "item", "workspace", "si_parent"],
+            ("GET", "/api/items/si_parent/workspace"),
+        ),
+        (
+            ["sprint", "item", "artifact", "list", "si_parent"],
+            ("GET", "/api/items/si_parent/workspace"),
+        ),
+        (
+            ["sprint", "item", "artifact", "delete", "si_parent", "map.html"],
+            ("DELETE", "/files/sprint-items/si_parent/artifacts/map.html"),
+        ),
+        (
+            ["sprint", "item", "conversation", "send", "si_parent", "--message", "Hello."],
+            ("POST", "/api/items/si_parent/conversation/send"),
+        ),
+        (
+            ["sprint", "item", "conversation", "reset", "si_parent"],
+            ("POST", "/api/items/si_parent/conversation/reset"),
+        ),
+    ),
+)
+def test_every_promoted_operation_has_an_ordinary_command(
+    monkeypatch: pytest.MonkeyPatch, argv: list[str], expected: tuple[str, str]
+) -> None:
+    """The operations that only had an Outcome-scoped door now have an ordinary one.
+
+    Each of these was reachable only through `sprint item supervisor`. The route moved to
+    an ordinary address, so the command did too.
+    """
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs))
+        if path == "/api/tickets":
+            return {"id": "t_child", "conversation_id": "c_child"}
+        if path.endswith("/workspace"):
+            return {"tickets": [], "artifacts": [{"path": "artifacts/map.html"}]}
+        if path.endswith("/events"):
+            return {"events": [], "has_more": False}
+        if path.endswith("/restart-worker"):
+            return {
+                "started": True,
+                "not_started_because": None,
+                "employee_configuration": {
+                    "employee_backend": "claude",
+                    "employee_launch_model": "opus",
+                },
+            }
+        return {"id": "t_child", "fate": "started", "url": "/files/x"}
+
+    monkeypatch.setattr(http, "send", fake_send)
+    result = CliRunner().invoke(cli_main.main, argv)
+
+    assert result.exit_code == 0, result.output
+    assert calls[-1][0:2] == expected
