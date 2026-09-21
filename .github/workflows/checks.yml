@@ -1,4 +1,4 @@
-# Every check this repository has, run directly on a pull request into main.
+# Every check this repository has, run directly on every pull request.
 #
 # There is no wrapper. Each check below is one command, and each fails the job on its
 # own exit code. Nothing is piped, because a pipe reports the pipe's exit status and
@@ -20,7 +20,6 @@
 name: Checks
 on:
   pull_request:
-    branches: [main]
 concurrency:
   group: checks-${{ github.event.pull_request.number }}
   cancel-in-progress: true
