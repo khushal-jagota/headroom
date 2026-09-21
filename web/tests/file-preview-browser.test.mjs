@@ -14,13 +14,15 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { build } from "vite";
+import { scratchDirectory } from "./support/scratch.mjs";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = join(webRoot, "..");
 const temporaryDirectory = await mkdtemp(join(tmpdir(), "panels-file-preview-"));
-const hostPath = join(webRoot, "tests", `.file-preview-host-${process.pid}.svelte`);
-const mainPath = join(webRoot, "tests", `.file-preview-main-${process.pid}.ts`);
-const indexPath = join(webRoot, "tests", `.file-preview-index-${process.pid}.html`);
+const scratchRoot = await scratchDirectory();
+const hostPath = join(scratchRoot, `file-preview-host-${process.pid}.svelte`);
+const mainPath = join(scratchRoot, `file-preview-main-${process.pid}.ts`);
+const indexPath = join(scratchRoot, `file-preview-index-${process.pid}.html`);
 let serverProcess;
 
 try {

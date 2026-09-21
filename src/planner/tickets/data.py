@@ -13,11 +13,13 @@ import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
+from datetime import datetime
 from typing import Protocol
 
 from planner.conversation.contracts import require_conversation_backend_key
 from planner.core import authority, ticket_blocks
 from planner.core.contracts import (
+    OWNER_PRINCIPAL,
     Principal,
     PrincipalKind,
     Priority,
@@ -440,7 +442,12 @@ def _seed_kickoff(
         raise PlannerError(ErrorCode.validation, "kickoff stage cannot be terminal")
     if not worker_type_definition.has_field(BRIEF_FIELD_ID):
         return stage, {}, None
-    if kickoff_note is None:
+    # A Ticket created without a Brief leaves the worker-owned Kickoff ready to start. The
+    # HTTP door defaults an absent kickoff_note to "", and a form leaves "" behind when its
+    # field is untouched, so a blank Brief is the ordinary way to say nothing was written —
+    # not a Brief whose text happens to be empty. Diverting it here is what stops an empty
+    # proposal parking for a decision with nothing in it.
+    if kickoff_note is None or not kickoff_note.strip():
         return stage, {}, None
     # A stated ceiling past kickoff settles the kickoff on the spot: below the ceiling a
     # worker-owned Stage writes its field and moves on, and creation is that write.
@@ -1370,6 +1377,95 @@ def delete_ticket(
         )
 
 
+def _outcome_title(conn: sqlite3.Connection, sprint_item_id: str | None) -> str | None:
+    if sprint_item_id is None:
+        return None
+    row = conn.execute(
+        "SELECT title FROM sprint_items WHERE id = ?", (sprint_item_id,)
+    ).fetchone()
+    return None if row is None else str(row["title"])
+
+
+def _returned_ceiling_line(
+    conn: sqlite3.Connection,
+    *,
+    moved_from_sprint_item_id: str | None,
+    moved_to_sprint_item_id: str | None,
+    now: int,
+) -> str:
+    """One sentence saying the ceiling came back, and which move sent it back.
+
+    Named by Outcome title rather than by id, because this is read by whoever is about to
+    decide the proposal and an id tells them nothing.
+    """
+    day = datetime.fromtimestamp(now).date().isoformat()
+    left = _outcome_title(conn, moved_from_sprint_item_id)
+    joined = _outcome_title(conn, moved_to_sprint_item_id)
+    if left is None:
+        where = f"This Ticket moved into **{joined}**"
+    elif joined is None:
+        where = f"This Ticket moved out of **{left}**"
+    else:
+        where = f"This Ticket moved from **{left}** to **{joined}**"
+    return (
+        f"{day} — the ceiling returned to Khushal. {where}, which left the Outcome that held "
+        "the ceiling no longer above it, so that Outcome can no longer decide what parks here."
+    )
+
+
+def _release_a_holder_the_move_left_below(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    moved_from_sprint_item_id: str | None,
+    moved_to_sprint_item_id: str | None,
+    now: int,
+) -> None:
+    """Return the ceiling to Khushal when a move leaves its holder no longer above.
+
+    Authority is derived from the Ticket's current Outcome and the ceiling holder is a
+    stored address, so a move can leave the two disagreeing: the Ticket goes on asking a
+    holder that every write door now refuses, and nothing says so. Khushal stands above
+    everything, so the ceiling always has somewhere valid to go, and only Khushal or the
+    Chief can make this move in the first place.
+
+    The rule is re-asked rather than restated. This does not test whether the holder was
+    the Outcome just left: it asks whether the holder still stands above the Ticket as the
+    Ticket now is. A holder that does keeps the ceiling, whatever kind of thing it is.
+
+    Asked on every move, not only while a proposal is parked. A wrong address is wrong
+    before anything arrives at it.
+    """
+    row = conn.execute(
+        "SELECT ceiling_holder, guidance FROM tickets WHERE id = ?", (ticket_id,)
+    ).fetchone()
+    if row is None:
+        return
+    # Read back rather than trust the Ticket loaded before the move: one edit can set the
+    # holder and move the Outcome together, and the holder that matters is the stored one.
+    holder = _principal_from_json(str(row["ceiling_holder"]))
+    if authority.is_above(conn, holder, authority.ticket(ticket_id)):
+        return
+    existing = str(row["guidance"])
+    line = _returned_ceiling_line(
+        conn,
+        moved_from_sprint_item_id=moved_from_sprint_item_id,
+        moved_to_sprint_item_id=moved_to_sprint_item_id,
+        now=now,
+    )
+    conn.execute(
+        "UPDATE tickets SET ceiling_holder = ?, guidance = ?, updated_at = ? WHERE id = ?",
+        (
+            _principal_to_json(OWNER_PRINCIPAL),
+            f"{existing}\n\n{line}" if existing else line,
+            now,
+            ticket_id,
+        ),
+    )
+    # Who holds the ceiling decides whether the user is waiting on this Ticket.
+    capture_ticket_attention(conn, ticket_id, now)
+
+
 def edit_ticket(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -1500,6 +1596,14 @@ def edit_ticket(
             f"UPDATE tickets SET {assignments}, updated_at = ? WHERE id = ?",
             (*params, now, ticket_id),
         )
+        if any(change[0] == "sprint_item_id" for change in changes):
+            _release_a_holder_the_move_left_below(
+                conn,
+                ticket_id,
+                moved_from_sprint_item_id=ticket.sprint_item_id,
+                moved_to_sprint_item_id=sprint_item_id,
+                now=now,
+            )
         # Who holds the ceiling decides whether the user is waiting on this Ticket, so a
         # new holder re-derives its attention.
         if "ceiling" in edit or "ceiling_holder" in edit:
@@ -1534,6 +1638,13 @@ def classify_ticket(
         conn.execute(
             "UPDATE tickets SET sprint_item_id = ?, project_id = ?, updated_at = ? WHERE id = ?",
             (sprint_item_id, str(item["project_id"]), now, ticket_id),
+        )
+        _release_a_holder_the_move_left_below(
+            conn,
+            ticket_id,
+            moved_from_sprint_item_id=ticket.sprint_item_id,
+            moved_to_sprint_item_id=sprint_item_id,
+            now=now,
         )
         return _load_ticket_for_write(conn, ticket_id)
 
@@ -1570,5 +1681,12 @@ def unclassify_ticket(
         conn.execute(
             "UPDATE tickets SET sprint_item_id = NULL, updated_at = ? WHERE id = ?",
             (now, ticket_id),
+        )
+        _release_a_holder_the_move_left_below(
+            conn,
+            ticket_id,
+            moved_from_sprint_item_id=ticket.sprint_item_id,
+            moved_to_sprint_item_id=None,
+            now=now,
         )
         return _load_ticket_for_write(conn, ticket_id)

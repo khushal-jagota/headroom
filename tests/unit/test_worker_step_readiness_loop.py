@@ -67,7 +67,7 @@ class _World:
         self,
         *,
         title: str = "T",
-        kickoff_note: str = "",
+        kickoff_note: str = "Agreed brief.",
         worker_type: str = "coding",
         conversation_id: str | None = None,
         on_today: bool = True,

@@ -230,6 +230,17 @@ A Ticket cannot hold its own ceiling: its Worker is the proposal author, so addr
 proposal to itself addresses it to nobody. Holder Tickets and Sprint Items must exist
 when the ceiling is written.
 
+**The holder must stand above the Ticket.** An address that cannot decide is not an
+address. Authority comes from the Ticket's current Outcome, so moving a Ticket to another
+Outcome — or out of every Outcome — can leave the Outcome that holds the ceiling below it.
+When a move does that, the ceiling returns to the user in the same transaction, and the
+Ticket's guidance gains one line naming the move that sent it back. The user stands above
+everything, so the ceiling always has somewhere valid to go, and only the user or the
+Chief can move a Ticket between Outcomes in the first place. It is the same question on
+every move, whether or not a proposal is parked right now: a wrong address is wrong before
+anything arrives at it. A holder that still stands above the moved Ticket keeps the
+ceiling. A Ticket that was already stranded stays as it is until something moves it.
+
 Below the ceiling, a worker-owned Stage's answer settles the field and the ticket
 advances, and no proposal is recorded at all. At the ceiling it files a proposal, and the
 ticket parks. So every proposal in the system is one somebody is going to look at. The
@@ -240,6 +251,12 @@ New tickets start leashed right at
 the **Brief**: the ceiling is `needs_brief` for every Worker type, so nothing advances past
 the human-approved intake until the human raises the ceiling — review before agents
 start.
+
+A Ticket created **without** a Brief parks nothing. A blank intake body means nothing was
+written, not a Brief whose text is empty, so the Ticket rests at its Brief stage with the
+worker-owned Kickoff ready to start. This is one rule at one door, so every way of creating
+a Ticket gets it: the API defaults an absent intake body to blank, and so does a form field
+nobody typed in.
 
 A creator can state the ceiling instead, at creation, with `ticket create --ceiling`.
 The same breath names who holds it, with `ticket create --holder`. A creator can name any
@@ -310,8 +327,10 @@ attention projection, and the answer belongs in that conversation.
 
 Replying to the worker does not decide its proposal. The proposal stays pending and
 addressed to its holder until a decision or a replacement proposal arrives. Panels does
-not wake the holder, retry proposal delivery, surface a delivery failure, or fall back to
-the owner. Owner-held proposals remain on Review.
+not wake the holder, retry proposal delivery, or surface a delivery failure, and nothing
+about delivery moves an address. The one thing that returns a ceiling to the user is a
+move that leaves its holder below the Ticket, described above. Owner-held proposals remain
+on Review.
 
 The Review screen can also send an owner-addressed ticket back instead of accepting it,
 whatever field is currently gated. The owner writes short guidance in the review card.

@@ -60,6 +60,7 @@ def _create(conn: Connection, cfg: Config, clock: TestClock, **kw: Any) -> Ticke
         principal=OWNER_PRINCIPAL,
         now=clock.now_unix(),
         title_max_chars=TITLE_MAX_CHARS,
+        kickoff_note=kw.pop("kickoff_note", "Agreed brief."),
         **kw,
     )
     if not settle_kickoff:
@@ -1076,3 +1077,20 @@ def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(
         is False
     )
     assert data.read_ticket(tmp_db, t.id).ticket_status is TicketStatus.agent
+
+
+def test_a_create_that_names_no_brief_parks_nothing(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    """A blank Brief is nothing written, not a Brief whose text is empty."""
+    blank = _create(tmp_db, cfg, fake_clock, kickoff_note="", settle_kickoff=False)
+    assert blank.stage == "needs_brief"
+    assert blank.ticket_status is TicketStatus.empty
+    assert blank.pending_proposal is None
+    assert dict(blank.field_values) == {}
+
+    whitespace = _create(
+        tmp_db, cfg, fake_clock, kickoff_note="  \n\t ", settle_kickoff=False
+    )
+    assert whitespace.pending_proposal is None
+    assert whitespace.ticket_status is TicketStatus.empty

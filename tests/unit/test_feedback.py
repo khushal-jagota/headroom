@@ -48,7 +48,11 @@ def _create_note(client: TestClient, text: str, **context: str) -> dict[str, Any
 def _create_ticket(
     client: TestClient, title: str, *, sprint_item_id: str | None = None
 ) -> dict[str, Any]:
-    body: dict[str, Any] = {"worker_type": "coding", "title": title}
+    body: dict[str, Any] = {
+        "worker_type": "coding",
+        "title": title,
+        "kickoff_note": "Agreed brief.",
+    }
     if sprint_item_id is not None:
         body["sprint_item_id"] = sprint_item_id
     response = client.post("/api/tickets", json=body)

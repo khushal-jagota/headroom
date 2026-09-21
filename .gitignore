@@ -12,9 +12,9 @@ playwright-report/
 .gstack/
 agent_backends/node_modules
 web/node_modules
-# What the web node suites write beside themselves while they run. They delete their own
-# on the way out; these patterns are for the runs that are interrupted and never get to.
-web/tests/.worker-configuration-*
-web/tests/.c2ssr-*
+# The one place the web browser tests build their throwaway Svelte hosts. A killed run
+# never reaches its cleanup, so the directory stays ignored and every run sweeps what
+# dead runs left behind. See web/tests/support/scratch.mjs.
+web/.test-scratch/
 .worktrees/
 .claude/worktrees/

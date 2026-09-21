@@ -7,13 +7,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { build } from "vite";
+import { scratchDirectory } from "./support/scratch.mjs";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = join(webRoot, "..");
 const temporaryDirectory = await mkdtemp(join(tmpdir(), "panels-model-picker-"));
-const hostPath = join(webRoot, "tests", `.model-picker-host-${process.pid}.svelte`);
-const mainPath = join(webRoot, "tests", `.model-picker-main-${process.pid}.ts`);
-const indexPath = join(webRoot, "tests", `.model-picker-index-${process.pid}.html`);
+const scratchRoot = await scratchDirectory();
+const hostPath = join(scratchRoot, `model-picker-host-${process.pid}.svelte`);
+const mainPath = join(scratchRoot, `model-picker-main-${process.pid}.ts`);
+const indexPath = join(scratchRoot, `model-picker-index-${process.pid}.html`);
 let serverProcess;
 
 for (const fileName of ["WorkerConfigurationSetup.svelte", "ManagedLaunchDefaults.svelte"]) {

@@ -55,6 +55,7 @@ def _create(conn: Connection, now: int) -> str:
         principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
+        kickoff_note="Agreed brief.",
     ).id
 
 
@@ -72,7 +73,7 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
         next_ceiling=B,
         next_holder=OWNER_PRINCIPAL,
     )
-    assert ticket.stage == A and ticket.field_values == {"brief": ""}
+    assert ticket.stage == A and ticket.field_values == {"brief": "Agreed brief."}
     ticket = data.file_current_proposal(
         tmp_db, tid, body="alpha", principal=ticket_principal(tid), now=now
     )
