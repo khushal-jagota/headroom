@@ -7,12 +7,14 @@ import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { build } from "vite";
+import { scratchDirectory } from "./support/scratch.mjs";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const outputDirectory = await mkdtemp(join(tmpdir(), "panels-sprint-documents-"));
-const hostPath = join(webRoot, "tests", `.sprint-documents-${process.pid}.svelte`);
-const mainPath = join(webRoot, "tests", `.sprint-documents-${process.pid}.ts`);
-const indexPath = join(webRoot, "tests", `.sprint-documents-${process.pid}.html`);
+const scratchRoot = await scratchDirectory();
+const hostPath = join(scratchRoot, `sprint-documents-${process.pid}.svelte`);
+const mainPath = join(scratchRoot, `sprint-documents-${process.pid}.ts`);
+const indexPath = join(scratchRoot, `sprint-documents-${process.pid}.html`);
 let server;
 try {
   await writeFile(hostPath, `
