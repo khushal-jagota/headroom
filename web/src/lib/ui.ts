@@ -38,15 +38,6 @@ export type TicketStageVisualInput = {
   fieldHasProposal?: boolean;
 };
 
-export function markerLabel(value: string): string {
-  const labels: Record<string, string> = {
-    "pending-proposal": "proposal pending",
-    "blockers-cleared": "blockers cleared",
-    frozen: "frozen"
-  };
-  return labels[value] || value;
-}
-
 // The ticket status names are the labels: underscores become spaces.
 export function ticketStatusText(value: string): string {
   return value.replace(/_/g, " ");

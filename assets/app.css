@@ -279,10 +279,6 @@ textarea {
   background: var(--surface-recessed);
 }
 
-.shell-more-subtitle {
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
-}
 
 .shell-more-divider {
   height: var(--border-hairline);
@@ -616,16 +612,13 @@ textarea {
   }
 }
 
-.sprint-outcome-actions, .sprint-outcome-menu, .outcome-picker-filters,
-.outcome-picker-pages, .carry-outcome .foot { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
-.outcome-picker, .carry-outcome { padding: var(--space-4); background: var(--surface-2); border-radius: var(--radius-sm); }
+.sprint-outcome-actions,
+.outcome-picker-filters,
+.outcome-picker-pages { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+.outcome-picker { padding: var(--space-4); background: var(--surface-2); border-radius: var(--radius-sm); }
 .outcome-picker-list, .sprint-outcome-block { display: grid; gap: var(--space-1); }
 .outcome-picker-row { width: 100%; border: 0; color: inherit; text-align: left; cursor: pointer; }
 .sprint-outcome-block { padding-block: var(--space-2); }
-.sprint-outcome-meta { color: var(--text-muted); font-size: var(--type-sm); }
-.sprint-outcome-menu { justify-content: flex-end; }
-.carry-ticket { display: block; padding-block: var(--space-1); }
-.backlog-outcomes > summary { cursor: pointer; }
 .ticket-row-backlog { margin-left: auto; padding-left: var(--space-2); color: var(--text-faintest); font-size: var(--type-sm); }
 
 @media (max-width: 390px) {
@@ -643,55 +636,6 @@ textarea {
   padding: var(--page-gutter);
 }
 
-/* The chief chat is a chat surface, not a flowing page: the shell hands it the same
- * bounded height chain the ticket screen uses, so the thread scrolls internally and
- * the composer sits at the bottom of the screen. 100dvh, not 100vh — a phone's
- * browser chrome must never push the composer below the fold. Under the old
- * min-height chain the page simply grew with the thread: nothing ever scrolled
- * internally, and every reply pushed the composer further off a phone's screen. */
-.shell:has(.chief-chat-page) {
-  height: 100dvh;
-  display: flex;
-  flex-direction: column;
-}
-
-.shell:has(.chief-chat-page) .shell-content {
-  flex: 1;
-  min-height: 0;
-  padding-bottom: max(var(--space-5), env(safe-area-inset-bottom));
-}
-
-.shell:has(.chief-chat-page) .screen {
-  height: 100%;
-}
-
-.chief-chat-page {
-  height: 100%;
-  min-width: 0;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.chief-chat-head {
-  flex: none;
-  margin-bottom: var(--space-3);
-}
-
-.chief-chat-head h1 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: var(--type-lg);
-  line-height: 1.2;
-}
-
-.chief-chat-shell {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  width: 100%;
-  display: flex;
-}
 
 /* --- Chief conversation ----------------------------------------------- */
 
@@ -813,15 +757,7 @@ textarea {
   outline-offset: var(--space-1);
 }
 
-.worker-detail-facts {
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
 
-.worker-detail-facts,
 .worker-stage-id,
 .worker-row-error {
   color: var(--text-faint);
@@ -1090,18 +1026,6 @@ textarea {
   margin-bottom: var(--space-4);
 }
 
-.panel-title {
-  margin: 0;
-  padding: var(--space-3) var(--space-4);
-  font-size: var(--type-lg);
-  font-weight: 600;
-  color: var(--text-strong);
-  border-bottom: var(--border-hairline) solid var(--border-color);
-}
-
-.panel-body {
-  padding: var(--space-4);
-}
 
 /* --- Markdown ------------------------------------------------------------ */
 
@@ -1427,32 +1351,6 @@ textarea {
   overflow-y: auto;
 }
 
-/* --- Field editor -------------------------------------------------------- */
-
-.field-editor {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.field-editor-input {
-  width: 100%;
-  background: var(--surface-recessed);
-  color: var(--text-default);
-  border: var(--border-hairline) solid var(--text-faint);
-  border-radius: var(--radius-sm);
-  padding: var(--space-2) var(--space-3);
-  font-family: var(--font-mono);
-  font-size: var(--type-sm);
-  line-height: 1.5;
-  resize: vertical;
-}
-
-.field-editor-input:focus {
-  border-color: var(--accent-bright);
-  outline: none;
-}
-
 /* --- Buttons (shared style class, not a component) ----------------------- */
 
 /* THE BUTTON — one base + three variants. Quiet = the neutral bordered chip (default);
@@ -1522,16 +1420,6 @@ textarea {
   line-height: 1.6;
 }
 
-.chip--state {
-  background: var(--surface-2);
-  color: var(--text-default);
-  border-color: transparent;
-}
-
-.chip--state[data-value="done"],
-.chip--state[data-value="dropped"] {
-  color: var(--text-muted);
-}
 
 .chip--project {
   background: transparent;
@@ -1539,59 +1427,6 @@ textarea {
   border-color: var(--text-faint);
 }
 
-.chip--deadline {
-  background: transparent;
-  color: var(--text-muted);
-  border-color: var(--text-faint);
-}
-
-.chip--overdue {
-  background: var(--accent-surface);
-  color: var(--accent-bright);
-  border-color: var(--accent-bright);
-}
-
-.chip--pending-proposal {
-  background: var(--accent-surface);
-  color: var(--accent-text);
-  border-color: var(--accent-bright);
-}
-
-.chip--agent {
-  background: var(--surface-2);
-  color: var(--text-strong);
-  border-color: var(--text-muted);
-}
-
-.chip--user {
-  background: transparent;
-  color: var(--text-strong);
-  border-color: var(--text-muted);
-}
-
-.chip--blockers-cleared {
-  background: transparent;
-  color: var(--text-strong);
-  border-color: var(--text-muted);
-}
-
-.chip--errored {
-  background: var(--accent-surface);
-  color: var(--accent-text);
-  border-color: var(--accent-bright);
-}
-
-.chip--frozen {
-  background: transparent;
-  color: var(--text-faint);
-  border-color: var(--text-faint);
-}
-
-/* blocked-by chip carries a quiet key */
-.chip--blocked-by .k {
-  margin-right: var(--space-1);
-  color: var(--text-faintest);
-}
 
 /* --- List row ------------------------------------------------------------ */
 
@@ -1967,14 +1802,6 @@ button.list-row:hover .list-row-title {
   text-transform: uppercase;
   color: var(--text-faint);
 }
-.acp-compaction.is-live span {
-  background: linear-gradient(90deg, var(--text-faint) 30%, var(--text-strong) 50%, var(--text-faint) 70%);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-          background-clip: text;
-  color: transparent;
-  animation: acp-shimmer var(--motion-loop-bounce) linear infinite;
-}
 
 /* Turn-end and wire-exception pills: centred, flat, outline. */
 .acp-turn-end {
@@ -2007,7 +1834,6 @@ button.list-row:hover .list-row-title {
 @keyframes acp-shimmer { to { background-position: -200% 0; } }
 @keyframes acp-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .acp-compaction.is-live span,
   .acp-spin { animation: none; }
   /* Still the brighter reading, so being alive is said in colour to anyone who does not
      want it said in movement. */
@@ -2278,14 +2104,6 @@ button.list-row:hover .list-row-title {
   line-height: 1.6;
   padding-inline-start: var(--space-3);
   overflow-wrap: anywhere;
-}
-.chat-system-label {
-  color: var(--text-faint);
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  letter-spacing: 0.03em;
-  margin-block-end: var(--space-1);
-  text-transform: uppercase;
 }
 
 /* composer = one recessed field; the container IS the input */
@@ -2945,9 +2763,6 @@ select {
  * NOTES disclosure when the field carries notes. */
 /* Recap sits close above the Notes row; the stage-section gap carries the rest
  * of the rhythm (mockup: recap→notes 16, notes→ask 26). */
-.review-context {
-  padding: var(--space-4) 0 0;
-}
 
 .ticket-stage-section--review .approval--review {
   margin-top: var(--space-2);
@@ -2964,26 +2779,6 @@ select {
   color: var(--text-faint);
 }
 
-.review-context-label {
-  font-size: var(--type-xs);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--text-faintest);
-  margin-bottom: var(--space-2);
-}
-
-.review-needs-user-label {
-  color: var(--accent-bright);
-}
-
-.review-context-recap {
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-md);
-  line-height: 1.68;
-  color: var(--text-muted);
-  max-width: 58ch;
-}
 
 .modern-review-content {
   display: flex;
@@ -3509,12 +3304,7 @@ select {
 
 /* Needs-you rows — an ask is waiting — read one text-step stronger at rest, keyed
  * off the existing status attribute (no new props). */
-.ticket-row[data-ticket-status="awaiting_approval"],
-.ticket-row[data-ticket-status="awaiting_user_review"],
-.ticket-row[data-ticket-status="needs_user"],
-.ticket-row[data-ticket-status="user"],
-.ticket-row[data-ticket-status="paired"],
-.ticket-row--attention {
+.ticket-row[data-ticket-status="awaiting_approval"] {
   color: var(--text-default);
 }
 
@@ -3607,143 +3397,10 @@ select {
 
 .ticket-field,
 .ticket-recap,
-.ticket-blockers,
-.ticket-user-note {
+.ticket-blockers {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-}
-
-/* --- State control (T16) ------------------------------------------------- */
-
-.state-control {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-
-.state-control-current {
-  font-size: var(--type-sm);
-  color: var(--text-muted);
-}
-
-.state-control-select {
-  width: auto;
-}
-
-.state-control-error,
-.scope-control-error,
-.ticket-copy-error,
-.ticket-links-error,
-.ticket-day-error,
-.ticket-sprint-error {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-/* --- Scope control (T16) ------------------------------------------------- */
-
-.scope-control {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-
-.scope-control-current {
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  color: var(--text-muted);
-}
-
-/* --- Run history / Event log (T16) --------------------------------------- */
-
-.run-history,
-.event-log {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.run-history-row,
-.event-log-row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  padding: var(--space-1) 0;
-}
-
-.run-history-status,
-.event-log-kind {
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.run-history-times,
-.event-log-time {
-  font-size: var(--type-xs);
-  color: var(--text-faint);
-  white-space: nowrap;
-}
-
-.run-history-detail,
-.event-log-summary {
-  font-size: var(--type-sm);
-  color: var(--text-default);
-}
-
-/* Errored run — the one event that must not be missed. Brand-accent marker (needs the
- * human), the reason bright and allowed to wrap however long it is. */
-.event-log-row--error .event-log-kind {
-  color: var(--accent-bright);
-}
-
-.event-log-row--error .event-log-summary {
-  color: var(--text-strong);
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-/* --- Links / day / sprint (T16) ------------------------------------------ */
-
-.ticket-links,
-.ticket-day {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.ticket-link-row,
-.ticket-day-row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-}
-
-.ticket-link-kind {
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  color: var(--text-muted);
-}
-
-.ticket-link-target {
-  color: var(--accent-bright);
-  text-decoration: none;
-}
-
-.ticket-link-add,
-.ticket-day-add,
-.ticket-sprint {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-  margin-top: var(--space-2);
 }
 
 /* --- Ticket redesign primitives (T3, SPEC §10.4) -------------------------- */
@@ -4106,24 +3763,6 @@ select {
   margin-right: var(--space-2);
 }
 
-/* A blocker chip is the existing pill in the error colour. The doubled class
- * outweighs the later base .pill and .pill:hover colour rules. */
-.pill.pill--blocker,
-.pill.pill--blocker:hover,
-.pill--blocker .pill-key {
-  color: var(--accent-error);
-}
-
-.pill--blocker a {
-  color: inherit;
-  text-decoration: none;
-}
-
-.pill--blocker .button--quiet {
-  font-size: var(--type-xs);
-  padding: 0 var(--space-2);
-  margin-left: var(--space-2);
-}
 
 /* Collapsible field sections (--stage) — hairline seam ONLY between rows; body not inset. */
 .disclosure--stage + .disclosure--stage {
@@ -4133,10 +3772,6 @@ select {
 /* On the ticket the spine is one list from the user-note row down: every stage row
  * carries a top seam, including the first (the user note, wrapped in
  * .ticket-user-note, which otherwise breaks the sibling adjacency above). */
-[data-screen="ticket"] .fields > .ticket-user-note > .disclosure--stage,
-[data-screen="ticket"] .fields > .ticket-user-note + .disclosure--stage {
-  border-top: var(--border-hairline) solid var(--border-color);
-}
 
 .disclosure--stage > .disclosure-summary {
   min-width: 0;
@@ -4297,10 +3932,6 @@ select {
   color: var(--text-strong);
 }
 
-.pill--state {
-  color: var(--text-strong);
-  background: var(--accent-surface);
-}
 
 .pill-key {
   color: var(--text-faintest);
@@ -4717,25 +4348,13 @@ select {
 
 /* The Sprint Item fact is a link back to that Item on the Workspace, not a control
  * that changes the Ticket. It keeps the fact look and adds link behavior. */
-.ticket-identity-link {
-  color: inherit;
-  text-decoration: none;
-}
 
-.ticket-identity-link:focus-visible {
-  color: var(--text-strong);
-  border-bottom-color: var(--accent-bright);
-  outline: var(--border-hairline) solid var(--accent-bright);
-  outline-offset: 2px;
-}
 
 .ticket-identity-priority {
   padding-bottom: 0;
   border-bottom: 0;
 }
 
-.ticket-identity-key,
-.ticket-identity-add,
 .ticket-identity-separator {
   color: var(--text-faintest);
 }
@@ -4744,8 +4363,7 @@ select {
   opacity: 0.5;
 }
 
-.ticket-identity-fact select,
-.ticket-identity-input {
+.ticket-identity-fact select {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -4848,19 +4466,6 @@ select {
   font-size: var(--type-sm);
 }
 
-.ticket-operating-copy {
-  padding: var(--space-1) var(--space-1);
-  border: 0;
-  background: none;
-  color: var(--text-faintest);
-  font: inherit;
-  font-size: var(--type-xs);
-  cursor: pointer;
-}
-
-.ticket-operating-copy:hover {
-  color: var(--text-default);
-}
 
 /* The leash is one disclosure that holds the scope controls. */
 .ticket-leash {
@@ -4932,44 +4537,6 @@ select {
   gap: var(--space-1);
 }
 
-.ticket-leash-option {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 0;
-  background: none;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: var(--type-sm);
-  text-align: left;
-  cursor: pointer;
-  transition: color var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease);
-}
-
-.ticket-leash-option:hover,
-.ticket-leash-option:focus-visible {
-  color: var(--text-strong);
-  background-image: var(--interaction-hover);
-}
-
-.ticket-leash-option--selected {
-  color: var(--text-strong);
-  background: var(--surface-recessed);
-}
-
-.ticket-leash-option:focus-visible {
-  outline: var(--border-hairline) solid var(--accent-bright);
-  outline-offset: calc(-1 * var(--border-hairline));
-}
-
-.ticket-leash-option-mark {
-  flex: none;
-  width: var(--space-3);
-  color: var(--accent-bright);
-  font-size: var(--type-xs);
-}
 
 .ticket-leash-select {
   display: block;
@@ -5297,9 +4864,6 @@ a.artifact-chip:hover,
 
 /* The blank spacer where the user-note row would carry a stage mark — it keeps the
  * row's alignment without drawing a mark. */
-.stage-mark--blank {
-  visibility: hidden;
-}
 
 /* Narrow (mockup @960). The breakpoint is a raw px — media features can't read custom
  * properties.
@@ -5521,12 +5085,6 @@ a.artifact-chip:hover,
   padding: 0 0 var(--space-6);
 }
 
-[data-screen="sprint"] .disclosure--phase .refline {
-  font-size: var(--type-sm);
-  line-height: 1.5;
-  color: var(--text-faintest);
-  margin-bottom: var(--space-5);
-}
 
 [data-screen="sprint"] .field + .field {
   margin-top: var(--space-5);
@@ -5620,17 +5178,6 @@ a.artifact-chip:hover,
   text-align: right;
 }
 
-[data-screen="sprint"] .sprint-item-row--settled .list-row-title {
-  color: var(--text-faintest);
-}
-
-[data-screen="sprint"] .sprint-item-row--settled .priority-tile {
-  opacity: 0.5;
-}
-
-[data-screen="sprint"] .sprint-item-row--settled .sprint-item-rollup {
-  color: var(--accent-done);
-}
 
 /* In the workspace host the rail is the way back, so the link is for narrow screens
  * only — below 960px the rail is hidden and this is the only way out. */
@@ -5831,10 +5378,6 @@ a.artifact-chip:hover,
   line-height: 1.26;
 }
 
-.sprint-workspace-title .inline-edit-display,
-.sprint-workspace-brief .inline-edit-display {
-  padding: 0;
-}
 
 /* The brief keeps the Ticket recap's voice and its clamp, and drops the 62ch measure,
    which is the one thing that made it narrower than the list under it. */
@@ -6014,33 +5557,9 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   font-size: var(--type-md);
 }
 
-.sprint-workspace-artifact:hover {
-  background-image: var(--interaction-hover);
-  color: var(--text-strong);
-}
 
 /* Artifact rows share the Ticket row's rhythm. */
-.sprint-workspace-artifact {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  margin-inline: calc(var(--space-2) * -1);
-  padding: var(--space-2);
-  border-radius: var(--radius-md);
-  color: var(--text-muted);
-  font-size: var(--type-md);
-  font-weight: 400;
-  text-decoration: none;
-}
 
-.sprint-workspace-artifact small {
-  margin-left: auto;
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
-  font-weight: 400;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-}
 
 .sprint-workspace-empty {
   padding-block: var(--space-2);
@@ -6279,30 +5798,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 }
 
 /* item row — flat + navigable, divided by seams; hover lifts the title only */
-[data-screen="backlog"] .list-row--backlog {
-  padding: var(--space-3) 0;
-  border-top: var(--border-hairline) solid var(--border-color);
-}
 
-[data-screen="backlog"] .grp .list-row--backlog:first-of-type {
-  border-top: 0;
-}
-
-[data-screen="backlog"] .list-row--backlog .list-row-title {
-  font-weight: 500;
-  color: var(--text-default);
-}
-
-[data-screen="backlog"] .list-row--backlog .chips {
-  display: flex;
-  gap: var(--space-1);
-  flex-wrap: wrap;
-  align-items: baseline;
-}
-
-[data-screen="backlog"] .list-row--backlog .chips .chip {
-  align-self: center;
-}
 
 /* --- Ideas screen (redesign) --------------------------------------------- */
 /* Capture with least friction, then browse the pile. The compose is the hero
