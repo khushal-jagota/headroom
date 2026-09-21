@@ -345,6 +345,12 @@ or run a native continuation. Panels does not classify those paths. It keeps the
 messages, tools, asks, results, and running usage under one turn token until Claude marks
 each UUID on a correlated result. That result supplies the exact terminal receipt.
 
+A steered command that Claude has taken up is waited out for as long as the work takes,
+because its ending arrives with the work. A steered command that nothing is running is
+waited out only briefly. If Claude admits a command and then goes quiet about it, Panels
+stops waiting after fifteen seconds and ends the turn on the result it is holding, rather
+than leaving the turn open with no ending at all.
+
 Claude Stop sends one interrupt that also cancels queued UUIDs. Panels waits for the
 provider receipt, verifies that no owned UUID remains queued, and waits for the active
 command result. If any proof is absent, Panels discards the child. The next prompt resumes
