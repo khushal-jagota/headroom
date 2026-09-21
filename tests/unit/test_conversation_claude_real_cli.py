@@ -21,14 +21,13 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
-import struct
-import zlib
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from tempfile import mkdtemp
 
 import pytest
 from tests.support.conversation_claude_agent_sdk_bench import _RecordingSink
+from tests.support.solid_png import solid_png
 
 from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChild,
@@ -89,35 +88,6 @@ def _real_child(
     )
 
 
-def _solid_png(red: int, green: int, blue: int) -> bytes:
-    """A real 8x8 PNG of one flat colour, built here rather than checked in.
-
-    A colour is what a model can be asked about and can only answer from having looked, so
-    the picture is the question. It is written by hand because a test fixture that is a
-    binary blob says nothing about what it is.
-    """
-    width = height = 8
-    raw = b"".join(
-        b"\x00" + bytes([red, green, blue]) * width for _ in range(height)
-    )
-
-    def chunk(kind: bytes, body: bytes) -> bytes:
-        return (
-            struct.pack(">I", len(body))
-            + kind
-            + body
-            + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
-        )
-
-    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", header)
-        + chunk(b"IDAT", zlib.compress(raw))
-        + chunk(b"IEND", b"")
-    )
-
-
 @real_claude_only
 def test_claude_really_takes_a_picture_in_a_message_and_can_see_it(tmp_path: Path) -> None:
     """The one thing a script cannot prove: the picture reaches the model, not just the CLI.
@@ -135,7 +105,7 @@ def test_claude_really_takes_a_picture_in_a_message_and_can_see_it(tmp_path: Pat
         try:
             # Pure green, which no other colour word is close to.
             kept = await message_files.keep(
-                "real-claude", _solid_png(0, 255, 0), media_type="image/png"
+                "real-claude", solid_png(0, 255, 0), media_type="image/png"
             )
             content = (
                 MessageText(

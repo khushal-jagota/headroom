@@ -23,6 +23,7 @@ from tempfile import mkdtemp
 
 import pytest
 from tests.support.conversation_codex_app_server_bench import _RecordingSink
+from tests.support.solid_png import solid_png
 
 from planner.conversation.backends.codex_app_server.adapter import (
     CodexAppServerBackendChild,
@@ -45,7 +46,13 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.events import ConversationTurnEnding
-from planner.conversation.message_content import MessageContent, text_message_content
+from planner.conversation.message_content import (
+    MessageContent,
+    MessageFile,
+    MessageImage,
+    MessageText,
+    text_message_content,
+)
 from planner.conversation.message_files import ConversationMessageFiles
 
 
@@ -98,7 +105,9 @@ def _real_child(
     *,
     model: str = CHEAP_MODEL,
     environment_overrides: tuple[tuple[str, str], ...] = (),
+    message_files: ConversationMessageFiles | None = None,
 ) -> CodexAppServerBackendChild:
+    """The child, with its file store handed in when the exercise puts files in it."""
     assert CODEX_EXECUTABLE is not None
     launch = codex_app_server_child_launch(
         codex_executable=Path(CODEX_EXECUTABLE),
@@ -111,9 +120,8 @@ def _real_child(
         ),
         resolved_start=_resolved_start(workspace, model=model),
         event_sink=sink,
-        message_files=_message_files(
-            workspace.parent / "message-files" if environment_overrides else None
-        ),
+        message_files=message_files
+        or _message_files(workspace.parent / "message-files" if environment_overrides else None),
     )
 
 
@@ -155,6 +163,65 @@ async def _turn(
         reasoning_effort_change=None,
     )
     await sink.wait_for_the_turn_to_end()
+
+
+@real_codex_only
+def test_real_codex_reads_both_an_image_and_a_file_one_message_carries(tmp_path: Path) -> None:
+    """Both halves of an attachment, which this adapter delivers two different ways.
+
+    An image becomes a ``localImage`` input holding the path the bytes are already at. A
+    file is not an attachment at all: it becomes a sentence of text saying where the bytes
+    are, and codex only learns what is in it by going and reading that path. The path is
+    outside the workspace folder, so the file half rests on codex reaching outside its
+    workspace — which a schema cannot settle and only the real thing can answer.
+
+    The colour and the word are written here. Neither is reachable except by having looked,
+    and they are separate, so a half that fails names itself.
+    """
+
+    async def exercise() -> None:
+        sink = _RecordingSink()
+        message_files = _message_files(tmp_path / "message-files")
+        child = _real_child(tmp_path, sink, message_files=message_files)
+        await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+        try:
+            # Pure green, which no other colour word is close to.
+            picture = await message_files.keep(
+                "real-codex", solid_png(0, 255, 0), media_type="image/png"
+            )
+            # An invented word, so reading the bytes is the only way to say it.
+            document = await message_files.keep(
+                "real-codex",
+                b"The passphrase is marrowglint.\n",
+                media_type="text/plain",
+            )
+            content = (
+                MessageText(
+                    text=(
+                        "Two questions. What colour is the image? And open the attached "
+                        "file, read it, and say the passphrase written inside it. Answer "
+                        "with exactly two words: the colour, then the passphrase."
+                    )
+                ),
+                MessageImage(stored_file_id=picture.stored_file_id, media_type="image/png"),
+                MessageFile(
+                    stored_file_id=document.stored_file_id,
+                    media_type="text/plain",
+                    file_name="passphrase.txt",
+                    byte_count=document.byte_count,
+                ),
+            )
+            await _turn(child, sink, 1, content)
+
+            said = " ".join(sink.agent_message_texts).lower()
+            print("REAL CODEX on a message carrying both:", said[:200])
+            assert sink.endings[-1] is ConversationTurnEnding.completed, sink.error_summaries
+            assert "green" in said, "codex did not see the picture"
+            assert "marrowglint" in said, "codex did not read the file"
+        finally:
+            await child.stop()
+
+    _run(exercise)
 
 
 @real_codex_only
