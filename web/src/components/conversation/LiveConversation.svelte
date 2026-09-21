@@ -40,11 +40,15 @@
     eligibleOwnerReadSequence,
     watchOwnerReadAttention
   } from "../../lib/conversation/ownerRead";
+  import { connectionStatus } from "../../lib/changeStream";
   import {
     afterTheRecordHasBeenRead,
+    afterWaitingLongEnoughForAnAnswer,
+    anOutgoingMessageIsWaitingOnTheRecord,
     mintOutgoingMessage,
     moveRememberedOutgoingMessages,
     outgoingPersistenceConversationId,
+    outgoingMessagesByPlace,
     outgoingMessagesTheRecordHasNot,
     recallOutgoingMessages,
     releaseOutgoingMessageFiles,
@@ -53,6 +57,7 @@
     reserveOutgoingMessageFiles,
     reserveOutgoingMessageImages,
     reserveRecalledOutgoingMessages,
+    whenTheNextWaitRunsOut,
     type OutgoingMessage,
     type OutgoingMessageKnownFate
   } from "../../lib/conversation/outgoing";
@@ -263,18 +268,12 @@
       held.sender_message_id == null ? [] : [held.sender_message_id]
     ))
   );
-  let stackOutgoingMessages = $derived(
-    sentMessages.filter((message) =>
-      composerStackMessageIds.includes(message.messageId)
-      || message.knownFate === "waiting_for_the_agent"
-      || serverHeldSenderIds.has(message.messageId)
-    )
-  );
-  let transcriptOutgoingMessages = $derived(
-    sentMessages.filter((message) =>
-      !stackOutgoingMessages.some((stackMessage) => stackMessage.messageId === message.messageId)
-    )
-  );
+  let placedOutgoingMessages = $derived(outgoingMessagesByPlace(sentMessages, {
+    composerStackMessageIds,
+    serverHeldSenderMessageIds: serverHeldSenderIds
+  }));
+  let stackOutgoingMessages = $derived(placedOutgoingMessages.composerStack);
+  let transcriptOutgoingMessages = $derived(placedOutgoingMessages.thread);
   let visibleHeldRows = $derived(heldPromptRows(
     (view?.held_prompts ?? []).filter((held) => heldPromptIsInLens(held, lens, senderLabel)),
     stackOutgoingMessages
@@ -500,7 +499,9 @@
     const message = mintOutgoingMessage({
       content,
       senderLabel,
-      mode
+      mode,
+      pickedModel: picked.model,
+      pickedReasoningEffort: picked.reasoningEffort
     });
     if (running) composerStackMessageIds = [...composerStackMessageIds, message.messageId];
     if (!reserveOutgoingMessageImages(message)) {
@@ -621,6 +622,37 @@
     releaseOutgoingMessageFiles(messageId);
   }
 
+  /** Send the same words again, as a new message.
+   *
+   * A new name and a new instant, because that is what this is. The first one may have
+   * arrived, and nothing here retries a message behind a person's back — so if it did
+   * arrive, the conversation ends up with two, which is the person's choice to make and
+   * not this browser's guess.
+   *
+   * The uncertain copy goes first and comes back if the send does not get away. That order
+   * is what lets a message carrying pictures or files be sent again at all: the tab's byte
+   * budget counts every copy it is holding, and two copies of the same attachment would
+   * not fit through it.
+   */
+  async function sendTheseWordsAgain(senderMessageId: string): Promise<void> {
+    const uncertain = sentMessages.find((message) => message.messageId === senderMessageId);
+    if (uncertain === undefined) return;
+    await stopDrawing(senderMessageId);
+    const away = await send(uncertain.content, uncertain.mode, {
+      model: uncertain.pickedModel ?? null,
+      reasoningEffort: uncertain.pickedReasoningEffort ?? null
+    });
+    if (away) return;
+    // The server turned it away, so the words are nowhere. Put the copy back rather than
+    // let a person lose what they wrote to a button they pressed.
+    if (!reserveOutgoingMessageImages(uncertain)) return;
+    if (!reserveOutgoingMessageFiles(uncertain)) {
+      releaseOutgoingMessageImages(senderMessageId);
+      return;
+    }
+    await holdOnTo([...sentMessages, uncertain]);
+  }
+
   function stopDrawing(messageId: string): Promise<boolean> {
     return holdOnTo(sentMessages.filter((message) => message.messageId !== messageId));
   }
@@ -737,22 +769,86 @@
     askNote = null;
   }
 
+  /** Read the record again, and tell whatever is waiting on it what the record said.
+   *
+   * Reading and being told are one thing rather than two. A copy brought back from before
+   * the page reloaded says nothing while it waits for the record, so a read that stops
+   * short leaves it waiting for a read that has already happened.
+   *
+   * A conversation switched away from part-way through loses its say: the trouble mark and
+   * the telling both belong to the reader that is still the current one.
+   */
+  function readTheRecordAgain(): void {
+    const reconnectingStream = stream;
+    const reconnectingId = openedId;
+    if (reconnectingId === null) return;
+    if (reconnectingStream === null) {
+      // The first read never got through, so there is no reader here to reconnect. Opening
+      // is that same read from the start, and it is the one path for coming back to a
+      // conversation — including a tab that came back before the server did.
+      if (!opening) void openConversation(reconnectingId);
+      return;
+    }
+    const stillTheCurrentReader = (): boolean =>
+      stream === reconnectingStream && openedId === reconnectingId;
+    reconnectingStream.connect().then(
+      () => {
+        if (stillTheCurrentReader()) theRecordHasBeenRead();
+      },
+      () => {
+        if (stillTheCurrentReader()) connectionTrouble = true;
+      }
+    );
+  }
+
+  /** A send whose answer never came must stop looking like one that is still on its way.
+   *
+   * The rule is the module's and the clock is the message's own send instant, so this is
+   * only a wake-up call. The instant handed over is the deadline itself rather than
+   * whatever the clock reads when the timer fires, because the timer was set for that
+   * moment: waiting is measured from when the person pressed send, not from when a browser
+   * got round to looking.
+   */
+  $effect(() => {
+    const runsOutAt = whenTheNextWaitRunsOut(sentMessages);
+    if (runsOutAt === null) return;
+    const wakeUp = window.setTimeout(
+      () => {
+        const told = afterWaitingLongEnoughForAnAnswer(
+          sentMessages,
+          Math.max(Date.now(), runsOutAt)
+        );
+        if (told !== sentMessages) void holdOnTo(told);
+      },
+      Math.max(0, runsOutAt - Date.now())
+    );
+    return () => window.clearTimeout(wakeUp);
+  });
+
   onMount(() => {
+    // The record is the only thing that can settle a send this tab never heard an answer
+    // for, and most of the time it already has the answer: the row was written and this
+    // browser was not listening. So when the server comes back, read again. Coming back is
+    // not something this pane has to work out — the app's own connection says it, and a
+    // reconnect is what everything else on screen reacts to as well.
+    let reachable = false;
+    const stopWatchingTheConnection = connectionStatus.subscribe((status) => {
+      const nowReachable = status === "connected";
+      const cameBack = nowReachable && !reachable;
+      reachable = nowReachable;
+      if (!cameBack) return;
+      if (!anOutgoingMessageIsWaitingOnTheRecord(sentMessages)) return;
+      readTheRecordAgain();
+    });
     const onVisible = (): void => {
       if (document.visibilityState !== "visible") return;
       // Coming back to the tab is the same read as opening it: what has happened since
       // the row this reader holds?
-      const reconnectingStream = stream;
-      const reconnectingId = openedId;
-      if (reconnectingStream === null || reconnectingId === null) return;
-      reconnectingStream.connect().catch(() => {
-        if (stream === reconnectingStream && openedId === reconnectingId) {
-          connectionTrouble = true;
-        }
-      });
+      readTheRecordAgain();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
+      stopWatchingTheConnection();
       document.removeEventListener("visibilitychange", onVisible);
       closeStream();
     };
@@ -799,6 +895,8 @@
   onCancelTurn={() => void stop()}
   onDiscardHeldPrompt={(heldPromptId) => discard(heldPromptId)}
   onPromoteHeldPrompt={(heldPromptId, mode) => promote(heldPromptId, mode)}
+  onStopDrawingHeldPrompt={(senderMessageId) => void stopDrawing(senderMessageId)}
+  onSendHeldPromptAgain={(senderMessageId) => sendTheseWordsAgain(senderMessageId)}
   onNewConversation={() => void newConversation()}
   emptyState={emptyState === undefined ? undefined : beforeThereIsAConversation}
   showRunPicker={started || emptyState === undefined}

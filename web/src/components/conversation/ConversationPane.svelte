@@ -75,6 +75,8 @@
     onCancelTurn,
     onDiscardHeldPrompt,
     onPromoteHeldPrompt,
+    onStopDrawingHeldPrompt,
+    onSendHeldPromptAgain,
     onNewConversation
   }: {
     /** Which conversation is on the screen. A message's files are fetched under it, so a
@@ -146,6 +148,8 @@
     onCancelTurn?: () => void;
     /** Throw away one message that is still waiting for the agent, by its own id. */
     onDiscardHeldPrompt?: (messageId: string) => void;
+    onStopDrawingHeldPrompt?: (senderMessageId: string) => Promise<void> | void;
+    onSendHeldPromptAgain?: (senderMessageId: string) => Promise<void> | void;
     onPromoteHeldPrompt?: (
       heldPromptId: string,
       mode: "send_now" | "steer"
@@ -411,6 +415,8 @@
       {onCancelTurn}
       {onDiscardHeldPrompt}
       {onPromoteHeldPrompt}
+      {onStopDrawingHeldPrompt}
+      {onSendHeldPromptAgain}
     />
   {/if}
 </div>

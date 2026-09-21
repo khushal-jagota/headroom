@@ -109,7 +109,9 @@
     onSubmitUserInput,
     onCancelTurn,
     onDiscardHeldPrompt,
-    onPromoteHeldPrompt
+    onPromoteHeldPrompt,
+    onStopDrawingHeldPrompt,
+    onSendHeldPromptAgain
   }: {
     /** The current conversation, or none before the first message creates it. */
     conversationId?: string | null;
@@ -171,6 +173,8 @@
       heldPromptId: string,
       mode: "send_now" | "steer"
     ) => Promise<void> | void;
+    onStopDrawingHeldPrompt?: (senderMessageId: string) => Promise<void> | void;
+    onSendHeldPromptAgain?: (senderMessageId: string) => Promise<void> | void;
   } = $props();
 
   let text = $state("");
@@ -771,6 +775,8 @@
       {running}
       onDiscard={onDiscardHeldPrompt}
       onPromote={onPromoteHeldPrompt}
+      onStopDrawing={onStopDrawingHeldPrompt}
+      onSendAgain={onSendHeldPromptAgain}
     />
 
     <div

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { heldPromptRowLabel, heldPromptRows } from "../src/lib/conversation/heldPrompts";
+import {
+  heldPromptRowActions,
+  heldPromptRowLabel,
+  heldPromptRows
+} from "../src/lib/conversation/heldPrompts";
 import type { OutgoingMessage } from "../src/lib/conversation/outgoing";
 import type { HeldPrompt } from "../src/lib/conversation/wire";
 
@@ -67,9 +71,27 @@ describe("held prompt composer rows", () => {
     });
   });
 
-  it("keeps uncertain local messages inert", () => {
+  it("marks an uncertain local message as one the record does not hold", () => {
     expect(heldPromptRows([], [local("unknown", 100, "answer_never_came_back")]))
       .toMatchObject([{ heldPromptId: null, state: "unknown" }]);
+  });
+
+  it("offers an uncertain row the two things this tab can do alone", () => {
+    const [row] = heldPromptRows([], [local("unknown", 100, "answer_never_came_back")]);
+
+    expect(heldPromptRowActions(row!)).toEqual(["stop_drawing", "send_again"]);
+  });
+
+  it("keeps the record's own operations on the rows the record holds", () => {
+    const [row] = heldPromptRows([held("h-1", null, "server one")], []);
+
+    expect(heldPromptRowActions(row!)).toEqual(["discard", "send_now", "steer"]);
+  });
+
+  it("offers nothing on a send that is still on its way", () => {
+    const [row] = heldPromptRows([], [local("sending", 100)]);
+
+    expect(heldPromptRowActions(row!)).toEqual([]);
   });
 
   it("labels file-only and mixed attachment rows without inventing message text", () => {
