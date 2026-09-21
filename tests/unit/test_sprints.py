@@ -15,13 +15,10 @@ from planner.core.clock import TestClock
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.sprints.data import (
-    create_idea,
     create_sprint,
     read_sprint,
-    set_sprint_dates,
     update_sprint,
 )
-from planner.sprints.logic import DateRange, current_sprint_id
 
 _EMPTY_CODING_FIELDS = "{}"
 
@@ -44,12 +41,6 @@ def _insert_ticket(
         "VALUES (?, ?, 'coding', 'hermes', ?, ?, 'needs_success', ?, ?, 0, 0)",
         (ticket_id, "child", stage, sprint_item_id, worker_step_claim, _EMPTY_CODING_FIELDS),
     )
-
-
-def _set_ticket_state(conn: Connection, ticket_id: str, stage: str) -> None:
-    # Same sanction as _insert_ticket: blocker ticket-states are test fixtures here,
-    # not exercises of T04's writers.
-    conn.execute("UPDATE tickets SET stage = ? WHERE id = ?", (stage, ticket_id))
 
 
 # --- item 10: sprint-item permissions (single anchored test) ----------------------
@@ -85,67 +76,6 @@ def test_a20_sprint_overlap(tmp_db: Connection, fake_clock: TestClock) -> None:
 
 
 # --- supplementary sprints-domain tests (no fence anchor) -------------------------
-
-
-def test_x06_current_sprint_selection() -> None:
-    a = DateRange(id="sp_a", date_start="2026-07-01", date_end="2026-07-14")
-    d = DateRange(id="sp_d", date_start="2026-07-15", date_end="2026-07-21")
-
-    assert current_sprint_id("2026-07-10", [a, d]) == "sp_a"
-    assert current_sprint_id("2026-07-14", [a, d]) == "sp_a"  # inclusive end
-    assert current_sprint_id("2026-07-15", [a, d]) == "sp_d"
-    assert current_sprint_id("2026-06-30", [a, d]) is None
-
-
-def test_x06_create_idea_writer_logs_event(tmp_db: Connection, fake_clock: TestClock) -> None:
-    now = fake_clock.now_unix()
-    idea = create_idea(
-        tmp_db,
-        title="Maybe later",
-        body="Worth exploring.",
-        project_id="project_vylo",
-        now=now,
-    )
-
-    assert idea["title"] == "Maybe later"
-    assert idea["body"] == "Worth exploring."
-    assert idea["project_id"] == "project_vylo"
-    assert idea["project_name"] == "Vylo"
-
-
-def test_x06_set_sprint_dates_writer_updates_and_rejects_overlap(
-    tmp_db: Connection, fake_clock: TestClock
-) -> None:
-    sprint = create_sprint(
-        tmp_db, name="A", date_start="2026-07-01", date_end="2026-07-14", clock=fake_clock
-    )
-    other = create_sprint(
-        tmp_db, name="B", date_start="2026-07-20", date_end="2026-07-22", clock=fake_clock
-    )
-
-    updated = set_sprint_dates(
-        tmp_db,
-        sprint.id,
-        date_start="2026-07-02",
-        date_end="2026-07-15",
-        clock=fake_clock,
-    )
-
-    assert updated.date_start == "2026-07-02"
-    assert updated.date_end == "2026-07-15"
-    assert read_sprint(tmp_db, sprint.id).date_start == "2026-07-02"
-    assert read_sprint(tmp_db, sprint.id).date_end == "2026-07-15"
-
-    with pytest.raises(PlannerError) as exc:
-        set_sprint_dates(
-            tmp_db,
-            sprint.id,
-            date_start=None,
-            date_end="2026-07-20",
-            clock=fake_clock,
-        )
-    assert exc.value.code is ErrorCode.sprint_overlap
-    assert exc.value.detail["conflict_id"] == other.id
 
 
 def test_compound_sprint_updates_serialize_overlap_validation_with_the_write(

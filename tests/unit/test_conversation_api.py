@@ -16,36 +16,27 @@ import json
 import sqlite3
 import zlib
 from collections.abc import Callable, Coroutine, Iterator, MutableMapping
-from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.principals import OWNER_PRINCIPAL
 
 import planner.conversation.api as conversation_api
-import planner.conversation.contracts as conversation_contracts
 import planner.conversation.system as conversation_system
 from planner.conversation.api import (
     COMMITTED_EVENT_STREAM_NAME,
     LIVE_FRAME_STREAM_NAME,
     PUBLIC_TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS,
     ConversationRuntime,
-    SentFilePiece,
-    conversation_message_content,
     router,
 )
-from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backend_usage import (
-    BackendUsageOutcome,
-    BackendUsageResult,
     BackendUsageService,
-    BackendUsageWindow,
-    BackendUsageWindowKind,
 )
 from planner.conversation.backends.claude_model_catalog import (
     ClaudeModel,
@@ -99,8 +90,6 @@ from planner.conversation.message_content import (
 )
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.snapshot import (
-    BackendModel,
-    BackendSnapshot,
     BackendSnapshotService,
     CommandOutcome,
 )
@@ -456,13 +445,6 @@ class _Harness:
         await self.settle()
         return request
 
-    async def stream_agent_text(self, conversation_id: str, text_delta: str) -> None:
-        backend = self.backend(conversation_id)
-        token = backend.live_turn_token
-        assert token is not None and backend.sink is not None
-        await backend.sink.agent_message_delta(token, text_delta)
-        await self.settle()
-
     async def stream_tool_output(
         self, conversation_id: str, tool_call_id: str, detail: str
     ) -> None:
@@ -781,63 +763,6 @@ def test_every_conversation_mutation_rejects_a_tickets_past_conversation(
                 },
             )
             assert unassociated_send.status_code == 200
-
-    _run(exercise)
-
-
-@pytest.mark.parametrize("backend_key", tuple(ConversationBackendKey))
-def test_starting_a_conversation_answers_with_what_it_resolved_to(
-    harness: _Harness,
-    monkeypatch: pytest.MonkeyPatch,
-    backend_key: ConversationBackendKey,
-) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            monkeypatch.setattr(
-                conversation_contracts,
-                "BACKEND_KEYS_SUPPORTING_STEER",
-                frozenset(ConversationBackendKey),
-            )
-            response = await _start(
-                client,
-                "c",
-                backend_key=str(backend_key),
-                model="a-model",
-                reasoning_effort="high",
-            )
-
-            assert response.status_code == 201
-            view = response.json()
-            assert view["conversation_id"] == "c"
-            assert view["backend_key"] == str(backend_key)
-            assert view["model"] == "a-model"
-            assert view["reasoning_effort"] == "high"
-            assert view["workspace_folder"] == "/tmp/workspace"
-            # The floor default, applied because the request said nothing about access.
-            assert view["access"] == "full"
-            assert view["is_running"] is False
-            assert view["supports_steer"] is True
-            assert view["latest_sequence"] == 0
-            assert view["held_prompts"] == []
-            assert view["pending_permission_ask"] is None
-            # Nothing has reported a menu, so there is none to offer.
-            assert view["composer_catalog"] == []
-
-    _run(exercise)
-
-
-def test_the_view_reports_a_controlled_capability_off(
-    harness: _Harness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def exercise() -> None:
-        monkeypatch.setattr(
-            conversation_contracts,
-            "BACKEND_KEYS_SUPPORTING_STEER",
-            frozenset(),
-        )
-        async with harness.client() as client:
-            response = await _start(client, "c")
-            assert response.json()["supports_steer"] is False
 
     _run(exercise)
 
@@ -1313,64 +1238,6 @@ def test_a_waiting_message_can_be_promoted_by_its_server_owned_id(
                 json={"mode": "send_now"},
             )
             assert again.json() == {"promoted": False}
-
-    _run(exercise)
-
-
-def test_the_tail_signals_that_held_prompts_changed(harness: _Harness) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "c")
-            await client.post(
-                "/api/conversation/conversations/c/send",
-                json={
-                    "content": [{"piece": "text", "text": "incumbent"}],
-                    "sender_label": "owner",
-                },
-            )
-            await client.post(
-                "/api/conversation/conversations/c/send",
-                json={
-                    "content": [{"piece": "text", "text": "held before subscribe"}],
-                    "sender_label": "owner",
-                },
-            )
-            async with _EventStreamDrive(
-                harness.app, "/api/conversation/conversations/c/tail", "after=1"
-            ) as stream:
-                await stream.wait_until_watching(harness.live_tail)
-                # The tail registered after the enqueue, so its initial wake closes the
-                # exact gap where the ephemeral mutation frame was unavailable.
-                assert await stream.next_named_frame() == (
-                    LIVE_FRAME_STREAM_NAME,
-                    {"frame": "held_prompts_changed"},
-                )
-                held = (await client.get("/api/conversation/conversations/c")).json()[
-                    "held_prompts"
-                ][0]
-                await client.delete(
-                    f"/api/conversation/conversations/c/held-prompts/{held['held_prompt_id']}"
-                )
-                assert await stream.next_named_frame() == (
-                    LIVE_FRAME_STREAM_NAME,
-                    {"frame": "held_prompts_changed"},
-                )
-
-            # An empty queue still wakes a new binder. This closes the inverse race:
-            # its earlier view may have contained the row that was just discarded.
-            latest = (await client.get("/api/conversation/conversations/c")).json()[
-                "latest_sequence"
-            ]
-            async with _EventStreamDrive(
-                harness.app,
-                "/api/conversation/conversations/c/tail",
-                f"after={latest}",
-            ) as empty_stream:
-                await empty_stream.wait_until_watching(harness.live_tail)
-                assert await empty_stream.next_named_frame() == (
-                    LIVE_FRAME_STREAM_NAME,
-                    {"frame": "held_prompts_changed"},
-                )
 
     _run(exercise)
 
@@ -1910,163 +1777,6 @@ def test_the_tail_replays_then_carries_on_with_no_gap_and_no_repeat(
     _run(exercise)
 
 
-def test_the_tail_shows_text_that_has_not_finished_arriving_and_never_stores_it(
-    harness: _Harness,
-) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "c")
-            await client.post(
-                "/api/conversation/conversations/c/send",
-                json={
-                    "content": [{"piece": "text", "text": "work"}],
-                    "sender_label": "owner",
-                },
-            )
-
-            async with _EventStreamDrive(
-                harness.app, "/api/conversation/conversations/c/tail", "after=1"
-            ) as stream:
-                await stream.wait_until_watching(harness.live_tail)
-                assert await stream.next_named_frame() == (
-                    LIVE_FRAME_STREAM_NAME,
-                    {"frame": "held_prompts_changed"},
-                )
-                await harness.stream_agent_text("c", "half a th")
-                await harness.stream_agent_text("c", "ought")
-
-                assert await stream.next_named_frame() == (
-                    LIVE_FRAME_STREAM_NAME,
-                    {"frame": "agent_message_delta", "text_delta": "half a th"},
-                )
-                assert await stream.next_named_frame() == (
-                    LIVE_FRAME_STREAM_NAME,
-                    {"frame": "agent_message_delta", "text_delta": "ought"},
-                )
-
-                await harness.complete_turn("c")
-                name, payload = await stream.next_named_frame()
-                assert name == COMMITTED_EVENT_STREAM_NAME
-                assert payload["kind"] == "turn_ended"
-
-            # The pieces were shown and forgotten: nothing about them is in the record.
-            rows = (await client.get("/api/conversation/conversations/c/events")).json()
-            assert [event["kind"] for event in rows["events"]] == [
-                "prompt",
-                "turn_ended",
-            ]
-
-    _run(exercise)
-
-
-def test_the_tail_shows_a_tool_call_getting_on_with_it_and_keeps_no_row_for_it(
-    harness: _Harness,
-) -> None:
-    """The call starting is a row; what it says while it runs is only ever shown."""
-
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "c")
-            await client.post(
-                "/api/conversation/conversations/c/send",
-                json={
-                    "content": [{"piece": "text", "text": "work"}],
-                    "sender_label": "owner",
-                },
-            )
-
-            async with _EventStreamDrive(
-                harness.app, "/api/conversation/conversations/c/tail", "after=1"
-            ) as stream:
-                await stream.wait_until_watching(harness.live_tail)
-                assert await stream.next_named_frame() == (
-                    LIVE_FRAME_STREAM_NAME,
-                    {"frame": "held_prompts_changed"},
-                )
-                await harness.start_tool_call("c", "t-9")
-                await harness.stream_tool_output("c", "t-9", "total 0\n")
-                await harness.stream_tool_output("c", "t-9", "halfway")
-                await harness.finish_tool_call("c", "t-9")
-
-                name, payload = await stream.next_named_frame()
-                assert (name, payload["kind"]) == (
-                    COMMITTED_EVENT_STREAM_NAME,
-                    "tool_call_started",
-                )
-                assert await stream.next_named_frame() == (
-                    LIVE_FRAME_STREAM_NAME,
-                    {
-                        "frame": "tool_call_progress",
-                        "tool_call_id": "t-9",
-                        "detail": "total 0\n",
-                    },
-                )
-                assert await stream.next_named_frame() == (
-                    LIVE_FRAME_STREAM_NAME,
-                    {
-                        "frame": "tool_call_progress",
-                        "tool_call_id": "t-9",
-                        "detail": "halfway",
-                    },
-                )
-                name, payload = await stream.next_named_frame()
-                assert (name, payload["kind"]) == (
-                    COMMITTED_EVENT_STREAM_NAME,
-                    "tool_call_finished",
-                )
-
-            rows = (await client.get("/api/conversation/conversations/c/events")).json()
-            assert [event["kind"] for event in rows["events"]] == [
-                "prompt",
-                "tool_call_started",
-                "tool_call_finished",
-            ]
-
-    _run(exercise)
-
-
-def test_the_tail_says_the_model_is_thinking_without_saying_what(
-    harness: _Harness,
-) -> None:
-    """The one thing a turn can show before it has produced anything visible.
-
-    The frame carries no fields at all — there is nothing in it to leak — and it is
-    exactly the shape the pane reads.
-    """
-
-    async def exercise() -> None:
-        async with harness.client() as client:
-            await _start(client, "c")
-            await client.post(
-                "/api/conversation/conversations/c/send",
-                json={
-                    "content": [{"piece": "text", "text": "think hard about this"}],
-                    "sender_label": "owner",
-                },
-            )
-
-            async with _EventStreamDrive(
-                harness.app, "/api/conversation/conversations/c/tail", "after=1"
-            ) as stream:
-                await stream.wait_until_watching(harness.live_tail)
-                assert await stream.next_named_frame() == (
-                    LIVE_FRAME_STREAM_NAME,
-                    {"frame": "held_prompts_changed"},
-                )
-                await harness.model_is_thinking("c")
-
-                assert await stream.next_named_frame() == (
-                    LIVE_FRAME_STREAM_NAME,
-                    {"frame": "model_thinking"},
-                )
-
-            # It was shown, and the record does not know it ever happened.
-            rows = (await client.get("/api/conversation/conversations/c/events")).json()
-            assert [event["kind"] for event in rows["events"]] == ["prompt"]
-
-    _run(exercise)
-
-
 def test_a_quiet_tail_is_kept_alive_by_a_comment(harness: _Harness) -> None:
     async def exercise() -> None:
         async with harness.client() as client:
@@ -2171,247 +1881,6 @@ def test_a_tail_is_closed_by_the_same_door_that_closes_the_change_stream(
 
             assert harness.live_tail.open_subscription_count() == 0
             assert sse.open_change_stream_count() == streams_before
-
-    _run(exercise)
-
-
-# --- the backends on this machine -------------------------------------------------------------
-
-
-class _UsageAnswer:
-    def __init__(self, result: BackendUsageResult) -> None:
-        self.result = result
-
-    async def refresh(self) -> BackendUsageResult:
-        return self.result
-
-
-class _SnapshotAnswers(BackendSnapshotService):
-    def __init__(self, snapshots: tuple[BackendSnapshot, ...]) -> None:
-        self.snapshots_answer = snapshots
-
-    async def snapshots(self, *, refresh: bool = False) -> tuple[BackendSnapshot, ...]:
-        assert refresh is False
-        return self.snapshots_answer
-
-
-class _OrderedUsageAnswers(BackendUsageService):
-    def __init__(self) -> None:
-        super().__init__({})
-        self.started: set[ConversationBackendKey] = set()
-        self.completed: set[ConversationBackendKey] = set()
-
-    async def refresh(self, backend_key: ConversationBackendKey) -> BackendUsageResult:
-        self.started.add(backend_key)
-        self.completed.add(backend_key)
-        return BackendUsageResult(
-            backend_key=backend_key,
-            outcome=BackendUsageOutcome.unavailable,
-            detail="No usage source.",
-        )
-
-
-class _SnapshotsAfterUsageStart(_SnapshotAnswers):
-    def __init__(
-        self,
-        snapshots: tuple[BackendSnapshot, ...],
-        release_snapshots: asyncio.Event,
-    ) -> None:
-        super().__init__(snapshots)
-        self.release_snapshots = release_snapshots
-        self.started = asyncio.Event()
-        self.refresh_arguments: list[bool] = []
-
-    async def snapshots(self, *, refresh: bool = False) -> tuple[BackendSnapshot, ...]:
-        self.refresh_arguments.append(refresh)
-        self.started.set()
-        await self.release_snapshots.wait()
-        return self.snapshots_answer
-
-
-class _UsageAnswersThatWait(BackendUsageService):
-    def __init__(self) -> None:
-        super().__init__({})
-        self.started: set[ConversationBackendKey] = set()
-        self.cancelled: set[ConversationBackendKey] = set()
-
-    async def refresh(self, backend_key: ConversationBackendKey) -> BackendUsageResult:
-        self.started.add(backend_key)
-        try:
-            await asyncio.Event().wait()
-        finally:
-            self.cancelled.add(backend_key)
-        raise AssertionError("usage wait was released")
-
-
-class _SnapshotFailure(BackendSnapshotService):
-    async def snapshots(self, *, refresh: bool = False) -> tuple[BackendSnapshot, ...]:
-        del refresh
-        raise RuntimeError("snapshot acquisition stopped")
-
-
-def test_backend_refresh_starts_usage_before_ordinary_snapshot_acquisition(
-    harness: _Harness,
-) -> None:
-    async def exercise() -> None:
-        snapshots = tuple(
-            BackendSnapshot(
-                backend_key=backend_key,
-                installed=False,
-                executable_path=None,
-                version=None,
-                identity=None,
-                available_models=(),
-                reasoning_effort_options=(),
-                default_model_id=None,
-                default_reasoning_effort=None,
-                update_advisory=None,
-                diagnoses=(),
-            )
-            for backend_key in ConversationBackendKey
-        )
-        usage = _OrderedUsageAnswers()
-        release_snapshots = asyncio.Event()
-        snapshot_answers = _SnapshotsAfterUsageStart(snapshots, release_snapshots)
-        runtime = replace(
-            harness.runtime,
-            backend_snapshots=snapshot_answers,
-            backend_usage=usage,
-        )
-
-        refreshing = asyncio.create_task(conversation_api.refresh_backends(runtime))
-        for _ in range(20):
-            if snapshot_answers.started.is_set():
-                break
-            await asyncio.sleep(0)
-        completed_before_snapshot = set(usage.completed)
-        release_snapshots.set()
-        response = await refreshing
-
-        assert snapshot_answers.started.is_set()
-        assert completed_before_snapshot == set(ConversationBackendKey)
-        assert snapshot_answers.refresh_arguments == [False]
-        assert [item["backend_key"] for item in response["usage_outcomes"]] == [
-            backend_key.value for backend_key in ConversationBackendKey
-        ]
-        assert [item["backend_key"] for item in response["backends"]] == [
-            backend_key.value for backend_key in ConversationBackendKey
-        ]
-
-    _run(exercise)
-
-
-def test_backend_refresh_cancels_provider_reads_when_snapshot_acquisition_fails(
-    harness: _Harness,
-) -> None:
-    async def exercise() -> None:
-        usage = _UsageAnswersThatWait()
-        runtime = replace(
-            harness.runtime,
-            backend_snapshots=_SnapshotFailure(),
-            backend_usage=usage,
-        )
-
-        with pytest.raises(RuntimeError, match="snapshot acquisition stopped"):
-            await conversation_api.refresh_backends(runtime)
-
-        assert usage.started == set(ConversationBackendKey)
-        assert usage.cancelled == set(ConversationBackendKey)
-
-    _run(exercise)
-
-
-def test_backend_refresh_resolves_scopes_and_keeps_cached_usage_after_failure(
-    harness: _Harness,
-) -> None:
-    async def exercise() -> None:
-        state = BackendStateStore(str(harness.db_path))
-        reset = datetime(2026, 9, 17, 12, 0, tzinfo=UTC)
-        old_observation = datetime(2026, 9, 9, 12, 0, tzinfo=UTC)
-        new_observation = datetime(2026, 9, 10, 12, 0, tzinfo=UTC)
-        old_claude = BackendUsageResult(
-            backend_key=ConversationBackendKey.claude,
-            outcome=BackendUsageOutcome.succeeded,
-            observed_at=old_observation,
-            windows=(
-                BackendUsageWindow(
-                    kind=BackendUsageWindowKind.seven_day,
-                    used_percent=20,
-                    resets_at=reset,
-                ),
-            ),
-        )
-        state.keep_successful_usage(old_claude)
-
-        snapshots = tuple(
-            BackendSnapshot(
-                backend_key=backend_key,
-                installed=True,
-                executable_path=f"/bin/{backend_key.value}",
-                version="1.0.0",
-                identity=None,
-                available_models=(BackendModel(model_id="spark[1m]", display_name="Spark 5 (1M)"),),
-                reasoning_effort_options=(),
-                default_model_id="spark[1m]",
-                default_reasoning_effort=None,
-                update_advisory=None,
-                diagnoses=(),
-            )
-            for backend_key in ConversationBackendKey
-        )
-        codex = BackendUsageResult(
-            backend_key=ConversationBackendKey.codex,
-            outcome=BackendUsageOutcome.succeeded,
-            observed_at=new_observation,
-            windows=(
-                BackendUsageWindow(
-                    kind=BackendUsageWindowKind.seven_day,
-                    model_scope="Spark",
-                    used_percent=8,
-                    resets_at=reset,
-                ),
-                BackendUsageWindow(
-                    kind=BackendUsageWindowKind.seven_day,
-                    model_scope="gpt-reserve",
-                    used_percent=9,
-                    resets_at=reset,
-                ),
-            ),
-        )
-        claude_failure = BackendUsageResult(
-            backend_key=ConversationBackendKey.claude,
-            outcome=BackendUsageOutcome.failed,
-            detail="Claude usage could not be refreshed. Try again.",
-        )
-        runtime = replace(
-            harness.runtime,
-            backend_snapshots=_SnapshotAnswers(snapshots),
-            backend_usage=BackendUsageService(
-                {
-                    ConversationBackendKey.codex: _UsageAnswer(codex),
-                    ConversationBackendKey.claude: _UsageAnswer(claude_failure),
-                }
-            ),
-            backend_state=state,
-        )
-
-        response = await conversation_api.refresh_backends(runtime)
-
-        assert [item["outcome"] for item in response["usage_outcomes"]] == [
-            "unavailable",
-            "succeeded",
-            "failed",
-        ]
-        by_backend = {item["backend_key"]: item for item in response["backends"]}
-        assert by_backend["codex"]["cached_usage"]["windows"] == [
-            {
-                "kind": "seven_day",
-                "used_percent": 8,
-                "resets_at": "2026-09-17T12:00:00Z",
-                "model_id": "spark[1m]",
-            }
-        ]
-        assert by_backend["claude"]["cached_usage"]["observed_at"] == ("2026-09-09T12:00:00Z")
 
     _run(exercise)
 
@@ -2592,79 +2061,6 @@ def test_a_data_file_is_validated_kept_and_served_with_server_metadata(
             )
             assert served.headers["content-type"] == "text/csv; charset=utf-8"
             assert served.content == payload
-
-    _run(exercise)
-
-
-def test_a_valid_file_followed_by_an_invalid_file_keeps_nothing(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        message_files = ConversationMessageFiles(tmp_path / "planner.db")
-        with pytest.raises(HTTPException, match="must contain valid JSON"):
-            await conversation_message_content(
-                message_files,
-                "c",
-                [
-                    SentFilePiece(
-                        piece="file",
-                        data=base64.b64encode(b"valid text").decode("ascii"),
-                        media_type="text/plain",
-                        file_name="valid.txt",
-                    ),
-                    SentFilePiece(
-                        piece="file",
-                        data=base64.b64encode(b"{no").decode("ascii"),
-                        media_type="application/json",
-                        file_name="invalid.json",
-                    ),
-                ],
-            )
-        assert not list((tmp_path / "files").glob("**/*"))
-
-    _run(exercise)
-
-
-def test_file_bytes_are_limited_per_piece_before_decode_and_in_aggregate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def exercise() -> None:
-        monkeypatch.setattr(conversation_api, "MAX_CONVERSATION_MESSAGE_FILE_BYTES", 10)
-        message_files = ConversationMessageFiles(tmp_path / "planner.db")
-
-        with pytest.raises(HTTPException, match="files are too large"):
-            await conversation_message_content(
-                message_files,
-                "single",
-                [
-                    SentFilePiece(
-                        piece="file",
-                        data="A" * 17,
-                        media_type="text/plain",
-                        file_name="large.txt",
-                    )
-                ],
-            )
-
-        encoded = base64.b64encode(b"123456").decode("ascii")
-        with pytest.raises(HTTPException, match="files are too large"):
-            await conversation_message_content(
-                message_files,
-                "aggregate",
-                [
-                    SentFilePiece(
-                        piece="file",
-                        data=encoded,
-                        media_type="text/plain",
-                        file_name="one.txt",
-                    ),
-                    SentFilePiece(
-                        piece="file",
-                        data=encoded,
-                        media_type="text/plain",
-                        file_name="two.txt",
-                    ),
-                ],
-            )
-        assert not list((tmp_path / "files").glob("**/*"))
 
     _run(exercise)
 

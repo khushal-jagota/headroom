@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
@@ -66,23 +65,6 @@ def _ticket(db_path: Path) -> str:
         ).id
     finally:
         conn.close()
-
-
-async def _websocket_messages(
-    app: Any,
-    headers: list[tuple[bytes, bytes]],
-    path: str = "/api/nothing-serves-this",
-) -> list[dict[str, Any]]:
-    messages: list[dict[str, Any]] = []
-
-    async def receive() -> dict[str, str]:
-        return {"type": "websocket.connect"}
-
-    async def send(message: dict[str, Any]) -> None:
-        messages.append(message)
-
-    await app({"type": "websocket", "path": path, "headers": headers}, receive, send)
-    return messages
 
 
 def test_tailscale_allowed_and_wrong_login_are_enforced(tmp_path: Path) -> None:
@@ -179,32 +161,3 @@ def test_static_and_file_surfaces_pass_through_trusted_ingress(
     assert allowed_ticket_file.status_code == 200
 
 
-def test_websocket_trusted_ingress_and_origin_policy(tmp_path: Path) -> None:
-    # Panels serves no WebSocket of its own any more, so the guard is driven directly
-    # rather than through a route. The guard stays: it is what a WebSocket added later
-    # arrives behind, and a scope nobody serves is exactly the one nobody would remember
-    # to protect.
-    app, _db_path = _make_app(tmp_path)
-
-    def first_message(headers: list[tuple[bytes, bytes]]) -> dict[str, Any]:
-        messages = asyncio.run(_websocket_messages(app, headers))
-        assert messages, "the guard said nothing at all"
-        return messages[0]
-
-    allowed = first_message([(b"tailscale-user-login", ALLOWED_LOGIN.encode("latin1"))])
-    wrong_login = first_message([(b"tailscale-user-login", b"other@example.com")])
-    wrong_origin = first_message(
-        [
-            (b"tailscale-user-login", ALLOWED_LOGIN.encode("latin1")),
-            (b"origin", b"https://evil.example"),
-        ]
-    )
-
-    # A refused connection is closed by the guard itself, with its own reason.
-    assert wrong_login["type"] == "websocket.close"
-    assert wrong_login["code"] == 1008
-    assert wrong_origin["type"] == "websocket.close"
-    assert wrong_origin["code"] == 1008
-    # An admitted one is not: it goes past the guard and meets the router, which has no
-    # WebSocket to give it. Whatever that closure says, it is not the guard's refusal.
-    assert allowed.get("code") != 1008

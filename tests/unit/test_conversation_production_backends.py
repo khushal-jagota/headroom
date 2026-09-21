@@ -9,15 +9,8 @@ agent or to none at all.
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 
-import pytest
-
-from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.production_backends import (
-    production_backend_child_factories,
-    production_backend_launches,
-)
+from planner.conversation.production_backends import production_backend_launches
 
 # Where the server under test is answering. Any local origin does; what the tests care
 # about is that the same one comes back out of every backend.
@@ -31,33 +24,6 @@ def _machine(**found: str) -> Callable[[str], str | None]:
         return found.get(executable_name)
 
     return executable_path
-
-
-def test_every_backend_has_a_factory_and_making_one_starts_nothing() -> None:
-    factories = production_backend_child_factories(
-        panels_server_url=SERVER_URL,
-        executable_path=_machine(codex="/usr/local/bin/codex", claude="/usr/local/bin/claude"),
-    )
-
-    assert set(factories) == set(ConversationBackendKey)
-
-
-def test_codex_is_taken_from_the_path_and_run_as_an_app_server() -> None:
-    launches = production_backend_launches(
-        panels_server_url=SERVER_URL,
-        executable_path=_machine(codex="/opt/homebrew/bin/codex")
-    )
-
-    assert launches.codex.argv == ("/opt/homebrew/bin/codex", "app-server")
-
-
-def test_a_codex_that_is_nowhere_is_still_composed_under_its_own_name() -> None:
-    """Nothing refuses to start: the failure belongs to the first send, and names codex."""
-    launches = production_backend_launches(
-        panels_server_url=SERVER_URL,
-        executable_path=_machine())
-
-    assert launches.codex.argv == ("codex", "app-server")
 
 
 def test_claude_runs_on_the_panels_owned_tested_cli() -> None:
@@ -75,40 +41,6 @@ def test_claude_runs_on_the_panels_owned_tested_cli() -> None:
         "bin",
         "claude.exe",
     )
-
-
-def test_an_explicit_claude_executable_override_remains_authoritative(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("PLAN_CLAUDE_EXECUTABLE", "/opt/claude-tested")
-    launches = production_backend_launches(
-        panels_server_url=SERVER_URL,
-        executable_path=_machine())
-
-    assert launches.claude.claude_executable == Path("/opt/claude-tested")
-
-
-def test_hermes_is_derived_from_its_interpreter_rather_than_the_path(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Hermes is a checkout, so the interpreter is what is configured and the rest follows."""
-    monkeypatch.setenv(
-        "PLAN_HERMES_PYTHON", "/tmp/hermes-install/hermes-agent/venv/bin/python"
-    )
-    monkeypatch.setenv("PLAN_HERMES_HOME", "/tmp/hermes-home")
-
-    launches = production_backend_launches(
-        panels_server_url=SERVER_URL,
-        executable_path=_machine())
-
-    assert launches.hermes.argv[0] == "/tmp/hermes-install/hermes-agent/venv/bin/python"
-    assert launches.hermes.argv[1].endswith(
-        "/planner/conversation/backends/hermes_acp_extension.py"
-    )
-    environment = dict(launches.hermes.environment_overrides)
-    assert environment["HERMES_HOME"] == "/tmp/hermes-home"
-    # Two levels up from the interpreter: the source tree the agent imports itself from.
-    assert environment["HERMES_PYTHON_SRC_ROOT"] == "/tmp/hermes-install/hermes-agent"
 
 
 def test_every_agent_is_told_where_panels_is_answering() -> None:

@@ -1,4 +1,4 @@
-"""Focused proof for the verify mode, CSS gate, environment check, and real/test clock boundary."""
+"""Focused proof for the environment check and the real/test clock boundary."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 import tree_environment  # noqa: E402  # reached via sys.path.insert above
-import verify_lib  # noqa: E402  # reached via sys.path.insert above
 
 from planner.core.clock import RealClock, build_clock  # noqa: E402
 from planner.core.clock import (
@@ -19,20 +18,7 @@ from planner.core.clock import (
 from planner.core.config import load_config  # noqa: E402
 
 
-def test_verify_modes_and_test_clock_isolation(tmp_path: Path) -> None:
-    assert verify_lib.parse_verify_mode([]) == "full"
-    assert verify_lib.parse_verify_mode(["full"]) == "full"
-    assert verify_lib.parse_verify_mode(["fast"]) == "fast"
-    assert verify_lib.parse_verify_mode(["integration"]) == "integration"
-    assert verify_lib.parse_verify_mode(["e2e"]) == "e2e"
-    for invalid in (["quick"], ["fast", "e2e"]):
-        try:
-            verify_lib.parse_verify_mode(invalid)
-        except ValueError as exc:
-            assert str(exc) == "usage: ./verify [full|fast|integration|e2e]"
-        else:
-            raise AssertionError(f"accepted invalid verify mode: {invalid}")
-
+def test_test_clock_is_used_only_in_test_mode(tmp_path: Path) -> None:
     fake_iso = "2021-01-02T03:04:05"
     # the clock reads a naive ISO fake exactly as parse_fake_now does: interpret it
     # as local wall time, kept timezone-aware. Compute the same value to compare against.
@@ -63,29 +49,6 @@ def test_verify_modes_and_test_clock_isolation(tmp_path: Path) -> None:
     after = datetime.now().astimezone()
     assert before <= observed <= after
     assert observed != fake_aware
-
-
-def test_check_css_syntax_clean_and_each_failure_mode() -> None:
-    clean = '/* header */\n.card { content: "}{"; }\n@media (a) { .x { color: red; } }\n'
-    assert verify_lib.check_css_syntax(clean) == []
-    assert verify_lib.check_css_syntax("") == []
-
-    assert verify_lib.check_css_syntax(".a { color: red;") == ["1 unclosed '{'"]
-    assert verify_lib.check_css_syntax(".a { }\n}\n") == ["line 2: unexpected '}'"]
-    assert verify_lib.check_css_syntax("/* never closed\n.a { }\n") == [
-        "line 1: unterminated block comment"
-    ]
-    assert verify_lib.check_css_syntax('.a::before { content: "oops\n; }') == [
-        "line 1: unterminated string"
-    ]
-    assert verify_lib.check_css_syntax('.a::before { content: "runs off the end') == [
-        "line 1: unterminated string",
-        "1 unclosed '{'",
-    ]
-    # braces inside strings and comments never count; an escaped newline is a
-    # legal string continuation (LF or CRLF), not a termination error.
-    assert verify_lib.check_css_syntax('/* { */ .a { content: "\\\n}"; }') == []
-    assert verify_lib.check_css_syntax('.a { content: "x\\\r\ny"; }') == []
 
 
 def test_environment_faults_name_every_way_a_copied_virtualenv_redirects_a_gate(

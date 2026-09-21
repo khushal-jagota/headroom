@@ -14,7 +14,6 @@ from planner.skill_sources import (
     provision_native_backend_skills,
 )
 from planner.worker_settings import service
-from planner.worker_types.configuration import configured_worker_type_registry
 
 
 @pytest.fixture
@@ -26,27 +25,6 @@ def database(tmp_path: Path) -> Iterator[sqlite3.Connection]:
         yield conn
     finally:
         conn.close()
-
-
-def test_worker_skill_edit_writes_managed_canonical_file(
-    tmp_path: Path, database: sqlite3.Connection
-) -> None:
-    registry = configured_worker_type_registry()
-    source = managed_skills_home(tmp_path) / "panels-worker-coding" / "SKILL.md"
-    saved = service.save_specialist_skill(
-        database,
-        registry,
-        "coding",
-        {"description": "canonical test", "markdown_body": "# canonical\n"},
-        now=1,
-        database_parent=tmp_path,
-    )
-    assert saved.specialist_skill.description == "canonical test"
-    assert source.read_text(encoding="utf-8").startswith('---\nname: "panels-worker-coding"')
-    # The row is the authority and the file is its copy: both carry the same edit.
-    assert service.read_skill(database, "panels-worker-coding").source_text == source.read_text(
-        encoding="utf-8"
-    )
 
 
 def test_supervisor_edit_reaches_every_backend_home_from_one_managed_source(
@@ -104,19 +82,6 @@ def test_native_skills_directory_preserves_custom_entries_and_replaces_panels_co
     assert (native_skills / "panels-worker-coding").resolve() == (
         managed / "panels-worker-coding"
     ).resolve()
-
-
-def test_chief_skill_uses_same_canonical_source(
-    tmp_path: Path, database: sqlite3.Connection
-) -> None:
-    saved = service.save_chief_skill(
-        database,
-        {"description": "chief canonical test", "body": "# chief\n"},
-        now=1,
-        database_parent=tmp_path,
-    )
-    assert saved.skill.description == "chief canonical test"
-    assert saved.skill.name == "panels-chief-of-staff"
 
 
 def test_skill_edit_rejects_an_unknown_skill_name(

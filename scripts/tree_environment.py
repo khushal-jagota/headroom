@@ -10,9 +10,9 @@ survive a copy, and any one of them is enough:
 * Each console script under ``.venv/bin`` carries an absolute interpreter shebang.
 * ``site-packages`` holds an editable path file naming the original ``src``.
 
-``faults`` states the property once. ``scripts/verify.py``, ``tests/conftest.py``,
-and mypy (through the ``plugin`` entry point at the end of this file) each collect
-the answers their own process can see and ask the same question.
+``faults`` states the property once. ``tests/conftest.py`` and mypy (through the
+``plugin`` entry point at the end of this file) each collect the answers their own
+process can see and ask the same question.
 
 This module imports nothing outside the standard library, and never imports
 ``planner`` at module level: it must stay usable when the environment is wrong.
@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import os
 import shlex
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -222,46 +221,6 @@ def running_answers(tree: Path, *, ask_planner: bool) -> EnvironmentAnswers:
         editable_root=read_editable_root(venv),
         planner_file=planner_file,
         planner_absent=planner_absent,
-    )
-
-
-def probed_answers(tree: Path, launchers: tuple[str, ...]) -> EnvironmentAnswers:
-    """Collect answers about a tree's virtualenv from outside it.
-
-    ``scripts/verify.py`` runs before its gates, so it asks the virtualenv's own
-    python where ``planner`` is, and reads the shebang of every launcher it is
-    about to invoke.
-    """
-    venv = tree.resolve() / ".venv"
-    planner_file: Path | None = None
-    planner_absent = False
-    try:
-        completed = subprocess.run(
-            [str(venv / "bin" / "python"), "-c", PLANNER_PROBE],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:
-        # A dangling ``.venv/bin/python`` after a system Python upgrade. Every other
-        # reader here tolerates a missing file, and so does this one.
-        completed = None
-    # The last line, not the whole of stdout: a chatty path file or sitecustomize can
-    # print before the probe does, and a two-line ``Path`` is nonsense.
-    lines = completed.stdout.strip().splitlines() if completed is not None else []
-    if completed is None or completed.returncode != 0 or not lines:
-        planner_absent = True
-    else:
-        planner_file = Path(lines[-1]).resolve()
-    return EnvironmentAnswers(
-        venv_prefix=None,
-        venv_origin=read_venv_origin(venv),
-        editable_root=read_editable_root(venv),
-        planner_file=planner_file,
-        planner_absent=planner_absent,
-        launcher_interpreters={
-            name: read_launcher_interpreter(venv / "bin" / name) for name in launchers
-        },
     )
 
 

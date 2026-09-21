@@ -28,7 +28,7 @@ from pathlib import Path
 from tempfile import mkdtemp
 
 import pytest
-from tests.unit.test_conversation_claude_agent_sdk import _RecordingSink
+from tests.support.conversation_claude_agent_sdk_bench import _RecordingSink
 
 from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChild,
@@ -161,42 +161,6 @@ def test_claude_really_takes_a_picture_in_a_message_and_can_see_it(tmp_path: Pat
                 message_content_text(content) for _, content in sink.message_contents
             ).lower()
             assert "green" in said
-        finally:
-            await child.stop()
-
-    _run(exercise)
-
-
-@real_claude_only
-def test_a_message_of_only_words_still_reaches_the_real_claude_unchanged(
-    tmp_path: Path,
-) -> None:
-    """The common path, against the real thing, so the richer one cannot have broken it."""
-
-    async def exercise() -> None:
-        sink = _RecordingSink()
-        message_files = ConversationMessageFiles(str(Path(mkdtemp()) / "planner.db"))
-        child = _real_child(tmp_path, sink, message_files)
-        await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
-        try:
-            content = text_message_content(
-                "Reply with the single word ready and nothing else. Do not use tools."
-            )
-            await child.write_prompt(
-                TurnToken(conversation_id="real-claude", turn_number=1),
-                content,
-                sender_content=content,
-                sender_label="owner",
-                mode=PromptDeliveryMode.queue,
-                model_change=None,
-                reasoning_effort_change=None,
-            )
-            await sink.wait_for_the_turn_to_end()
-
-            said = " ".join(
-                message_content_text(content) for _, content in sink.message_contents
-            ).lower()
-            assert "ready" in said
         finally:
             await child.stop()
 

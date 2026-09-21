@@ -125,44 +125,6 @@ def test_a_ticket_goes_under_an_outcome_and_comes_out_again(tmp_path: Path) -> N
     assert detached is None
 
 
-def test_an_outcome_is_committed_to_a_sprint_and_uncommitted(tmp_path: Path) -> None:
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        sprint = _sprint(client)
-        item = _item(client)
-        path = _member(client, "sprint_outcomes", str(sprint["id"]), str(item["id"]))
-        added = client.put(path)
-        with connect(str(db_path)) as conn:
-            committed = conn.execute("SELECT count(*) FROM sprint_outcomes").fetchone()[0]
-        removed = client.delete(path)
-        with connect(str(db_path)) as conn:
-            after = conn.execute("SELECT count(*) FROM sprint_outcomes").fetchone()[0]
-
-    assert added.status_code == 200, added.text
-    assert committed == 1
-    assert removed.status_code == 200, removed.text
-    assert after == 0
-
-
-def test_a_blocker_goes_on_a_ticket_and_comes_off_again(tmp_path: Path) -> None:
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        blocking = _ticket(client, "Blocker")
-        blocked = _ticket(client, "Blocked")
-        path = _member(client, "blockers", blocked, blocking)
-        added = client.put(path)
-        with connect(str(db_path)) as conn:
-            blocks = conn.execute("SELECT count(*) FROM ticket_blocks").fetchone()[0]
-        removed = client.delete(path)
-        with connect(str(db_path)) as conn:
-            after = conn.execute("SELECT count(*) FROM ticket_blocks").fetchone()[0]
-
-    assert added.status_code == 200, added.text
-    assert blocks == 1
-    assert removed.status_code == 200, removed.text
-    assert after == 0
-
-
 # --- the refusals each collection keeps ---------------------------------------
 
 

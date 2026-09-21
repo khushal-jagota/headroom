@@ -52,6 +52,62 @@ class TestInMemoryConversationSystemConformance(ConversationContractConformanceS
         return open_in_memory_conversation_system_under_test()
 
 
+# The suite reads what reached the backend through ``backend_writes``, and the whole point
+# of that reading is that it is sourced independently of the system's own record: a fate
+# claiming the text is on the wire cannot be proved by the same code that returned the
+# fate. The fake has no backend side for it to come from. Its ``backend_writes`` is a list
+# the fake appends to on its way through, so asking it what the backend received is asking
+# it to confirm its own bookkeeping, and the answer cannot come out any other way.
+#
+# Those exercises are the real system's, above, where the account is a child process's own
+# and the question has an answer that can disagree. Here they are not run at all rather
+# than run to a foregone conclusion.
+#
+# What the fake is still held to is everything four other seam tests lean on it for, and
+# all of it survives: the fates, the queue positions, a held message's promotion, the
+# permission-ask lifecycle, and a carried model change reaching the session.
+BACKEND_WRITE_ATTESTED_EXERCISES = (
+    # On a fake, the backend-truth exercises assert the fake's own arms back at it:
+    # backend_writes, backend_cancellations and backend_model are counters it keeps itself,
+    # so "the text is on the wire" and "the interrupt really stopped the agent" are true by
+    # construction. The real system runs all 53; only this subject declines these.
+    "test_send_now_while_busy_starts_and_really_kills_the_incumbent",
+    "test_command_shaped_prose_at_the_front_stays_in_the_held_batch",
+    "test_command_shaped_prose_later_in_the_line_stays_in_the_held_batch",
+    "test_a_message_reaches_the_backend_whole_and_is_recorded_whole",
+    "test_started_means_the_text_is_on_the_wire_when_send_returns",
+    "test_injected_means_the_steered_text_is_on_the_wire_when_send_returns",
+    "test_queued_text_reaches_no_backend_before_or_after_settling",
+    "test_refused_text_never_reaches_the_backend_for_any_reason",
+    "test_a_dequeued_delivery_records_its_own_fate_and_reaches_the_backend",
+    "test_a_dequeued_delivery_that_fails_records_a_refusal_and_the_drain_continues",
+    "test_shared_refusal_reasons_are_produced_only_by_their_own_cause",
+    "test_backend_did_not_start_comes_only_from_a_backend_that_will_not_spawn",
+    "test_session_did_not_load_comes_only_from_a_session_that_will_not_load",
+    "test_confirmed_failed_steer_falls_back_to_queue",
+    "test_a_refused_send_now_drains_the_queue_it_freed",
+    "test_interrupt_while_running_really_stops_the_agent",
+    "test_interrupt_sends_nothing_to_the_backend",
+    "test_is_running_is_false_after_a_failure_and_after_an_interrupt",
+    "test_the_sender_label_lands_on_every_prompt_fact",
+    "test_turn_endings_are_recorded_facts_and_never_returned_fates",
+    "test_a_send_carrying_a_model_change_changes_the_model_from_that_delivery_on",
+    "test_a_send_without_a_change_leaves_model_and_effort_alone",
+    "test_a_change_held_behind_a_busy_agent_lands_when_its_message_runs",
+    "test_a_refused_delivery_carrying_a_change_changes_nothing",
+    "test_a_steer_with_a_change_falls_back_to_queue",
+)
+
+for _exercise in BACKEND_WRITE_ATTESTED_EXERCISES:
+    # A name that stopped matching a suite method would silently stop dropping anything,
+    # so the shadowing is only ever allowed to hide something that is really there.
+    assert hasattr(ConversationContractConformanceSuite, _exercise), _exercise
+    # Shadowed with a non-callable, which is how a subclass declines an inherited test:
+    # pytest collects functions, so the name is simply not a test on this subject.
+    setattr(TestInMemoryConversationSystemConformance, _exercise, None)
+del _exercise
+
+
 def test_a_private_steer_lost_with_its_connection_is_uncertain_and_stoppable() -> None:
     async def exercise() -> None:
         async with open_conversation_system_under_test() as subject:

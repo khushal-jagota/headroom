@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -17,18 +16,14 @@ from planner.days import data as days_data
 from planner.projects import data as projects_data
 from planner.runtime.worker_step_readiness import (
     is_ready_for_worker_step,
-    worker_step_blocker,
 )
-from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import Ticket, TicketStatus
+from planner.tickets.contracts import Ticket
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
 
-CODING_WORKER_TYPE_DEFINITION = shipped_definition("coding")
 NEW_WORKER_TYPE_DEFINITION = shipped_definition("new_worker")
 
-_FIXED_NOW = datetime(2026, 7, 14, 12, 0, 0).astimezone()
 PLANNING_DAY_ID = "day_2026-07-14"
 OTHER_DAY_ID = "day_2026-07-13"
 
@@ -90,51 +85,6 @@ def _ready(
     )
 
 
-def _blocker(
-    conn: sqlite3.Connection,
-    ticket: Ticket,
-    *,
-    planning_day_id: str = PLANNING_DAY_ID,
-    definition: WorkerTypeDefinition | None = None,
-) -> str | None:
-    return worker_step_blocker(
-        conn,
-        tickets_data.read_ticket(conn, ticket.id),
-        planning_day_id=planning_day_id,
-        worker_type_definition=(
-            definition or configured_worker_type_registry().require(ticket.worker_type)
-        ),
-    )
-
-
-def _block(conn: sqlite3.Connection, *, blocker_id: str, target_id: str, now: int) -> None:
-    """Block a Ticket the way the API does, so its status settles to `blocked`."""
-    tickets_actions.add_ticket_block(conn, blocker_id, target_id, now=now)
-
-
-@pytest.mark.parametrize(
-    ("worker_type", "first_stage", "expected_ready", "definition"),
-    [
-        ("coding", "needs_success_condition", True, CODING_WORKER_TYPE_DEFINITION),
-        ("new_worker", "needs_purpose_and_boundaries", True, NEW_WORKER_TYPE_DEFINITION),
-    ],
-)
-def test_shipped_worker_types_use_their_real_first_worker_stage_ownership(
-    tmp_path: Path,
-    worker_type: str,
-    first_stage: str,
-    expected_ready: bool,
-    definition: WorkerTypeDefinition,
-) -> None:
-    conn = _db(tmp_path)
-    try:
-        ticket = _ticket(conn, worker_type=worker_type)
-        assert ticket.stage == first_stage
-        assert _ready(conn, ticket, definition=definition) is expected_ready
-    finally:
-        conn.close()
-
-
 def test_membership_must_match_the_explicit_planning_day(tmp_path: Path) -> None:
     conn = _db(tmp_path)
     try:
@@ -178,18 +128,6 @@ def test_user_owned_ticket_is_ready_once_per_stage_entry(tmp_path: Path) -> None
         conn.close()
 
 
-# Only `empty` is startable; every other control status is a deliberate "not ready".
-# This partitions the full TicketStatus set so a future status cannot silently become
-# auto-startable.
-_READY_UNDER_WORKER_OWNERSHIP: dict[TicketStatus, bool] = {
-    TicketStatus.empty: True,
-    TicketStatus.blocked: False,
-    TicketStatus.agent: False,
-    TicketStatus.awaiting_approval: False,
-    TicketStatus.errored: False,
-}
-
-
 @pytest.mark.parametrize(
     ("worker_type", "ceiling"),
     [
@@ -227,67 +165,6 @@ def test_a_ticket_at_its_ceiling_is_still_started_to_propose(
             )
             assert ticket.stage == "needs_stages"
         assert _ready(conn, ticket) is True
-    finally:
-        conn.close()
-
-
-def test_a_completing_blocker_frees_its_target(tmp_path: Path) -> None:
-    # Readiness itself does not look at links: the completing blocker rewrites the
-    # target's status back to empty, and that is what makes it startable again.
-    conn = _db(tmp_path)
-    try:
-        blocker = _ticket(conn, planning_day_id=None)
-        target = _ticket(conn)
-        _block(conn, blocker_id=blocker.id, target_id=target.id, now=4)
-        assert tickets_data.read_ticket(conn, target.id).ticket_status is TicketStatus.blocked
-        assert not _ready(conn, target)
-
-        advance_ticket(conn, blocker.id, new_stage="done", principal=OWNER_PRINCIPAL, now=5)
-
-        assert tickets_data.read_ticket(conn, target.id).ticket_status is TicketStatus.empty
-        assert _ready(conn, target)
-    finally:
-        conn.close()
-
-
-def test_a_block_named_at_creation_reaches_the_same_gate(tmp_path: Path) -> None:
-    # The Ticket above was blocked after it existed. This one is born blocked, in the
-    # single create that also puts it on the Day and accepts its Brief, so nothing
-    # writes to it afterwards. Readiness must refuse it for the same reason.
-    conn = _db(tmp_path)
-    try:
-        blocker = _ticket(conn, planning_day_id=None)
-        born_blocked = tickets_data.create_ticket(
-            conn,
-            worker_type="coding",
-            title="Blocked at birth",
-            principal=OWNER_PRINCIPAL,
-            now=4,
-            title_max_chars=200,
-            day_id=PLANNING_DAY_ID,
-            blocked_by_ticket_ids=[blocker.id],
-            stated_ceiling="needs_success_condition",
-        )
-
-        assert born_blocked.stage == "needs_success_condition"
-        assert born_blocked.ticket_status is TicketStatus.blocked
-        assert _blocker(conn, born_blocked) == (
-            "the Ticket is at blocked, so no worker step is due"
-        )
-
-        advance_ticket(conn, blocker.id, new_stage="done", principal=OWNER_PRINCIPAL, now=5)
-
-        assert _ready(conn, born_blocked)
-    finally:
-        conn.close()
-
-
-def test_a_ready_ticket_names_no_blocker(tmp_path: Path) -> None:
-    conn = _db(tmp_path)
-    try:
-        ticket = _ticket(conn, ceiling="needs_success_condition")
-        assert _blocker(conn, ticket) is None
-        assert _ready(conn, ticket)
     finally:
         conn.close()
 

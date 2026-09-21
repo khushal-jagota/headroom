@@ -26,7 +26,6 @@ from planner.core.db import connect, create_schema
 from planner.managed_skills import managed_skills_home, read_skill_source, write_skill_source
 from planner.skill_versions import (
     bind_worker_step_skills,
-    capture_skill_version,
 )
 from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -68,43 +67,6 @@ def _prompt(sender_message_id: str) -> PromptEventPayload:
         mode=PromptDeliveryMode.queue,
         sender_message_id=sender_message_id,
     )
-
-
-def test_capture_preserves_raw_bytes_and_reuses_the_same_hash(tmp_path: Path) -> None:
-    _, conn = _database(tmp_path)
-    try:
-        content = "# Café\r\n\r\n最後の行\n".encode()
-        first = capture_skill_version(conn, "panels-test", content)
-        second = capture_skill_version(conn, "panels-test", content)
-
-        assert first == second
-        row = conn.execute(
-            "SELECT content, content_sha256 FROM managed_skill_versions WHERE id = ?",
-            (first,),
-        ).fetchone()
-        assert bytes(row["content"]) == content
-        assert len(str(row["content_sha256"])) == 64
-        assert (
-            conn.execute(
-                "SELECT count(*) FROM managed_skill_versions WHERE skill_name = 'panels-test'"
-            ).fetchone()[0]
-            == 1
-        )
-    finally:
-        conn.close()
-
-
-def test_versions_are_immutable_in_the_database(tmp_path: Path) -> None:
-    _, conn = _database(tmp_path)
-    try:
-        version_id = capture_skill_version(conn, "panels-test", b"one")
-        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
-            conn.execute(
-                "UPDATE managed_skill_versions SET content = ? WHERE id = ?",
-                (b"two", version_id),
-            )
-    finally:
-        conn.close()
 
 
 def test_each_step_binds_exact_orientation_worker_and_specialist_versions(

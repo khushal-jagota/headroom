@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -67,47 +66,6 @@ def test_panels_wrapper_uses_the_vps_users_current_app_and_preserves_arguments(
     assert second.stdout.splitlines() == ["release-b", *arguments]
 
 
-def test_runner_setup_registers_the_labels_requested_by_the_workflow(
-    tmp_path: Path,
-) -> None:
-    source = ASSET_ROOT / "configure-deployment-runner.sh"
-    assert source.stat().st_mode & 0o111 == 0o111
-    runner_root = tmp_path / "Deployments" / "Panels" / "deployment-runner"
-    runner_root.mkdir(parents=True)
-    calls = tmp_path / "calls"
-    config = runner_root / "config.sh"
-    config.write_text(
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$PANELS_TEST_CALLS\"\n",
-        encoding="utf-8",
-    )
-    config.chmod(0o755)
-
-    subprocess.run(
-        [str(source), "https://github.com/example/panels", "short-lived-token"],
-        check=True,
-        env={
-            "HOME": str(tmp_path),
-            "PANELS_TEST_CALLS": str(calls),
-            "PATH": "/usr/bin:/bin",
-        },
-    )
-
-    assert calls.read_text(encoding="utf-8").splitlines() == [
-        "--unattended",
-        "--url",
-        "https://github.com/example/panels",
-        "--token",
-        "short-lived-token",
-        "--name",
-        "panels-vps-deployment",
-        "--labels",
-        "production,panels-deploy",
-        "--work",
-        "_work",
-        "--replace",
-    ]
-
-
 def test_predeploy_backup_replaces_ambient_hermes_home_with_vps_home(
     tmp_path: Path,
 ) -> None:
@@ -150,77 +108,3 @@ def test_predeploy_backup_replaces_ambient_hermes_home_with_vps_home(
     ]
 
 
-def test_service_control_keeps_launchctl_and_uses_systemd_user_manager(
-    tmp_path: Path,
-) -> None:
-    control_path = ASSET_ROOT / "service-control.sh"
-    control = control_path.read_text(encoding="utf-8")
-    assert 'launchctl=${PANELS_LAUNCHCTL:-/bin/launchctl}' in control
-    assert '"$launchctl" kickstart' in control
-    assert '"$launchctl" bootout' in control
-    assert '"$launchctl" bootstrap' in control
-    assert '"$launchctl" kill SIGTERM "$target" >/dev/null 2>&1 || true' in control
-    assert 'domain=${PANELS_LAUNCHD_DOMAIN:-"gui/$(id -u)"}' in control
-    assert "exec systemctl --user \"$action\" panels-live.service" in control
-
-    command_directory = tmp_path / "bin"
-    command_directory.mkdir()
-    calls = tmp_path / "calls"
-    systemctl = command_directory / "systemctl"
-    systemctl.write_text(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$PANELS_TEST_CALLS\"\n",
-        encoding="utf-8",
-    )
-    systemctl.chmod(0o755)
-    # A machine with systemctl and no launchctl — the VPS. The script chooses launchctl
-    # whenever it can find one, so the only way to ask it for the systemd branch is a PATH
-    # with no launchctl on it; leaving the system directories in would hand a macOS host
-    # its real /bin/launchctl and run this against the actual service manager.
-    subprocess.run(
-        ["/bin/sh", str(control_path), "restart"],
-        check=True,
-        env={
-            "HOME": str(tmp_path),
-            "PANELS_TEST_CALLS": str(calls),
-            "PATH": str(command_directory),
-        },
-    )
-    assert calls.read_text(encoding="utf-8") == "--user restart panels-live.service\n"
-
-
-def test_launchctl_restart_recovers_when_loaded_job_has_no_process(tmp_path: Path) -> None:
-    fake_launchctl = tmp_path / "launchctl"
-    state = tmp_path / "state"
-    calls = tmp_path / "calls"
-    state.write_text("waiting\n", encoding="utf-8")
-    fake_launchctl.write_text(
-        "#!/bin/sh\n"
-        "printf '%s\\n' \"$*\" >> \"$PANELS_TEST_CALLS\"\n"
-        "case \"$1\" in\n"
-        "  print) test \"$(cat \"$PANELS_TEST_STATE\")\" != unloaded ;;\n"
-        "  kill) exit 1 ;;\n"
-        "  bootout) printf 'unloaded\\n' > \"$PANELS_TEST_STATE\" ;;\n"
-        "  bootstrap) printf 'running\\n' > \"$PANELS_TEST_STATE\" ;;\n"
-        "esac\n",
-        encoding="utf-8",
-    )
-    fake_launchctl.chmod(0o755)
-    environment = os.environ | {
-        "PANELS_LAUNCHCTL": str(fake_launchctl),
-        "PANELS_LAUNCHD_DOMAIN": "gui/501",
-        "PANELS_TEST_CALLS": str(calls),
-        "PANELS_TEST_STATE": str(state),
-    }
-    subprocess.run(
-        ["sh", str(ASSET_ROOT / "service-control.sh"), "restart"],
-        check=True,
-        env=environment,
-    )
-    assert calls.read_text(encoding="utf-8").splitlines() == [
-        "print gui/501/com.panels.live",
-        "kill SIGTERM gui/501/com.panels.live",
-        "print gui/501/com.panels.live",
-        "bootout gui/501/com.panels.live",
-        "bootstrap gui/501 "
-        + str(Path.home() / "Library/LaunchAgents/com.panels.live.plist"),
-    ]

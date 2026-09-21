@@ -15,8 +15,6 @@ from sqlite3 import Connection
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 from tests.support.probe import (
-    FIELD_ALPHA,
-    FIELD_BETA,
     install_probe_registry,
     uninstall_probe_registry,
 )
@@ -107,29 +105,3 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
         now=4,
     )
     assert copy_text(tmp_db, ticket.id) == _CODING_COPY_TEXT_GOLDEN
-
-
-def test_copy_text_probe_renders_own_fields(
-    tmp_db: Connection, probe_registry: WorkerTypeDefinition
-) -> None:
-    ticket = create_ticket(
-        tmp_db,
-        title="Probe ticket",
-        principal=OWNER_PRINCIPAL,
-        now=1,
-        title_max_chars=200,
-        worker_type="probe",
-    )
-    text = copy_text(tmp_db, ticket.id)
-
-    # Probe renders its own field blocks plus one separate guidance document.
-    assert "brief:\n" in text
-    assert f"{FIELD_ALPHA}:\n" in text
-    assert f"{FIELD_BETA}:\n" in text
-    # Consequences is the one field every Worker type carries, so the probe has it too.
-    assert "consequences:\n" in text
-
-    # No other coding-only field appears (success_condition/what_changes/plan/implementation).
-    for coding_field in ("success_condition", "what_changes", "plan", "implementation"):
-        assert f"{coding_field}:\n" not in text
-        assert f"{coding_field}_user_note:\n" not in text

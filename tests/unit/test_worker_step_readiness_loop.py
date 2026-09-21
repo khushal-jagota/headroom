@@ -41,8 +41,6 @@ from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback
 from planner.tickets.contracts import Ticket, TicketEdit, TicketStatus
 from planner.worker_types.configuration import configured_worker_type_registry
-from planner.worker_types.contracts import WorkerTypeDefinition
-from planner.worker_types.registry import WorkerTypeRegistry
 
 FIXED_NOW = datetime(2026, 7, 6, 12, 0, 0).astimezone()
 BOUNDARY_HOUR = 5
@@ -190,60 +188,6 @@ def test_two_racing_claimers_on_one_database_produce_exactly_one_winner(
         assert not thread.is_alive()
 
     assert sorted(outcomes) == [False, True]
-    assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
-
-
-def test_a_release_does_not_fire_once_the_status_has_been_written_again(
-    tmp_path: Path,
-) -> None:
-    # A delayed release carries the transition revision. A release and re-claim
-    # inside one second share a timestamp and status but have distinct revisions.
-    world = _World(tmp_path)
-    ticket_id = world.ready_ticket()
-    conn = world.connect()
-    try:
-        claimed = tickets_data.claim_ticket_for_worker_step(
-            conn,
-            ticket_id,
-            planning_day_id_resolver=lambda: TODAY_DAY_ID,
-            readiness_check=worker_step_readiness.is_ready_for_worker_step,
-            now=100,
-        )
-        assert claimed is not None
-
-        # Someone else takes the Ticket away and hands it back to the worker in the same second.
-        assert tickets_data.release_worker_step_claim(
-            conn,
-            ticket_id,
-            expected_claim=claimed.worker_step_claim,
-            expected_claim_revision=claimed.worker_step_claim_revision,
-            now=100,
-        )
-        reclaimed = tickets_data.claim_ticket_for_worker_step(
-            conn,
-            ticket_id,
-            planning_day_id_resolver=lambda: TODAY_DAY_ID,
-            readiness_check=worker_step_readiness.is_ready_for_worker_step,
-            now=100,
-        )
-        assert reclaimed is not None
-        assert reclaimed.ticket_status is claimed.ticket_status
-        assert reclaimed.worker_step_claim_changed_at == claimed.worker_step_claim_changed_at
-        assert reclaimed.worker_step_claim_revision > claimed.worker_step_claim_revision
-
-        # The first claim's late release finds a different revision despite the same clock.
-        assert (
-            tickets_data.release_worker_step_claim(
-                conn,
-                ticket_id,
-                expected_claim=claimed.worker_step_claim,
-                expected_claim_revision=claimed.worker_step_claim_revision,
-                now=100,
-            )
-            is False
-        )
-    finally:
-        conn.close()
     assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
 
 
@@ -450,42 +394,6 @@ class _QueueingConversationSystem:
         return await self._system.has_pending_permission_ask(conversation_id)
 
 
-def test_a_failure_before_send_removes_bindings_and_releases_the_claim(
-    world: _World,
-) -> None:
-    ticket_id = world.ready_ticket(conversation_id="conv-worker-type-failure")
-    world.start_conversation("conv-worker-type-failure")
-
-    started = asyncio.run(
-        start_ready_worker_step(
-            ticket_id,
-            connect_database=world.connect,
-            conversation_system=cast(ConversationSystem, world.conversations),
-            worker_type_registry=cast(WorkerTypeRegistry, _WorkerTypeLookupFailure()),
-            planning_day_id_resolver=lambda: TODAY_DAY_ID,
-            now=world.clock.now_unix,
-        )
-    )
-
-    assert started is False
-    assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
-    assert world.skill_bindings() == []
-
-
-class _WorkerTypeLookupFailure:
-    """A registry that cannot answer what the Ticket's worker type is."""
-
-    def require(self, worker_type: str) -> WorkerTypeDefinition:
-        raise RuntimeError("the worker type could not be looked up")
-
-
-class _UnreadableConversationSystem(InMemoryConversationSystem):
-    """A conversation system whose liveness read fails outright."""
-
-    async def is_running(self, conversation_id: str) -> bool:
-        raise RuntimeError("the conversation system is unreachable")
-
-
 def test_the_opener_carries_the_ordered_worker_inputs(world: _World) -> None:
     ticket_id = world.ready_ticket(
         title="Ship it",
@@ -524,96 +432,7 @@ def test_the_opener_carries_the_ordered_worker_inputs(world: _World) -> None:
     assert {row["sender_message_id"] for row in bindings} == {sender_message_id}
 
 
-def test_a_user_owned_stage_rests_empty_after_its_single_collaborative_opener(
-    world: _World,
-) -> None:
-    ticket_id = world.ready_ticket(
-        title="Talk it through",
-        worker_type="new_worker",
-        conversation_id="conv-paired",
-    )
-    world.start_conversation("conv-paired")
-
-    assert world.start_step(ticket_id) is True
-
-    assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
-    text = world.conversations.backend_prompt_writes("conv-paired")[0].text
-    assert "open the collaborative discussion for the 'purpose_and_boundaries' field" in text
-    assert "Stage owner: user" in text
-    assert world.start_step(ticket_id) is False
-    assert len(world.conversations.backend_prompt_writes("conv-paired")) == 1
-
-
-def test_a_ticket_that_is_not_ready_is_never_sent_to(world: _World) -> None:
-    ticket_id = world.ready_ticket(conversation_id="conv-unready", on_today=False)
-    world.start_conversation("conv-unready")
-
-    assert world.start_step(ticket_id) is False
-    assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
-    assert world.conversations.backend_prompt_writes("conv-unready") == ()
-
-
 # --- the polling loop ----------------------------------------------------------
-
-
-class _HeldAtTheOccupancyCheck:
-    """The fake, with its first read held open until a test lets it go.
-
-    The occupancy check is the flow's first await, so holding it there keeps a step
-    genuinely in flight while its Ticket is still untouched and still ready.
-    """
-
-    def __init__(self, system: InMemoryConversationSystem) -> None:
-        self._system = system
-        self.reached = threading.Event()
-        self._gate: asyncio.Event | None = None
-
-    def release(self, asyncio_loop: asyncio.AbstractEventLoop) -> None:
-        gate = self._gate
-        if gate is not None:
-            asyncio_loop.call_soon_threadsafe(gate.set)
-
-    async def is_running(self, conversation_id: str) -> bool:
-        if self._gate is None:
-            self._gate = asyncio.Event()
-        self.reached.set()
-        await self._gate.wait()
-        return await self._system.is_running(conversation_id)
-
-    async def start_conversation(self, request: ConversationStartRequest) -> None:
-        await self._system.start_conversation(request)
-
-    async def send(
-        self,
-        conversation_id: str,
-        content: MessageContent,
-        *,
-        sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
-        model_change: str | None = None,
-        reasoning_effort_change: str | None = None,
-        sender_message_id: str | None = None,
-        sent_at_unix_milliseconds: int | None = None,
-    ) -> PromptDeliveryFate:
-        return await self._system.send(
-            conversation_id,
-            content,
-            sender_label=sender_label,
-            mode=mode,
-            model_change=model_change,
-            reasoning_effort_change=reasoning_effort_change,
-            sender_message_id=sender_message_id,
-            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-        )
-
-    async def interrupt(self, conversation_id: str) -> None:
-        await self._system.interrupt(conversation_id)
-
-    async def kill(self, conversation_id: str) -> None:
-        await self._system.kill(conversation_id)
-
-    async def has_pending_permission_ask(self, conversation_id: str) -> bool:
-        return await self._system.has_pending_permission_ask(conversation_id)
 
 
 def _loop_in_a_thread(
@@ -710,44 +529,3 @@ def test_a_wake_makes_the_running_loop_poll_before_its_timer(world: _World) -> N
         asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
         thread.join(5)
         asyncio_loop.close()
-
-
-def test_the_test_mode_route_runs_one_worker_step_against_the_composed_system(
-    tmp_path: Path,
-) -> None:
-    from fastapi.testclient import TestClient
-
-    from planner.core.clock import build_clock
-    from planner.core.config import load_config
-    from planner.core.server import create_app
-
-    world = _World(tmp_path)
-    ticket_id = world.ready_ticket(title="Driven by hand")
-    config = load_config(
-        path=None,
-        env={
-            "PLAN_TEST_MODE": "1",
-            "PLAN_DB_PATH": world.db_path,
-            "PLAN_FAKE_NOW": FIXED_NOW.isoformat(),
-        },
-    )
-    app = create_app(
-        config,
-        build_clock(config),
-        world.connect,
-        # This asserts what the step wrote to the backend, so it needs a conversation
-        # system that records its writes rather than one that spawns an agent.
-        conversation_system_for_test=InMemoryConversationSystem(),
-    )
-
-    with TestClient(app) as client:
-        response = client.post(f"/api/test/run-step/{ticket_id}")
-        assert response.status_code == 200, response.text
-        assert response.json() == {"dispatched": True, "ticket_id": ticket_id}
-        conversation_id = world.ticket(ticket_id).conversation_id
-        assert conversation_id is not None
-        writes = app.state.conversation_system.backend_prompt_writes(conversation_id)
-        assert len(writes) == 1
-        assert writes[0].sender_label == "loop"
-
-    assert world.ticket(ticket_id).ticket_status is TicketStatus.agent

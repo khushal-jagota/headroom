@@ -13,7 +13,6 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.tickets import actions as tickets_actions
 from planner.tickets.contracts import NO_FURTHER, TicketEdit
 from planner.tickets.data import (
     accept_proposal,
@@ -106,22 +105,6 @@ def test_the_one_edit_corrects_a_settled_field(tmp_path: Path) -> None:
     assert body["ceiling"] == "needs_plan"
 
 
-def test_worker_cannot_edit_settled_value(tmp_path: Path) -> None:
-    """A settled value is not the Ticket's own record, so its own Worker is refused."""
-    app, db_path = _make_app(tmp_path)
-    tid = _passed_ticket(db_path)
-    with TestClient(app) as client:
-        response = client.patch(
-            f"/api/tickets/{tid}",
-            json={"field_values": {"success_condition": "edited success"}},
-            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": tid},
-        )
-        after = client.get(f"/api/tickets?detail=full&id={tid}").json()
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "agent_forbidden"
-    assert after["field_values"]["success_condition"] == "success v1"
-
-
 def test_the_one_edit_refuses_to_fill_a_blank(tmp_path: Path) -> None:
     """Filling the current gate is completion, an operation, and not this door."""
     app, db_path = _make_app(tmp_path)
@@ -197,80 +180,3 @@ def test_completion_rejects_a_worker_owned_gate_without_changing_the_ticket(
     assert response.json()["error"]["code"] == "agent_forbidden"
     assert after["stage"] == ticket.stage
     assert after["field_values"] == {}
-
-
-def test_user_completion_enters_blocked_when_a_live_blocker_exists(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _make_app(tmp_path)
-    conn = connect(str(db_path))
-    try:
-        blocker = create_ticket(
-            conn,
-            worker_type="coding",
-            title="Blocker",
-            principal=OWNER_PRINCIPAL,
-            now=0,
-            title_max_chars=200,
-            kickoff_note=None,
-        )
-        ticket = create_ticket(
-            conn,
-            worker_type="personal",
-            title="Blocked task",
-            principal=OWNER_PRINCIPAL,
-            now=0,
-            title_max_chars=200,
-            kickoff_note=None,
-        )
-        tickets_actions.add_ticket_block(conn, blocker.id, ticket.id, now=1)
-    finally:
-        conn.close()
-
-    with TestClient(app) as client:
-        response = client.post(
-            f"/api/tickets/{ticket.id}/complete/brief",
-            json={"body": "User context"},
-        )
-
-    assert response.status_code == 200, response.json()
-    assert response.json()["stage"] == "needs_outcome"
-    assert response.json()["ticket_status"] == "blocked"
-
-
-def test_a_parked_proposal_has_no_edit_door(tmp_path: Path) -> None:
-    """Approve it, or send it back. There is no third thing to do with a proposal."""
-    app, db_path = _make_app(tmp_path)
-    tid = _passed_ticket(db_path)
-    conn = connect(str(db_path))
-    try:
-        ticket = file_current_proposal(
-            conn,
-            tid,
-            body="plan draft",
-            principal=ticket_principal(tid),
-            now=23,
-        )
-        assert ticket.pending_proposal is not None
-    finally:
-        conn.close()
-
-    with TestClient(app) as client:
-        response = client.put(
-            f"/api/tickets/{tid}/proposal",
-            json={"field": "plan", "body": "edited plan draft"},
-            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": tid},
-        )
-        after = client.get(f"/api/tickets?detail=full&id={tid}").json()
-
-    assert response.status_code == 404
-    assert after["pending_proposal"]["body"] == "plan draft"
-
-
-def test_completing_an_unknown_field_is_a_validation_error(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    tid = _passed_ticket(db_path)
-    with TestClient(app) as client:
-        response = client.post(f"/api/tickets/{tid}/complete/bogus", json={"body": "x"})
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "validation"

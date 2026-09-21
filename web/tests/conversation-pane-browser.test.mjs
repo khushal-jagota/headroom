@@ -274,6 +274,49 @@ try {
     lens = "focus";
     conversationState = "opened";
   };
+  (window as any).__showTurnEndings = () => {
+    rows = [
+      {
+        key: "failed-prompt",
+        kind: "prompt",
+        sequence: 4_000,
+        createdAt: 5_000,
+        content: [{ piece: "text", text: "run the backend" }],
+        senderLabel: "owner",
+        mode: "queue",
+        sentAtUnixMilliseconds: 5_000
+      },
+      {
+        key: "failed-end",
+        kind: "turn_ended",
+        sequence: 4_001,
+        createdAt: 5_001,
+        ending: "failed",
+        errorSummary: "backend exited",
+        automaticCompactionResult: null
+      },
+      {
+        key: "lost-prompt",
+        kind: "prompt",
+        sequence: 4_002,
+        createdAt: 5_002,
+        content: [{ piece: "text", text: "turn that loses its ending" }],
+        senderLabel: "owner",
+        mode: "queue",
+        sentAtUnixMilliseconds: 5_002
+      },
+      {
+        key: "turn-stopped",
+        kind: "turn_stopped",
+        sequence: 4_003,
+        createdAt: 5_003
+      }
+    ];
+    visibleRows = null;
+    lens = "full";
+    running = false;
+    conversationState = "opened";
+  };
 </script>
 
 <main class="fixture-ticket">
@@ -798,6 +841,13 @@ with sync_playwright() as playwright:
     assert page.locator("[data-conversation-turn-fold]").count() == 0
     assert page.locator("[data-conversation-turn-count]").count() == 0
     assert page.locator("[data-conversation-turn-settled-head]").count() == 1
+
+    # The two endings a reader has to act on are the two the pane spells out: a turn the
+    # backend killed, named with the reason it gave, and a turn whose ending the record
+    # will never contain.
+    page.evaluate("window.__showTurnEndings()")
+    page.get_by_text("turn failed · backend exited", exact=True).wait_for()
+    page.get_by_text("turn stopped without an ending", exact=True).wait_for()
 
     # The composer catalog menu opens from the keyboard, under a pointer left wherever it
     # was. A menu that mounts or reflows under a still pointer receives a mouse event at

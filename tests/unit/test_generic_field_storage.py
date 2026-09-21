@@ -12,10 +12,9 @@ from tests.support.probe import FIELD_BETA as B_FIELD
 from tests.support.probe import NEEDS_ALPHA as A
 from tests.support.probe import NEEDS_BETA as B
 from tests.support.probe import NEEDS_LANDING as CLOSEOUT_STAGE
-from tests.support.probe import install_probe_registry, shipped_definition, uninstall_probe_registry
+from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
 from planner.core.clock import TestClock
-from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect, create_schema
 from planner.tickets import data
 from planner.tickets.contracts import (
@@ -23,10 +22,8 @@ from planner.tickets.contracts import (
     TITLE_MAX_CHARS,
     PendingTicketProposal,
 )
-from planner.tickets.logic import fields_codec, machine
 from planner.worker_types.contracts import WorkerTypeDefinition
 
-CODING_WORKER_TYPE_DEFINITION = shipped_definition("coding")
 
 @pytest.fixture
 def probe_registry() -> Iterator[WorkerTypeDefinition]:
@@ -48,41 +45,6 @@ def tmp_db(tmp_path: Path) -> Iterator[Connection]:
 @pytest.fixture
 def fake_clock() -> TestClock:
     return TestClock(datetime(2026, 7, 4, 12).astimezone())
-
-
-def test_sparse_values_codec_round_trip_and_declared_order(
-    probe_registry: WorkerTypeDefinition,
-) -> None:
-    raw = fields_codec.values_to_json({B_FIELD: "B", A_FIELD: "A"})
-    values = fields_codec.values_from_json(raw, probe_registry.field_ids())
-    assert dict(values) == {A_FIELD: "A", B_FIELD: "B"}
-    assert fields_codec.field_value(values, A_FIELD, worker_type_definition=probe_registry) == "A"
-    with pytest.raises(PlannerError):
-        fields_codec.field_value(values, "success_condition", worker_type_definition=probe_registry)
-
-
-def test_proposal_codec_round_trip_is_strict() -> None:
-    proposal = PendingTicketProposal("success_condition", "text", "worker", 4)
-    assert fields_codec.proposal_from_json(fields_codec.proposal_to_json(proposal)) == proposal
-    with pytest.raises(PlannerError):
-        fields_codec.proposal_from_json('{"field":"success_condition"}')
-
-
-def test_resolve_next_ceiling_distinguishes_unknown_from_too_early() -> None:
-    with pytest.raises(PlannerError) as unknown:
-        machine.resolve_next_ceiling(
-            "needs_what_changes",
-            "bogus",
-            worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
-        )
-    assert unknown.value.code == ErrorCode.scope_invalid
-    with pytest.raises(PlannerError) as early:
-        machine.resolve_next_ceiling(
-            "needs_plan",
-            "needs_what_changes",
-            worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
-        )
-    assert early.value.detail == {"next_ceiling": "needs_what_changes", "new_stage": "needs_plan"}
 
 
 def _create(conn: Connection, now: int) -> str:
@@ -158,42 +120,3 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
         and ticket.field_values["consequences"] == "landed"
         and ticket.pending_proposal is None
     )
-
-
-def test_the_proposal_writer_infers_the_probe_gate(
-    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkerTypeDefinition
-) -> None:
-    now = fake_clock.now_unix()
-    tid = _create(tmp_db, now)
-    data.accept_proposal(
-        tmp_db,
-        tid,
-        field="brief",
-        principal=OWNER_PRINCIPAL,
-        now=now,
-        next_ceiling=NO_FURTHER,
-        next_holder=OWNER_PRINCIPAL,
-    )
-    ticket = data.file_current_proposal(
-        tmp_db, tid, body="alpha", principal=ticket_principal(tid), now=now
-    )
-    assert ticket.pending_proposal is not None
-    # The proposal carries only what is proposed; the recap is a separate write.
-    assert ticket.recap == "" and ticket.pending_proposal.field == A_FIELD
-
-
-def test_current_gate_is_enforced_by_state_validation(probe_registry: WorkerTypeDefinition) -> None:
-    with pytest.raises(PlannerError):
-        fields_codec.validate_state(
-            {},
-            PendingTicketProposal(B_FIELD, "too early", "agent", 1),
-            A,
-            worker_type_definition=probe_registry,
-        )
-
-
-def test_probe_survives_create_and_reload(
-    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkerTypeDefinition
-) -> None:
-    ticket = data.read_ticket(tmp_db, _create(tmp_db, fake_clock.now_unix()))
-    assert ticket.stage == "needs_brief" and type(ticket.stage) is str

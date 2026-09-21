@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-import threading
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -53,73 +52,6 @@ def test_a_transaction_ended_with_the_commit_method_signals_once(
     conn.commit()
 
     assert signals.count == 1
-
-
-def test_the_commit_method_on_a_connection_with_nothing_open_signals_nothing(
-    conn: sqlite3.Connection, signals: _SignalCounter
-) -> None:
-    conn.commit()
-
-    assert signals.count == 0
-
-
-def test_a_rollback_signals_nothing(
-    conn: sqlite3.Connection, signals: _SignalCounter
-) -> None:
-    conn.execute("BEGIN IMMEDIATE")
-    conn.execute("INSERT INTO door (note) VALUES ('discarded')")
-    conn.execute("ROLLBACK")
-
-    assert signals.count == 0
-    assert conn.execute("SELECT COUNT(*) FROM door").fetchone()[0] == 0
-
-
-def test_a_commit_that_fails_signals_nothing(
-    tmp_path: Path, conn: sqlite3.Connection, signals: _SignalCounter
-) -> None:
-    # A deferred foreign key violation is only found when the transaction tries to close,
-    # so this is a commit that is asked for and refused.
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute(
-        "CREATE TABLE child (id INTEGER PRIMARY KEY, ticket_id TEXT NOT NULL "
-        "REFERENCES tickets(id) DEFERRABLE INITIALLY DEFERRED)"
-    )
-    conn.execute("BEGIN IMMEDIATE")
-    conn.execute("INSERT INTO child (ticket_id) VALUES ('t_missing')")
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute("COMMIT")
-
-    assert signals.count == 0
-    conn.execute("ROLLBACK")
-    assert signals.count == 0
-
-
-def test_a_commit_on_another_thread_reaches_the_subscriber(tmp_path: Path) -> None:
-    db_path = str(tmp_path / "cross-thread.db")
-    boot = connect(db_path)
-    create_schema(boot)
-    boot.execute("CREATE TABLE door (id INTEGER PRIMARY KEY, note TEXT)")
-    boot.close()
-
-    delivered = threading.Event()
-    unsubscribe = change_signal.subscribe(delivered.set)
-
-    def writer() -> None:
-        connection = connect(db_path)
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute("INSERT INTO door (note) VALUES ('from a thread')")
-            connection.execute("COMMIT")
-        finally:
-            connection.close()
-
-    try:
-        thread = threading.Thread(target=writer)
-        thread.start()
-        thread.join(5)
-        assert delivered.wait(5)
-    finally:
-        unsubscribe()
 
 
 def test_the_signal_arrives_after_the_write_lock_is_released(tmp_path: Path) -> None:

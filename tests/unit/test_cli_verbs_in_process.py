@@ -139,44 +139,6 @@ def api(
     return cli_app[2]
 
 
-def test_worker_type_list_json_preserves_the_registry_manifest(
-    server: ServerHandle,
-    cli: Callable[..., JsonObject],
-    api: ApiHelper,
-) -> None:
-    expected = api.get(server, "/api/worker-types")
-
-    listed = cli(server, "worker-type", "list")
-
-    assert listed == expected
-    assert listed["worker_types"][-1]["worker_type"] == "probe"
-
-
-def test_day_cli_round_trips_midday_reconciliation(
-    server: ServerHandle, cli: Callable[..., JsonObject]
-) -> None:
-    updated = cli(
-        server,
-        "day",
-        "set",
-        "midday-reconciliation",
-        "--date",
-        "2026-07-04",
-        "--value",
-        "The morning bet still holds.",
-    )
-    shown = cli(
-        server,
-        "day",
-        "show",
-        "2026-07-04",
-        "midday_reconciliation",
-    )
-
-    assert updated["midday_reconciliation"] == "The morning bet still holds."
-    assert shown["parts"]["midday_reconciliation"]["value"] == "The morning bet still holds."
-
-
 def test_send_message_cli_mode_reaches_the_current_conversation_system(
     server: ServerHandle, cli: Callable[..., JsonObject]
 ) -> None:

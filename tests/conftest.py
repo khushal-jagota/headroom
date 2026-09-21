@@ -5,9 +5,8 @@ worktree. The tests then pass or fail on somebody else's code while every path o
 screen still reads correctly. This conftest runs inside the pytest process that is
 under suspicion, so the answers it collects are the real ones.
 
-The check lives in ``scripts/tree_environment.py`` so that ``./verify`` and mypy
-state the same property. ``tests/unit/test_instrument.py`` reaches ``scripts`` the
-same way.
+The check lives in ``scripts/tree_environment.py`` so that mypy states the same
+property. ``tests/unit/test_instrument.py`` reaches ``scripts`` the same way.
 """
 
 from __future__ import annotations

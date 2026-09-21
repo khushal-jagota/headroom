@@ -19,14 +19,18 @@ try {
 import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';
 import TicketRoute from '../src/routes/TicketRoute.svelte';
 import ReviewProposalCard from '../src/components/ReviewProposalCard.svelte';
+import ConfigRoute from '../src/routes/ConfigRoute.svelte';
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 let review = $state(false);
+let config = $state(false);
 let ticketId = $state('t_guidance');
 (window as any).__showReview = () => { review = true; };
 (window as any).__showTicket = (id: string) => { review = false; ticketId = id; };
+(window as any).__showConfig = () => { config = true; };
 </script>
 <QueryClientProvider {client}>
-{#if review}<ReviewProposalCard ticketId="t_guidance" field="success_condition" />
+{#if config}<ConfigRoute roleKind="worker" roleId="coding" />
+{:else if review}<ReviewProposalCard ticketId="t_guidance" field="success_condition" />
 {:else}{#key ticketId}<TicketRoute id={ticketId} />{/key}{/if}
 </QueryClientProvider>`);
   await writeFile(main, `import { mount } from 'svelte'; import Host from './${stem}.svelte'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host, {target: document.getElementById('app')!});`);
@@ -44,6 +48,7 @@ ticket = dict(project_id='project_one', project='One', sprint_id='sp_old', sprin
 stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, ownership_mode='worker' if f else None) for s,l,f in [('needs_brief','Kickoff','brief'),('needs_success_condition','Success','success_condition'),('done','Done',None)]]
 personal_stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, ownership_mode=o) for s,l,f,o in [('needs_brief','Kickoff','brief','user'),('needs_outcome','Outcome','outcome','user'),('needs_consequences','Closeout','consequences','worker'),('done','Done',None,None)]]
 manifest = {'worker_types': [dict(worker_type='coding', label='Coding', stages=stages, advance={'needs_brief': 'needs_success_condition', 'needs_success_condition': 'done'}, ceiling_range=['needs_brief','needs_success_condition','done'], default_ceiling='needs_success_condition', worker_profile_id='panels-worker-coding', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'brief','label':'Kickoff'}, {'id':'success_condition','label':'Success'}]), dict(worker_type='personal', label='Personal', stages=personal_stages, advance={'needs_brief':'needs_outcome','needs_outcome':'needs_consequences','needs_consequences':'done'}, ceiling_range=['needs_brief','needs_outcome','needs_consequences','done'], default_ceiling='needs_brief', worker_profile_id='panels-worker-personal-task', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'brief','label':'Kickoff'},{'id':'outcome','label':'Outcome'},{'id':'consequences','label':'Closeout'}])]}
+worker_detail = {'manifest': manifest['worker_types'][0], 'settings': {'worker_type': 'coding', 'specialist_skill': {'name': 'panels-worker-coding', 'description': 'Coding worker', 'markdown_body': '# Coding'}, 'launch_defaults': {'employee_backend': 'codex', 'employee_launch_model': None, 'employee_launch_reasoning_effort': None}}}
 writes=[]
 placement_writes=[]
 ceiling_writes=[]
@@ -88,6 +93,7 @@ def respond(route):
         approvals.append(route.request.post_data_json)
         result={**ticket, 'pending_proposal': None, 'ticket_status': 'empty'}
     elif path == 'worker-types': result=manifest
+    elif path == 'workers/coding': result=worker_detail
     elif path == 'conversation/backends': result={'backends': []}
     else: result={}
     route.fulfill(status=200, content_type='application/json', body=json.dumps(result))
@@ -225,6 +231,12 @@ with sync_playwright() as p:
         page.wait_for_timeout(50)
     assert len(approvals) == 1
     assert approvals[0]['next_holder'] == {'kind': 'chief', 'id': 'chief'}
+    # Declared ownership is Config's to show and nobody's to edit: the Stage table is
+    # display-only, so who owns a Stage cannot be changed from the screen that reads it.
+    page.evaluate('window.__showConfig()')
+    stage_table=page.locator('[data-worker-stage-table]')
+    stage_table.locator('[data-worker-stage-row]').first.wait_for()
+    assert stage_table.locator('select, input, [contenteditable]').count() == 0
     browser.close()
 `;
   const child = spawn(join(root, '..', '.venv', 'bin', 'python'), ['-c', script, `http://127.0.0.1:${address.port}/tests/${stem}.html`], { stdio: 'inherit' });

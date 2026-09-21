@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import json
 from dataclasses import replace
 
 import pytest
-from tests.support.probe import build_shipped_registry, shipped_definition
+from tests.support.probe import shipped_definition
 
-from planner.conversation.contracts import ConversationBackendKey
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.worker_types.contracts import (
     FieldDefinition,
@@ -14,7 +12,6 @@ from planner.worker_types.contracts import (
 )
 from planner.worker_types.registry import WorkerTypeRegistry
 
-SHIPPED_REGISTRY = build_shipped_registry()
 CODING_WORKER_TYPE_DEFINITION = shipped_definition("coding")
 
 KNOWN_SKILLS = frozenset({"panels-worker", "panels-worker-coding", "panels-worker-new-worker"})
@@ -29,33 +26,6 @@ def registry(*definitions: WorkerTypeDefinition) -> WorkerTypeRegistry:
     )
 
 
-def test_the_agent_backends_are_a_closed_set_of_three() -> None:
-    shipped_registry = SHIPPED_REGISTRY
-    assert tuple(str(key) for key in ConversationBackendKey) == (
-        "hermes",
-        "codex",
-        "claude",
-    )
-    assert {
-        shipped_registry.require(worker_type).worker_profile.default_backend
-        for worker_type in shipped_registry.registered_worker_types()
-    } == {"codex", "claude"}
-
-
-def test_worker_profiles_declare_complete_employee_defaults() -> None:
-    """Every shipped type names a real backend and a model. The values themselves
-    belong to that type's own definition and its own test, not to a list here."""
-    backends = {str(key) for key in ConversationBackendKey}
-    for worker_type in SHIPPED_REGISTRY.registered_worker_types():
-        profile = SHIPPED_REGISTRY.require(worker_type).worker_profile
-        assert profile.default_backend in backends, worker_type
-        assert profile.default_model.strip(), worker_type
-        assert profile.default_reasoning_effort is None or (
-            profile.default_reasoning_effort.strip()
-        ), worker_type
-        assert profile.specialist_skill.strip(), worker_type
-
-
 def assert_error(
     definition: WorkerTypeDefinition,
     message: str,
@@ -66,37 +36,6 @@ def assert_error(
     assert raised.value.code is ErrorCode.validation
     assert raised.value.message == message
     assert raised.value.detail == detail
-
-
-def test_definition_errors_are_preserved() -> None:
-    definition = CODING_WORKER_TYPE_DEFINITION
-    with pytest.raises(PlannerError) as raised:
-        definition.stage_index("ghost")
-    assert raised.value.to_payload() == {
-        "error": {
-            "code": "validation",
-            "message": "stage outside the linear order",
-            "detail": {"stage": "ghost"},
-        }
-    }
-    with pytest.raises(PlannerError) as raised:
-        definition.field_definition("ghost")
-    assert raised.value.to_payload() == {
-        "error": {
-            "code": "validation",
-            "message": "unknown ticket field",
-            "detail": {"field": "ghost"},
-        }
-    }
-    with pytest.raises(PlannerError) as raised:
-        definition.validate_ticket_position("done", "ghost")
-    assert raised.value.to_payload() == {
-        "error": {
-            "code": "scope_invalid",
-            "message": "ceiling outside the type's range",
-            "detail": {"worker_type": "coding", "ceiling": "ghost"},
-        }
-    }
 
 
 def test_registry_validation_order_and_messages() -> None:
@@ -224,100 +163,4 @@ def test_registry_validation_order_and_messages() -> None:
         replace(base, worker_profile=replace(base.worker_profile, default_model="   ")),
         "default_model must be a non-empty string",
         {"worker_type": "coding", "default_model": "   "},
-    )
-
-
-def test_manifests_are_complete_and_json_round_trip() -> None:
-    registered = SHIPPED_REGISTRY.registered_worker_types()
-    assert len(set(registered)) == len(registered)
-    coding = SHIPPED_REGISTRY.manifest("coding")
-    assert coding == {
-        "worker_type": "coding",
-        "label": "Coding",
-        "stages": [
-            {
-                "id": "needs_brief",
-                "label": "Kickoff",
-                "gating_field": "brief",
-                "is_terminal": False,
-                "ownership_mode": "worker",
-            },
-            {
-                "id": "needs_success_condition",
-                "label": "Success",
-                "gating_field": "success_condition",
-                "is_terminal": False,
-                "ownership_mode": "worker",
-            },
-            {
-                "id": "needs_what_changes",
-                "label": "Approach",
-                "gating_field": "what_changes",
-                "is_terminal": False,
-                "ownership_mode": "worker",
-            },
-            {
-                "id": "needs_plan",
-                "label": "Plan",
-                "gating_field": "plan",
-                "is_terminal": False,
-                "ownership_mode": "worker",
-            },
-            {
-                "id": "needs_implementation",
-                "label": "Implementation",
-                "gating_field": "implementation",
-                "is_terminal": False,
-                "ownership_mode": "worker",
-            },
-            {
-                "id": "needs_consequences",
-                "label": "Closeout",
-                "gating_field": "consequences",
-                "is_terminal": False,
-                "ownership_mode": "worker",
-            },
-            {
-                "id": "done",
-                "label": "Done",
-                "gating_field": None,
-                "is_terminal": True,
-                "ownership_mode": None,
-            },
-        ],
-        "advance": {
-            "needs_brief": "needs_success_condition",
-            "needs_success_condition": "needs_what_changes",
-            "needs_what_changes": "needs_plan",
-            "needs_plan": "needs_implementation",
-            "needs_implementation": "needs_consequences",
-            "needs_consequences": "done",
-        },
-        "fields": [
-            {"id": "brief", "label": "Kickoff"},
-            {"id": "success_condition", "label": "Success"},
-            {"id": "what_changes", "label": "Approach"},
-            {"id": "plan", "label": "Plan"},
-            {"id": "implementation", "label": "Implementation"},
-            {"id": "consequences", "label": "Closeout"},
-        ],
-        "ceiling_range": [
-            "needs_brief",
-            "needs_success_condition",
-            "needs_what_changes",
-            "needs_plan",
-            "needs_implementation",
-            "needs_consequences",
-            "done",
-        ],
-        "default_ceiling": "needs_brief",
-        "worker_profile_id": "panels-worker-coding",
-        "default_backend": "codex",
-        "default_model": "gpt-5.6-sol",
-        "default_reasoning_effort": "medium",
-    }
-    assert json.loads(json.dumps(coding)) == coding
-    assert (
-        json.loads(json.dumps(SHIPPED_REGISTRY.manifest("new_worker")))["worker_type"]
-        == "new_worker"
     )

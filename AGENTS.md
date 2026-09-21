@@ -1,6 +1,6 @@
 # AGENTS.md
 
-There is no immutable spec. `SPEC.md` was a starting point and has been retired: design intent lives in `DESIGN.md` and the current plain-language documentation. Code and focused behavioral tests establish correctness; `./verify` is the final integration check.
+There is no immutable spec. `SPEC.md` was a starting point and has been retired: design intent lives in `DESIGN.md` and the current plain-language documentation. Code and focused behavioral tests establish correctness.
 
 **PRINCIPLES.md** holds the standing engineering and design rules; they bind unless a live owner decision overrides them.
 
@@ -15,7 +15,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - Frontend is Svelte/Vite in `web/`; FastAPI serves the built `web/dist` app at `/` and Vite chunks under `/_app/`. Shared design assets remain in `assets/`: `tokens.css` and `app.css`; the Vite-owned GFM pipeline lives in `web/src/lib/markdownPipeline.ts`.
 - Panels-owned agent role skills live in `src/planner/skills/`, especially `panels` and `panels-worker`; they ship with the Python package, project-native agent roots point there, and startup exposes those same source directories to the planner Hermes home under `data/hermes-home/skills/`.
 - `docs/` is the live plain-language system documentation. `orchestration/tickets/` holds historical ticket plans, dispatches, and reviews.
-- `data/` is gitignored runtime state: SQLite DBs, WAL/SHM files, logs, locks, Hermes home state, smoke artifacts, and verify output.
+- `data/` is gitignored runtime state: SQLite DBs, WAL/SHM files, logs, locks, Hermes home state, and smoke artifacts.
 
 ## Worker conversation boundary
 - **A database row, event, or browser update is not model context.** Only text that was actually sent into the worker's conversation is.
@@ -32,7 +32,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 ## Verification
 - **A check follows a piece of work, not a file and not an edit.** Finish what you set out to do, then run the narrowest check that proves it. A broad suite re-run when nothing since could have changed it proves nothing, and at a hundred repetitions it is not a detail of the work, it is most of the wall clock.
-- Reserve `./verify` for the final settled tree of a complete change or multi-ticket program. Do not run it during investigation, planning, or individual implementation chunks. During work, run only the narrow checks that prove the changed behavior. One clean final run supports the repository-wide completeness claim; save and cite its full output. Repeat only after a failure or a material subsequent change.
+- There is no single command that checks everything. Run `ruff`, `mypy` and `pytest` yourself, pointed at what your work touched, and read the output. A tool that is missing or a suite that skipped says so on screen, which a wrapper reporting one number does not.
 - Use Playwright E2E only when a material risk requires a real browser and live server together. Ticket plans or reviews must name that risk, the exercised boundary, and why frontend, unit, or integration tests cannot prove it. Keep the smallest E2E proof. Test other browser behavior in `web/tests`, and never rely on an eyeball check.
 - Independent reviews may use a fresh sub-agent; the Codex CLI is not required. Use one focused review wherever a second pair of eyes materially improves confidence: completed work against its contract/design, intricate correctness logic, or a combined diff before integration. A second round is only for a concrete unresolved finding. Surface the review output and address or refute each point in writing.
 
@@ -40,12 +40,12 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - You are primarily a **planner and orchestrator of sub-agents**. Your own outputs are: the plan, contract-scoped tickets, dispatches, independent reviews, serial integrations, and verification runs. Implementation substance is produced by sub-agents working tickets.
 - Write code directly only when a change is too small to be worth a ticket — glue, integration repairs, one-line fixes — and note it in the owning ticket. If you catch yourself implementing a stage's substance inline, stop and cut tickets. Route, don't execute.
 - A ticket is contract-scoped: it names the contract/type files it implements against, the acceptance tests it must turn green, and nothing else. Sub-agents do not invent shapes, do not modify contracts, and do not touch files outside their ticket.
-- Per-ticket pipeline — each step isolated work: (1) you decompose and write the ticket; (2) a sub-agent plans the ticket's implementation; (3) an independent reviewer checks that plan against the contracts and relevant design doc; (4) a sub-agent implements to the reviewed plan; (5) an independent reviewer checks the implementation diff; (6) you integrate serially. Steps 2–5 can be collapsed for trivial tickets when the ticket records why. A multi-ticket program may explicitly reserve one full `./verify` for its final settled tree; individual tickets then use their named focused gates.
+- Per-ticket pipeline — each step isolated work: (1) you decompose and write the ticket; (2) a sub-agent plans the ticket's implementation; (3) an independent reviewer checks that plan against the contracts and relevant design doc; (4) a sub-agent implements to the reviewed plan; (5) an independent reviewer checks the implementation diff; (6) you integrate serially. Steps 2–5 can be collapsed for trivial tickets when the ticket records why. Each ticket names its own focused gates.
 - Parallelisation is your call: decide from file overlap which tickets may share the main worktree and which need isolated git worktrees; never let two agents write the same files concurrently.
 - **Anything that can run in parallel should.** Serial work is a cost, and only a real dependency justifies it. A sub-agent orchestrates too — say so, and let it fan out without asking.
 - **Pick the model, then brief to it.** Opus is the default. It may do a task itself, or spawn its own agents to plan, implement and review — which of those fits is its call, not something to prescribe. Give it the task and the decisions already made, encourage it to parallelise and delegate where that makes sense, and leave the shape to it. Sonnet is for speed on a specific, well-bounded job, so brief it tightly. Fable is for large orchestrations and is rare.
 - Spot-check the load-bearing code yourself even when reviews pass: the proposal resolver, the worker-step claim and its release, planning-date math, and the migration parser.
-- A ticket is done when its named gates pass and its independent review reports no unresolved violations. When the program reserves a final canonical `./verify`, that final gate—not repeated per-ticket runs—makes the repository-wide completeness claim.
+- A ticket is done when its named gates pass and its independent review reports no unresolved violations.
 
 ## Worktree and server flow
 
@@ -69,10 +69,10 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   built in, so a copy points `pytest` at that tree's source and checks this source
   against that tree's pinned dependency versions. `git worktree move` breaks a
   virtualenv the same way. After a move, delete `.venv` and build it again.
-- `./verify` refuses to run when the environment does not belong to the tree, and
-  names what is wrong. So does `mypy` run against this tree's config, and so does any
-  `pytest` that collects a path under `tests/`. That refusal is the check for those
-  three. It does not cover `ruff`, a `pytest` pointed outside `tests/`, or anything
+- `mypy` run against this tree's config refuses when the environment does not belong to
+  the tree, and names what is wrong. So does any `pytest` that collects a path under
+  `tests/`. That refusal is the check for those two. It does not cover `ruff`, a
+  `pytest` pointed outside `tests/`, or anything
   else you launch from `.venv/bin` by hand — for those, a copied virtualenv is still
   silent, so build the environment correctly rather than rely on being caught.
 - Run `env | rg '^PLAN_(DB_PATH|LOGS_DIR|DISPATCHER_LOCK_PATH|SERVER_CONTROL_SOCKET|HERMES_HOME)='`

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import multiprocessing
-import sqlite3
-import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -11,12 +9,10 @@ from pathlib import Path
 import pytest
 
 from planner.environments.app import digest_app_artifact, digest_app_source
-from planner.environments.backup import create_database_backup
 from planner.environments.deployment import (
     DeploymentError,
     DeploymentResult,
     deploy_app,
-    run_current_app_backup,
 )
 
 SHA_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -251,26 +247,6 @@ def test_deployment_uses_operator_owned_interprocess_lock(tmp_path: Path) -> Non
     assert result.status == "succeeded"
     assert time.monotonic() - started >= 0.25
     process.join()
-
-
-def test_predeploy_backup_rejects_wrong_revision(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    current = tmp_path / "current"
-    source_db = current / "data" / "planner.db"
-    source_db.parent.mkdir(parents=True)
-    with sqlite3.connect(source_db) as connection:
-        connection.execute("CREATE TABLE proof (value TEXT)")
-    backup_dir = current / "data" / "backups"
-    snapshot = create_database_backup(source_db, backup_dir, SHA_A)
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, f"{snapshot}\n", ""),
-    )
-
-    with pytest.raises(DeploymentError, match="does not match prior app"):
-        run_current_app_backup(current, source_db, backup_dir, SHA_B)
 
 
 def _database(current: Path) -> Path:

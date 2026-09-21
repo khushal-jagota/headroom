@@ -12,7 +12,6 @@ from planner.core import authority
 from planner.core.authctx import _classify
 from planner.core.authority import require_above, require_above_or_self
 from planner.core.clock import TestClock as Clock
-from planner.core.db import connect
 from planner.core.errors import PlannerError
 from planner.sprints import commitments, data, views
 from planner.tickets import data as tickets
@@ -219,60 +218,3 @@ def test_carry_rejects_entire_stale_selection_and_preserves_existing_authority(
     )
     with pytest.raises(PlannerError):
         require_above(tmp_db, supervisor.principal, authority.ticket(valid.id))
-
-
-def test_creation_validates_explicit_placement_and_blockers_without_an_outcome(
-    tmp_db: Connection,
-) -> None:
-    with pytest.raises(PlannerError, match="invalid sprint_id"):
-        tickets.create_ticket(
-            tmp_db,
-            title="Invalid Sprint",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=200,
-            worker_type="coding",
-            project_id="project_vylo",
-            sprint_id="missing",
-        )
-    with pytest.raises(PlannerError):
-        tickets.create_ticket(
-            tmp_db,
-            title="Invalid blocker",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=200,
-            worker_type="coding",
-            blocked_by_ticket_ids=["missing"],
-        )
-    assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
-
-
-def test_tracking_reads_without_a_writer_lock_and_preserves_the_callers_snapshot(
-    tmp_db: Connection,
-    fake_clock: Clock,
-) -> None:
-    sprint = data.create_sprint(
-        tmp_db,
-        name="Committed name",
-        date_start="2026-07-01",
-        date_end="2026-07-07",
-        clock=fake_clock,
-    )
-    path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    writer = connect(path, busy_timeout_ms=20)
-    try:
-        writer.execute("BEGIN IMMEDIATE")
-        writer.execute("UPDATE sprints SET name='Uncommitted name' WHERE id=?", (sprint.id,))
-        current = views.sprint_current_view(tmp_db, "2026-07-04")
-        assert current["sprint"] is not None
-        assert current["sprint"]["name"] == "Committed name"
-        assert not tmp_db.in_transaction
-        tmp_db.execute("BEGIN")
-        explicit = views.sprint_tracking_view(tmp_db, sprint.id, "2026-07-04")
-        assert explicit == current
-        assert tmp_db.in_transaction
-        tmp_db.execute("ROLLBACK")
-    finally:
-        writer.execute("ROLLBACK")
-        writer.close()

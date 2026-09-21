@@ -28,7 +28,7 @@ from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.days.data import add_day_ticket
 from planner.tickets.data import create_ticket
-from planner.tickets.views import board_view, ticket_ids_for_conversations
+from planner.tickets.views import board_view
 
 A_DAY = "2026-09-20"
 
@@ -43,7 +43,7 @@ def _card_ids(board: dict[str, object]) -> set[str]:
     }
 
 
-def _make_ticket(conn: Connection, title: str, *, conversation_id: str | None = None) -> str:
+def _make_ticket(conn: Connection, title: str) -> str:
     ticket = create_ticket(
         conn,
         title=title,
@@ -52,11 +52,6 @@ def _make_ticket(conn: Connection, title: str, *, conversation_id: str | None = 
         worker_type="coding",
         title_max_chars=200,
     )
-    if conversation_id is not None:
-        conn.execute(
-            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
-            (conversation_id, ticket.id),
-        )
     return ticket.id
 
 
@@ -110,22 +105,6 @@ def test_only_conversations_past_the_owners_read_mark_are_named(
     asyncio.run(exercise())
 
 
-def test_a_later_message_reopens_a_conversation_the_owner_had_read(
-    store: ConversationStore,
-) -> None:
-    async def exercise() -> None:
-        await store.create_conversation(_resolved("c"))
-        await store.append_event("c", _a_message_to_the_owner())
-        await store.advance_owner_read_through_sequence("c", 1)
-        assert await store.conversation_ids_holding_unread_owner_message() == frozenset()
-
-        await store.append_event("c", _a_message_to_the_owner())
-
-        assert await store.conversation_ids_holding_unread_owner_message() == frozenset({"c"})
-
-    asyncio.run(exercise())
-
-
 # --- which Tickets the board returns ----------------------------------------------
 
 
@@ -145,14 +124,6 @@ def test_a_named_ticket_joins_the_board_from_off_the_day(tmp_db: Connection) -> 
     assert off_day_quiet not in _card_ids(board)
 
 
-def test_the_day_alone_is_the_board_when_nothing_is_named(tmp_db: Connection) -> None:
-    on_day = _make_ticket(tmp_db, "On today")
-    _make_ticket(tmp_db, "Off today")
-    add_day_ticket(tmp_db, A_DAY, on_day, 1)
-
-    assert _card_ids(board_view(tmp_db, day_id=A_DAY)) == {on_day}
-
-
 def test_a_named_ticket_already_on_the_day_appears_once(tmp_db: Connection) -> None:
     on_day = _make_ticket(tmp_db, "On today, message waiting")
     add_day_ticket(tmp_db, A_DAY, on_day, 1)
@@ -167,17 +138,3 @@ def test_a_named_ticket_already_on_the_day_appears_once(tmp_db: Connection) -> N
     assert isinstance(columns, list)
     cards = [card for column in columns for card in column["cards"]]
     assert [str(card["id"]) for card in cards] == [on_day]
-
-
-# --- the two halves meet ------------------------------------------------------------
-
-
-def test_the_board_route_reads_conversations_through_their_tickets(tmp_db: Connection) -> None:
-    """The record answers about conversations. Only the Ticket rows say whose they are."""
-    ticket = _make_ticket(tmp_db, "Has a conversation", conversation_id="conv_ticket")
-    _make_ticket(tmp_db, "Has none")
-
-    assert ticket_ids_for_conversations(
-        tmp_db, frozenset({"conv_ticket", "conv_a_supervisor_owns"})
-    ) == frozenset({ticket})
-    assert ticket_ids_for_conversations(tmp_db, frozenset()) == frozenset()

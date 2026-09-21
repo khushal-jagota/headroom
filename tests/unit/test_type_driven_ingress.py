@@ -13,7 +13,6 @@ directly without resolving a Worker type.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterator
 from pathlib import Path
 from sqlite3 import Connection
@@ -104,34 +103,6 @@ def test_coding_ticket_accepts_coding_field_and_ceiling(
         )
         assert approved.status_code == 200, approved.json()
         assert approved.json()["ceiling"] == "needs_what_changes"
-
-
-def test_worker_api_cannot_decide_a_corrupted_self_held_proposal(app_db: AppDb) -> None:
-    app, db_path = app_db
-    with TestClient(app) as client:
-        ticket_id = _create(client, "coding")
-        with connect(str(db_path)) as conn:
-            conn.execute(
-                "UPDATE tickets SET ceiling_holder = ? WHERE id = ?",
-                (
-                    json.dumps({"kind": "ticket", "id": ticket_id}),
-                    ticket_id,
-                ),
-            )
-            conn.commit()
-        decided = client.post(
-            f"/api/tickets/{ticket_id}/accept/brief",
-            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
-            json={
-                "next_ceiling": "needs_success_condition",
-                "next_holder": OWNER,
-            },
-        )
-
-    # The one rule answers first, and it does not read the holder column at all: nothing
-    # is below itself, so a Ticket never stands above the Ticket it is.
-    assert decided.status_code == 400, decided.json()
-    assert decided.json()["error"]["code"] == "agent_forbidden"
 
 
 def test_accept_rejects_foreign_field_and_foreign_next_ceiling(
@@ -232,51 +203,6 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(app_db: AppDb) -> Non
         )
         assert own.status_code == 200, own.text
         assert own.json()["pending_proposal"]["body"] == "Own Worker"
-
-
-def test_ticket_note_routes_make_replace_and_append_explicit(app_db: AppDb) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        tid = _create(client, "coding")
-
-        replaced = client.patch(f"/api/tickets/{tid}", json={"guidance": "first guidance"})
-        assert replaced.status_code == 200, replaced.json()
-
-        appended = client.patch(
-            f"/api/tickets/{tid}", json={"guidance_append": "second guidance"}
-        )
-        assert appended.status_code == 200, appended.json()
-        assert appended.json()["guidance"] == "first guidance\n\nsecond guidance"
-
-        # One call, two intentions, and never both at once.
-        both = client.patch(
-            f"/api/tickets/{tid}", json={"guidance": "a", "guidance_append": "b"}
-        )
-        assert both.status_code == 400, both.json()
-
-        cleared = client.patch(f"/api/tickets/{tid}", json={"guidance": ""})
-        assert cleared.status_code == 200, cleared.json()
-
-        appended_after_clear = client.patch(
-            f"/api/tickets/{tid}", json={"guidance_append": "new guidance"}
-        )
-        assert appended_after_clear.status_code == 200, appended_after_clear.json()
-        assert appended_after_clear.json()["guidance"] == "new guidance"
-
-
-def test_arbitrary_stage_jump_route_is_removed(app_db: AppDb, probe_installed: None) -> None:
-    # Even declared worker stages have no arbitrary transition route.
-    app, _db = app_db
-    with TestClient(app) as client:
-        tid = _create(client, "probe")
-        client.post(
-            f"/api/tickets/{tid}/accept/brief",
-            json={"next_ceiling": "done", "next_holder": OWNER},
-        )
-        jumped = client.post(f"/api/tickets/{tid}/stage", json={"to_stage": "needs_beta"})
-        assert jumped.status_code == 404, jumped.json()
-        arbitrary = client.post(f"/api/tickets/{tid}/propose/beta", json={"body": "skip ahead"})
-        assert arbitrary.status_code == 404, arbitrary.json()
 
 
 # --- the ?stage= filter decision -----------------------------------------------

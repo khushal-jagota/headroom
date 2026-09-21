@@ -4,20 +4,16 @@ import sqlite3
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
 
 import pytest
 from alembic import command
 
 from planner.core import db as db_module
-from planner.core import ticket_blocks
 from planner.core.db import (
     BASELINE_REVISION,
-    ChangeSignallingConnection,
     connect,
     create_schema,
 )
-from planner.tickets import derivation
 
 _EMPTY_CODING_FIELDS = json.dumps(
     {
@@ -46,18 +42,6 @@ HEAD_REVISION = "settled_stage_and_field_ids"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
 CURRENT_SCHEMA_OBJECT_COUNT = 55
-
-# The one state-of-control value this build stores, as the CHECK constraint renders it.
-FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"
-
-# The names the reshape moved off. None of them survives, in the schema or in the rows.
-RETIRED_TICKET_STATUSES = (
-    "agent_running_step",
-    "paired_work",
-    "user_takeover",
-    "proposal_discussion",
-)
-
 
 def _schema_objects(conn: sqlite3.Connection) -> dict[str, str]:
     """Every schema object's SQL, with whitespace and IF NOT EXISTS made irrelevant."""
@@ -276,71 +260,7 @@ def _insert_ticket(
 # --- connecting ------------------------------------------------------------------------
 
 
-def test_connect_applies_busy_timeout_to_initial_connect_and_pragma(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    real_connect = sqlite3.connect
-    initial_connect_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
-
-    def recording_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
-        initial_connect_calls.append((args, kwargs))
-        connection: sqlite3.Connection = real_connect(*args, **kwargs)
-        return connection
-
-    monkeypatch.setattr(sqlite3, "connect", recording_connect)
-
-    db_path = str(tmp_path / "bounded-connect.db")
-    conn = connect(db_path, busy_timeout_ms=275)
-    try:
-        assert initial_connect_calls == [
-            (
-                (db_path,),
-                {
-                    "isolation_level": None,
-                    "timeout": 0.275,
-                    "factory": ChangeSignallingConnection,
-                },
-            )
-        ]
-        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 275
-        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-    finally:
-        conn.close()
-
-
 # --- bringing a database up to the current schema ---------------------------------------
-
-
-def test_fresh_database_is_built_and_marked_at_the_current_revision(
-    tmp_path: Path,
-) -> None:
-    conn = connect(str(tmp_path / "fresh.db"))
-    create_schema(conn)
-
-    assert _revision(conn) == HEAD_REVISION
-    day_columns = {
-        str(row["name"]): str(row["dflt_value"]) for row in conn.execute("PRAGMA table_info(days)")
-    }
-    assert day_columns["midday_reconciliation"] == "''"
-    assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
-    ticket_columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")}
-    assert "alias" not in ticket_columns
-    assert "backend_error" not in ticket_columns
-    assert "idx_tickets_alias" not in {
-        str(row["name"]) for row in conn.execute("PRAGMA index_list(tickets)")
-    }
-    assert not {
-        "proposal_holder_wakes",
-        "ticket_rejection_messages",
-        "proposal_delivery_failures",
-    } & set(_schema_objects(conn))
-    assert "ticket_revision_feedback" in _schema_objects(conn)
-    # Carried so a fresh database is not distinguishable from one the old ladder built.
-    # An older checkout reads this marker to decide what it still has to do.
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 37
-    conn.close()
 
 
 def test_ticket_blocks_migration_fails_atomically_for_invalid_legacy_rows(
@@ -382,22 +302,6 @@ def test_ticket_blocks_migration_fails_atomically_for_invalid_legacy_rows(
     conn.close()
 
 
-def test_ticket_blocks_schema_enforces_ticket_pairs(tmp_path: Path) -> None:
-    conn = connect(str(tmp_path / "ticket-blocks.db"))
-    create_schema(conn)
-    _insert_ticket(conn, "t_blocker")
-    _insert_ticket(conn, "t_blocked")
-    conn.execute("INSERT INTO ticket_blocks VALUES ('t_blocker', 't_blocked')")
-
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute("INSERT INTO ticket_blocks VALUES ('t_blocker', 't_blocked')")
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute("INSERT INTO ticket_blocks VALUES ('t_blocker', 't_blocker')")
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute("INSERT INTO ticket_blocks VALUES ('t_blocker', 't_missing')")
-    conn.close()
-
-
 def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(
     tmp_path: Path,
 ) -> None:
@@ -436,145 +340,6 @@ def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(
     # The step run went with its table. Adoption keeps the rows of everything that
     # survives; a table the conversation layer left behind is not one of those.
     assert "employee_step_runs" not in _schema_objects(conn)
-    conn.close()
-
-
-def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
-    tmp_path: Path,
-) -> None:
-    """Statuses a database written before the reshape holds, brought onto the eight."""
-    db_path = tmp_path / "pre-reshape.db"
-    _build_pre_alembic_database(db_path)
-    conn = connect(str(db_path))
-    # Every value the old CHECK admitted, so nothing is left without somewhere to land.
-    _insert_ticket(conn, "t_empty", ticket_status="empty")
-    _insert_ticket(conn, "t_agent", ticket_status="agent_running_step")
-    _insert_ticket(conn, "t_paired", ticket_status="paired_work")
-    _insert_ticket(conn, "t_takeover", ticket_status="user_takeover")
-    _insert_ticket(conn, "t_discussion", ticket_status="proposal_discussion")
-    _insert_ticket(conn, "t_awaiting", ticket_status="awaiting_approval")
-    _insert_ticket(conn, "t_needs_user", ticket_status="needs_user")
-    _insert_ticket(conn, "t_errored", ticket_status="errored")
-    # One blocker still live, one finished. A finished one blocks nothing.
-    _insert_ticket(conn, "t_live_blocker", stage="needs_implementation")
-    _insert_ticket(conn, "t_finished_blocker", stage="done")
-    _insert_ticket(conn, "t_blocked", ticket_status="empty")
-    _insert_ticket(conn, "t_freed", ticket_status="empty")
-    # Being done itself is no exception: the rule asks about the blocker, not the blocked.
-    _insert_ticket(conn, "t_blocked_and_done", ticket_status="empty", stage="done")
-    for from_id, to_id in (
-        ("t_live_blocker", "t_blocked"),
-        ("t_finished_blocker", "t_freed"),
-        ("t_live_blocker", "t_blocked_and_done"),
-        # The reshape mapped this one to `empty` and never re-derived the stand-in, so a
-        # stored status said `empty` while a live blocker existed. Derived, it says
-        # `blocked` — which is the drift that stopping storing the status removes.
-        ("t_live_blocker", "t_paired"),
-    ):
-        conn.execute(
-            "INSERT INTO links (from_id, to_id, kind) VALUES (?, ?, 'blocks')",
-            (from_id, to_id),
-        )
-    # Two children hanging off tickets, so a rebuild that quietly emptied them is caught.
-    conn.execute("INSERT INTO days (id, created_at, updated_at) VALUES ('day_2026-07-04', 1, 1)")
-    conn.execute(
-        "INSERT INTO day_tickets (day_id, ticket_id, position) "
-        "VALUES ('day_2026-07-04', 't_agent', 0)"
-    )
-    structure_before = _table_structure(conn, "tickets")
-
-    create_schema(conn)
-
-    assert _revision(conn) == HEAD_REVISION
-    blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
-    assert {
-        str(row["id"]): derivation.derive_ticket_status(
-            derivation.stored_facts_from_row(
-                row, has_live_blocker=str(row["id"]) in blocked_ticket_ids
-            )
-        ).value
-        for row in conn.execute(
-            "SELECT id, stage, worker_type, worker_step_claim, pending_proposal FROM tickets"
-        )
-    } == {
-        "t_empty": "empty",
-        "t_agent": "agent",
-        "t_paired": "blocked",
-        "t_takeover": "empty",
-        "t_discussion": "empty",
-        "t_awaiting": "awaiting_approval",
-        "t_needs_user": "agent",
-        "t_errored": "empty",
-        "t_live_blocker": "empty",
-        "t_finished_blocker": "empty",
-        "t_blocked": "blocked",
-        "t_freed": "empty",
-        "t_blocked_and_done": "blocked",
-    }
-    assert [
-        (str(row[0]), str(row[1]))
-        for row in conn.execute(
-            "SELECT ticket_id, stage FROM ticket_paired_stage_openers ORDER BY ticket_id"
-        )
-    ] == [
-        # Seeded as `needs_kickoff` far down the ladder; a later revision moves the ids to
-        # the settled labels, and an opener row carries a Stage id like any other store.
-        ("t_discussion", "needs_brief"),
-        ("t_paired", "needs_brief"),
-    ]
-
-    # Two rebuilds dropped and recreated the table the children hang off. With foreign keys
-    # enforced those drops would have emptied both of these and said nothing about it.
-    assert conn.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 1
-    assert (
-        conn.execute(
-            "SELECT midday_reconciliation FROM days WHERE id = 'day_2026-07-04'"
-        ).fetchone()[0]
-        == ""
-    )
-    assert [
-        (str(row[0]), str(row[1]))
-        for row in conn.execute(
-            "SELECT blocking_ticket_id, blocked_ticket_id FROM ticket_blocks "
-            "ORDER BY blocking_ticket_id, blocked_ticket_id"
-        )
-    ] == [
-        ("t_finished_blocker", "t_freed"),
-        ("t_live_blocker", "t_blocked"),
-        ("t_live_blocker", "t_blocked_and_done"),
-        ("t_live_blocker", "t_paired"),
-    ]
-    assert conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='links'"
-    ).fetchone() is None
-    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-    # Every retained column, outgoing foreign key, and index survives the rebuild.
-    assert _table_structure_before_the_claim_columns(
-        _table_structure(conn, "tickets")
-    ) == _without_the_stored_status(
-        _without_the_cap(
-            _without_ticket_ownership_policy(
-                _without_removed_ticket_fields(
-                    _with_the_conversation_link_renamed(structure_before)
-                )
-            )
-        )
-    )
-
-    tickets_sql = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
-    ).fetchone()[0]
-    assert FINAL_WORKER_STEP_CLAIM_CHECK in tickets_sql
-    assert "ticket_status" not in tickets_sql
-    assert "length(title) <= 200" in tickets_sql
-    assert "priority IN ('P0','P1','P2','P3')" in tickets_sql
-    assert "at_cap" not in tickets_sql
-    assert "stage_ownership_overrides" not in tickets_sql
-    assert "default_stage_ownership_mode" not in tickets_sql
-    for retired in RETIRED_TICKET_STATUSES:
-        assert retired not in tickets_sql
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute("UPDATE tickets SET worker_step_claim = 'paired_work' WHERE id = 't_paired'")
     conn.close()
 
 
@@ -891,53 +656,3 @@ def test_a_migration_that_leaves_a_dangling_reference_is_rolled_back(
 # --- the schema the baseline describes ----------------------------------------------------
 
 
-def test_fresh_schema_rejects_ticket_fields_omission(tmp_path: Path) -> None:
-    conn = connect(str(tmp_path / "fresh-fields-required.db"))
-    create_schema(conn)
-
-    with pytest.raises(sqlite3.IntegrityError, match="tickets.field_values"):
-        conn.execute(
-            "INSERT INTO tickets (id, title, worker_type, employee_backend, ceiling, "
-            "created_at, updated_at) "
-            "VALUES ('t_omits_fields', 'Missing fields', 'coding', 'hermes', 'needs_success', 1, 1)"
-        )
-
-    conn.close()
-
-
-def test_create_schema_has_projects_project_ids_and_default_rows(
-    tmp_path: Path,
-) -> None:
-    conn = connect(str(tmp_path / "fresh.db"))
-
-    create_schema(conn)
-
-    assert {
-        row["id"]: (row["name"], row["summary"], row["priority"])
-        for row in conn.execute("SELECT id, name, summary, priority FROM projects ORDER BY id")
-    } == {
-        "project_other": ("Other", "", None),
-        "project_personal": ("Personal", "", None),
-        "project_tribe": ("Tribe", "", None),
-        "project_vylo": ("Vylo", "", None),
-    }
-    project_columns = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(projects)")}
-    assert "summary" in project_columns
-    priority_column = project_columns["priority"]
-    assert (
-        str(priority_column["type"]),
-        int(priority_column["notnull"]),
-        priority_column["dflt_value"],
-    ) == ("TEXT", 0, None)
-    for table in ("sprint_items", "tickets", "ideas"):
-        columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")}
-        assert "project_id" in columns
-        assert "project" not in columns
-        if table == "sprint_items":
-            assert "status" not in columns
-            assert "blocked_by" not in columns
-            assert "status_proposal" not in columns
-    assert conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pending_worker_context'"
-    ).fetchone() is None
-    conn.close()

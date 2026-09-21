@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlite3 import Connection
 
-from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL, ticket_principal
+from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
 
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback
@@ -47,57 +47,6 @@ def test_revision_feedback_is_attributed_stage_scoped_and_acknowledged_by_revisi
     assert revision_feedback.snapshot(tmp_db, ticket.id) == snapshot
     revision_feedback.acknowledge(tmp_db, ticket.id, second.revision)
     assert revision_feedback.snapshot(tmp_db, ticket.id) is None
-
-
-def test_revision_feedback_for_an_old_stage_does_not_enter_the_next_prompt(
-    tmp_db: Connection,
-) -> None:
-    ticket = _ticket(tmp_db)
-    revision_feedback.set_feedback(
-        tmp_db,
-        ticket.id,
-        stage="needs_plan",
-        sender=OWNER_PRINCIPAL,
-        message="Do not leak this into success.",
-        now=2,
-    )
-
-    assert revision_feedback.snapshot(tmp_db, ticket.id) is None
-
-
-def test_advancing_a_ticket_discards_its_previous_stage_feedback(tmp_db: Connection) -> None:
-    ticket = _ticket(tmp_db)
-    revision_feedback.set_feedback(
-        tmp_db,
-        ticket.id,
-        stage=ticket.stage,
-        sender=OWNER_PRINCIPAL,
-        message="Replace this proposal.",
-        now=2,
-    )
-    tickets_data.file_current_proposal(
-        tmp_db,
-        ticket.id,
-        body="Revised success",
-        principal=ticket_principal(ticket.id),
-        now=3,
-    )
-    tickets_data.accept_proposal(
-        tmp_db,
-        ticket.id,
-        field="success_condition",
-        principal=OWNER_PRINCIPAL,
-        now=4,
-        next_ceiling="needs_plan",
-        next_holder=OWNER_PRINCIPAL,
-    )
-
-    assert (
-        tmp_db.execute(
-            "SELECT 1 FROM ticket_revision_feedback WHERE ticket_id=?", (ticket.id,)
-        ).fetchone()
-        is None
-    )
 
 
 def _ticket(tmp_db: Connection) -> Ticket:

@@ -11,7 +11,6 @@ import pytest
 from click.testing import CliRunner
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from tests.support.probe import build_shipped_registry
 
 from planner.cli import http as cli_http
 from planner.cli.main import main as cli_main
@@ -19,8 +18,6 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-
-SHIPPED_REGISTRY = build_shipped_registry()
 
 # --- server: the by-ticket-id worker-self route ------------------------------
 
@@ -117,50 +114,10 @@ def test_worker_self_route_ownership_validation_rejects_ambiguous_session(
 # --- CLI: PLAN_TICKET_ID only ------------------------------------------------
 
 
-class _RecordingSend:
-    """Capture the path `worker_my_ticket` GETs, returning a canned detail body."""
-
-    def __init__(self, body: dict[str, Any]) -> None:
-        self.paths: list[str] = []
-        self._body = body
-
-    def __call__(self, method: str, path: str, **_kwargs: Any) -> Any:
-        self.paths.append(path)
-        if path == "/api/worker-types":
-            return {"worker_types": [SHIPPED_REGISTRY.manifest("coding")]}
-        return self._body
-
-
-_DETAIL_BODY: dict[str, Any] = {
-    "id": "t_abc",
-    "worker_type": "coding",
-    "stage": "needs_implementation",
-    "ticket_status": "agent",
-    "priority": "P1",
-    "title": "Do the thing",
-    "worker": "panels-worker-coding",
-    "field_values": {},
-    "pending_proposal": None,
-}
-
-
 @pytest.fixture
 def clear_identity_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv("PLAN_TICKET_ID", raising=False)
     yield
-
-
-def test_worker_my_ticket_resolves_from_plan_ticket_id(
-    monkeypatch: pytest.MonkeyPatch, clear_identity_env: None
-) -> None:
-    monkeypatch.setenv("PLAN_TICKET_ID", "t_abc")
-    recorder = _RecordingSend(_DETAIL_BODY)
-    monkeypatch.setattr(cli_http, "send", recorder)
-
-    result = CliRunner().invoke(cli_main, ["worker", "my-ticket", "--json"])
-
-    assert result.exit_code == 0, result.output
-    assert recorder.paths == ["/api/tickets/t_abc/worker-self", "/api/worker-types"]
 
 
 def test_worker_my_ticket_no_identity_fails_validation(

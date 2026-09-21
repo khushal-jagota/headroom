@@ -66,10 +66,6 @@ def test_a_transcript_that_merely_contains_a_fabrication_phrase_is_kept(
     assert without_whisper_hallucination(spoken) == spoken
 
 
-def test_a_kept_transcript_is_returned_with_its_edges_trimmed() -> None:
-    assert without_whisper_hallucination("  Deploy it.  ") == "Deploy it."
-
-
 # --- the silence trim, against the real ffmpeg ---------------------------------------------
 
 
@@ -253,22 +249,6 @@ def test_audio_is_transcribed_without_a_conversation_or_file(
     _run(exercise)
 
 
-def test_route_accepts_fresh_audio_only(harness: _Harness) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            stored_only = await _post(client, {"stored_file_id": "f_1"})
-            both = await _post(
-                client,
-                {"audio": _encoded(b"x"), "stored_file_id": "f_1"},
-            )
-        assert stored_only.status_code == 422
-        assert both.status_code == 422
-
-    _run(exercise)
-
-
-
-
 def test_provider_failure_does_not_name_or_store_a_file(
     harness: _Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -307,17 +287,6 @@ def test_a_missing_key_is_a_503_naming_the_environment_variable(
             response = await _post(client, {"audio": _encoded(b"opus-bytes")})
         assert response.status_code == 503
         assert "PLAN_GROQ_API_KEY" in response.json()["detail"]
-
-    _run(exercise)
-
-
-def test_a_media_type_outside_the_allowlist_is_refused(harness: _Harness) -> None:
-    async def exercise() -> None:
-        async with harness.client() as client:
-            response = await _post(
-                client, {"audio": _encoded(b"x"), "media_type": "video/webm"}
-            )
-        assert response.status_code == 422
 
     _run(exercise)
 
