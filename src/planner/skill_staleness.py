@@ -5,10 +5,18 @@ report is what makes a stale row visible instead of silent. Before this existed,
 build could remove a command and leave every skill still teaching it, with nothing
 anywhere saying so.
 
-The three kinds of reference are checked against the build itself rather than against
+The four kinds of reference are checked against the build itself rather than against
 a list of yesterday's names: the CLI command tree, the Stage ids the Worker types
-declare, and the skills that are retired. A list would need editing every time
-something moved, and the thing that goes stale is exactly the list nobody edits.
+declare, the Stage ladders those Worker types spell out, and the skills that are
+retired. A list would need editing every time something moved, and the thing that goes
+stale is exactly the list nobody edits.
+
+A Stage is named two ways. Its id, ``needs_something``, is unmistakable anywhere it
+appears. Its label is an ordinary phrase, and searching prose for a label reports text
+that is correct: "approach" is an English word, and "kickoff" names the live
+``--kickoff-note`` option. So labels are read in one place only, the ladder — names
+joined by arrows inside a bold span, ending at a terminal Stage. Nothing but a taught
+sequence takes that shape.
 """
 
 from __future__ import annotations
@@ -30,6 +38,11 @@ from planner.skill_sources import RETIRED_PANELS_SKILL_NAMES
 COMMAND_SPAN: Final = re.compile(r"`panels ([^`]{0,200}?)`", re.S)
 # Markdown escapes the underscores in bold, so both spellings occur.
 STAGE_REFERENCE: Final = re.compile(r"needs(?:\\_|_)([a-z](?:[a-z]|\\_|_)*)")
+# A ladder is the sequence a skill teaches: Stage names joined by arrows, inside a bold
+# span, ending at a terminal Stage. The bold and the terminal Stage are what separate a
+# taught sequence from any other arrow in the text. A span may wrap across a line.
+LADDER_SPAN: Final = re.compile(r"\*\*([^*]*?\u2192[^*]*?)\*\*", re.S)
+LADDER_ARROW: Final = "\u2192"
 
 
 # The probe fixture's specialist skill ships so that the Worker type machinery can be
@@ -87,12 +100,61 @@ def declared_stage_ids(conn: sqlite3.Connection) -> frozenset[str]:
     return frozenset(ids)
 
 
+def declared_stage_names(conn: sqlite3.Connection) -> frozenset[str]:
+    """Every id and every label a Worker type gives one of its Stages."""
+    names: set[str] = set()
+    for row in conn.execute("SELECT definition_json FROM worker_types"):
+        definition = json.loads(row[0])
+        for stage in definition["stages"]:
+            names.add(str(stage["id"]))
+            label = stage.get("label")
+            if label:
+                names.add(str(label))
+    return frozenset(names)
+
+
+def terminal_stage_names(conn: sqlite3.Connection) -> frozenset[str]:
+    """The id and label of the last Stage of every Worker type.
+
+    A ladder ends where the work ends. Reading that from the Worker types keeps the
+    check free of a literal to update the next time the last Stage is renamed.
+    """
+    names: set[str] = set()
+    for row in conn.execute("SELECT definition_json FROM worker_types"):
+        definition = json.loads(row[0])
+        last = definition["stages"][-1]
+        names.add(str(last["id"]))
+        label = last.get("label")
+        if label:
+            names.add(str(label))
+    return frozenset(names)
+
+
+def ladder_names(span: str) -> tuple[str, ...]:
+    """The Stage names in a bold arrow span, in order.
+
+    A skill sometimes introduces the sequence inside the bold, as "Stages: Brief
+    \u2192 ...". That prefix labels the list rather than naming a Stage, so it is
+    dropped. Line breaks inside the span collapse, and a closing period is not part of
+    the last name.
+    """
+    names: list[str] = []
+    for part in span.split(LADDER_ARROW):
+        name = " ".join(part.split()).strip(".")
+        if not names and ":" in name:
+            name = name.rsplit(":", 1)[1].strip()
+        names.append(name)
+    return tuple(names)
+
+
 def stale_references_in(
     skill_name: str,
     source_text: str,
     *,
     command_root: click.Command,
     stage_ids: frozenset[str],
+    stage_names: frozenset[str] = frozenset(),
+    terminal_names: frozenset[str] = frozenset(),
 ) -> tuple[StaleReference, ...]:
     found: set[StaleReference] = set()
     for match in COMMAND_SPAN.finditer(source_text):
@@ -106,6 +168,13 @@ def stale_references_in(
             stage_id = "needs_" + match.group(1).replace("\\", "").rstrip("_")
             if stage_id not in stage_ids:
                 found.add(StaleReference(skill_name, "stage", stage_id))
+        for match in LADDER_SPAN.finditer(source_text):
+            names = ladder_names(match.group(1))
+            if len(names) < 2 or names[-1] not in terminal_names:
+                continue
+            for name in names:
+                if name not in stage_names:
+                    found.add(StaleReference(skill_name, "ladder", name))
     for retired_name in RETIRED_PANELS_SKILL_NAMES:
         if retired_name in source_text:
             found.add(StaleReference(skill_name, "retired_skill", retired_name))
@@ -123,6 +192,8 @@ def stale_references(
 
         command_root = cli_root
     stage_ids = declared_stage_ids(conn)
+    stage_names = declared_stage_names(conn)
+    terminal_names = terminal_stage_names(conn)
     found: list[StaleReference] = []
     for row in conn.execute(
         "SELECT skill_name, source_text FROM managed_skills ORDER BY skill_name"
@@ -133,6 +204,8 @@ def stale_references(
                 str(row[1]),
                 command_root=command_root,
                 stage_ids=stage_ids,
+                stage_names=stage_names,
+                terminal_names=terminal_names,
             )
         )
     return tuple(found)
