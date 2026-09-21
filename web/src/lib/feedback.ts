@@ -2,6 +2,10 @@ import { shortMonthDayLabel } from "./dates";
 import type { FieldStageVisualState } from "./ui";
 import type { WorkAttention } from "./types";
 import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
+import {
+  workItemActivityMark,
+  workItemActivityMarkPresentation
+} from "./workItemPresentation";
 
 export type FeedbackNote = {
   id: string;
@@ -109,19 +113,7 @@ export function feedbackRelativeTime(value: number, now = new Date()): string {
 }
 
 export function feedbackTicketStageState(ticket: FeedbackTicket): FieldStageVisualState {
-  if (ticket.stage === "done") return "completed";
-  if (ticket.ticket_status === "errored" || ticket.ticket_status === "blocked") return "errored";
-  const attention = primaryWorkAttention(ticket);
-  if (attention === "awaiting_approval") return "current-awaiting-approval";
-  if (attention === "awaiting_answer") return "needs-me";
-  if (attention === "assigned") return "current-assigned";
-  if (attention === "awaiting_reply") return "current-awaiting-approval";
-  // A broken worker is named before the work it holds, as it is on every other screen.
-  if (ticket.agent_state === "errored") return "errored";
-  // One rule answers whether a worker has this Ticket, and every screen calls it.
-  if (agentHoldsTicket(ticket)) return "current-running";
-  if (ticket.stage === "needs_consequences") return "current-waiting";
-  return "upcoming";
+  return workItemActivityMarkPresentation(workItemActivityMark(ticket)).state;
 }
 
 export function feedbackTicketStateLabel(ticket: FeedbackTicket): string {
@@ -135,7 +127,7 @@ export function feedbackTicketStateLabel(ticket: FeedbackTicket): string {
   if (attention === "assigned") return "Yours";
   if (attention === "awaiting_reply") return "Messages";
   if (ticket.agent_state === "errored") return "Errored";
-  if (agentHoldsTicket(ticket)) return "Running";
+  if (agentHoldsTicket(ticket)) return "Agent";
   const labels: Record<string, string> = { errored: "Errored", blocked: "Blocked" };
   if (ticket.ticket_status === "empty" && ticket.stage === "needs_consequences") {
     return "Waiting on Consequences";

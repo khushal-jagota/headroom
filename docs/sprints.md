@@ -73,6 +73,13 @@ groups. Other Tickets starts collapsed. Ticket rows omit Sprint names and mark o
 unsprinted work as Backlog. The Ticket page does not show Sprint or Backlog placement.
 Commitment links and a Ticket's stored schedule can differ: they state different facts.
 
+The open Item and its Workspace rail card use one Item snapshot. One presentation rule
+derives each Ticket group, label, activity order, count, and mark. A white dot means that
+the owner owes approval or an answer. A blue dot means that an unread reply waits. A
+spinner means that an agent works now. The mark is empty otherwise. Ownership groups and
+activity marks are independent. The rail stays compact, while Today and Other Tickets
+show the full set.
+
 Outcome and Ticket Projects remain coherent. Classifying a Ticket aligns its Project
 and preserves its Sprint. Removing its Outcome preserves both Project and Sprint.
 Changing an Outcome's Project moves child and template Projects in one transaction,
@@ -150,12 +157,13 @@ ceiling, status, or Day membership.
 
 Nothing a supervisor does reaches the user on its own. Backend prose is runtime output;
 only an explicit Send Message reaches another principal. The Item row in the Workspace
-carries the same mark a Ticket row carries: an unseen completed turn from the
-conversation, put out when the user opens the Item. A system marker in the transcript
-says when that turn ended without an explicit reply to its prompt sender.
+uses the shared activity mark across its supervisor and child Tickets. Reading an Item
+clears its unread supervisor reply through the normal conversation read position. A
+system marker in the transcript says when a turn ended without an explicit reply.
 
 The workspace reads one coherent Item snapshot with child Ticket Day membership,
-artifacts, supervisor state, and the current conversation link. It adds
+activity timestamps, attention facts, artifacts, supervisor state, and the current
+conversation link. It adds
 no second Ticket review or Worker-control route. Worker readiness remains the only
 automatic creator of a Worker step.
 
@@ -170,7 +178,7 @@ the directory. A successful deletion removes the item, its agent row, and its fi
 _Code paths:_ `src/planner/sprints/` (the sprint, its items, and workspace read),
 `web/src/components/SprintItemWorkspace.svelte` (the Item workspace),
 `web/src/routes/SprintRoute.svelte` (tracking and documents), and
-`web/src/lib/sprintItemWorkspace.ts` (workspace presentation rules).
+`web/src/lib/workItemPresentation.ts` (shared Item and Ticket presentation rules).
 
 ## Handoffs
 
@@ -181,4 +189,4 @@ _Code paths:_ `src/planner/sprints/` (the sprint, its items, and workspace read)
 
 ---
 
-_Last verified: 2026-08-17._
+_Last verified: 2026-09-22._

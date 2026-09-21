@@ -1,59 +1,31 @@
-import { labelize, type FieldStageVisualState } from "./ui";
-import type { BoardCard, BoardSprintItem, Priority } from "./types";
-import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
-
-const ATTENTION_GROUP_ORDER = [
-  "awaiting_approval",
-  "awaiting_answer",
-  "assigned",
-  "awaiting_reply"
-] as const;
-
-// Tickets outside the three attention groups keep the status order the Workspace
-// already used. Unknown statuses still follow these in the order first seen.
-const REMAINDER_GROUP_ORDER: readonly string[] = [
-  "errored",
-  "agent",
-  "waiting_to_closeout",
-  "status_awaiting_approval",
-  "empty",
-  "blocked",
-  "done"
-];
-
-const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set([
-  "blocked",
-  "done"
-]);
-
-// Each of the three says whose the work is, in the word the code already uses for it:
-// `awaiting_approval` is a proposal whose ceiling the owner holds, and `assigned` is a
-// stage whose ownership mode is `user`, meaning his own to do — the whole of that rule
-// lives in `ticket_is_assigned` on the server. A proposal parked on an agent is a
-// different fact and keeps its own quiet heading, so no label here can mean two things
-// depending on the screen it is read on.
-const GROUP_LABELS: Readonly<Record<string, string>> = {
-  awaiting_approval: "Needs your approval",
-  awaiting_answer: "Needs your answer",
-  assigned: "Yours",
-  awaiting_reply: "Messages",
-  status_awaiting_approval: "Awaiting an agent's approval",
-  waiting_to_closeout: "Waiting on Consequences"
-};
+import type {
+  BoardCard,
+  BoardSprintItem,
+  Priority,
+  SprintItemWorkspace,
+  WorkAttention
+} from "./types";
+import {
+  WORK_ITEM_ATTENTION_GROUP_KEYS,
+  workItemActivityMark,
+  workItemActivityMarkPresentation,
+  workItemRollupActivityMark,
+  workItemTicketGroupKey,
+  workItemTicketGroups,
+  type WorkItemActivityMark,
+  type WorkItemActivityMarkPresentation,
+  type WorkItemTicketFacts
+} from "./workItemPresentation";
 
 export type WorkspaceTicketGroup = {
   key: string;
   label: string;
   defaultCollapsed: boolean;
-  cards: BoardCard[];
+  cards: WorkItemTicketFacts[];
 };
 
-export type WorkspaceRowMark = "answer" | "attention" | "working" | null;
-
-export type WorkspaceRowMarkPresentation = {
-  state: FieldStageVisualState;
-  ariaLabel: string;
-};
+export type WorkspaceRowMark = WorkItemActivityMark;
+export type WorkspaceRowMarkPresentation = WorkItemActivityMarkPresentation;
 
 export type WorkspaceRailItem = {
   id: string;
@@ -72,124 +44,55 @@ export type WorkspaceRail = {
 
 const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
 
-function workspaceRemainderGroupKey(card: BoardCard): string {
-  if (card.is_done) return "done";
-  if (card.waiting_to_closeout) return "waiting_to_closeout";
-  // The server says who holds a parked proposal. This reads that fact rather than the
-  // status, which says a proposal is parked and not whose it is.
-  if (card.awaiting_agent_approval) return "status_awaiting_approval";
-  // One rule answers whether a worker has this Ticket, and every screen calls it.
-  if (agentHoldsTicket(card)) return "agent";
-  return String(card.ticket_status);
-}
+export const workspaceCardGroupKey = workItemTicketGroupKey;
+export const workspaceTicketRowMark = workItemActivityMark;
+export const workspaceRowMarkPresentation = workItemActivityMarkPresentation;
 
-// Each Ticket gets one group. A broken worker leads, then attention wins in the shared
-// canonical order. Tickets without attention retain the status group that made them
-// reachable before.
-//
-// Errored is read from `agent_state`, which is the status *or* a last turn that ended
-// failed. The raw status alone cannot carry it: nothing in production writes
-// `ticket_status = 'errored'`, so a rail that grouped on the status alone named no
-// broken worker at all. The Sprint Item page reads the same fact in the same place.
-export function workspaceCardGroupKey(card: BoardCard): string {
-  if (!card.is_done && card.agent_state === "errored") return "errored";
-  return primaryWorkAttention(card) ?? workspaceRemainderGroupKey(card);
-}
-
-export function workspaceTicketRowMark(card: BoardCard): WorkspaceRowMark {
-  if (card.awaiting_answer) return "answer";
-  if (card.awaiting_reply) return "attention";
-  if (card.agent_state === "working") return "working";
-  return null;
-}
-
-export function workspaceRowMarkPresentation(
-  mark: WorkspaceRowMark
-): WorkspaceRowMarkPresentation {
-  if (mark === "answer") {
-    return { state: "needs-me", ariaLabel: "Needs an answer" };
-  }
-  if (mark === "attention") {
-    return { state: "current-awaiting-approval", ariaLabel: "Message" };
-  }
-  if (mark === "working") {
-    return { state: "current-running", ariaLabel: "Agent working" };
-  }
-  return { state: "upcoming", ariaLabel: "Nothing waiting" };
-}
-
-export function workspaceSprintItemRowMark(item: BoardSprintItem): WorkspaceRowMark {
-  if (item.awaiting_answer || item.ticket_rollup.awaiting_answer) return "answer";
-  if (item.awaiting_reply || item.ticket_rollup.awaiting_reply) return "attention";
-  if (item.agent_state === "working" || item.ticket_rollup.agent_state === "working") {
-    return "working";
-  }
-  return null;
+export function workspaceSprintItemRowMark(
+  item: WorkAttention & { ticket_rollup: WorkAttention }
+): WorkspaceRowMark {
+  return workItemRollupActivityMark(item, item.ticket_rollup);
 }
 
 function priorityRank(priority: Priority): number {
   return PRIORITY_ORDER.indexOf(priority);
 }
 
-function cardOrder(left: BoardCard, right: BoardCard): number {
-  return right.activity_at - left.activity_at || left.id.localeCompare(right.id);
-}
-
-function groupCards(
-  cards: readonly BoardCard[],
-  keys: readonly string[],
-  keyOf: (card: BoardCard) => string = workspaceCardGroupKey
+function railGroups(
+  cards: readonly WorkItemTicketFacts[],
+  attentionOnly = false
 ): WorkspaceTicketGroup[] {
-  const byGroup = new Map<string, BoardCard[]>();
-  const firstSeen: string[] = [];
-  for (const card of cards) {
-    const key = keyOf(card);
-    if (!byGroup.has(key)) {
-      byGroup.set(key, []);
-      firstSeen.push(key);
-    }
-    byGroup.get(key)?.push(card);
-  }
-  const orderedKeys = keys.filter((key) => byGroup.has(key)).concat(
-    firstSeen.filter((key) => !keys.includes(key))
+  const groups = workItemTicketGroups(
+    cards,
+    attentionOnly ? WORK_ITEM_ATTENTION_GROUP_KEYS : undefined
   );
-  return orderedKeys.map((key) => ({
-    key,
-    label: GROUP_LABELS[key] ?? labelize(key),
-    defaultCollapsed: DEFAULT_COLLAPSED_GROUPS.has(key),
-    cards: [...(byGroup.get(key) ?? [])].sort(cardOrder)
+  return groups.map((group) => ({
+    key: group.key,
+    label: group.label,
+    defaultCollapsed: group.quiet,
+    cards: group.tickets
   }));
 }
 
-// The Tickets view starts with attention, then preserves every remaining status group.
 export function workspaceGroups(cards: readonly BoardCard[]): WorkspaceTicketGroup[] {
-  return groupCards(cards, [...ATTENTION_GROUP_ORDER, ...REMAINDER_GROUP_ORDER]);
+  return railGroups(cards);
 }
 
-// An Item exposes only work that needs the owner. Quiet child Tickets remain available
-// from the Tickets view and from the Item workspace.
-//
-// An Item is read at rest, under a title the reader has not clicked, so it holds to the
-// three groups and nothing else. It therefore names a Ticket by the attention it filtered
-// on, not by `workspaceCardGroupKey`, whose broken-worker branch comes first and would put
-// a Ticket the reader must approve under a fourth heading, Errored. The Tickets view is
-// the screen that leads with a broken worker, and it still does.
 export function workspaceAttentionGroups(
-  cards: readonly BoardCard[]
+  cards: readonly WorkItemTicketFacts[]
 ): WorkspaceTicketGroup[] {
-  return groupCards(
-    cards.filter((card) => primaryWorkAttention(card) !== null),
-    ATTENTION_GROUP_ORDER,
-    (card) => primaryWorkAttention(card) ?? workspaceCardGroupKey(card)
-  );
+  return railGroups(cards, true);
 }
 
 export function buildWorkspaceRail(
   cards: readonly BoardCard[],
-  sprintItems: readonly BoardSprintItem[] = []
+  sprintItems: readonly BoardSprintItem[] = [],
+  selectedWorkspace: SprintItemWorkspace | undefined = undefined
 ): WorkspaceRail {
-  const itemCards = new Map<string, BoardCard[]>();
-  const summaries = new Map(sprintItems.map((item) => [item.id, item]));
+  const itemCards = new Map<string, WorkItemTicketFacts[]>();
+  const summaries = new Map<string, BoardSprintItem | SprintItemWorkspace>(
+    sprintItems.map((item) => [item.id, item])
+  );
 
   for (const card of cards) {
     if (!card.sprint_item_id) continue;
@@ -198,17 +101,23 @@ export function buildWorkspaceRail(
     itemCards.set(card.sprint_item_id, grouped);
   }
 
+  if (selectedWorkspace) {
+    itemCards.set(selectedWorkspace.id, selectedWorkspace.tickets);
+    summaries.set(selectedWorkspace.id, selectedWorkspace);
+  }
+
   const items = [...itemCards.entries()].map(([id, groupedCards]) => {
-    const first = groupedCards[0];
+    const first = cards.find((card) => card.sprint_item_id === id);
     const summary = summaries.get(id);
+    const selected = selectedWorkspace?.id === id ? selectedWorkspace : undefined;
     return {
       id,
-      title: first.sprint_item_title ?? "Untitled Sprint Item",
-      priority: first.sprint_item_priority ?? "P3",
+      title: selected?.title ?? first?.sprint_item_title ?? "Untitled Sprint Item",
+      priority: selected?.priority ?? first?.sprint_item_priority ?? "P3",
       createdAt: summary?.created_at ?? 0,
       mark: summary ? workspaceSprintItemRowMark(summary) : null,
       groups: workspaceAttentionGroups(groupedCards),
-      rested: groupedCards.every((groupedCard) => groupedCard.is_done)
+      rested: groupedCards.every((groupedCard) => groupedCard.stage === "done")
     } satisfies WorkspaceRailItem;
   });
 

@@ -15,7 +15,7 @@
     type WorkspaceAddress
   } from "../lib/workspaceAddress";
   import type { ManagedFileTarget } from "../lib/filePreview";
-  import type { BoardCard } from "../lib/types";
+  import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import ChiefConversation from "../components/ChiefConversation.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ResourceState from "../components/ResourceState.svelte";
@@ -38,8 +38,18 @@
   // carries the selected mark. This screen keeps no answer of its own, so the same
   // address always draws the same rail.
   let opening = $derived(whatTheAddressOpens(address));
+  const selectedItemWorkspace = createQuery(() => ({
+    ...queries.sprintItemWorkspace(opening.openItemId ?? ""),
+    enabled: opening.openItemId !== null
+  }));
   let allCards = $derived((board.data?.columns ?? []).flatMap((column) => column.cards));
-  let rail = $derived(buildWorkspaceRail(allCards, board.data?.sprint_items ?? []));
+  let rail = $derived(
+    buildWorkspaceRail(
+      allCards,
+      board.data?.sprint_items ?? [],
+      selectedItemWorkspace.data
+    )
+  );
   // A Ticket opens here from anywhere, including the Sprint page and Review, so the
   // selection is not limited to the cards on today's board. The rail highlights a
   // Ticket only when it holds a card for it, and TicketRoute answers for the Ticket
@@ -114,7 +124,7 @@
   let orderedItems = $derived(partitionByRest(rail.items));
 </script>
 
-{#snippet ticketRow(card: BoardCard, withPriority: boolean, insideItemId: string | null)}
+{#snippet ticketRow(card: WorkItemTicketFacts, withPriority: boolean, insideItemId: string | null)}
   {@const mark = workspaceTicketRowMark(card)}
   {@const presentation = workspaceRowMarkPresentation(mark)}
   <SprintTicketRow
@@ -139,6 +149,7 @@
     data-ticket-id={card.id}
     data-ticket-stage={card.stage}
     data-ticket-status={card.ticket_status}
+    data-workspace-mark={mark ?? "none"}
   />
 {/snippet}
 
@@ -314,7 +325,16 @@
             {/key}
           {:else if itemPane && opening.openItemId}
             {#key opening.openItemId}
-              <SprintItemWorkspace itemId={opening.openItemId} sprintName="Workspace" backHref="#/workspace" />
+              <SprintItemWorkspace
+                itemId={opening.openItemId}
+                sprintName="Workspace"
+                backHref="#/workspace"
+                workspaceResource={{
+                  data: selectedItemWorkspace.data,
+                  error: selectedItemWorkspace.error,
+                  isLoading: selectedItemWorkspace.isLoading
+                }}
+              />
             {/key}
           {:else}
             <div class="board-workspace-empty-inspector">

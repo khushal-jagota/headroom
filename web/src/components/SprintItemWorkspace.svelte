@@ -11,7 +11,11 @@
     workspaceTicketIsBacklog,
     type WorkspaceTicketGroup
   } from "../lib/sprintItemWorkspace";
-  import { sprintTicketCondition } from "../lib/sprintPresentation";
+  import {
+    workItemActivityMark,
+    workItemActivityMarkPresentation,
+    workItemRollupActivityMark
+  } from "../lib/workItemPresentation";
   import type { ConversationState } from "../lib/conversation/conversationState";
   import {
     readBackends,
@@ -34,15 +38,32 @@
   } from "../lib/artifactStrip";
   import { isPlainLinkClick } from "../lib/linkClick";
   import type { ManagedFileTarget } from "../lib/filePreview";
+  import type { SprintItemWorkspace as SprintItemWorkspaceData } from "../lib/types";
+
+  export type SprintItemWorkspaceResource = {
+    data: SprintItemWorkspaceData | undefined;
+    error: unknown;
+    isLoading: boolean;
+  };
 
   let {
     itemId,
     sprintName,
-    backHref = "#/sprint"
+    backHref = "#/sprint",
+    workspaceResource = null
     // A host that is already a way back can pass null so the line is not drawn.
-  }: { itemId: string; sprintName: string; backHref?: string | null } = $props();
+  }: {
+    itemId: string;
+    sprintName: string;
+    backHref?: string | null;
+    workspaceResource?: SprintItemWorkspaceResource | null;
+  } = $props();
 
-  const workspace = createQuery(() => queries.sprintItemWorkspace(itemId));
+  const ownWorkspace = createQuery(() => ({
+    ...queries.sprintItemWorkspace(itemId),
+    enabled: workspaceResource === null
+  }));
+  let workspace = $derived(workspaceResource ?? ownWorkspace);
   const startValues = createQuery(() => queries.sprintItemConversationStartValues(itemId));
   let conversationId = $state<string | null>(null);
   let selectedPastConversationId = $state<string | null>(null);
@@ -159,15 +180,17 @@
       </summary>
       <div class="sprint-workspace-status-body">
         {#each group.tickets as ticket (ticket.id)}
-          {@const condition = sprintTicketCondition(ticket)}
+          {@const mark = workItemActivityMark(ticket)}
+          {@const presentation = workItemActivityMarkPresentation(mark)}
           <a
             class="ticket-row"
             class:ticket-row--quiet={ticket.stage === "done"}
             href={workspaceAddress({ kind: "ticket", id: ticket.id, openedFromItemId: itemId })}
             data-sprint-ticket-id={ticket.id}
-            data-ticket-state={condition.mark}
+            data-ticket-state={presentation.state}
+            data-workspace-mark={mark ?? "none"}
           >
-            <StageMark state={condition.mark} aria-label={condition.word} />
+            <StageMark state={presentation.state} aria-label={presentation.ariaLabel} />
             <span class="ticket-row-title">{ticket.title}</span>
             {#if workspaceTicketIsBacklog(ticket)}
               <span class="ticket-row-backlog" data-ticket-backlog>Backlog</span>
@@ -200,6 +223,8 @@
     >
       {#if workspace.data}
         {@const item = workspace.data}
+        {@const itemMark = workItemRollupActivityMark(item, item.ticket_rollup)}
+        {@const itemMarkPresentation = workItemActivityMarkPresentation(itemMark)}
         <div class="sprint-item-column">
           {#if backHref !== null}
             <a class="sprint-item-back" href={backHref}>‹ {sprintName}</a>
@@ -219,6 +244,13 @@
                 value={item.title}
                 placeholder="(untitled Outcome)"
                 onSave={(value) => saveItem("title", value)}
+              />
+              <StageMark
+                state={itemMarkPresentation.state}
+                class="sprint-workspace-title-mark"
+                data-workspace-mark={itemMark ?? "none"}
+                aria-hidden={itemMark === null ? "true" : undefined}
+                aria-label={itemMarkPresentation.ariaLabel}
               />
             </h1>
             <ClampedText

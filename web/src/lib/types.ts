@@ -384,6 +384,7 @@ export type SprintItemWorkspaceTicket = WorkAttention & {
   title: string;
   stage: string;
   priority: Priority;
+  activity_at: number;
   ticket_status: string;
   waiting_to_closeout: boolean;
   has_pending_proposal: boolean;
@@ -407,6 +408,7 @@ export type SprintItemWorkspace = SprintItemSummary & {
   planning_day_id: string;
   today_ticket_ids: string[];
   tickets: SprintItemWorkspaceTicket[];
+  ticket_rollup: WorkAttention;
   artifacts: SprintItemArtifact[];
   conversation_history: TicketConversationHistoryEntry[];
 };

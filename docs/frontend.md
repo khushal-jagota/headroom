@@ -51,11 +51,10 @@ One screen per part of the system:
   and it is never one of the four. Needs your answer is a worker stopped on a permission
   request or a question, which is why it sits above a stage that is merely the owner's
   to do. Yours is a stage the ticket's worker type gives to the user rather than to a
-  worker. A ticket appears in only its first applicable group.
-  A ticket whose worker broke is named Errored before any of the three, because a broken
-  worker wants the reader more than the request it was carrying. Broken means the ticket
-  is errored, or its last turn ended failed. Otherwise approval takes precedence over
-  assignment, and assignment takes precedence over a reply. Empty groups are not drawn.
+  worker. A ticket appears in only its first applicable group. Owner approval, an owner
+  answer, assignment, and an unread reply take precedence in that order. Errored follows
+  those groups. Broken means the ticket is errored, or its last turn ended failed. Empty
+  groups are not drawn.
   Every ticket outside these groups follows in the existing status order, so no ticket
   becomes unreachable.
 
@@ -100,13 +99,17 @@ One screen per part of the system:
   leaves that Item open around it — the address names the Item as well as the ticket —
   and selection moves to the ticket. An open Item carries no selection of its own.
 
-  Every Ticket row keeps its mark slot. A reply waiting for Khushal gives it the filled
-  blue dot. Otherwise active agent work gives it the spinner. Idle and error states
-  leave the slot empty. An Item title rolls up its own facts and every child ticket. A
-  reply waiting for Khushal gives it the filled blue dot. Otherwise any active work gives
-  it the spinner. A waiting reply takes precedence over active work. Approval and
-  assignment alone leave the Item slot empty. The empty Item slot stays in
-  place, so the title layout does not move when its state changes.
+  Every Ticket row and Item title uses one activity mark. A needed approval or answer is
+  a white dot. An unread reply is a blue dot. Active agent work is a spinner. The mark is
+  empty when none applies. That precedence is white, blue, spinner, then empty. The mark
+  never changes the Ticket's group. A Ticket under Yours can therefore show a spinner.
+  An Item title applies the same rule across its supervisor and every child Ticket.
+  The empty mark slot stays in place, so the title layout does not move.
+
+  When an Item is open, the rail Item and detail pane read the same Item workspace
+  snapshot. A change signal refreshes that one query for both renderers. The rail keeps
+  its compact four-group subset. The detail keeps every Ticket split into Today and
+  Other Tickets. Shared Tickets have identical groups, marks, labels, counts, and order.
   A ticket without a Sprint Item appears in the Tickets view like any other. Every
   Ticket row is the shared Ticket row and uses the same blue dot and spinner. It carries
   its priority tile in the Tickets view and drops it inside a Sprint Item, where the Item

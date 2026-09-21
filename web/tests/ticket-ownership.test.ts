@@ -30,7 +30,7 @@ describe("a Stage the worker owns", () => {
 
   it("reads as an empty Stage instead", () => {
     expect(workspaceHeading(workerOwned)).toBe("Empty");
-    expect(sprintItemWord(workerOwned)).toBe("to do");
+    expect(sprintItemWord(workerOwned)).toBe("empty");
     expect(ticketPageMark(workerOwned)).toBe("current-waiting");
   });
 });
@@ -44,7 +44,7 @@ describe("a Stage the owner owns", () => {
     expect(sprintItemWord(userOwned)).toBe("yours");
     expect(feedbackLabel(userOwned)).toBe("Yours");
     expect(homeTiles(userOwned)).toEqual(["Assigned 1"]);
-    expect(homeDotLabel(userOwned)).toBe("Assigned");
+    expect(homeDotLabel(userOwned)).toBe("No current activity");
     expect(ticketPageMark(userOwned)).toBe("current-assigned");
   });
 

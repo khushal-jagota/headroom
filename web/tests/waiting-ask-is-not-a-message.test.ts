@@ -74,7 +74,7 @@ describe("a worker waiting on an answer", () => {
     const mark = workspaceTicketRowMark(waiting);
     expect(workspaceRowMarkPresentation(mark)).toEqual({
       state: "needs-me",
-      ariaLabel: "Needs an answer"
+      ariaLabel: "Needs your answer"
     });
   });
 
@@ -107,7 +107,7 @@ describe("an unread message", () => {
     const withAMessage = boardCard({ awaiting_reply: true });
     expect(workspaceRowMarkPresentation(workspaceTicketRowMark(withAMessage))).toEqual({
       state: "current-awaiting-approval",
-      ariaLabel: "Message"
+      ariaLabel: "Unread reply"
     });
     expect(sprintTicketCondition({ ...quiet, awaiting_reply: true }).word).toBe("messages");
     expect(feedbackTicketStateLabel({ ...quiet, awaiting_reply: true })).toBe("Messages");
@@ -116,7 +116,7 @@ describe("an unread message", () => {
   it("does not outrank the answer the worker is blocked on", () => {
     const both = boardCard({ awaiting_reply: true, awaiting_answer: true });
     expect(workspaceRowMarkPresentation(workspaceTicketRowMark(both)).ariaLabel).toBe(
-      "Needs an answer"
+      "Needs your answer"
     );
   });
 
