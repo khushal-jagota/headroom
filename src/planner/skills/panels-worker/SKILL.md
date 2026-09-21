@@ -14,6 +14,16 @@ Which Stages a Ticket has, and what each needs, depend on its Worker type. Run
 `panels worker my-ticket` — it names your worker skill and reports the current
 Stage and ceiling. Invoke that skill.
 
+A wake message does not carry your Ticket. It carries only what you cannot get for
+yourself: which Stage you are at, why a proposal came back, and whether your context was
+compacted. Everything else is a read. Start every step with
+`panels worker my-ticket brief,guidance` for the brief and any direction recorded on the
+Ticket, then ask the manifest for whatever else the Stage needs.
+
+If a message tells you that your context was compacted, that is Panels telling you
+something the conversation cannot: the text you were working from is gone. Re-read the
+Ticket and re-load this skill and your specialist skill before you continue.
+
 ### Who owns the current Stage
 
 Every non-terminal Stage declares one ownership mode in its Worker type. A Ticket cannot
@@ -75,7 +85,7 @@ All four write commands take their text on stdin only; there is no file-path opt
 - **Do not over-specify fields.** 
 - **Explain your proposal judgment in chat.** After you propose a gated field, your chat reply should very briefly explain why you shaped the proposal that way. Do not merely announce that the field is ready, repeat which field you proposed, or restate approval/status details, the UI already shows this. 
 - **Use recap as cold-user orientation.** The recap is not a work log. Keep it short and scannable, so a cold user can read it alongside the title and understand what the ticket is and what was done before this proposal to refresh their mind before reviewing this proposal.
-- **Preserve direct user guidance.** When the user gives direction during a worker step that should survive the turn, add it to the Ticket guidance with `panels worker note <id> --append`. Keep this document for user direction, not a work log. Automatic step prompts include current guidance; saving it does not send a chat message. Read it with `panels worker my-ticket guidance` when continuing another conversation turn.
+- **Preserve direct user guidance.** When the user gives direction during a worker step that should survive the turn, add it to the Ticket guidance with `panels worker note <id> --append`. Keep this document for user direction, not a work log. Saving it does not send a chat message, and no step prompt carries it: read it with `panels worker my-ticket guidance` at the start of every step and whenever you continue another conversation turn.
 
 ### Ticket-owned planning artifacts
 

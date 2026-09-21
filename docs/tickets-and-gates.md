@@ -199,11 +199,11 @@ shows this document, while the Ticket page does not. The CLI reads it with
 stdin; `--append` preserves the existing text. Copy text, Ticket search, and supervisor
 context include it too.
 
-The next automatic Worker step includes current guidance in its actual prompt. A direct
-edit keeps the existing generic Ticket-changed notice. Saving guidance is not an
-immediate conversation intervention: ordinary chat and rejection keep their
-existing send behavior. A Worker continuing those conversations can read current
-guidance from the Ticket.
+No Worker step prompt carries this document. The Stage instruction names the command
+that reads it, and the Worker reads it at the start of every step. A direct edit keeps
+the existing generic Ticket-changed notice. Saving guidance is not an immediate
+conversation intervention: ordinary chat and rejection keep their existing send
+behavior.
 
 The **recap** is a short cold-reader
 orientation line that works beside the title: what the ticket is, where it stands now,

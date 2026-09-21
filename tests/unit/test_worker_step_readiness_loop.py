@@ -24,6 +24,7 @@ from tests.support.ticket_progress import advance_ticket
 from planner.conversation.contracts import (
     ConversationStartRequest,
     ConversationSystem,
+    HeldPrompt,
     PromptDeliveryFate,
     PromptDeliveryMode,
 )
@@ -33,13 +34,17 @@ from planner.core.clock import TestClock
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
 from planner.runtime import worker_step_readiness
+from planner.runtime.logic.worker_step_prompt import (
+    MEMORY_LOSS_NOTICE,
+    READ_YOUR_TICKET_COMMAND,
+)
 from planner.runtime.worker_step_readiness_loop import (
     WorkerStepReadinessLoop,
     start_ready_worker_step,
 )
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback
-from planner.tickets.contracts import Ticket, TicketEdit, TicketStatus
+from planner.tickets.contracts import Ticket, TicketEdit, TicketStatus, WorkerStepClaim
 from planner.worker_types.configuration import configured_worker_type_registry
 
 FIXED_NOW = datetime(2026, 7, 6, 12, 0, 0).astimezone()
@@ -99,6 +104,38 @@ class _World:
             if on_today:
                 days_data.add_day_ticket(conn, TODAY_DAY_ID, ticket.id, 0)
         return ticket.id
+
+    def record_compacted_conversation(
+        self,
+        conversation_id: str,
+        *,
+        last_worker_step_sequence: int,
+        compacted_through: int,
+    ) -> None:
+        """Write the conversation rows the in-memory system does not keep.
+
+        The boundary is read straight off the conversation record, so a test that wants
+        one states it: a worker-step message at one sequence, and a compaction past it.
+        """
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO conversations (conversation_id, backend_key, workspace_folder, "
+                "access, created_at, automatically_compacted_through_sequence) VALUES "
+                "(?, 'claude', '/tmp', 'full', 0, ?)",
+                (conversation_id, compacted_through),
+            )
+            conn.execute(
+                "INSERT INTO conversation_events (conversation_id, sequence, kind, payload, "
+                "created_at) VALUES (?, ?, 'prompt', ?, 0)",
+                (
+                    conversation_id,
+                    last_worker_step_sequence,
+                    '{"sender_message_id": "worker_step_message_earlier"}',
+                ),
+            )
+
+    def held_prompts(self, conversation_id: str) -> tuple[HeldPrompt, ...]:
+        return asyncio.run(self.conversations.held_prompts(conversation_id))
 
     def start_conversation(self, conversation_id: str) -> None:
         asyncio.run(
@@ -257,7 +294,9 @@ def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _
     assert len(writes) == 1
     assert "Revision feedback from owner owner for stage needs_success_condition" in writes[0].text
     assert "  Preserve this exact feedback.  " in writes[0].text
-    assert "Mutable guidance changed independently." in writes[0].text
+    # Guidance moves on its own and the worker reads it off the Ticket, so a rejection
+    # carries only the feedback that explains the rejection.
+    assert "Mutable guidance changed independently." not in writes[0].text
     assert world.pending_revision_feedback(ticket_id) is False
 
 
@@ -394,7 +433,7 @@ class _QueueingConversationSystem:
         return await self._system.has_pending_permission_ask(conversation_id)
 
 
-def test_the_opener_carries_the_ordered_worker_inputs(world: _World) -> None:
+def test_the_opener_carries_only_what_the_worker_cannot_get_for_itself(world: _World) -> None:
     ticket_id = world.ready_ticket(
         title="Ship it",
         kickoff_note="Use this agreed starting point.",
@@ -422,14 +461,111 @@ def test_the_opener_carries_the_ordered_worker_inputs(world: _World) -> None:
     assert f"Work ticket {ticket_id} — Ship it" in writes[0].text
     assert "propose the 'success_condition' field for approval" in writes[0].text
     assert "Stage owner: worker" in writes[0].text
-    assert f"[Ticket guidance]\n{guidance}\n[/Ticket guidance]" in writes[0].text
-    assert (
-        "[Ticket brief]\nUse this agreed starting point.\n[/Ticket brief]" in writes[0].text
-    )
-    assert "[Pending worker context]" not in writes[0].text
+    assert f"Read your Ticket first: {READ_YOUR_TICKET_COMMAND}." in writes[0].text
+    # The Ticket is a read the worker makes, so neither of these rides the message.
+    assert "Ticket guidance" not in writes[0].text
+    assert "Exact whitespace stays" not in writes[0].text
+    assert "Ticket brief" not in writes[0].text
+    assert "Use this agreed starting point." not in writes[0].text
+    assert MEMORY_LOSS_NOTICE not in writes[0].text
     bindings = world.skill_bindings()
     assert len(bindings) == 3
     assert {row["sender_message_id"] for row in bindings} == {sender_message_id}
+
+
+def test_a_wake_after_a_compaction_leads_with_the_memory_loss_notice(world: _World) -> None:
+    ticket_id = world.ready_ticket(title="Ship it", conversation_id="conv-compacted")
+    world.start_conversation("conv-compacted")
+    world.record_compacted_conversation(
+        "conv-compacted", last_worker_step_sequence=4, compacted_through=9
+    )
+
+    assert world.start_step(ticket_id) is True
+
+    text = world.conversations.backend_prompt_writes("conv-compacted")[0].text
+    assert MEMORY_LOSS_NOTICE in text
+    assert f"Work ticket {ticket_id} — Ship it" in text
+    # It leads: a worker reads why it is confused before it reads what to do.
+    assert text.index(MEMORY_LOSS_NOTICE) < text.index("Work ticket")
+
+
+def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_a_wake(
+    world: _World,
+) -> None:
+    ticket_id = world.ready_ticket(title="Ship it", conversation_id="conv-mid-step")
+    world.start_conversation("conv-mid-step")
+    assert world.start_step(ticket_id) is True
+    assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
+    # The step is still out, and the worker is between turns. That is when Panels
+    # compacts an idle worker, and it is the case a later wake never reaches.
+    world.conversations.complete_running_turn("conv-mid-step")
+    world.record_compacted_conversation(
+        "conv-mid-step", last_worker_step_sequence=4, compacted_through=9
+    )
+
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
+    try:
+        assert readiness_loop.tell_every_worker_that_lost_its_memory() == [ticket_id]
+        assert _waited_for(
+            lambda: len(world.conversations.backend_prompt_writes("conv-mid-step")) == 2
+        )
+    finally:
+        readiness_loop.stop()
+        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
+        thread.join(5)
+        asyncio_loop.close()
+
+    notice = world.conversations.backend_prompt_writes("conv-mid-step")[1]
+    assert MEMORY_LOSS_NOTICE in notice.text
+    assert f"part-way through a step on ticket {ticket_id}" in notice.text
+    assert notice.mode is PromptDeliveryMode.queue
+    # The step keeps its claim: the worker was never sent away, only told.
+    assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
+
+
+def test_a_notice_still_queued_behind_a_busy_worker_is_not_sent_again(world: _World) -> None:
+    ticket_id = world.ready_ticket(title="Busy", conversation_id="conv-busy")
+    world.start_conversation("conv-busy")
+    assert world.start_step(ticket_id) is True
+    # The turn runs on, so anything sent now queues behind it and writes no event row.
+    world.record_compacted_conversation(
+        "conv-busy", last_worker_step_sequence=4, compacted_through=9
+    )
+
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
+    try:
+        assert readiness_loop.tell_every_worker_that_lost_its_memory() == [ticket_id]
+        assert _waited_for(lambda: len(world.held_prompts("conv-busy")) == 1)
+        assert readiness_loop.tell_every_worker_that_lost_its_memory() == [ticket_id]
+        # The second pass finds its own notice waiting and sends nothing.
+        sleep(0.2)
+    finally:
+        readiness_loop.stop()
+        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
+        thread.join(5)
+        asyncio_loop.close()
+
+    assert len(world.held_prompts("conv-busy")) == 1
+
+
+def test_a_worker_resting_between_steps_is_left_for_its_next_wake(world: _World) -> None:
+    ticket_id = world.ready_ticket(title="Resting", conversation_id="conv-resting")
+    world.start_conversation("conv-resting")
+    world.record_compacted_conversation(
+        "conv-resting", last_worker_step_sequence=4, compacted_through=9
+    )
+    assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.none
+
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
+    try:
+        assert readiness_loop.tell_every_worker_that_lost_its_memory() == []
+    finally:
+        readiness_loop.stop()
+        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
+        thread.join(5)
+        asyncio_loop.close()
+
+    assert world.conversations.backend_prompt_writes("conv-resting") == ()
 
 
 # --- the polling loop ----------------------------------------------------------
