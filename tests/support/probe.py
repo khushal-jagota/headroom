@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from planner.core.migrations.versions.settled_stage_and_field_ids import renamed_definition
-from planner.core.migrations.versions.worker_types_in_database import SHIPPED_WORKER_TYPES
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.configuration import (
     ConfiguredWorkerRuntimeDefinitions,
@@ -20,6 +18,7 @@ from planner.worker_types.contracts import (
     WorkerTypeDefinition,
 )
 from planner.worker_types.registry import WorkerTypeRegistry
+from planner.worker_types.shipped import shipped_worker_types
 from planner.worker_types.store import definition_from_json, write_definition
 
 NEEDS_ALPHA = "".join(("needs_", "alpha"))
@@ -64,12 +63,7 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
 # stage the one_ticket_ending migration removes and still spells the ids the
 # settled_stage_and_field_ids migration moves. A stored record has been through both.
 SHIPPED_DEFINITIONS: tuple[WorkerTypeDefinition, ...] = tuple(
-    definition_from_json(
-        json.dumps(
-            renamed_definition({k: v for k, v in shipped.items() if k != "dropped"})
-        )
-    )
-    for shipped in SHIPPED_WORKER_TYPES
+    definition_from_json(json.dumps(shipped)) for shipped in shipped_worker_types()
 )
 PROBE_KNOWN_SKILLS: frozenset[str] = frozenset(
     {definition.worker_profile.specialist_skill for definition in SHIPPED_DEFINITIONS}

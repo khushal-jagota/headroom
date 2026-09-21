@@ -102,7 +102,7 @@ either unsafe, request user help rather than improvising.
 For a normal or stale boundary, write the current sprint's `review` document first and
 read it back through `panels sprint show <id> review`.
 For a genuine first sprint, verify the approved no-review result and perform no review
-write. Then create the next (or first) sprint with the approved `primary_bet` and `kickoff`,
+write. Then create the next (or first) sprint with the approved `primary_bet` and `brief`,
 retain its returned id, create only approved new Outcomes, and add only approved
 commitments through `panels sprint outcome add`. For an explicit approved carry list,
 use `panels sprint outcome carry` with each selected Ticket ID. Read tracking and affected

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-from tests.support.probe import shipped_definition
+from tests.support.probe import build_shipped_registry, shipped_definition
 
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.worker_types.contracts import (
@@ -12,6 +12,7 @@ from planner.worker_types.contracts import (
 )
 from planner.worker_types.registry import WorkerTypeRegistry
 
+SHIPPED_REGISTRY = build_shipped_registry()
 CODING_WORKER_TYPE_DEFINITION = shipped_definition("coding")
 
 KNOWN_SKILLS = frozenset({"panels-worker", "panels-worker-coding", "panels-worker-new-worker"})
@@ -164,3 +165,5 @@ def test_registry_validation_order_and_messages() -> None:
         "default_model must be a non-empty string",
         {"worker_type": "coding", "default_model": "   "},
     )
+
+

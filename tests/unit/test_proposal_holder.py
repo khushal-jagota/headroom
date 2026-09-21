@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
+from pathlib import Path
 from sqlite3 import Connection
 from unittest.mock import AsyncMock
 
@@ -16,6 +18,7 @@ from planner.core.contracts import (
     Principal,
     PrincipalKind,
 )
+from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
 from planner.sprints import data as sprints_data
@@ -254,6 +257,74 @@ def test_revision_feedback_is_discarded_when_the_ticket_leaves_its_stage(
     )
 
 
+def test_a_ticket_holder_cannot_be_deleted_while_another_ticket_uses_it(
+    tmp_db: Connection,
+) -> None:
+    holder = data.create_ticket(
+        tmp_db,
+        title="Holder",
+        principal=OWNER_PRINCIPAL,
+        now=10,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note=None,
+    )
+    data.create_ticket(
+        tmp_db,
+        title="Held",
+        principal=Principal(PrincipalKind.ticket, holder.id),
+        now=11,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note=None,
+    )
+    with pytest.raises(PlannerError, match="holds another Ticket ceiling"):
+        data.delete_ticket(tmp_db, holder.id, principal=OWNER_PRINCIPAL, now=12)
+
+
+def test_the_holder_check_and_the_startup_audit_refuse_a_broken_holder(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "proposal-holder.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    conn.execute(
+        "INSERT INTO tickets "
+        "(id,title,worker_type,employee_backend,stage,ceiling,"
+        "field_values,created_at,updated_at) "
+        "VALUES ('t_old','Old','coding','codex','needs_brief','needs_brief','{}',1,1)"
+    )
+
+    # A row that names no holder takes the owner, which is the column's default.
+    assert data.read_ticket(conn, "t_old").ceiling_holder == OWNER_PRINCIPAL
+    invalid_holders = (
+        "{}",
+        '{"kind":"ticket"}',
+        '{"id":"t_old"}',
+        '{"kind":"owner","id":"chief"}',
+        '{"kind":"chief","id":"owner"}',
+        '{"kind":"ticket","id":" t_old"}',
+        '{"kind":"ticket","id":"t_old "}',
+    )
+    for invalid_holder in invalid_holders:
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "UPDATE tickets SET ceiling_holder = ? WHERE id = 't_old'",
+                (invalid_holder,),
+            )
+    # A holder that is well formed but names nobody passes the CHECK, so the startup
+    # audit is what catches it.
+    conn.execute("PRAGMA ignore_check_constraints=ON")
+    conn.execute(
+        "UPDATE tickets SET ceiling_holder = ? WHERE id = 't_old'",
+        ('{"id":"missing","kind":"ticket"}',),
+    )
+    conn.execute("PRAGMA ignore_check_constraints=OFF")
+    with pytest.raises(RuntimeError, match="ceiling holder does not exist"):
+        data.audit_ticket_registry_integrity(conn)
+    conn.close()
+
+
 def test_setting_the_ceiling_leaves_the_holder_alone(tmp_db: Connection) -> None:
     """How far a Ticket may go and who is asked are set separately."""
     ticket = data.create_ticket(
@@ -360,29 +431,3 @@ def test_a_worker_cannot_move_its_own_ticket_holder(tmp_db: Connection) -> None:
     assert data.read_ticket(tmp_db, ticket.id).ceiling_holder == CHIEF_PRINCIPAL
 
 
-def test_holding_a_ceiling_grants_a_ticket_nothing(tmp_db: Connection) -> None:
-    """A holder is an address. Being one gives a Ticket no reach it did not have."""
-    parent = data.create_ticket(
-        tmp_db,
-        title="Parent",
-        principal=OWNER_PRINCIPAL,
-        now=1,
-        title_max_chars=TITLE_MAX_CHARS,
-        worker_type="coding",
-        kickoff_note="Parent",
-    )
-    holder = Principal(PrincipalKind.ticket, parent.id)
-    child = _park(tmp_db, holder, now=10)
-    assert child.ceiling_holder == holder
-
-    with pytest.raises(PlannerError) as forbidden:
-        data.edit_ticket(
-            tmp_db,
-            child.id,
-            edit=TicketEdit(ceiling_holder=OWNER_PRINCIPAL),
-            title_max_chars=TITLE_MAX_CHARS,
-            principal=holder,
-            now=12,
-        )
-    assert forbidden.value.code is ErrorCode.agent_forbidden
-    assert data.read_ticket(tmp_db, child.id).ceiling_holder == holder

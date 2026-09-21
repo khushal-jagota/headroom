@@ -1,4 +1,4 @@
-"""Sprint prose survives migration and uses one write/read path per document."""
+"""Sprint prose uses one write and read path per document."""
 
 from __future__ import annotations
 

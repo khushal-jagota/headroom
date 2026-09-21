@@ -102,9 +102,9 @@ workflow. Ticket contracts still own universal Ticket facts such as the worker-s
 and the ceiling, but they do not define a coding lifecycle.
 
 _Code paths:_ `src/planner/worker_types/contracts.py` contains the immutable declaration
-types and behavior. `src/planner/worker_types/store.py` reads and writes the rows. The
-migration `worker_types_in_database` carries a frozen copy of the fourteen definitions a
-new database is seeded with.
+types and behavior. `src/planner/worker_types/store.py` reads and writes the rows.
+`src/planner/worker_types/shipped_worker_types.json` holds the fourteen definitions a new
+database is seeded with, and `shipped.py` puts them in when the table is empty.
 
 ## Validation at the write door
 

@@ -10,8 +10,7 @@ that no reader is waiting for its rows closes its transaction with
 ``commit_without_change_signal`` instead, which is the one way past it.
 
 The schema itself is not written here. It lives in the migration history under
-``migrations/``, whose first revision is the schema as the old hand-written migration
-ladder left it.
+``migrations/``, whose first revision is the whole schema.
 """
 
 from __future__ import annotations
@@ -28,52 +27,74 @@ from sqlalchemy.engine import URL
 from planner.core import change_signal
 
 MIGRATIONS_DIRECTORY: Final = Path(__file__).resolve().parent / "migrations"
-BASELINE_REVISION: Final = "baseline_v37"
+BASELINE_REVISION: Final = "baseline_2026_09"
 
-# The schema version the old hand-written migration ladder finished at. A database that
-# carries this marker and has no Alembic version table is one the ladder built, and is
-# adopted at the baseline revision. Anything older is brought up by a checkout that still
-# has the ladder; this build does not carry those steps.
-LAST_HAND_WRITTEN_SCHEMA_VERSION: Final = 37
+# The head of the sixty-revision chain the baseline replaced. A database that carries this
+# revision holds exactly the schema the baseline builds, and every row rewrite those
+# revisions performed, so it is adopted at the baseline rather than rebuilt. Frozen: it
+# names a moment in history, so later schema work never changes it.
+PRE_COLLAPSE_HEAD_REVISION: Final = "settled_stage_and_field_ids"
 
-# What a database the ladder built contains. Frozen alongside the version above: these
-# describe the schema as it was when Alembic took over, and are read only when adopting
-# such a database, so they never follow later schema changes.
-PRE_ALEMBIC_TABLE_NAMES: Final = frozenset(
+# Every table, index and trigger a database at that head holds. Frozen alongside the
+# revision above, and read only when adopting such a database, so it describes that one
+# moment in history and never follows later schema changes.
+PRE_COLLAPSE_HEAD_SCHEMA_OBJECT_NAMES: Final = frozenset(
     {
-        "conversation_session_bindings",
+        "agents",
+        "backend_model_enablement",
+        "backend_usage_snapshots",
+        "backend_usage_windows",
+        "chief_settings",
+        "conversation_error_acknowledgements",
+        "conversation_events",
+        "conversations",
         "day_tickets",
         "days",
-        "employee_configuration_catalog_cache",
-        "employee_conversations",
-        "employee_step_runs",
-        "events",
+        "feedback_notes",
         "ideas",
-        "links",
-        "pending_worker_context",
-        "projects",
-        "sprint_items",
-        "sprints",
-        "ticket_conversation_projections",
-        "tickets",
-    }
-)
-
-# Checked for the same reason as the tables, and worth checking separately: the ladder
-# wrote its version marker before creating indexes, so a database could carry the marker
-# while still missing one. Adopting that quietly would leave the database short of an
-# index the ladder promised, so the adoption check names them as they stood then.
-PRE_ALEMBIC_INDEX_NAMES: Final = frozenset(
-    {
-        "idx_employee_step_runs_one_running",
-        "idx_events_entity",
+        "idx_conversation_events_kind_recipient",
+        "idx_conversation_events_sender_message_id",
+        "idx_conversations_automatic_compaction_due",
+        "idx_feedback_notes_state_created",
+        "idx_feedback_notes_ticket_id",
         "idx_ideas_project_id",
-        "idx_links_to",
+        "idx_notification_deliveries_due",
+        "idx_scheduled_ticket_occurrences_created_at",
+        "idx_scheduled_ticket_schedules_slot",
         "idx_sprint_items_project_id",
-        "idx_tickets_alias",
+        "idx_sprint_items_supervisor_agent_key",
+        "idx_sprint_outcomes_outcome_id",
+        "idx_ticket_blocks_blocked_ticket_id",
+        "idx_ticket_conversations_ticket_id",
         "idx_tickets_project_id",
         "idx_tickets_stage",
         "idx_tickets_worker_type_stage",
+        "managed_skill_versions",
+        "managed_skill_versions_no_delete",
+        "managed_skill_versions_no_update",
+        "managed_skills",
+        "notification_attention_edges",
+        "notification_attention_state",
+        "notification_deliveries",
+        "notification_preferences",
+        "notification_push_subscriptions",
+        "notification_web_push_identity",
+        "projects",
+        "scheduled_ticket_occurrences",
+        "scheduled_ticket_schedules",
+        "sprint_items",
+        "sprint_items_supervisor_create",
+        "sprint_items_supervisor_insert_guard",
+        "sprint_items_supervisor_update_guard",
+        "sprint_outcomes",
+        "sprints",
+        "ticket_blocks",
+        "ticket_conversations",
+        "ticket_paired_stage_openers",
+        "ticket_revision_feedback",
+        "tickets",
+        "worker_step_skill_bindings",
+        "worker_types",
     }
 )
 
@@ -183,10 +204,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
     # Seeding is the only thing here that knows a domain, and domains open connections
     # through this module — so these are imported where they are used, leaving this module
     # importable on its own.
-    from planner.managed_skills import write_skill_home
+    from planner.managed_skills import seed_packaged_skills, write_skill_home
     from planner.notifications import data as notifications_data
     from planner.projects import data as projects_data
+    from planner.scheduled_tickets.data import seed_shipped_schedules
     from planner.worker_types.configuration import load_worker_runtime_definitions
+    from planner.worker_types.shipped import seed_chief_settings, seed_shipped_worker_types
     from planner.worker_types.store import worker_types_table_exists
 
     if conn.in_transaction:
@@ -207,6 +230,21 @@ def create_schema(conn: sqlite3.Connection) -> None:
     # The Worker types this process runs on, and the skill files agents read, both come
     # from this database. Loading them here is what makes opening a database enough.
     if worker_types_table_exists(conn):
+        # The rows a brand-new database needs. Each one declines to touch a table that
+        # already holds rows, so an existing database keeps what its owner has edited.
+        # One transaction for all three, because a Worker type names a skill: a second
+        # process must not find the types seeded and the skills still going in.
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            seed_packaged_skills(conn)
+            seed_shipped_worker_types(conn)
+            seed_chief_settings(conn)
+            seed_shipped_schedules(conn)
+            notifications_data.seed_shipped_notification_preferences(conn)
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        conn.commit()
         write_skill_home(conn, Path(_main_database_path(conn)).parent)
         load_worker_runtime_definitions(conn)
 
@@ -234,7 +272,7 @@ def _upgrade_to_current_schema(db_path: str, busy_timeout_ms: int) -> None:
     engine = _migration_engine(db_path, busy_timeout_ms)
     try:
         with engine.begin() as connection:
-            _adopt_database_built_before_alembic(connection)
+            _adopt_database_left_by_the_collapsed_chain(connection)
             command.upgrade(_alembic_config(connection), "head")
             violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
             if violations:
@@ -278,13 +316,27 @@ def _alembic_config(connection: Connection) -> Config:
     return config
 
 
-def _adopt_database_built_before_alembic(connection: Connection) -> None:
-    """Give a database the old ladder built the version marker Alembic reads.
+def _schema_object_names(connection: Connection) -> set[str]:
+    """Every table, index and trigger a database holds, excluding SQLite's own."""
+    return {
+        str(row[0])
+        for row in connection.exec_driver_sql(
+            "SELECT name FROM sqlite_master "
+            "WHERE type IN ('table', 'index', 'trigger') AND name NOT LIKE 'sqlite_%'"
+        )
+    }
 
-    A new database and a database Alembic already tracks both need nothing here — the
-    upgrade that follows builds the first and advances the second. A database with tables
-    but no version table came from the ladder, and is adopted at the baseline once it is
-    established that it really holds the schema the baseline describes.
+
+def _adopt_database_left_by_the_collapsed_chain(connection: Connection) -> None:
+    """Give a database the old chain left behind the version marker this build reads.
+
+    A new database and a database already at the baseline both need nothing here — the
+    upgrade that follows builds the first and leaves the second alone. A database at the
+    head the chain finished at holds the baseline's schema and the row rewrites the chain
+    performed, so it is adopted at the baseline once that schema is confirmed.
+
+    Every other state is refused. The revisions that would carry such a database forward
+    are not in this build, so the only honest answer is to say which build has them.
     """
     tables = {
         str(row[0])
@@ -292,47 +344,45 @@ def _adopt_database_built_before_alembic(connection: Connection) -> None:
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
         )
     }
-    schema_version = int(connection.exec_driver_sql("PRAGMA user_version").scalar() or 0)
 
-    if "alembic_version" in tables:
-        # Alembic writes a row whenever it stamps or upgrades, so an empty version table
-        # is not a database it has seen. Left alone, the upgrade below would take it for
-        # an empty database and lay the baseline over whatever is really there.
-        if not connection.exec_driver_sql("SELECT count(*) FROM alembic_version").scalar():
-            raise RuntimeError(
-                "this database has a version table with nothing in it, so there is no "
-                "saying what schema it holds. Restore it from a backup."
-            )
-        return
-
-    if not tables:
-        if schema_version:
-            raise RuntimeError(
-                f"this database has no tables but is marked as schema version "
-                f"{schema_version}, so it is not the empty database it looks like. "
-                "Restore it from a backup."
-            )
-        return
-
-    if schema_version != LAST_HAND_WRITTEN_SCHEMA_VERSION:
+    if "alembic_version" not in tables:
+        if not tables:
+            return
         raise RuntimeError(
-            f"this database is at schema version {schema_version}, and this build starts at "
-            f"version {LAST_HAND_WRITTEN_SCHEMA_VERSION}. Open it once with a checkout that "
-            "still has the hand-written migrations, then come back."
+            "this database has tables but no version table, so there is no saying what "
+            "schema it holds. Open it once with a build from before the migration chain "
+            "was collapsed, let it start, then come back."
         )
-    indexes = {
-        str(row[0])
-        for row in connection.exec_driver_sql(
-            "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"
+
+    revisions = [
+        str(row[0]) for row in connection.exec_driver_sql("SELECT version_num FROM alembic_version")
+    ]
+    if revisions == [BASELINE_REVISION]:
+        return
+    if revisions != [PRE_COLLAPSE_HEAD_REVISION]:
+        held = ", ".join(revisions) if revisions else "nothing"
+        raise RuntimeError(
+            f"this database is at revision {held}, and this build starts at "
+            f"{BASELINE_REVISION}, which it adopts only from {PRE_COLLAPSE_HEAD_REVISION}. "
+            "Deploy the build from before the migration chain was collapsed, let it start "
+            "once so it carries this database to "
+            f"{PRE_COLLAPSE_HEAD_REVISION}, then deploy this build again."
         )
-    }
-    missing = sorted(
-        (PRE_ALEMBIC_TABLE_NAMES - tables) | (PRE_ALEMBIC_INDEX_NAMES - indexes)
-    )
-    unexpected = sorted(tables - PRE_ALEMBIC_TABLE_NAMES)
+
+    present = _schema_object_names(connection)
+    promised = set(PRE_COLLAPSE_HEAD_SCHEMA_OBJECT_NAMES)
+    missing = sorted(promised - present)
+    unexpected = sorted(present - promised - {"alembic_version"})
     if missing or unexpected:
         raise RuntimeError(
-            f"this database is marked as schema version {LAST_HAND_WRITTEN_SCHEMA_VERSION} but "
-            f"does not hold that schema: missing {missing}, unexpected tables {unexpected}"
+            f"this database is at revision {PRE_COLLAPSE_HEAD_REVISION} but does not hold "
+            f"that schema: missing {missing}, unexpected {unexpected}"
         )
-    command.stamp(_alembic_config(connection), BASELINE_REVISION)
+    # purge, because the row already in the version table names a revision this build no
+    # longer carries. Without it Alembic tries to resolve that name to plot a path, and
+    # fails before it writes anything.
+    command.stamp(_alembic_config(connection), BASELINE_REVISION, purge=True)
+    # The pre-Alembic ladder left a version marker behind, and no build still reads it.
+    # Clearing it as the database is adopted makes an adopted database and a database this
+    # build made from nothing the same database.
+    connection.exec_driver_sql("PRAGMA user_version=0")

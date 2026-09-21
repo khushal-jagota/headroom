@@ -34,6 +34,7 @@ planner = [
   "core/migrations/env.py",
   "core/migrations/script.py.mako",
   "core/migrations/versions/*.py",
+  "worker_types/shipped_worker_types.json",
   "skills/*/SKILL.md",
   "skills/*/agents/*.yaml",
   "skills/*/references/*.md",

@@ -8,6 +8,7 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Final
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -88,6 +89,25 @@ def set_preference(
         "enabled = excluded.enabled, updated_at = excluded.updated_at",
         (subject_key, notification_type, int(enabled), now),
     )
+
+
+# The one preference this build ships turned off. Everything else is on until the owner
+# says otherwise, so only the exception is stored.
+SHIPPED_DISABLED_PREFERENCES: Final = (
+    (SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY, "errored"),
+)
+
+
+def seed_shipped_notification_preferences(conn: sqlite3.Connection) -> None:
+    """Put the shipped preferences in an empty table, and nothing in a populated one."""
+    if conn.execute("SELECT 1 FROM notification_preferences LIMIT 1").fetchone() is not None:
+        return
+    for subject_key, notification_type in SHIPPED_DISABLED_PREFERENCES:
+        conn.execute(
+            "INSERT INTO notification_preferences"
+            "(subject_key, notification_type, enabled, updated_at) VALUES (?, ?, 0, 0)",
+            (subject_key, notification_type),
+        )
 
 
 def get_or_create_web_push_identity(conn: sqlite3.Connection, now: int) -> WebPushIdentity:

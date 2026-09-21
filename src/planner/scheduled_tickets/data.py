@@ -6,7 +6,7 @@ import json
 import sqlite3
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
-from typing import cast
+from typing import Final, cast
 
 from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
@@ -48,6 +48,27 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
         raise
     else:
         conn.execute("COMMIT")
+
+
+# The one schedule this build ships. A Sprint's Checkpoint is due on its fourth day,
+# whether or not anyone remembers it.
+CHECKPOINT_SCHEDULE_ID: Final = "schedule_weekly_sprint_checkpoint"
+CHECKPOINT_KICKOFF_NOTE: Final = (
+    "Review the sprint so far and decide what to adjust for the remaining days."
+)
+
+
+def seed_shipped_schedules(conn: sqlite3.Connection) -> None:
+    """Put the shipped schedules in an empty table, and nothing in a populated one."""
+    if conn.execute("SELECT 1 FROM scheduled_ticket_schedules LIMIT 1").fetchone() is not None:
+        return
+    conn.execute(
+        "INSERT INTO scheduled_ticket_schedules (id, enabled, cadence, local_time, title, "
+        "worker_type, kickoff_note, priority, blocked_by_ticket_ids, created_at, updated_at, "
+        "placement_mode) VALUES (?, 1, 'current_sprint_day_four', '17:00', 'Checkpoint', "
+        "'personal', ?, 'P3', '[]', 0, 0, 'current_sprint')",
+        (CHECKPOINT_SCHEDULE_ID, CHECKPOINT_KICKOFF_NOTE),
+    )
 
 
 def _blocked_by_from_json(raw: object) -> tuple[str, ...]:

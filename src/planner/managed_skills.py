@@ -20,6 +20,7 @@ from planner.core.contracts import ErrorCode, PlannerError
 
 SKILL_FILE_NAME: Final = "SKILL.md"
 SKILLS_DIR_NAME: Final = "skills"
+PACKAGED_SKILLS_ROOT: Final = Path(__file__).resolve().parent / SKILLS_DIR_NAME
 
 
 def managed_skills_home(configured_database_parent: Path | str) -> Path:
@@ -225,6 +226,24 @@ def write_skill_source(
         "updated_at = excluded.updated_at",
         (skill_name, source_text, now),
     )
+
+
+def seed_packaged_skills(conn: sqlite3.Connection) -> None:
+    """Put the skills this build ships in an empty table, and nothing in a populated one.
+
+    These rows used to arrive with the migration that moved skills into the database. On
+    an existing database the rows are the owner's, edits and all, so they are left alone.
+    """
+    if conn.execute("SELECT 1 FROM managed_skills LIMIT 1").fetchone() is not None:
+        return
+    for directory in sorted(PACKAGED_SKILLS_ROOT.iterdir(), key=lambda path: path.name):
+        skill_file = directory / SKILL_FILE_NAME
+        if not directory.is_dir() or not skill_file.is_file():
+            continue
+        conn.execute(
+            "INSERT INTO managed_skills (skill_name, source_text, updated_at) VALUES (?, ?, 0)",
+            (directory.name, skill_file.read_text(encoding="utf-8")),
+        )
 
 
 def write_skill_home(conn: sqlite3.Connection, configured_database_parent: Path | str) -> Path:
