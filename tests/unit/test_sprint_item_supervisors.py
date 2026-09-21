@@ -374,6 +374,50 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
     assert write.text.endswith(f"Sprint Item {item['id']}:\nCheck the acceptance evidence.")
 
 
+def test_a_worker_can_answer_the_outcome_that_asked_it_something(tmp_path: Path) -> None:
+    """The reply the message above demands must be sendable.
+
+    Messaging down the chain is acting on the recipient, and the rule decides it.
+    Messaging up is only speaking, so a Worker answering its own Outcome is admitted and
+    a Worker reaching a different Outcome is not.
+    """
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        own = _create_item(client, "Own")
+        other = _create_item(client, "Other")
+        ticket = client.post(
+            "/api/tickets",
+            json={
+                "worker_type": "coding",
+                "title": "Current child",
+                "kickoff_note": "Start.",
+                "sprint_item_id": own["id"],
+            },
+        ).json()
+        worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(ticket["id"])}
+        reply = client.post(
+            "/api/messages/send",
+            json={"target": {"kind": "sprint_item", "id": own["id"]}, "message": "Answered."},
+            headers=worker,
+        )
+        stranger = client.post(
+            "/api/messages/send",
+            json={"target": {"kind": "sprint_item", "id": other["id"]}, "message": "Answered."},
+            headers=worker,
+        )
+        to_owner = client.post(
+            "/api/messages/send",
+            json={"target": {"kind": "owner", "id": "owner"}, "message": "Answered."},
+            headers=worker,
+        )
+
+    assert reply.status_code == 200, reply.text
+    assert stranger.json()["error"]["code"] == "agent_forbidden"
+    # Nobody stands above Khushal, so this one asks no authority question at all. It
+    # fails later, on the Ticket having no conversation to send from.
+    assert to_owner.json()["error"]["code"] == "not_found"
+
+
 def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> None:
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:

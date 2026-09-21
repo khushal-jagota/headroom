@@ -89,18 +89,40 @@ def _result_json(result: MessageDeliveryResult) -> JsonDict:
     }
 
 
+def _as_target(principal: Principal) -> authority.Target | None:
+    """The thing this principal is, when something can stand above it.
+
+    Khushal and the Chief are above everything, so nothing is above them and they are no
+    target. A message addressed to either asks no authority question.
+    """
+    if principal.kind is PrincipalKind.ticket:
+        return authority.ticket(principal.id)
+    if principal.kind is PrincipalKind.sprint_item:
+        return authority.outcome(principal.id)
+    return None
+
+
 def _require_reach(conn: DbConn, caller: Principal, recipient: Principal) -> None:
     """Sending down the chain is acting on the recipient. Sending up is only speaking.
 
-    A Ticket's worker conversation and an Outcome manager's conversation belong to
-    something the caller stands above, or they do not. Khushal and the Chief are above
-    everything, so nobody reaches them by position and a message addressed to either of
-    them asks no authority question.
+    Two principals in one chain can talk, in both directions. Standing above the
+    recipient is acting on it — starting a turn in a conversation that belongs to
+    something below you — and that is the rule's own question. Standing below it is not:
+    a Worker answering the Outcome that asked it something is speaking, and refusing that
+    would make the reply every addressed prompt requires impossible to send.
+
+    Strangers are neither, and they refuse. That is the whole of what this door checks,
+    and before this it checked nothing at all.
     """
-    if recipient.kind is PrincipalKind.ticket:
-        authority.require_above(conn, caller, authority.ticket(recipient.id))
-    elif recipient.kind is PrincipalKind.sprint_item:
-        authority.require_above(conn, caller, authority.outcome(recipient.id))
+    target = _as_target(recipient)
+    if target is None:
+        return
+    if authority.is_above(conn, caller, target):
+        return
+    caller_target = _as_target(caller)
+    if caller_target is not None and authority.is_above(conn, recipient, caller_target):
+        return
+    authority.require_above(conn, caller, target)
 
 
 @router.post("/messages/send")
