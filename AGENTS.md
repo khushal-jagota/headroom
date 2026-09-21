@@ -64,12 +64,22 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   npm ci --prefix agent_backends
   ```
 
-  Use `git rev-parse --show-toplevel` and
-  `.venv/bin/python -c 'import planner; print(planner.__file__)'` to confirm the source
-  root. Run `env | rg '^PLAN_(DB_PATH|LOGS_DIR|DISPATCHER_LOCK_PATH|SERVER_CONTROL_SOCKET|HERMES_HOME)='`
+  Create `.venv` in the worktree with those commands. Never copy, move, or symlink
+  one from another worktree: a virtualenv stores absolute paths to the tree it was
+  built in, so a copy points `pytest` at that tree's source and checks this source
+  against that tree's pinned dependency versions. `git worktree move` breaks a
+  virtualenv the same way. After a move, delete `.venv` and build it again.
+- `./verify` refuses to run when the environment does not belong to the tree, and
+  names what is wrong. So does `mypy` run against this tree's config, and so does any
+  `pytest` that collects a path under `tests/`. That refusal is the check for those
+  three. It does not cover `ruff`, a `pytest` pointed outside `tests/`, or anything
+  else you launch from `.venv/bin` by hand — for those, a copied virtualenv is still
+  silent, so build the environment correctly rather than rely on being caught.
+- Run `env | rg '^PLAN_(DB_PATH|LOGS_DIR|DISPATCHER_LOCK_PATH|SERVER_CONTROL_SOCKET|HERMES_HOME)='`
   and confirm any printed path resolves to the worktree before using its runtime.
-- Unchanged dependency trees may be reused when their manifests and locks match.
-  Detach them before installing or changing dependencies.
+- Node dependency trees under `web/` and `agent_backends/` may be reused when their
+  manifests and locks match. Detach them before installing or changing dependencies.
+  This never covers `.venv`.
 - When testing, browsing, computer use, exploration, or other active work needs
   running services, survey current port use, select available ports, start the
   services, and stop them when that active work is finished. If a port is taken during

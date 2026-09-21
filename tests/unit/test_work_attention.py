@@ -79,6 +79,7 @@ def test_ticket_attention_combines_ownership_proposal_and_conversation_facts(
         "id": ticket.id,
         "awaiting_reply": True,
         "awaiting_approval": True,
+        "awaiting_agent_approval": False,
         "assigned": True,
         "agent_state": "errored",
     }
@@ -143,7 +144,10 @@ def test_ticket_attention_combines_ownership_proposal_and_conversation_facts(
             tickets=[non_owner_row],
         )
     )
+    # The ceiling moved to the chief, so the same parked proposal is the other half of
+    # the split: never the owner's queue, and named as an agent's on every route.
     assert non_owner_row["awaiting_approval"] is False
+    assert non_owner_row["awaiting_agent_approval"] is True
     conn.close()
 
 

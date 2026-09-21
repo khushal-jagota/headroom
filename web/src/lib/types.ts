@@ -66,9 +66,13 @@ export type Priority = "P0" | "P1" | "P2" | "P3";
 
 export type AgentState = "working" | "idle" | "errored";
 
+// `awaiting_approval` is a proposal the owner holds; `awaiting_agent_approval` is one
+// parked on a supervisor or another Ticket. The server splits them, so the same word
+// means the same thing on every screen and no screen has to guess from the status.
 export type WorkAttention = {
   awaiting_reply: boolean;
   awaiting_approval: boolean;
+  awaiting_agent_approval: boolean;
   assigned: boolean;
   agent_state: AgentState;
 };
@@ -299,6 +303,7 @@ export type TicketDetail = {
   pending_proposal: PendingTicketProposal | null;
   awaiting_reply?: boolean;
   awaiting_approval?: boolean;
+  awaiting_agent_approval?: boolean;
   assigned?: boolean;
   agent_state?: AgentState;
 };
@@ -440,6 +445,7 @@ export type BoardSprintItem = {
   conversation_id: string | null;
   awaiting_reply: boolean;
   awaiting_approval: boolean;
+  awaiting_agent_approval: boolean;
   assigned: boolean;
   agent_state: AgentState;
   ticket_rollup: WorkAttention;
@@ -483,6 +489,7 @@ export type DayTicket = AnyRecord & {
   gating_field?: string | null;
   awaiting_reply?: boolean;
   awaiting_approval?: boolean;
+  awaiting_agent_approval?: boolean;
   assigned?: boolean;
   agent_state?: AgentState;
 };

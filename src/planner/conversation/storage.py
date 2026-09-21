@@ -344,6 +344,15 @@ class ConversationStore:
         """Return owner-message and last-turn facts for a list of conversations."""
         return await asyncio.to_thread(self._attention_facts_sync, conversation_ids)
 
+    async def conversation_ids_holding_unread_owner_message(self) -> frozenset[str]:
+        """Every conversation whose newest message to the owner is past his read mark.
+
+        This asks the whole record rather than a list, because the caller is looking for
+        conversations it does not already hold. A caller that has the list wants
+        ``attention_facts``, which answers more about each one.
+        """
+        return await asyncio.to_thread(self._conversation_ids_holding_unread_owner_message_sync)
+
     async def has_delivered_prompt(self, conversation_id: str) -> bool:
         """Whether any prompt has ever reached this conversation's backend.
 
@@ -846,6 +855,20 @@ class ConversationStore:
             )
             for row in rows
         }
+
+    def _conversation_ids_holding_unread_owner_message_sync(self) -> frozenset[str]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT c.conversation_id FROM conversations c "
+                "JOIN conversation_events e ON e.conversation_id = c.conversation_id "
+                "WHERE e.kind = 'message_to_owner' "
+                "GROUP BY c.conversation_id "
+                "HAVING MAX(e.sequence) > c.owner_read_through_sequence"
+            ).fetchall()
+        finally:
+            conn.close()
+        return frozenset(str(row["conversation_id"]) for row in rows)
 
     def _has_delivered_prompt_sync(self, conversation_id: str) -> bool:
         conn = self._connect()

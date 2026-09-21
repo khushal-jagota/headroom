@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -131,6 +132,11 @@ def item_tickets(
                 "stage": stage,
                 "priority": str(r["priority"]),
                 "has_pending_proposal": r["pending_proposal"] is not None,
+                # Who a parked proposal is addressed to. The shared attention projection
+                # answers `awaiting_approval` for Khushal and `awaiting_agent_approval`
+                # for everyone else, so this is what tells a reader whether the one it is
+                # looking at is its own.
+                "ceiling_holder": json.loads(str(r["ceiling_holder"])),
                 "ticket_status": facts.ticket_status.value,
                 "waiting_to_closeout": facts.waiting_to_closeout,
                 "gating_field": gating_field,
@@ -147,41 +153,6 @@ def item_tickets(
             }
         )
     return result
-
-
-def item_ticket_overview(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
-    """One line per Ticket on the Item, for the Sprint Item supervisor's own-Item read:
-    id, title, stage, ticket_status, and Day membership. Finished Tickets included,
-    ordered created_at, id.
-
-    This is not item_tickets. That projection carries the board-card signals the Sprint
-    Item page colours its rows off; the supervisor reads its answer in full and drills
-    into one Ticket at a time through ticket-context, so anything more per Ticket is
-    weight it pays for and does not use."""
-    rows = conn.execute(
-        "SELECT id, title, stage, worker_type, worker_step_claim, pending_proposal FROM tickets "
-        "WHERE sprint_item_id = ? ORDER BY created_at, id",
-        (item_id,),
-    ).fetchall()
-    facts_by_ticket = derivation.load_ticket_facts(conn, {str(row["id"]) for row in rows})
-    day_ids_by_ticket: dict[str, list[str]] = {}
-    for day_row in conn.execute(
-        "SELECT day_tickets.ticket_id AS ticket_id, day_tickets.day_id AS day_id "
-        "FROM day_tickets JOIN tickets ON tickets.id = day_tickets.ticket_id "
-        "WHERE tickets.sprint_item_id = ? ORDER BY day_tickets.day_id",
-        (item_id,),
-    ).fetchall():
-        day_ids_by_ticket.setdefault(str(day_row["ticket_id"]), []).append(str(day_row["day_id"]))
-    return [
-        {
-            "id": str(row["id"]),
-            "title": str(row["title"]),
-            "stage": str(row["stage"]),
-            "ticket_status": facts_by_ticket[str(row["id"])].ticket_status.value,
-            "day_ids": day_ids_by_ticket.get(str(row["id"]), []),
-        }
-        for row in rows
-    ]
 
 
 def _item_row_key(row: sqlite3.Row) -> tuple[int, int, str]:

@@ -22,9 +22,16 @@ function item(id: string, values: Partial<BoardSprintItem> = {}): BoardSprintIte
     conversation_id: null,
     awaiting_reply: false,
     awaiting_approval: false,
+    awaiting_agent_approval: false,
     assigned: false,
     agent_state: "idle",
-    ticket_rollup: { awaiting_reply: false, awaiting_approval: false, assigned: false, agent_state: "idle" },
+    ticket_rollup: {
+      awaiting_reply: false,
+      awaiting_approval: false,
+      awaiting_agent_approval: false,
+      assigned: false,
+      agent_state: "idle"
+    },
     ...values
   };
 }
@@ -91,7 +98,10 @@ describe("Workspace rail", () => {
       card("resting"),
       card("blocked", { ticket_status: "blocked" }),
       card("closeout", { waiting_to_closeout: true }),
-      card("non-owner-approval", { ticket_status: "awaiting_approval" }),
+      card("non-owner-approval", {
+        ticket_status: "awaiting_approval",
+        awaiting_agent_approval: true
+      }),
       card("kickoff", { awaiting_approval: true, gating_field: "brief" }),
       card("review", { awaiting_approval: true }),
       card("working", { ticket_status: "agent" }),
@@ -101,8 +111,8 @@ describe("Workspace rail", () => {
     ]);
 
     expect(groups.map((group) => group.label)).toEqual([
-      "Awaiting approval",
-      "Assigned",
+      "Needs your approval",
+      "Yours",
       "Messages",
       "Errored",
       "Agent",
@@ -121,7 +131,8 @@ describe("Workspace rail", () => {
   it("keeps a non-owner awaiting-approval status in the old remainder position", () => {
     const nonOwner = card("non-owner", {
       ticket_status: "awaiting_approval",
-      awaiting_approval: false
+      awaiting_approval: false,
+      awaiting_agent_approval: true
     });
     expect(workspaceCardGroupKey(nonOwner)).toBe("status_awaiting_approval");
 
@@ -150,13 +161,14 @@ describe("Workspace rail", () => {
       card("owner", { awaiting_approval: true }),
       card("agent-owner", {
         ticket_status: "awaiting_approval",
-        awaiting_approval: false
+        awaiting_approval: false,
+        awaiting_agent_approval: true
       })
     ]);
     const labels = groups.map((group) => group.label);
 
     expect(labels).toEqual([
-      "Awaiting approval",
+      "Needs your approval",
       "Awaiting an agent's approval"
     ]);
     expect(new Set(labels).size).toBe(labels.length);
@@ -211,7 +223,7 @@ describe("Workspace rail", () => {
     ]);
     // Quiet child Tickets remain in the Tickets view, not under the Item heading.
     expect(rail.items[0].groups.map((group) => group.label)).toEqual([
-      "Assigned"
+      "Yours"
     ]);
   });
 
@@ -230,12 +242,37 @@ describe("Workspace rail", () => {
     );
 
     expect(rail.items[0].groups.map((group) => group.label)).toEqual([
-      "Awaiting approval",
+      "Needs your approval",
       "Messages"
     ]);
     expect(
       rail.items[0].groups.flatMap((group) => group.cards.map((entry) => entry.id))
     ).toEqual(["all-three", "reply"]);
+  });
+
+  it("keeps a broken worker's own attention group beneath a Sprint Item", () => {
+    // An Item is read at rest, so it holds to the three groups. The Tickets view is the
+    // screen that leads with a broken worker, and it still does.
+    const rail = buildWorkspaceRail(
+      [
+        card("broken-approval", {
+          sprint_item_id: "si_one",
+          awaiting_approval: true,
+          agent_state: "errored"
+        }),
+        card("broken-quiet", { sprint_item_id: "si_one", agent_state: "errored" })
+      ],
+      [item("si_one")]
+    );
+
+    expect(rail.items[0].groups.map((group) => group.label)).toEqual([
+      "Needs your approval"
+    ]);
+    expect(
+      rail.items[0].groups.flatMap((group) => group.cards.map((entry) => entry.id))
+    ).toEqual(["broken-approval"]);
+    // The Tickets view still names both broken workers first, and names them Errored.
+    expect(rail.groups.map((group) => group.key)).toEqual(["errored"]);
   });
 
   it("orders Items by priority then a fixed creation-time tie-break", () => {
@@ -313,7 +350,13 @@ describe("Workspace rail", () => {
       [card("its-ticket", { sprint_item_id: "si_one" })],
       [
         item("si_one", {
-          ticket_rollup: { awaiting_reply: true, awaiting_approval: false, assigned: false, agent_state: "idle" }
+          ticket_rollup: {
+            awaiting_reply: true,
+            awaiting_approval: false,
+            awaiting_agent_approval: false,
+            assigned: false,
+            agent_state: "idle"
+          }
         })
       ]
     );
@@ -417,6 +460,7 @@ describe("Workspace rail", () => {
           ticket_rollup: {
             awaiting_reply: false,
             awaiting_approval: true,
+            awaiting_agent_approval: false,
             assigned: true,
             agent_state: "idle"
           }
@@ -435,6 +479,7 @@ describe("Workspace rail", () => {
           ticket_rollup: {
             awaiting_reply: true,
             awaiting_approval: true,
+            awaiting_agent_approval: false,
             assigned: true,
             agent_state: "working"
           }
@@ -450,6 +495,7 @@ describe("Workspace rail", () => {
           ticket_rollup: {
             awaiting_reply: false,
             awaiting_approval: false,
+            awaiting_agent_approval: false,
             assigned: false,
             agent_state: "working"
           }

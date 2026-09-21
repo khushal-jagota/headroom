@@ -27,13 +27,18 @@ const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set([
   "done"
 ]);
 
+// Each of the three says whose the work is, in the word the code already uses for it:
+// `awaiting_approval` is a proposal whose ceiling the owner holds, and `assigned` is a
+// stage whose ownership mode is `user`, meaning his own to do. A proposal parked on an
+// agent is a different fact and keeps its own quiet heading, so no label here can mean
+// two things depending on the screen it is read on.
 const GROUP_LABELS: Readonly<Record<string, string>> = {
-  awaiting_approval: "Awaiting approval",
-  assigned: "Assigned",
+  awaiting_approval: "Needs your approval",
+  assigned: "Yours",
   awaiting_reply: "Messages",
   status_awaiting_approval: "Awaiting an agent's approval",
   waiting_to_closeout: "Waiting on Consequences",
-  waiting_for_kickoff: "Waiting for Brief"
+  waiting_for_kickoff: "Awaiting kickoff"
 };
 
 export type WorkspaceTicketGroup = {
@@ -70,7 +75,9 @@ const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
 function workspaceRemainderGroupKey(card: BoardCard): string {
   if (card.is_done) return "done";
   if (card.waiting_to_closeout) return "waiting_to_closeout";
-  if (card.ticket_status === "awaiting_approval") return "status_awaiting_approval";
+  // The server says who holds a parked proposal. This reads that fact rather than the
+  // status, which says a proposal is parked and not whose it is.
+  if (card.awaiting_agent_approval) return "status_awaiting_approval";
   return String(card.ticket_status);
 }
 
@@ -123,12 +130,13 @@ function cardOrder(left: BoardCard, right: BoardCard): number {
 
 function groupCards(
   cards: readonly BoardCard[],
-  keys: readonly string[]
+  keys: readonly string[],
+  keyOf: (card: BoardCard) => string = workspaceCardGroupKey
 ): WorkspaceTicketGroup[] {
   const byGroup = new Map<string, BoardCard[]>();
   const firstSeen: string[] = [];
   for (const card of cards) {
-    const key = workspaceCardGroupKey(card);
+    const key = keyOf(card);
     if (!byGroup.has(key)) {
       byGroup.set(key, []);
       firstSeen.push(key);
@@ -153,12 +161,19 @@ export function workspaceGroups(cards: readonly BoardCard[]): WorkspaceTicketGro
 
 // An Item exposes only work that needs the owner. Quiet child Tickets remain available
 // from the Tickets view and from the Item workspace.
+//
+// An Item is read at rest, under a title the reader has not clicked, so it holds to the
+// three groups and nothing else. It therefore names a Ticket by the attention it filtered
+// on, not by `workspaceCardGroupKey`, whose broken-worker branch comes first and would put
+// a Ticket the reader must approve under a fourth heading, Errored. The Tickets view is
+// the screen that leads with a broken worker, and it still does.
 export function workspaceAttentionGroups(
   cards: readonly BoardCard[]
 ): WorkspaceTicketGroup[] {
   return groupCards(
     cards.filter((card) => primaryWorkAttention(card) !== null),
-    ATTENTION_GROUP_ORDER
+    ATTENTION_GROUP_ORDER,
+    (card) => primaryWorkAttention(card) ?? workspaceCardGroupKey(card)
   );
 }
 

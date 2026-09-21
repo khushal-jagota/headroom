@@ -5,6 +5,7 @@ import {
   ticketStatusGroupKey,
   type TicketStatusGroupFacts
 } from "../src/lib/ticketStatusGroups";
+import { sprintTicketCondition } from "../src/lib/sprintPresentation";
 import { workspaceGroups } from "../src/lib/workspaceRail";
 import { boardCard } from "./boardCardFixture";
 
@@ -16,6 +17,7 @@ function ticket(values: Partial<TicketStatusGroupFacts> = {}): TicketStatusGroup
     gating_field: "implementation",
     awaiting_reply: false,
     awaiting_approval: false,
+    awaiting_agent_approval: false,
     assigned: false,
     agent_state: "idle",
     ...values
@@ -30,13 +32,14 @@ function ticketWithFiledProposal(values: Partial<TicketStatusGroupFacts> = {}) {
 
 describe("Ticket status groups", () => {
   it("holds one order, and names the groups that arrive open", () => {
-    // Errored leads and Blocked sits late, as they do in the rail.
+    // The three that are the reader's own lead, then Errored, as they do in the rail.
+    // Blocked sits late on both.
     expect(TICKET_STATUS_GROUPS.map((group) => group.label)).toEqual([
+      "Needs your approval",
+      "Yours",
+      "Messages",
       "Errored",
-      "Needs you",
-      "Waiting for Brief",
-      "Awaiting approval",
-      "Assigned",
+      "Awaiting kickoff",
       "Agent",
       "Awaiting an agent's approval",
       "Waiting on Consequences",
@@ -49,11 +52,11 @@ describe("Ticket status groups", () => {
     expect(
       TICKET_STATUS_GROUPS.filter((group) => !group.quiet).map((group) => group.label)
     ).toEqual([
+      "Needs your approval",
+      "Yours",
+      "Messages",
       "Errored",
-      "Needs you",
-      "Waiting for Brief",
-      "Awaiting approval",
-      "Assigned",
+      "Awaiting kickoff",
       "Agent"
     ]);
   });
@@ -121,9 +124,12 @@ describe("Ticket status groups", () => {
   });
 
   it("names a proposal held by an agent the same on both screens", () => {
-    // The viewer does not hold this ceiling, so no attention fact is set. This Ticket
-    // used to fall into Empty on the page while the rail named it.
-    const facts = { ticket_status: "awaiting_approval" } as const;
+    // An agent holds this ceiling, and the server says so. This Ticket used to fall into
+    // Empty on the page while the rail named it.
+    const facts = {
+      ticket_status: "awaiting_approval",
+      awaiting_agent_approval: true
+    } as const;
     const railGroups = workspaceGroups([boardCard("t_agent_held", facts)]);
     const pageKey = ticketStatusGroupKey(ticketWithFiledProposal(facts));
     expect(railGroups.map((group) => group.label)).toEqual(["Awaiting an agent's approval"]);
@@ -135,7 +141,11 @@ describe("Ticket status groups", () => {
   it("lets a broken worker and the user's own work outrank a proposal held by an agent", () => {
     // Both facts hold at once: a worker filed for its supervisor and then its last turn
     // failed. Errored leads on both screens, and a parked proposal never renames it.
-    const brokenFacts = { ticket_status: "awaiting_approval", agent_state: "errored" } as const;
+    const brokenFacts = {
+      ticket_status: "awaiting_approval",
+      awaiting_agent_approval: true,
+      agent_state: "errored"
+    } as const;
     expect(
       workspaceGroups([boardCard("t_broken", brokenFacts)]).map((group) => group.label)
     ).toEqual(["Errored"]);
@@ -145,18 +155,39 @@ describe("Ticket status groups", () => {
       )?.label
     ).toBe("Errored");
 
-    const mineFacts = { ticket_status: "awaiting_approval", assigned: true } as const;
+    const mineFacts = {
+      ticket_status: "awaiting_approval",
+      awaiting_agent_approval: true,
+      assigned: true
+    } as const;
     expect(
       workspaceGroups([boardCard("t_mine", mineFacts)]).map((group) => group.label)
-    ).toEqual(["Assigned"]);
+    ).toEqual(["Yours"]);
     expect(
       TICKET_STATUS_GROUPS.find(
         (group) => group.key === ticketStatusGroupKey(ticketWithFiledProposal(mineFacts))
       )?.label
-    ).toBe("Assigned");
+    ).toBe("Yours");
   });
 
-  it("uses the Workspace's owner-facing Assigned label for an assigned Ticket", () => {
+  // The row and its heading never disagree. A Ticket row shows `condition.word` as
+  // visible text on the Sprint screen and as the mark's label on the Sprint Item page,
+  // one line under the heading it sits beneath, so the word is the heading lowercased.
+  it.each([
+    [{ awaiting_approval: true }, "needs your approval"],
+    [{ assigned: true }, "yours"],
+    [{ awaiting_reply: true }, "messages"]
+  ])("says the same word in a row as in the heading above it", (facts, word) => {
+    const railGroups = workspaceGroups([boardCard("t_one", facts)]);
+    const pageKey = ticketStatusGroupKey(ticket(facts));
+    const pageLabel = TICKET_STATUS_GROUPS.find((group) => group.key === pageKey)?.label;
+
+    expect(sprintTicketCondition(ticket(facts)).word).toBe(word);
+    expect(railGroups[0].label.toLowerCase()).toBe(word);
+    expect(pageLabel?.toLowerCase()).toBe(word);
+  });
+
+  it("names a stage that is the user's own Yours on both screens", () => {
     const railGroups = workspaceGroups([
       boardCard("t_assigned", { assigned: true, has_pending_proposal: true })
     ]);
@@ -164,7 +195,7 @@ describe("Ticket status groups", () => {
       ticketWithFiledProposal({ assigned: true })
     );
     const pageLabel = TICKET_STATUS_GROUPS.find((group) => group.key === pageKey)?.label;
-    expect(railGroups.map((group) => group.label)).toEqual(["Assigned"]);
-    expect(pageLabel).toBe("Assigned");
+    expect(railGroups.map((group) => group.label)).toEqual(["Yours"]);
+    expect(pageLabel).toBe("Yours");
   });
 });

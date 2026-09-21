@@ -31,6 +31,7 @@ export function boardCard(id: string, values: Partial<BoardCard> = {}): BoardCar
     sprint_item_priority: null,
     awaiting_reply: false,
     awaiting_approval: false,
+    awaiting_agent_approval: false,
     assigned: false,
     agent_state: "idle",
     ...values

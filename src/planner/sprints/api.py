@@ -206,12 +206,13 @@ async def get_item_workspace(
     conversations: Conversations,
     conversation_record: ConversationRecord,
 ) -> JsonDict:
-    """Everything a reader of this Outcome needs, for whoever is reading.
+    """Everything a reader of this Outcome needs.
 
-    ``awaiting_approval`` is answered against the caller's own principal, because the
-    ceiling holder is an address: the question is whether a parked proposal is addressed
-    to the reader. Khushal reads what is addressed to Khushal, an Outcome what is
-    addressed to it. That is one read serving both, rather than a second route.
+    The two approval words mean the same thing here as on every other route, and the
+    projection makes that split itself: ``awaiting_approval`` is Khushal's own queue,
+    ``awaiting_agent_approval`` is a proposal parked on an agent. A reader that needs to
+    know *which* agent holds one reads ``ceiling_holder`` on the row — the holder is an
+    address, and this is the read of it.
     """
     require_above_or_self(conn, ctx.principal, authority.outcome(item_id))
     planning_day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
@@ -222,7 +223,6 @@ async def get_item_workspace(
         conversation_record,
         tickets=result["tickets"],
         sprint_items=(result,),
-        approval_holder=ctx.principal,
     )
     result["artifacts"] = sprint_item_files.list_files(conn, ctx.principal, item_id, cfg.db_path)
     return result

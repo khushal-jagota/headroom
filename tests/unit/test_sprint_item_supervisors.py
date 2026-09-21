@@ -94,9 +94,15 @@ def _supervisor_headers(item_id: str) -> dict[str, str]:
     }
 
 
-def test_the_workspace_marks_a_proposal_addressed_to_its_reader(
+def test_the_workspace_names_a_proposal_the_item_holds_without_claiming_the_owner(
     tmp_path: Path,
 ) -> None:
+    """The word means one thing on every route.
+
+    This proposal is parked on the Item, not on Khushal, so the shared projection says
+    `awaiting_agent_approval` here exactly as it does on the Workspace. The supervisor
+    still sees that the proposal is its own, because the row carries the ceiling holder.
+    """
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _create_item(client)
@@ -109,7 +115,49 @@ def test_the_workspace_marks_a_proposal_addressed_to_its_reader(
     assert response.status_code == 200, response.text
     row = next(entry for entry in response.json()["tickets"] if entry["id"] == ticket["id"])
     assert row["ticket_status"] == "awaiting_approval"
-    assert row["awaiting_approval"] is True
+    assert row["awaiting_approval"] is False
+    assert row["awaiting_agent_approval"] is True
+    assert row["ceiling_holder"] == {"kind": "sprint_item", "id": str(item["id"])}
+
+
+def test_every_route_names_a_proposal_parked_on_the_item_the_same_way(
+    tmp_path: Path,
+) -> None:
+    """The Workspace, the Board, and the Outcome's own reader get one answer.
+
+    Before, the supervisor's own route asked the projection to treat the Item as the
+    approver, so the identical word `awaiting_approval` meant "Khushal's" on two screens
+    and "the supervisor's" on the third. That route is gone and the Outcome reads the
+    ordinary Workspace, so there is no longer a third place for the word to mean
+    something else — and nothing chooses per reader either.
+    """
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket = _park_a_proposal(client, str(item["id"]))
+        page = client.get(f"/api/items/{item['id']}/workspace")
+        board = client.get("/api/board")
+        supervisor = client.get(
+            f"/api/items/{item['id']}/workspace",
+            headers=_supervisor_headers(str(item["id"])),
+        )
+
+    assert page.status_code == 200, page.text
+    assert board.status_code == 200, board.text
+    assert supervisor.status_code == 200, supervisor.text
+    rows = [
+        next(row for row in page.json()["tickets"] if row["id"] == ticket["id"]),
+        next(row for row in supervisor.json()["tickets"] if row["id"] == ticket["id"]),
+    ]
+    cards = [
+        card
+        for column in board.json()["columns"]
+        for card in column["cards"]
+        if card["id"] == ticket["id"]
+    ]
+    for row in [*rows, *cards]:
+        assert row["awaiting_approval"] is False
+        assert row["awaiting_agent_approval"] is True
 
 
 def test_workspace_artifacts_include_each_file_modified_time(tmp_path: Path) -> None:

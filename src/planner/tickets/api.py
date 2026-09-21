@@ -1374,9 +1374,18 @@ async def board(
     conversation_record: ConversationRecord,
 ) -> JsonDict:
     day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
+    # A message the owner has not read reaches him whatever Day its Ticket is on. The
+    # record names the conversations; the Ticket rows name whose they are.
+    unread = await conversation_record.conversation_ids_holding_unread_owner_message()
     return await add_conversation_row_signals(
         conn,
-        tickets_views.board_view(conn, day_id=day_id),
+        tickets_views.board_view(
+            conn,
+            day_id=day_id,
+            ticket_ids_holding_unread_owner_message=tickets_views.ticket_ids_for_conversations(
+                conn, unread
+            ),
+        ),
         conversations,
         conversation_record,
     )

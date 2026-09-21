@@ -37,11 +37,19 @@ One screen per part of the system:
   guidance stays independent. A reply in the Ticket conversation leaves the proposal in
   Review until a decision.
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
-  follows the same 5am planning-day boundary as the Day screen. The Chief of Staff row leads, and under it a selector chooses one of two views
+  follows the same 5am planning-day boundary as the Day screen. One thing joins today:
+  a ticket holding a message the owner has not read appears whatever day it is on,
+  because he has not seen the message and a day he did not put it on is not his answer
+  to it. Everything else in the rail is today's tickets.
+  The Chief of Staff row leads, and under it a selector chooses one of two views
   over the same tickets: **Tickets** or **Sprint Items**.
 
-  The Tickets view starts with three owner-attention groups in this order: Awaiting
-  approval, Assigned, and Messages. A ticket appears in only its first applicable group.
+  The Tickets view starts with three owner-attention groups in this order: Needs your
+  approval, Yours, and Messages. Each name says whose the work is. Needs your approval
+  is a proposal the owner himself holds; a proposal parked on a supervisor or another
+  ticket is a different fact, named Awaiting an agent's approval, and it is never one of
+  the three. Yours is a stage the ticket's worker type gives to the user rather than to
+  a worker. A ticket appears in only its first applicable group.
   A ticket whose worker broke is named Errored before any of the three, because a broken
   worker wants the reader more than the request it was carrying. Broken means the ticket
   is errored, or its last turn ended failed. Otherwise approval takes precedence over
@@ -59,14 +67,15 @@ One screen per part of the system:
   newest first.
 
   The Sprint Items view is one box per Sprint Item with a ticket on today. Each Item
-  shows only its non-empty Awaiting approval, Assigned, and Messages child groups. Quiet
-  child tickets remain available in the Tickets view and the Item workspace. A shut
-  Item shows a line of counts for its owner-attention groups. Clicking anywhere in the
-  box selects the Item and opens its workspace beside the rail. That is all a click on
+  shows only its non-empty Needs your approval, Yours, and Messages child groups. Quiet
+  child tickets remain available in the Tickets view and the Item workspace. An Item
+  shows those groups, and their rows, whether or not it is the Item the reader has
+  opened. The rail therefore says what needs the reader before anything is clicked, and
+  an Item with none of the three shows its title and its mark alone. Clicking anywhere in
+  the box selects the Item and opens its workspace beside the rail. That is all a click on
   an Item ever does: no click shuts an Item. A reader inside one of its tickets clicks
-  the Item to come back to it. An
-  open Item shows the same owner-attention groups nested inside it, without their own boxes.
-  Folding one of those groups, or opening a ticket, leaves the Item open. Items are
+  the Item to come back to it. The groups sit inside the Item without boxes of their own.
+  Folding one of those groups, or opening a ticket, leaves the Item selected. Items are
   ordered by priority and then by age, so an Item holds its place while its tickets move
   under it.
 
