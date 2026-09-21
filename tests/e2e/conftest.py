@@ -438,7 +438,12 @@ def cli() -> Callable[..., JsonObject]:
         env = _scrubbed_env()
         env["PLAN_SERVER_URL"] = server.base
         if ticket_id is not None:
+            # The identity a launched Worker runs under is both variables together:
+            # worker_conversation_role_materials sets PLAN_ACTOR beside the Ticket id.
+            # The CLI sends what the environment says, so an id on its own is not a
+            # claim to be that Ticket.
             env["PLAN_TICKET_ID"] = ticket_id
+            env["PLAN_ACTOR"] = "worker"
         if actor is not None:
             env["PLAN_ACTOR"] = actor
         proc = subprocess.run(

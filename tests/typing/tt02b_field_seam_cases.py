@@ -82,7 +82,6 @@ def _cases(
             ticket,
             foreign_field,
             "b",
-            OWNER_PRINCIPAL,
             worker_type_definition=definition,
         ),
         Decision,
