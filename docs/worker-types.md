@@ -279,15 +279,28 @@ differ, and the stored one is what runs.
 Because the packaged tree is not consulted again, a stored skill can go on teaching a
 command, a Stage or a skill that a later build removed, and nothing says so. `panels skill
 check` is what says so. It reads the build itself — the CLI command tree, the Stage ids the
-Worker types declare, and the retired skill names — and lists every stored skill naming
-something absent. It reports; it never rewrites a row. `GET /api/skills/stale` serves the
-same list.
+Worker types declare, the Stage ladders they spell out, and the retired skill names — and
+lists every stored skill naming something absent. It reports; it never rewrites a row.
+`GET /api/skills/stale` serves the same list.
+
+A Stage is named two ways, and the check reads them differently on purpose. Its id,
+`needs_something`, is unmistakable anywhere. Its label is an ordinary phrase: `approach` is
+an English word and `kickoff` names the live `--kickoff-note` option, so searching prose for
+a label reports text that is correct. Labels are therefore read in one place only, the
+ladder — names joined by arrows inside a bold span, ending at a terminal Stage. Nothing but
+a taught sequence takes that shape. A label in an ordinary sentence stays invisible to the
+check, which is a decision and not an oversight: a check that always shows noise gets read
+like silence.
 
 Correcting a stored skill is a migration, because the row is the owner's and a correction
 must not eat an edit. `skill_rows_name_what_exists` replaces only text that occurs verbatim
 in a version this repository shipped, which is the proof the text is the build's own, and
-moves a renamed command anywhere it appears. It raises when a correction it declared did
-not land, and only then: a row that is merely stale is reported by the check rather than
+moves a renamed command anywhere it appears. That proof cannot cover a sentence the owner
+wrote. `skill_rows_teach_what_exists` corrects those under a narrower authority instead:
+each correction renames a Stage or a field and keeps the sentence around it, the owner
+approved the whole set as exact before-and-after text, and the generator refuses a span that
+does not occur exactly once. Both revisions raise when a correction they declared did not
+land, and only then: a row that is merely stale is reported by the check rather than
 refusing an upgrade.
 
 A Worker type owns its specialist skill. `PATCH /api/skills/{skill-name}` refuses one and
