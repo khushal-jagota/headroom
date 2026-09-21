@@ -13,6 +13,7 @@ from planner.conversation.contracts import (
     PromptDeliveryStarted,
 )
 from planner.conversation.message_content import text_message_content
+from planner.core import authority
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
@@ -166,6 +167,49 @@ def _sender_conversation_link_key(conn: sqlite3.Connection, sender: Principal) -
         item = sprints_data.read_item(conn, sender.id).item
         return f"agent:{item.supervisor_agent_key}"
     raise ValueError("the owner has no sender conversation link")
+
+
+def _as_target(principal: Principal) -> authority.Target | None:
+    """The thing this principal is, when something can stand above it.
+
+    Khushal and the Chief are above everything, so nothing is above them and they are no
+    target. A message addressed to either asks no authority question.
+    """
+    if principal.kind is PrincipalKind.ticket:
+        return authority.ticket(principal.id)
+    if principal.kind is PrincipalKind.sprint_item:
+        return authority.outcome(principal.id)
+    return None
+
+
+def require_reach(
+    conn: sqlite3.Connection, caller: Principal, recipient: Principal
+) -> None:
+    """Sending down the chain is acting on the recipient. Sending up is only speaking.
+
+    Two principals in one chain can talk, in both directions. Standing above the
+    recipient is acting on it — starting a turn in a conversation that belongs to
+    something below you — and that is the rule's own question. Standing below it is not:
+    a Worker answering the Outcome that asked it something is speaking, and refusing that
+    would make the reply every addressed prompt requires impossible to send.
+
+    Strangers are neither, and they refuse.
+
+    Asked by the two routes that take a recipient from their caller, and it lives here so
+    they ask the same question rather than two. It is not asked inside ``send_message``:
+    the other callers name a recipient the route has already guarded, and a Ticket asking
+    its own ceiling holder for help names a principal Panels addressed it to, which is not
+    the caller reaching anywhere.
+    """
+    target = _as_target(recipient)
+    if target is None:
+        return
+    if authority.is_above(conn, caller, target):
+        return
+    caller_target = _as_target(caller)
+    if caller_target is not None and authority.is_above(conn, recipient, caller_target):
+        return
+    authority.require_above(conn, caller, target)
 
 
 async def send_message(

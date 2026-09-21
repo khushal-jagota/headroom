@@ -473,7 +473,7 @@ MAXIMUM_EVENT_PAGE = 100
 async def read_conversation_events(
     conversation_id: str,
     runtime: Runtime,
-    after: int = 0,
+    after: int | None = None,
     before: int | None = None,
     limit: int | None = None,
 ) -> dict[str, Any]:
@@ -493,16 +493,30 @@ async def read_conversation_events(
         raise PlannerError(
             ErrorCode.validation, "before needs a limit: it reads backwards", {"before": before}
         )
+    if before is not None and after is not None:
+        raise PlannerError(
+            ErrorCode.validation,
+            "a page reads one direction: after, or before",
+            {"after": after, "before": before},
+        )
     record = await _require_conversation(runtime, conversation_id)
-    if limit is None:
-        events = await runtime.store.read_events_after(conversation_id, after)
-    else:
+    reads_backwards = after is None
+    if reads_backwards and limit is not None:
         events = await runtime.store.read_latest_events(
             conversation_id, before_sequence=before, limit=limit
         )
+        # Reading back from the end, more to come means older rows before this page.
+        has_more = bool(events) and events[0].sequence > 1
+    else:
+        # Reading on from a position, more to come means rows after this page. One row
+        # past the limit answers that without a second query, and is not returned.
+        events = await runtime.store.read_events_after(conversation_id, after or 0)
+        has_more = limit is not None and len(events) > limit
+        if limit is not None:
+            events = events[:limit]
     return {
         "events": [_public_event_json(event, backend_key=record.backend_key) for event in events],
-        "has_more": bool(events) and events[0].sequence > 1,
+        "has_more": has_more,
     }
 
 

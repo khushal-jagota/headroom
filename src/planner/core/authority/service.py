@@ -35,6 +35,8 @@ from planner.core.contracts import (
     principal_legacy_actor,
 )
 
+_ABOVE_EVERY_OUTCOME = frozenset({PrincipalKind.owner, PrincipalKind.chief})
+
 
 def _target_parent_outcome_id(conn: sqlite3.Connection, target: Target) -> str | None:
     """The Outcome a Ticket target sits under right now, if it sits under one.
@@ -148,15 +150,20 @@ def refuse_outcome_re_parenting(caller: Principal, ticket_id: str) -> None:
     """The one stated exception to the rule, asked wherever a Ticket's Outcome is set.
 
     An Outcome stands above its Tickets because of ``tickets.sprint_item_id``. Setting that
-    column is reassigning the authority the caller is using rather than exercising it, and
-    "strictly below" cannot refuse it: at the moment of the call the Ticket really is below
-    the Outcome. Khushal and the Chief stand above every Outcome, so re-parenting is theirs.
+    column is reassigning authority rather than exercising it, and "strictly below" cannot
+    refuse it: at the moment of the call the Ticket really is below the Outcome that is
+    moving it away. Only Khushal and the Chief, who stand above every Outcome, may do it.
+
+    Asked of the caller alone, because no answer about the Ticket can decide it. That
+    includes the Ticket itself: a Ticket that could set its own Outcome could leave one,
+    or leave every Outcome, and choose who is allowed to act on it. Being a thing does not
+    include choosing who stands above you.
     """
-    if caller.kind is not PrincipalKind.sprint_item:
+    if caller.kind in _ABOVE_EVERY_OUTCOME:
         return
     raise PlannerError(
         ErrorCode.agent_forbidden,
-        "an Outcome cannot move a Ticket out of its own chain",
+        "only Khushal or the Chief can move a Ticket out of its own chain",
         {"field": "sprint_item_id", "ticket_id": ticket_id},
     )
 

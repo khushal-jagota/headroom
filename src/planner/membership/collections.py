@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from planner.core import authority
 from planner.core.authctx import RequestContext
 from planner.core.authority import (
+    is_above,
     refuse_outcome_re_parenting,
     require_above,
     require_above_or_self,
@@ -137,15 +138,27 @@ def _required(admit: Callable[[], None] | None) -> Callable[[], None]:
 def _day_ticket_rule(
     conn: sqlite3.Connection, ctx: RequestContext, container_id: str, member_id: str
 ) -> None:
-    """A Day holds no authority of its own, so the Ticket is the thing acted on."""
+    """Two callers can put work on a Day, and they are above two different things.
+
+    Anyone above the Ticket is moving their own work around, so the Ticket is the thing
+    acted on. A planning Worker is doing something else: it is composing the Day itself,
+    which is the plan it was created to write, and it stands above no Ticket. Without the
+    second question the Day Workers cannot build a Day, which is their whole job.
+    """
+    if is_above(conn, ctx.principal, authority.plan("day_tickets")):
+        return
     require_above_or_self(conn, ctx.principal, authority.ticket(member_id))
 
 
 def _outcome_ticket_rule(
     conn: sqlite3.Connection, ctx: RequestContext, container_id: str, member_id: str
 ) -> None:
-    """The Ticket is acted on, and this write is the one that sets its Outcome."""
-    require_above_or_self(conn, ctx.principal, authority.ticket(member_id))
+    """The Ticket is acted on, and this write is the one that sets its Outcome.
+
+    So it is re-parenting under another name, and the stated exception decides it. Not
+    ``or_self``: a Ticket setting its own Outcome is the case the exception exists for.
+    """
+    require_above(conn, ctx.principal, authority.ticket(member_id))
     refuse_outcome_re_parenting(ctx.principal, member_id)
 
 

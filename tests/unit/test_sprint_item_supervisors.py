@@ -848,3 +848,147 @@ def test_restart_refuses_a_stage_the_worker_does_not_own(tmp_path: Path) -> None
         "only a Worker-owned Stage has a worker step to restart"
     )
     assert after.json()["conversation_id"] == "conv-dead-worker"
+
+
+def test_a_ticket_cannot_choose_who_stands_above_it(tmp_path: Path) -> None:
+    """The stated exception, at the door that is re-parenting under another name.
+
+    Outcome membership is the write that sets ``tickets.sprint_item_id``. A Ticket that
+    could set its own could move to another Outcome, or leave every Outcome, and pick who
+    is allowed to accept, reject, delete or restart it. Being a thing does not include
+    choosing who is above you.
+    """
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        own = _create_item(client, "Own")
+        other = _create_item(client, "Other")
+        ticket = client.post(
+            "/api/tickets",
+            json={
+                "worker_type": "coding",
+                "title": "Child",
+                "kickoff_note": "Start.",
+                "sprint_item_id": own["id"],
+            },
+        ).json()
+        itself = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(ticket["id"])}
+        moved = client.put(
+            f"/api/collections/outcome_tickets/{other['id']}/{ticket['id']}", headers=itself
+        )
+        orphaned = client.delete(
+            f"/api/collections/outcome_tickets/{own['id']}/{ticket['id']}", headers=itself
+        )
+        parent_moves_it = client.put(
+            f"/api/collections/outcome_tickets/{other['id']}/{ticket['id']}",
+            headers=_supervisor_headers(str(own["id"])),
+        )
+        khushal_moves_it = client.put(
+            f"/api/collections/outcome_tickets/{other['id']}/{ticket['id']}"
+        )
+        after = client.get(f"/api/tickets?detail=full&id={ticket['id']}").json()
+
+    assert moved.json()["error"]["code"] == "agent_forbidden"
+    assert orphaned.json()["error"]["code"] == "agent_forbidden"
+    assert parent_moves_it.json()["error"]["code"] == "agent_forbidden"
+    assert khushal_moves_it.status_code == 200, khushal_moves_it.text
+    assert after["sprint_item_id"] == other["id"]
+
+
+def test_a_help_request_reaches_no_further_than_a_sent_message(tmp_path: Path) -> None:
+    """The second door that takes a recipient. It asks the same question as the first."""
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        own = _create_item(client, "Own")
+        mine = client.post(
+            "/api/tickets",
+            json={
+                "worker_type": "coding",
+                "title": "Mine",
+                "kickoff_note": "Start.",
+                "sprint_item_id": own["id"],
+            },
+        ).json()
+        stranger = client.post(
+            "/api/tickets",
+            json={"worker_type": "coding", "title": "Stranger", "kickoff_note": "Start."},
+        ).json()
+        itself = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(mine["id"])}
+        into_a_stranger = client.post(
+            f"/api/tickets/{mine['id']}/request-help",
+            json={"message": "Help.", "recipient": {"kind": "ticket", "id": stranger["id"]}},
+            headers=itself,
+        )
+        up_to_its_outcome = client.post(
+            f"/api/tickets/{mine['id']}/request-help",
+            json={"message": "Help.", "recipient": {"kind": "sprint_item", "id": own["id"]}},
+            headers=itself,
+        )
+
+    assert into_a_stranger.json()["error"]["code"] == "agent_forbidden"
+    # Asking its own Outcome for help is speaking up the chain, so it lands.
+    assert up_to_its_outcome.status_code == 200, up_to_its_outcome.text
+    assert up_to_its_outcome.json()["target"] == {"kind": "sprint_item", "id": own["id"]}
+
+
+def test_a_conversation_pages_in_the_direction_it_was_asked_for(tmp_path: Path) -> None:
+    """Five events, so a page of two cannot accidentally be the whole record.
+
+    The read that replaced the Outcome-scoped history has to do both directions. A
+    caller catching up reads on from where it got to; one that has just arrived reads
+    the end, then the page before it. `has_more` means the same thing in both: there is
+    record left in the direction you were reading.
+    """
+    app, db_path = _app(tmp_path)
+    conversation_id = "conv-paging"
+    with TestClient(app) as client:
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "INSERT INTO conversations(conversation_id,backend_key,model,"
+                "workspace_folder,access,latest_sequence,created_at) "
+                "VALUES (?, 'codex', 'test', '/tmp', 'full', 5, 1)",
+                (conversation_id,),
+            )
+            conn.executemany(
+                "INSERT INTO conversation_events "
+                "(conversation_id,sequence,kind,payload,created_at) VALUES (?,?,?,?,?)",
+                (
+                    (conversation_id, n, "agent_message", json.dumps({"text": f"m{n}"}), n)
+                    for n in range(1, 6)
+                ),
+            )
+            conn.commit()
+
+        def read(**params: Any) -> dict[str, Any]:
+            response = client.get(
+                f"/api/conversation/conversations/{conversation_id}/events", params=params
+            )
+            assert response.status_code == 200, response.text
+            return cast(dict[str, Any], response.json())
+
+        def sequences(page: dict[str, Any]) -> list[int]:
+            return [event["sequence"] for event in page["events"]]
+
+        last_page = read(limit=2)
+        page_before_it = read(limit=2, before=4)
+        oldest_page = read(limit=2, before=2)
+        forwards = read(after=1, limit=2)
+        forwards_to_the_end = read(after=3, limit=2)
+        everything = read(after=0)
+        one_direction = client.get(
+            f"/api/conversation/conversations/{conversation_id}/events",
+            params={"after": 1, "before": 4, "limit": 2},
+        )
+        too_large = client.get(
+            f"/api/conversation/conversations/{conversation_id}/events", params={"limit": 101}
+        )
+
+    assert sequences(last_page) == [4, 5] and last_page["has_more"] is True
+    assert sequences(page_before_it) == [2, 3] and page_before_it["has_more"] is True
+    assert sequences(oldest_page) == [1] and oldest_page["has_more"] is False
+    # `after` is honoured alongside `limit`. Reading it as "the last two" would answer
+    # [4, 5] here, which is the opposite end of the record from the one asked for.
+    assert sequences(forwards) == [2, 3] and forwards["has_more"] is True
+    assert sequences(forwards_to_the_end) == [4, 5] and forwards_to_the_end["has_more"] is False
+    assert sequences(everything) == [1, 2, 3, 4, 5] and everything["has_more"] is False
+    assert one_direction.json()["error"]["code"] == "validation"
+    assert too_large.json()["error"]["code"] == "validation"

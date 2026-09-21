@@ -50,6 +50,7 @@ class Seed:
     ticket_a: str
     ticket_b: str
     ticket_planning: str
+    ticket_planning_sprint: str
     ticket_user_owned: str
     sprint_id: str
     gating_field: str
@@ -94,6 +95,10 @@ def _principal_headers(seed: Seed) -> dict[str, dict[str, str]]:
             "X-Plan-Actor": "worker",
             "X-Plan-Ticket-ID": seed.ticket_planning,
         },
+        "ticket_planning_sprint": {
+            "X-Plan-Actor": "worker",
+            "X-Plan-Ticket-ID": seed.ticket_planning_sprint,
+        },
     }
 
 
@@ -105,6 +110,7 @@ PRINCIPALS: Final = (
     "ticket_self",
     "ticket_stranger",
     "ticket_planning_day",
+    "ticket_planning_sprint",
 )
 
 
@@ -157,6 +163,16 @@ def _seed(db_path: Path) -> Seed:
                 },
             )
         )
+        ticket_planning_sprint = _ok(
+            client.post(
+                "/api/tickets",
+                json={
+                    "worker_type": "planning-sprint",
+                    "title": "Plan the sprint",
+                    "kickoff_note": "Start here.",
+                },
+            )
+        )
         ticket_user_owned = _ok(
             client.post(
                 "/api/tickets",
@@ -185,6 +201,7 @@ def _seed(db_path: Path) -> Seed:
         ticket_a=str(ticket_a["id"]),
         ticket_b=str(ticket_b["id"]),
         ticket_planning=str(ticket_planning["id"]),
+        ticket_planning_sprint=str(ticket_planning_sprint["id"]),
         ticket_user_owned=str(ticket_user_owned["id"]),
         sprint_id=str(sprint["id"]),
     )
@@ -327,8 +344,10 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
     ("DELETE /items/{i}", lambda s: Call("DELETE", f"/api/items/{s.item_b}")),
     # --- collections
     (
+        # item_b, not item_a. Into its existing Outcome the write short-circuits, so the
+        # cell would pass for a caller that may not re-parent anything.
         "PUT    /collections/outcome_tickets",
-        lambda s: Call("PUT", f"/api/collections/outcome_tickets/{s.item_a}/{s.ticket_a}"),
+        lambda s: Call("PUT", f"/api/collections/outcome_tickets/{s.item_b}/{s.ticket_a}"),
     ),
     (
         "PUT    /collections/day_tickets",

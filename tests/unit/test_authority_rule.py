@@ -252,3 +252,39 @@ def test_an_other_kind_sprint_item_is_nobody(db: Connection) -> None:
 def test_a_claimed_outcome_that_does_not_exist_is_nobody(db: Connection) -> None:
     claimed = Principal(PrincipalKind.sprint_item, "si_nope")
     assert is_above_or_self(db, claimed, targets.outcome("si_nope")) is False
+
+
+def test_a_declaration_over_named_fields_does_not_reach_the_whole_object() -> None:
+    """The boundary that keeps sprint planning out of deleting an Outcome.
+
+    Shaping an Outcome's brief names the fields it writes. Deleting one names no field,
+    because it is not a write to a field — it is the whole object. A declaration limited
+    to fields must not be read as covering that, or "may edit four fields" quietly
+    becomes "may delete it".
+    """
+    declared = targets.outcome(ANY_ID, "title", "body")
+
+    assert declared.covers(targets.outcome("si_a", "title"))
+    assert declared.covers(targets.outcome("si_a", "title", "body"))
+    assert not declared.covers(targets.outcome("si_a", "title", "project_id"))
+    assert not declared.covers(targets.outcome("si_a"))
+    # A declaration that names nothing does reach the whole object, which is what
+    # plan("sprint") and plan("day_tickets") mean.
+    assert targets.plan("day_tickets").covers(targets.plan("day_tickets"))
+
+
+def test_sprint_planning_shapes_an_outcome_without_being_able_to_remove_one() -> None:
+    reach = dict(STANDS_ABOVE_BY_WORKER_TYPE)["planning-sprint"]
+    whole_outcome = Target(TargetKind.outcome, "si_a")
+    its_brief = targets.outcome("si_a", "body")
+
+    assert any(declared.covers(its_brief) for declared in reach)
+    assert not any(declared.covers(whole_outcome) for declared in reach)
+
+
+def test_the_day_workers_stand_above_the_day_s_composition() -> None:
+    """Putting work on a Day is composing the Day, not reaching into the work."""
+    for worker_type in ("planning-day", "planning-midday-check"):
+        reach = dict(STANDS_ABOVE_BY_WORKER_TYPE)[worker_type]
+        assert any(declared.covers(targets.plan("day_tickets")) for declared in reach)
+        assert not any(declared.covers(targets.ticket("t_a")) for declared in reach)

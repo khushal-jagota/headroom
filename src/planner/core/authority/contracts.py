@@ -50,17 +50,25 @@ class Target:
     def __post_init__(self) -> None:
         if not self.id or self.id != self.id.strip():
             raise ValueError("target id must be non-empty and must not contain outer whitespace")
-        if self.fields and self.kind is not TargetKind.plan:
-            raise ValueError("only a plan target carries fields")
+        if self.fields and self.kind not in (TargetKind.plan, TargetKind.outcome):
+            raise ValueError("only a plan or outcome target carries fields")
 
     def covers(self, other: Target) -> bool:
-        """Whether this declaration reaches ``other``, the target of a real operation."""
+        """Whether this declaration reaches ``other``, the target of a real operation.
+
+        A declaration that names no fields reaches the whole object. One that names fields
+        reaches an operation on those fields and nothing else — including an operation that
+        names no fields, which is an operation on the whole object. Deleting an Outcome
+        names no field, so a declaration over four of its fields must not reach it.
+        """
         if self.kind is not other.kind:
             return False
         if self.id != ANY_ID and self.id != other.id:
             return False
         if not self.fields:
             return True
+        if not other.fields:
+            return False
         return other.fields <= self.fields
 
 
@@ -68,8 +76,8 @@ def ticket(ticket_id: str) -> Target:
     return Target(TargetKind.ticket, ticket_id)
 
 
-def outcome(sprint_item_id: str) -> Target:
-    return Target(TargetKind.outcome, sprint_item_id)
+def outcome(sprint_item_id: str, *fields: str) -> Target:
+    return Target(TargetKind.outcome, sprint_item_id, frozenset(fields))
 
 
 def plan(plan_object: str, *fields: str) -> Target:

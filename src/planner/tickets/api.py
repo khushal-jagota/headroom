@@ -1318,7 +1318,13 @@ async def request_help(
     if not message.strip():
         raise PlannerError(ErrorCode.validation, "help message must not be empty", {})
     ticket = tickets_data.read_ticket(conn, ticket_id)
-    recipient = _parse_principal(body.get("recipient"), "recipient") or ticket.ceiling_holder
+    named = _parse_principal(body.get("recipient"), "recipient")
+    if named is not None:
+        # The same question Send Message asks. Without it this is a second, open door
+        # into any conversation in Panels. The default below is not asked, because the
+        # ceiling holder is the principal Panels itself addressed this Ticket to.
+        message_delivery_service.require_reach(conn, ctx.principal, named)
+    recipient = named or ticket.ceiling_holder
     delivered = await message_delivery_service.send_message(
         conversations, conn, clk, ctx, recipient, message
     )

@@ -382,7 +382,9 @@ async def patch_item(
         item_id,
         edits=edits,
         clock=clk,
-        admit=lambda: require_above_or_self(conn, ctx.principal, authority.outcome(item_id)),
+        admit=lambda: require_above_or_self(
+            conn, ctx.principal, authority.outcome(item_id, *edits)
+        ),
     )
     return sprints_views.item_detail(conn, item_id)
 

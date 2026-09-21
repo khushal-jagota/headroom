@@ -31,16 +31,33 @@ PLANNING_SPRINT_WORKER_TYPE: Final = "planning-sprint"
 DAY_MORNING_FIELDS: Final = ("focus", "brief_take", "watchout", "if_today_lands")
 DAY_MIDDAY_FIELD: Final = "midday_reconciliation"
 
+# What an Outcome is, as sprint planning shapes it: its words and its placement. Not its
+# existence, not its agent, and not its files. Sprint planning writes briefs; it does not
+# delete Outcomes or reach into a manager's conversation, and the declaration says so.
+OUTCOME_BRIEF_FIELDS: Final = ("title", "body", "priority", "deadline", "project_id")
+
 STANDS_ABOVE_BY_WORKER_TYPE: Final[dict[str, tuple[Target, ...]]] = {
-    # The morning overview, and nothing else on a Day. A Day's notes stay Khushal's.
-    PLANNING_DAY_WORKER_TYPE: (plan("day", *DAY_MORNING_FIELDS),),
-    # One field, written once in the afternoon.
-    PLANNING_MIDDAY_CHECK_WORKER_TYPE: (plan("day", DAY_MIDDAY_FIELD),),
-    # Sprint planning shapes the sprint itself, its membership, and every Outcome in it.
+    # The morning overview, and which Tickets are on the Day. A Day's notes stay
+    # Khushal's, and a Ticket's own fields stay the Ticket's: putting work on a Day is
+    # composing the Day, not reaching into the work.
+    PLANNING_DAY_WORKER_TYPE: (
+        plan("day", *DAY_MORNING_FIELDS),
+        plan("day_tickets"),
+    ),
+    # One field, written once in the afternoon, and the same power to move work on and
+    # off today, which is the whole point of checking at midday.
+    PLANNING_MIDDAY_CHECK_WORKER_TYPE: (
+        plan("day", DAY_MIDDAY_FIELD),
+        plan("day_tickets"),
+    ),
+    # Sprint planning shapes the sprint, its membership, and the brief of any Outcome it
+    # commits. Naming those fields is what keeps it out of deleting an Outcome, resetting
+    # its manager's conversation, or writing its files — operations on the whole object,
+    # which a declaration over named fields does not reach.
     PLANNING_SPRINT_WORKER_TYPE: (
         plan("sprint"),
         plan("sprint_outcomes"),
-        outcome(ANY_ID),
+        outcome(ANY_ID, *OUTCOME_BRIEF_FIELDS),
     ),
 }
 
@@ -53,6 +70,7 @@ def stands_above_for_worker_type(worker_type: str) -> tuple[Target, ...]:
 __all__ = [
     "DAY_MIDDAY_FIELD",
     "DAY_MORNING_FIELDS",
+    "OUTCOME_BRIEF_FIELDS",
     "PLANNING_DAY_WORKER_TYPE",
     "PLANNING_MIDDAY_CHECK_WORKER_TYPE",
     "PLANNING_SPRINT_WORKER_TYPE",
