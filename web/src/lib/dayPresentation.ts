@@ -1,7 +1,7 @@
 import { conversationSignalPresentation } from "./conversationSignalPresentation";
 import type { DayTicket } from "./types";
 import type { FieldStageVisualState } from "./ui";
-import { primaryWorkAttention } from "./workAttentionPresentation";
+import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
 
 export type DayVisualTicket = {
   ticket: DayTicket;
@@ -22,6 +22,7 @@ function groupKeyFor(ticket: DayTicket): string {
   if (ticket.waiting_to_closeout) return "waiting_to_closeout";
   const attention = primaryWorkAttention({
     awaiting_reply: Boolean(ticket.awaiting_reply),
+    awaiting_answer: Boolean(ticket.awaiting_answer),
     awaiting_approval: Boolean(ticket.awaiting_approval),
     assigned: Boolean(ticket.assigned)
   });
@@ -39,6 +40,7 @@ export function dayVisualTicket(
   const presentation = conversationSignalPresentation(
     {
       awaiting_reply: Boolean(ticket.awaiting_reply),
+      awaiting_answer: Boolean(ticket.awaiting_answer),
       agent_state: ticket.agent_state ?? "idle"
     }
   );
@@ -56,6 +58,13 @@ export function dayVisualTicket(
       group === "awaiting_reply")
   ) {
     return { ticket, state: "current-awaiting-approval", ariaLabel: "To review", group };
+  }
+  // One rule answers whether a worker has this Ticket, and every screen calls it. Home
+  // has no group heading beside the dot, so the dot is the only thing that can carry
+  // the durable claim. Reading the live turn alone emptied Working the moment a worker
+  // paused to wait on a long job.
+  if (presentation.state === "upcoming" && agentHoldsTicket(ticket)) {
+    return { ticket, state: "current-running", ariaLabel: "Agent working", group };
   }
   return { ticket, state: presentation.state, ariaLabel: presentation.ariaLabel, group };
 }
@@ -99,8 +108,12 @@ export function dayActionTiles(visualTickets: readonly DayVisualTicket[]): DayAc
     done: 0
   };
 
+  // "Need you" is every ticket stopped on the owner: a worker waiting on an answer,
+  // which carries the `needs-me` dot, and an unread message, which carries its own.
   for (const visual of visualTickets) {
-    if (visual.state === "needs-me") counts["needs-me"] += 1;
+    if (visual.state === "needs-me" || visual.group === "awaiting_reply") {
+      counts["needs-me"] += 1;
+    }
     else if (visual.state === "current-running") counts.working += 1;
     else if (
       visual.state === "current-awaiting-approval" &&
@@ -128,5 +141,9 @@ export function dayActionTiles(visualTickets: readonly DayVisualTicket[]): DayAc
 }
 
 export function dayPageState(visualTickets: readonly DayVisualTicket[]): "populated" | "calm" {
-  return visualTickets.some((visual) => visual.state === "needs-me") ? "populated" : "calm";
+  return visualTickets.some(
+    (visual) => visual.state === "needs-me" || visual.group === "awaiting_reply"
+  )
+    ? "populated"
+    : "calm";
 }

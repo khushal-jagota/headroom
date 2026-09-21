@@ -38,11 +38,6 @@ export type TicketStageVisualInput = {
   fieldHasProposal?: boolean;
 };
 
-// The ticket status names are the labels: underscores become spaces.
-export function ticketStatusText(value: string): string {
-  return value.replace(/_/g, " ");
-}
-
 export function formatUnix(seconds: unknown): string {
   if (seconds === null || seconds === undefined) return "";
   return new Date(Number(seconds) * 1000).toLocaleString();

@@ -2218,3 +2218,67 @@ def test_each_held_queue_mutation_publishes_an_empty_live_frame(
             assert isinstance(await watching.next_item(), HeldPromptsChangedFrame)
 
     _run(exercise)
+
+
+def test_a_command_that_cannot_join_the_running_turn_waits_for_the_next_one(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A backend that runs commands as their own turns refuses the steer, and the message
+    goes to the line rather than being written down as undeliverable.
+
+    The composer steers by default, so this is the ordinary way a command is typed while
+    an agent is working. The message has to survive that.
+    """
+
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        harness.backend("c").steer_outcome = BackendSteerRefused(
+            PromptDeliveryRefusalReason.command_cannot_join_running_turn
+        )
+
+        fate = await harness.system.send(
+            "c",
+            text_message_content("/compact"),
+            sender_label="owner",
+            mode=PromptDeliveryMode.steer,
+        )
+
+        assert fate == PromptDeliveryQueued(queue_position=1)
+        held = await harness.system.held_prompts("c")
+        assert [message.queue_reason for message in held] == [
+            PromptQueueReason.command_needs_its_own_turn
+        ]
+
+    _run(exercise)
+
+
+def test_a_promoted_command_goes_back_to_the_line_instead_of_being_thrown_away(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Promoting a held command into a running turn is the right gesture at the wrong
+    moment. The message keeps its place in the line and runs as its own turn."""
+
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _key: True)
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        await harness.system.send("c", text_message_content("/compact"), sender_label="owner")
+        selected = (await harness.system.held_prompts("c"))[0]
+        harness.backend("c").steer_outcome = BackendSteerRefused(
+            PromptDeliveryRefusalReason.command_cannot_join_running_turn
+        )
+
+        fate = await harness.system.promote_held_prompt(
+            "c", selected.held_prompt_id, HeldPromptPromotionMode.steer
+        )
+
+        assert fate == PromptDeliveryQueued(queue_position=1)
+        held = await harness.system.held_prompts("c")
+        assert [message_content_text(message.content) for message in held] == ["/compact"]
+        assert [message.queue_reason for message in held] == [
+            PromptQueueReason.command_needs_its_own_turn
+        ]
+
+    _run(exercise)

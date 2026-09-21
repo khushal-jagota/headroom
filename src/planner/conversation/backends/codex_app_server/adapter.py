@@ -461,7 +461,15 @@ class CodexAppServerBackendChild:
         sender_content: MessageContent | None = None,
         sender_label: str,
     ) -> BackendSteerOutcome:
-        """Ask Codex to admit this content to the exact captured ordinary turn."""
+        """Ask Codex to admit this content to the exact captured ordinary turn.
+
+        A catalog command is the one thing this cannot carry. Codex runs every command
+        through an RPC of its own — compaction, review, a goal — and each of those starts
+        a turn, so no command joins a turn that is already running. Putting its text into
+        ``turn/steer`` anyway would hand the model a sentence that reads like a command
+        and never runs as one, which is the silent failure this guard exists to stop. The
+        adapter says it cannot take it, and the core holds the message for the next turn.
+        """
         sender_content = content if sender_content is None else sender_content
         turn = self._turn
         if turn is None:
@@ -482,6 +490,14 @@ class CodexAppServerBackendChild:
             )
 
         captured_native_turn_id = turn.turn_id
+        try:
+            invocation = self._catalog_invocation(sender_content)
+        except PromptWriteFailed:
+            return BackendSteerRefused(PromptDeliveryRefusalReason.message_cannot_be_steered)
+        if invocation is not None and invocation.kind is ComposerCatalogEntryKind.command:
+            return BackendSteerRefused(
+                PromptDeliveryRefusalReason.command_cannot_join_running_turn
+            )
         try:
             thread_id = self._bound_thread()
         except PromptWriteFailed:

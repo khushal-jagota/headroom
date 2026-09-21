@@ -1,9 +1,10 @@
 import { labelize, type FieldStageVisualState } from "./ui";
 import type { BoardCard, BoardSprintItem, Priority } from "./types";
-import { primaryWorkAttention } from "./workAttentionPresentation";
+import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
 
 const ATTENTION_GROUP_ORDER = [
   "awaiting_approval",
+  "awaiting_answer",
   "assigned",
   "awaiting_reply"
 ] as const;
@@ -27,11 +28,13 @@ const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set([
 
 // Each of the three says whose the work is, in the word the code already uses for it:
 // `awaiting_approval` is a proposal whose ceiling the owner holds, and `assigned` is a
-// stage whose ownership mode is `user`, meaning his own to do. A proposal parked on an
-// agent is a different fact and keeps its own quiet heading, so no label here can mean
-// two things depending on the screen it is read on.
+// stage whose ownership mode is `user`, meaning his own to do — the whole of that rule
+// lives in `ticket_is_assigned` on the server. A proposal parked on an agent is a
+// different fact and keeps its own quiet heading, so no label here can mean two things
+// depending on the screen it is read on.
 const GROUP_LABELS: Readonly<Record<string, string>> = {
   awaiting_approval: "Needs your approval",
+  awaiting_answer: "Needs your answer",
   assigned: "Yours",
   awaiting_reply: "Messages",
   status_awaiting_approval: "Awaiting an agent's approval",
@@ -45,7 +48,7 @@ export type WorkspaceTicketGroup = {
   cards: BoardCard[];
 };
 
-export type WorkspaceRowMark = "attention" | "working" | null;
+export type WorkspaceRowMark = "answer" | "attention" | "working" | null;
 
 export type WorkspaceRowMarkPresentation = {
   state: FieldStageVisualState;
@@ -75,6 +78,8 @@ function workspaceRemainderGroupKey(card: BoardCard): string {
   // The server says who holds a parked proposal. This reads that fact rather than the
   // status, which says a proposal is parked and not whose it is.
   if (card.awaiting_agent_approval) return "status_awaiting_approval";
+  // One rule answers whether a worker has this Ticket, and every screen calls it.
+  if (agentHoldsTicket(card)) return "agent";
   return String(card.ticket_status);
 }
 
@@ -92,6 +97,7 @@ export function workspaceCardGroupKey(card: BoardCard): string {
 }
 
 export function workspaceTicketRowMark(card: BoardCard): WorkspaceRowMark {
+  if (card.awaiting_answer) return "answer";
   if (card.awaiting_reply) return "attention";
   if (card.agent_state === "working") return "working";
   return null;
@@ -100,6 +106,9 @@ export function workspaceTicketRowMark(card: BoardCard): WorkspaceRowMark {
 export function workspaceRowMarkPresentation(
   mark: WorkspaceRowMark
 ): WorkspaceRowMarkPresentation {
+  if (mark === "answer") {
+    return { state: "needs-me", ariaLabel: "Needs an answer" };
+  }
   if (mark === "attention") {
     return { state: "current-awaiting-approval", ariaLabel: "Message" };
   }
@@ -110,6 +119,7 @@ export function workspaceRowMarkPresentation(
 }
 
 export function workspaceSprintItemRowMark(item: BoardSprintItem): WorkspaceRowMark {
+  if (item.awaiting_answer || item.ticket_rollup.awaiting_answer) return "answer";
   if (item.awaiting_reply || item.ticket_rollup.awaiting_reply) return "attention";
   if (item.agent_state === "working" || item.ticket_rollup.agent_state === "working") {
     return "working";

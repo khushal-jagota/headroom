@@ -56,6 +56,9 @@ select = ["E", "F", "W", "I", "UP", "B"]
 # The same reason, for the skill text one revision replaces. It is the owner's rows
 # quoted exactly as they stand, so rewrapping it would stop it matching them.
 "src/planner/core/migrations/skill_row_correction_data.py" = ["E501"]
+"src/planner/core/migrations/skill_ladder_correction_data.py" = ["E501"]
+# The generator that writes that module holds the same quoted rows before it writes them.
+"scripts/build_ladder_corrections.py" = ["E501"]
 
 [tool.mypy]
 strict = true

@@ -40,6 +40,7 @@
     if (row.queueReason === "attachment") return "Queued because attachments cannot steer";
     if (row.queueReason === "run_change") return "Queued to apply the run change";
     if (row.queueReason === "steer_refused") return "Queued because the turn did not accept steering";
+    if (row.queueReason === "command_needs_its_own_turn") return "Queued because a command runs as its own turn";
     return null;
   }
 

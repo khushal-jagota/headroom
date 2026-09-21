@@ -1,7 +1,7 @@
 import { shortMonthDayLabel } from "./dates";
 import type { FieldStageVisualState } from "./ui";
 import type { WorkAttention } from "./types";
-import { primaryWorkAttention } from "./workAttentionPresentation";
+import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
 
 export type FeedbackNote = {
   id: string;
@@ -113,10 +113,13 @@ export function feedbackTicketStageState(ticket: FeedbackTicket): FieldStageVisu
   if (ticket.ticket_status === "errored" || ticket.ticket_status === "blocked") return "errored";
   const attention = primaryWorkAttention(ticket);
   if (attention === "awaiting_approval") return "current-awaiting-approval";
+  if (attention === "awaiting_answer") return "needs-me";
   if (attention === "assigned") return "current-assigned";
-  if (attention === "awaiting_reply") return "needs-me";
-  if (ticket.agent_state === "working") return "current-running";
+  if (attention === "awaiting_reply") return "current-awaiting-approval";
+  // A broken worker is named before the work it holds, as it is on every other screen.
   if (ticket.agent_state === "errored") return "errored";
+  // One rule answers whether a worker has this Ticket, and every screen calls it.
+  if (agentHoldsTicket(ticket)) return "current-running";
   if (ticket.stage === "needs_consequences") return "current-waiting";
   return "upcoming";
 }
@@ -125,13 +128,14 @@ export function feedbackTicketStateLabel(ticket: FeedbackTicket): string {
   if (ticket.stage === "done") return "Done";
   if (ticket.ticket_status === "blocked") return "Blocked";
   const attention = primaryWorkAttention(ticket);
-  // The same three facts the Workspace rail and the Sprint Item page head their groups
+  // The same four facts the Workspace rail and the Sprint Item page head their groups
   // with, in the same words. One fact is named one way wherever it is read.
   if (attention === "awaiting_approval") return "Needs your approval";
+  if (attention === "awaiting_answer") return "Needs your answer";
   if (attention === "assigned") return "Yours";
   if (attention === "awaiting_reply") return "Messages";
-  if (ticket.agent_state === "working") return "Running";
   if (ticket.agent_state === "errored") return "Errored";
+  if (agentHoldsTicket(ticket)) return "Running";
   const labels: Record<string, string> = { errored: "Errored", blocked: "Blocked" };
   if (ticket.ticket_status === "empty" && ticket.stage === "needs_consequences") {
     return "Waiting on Consequences";

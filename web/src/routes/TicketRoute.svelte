@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
+  import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
@@ -151,6 +152,10 @@
   let heldFile = $state<ManagedFileTarget | null>(null);
   let shownFile = $derived(onOpenFile ? openFile : heldFile);
   let artifactReloadSignal = $state(0);
+  // Which stages the reader has opened or closed with their own hands, by field name. A
+  // stage that settles moves into the fold above and is rebuilt there, so the answer
+  // cannot live in the stage. It lives here, where it outlives the move.
+  let readerStageFolds = new SvelteMap<string, boolean>();
 
   /** Show a file on this screen, or close the one it is showing.
    *
@@ -296,10 +301,6 @@
 
   function acceptField(field: string, body: Record<string, unknown>): Promise<unknown> {
     return mutateJson(`/api/tickets/${stableId}/accept/${field}`, { method: "POST", body });
-  }
-
-  function userOwnsCurrentStage(detail: TicketDetail): boolean {
-    return lc?.stageOwnershipMode[detail.stage] === "user";
   }
 
   function currentStageRunLabel(detail: TicketDetail): string | null {
@@ -536,9 +537,11 @@
                         ceiling={detail.ceiling}
                         sprintItem={ticketSprintItem}
                         emptyText={emptyTicketFieldText}
-                        editableCurrentValue={userOwnsCurrentStage(detail)}
+                        editableCurrentValue={detail.assigned}
                         runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                         runLabelAttention={stageState === "current-awaiting-approval"}
+                        readerLeftItOpen={readerStageFolds.get(name) ?? null}
+                        onReaderToggle={(open) => readerStageFolds.set(name, open)}
                         contextRow={name === "brief" && kickoffCardShowsContextRow
                           ? kickoffContextRow
                           : undefined}
@@ -571,9 +574,11 @@
                   ceiling={detail.ceiling}
                   sprintItem={ticketSprintItem}
                   emptyText={emptyTicketFieldText}
-                  editableCurrentValue={userOwnsCurrentStage(detail)}
+                  editableCurrentValue={detail.assigned}
                   runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                   runLabelAttention={stageState === "current-awaiting-approval"}
+                  readerLeftItOpen={readerStageFolds.get(name) ?? null}
+                  onReaderToggle={(open) => readerStageFolds.set(name, open)}
                   contextRow={name === "brief" && kickoffCardShowsContextRow
                     ? kickoffContextRow
                     : undefined}
