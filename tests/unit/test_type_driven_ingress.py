@@ -321,3 +321,16 @@ def test_guidance_round_trip_validation_and_retired_field_routes(app_db: AppDb) 
             client.put(f"/api/tickets/{ticket_id}/notes/plan", json={"body": "old"}).status_code
             == 404
         )
+
+
+def test_a_create_naming_no_brief_parks_nothing_at_the_http_door(
+    app_db: AppDb, probe_installed: None
+) -> None:
+    """The default path: an absent kickoff_note used to park an empty proposal."""
+    app, _db = app_db
+    with TestClient(app) as client:
+        created = client.post("/api/tickets", json={"title": "No brief", "worker_type": "coding"})
+        assert created.status_code == 200, created.json()
+        detail = client.get(f"/api/tickets?detail=full&id={created.json()['id']}").json()
+        assert detail["ticket_status"] == "empty"
+        assert detail["pending_proposal"] is None

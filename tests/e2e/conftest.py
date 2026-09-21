@@ -446,6 +446,11 @@ def cli() -> Callable[..., JsonObject]:
             env["PLAN_ACTOR"] = "worker"
         if actor is not None:
             env["PLAN_ACTOR"] = actor
+        # A Ticket created with no Brief rests at its Brief stage with nothing parked,
+        # so the fixture has to write one before it can settle the gate below.
+        settles_the_intake_gate = args[:2] == ("ticket", "create") and "--kickoff-note" not in args
+        if settles_the_intake_gate:
+            args = (*args, "--kickoff-note", "Agreed brief.")
         proc = subprocess.run(
             [str(PLAN_BIN), *args, "--json"],
             input=stdin,
@@ -462,7 +467,7 @@ def cli() -> Callable[..., JsonObject]:
         # Most pre-Kickoff browser scenarios need a worker-stage ticket. Settle the
         # new intake gate in the fixture unless the test supplied Kickoff content;
         # those explicit cases exercise the parked proposal itself.
-        if args[:2] == ("ticket", "create") and "--kickoff-note" not in args:
+        if settles_the_intake_gate:
             approve = subprocess.run(
                 [
                     str(PLAN_BIN), "ticket", "approve", data["id"],

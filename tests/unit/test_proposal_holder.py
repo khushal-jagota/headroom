@@ -431,3 +431,139 @@ def test_a_worker_cannot_move_its_own_ticket_holder(tmp_db: Connection) -> None:
     assert data.read_ticket(tmp_db, ticket.id).ceiling_holder == CHIEF_PRINCIPAL
 
 
+
+
+# --- a move that leaves the holder below the Ticket -----------------------------
+
+
+def _outcome(conn: Connection, title: str, clock: Clock) -> str:
+    return sprints_data.create_item(
+        conn, title=title, project_id="project_vylo", clock=clock
+    ).id
+
+
+def _park_under(conn: Connection, outcome_id: str, *, now: int = 10) -> Ticket:
+    """A Ticket under an Outcome, with a proposal parked for that same Outcome."""
+    holder = Principal(PrincipalKind.sprint_item, outcome_id)
+    ticket = data.create_ticket(
+        conn,
+        title="Addressed to its Outcome",
+        principal=OWNER_PRINCIPAL,
+        now=now,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note="Agreed kickoff",
+        stated_ceiling="needs_success_condition",
+        sprint_item_id=outcome_id,
+        stated_holder=holder,
+    )
+    return data.file_current_proposal(
+        conn,
+        ticket.id,
+        body="Success proposal",
+        principal=Principal(PrincipalKind.ticket, ticket.id),
+        now=now + 1,
+    )
+
+
+def test_a_move_puts_a_stranded_proposal_back_in_the_user_review(
+    tmp_db: Connection, fake_clock: Clock
+) -> None:
+    """The whole complaint, end to end: parked, moved, and nobody coming."""
+    left = _outcome(tmp_db, "Inbox triage", fake_clock)
+    joined = _outcome(tmp_db, "Sprint hygiene", fake_clock)
+    ticket = _park_under(tmp_db, left)
+    day_id = "day_2026-09-21"
+    days_data.add_day_ticket(tmp_db, day_id, ticket.id, 20)
+    assert views.review_view(tmp_db, day_id=day_id)["items"] == []
+
+    data.edit_ticket(
+        tmp_db,
+        ticket.id,
+        edit=TicketEdit(sprint_item_id=joined),
+        title_max_chars=TITLE_MAX_CHARS,
+        principal=OWNER_PRINCIPAL,
+        now=30,
+    )
+
+    moved = data.read_ticket(tmp_db, ticket.id)
+    assert moved.ceiling_holder == OWNER_PRINCIPAL
+    assert moved.pending_proposal == ticket.pending_proposal
+    assert "Inbox triage" in moved.guidance and "Sprint hygiene" in moved.guidance
+    review = views.review_view(tmp_db, day_id=day_id)
+    assert [item["ticket_id"] for item in review["items"]] == [ticket.id]
+
+
+def test_the_outcome_collection_doors_return_a_stranded_ceiling_too(
+    tmp_db: Connection, fake_clock: Clock
+) -> None:
+    left = _outcome(tmp_db, "Inbox triage", fake_clock)
+    joined = _outcome(tmp_db, "Sprint hygiene", fake_clock)
+
+    classified = _park_under(tmp_db, left)
+    data.classify_ticket(
+        tmp_db, classified.id, sprint_item_id=joined, principal=OWNER_PRINCIPAL, now=30
+    )
+    assert data.read_ticket(tmp_db, classified.id).ceiling_holder == OWNER_PRINCIPAL
+
+    unclassified = _park_under(tmp_db, left, now=40)
+    data.unclassify_ticket(
+        tmp_db, unclassified.id, sprint_item_id=left, principal=OWNER_PRINCIPAL, now=50
+    )
+    emptied = data.read_ticket(tmp_db, unclassified.id)
+    assert emptied.ceiling_holder == OWNER_PRINCIPAL
+    assert "moved out of **Inbox triage**" in emptied.guidance
+
+
+def test_a_move_leaves_a_holder_that_still_stands_above_alone(
+    tmp_db: Connection, fake_clock: Clock
+) -> None:
+    """Khushal stands above every Outcome, so no move can strand him."""
+    left = _outcome(tmp_db, "Inbox triage", fake_clock)
+    joined = _outcome(tmp_db, "Sprint hygiene", fake_clock)
+    ticket = data.create_ticket(
+        tmp_db,
+        title="Held by the user throughout",
+        principal=OWNER_PRINCIPAL,
+        now=10,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note="Agreed kickoff",
+        stated_ceiling="needs_success_condition",
+        sprint_item_id=left,
+    )
+
+    data.edit_ticket(
+        tmp_db,
+        ticket.id,
+        edit=TicketEdit(sprint_item_id=joined),
+        title_max_chars=TITLE_MAX_CHARS,
+        principal=OWNER_PRINCIPAL,
+        now=20,
+    )
+
+    moved = data.read_ticket(tmp_db, ticket.id)
+    assert moved.ceiling_holder == OWNER_PRINCIPAL
+    assert moved.guidance == ""
+
+
+def test_only_a_move_returns_the_ceiling_not_any_other_edit(
+    tmp_db: Connection, fake_clock: Clock
+) -> None:
+    """A Ticket already stranded stays stranded until something moves it."""
+    left = _outcome(tmp_db, "Inbox triage", fake_clock)
+    ticket = _park_under(tmp_db, left)
+    tmp_db.execute("UPDATE tickets SET sprint_item_id = NULL WHERE id = ?", (ticket.id,))
+
+    data.edit_ticket(
+        tmp_db,
+        ticket.id,
+        edit=TicketEdit(title="Renamed, not moved"),
+        title_max_chars=TITLE_MAX_CHARS,
+        principal=OWNER_PRINCIPAL,
+        now=30,
+    )
+
+    unchanged = data.read_ticket(tmp_db, ticket.id)
+    assert unchanged.ceiling_holder == Principal(PrincipalKind.sprint_item, left)
+    assert unchanged.guidance == ""

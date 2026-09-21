@@ -38,6 +38,7 @@ def _ticket(conn: Connection, now: int) -> Ticket:
         principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
+        kickoff_note="Agreed brief.",
     )
 
 
