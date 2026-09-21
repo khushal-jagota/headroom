@@ -688,7 +688,7 @@ virtual environment:
 | Switch on | Point it at | Cases |
 | --- | --- | --- |
 | `PANELS_REAL_CLAUDE_TESTS=1` | `tests/unit/test_conversation_claude_real_cli.py` and `tests/unit/test_conversation_claude_agent_sdk.py` | 8 |
-| `PANELS_REAL_CODEX_TESTS=1` | `tests/unit/test_conversation_codex_real_cli.py` | 11 |
+| `PANELS_REAL_CODEX_TESTS=1` | `tests/unit/test_conversation_codex_real_cli.py` | 12 |
 | `PANELS_REAL_HERMES_TESTS=1` | `tests/unit/test_conversation_hermes_acp.py` | 4 |
 | `PANELS_REAL_SYSTEM_STEERING_TESTS=1` | `tests/integration/test_conversation_real_provider_steering.py` | 3 |
 
@@ -709,25 +709,31 @@ directories, because it gives each agent a private home rather than borrowing yo
 You build those three yourself. Nothing in the repository makes them for you, and a stale
 copy fails as a login problem rather than as a missing file.
 
-### Eight of the twenty-six fail today
+### A red run is expected today
 
-A first run is red, and none of it is Panels being wrong. Expect it, and do not go
-looking for a defect you did not cause.
+Seven or eight of the twenty-seven fail, and none of it is Panels being wrong. Expect it,
+and do not go looking for a defect you did not cause. Four groups:
 
-- **Three cases — the whole steering exercise, one per backend.** They expect a steer sent
-  while nothing is running to be refused. Panels now starts a turn instead, and has since
-  the send modes were named. One assertion, three failures. Worth repairing: these three
-  are the only thing here that runs the contract against real adapters.
-- **Two claude cases.** They plant a codeword and ask for it back, and the model now reads
-  that as an attempt to smuggle instructions past it. Worth repairing, by asking for
-  something a model will agree to do.
-- **Two hermes cases.** They ask for a long count, sleep two seconds, then cancel and
-  expect an interrupted turn. The turn has already finished. Worth repairing, by timing
-  the cancel off the first streamed token instead of the clock.
+- **The whole steering exercise, one failure per backend.** All three die on the same
+  assertion, that a steer sent while nothing is running is refused. Panels now starts a turn
+  instead, and has since the send modes were named. Worth repairing, and it is one line:
+  these three cases are the only thing here that runs the contract against real adapters.
+- **Two claude cases, and they are not reliably red.** Both plant a codeword and ask for it
+  back, and the model reads that as an attempt to smuggle instructions past it — sometimes.
+  One run fails both, the next fails one. A case that turns on whether a model feels like
+  complying is worse than one that always fails, because it teaches you to ignore it. Worth
+  repairing, by asking for something a model will agree to do.
+- **Two hermes cases.** They ask for a long count, sleep two seconds, then cancel and expect
+  an interrupted turn. The turn has already finished. Worth repairing, by timing the cancel
+  off the first streamed token instead of the clock.
 - **One codex case.** It changes the model mid-conversation to one a ChatGPT-account login
-  cannot use, and codex says so. Not worth repairing: a hardcoded vendor model name has to
-  stay valid forever on whichever account is logged in, and the claim that carries weight —
-  that a model sent with a turn reaches the model call — is proved by the case next to it.
+  cannot use, and codex says so plainly. Not worth repairing: a hardcoded vendor model name
+  has to stay valid forever on whichever account is logged in, and the claim that carries
+  weight — that a model sent with a turn reaches the model call — is proved by the case next
+  to it, which sends a model that does not exist and reads the refusal back.
+
+What passes is worth knowing too. Every run so far has each of the three backends accept a
+steer into a turn that was genuinely running, on a receipt from the provider process itself.
 
 ## Code paths
 
