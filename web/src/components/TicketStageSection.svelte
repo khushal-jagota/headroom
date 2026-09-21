@@ -31,6 +31,8 @@
     approvalDisabled = false,
     runLabel = null,
     runLabelAttention = false,
+    readerLeftItOpen = null,
+    onReaderToggle,
     contextRow,
     onAccept,
     onSaveValue,
@@ -51,6 +53,11 @@
     approvalDisabled?: boolean;
     runLabel?: string | null;
     runLabelAttention?: boolean;
+    /** How the reader last left this stage, when they have touched it. A settling stage
+     *  moves into the fold above and is rebuilt there, so the answer is kept by the
+     *  screen rather than by this component. */
+    readerLeftItOpen?: boolean | null;
+    onReaderToggle?: (open: boolean) => void;
     contextRow?: Snippet;
     onAccept: (payload: Record<string, unknown>) => Promise<unknown>;
     onSaveValue?: (raw: string) => Promise<unknown>;
@@ -65,7 +72,7 @@
   let nextStage = $derived(advanceTargetFor(lifecycle, ticketStage, ceiling));
   let canEditValue = $derived(passed);
   let canCompleteGate = $derived(isGating && editableCurrentValue && !hasProposal);
-  let defaultOpen = $derived(isGating);
+  let defaultOpen = $derived(readerLeftItOpen ?? isGating);
 
 </script>
 
@@ -108,6 +115,7 @@
   <Disclosure
     variant="stage"
     {defaultOpen}
+    {onReaderToggle}
     chevron="none"
     data-field={name}
     data-stage-state={stageState}

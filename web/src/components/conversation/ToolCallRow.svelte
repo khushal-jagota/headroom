@@ -6,37 +6,70 @@
    * directory listing into the conversation is a file the owner has to scroll past to
    * find the reply. Opened, the output is capped and scrolls in place, so no single row
    * can push the rest of the conversation off the screen.
+   *
+   * Whether this row is open is not this row's to keep. A turn that ends puts its work
+   * behind a fold, which destroys these rows, so the answer belongs to the thread and is
+   * handed back when the row is drawn again.
    */
   import { presentToolCall } from "../../lib/conversation/toolCallPresentation";
   import type { ToolCallRow } from "../../lib/conversation/transcript";
+  import type { SvelteMap, SvelteSet } from "svelte/reactivity";
   import { readToolCallDetail } from "../../lib/conversation/wire";
 
-  let { row, conversationId }: { row: ToolCallRow; conversationId: string } = $props();
+  let {
+    row,
+    conversationId,
+    openRows,
+    wholeDetails
+  }: {
+    row: ToolCallRow;
+    conversationId: string;
+    /** Which rows the reader has opened, by tool call id. Owned by the thread. */
+    openRows: SvelteSet<string>;
+    /** The whole output of every row the reader opened, so a row that is drawn again
+     *  does not ask the server for text it already has. */
+    wholeDetails: SvelteMap<string, string>;
+  } = $props();
 
-  let open = $state(false);
-  /** The whole output, once this reader has asked for it. An open carries only the start
-   *  of a long one, so the rest arrives when somebody opens the row and is kept for the
-   *  rest of the visit. */
-  let wholeDetail = $state<string | null>(null);
   let detailFailed = $state(false);
+  /** One request at a time, however often the effect below is woken. */
+  let asking = false;
 
+  let open = $derived(openRows.has(row.toolCallId));
   let presentation = $derived(presentToolCall(row));
   let regionId = $derived(`c2-tool-${row.toolCallId}`);
-  let shownDetail = $derived(wholeDetail ?? presentation.detail);
+  let shownDetail = $derived(wholeDetails.get(row.toolCallId) ?? presentation.detail);
 
-  async function openRow(): Promise<void> {
-    open = !open;
-    const at = row.cappedDetailSequence;
-    if (!open || at === null || wholeDetail !== null) return;
-    detailFailed = false;
-    try {
-      wholeDetail = await readToolCallDetail(conversationId, at);
-    } catch {
-      // The start of the output is still true and stays on screen. The row says only
-      // that the rest of it did not arrive.
-      detailFailed = true;
+  function openRow(): void {
+    if (openRows.has(row.toolCallId)) {
+      openRows.delete(row.toolCallId);
+      return;
     }
+    detailFailed = false;
+    openRows.add(row.toolCallId);
   }
+
+  // An open carries only the start of a long output. The rest is asked for when the row
+  // is open and the thread does not hold it yet, which covers both the reader opening
+  // this row and a row drawn again already open.
+  $effect(() => {
+    const at = row.cappedDetailSequence;
+    const id = row.toolCallId;
+    if (!open || at === null || wholeDetails.has(id) || detailFailed || asking) return;
+    asking = true;
+    void (async () => {
+      try {
+        const whole = await readToolCallDetail(conversationId, at);
+        if (whole !== null) wholeDetails.set(id, whole);
+      } catch {
+        // The start of the output is still true and stays on screen. The row says only
+        // that the rest of it did not arrive.
+        detailFailed = true;
+      } finally {
+        asking = false;
+      }
+    })();
+  });
 </script>
 
 {#snippet body()}
