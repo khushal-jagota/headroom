@@ -658,6 +658,63 @@ notifications are therefore ignored rather than decoded into a second result.
 The last catalog reported is kept on the conversation. The menu still works when no
 child process runs. A conversation with no report yet offers nothing.
 
+## Proving the three backends
+
+The contract's proof runs every backend key against one scripted agent. That proves the
+core three times over, not the three adapters. What each real agent CLI actually does is
+proved by four opt-in exercises that make real model calls against the logins on this
+host. They are off unless you switch them on, and nothing runs them on a push, a pull
+request, or a schedule. A person runs them or nobody does.
+
+The whole set takes about four minutes. Cost is not the reason to skip them.
+
+Each exercise is its own `pytest` command, from the repository root with the tree's own
+virtual environment:
+
+| Switch on | Point it at | Cases |
+| --- | --- | --- |
+| `PANELS_REAL_CLAUDE_TESTS=1` | `tests/unit/test_conversation_claude_real_cli.py` and `tests/unit/test_conversation_claude_agent_sdk.py` | 8 |
+| `PANELS_REAL_CODEX_TESTS=1` | `tests/unit/test_conversation_codex_real_cli.py` | 11 |
+| `PANELS_REAL_HERMES_TESTS=1` | `tests/unit/test_conversation_hermes_acp.py` | 4 |
+| `PANELS_REAL_SYSTEM_STEERING_TESTS=1` | `tests/integration/test_conversation_real_provider_steering.py` | 3 |
+
+The first three drive one adapter directly. The fourth is the only one that runs the whole
+conversation system and its HTTP API against all three real agent processes, and it is
+where a steer is proved to cross into a live turn.
+
+That fourth exercise asks for more before it will start. It refuses a dirty tree, so
+`git status --short` must come back empty. It needs a directory to write its receipts
+into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs three credential
+directories, because it gives each agent a private home rather than borrowing yours:
+
+- `PANELS_REAL_HERMES_HOME_TEMPLATE` — a copy of `~/.hermes`.
+- `PANELS_REAL_CODEX_HOME_TEMPLATE` — a directory holding `auth.json` and `config.toml`.
+- `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` — a directory holding `.credentials.json` and
+  `settings.json`.
+
+You build those three yourself. Nothing in the repository makes them for you, and a stale
+copy fails as a login problem rather than as a missing file.
+
+### Eight of the twenty-six fail today
+
+A first run is red, and none of it is Panels being wrong. Expect it, and do not go
+looking for a defect you did not cause.
+
+- **Three cases — the whole steering exercise, one per backend.** They expect a steer sent
+  while nothing is running to be refused. Panels now starts a turn instead, and has since
+  the send modes were named. One assertion, three failures. Worth repairing: these three
+  are the only thing here that runs the contract against real adapters.
+- **Two claude cases.** They plant a codeword and ask for it back, and the model now reads
+  that as an attempt to smuggle instructions past it. Worth repairing, by asking for
+  something a model will agree to do.
+- **Two hermes cases.** They ask for a long count, sleep two seconds, then cancel and
+  expect an interrupted turn. The turn has already finished. Worth repairing, by timing
+  the cancel off the first streamed token instead of the clock.
+- **One codex case.** It changes the model mid-conversation to one a ChatGPT-account login
+  cannot use, and codex says so. Not worth repairing: a hardcoded vendor model name has to
+  stay valid forever on whichever account is logged in, and the claim that carries weight —
+  that a model sent with a turn reaches the model call — is proved by the case next to it.
+
 ## Code paths
 
 - Contract and floor defaults: `src/planner/conversation/contracts.py` (the
@@ -676,7 +733,11 @@ child process runs. A conversation with no report yet offers nothing.
   and the routes that mount them.
 - The contract's proof: `tests/support/conversation_contract_conformance.py`,
   run against the real system in
-  `tests/unit/test_conversation_conformance.py`.
+  `tests/unit/test_conversation_conformance.py`. Every backend key is bound to the
+  same scripted agent in `tests/support/conversation_system_under_test.py`.
+- The real-agent exercises: the four files named above, plus
+  `tests/support/conversation_claude_agent_sdk_bench.py` and
+  `conversation_codex_app_server_bench.py`.
 
 ## Handoffs
 
