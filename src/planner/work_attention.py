@@ -6,14 +6,13 @@ import asyncio
 import json
 import sqlite3
 from collections.abc import Iterable
-from typing import TypedDict
 
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.storage import ConversationAttentionFacts, ConversationStore
 from planner.core import ticket_blocks
 from planner.core.contracts import OWNER_PRINCIPAL, JsonDict
 from planner.tickets import derivation
-from planner.tickets.contracts import StageOwnershipMode, TicketStatus
+from planner.tickets.contracts import StageOwnershipMode, TicketStatus, WorkAttention
 from planner.tickets.derivation import AgentState, TicketFacts
 from planner.tickets.logic import machine
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -25,15 +24,6 @@ from planner.worker_types.configuration import configured_worker_type_registry
 # is quiet work the owner is not being asked for. A caller that must know *which* agent
 # holds it reads the holder on its own rows: the two words here never change meaning with
 # the endpoint the reader came through.
-class WorkAttention(TypedDict):
-    awaiting_reply: bool
-    awaiting_answer: bool
-    awaiting_approval: bool
-    awaiting_agent_approval: bool
-    assigned: bool
-    agent_state: str
-
-
 def _empty_attention() -> WorkAttention:
     return {
         "awaiting_reply": False,

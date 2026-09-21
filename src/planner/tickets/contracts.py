@@ -62,6 +62,17 @@ class TicketStatus(StrEnum):  # derived at the moment of a read; never stored
     errored = "errored"
 
 
+class WorkAttention(TypedDict):
+    """The shared owner-attention and employee-activity projection."""
+
+    awaiting_reply: bool
+    awaiting_answer: bool
+    awaiting_approval: bool
+    awaiting_agent_approval: bool
+    assigned: bool
+    agent_state: str
+
+
 class BoardCard(TypedDict):
     """The Ticket projection consumed by the Workspace rail."""
 
@@ -109,7 +120,7 @@ class BoardSprintItem(TypedDict):
     awaiting_approval: NotRequired[bool]
     assigned: NotRequired[bool]
     agent_state: NotRequired[str]
-    ticket_rollup: NotRequired[dict[str, object]]
+    ticket_rollup: NotRequired[WorkAttention]
 
 
 @dataclass(frozen=True, slots=True)
