@@ -209,7 +209,7 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
     ) == "working"
 
     before = int(page.evaluate("() => window.__plannerDebug.flushes"))
-    mutable.update(awaiting_reply=True, agent_state="idle")
+    mutable.update(awaiting_answer=True, awaiting_reply=True, agent_state="working")
     api.direct_patch(server, f"/api/tickets/{ticket['id']}", {"title": "Signal mirror refresh"})
     page.wait_for_function(
         "previous => window.__plannerDebug.flushes > previous",
@@ -219,16 +219,35 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
     for row in (left_ticket, right_ticket):
         row.wait_for(timeout=WAIT_MS)
         page.wait_for_function(
-            "element => element.dataset.workspaceMark === 'reply'",
+            "element => element.dataset.workspaceMark === 'owner-answer'",
             arg=row.element_handle(),
             timeout=WAIT_MS,
         )
     assert left_item.locator(".board-workspace-item-head [data-workspace-mark]").get_attribute(
         "data-workspace-mark"
-    ) == "reply"
+    ) == "owner-answer"
     assert right_item.locator(".sprint-workspace-title-mark").get_attribute(
         "data-workspace-mark"
-    ) == "reply"
+    ) == "owner-answer"
+
+    before = int(page.evaluate("() => window.__plannerDebug.flushes"))
+    mutable.update(awaiting_answer=False, agent_state="idle")
+    api.direct_patch(
+        server,
+        f"/api/tickets/{ticket['id']}",
+        {"title": "Signal second mirror refresh"},
+    )
+    page.wait_for_function(
+        "previous => window.__plannerDebug.flushes > previous",
+        arg=before,
+        timeout=WAIT_MS,
+    )
+    for row in (left_ticket, right_ticket):
+        page.wait_for_function(
+            "element => element.dataset.workspaceMark === 'reply'",
+            arg=row.element_handle(),
+            timeout=WAIT_MS,
+        )
 
     page.reload()
     right_ticket.wait_for(timeout=WAIT_MS)
