@@ -1,8 +1,8 @@
 """The CLI's single HTTP seam. Owns URL construction, header assembly, request
 execution, and — the whole point — every stdout/stderr/exit-code decision. A
 handler in main.py only builds a route + body, calls `send`, then `emit` (or a
-client-side `fail_validation`). This module imports stdlib + httpx only; error
-envelopes are plain dict literals, never a planner type."""
+client-side `fail_validation`). Error envelopes remain plain transport dictionaries;
+the shared CLI error renderer adds human recovery text without changing those envelopes."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ import sys
 from typing import Any, NoReturn
 
 import httpx
+
+from planner.cli.errors import exit_with_human_error
 
 _DEFAULT_BASE_URL = "http://127.0.0.1:8767"
 _TIMEOUT = 30.0
@@ -119,23 +121,37 @@ def emit(data: Any, as_json: bool, human: str) -> NoReturn:
     sys.exit(EXIT_OK)
 
 
-def fail_validation(message: str, as_json: bool, detail: dict[str, Any] | None = None) -> NoReturn:
+def fail_validation(
+    message: str,
+    as_json: bool,
+    detail: dict[str, Any] | None = None,
+    *,
+    recovery: str | None = None,
+    no_route: str | None = None,
+) -> NoReturn:
     """Client-side validation error, rendered in the same style as a server error. exit 1."""
     payload = {"error": {"code": "validation", "message": message, "detail": detail or {}}}
     if as_json:
         print(json.dumps(payload), file=sys.stderr)
-    else:
-        print(f"error: validation: {message}", file=sys.stderr)
-    sys.exit(EXIT_ERROR)
+        sys.exit(EXIT_ERROR)
+    exit_with_human_error(
+        message,
+        exit_code=EXIT_ERROR,
+        recovery=recovery,
+        no_route=no_route,
+    )
 
 
 def _fail_connection(exc: httpx.TransportError, as_json: bool) -> NoReturn:
     payload = {"error": {"code": "connection", "message": str(exc), "detail": {}}}
     if as_json:
         print(json.dumps(payload), file=sys.stderr)
-    else:
-        print(f"error: connection: {exc}", file=sys.stderr)
-    sys.exit(EXIT_CONNECTION)
+        sys.exit(EXIT_CONNECTION)
+    exit_with_human_error(
+        "The Panels server is unavailable.",
+        exit_code=EXIT_CONNECTION,
+        no_route="No panels call can work until the server is available.",
+    )
 
 
 def _fail_response(resp: httpx.Response, data: Any, as_json: bool) -> NoReturn:
@@ -153,7 +169,25 @@ def _fail_response(resp: httpx.Response, data: Any, as_json: bool) -> NoReturn:
         }
     if as_json:
         print(json.dumps(payload), file=sys.stderr)
-    else:
-        err = payload["error"]
-        print(f"error: {err['code']}: {err['message']}", file=sys.stderr)
-    sys.exit(EXIT_ERROR)
+        sys.exit(EXIT_ERROR)
+    err = payload["error"]
+    code = str(err["code"])
+    if code == "agent_forbidden":
+        exit_with_human_error(
+            "This actor cannot perform this operation.",
+            exit_code=EXIT_ERROR,
+            no_route="No panels call can perform it as this actor.",
+        )
+    if code == "gateway_offline":
+        exit_with_human_error(
+            str(err["message"]),
+            exit_code=EXIT_ERROR,
+            no_route="No panels call can work until the gateway is available.",
+        )
+    if code == "http_error":
+        exit_with_human_error(
+            str(err["message"]),
+            exit_code=EXIT_ERROR,
+            no_route="No panels call can recover from this server response.",
+        )
+    exit_with_human_error(str(err["message"]), exit_code=EXIT_ERROR)
