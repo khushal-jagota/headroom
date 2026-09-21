@@ -8,9 +8,28 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from typing import NamedTuple
 
 from planner.tickets import derivation
 from planner.tickets.contracts import TicketStatus
+
+
+class ConversationAttention(NamedTuple):
+    """What one conversation is asking of its owner, one fact per thing it can ask.
+
+    An unread message and a pending ask are separate because they are separate things.
+    Held as one flag, the second one to arrive raised no edge and notified nobody, and
+    an ask announced itself as a message.
+    """
+
+    unread_message: bool
+    pending_ask: bool
+    errored: bool
+    latest_sequence: int
+    occurred_at: int
+
+
+NOTHING_WAITING = ConversationAttention(False, False, False, 0, 0)
 
 
 def _record(
@@ -50,7 +69,7 @@ def _record(
 def conversation_attention(
     conn: sqlite3.Connection,
     conversation_id: str | None = None,
-) -> dict[str, tuple[bool, bool, int, int]]:
+) -> dict[str, ConversationAttention]:
     where = "WHERE c.conversation_id = ? " if conversation_id is not None else ""
     parameters: tuple[str, ...] = (conversation_id,) if conversation_id is not None else ()
     rows = conn.execute(
@@ -86,11 +105,12 @@ def conversation_attention(
         parameters,
     ).fetchall()
     return {
-        str(row["conversation_id"]): (
-            bool(row["unread_message"]) or bool(row["pending_ask"]),
-            bool(row["errored"]),
-            int(row["latest_sequence"]),
-            int(row["occurred_at"]),
+        str(row["conversation_id"]): ConversationAttention(
+            unread_message=bool(row["unread_message"]),
+            pending_ask=bool(row["pending_ask"]),
+            errored=bool(row["errored"]),
+            latest_sequence=int(row["latest_sequence"]),
+            occurred_at=int(row["occurred_at"]),
         )
         for row in rows
     }
@@ -112,12 +132,13 @@ def capture_ticket_attention(conn: sqlite3.Connection, ticket_id: str, occurred_
         derivation.stored_facts_from_row(row, has_live_blocker=bool(row["has_live_blocker"]))
     )
     conversation = conversation_attention(conn, row["conversation_id"]).get(
-        str(row["conversation_id"]), (False, False, 0, 0)
+        str(row["conversation_id"]), NOTHING_WAITING
     )
     holder = json.loads(str(row["ceiling_holder"]))
     owner_holds = holder.get("kind") == "owner"
     flags = {
-        "awaiting_reply": conversation[0],
+        "awaiting_reply": conversation.unread_message,
+        "awaiting_answer": conversation.pending_ask,
         "awaiting_approval": facts.ticket_status is TicketStatus.awaiting_approval
         and owner_holds,
         "assigned": ticket_assignment_from_values(
@@ -125,7 +146,7 @@ def capture_ticket_attention(conn: sqlite3.Connection, ticket_id: str, occurred_
             worker_type=str(row["worker_type"]),
             owner_holds_ceiling=owner_holds,
         ),
-        "errored": facts.ticket_status is TicketStatus.errored or conversation[1],
+        "errored": facts.ticket_status is TicketStatus.errored or conversation.errored,
     }
     for notification_type, active in flags.items():
         _record(conn, "ticket", ticket_id, notification_type, active, occurred_at)
@@ -147,8 +168,9 @@ def capture_conversation_attention(
         (conversation_id,),
     ):
         for notification_type, active in (
-            ("awaiting_reply", attention[0]),
-            ("errored", attention[1]),
+            ("awaiting_reply", attention.unread_message),
+            ("awaiting_answer", attention.pending_ask),
+            ("errored", attention.errored),
         ):
             _record(
                 conn,

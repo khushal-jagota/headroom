@@ -283,11 +283,14 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
         ticket_id = str(row["id"])
         subject = Principal(PrincipalKind.ticket, ticket_id)
         label = str(row["title"])
-        conversation = conversations.get(str(row["conversation_id"]), (False, False, 0, 0))
+        conversation = conversations.get(
+            str(row["conversation_id"]), attention_data.NOTHING_WAITING
+        )
         owner_holds = _owner_holds_ticket_ceiling(str(row["ceiling_holder"]))
         parked = fields_codec.proposal_from_json(row["pending_proposal"])
         flags = {
-            "awaiting_reply": conversation[0],
+            "awaiting_reply": conversation.unread_message,
+            "awaiting_answer": conversation.pending_ask,
             "awaiting_approval": (
                 facts.ticket_status is TicketStatus.awaiting_approval and owner_holds
             ),
@@ -296,12 +299,13 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
                 worker_type=str(row["worker_type"]),
                 owner_holds_ceiling=owner_holds,
             ),
-            "errored": facts.ticket_status is TicketStatus.errored or conversation[1],
+            "errored": facts.ticket_status is TicketStatus.errored or conversation.errored,
         }
         for notification_type, active in flags.items():
             occurred_at = (
-                conversation[3]
-                if notification_type in {"awaiting_reply", "errored"} and conversation[3]
+                conversation.occurred_at
+                if notification_type in {"awaiting_reply", "awaiting_answer", "errored"}
+                and conversation.occurred_at
                 # A parked proposal knows when it was parked, and that is the wait.
                 # It is the same number the review list shows.
                 else int(parked.created_at)
@@ -327,16 +331,19 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
         subject_id = str(row["item_id"] if is_item else row["agent_key"])
         subject = _principal_from_stored_subject(subject_kind, subject_id)
         label = str(row["item_title"]) if is_item else _agent_label(subject_id)
-        conversation = conversations.get(str(row["conversation_id"]), (False, False, 0, 0))
+        conversation = conversations.get(
+            str(row["conversation_id"]), attention_data.NOTHING_WAITING
+        )
         for notification_type, active in (
-            ("awaiting_reply", conversation[0]),
-            ("errored", conversation[1]),
+            ("awaiting_reply", conversation.unread_message),
+            ("awaiting_answer", conversation.pending_ask),
+            ("errored", conversation.errored),
         ):
             desired[(subject_kind, subject_id, notification_type)] = (
                 active,
                 subject,
                 label,
-                conversation[3],
+                conversation.occurred_at,
             )
 
     attention_data.reconcile_attention(

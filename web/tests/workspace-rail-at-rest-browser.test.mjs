@@ -65,7 +65,7 @@ def card(ticket_id, item_id, item_title, **values):
         "gating_field_label": "Implementation", "is_done": False, "blocked": False,
         "conversation_id": None, "waiting_to_closeout": False,
         "sprint_item_id": item_id, "sprint_item_title": item_title, "sprint_item_priority": "P1",
-        "awaiting_reply": False, "awaiting_approval": False,
+        "awaiting_reply": False, "awaiting_answer": False, "awaiting_approval": False,
         "awaiting_agent_approval": False, "assigned": False, "agent_state": "idle",
     }
     row.update(values)
@@ -73,18 +73,19 @@ def card(ticket_id, item_id, item_title, **values):
 
 def item(item_id):
     quiet = {
-        "awaiting_reply": False, "awaiting_approval": False,
+        "awaiting_reply": False, "awaiting_answer": False, "awaiting_approval": False,
         "awaiting_agent_approval": False, "assigned": False, "agent_state": "idle",
     }
     return {"id": item_id, "created_at": 0, "conversation_id": None, "ticket_rollup": dict(quiet), **quiet}
 
-# One Item holds all three of his groups plus a Ticket that is only an agent's to approve.
+# One Item holds all four of his groups plus a Ticket that is only an agent's to approve.
 # The other holds nothing that is his.
 board = {
     "columns": [{"stage": "needs_implementation", "cards": [
         card("t_approval", "si_needs_him", "Needs him", awaiting_approval=True),
         card("t_assigned", "si_needs_him", "Needs him", assigned=True),
         card("t_message", "si_needs_him", "Needs him", awaiting_reply=True),
+        card("t_answer", "si_needs_him", "Needs him", awaiting_answer=True),
         card("t_agents_approval", "si_needs_him", "Needs him",
              ticket_status="awaiting_approval", awaiting_agent_approval=True),
         # A broken worker still holding a proposal for him. It is his to approve, and the
@@ -119,15 +120,16 @@ with sync_playwright() as p:
     assert page.locator('[data-sprint-item] [aria-current="page"]').count() == 0
     assert page.locator(".board-workspace-item--selected").count() == 0
 
-    # Exactly the three groups. A broken worker does not open a fourth one here.
+    # Exactly the four groups. A broken worker does not open a fifth one here. An answer
+    # he owes sits under the decision he owes and above the Stage that is merely his.
     headers = needs_him.locator("[data-bucket-key]")
-    expect(headers).to_have_count(3)
-    assert [headers.nth(i).get_attribute("data-bucket-key") for i in range(3)] == [
-        "awaiting_approval", "assigned", "awaiting_reply"
+    expect(headers).to_have_count(4)
+    assert [headers.nth(i).get_attribute("data-bucket-key") for i in range(4)] == [
+        "awaiting_approval", "awaiting_answer", "assigned", "awaiting_reply"
     ]
     assert [
-        headers.nth(i).locator(".board-workspace-bucket-label").inner_text() for i in range(3)
-    ] == ["Needs your approval", "Yours", "Messages"]
+        headers.nth(i).locator(".board-workspace-bucket-label").inner_text() for i in range(4)
+    ] == ["Needs your approval", "Needs your answer", "Yours", "Messages"]
 
     # The rows are there too, one Ticket under one header.
     for ticket_id, key in [
@@ -135,6 +137,7 @@ with sync_playwright() as p:
         ("t_broken", "awaiting_approval"),
         ("t_assigned", "assigned"),
         ("t_message", "awaiting_reply"),
+        ("t_answer", "awaiting_answer"),
     ]:
         row = needs_him.locator('[data-ticket-id="' + ticket_id + '"]')
         expect(row).to_have_count(1)

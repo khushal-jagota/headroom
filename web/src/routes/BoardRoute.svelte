@@ -86,7 +86,11 @@
     workers.data
       ? conversationSignalPresentation(
           {
-            awaiting_reply: workers.data.chief_of_staff.needs_me,
+            // `needs_me` is a pending ask and only a pending ask, which the roster has
+            // always read straight from the live conversation. It was handed over as a
+            // message, and it never was one.
+            awaiting_reply: false,
+            awaiting_answer: workers.data.chief_of_staff.needs_me,
             agent_state: workers.data.chief_of_staff.agent_working ? "working" : "idle"
           }
         )
@@ -124,6 +128,7 @@
     stageMarkAttributes={{
       "data-stage-state": presentation.state,
       "data-awaiting-reply": card.awaiting_reply ? "true" : "false",
+      "data-awaiting-answer": card.awaiting_answer ? "true" : "false",
       "data-awaiting-approval": card.awaiting_approval ? "true" : "false",
       "data-assigned": card.assigned ? "true" : "false",
       "data-agent-state": card.agent_state,

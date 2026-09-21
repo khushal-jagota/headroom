@@ -113,8 +113,9 @@ export function feedbackTicketStageState(ticket: FeedbackTicket): FieldStageVisu
   if (ticket.ticket_status === "errored" || ticket.ticket_status === "blocked") return "errored";
   const attention = primaryWorkAttention(ticket);
   if (attention === "awaiting_approval") return "current-awaiting-approval";
+  if (attention === "awaiting_answer") return "needs-me";
   if (attention === "assigned") return "current-assigned";
-  if (attention === "awaiting_reply") return "needs-me";
+  if (attention === "awaiting_reply") return "current-awaiting-approval";
   if (ticket.agent_state === "working") return "current-running";
   if (ticket.agent_state === "errored") return "errored";
   if (ticket.stage === "needs_consequences") return "current-waiting";
@@ -128,6 +129,7 @@ export function feedbackTicketStateLabel(ticket: FeedbackTicket): string {
   // The same three facts the Workspace rail and the Sprint Item page head their groups
   // with, in the same words. One fact is named one way wherever it is read.
   if (attention === "awaiting_approval") return "Needs your approval";
+  if (attention === "awaiting_answer") return "Needs your answer";
   if (attention === "assigned") return "Yours";
   if (attention === "awaiting_reply") return "Messages";
   if (ticket.agent_state === "working") return "Running";

@@ -44,12 +44,14 @@ One screen per part of the system:
   The Chief of Staff row leads, and under it a selector chooses one of two views
   over the same tickets: **Tickets** or **Sprint Items**.
 
-  The Tickets view starts with three owner-attention groups in this order: Needs your
-  approval, Yours, and Messages. Each name says whose the work is. Needs your approval
-  is a proposal the owner himself holds; a proposal parked on a supervisor or another
-  ticket is a different fact, named Awaiting an agent's approval, and it is never one of
-  the three. Yours is a stage the ticket's worker type gives to the user rather than to
-  a worker. A ticket appears in only its first applicable group.
+  The Tickets view starts with four owner-attention groups in this order: Needs your
+  approval, Needs your answer, Yours, and Messages. Each name says whose the work is.
+  Needs your approval is a proposal the owner himself holds; a proposal parked on a
+  supervisor or another ticket is a different fact, named Awaiting an agent's approval,
+  and it is never one of the four. Needs your answer is a worker stopped on a permission
+  request or a question, which is why it sits above a stage that is merely the owner's
+  to do. Yours is a stage the ticket's worker type gives to the user rather than to a
+  worker. A ticket appears in only its first applicable group.
   A ticket whose worker broke is named Errored before any of the three, because a broken
   worker wants the reader more than the request it was carrying. Broken means the ticket
   is errored, or its last turn ended failed. Otherwise approval takes precedence over
@@ -67,11 +69,12 @@ One screen per part of the system:
   newest first.
 
   The Sprint Items view is one box per Sprint Item with a ticket on today. Each Item
-  shows only its non-empty Needs your approval, Yours, and Messages child groups. Quiet
+  shows only its non-empty Needs your approval, Needs your answer, Yours, and Messages
+  child groups. Quiet
   child tickets remain available in the Tickets view and the Item workspace. An Item
   shows those groups, and their rows, whether or not it is the Item the reader has
   opened. The rail therefore says what needs the reader before anything is clicked, and
-  an Item with none of the three shows its title and its mark alone. Clicking anywhere in
+  an Item with none of the four shows its title and its mark alone. Clicking anywhere in
   the box selects the Item and opens its workspace beside the rail. That is all a click on
   an Item ever does: no click shuts an Item. A reader inside one of its tickets clicks
   the Item to come back to it. The groups sit inside the Item without boxes of their own.
