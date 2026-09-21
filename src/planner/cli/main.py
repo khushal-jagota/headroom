@@ -24,6 +24,7 @@ from typing import Any
 import click
 
 from planner.cli import http
+from planner.cli.errors import PanelsGroup
 from planner.cli.record_projection import (
     RecordPart,
     parse_part_names,
@@ -230,7 +231,7 @@ def _current_sprint_id(as_json: bool) -> str:
     data = http.send("GET", "/api/sprint/current", as_json=as_json)
     sprint = data.get("sprint") if isinstance(data, dict) else None
     if sprint is None:
-        http.fail_validation("no current sprint", as_json)
+        http.fail_validation("no current sprint", as_json, recovery="panels sprint list")
     return str(sprint["id"])
 
 
@@ -250,6 +251,16 @@ def _emit_record(
     try:
         projection = project_record(header, parts, _record_parts(raw_part_names, as_json))
     except ValueError as exc:
+        requested = () if raw_part_names is None else tuple(raw_part_names.split(","))
+        if "rejection" in requested:
+            http.fail_validation(
+                str(exc),
+                as_json,
+                no_route=(
+                    "Revision feedback arrives in the Worker prompt. "
+                    "No panels command reads it."
+                ),
+            )
         http.fail_validation(str(exc), as_json)
     http.emit(projection, as_json, render_text(projection))
 
@@ -479,7 +490,7 @@ def json_option(func: Callable[..., Any]) -> Callable[..., Any]:
     )(func)
 
 
-@click.group()
+@click.group(cls=PanelsGroup)
 def main() -> None:
     """Operate the local planner server."""
 
@@ -1611,10 +1622,18 @@ def ticket_approve(
     manifest = _worker_type(detail["worker_type"], as_json)
     field = _gating_field_for_stage(manifest, stage)
     if field is None:
-        http.fail_validation(f"ticket in {stage} has nothing to approve", as_json)
+        http.fail_validation(
+            f"ticket in {stage} has nothing to approve",
+            as_json,
+            no_route="No panels approval call is available for this Ticket.",
+        )
     proposal = detail["pending_proposal"]
     if proposal is None or proposal["field"] != field:
-        http.fail_validation(f"no pending {field} proposal", as_json)
+        http.fail_validation(
+            f"no pending {field} proposal",
+            as_json,
+            no_route="No panels approval call is available until a proposal exists.",
+        )
     if ceiling is None:
         http.fail_validation("approval requires --ceiling", as_json)
     if kickoff_title is not None:
@@ -1699,7 +1718,11 @@ def ticket_history(
     )
     conversation_id = detail["conversation_id"]
     if not conversation_id:
-        http.fail_validation("the Ticket has no current Worker conversation", as_json)
+        http.fail_validation(
+            "the Ticket has no current Worker conversation",
+            as_json,
+            no_route="No panels history call is available until a Worker conversation exists.",
+        )
     params = (
         {"after": after, "limit": limit}
         if after is not None
@@ -1891,7 +1914,7 @@ def sprint_show(sprint_id: str | None, part_names: str | None, as_json: bool) ->
         )
         data = current_response["sprint"]
         if data is None:
-            http.fail_validation("no current sprint", as_json)
+            http.fail_validation("no current sprint", as_json, recovery="panels sprint list")
     else:
         data = http.send(
             "GET",
@@ -2218,6 +2241,9 @@ def worker_my_ticket(part_names: str | None, as_json: bool) -> None:
             "no ticket worker identity in env (PLAN_TICKET_ID is missing); "
             "not running as a ticket worker",
             as_json,
+            no_route=(
+                "No panels worker call is available until the process has a Ticket identity."
+            ),
         )
     data = http.send(
         "GET",

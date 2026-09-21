@@ -3,6 +3,26 @@
 `panels` is the command-line tool. It speaks to the server over HTTP and answers in
 machine-readable JSON with `--json`.
 
+Human errors use one or two lines. The first line says what failed. The second line
+shows a registered `panels` call, or states that no call is available. Syntax errors
+derive their recovery shape from the live Click command tree. Known removed supervisor
+calls name their current ordinary replacement. Structured errors keep the existing JSON
+envelope and exit code.
+
+For example, a Ticket part is positional:
+
+```text
+error: "--field" is not an option for panels ticket show.
+Use: panels ticket show [OPTIONS] [TICKET_ID] [PART_NAMES]
+```
+
+An authority refusal does not invent a route:
+
+```text
+error: This actor cannot perform this operation.
+No panels call can perform it as this actor.
+```
+
 Single-record reads use one grammar. With no part list, a read returns an identity and
 state header plus a manifest. The manifest lists every authored part in stable order,
 including empty parts. It reports the Unicode character count for
