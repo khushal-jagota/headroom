@@ -501,3 +501,97 @@ def test_a_migration_that_leaves_a_dangling_reference_is_rolled_back(
 
 
 # --- the schema the baseline describes ----------------------------------------------------
+
+
+_NOTIFICATION_TABLES = (
+    "notification_preferences",
+    "notification_attention_state",
+    "notification_attention_edges",
+    "notification_deliveries",
+)
+
+
+def _seed_notification_rows(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO notification_preferences"
+        "(subject_key, notification_type, enabled, updated_at) "
+        "VALUES ('tickets', 'awaiting_reply', 1, 1)"
+    )
+    conn.execute(
+        "INSERT INTO notification_attention_state"
+        "(subject_kind, subject_id, notification_type, active, generation) "
+        "VALUES ('ticket', 't_kept', 'awaiting_reply', 1, 3)"
+    )
+    conn.execute(
+        "INSERT INTO notification_attention_edges"
+        "(subject_kind, subject_id, notification_type, generation, occurred_at) "
+        "VALUES ('ticket', 't_kept', 'awaiting_reply', 3, 7)"
+    )
+    conn.execute(
+        "INSERT INTO notification_push_subscriptions"
+        "(subscription_id, endpoint, p256dh, auth, created_at, updated_at) "
+        "VALUES ('sub_kept', 'https://push.example/kept', 'p', 'a', 1, 1)"
+    )
+    conn.execute(
+        "INSERT INTO notification_deliveries"
+        "(subject_kind, subject_id, notification_type, generation, subscription_id, "
+        "title, body, route, tag, created_at, status, next_attempt_at) "
+        "VALUES ('ticket', 't_kept', 'awaiting_reply', 3, 'sub_kept', 'Panels', 'body', "
+        "'/', 'tag', 1, 'pending', 1)"
+    )
+
+
+def test_widening_the_notification_type_keeps_every_row_index_and_foreign_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Four tables restrict `notification_type` with a CHECK, and SQLite cannot alter one.
+
+    So the revision rebuilds all four, and a rebuild is a DROP: whatever the new table
+    does not declare is gone, and nothing afterwards is left dangling to notice it. This
+    builds the four as they were before the revision, puts a row in each, and reads the
+    tables back after the revision has run against them.
+    """
+    shipped = db_module.MIGRATIONS_DIRECTORY / "versions"
+    tree = _migration_tree(tmp_path, monkeypatch)
+    conn = connect(str(tmp_path / "widened.db"))
+    create_schema(conn)
+    _seed_notification_rows(conn)
+    before = {table: _table_structure(conn, table) for table in _NOTIFICATION_TABLES}
+    for table in _NOTIFICATION_TABLES:
+        sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()[0]
+        assert "awaiting_answer" not in sql
+
+    for revision in ("skill_rows_name_what_exists", "an_ask_is_its_own_notification"):
+        shutil.copy(shipped / f"{revision}.py", tree / "versions" / f"{revision}.py")
+    create_schema(conn)
+
+    assert _revision(conn) == "an_ask_is_its_own_notification"
+    for table in _NOTIFICATION_TABLES:
+        sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()[0]
+        assert "'awaiting_answer'" in sql
+        assert _table_structure(conn, table) == before[table]
+        kept = conn.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE notification_type = 'awaiting_reply'"
+        ).fetchone()[0]
+        assert kept == 1, f"{table} lost its row"
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                f"INSERT INTO {table} (subject_kind, subject_id, notification_type) "
+                "VALUES ('ticket', 't_probe', 'not_a_notification_type')"
+                if table != "notification_preferences"
+                else "INSERT INTO notification_preferences "
+                "(subject_key, notification_type, enabled, updated_at) "
+                "VALUES ('tickets', 'not_a_notification_type', 1, 1)"
+            )
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '%__rebuilt'"
+        ).fetchone()[0]
+        == 0
+    )
+    conn.close()
