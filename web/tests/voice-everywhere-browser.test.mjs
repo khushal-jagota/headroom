@@ -8,13 +8,15 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { build } from "vite";
+import { scratchDirectory } from "./support/scratch.mjs";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = join(webRoot, "..");
 const temporaryDirectory = await mkdtemp(join(tmpdir(), "panels-voice-everywhere-"));
-const hostPath = join(webRoot, "tests", `.voice-everywhere-host-${process.pid}.svelte`);
-const mainPath = join(webRoot, "tests", `.voice-everywhere-main-${process.pid}.ts`);
-const indexPath = join(webRoot, "tests", `.voice-everywhere-index-${process.pid}.html`);
+const scratchRoot = await scratchDirectory();
+const hostPath = join(scratchRoot, `voice-everywhere-host-${process.pid}.svelte`);
+const mainPath = join(scratchRoot, `voice-everywhere-main-${process.pid}.ts`);
+const indexPath = join(scratchRoot, `voice-everywhere-index-${process.pid}.html`);
 let serverProcess;
 
 try {
