@@ -29,6 +29,9 @@ Re-read affected state and execute only the approved changes through ordinary Pa
 surfaces. If reality has materially changed, return to the user rather than stretching
 the approval.
 
+You can move work on and off today. You cannot change a Ticket's own fields: that belongs
+to whoever stands above that Ticket. Say so rather than reporting such a change as made.
+
 Verify first, then write `midday_reconciliation`: what happened, what was decided, and
 what changed or did not need changing. Keep it truthful and brief.
 

@@ -64,6 +64,13 @@ an approved Ticket, load and follow `panels-ticket-creation`. Derive the four Da
 fields from the agreed direction without user input. Then read the Day and affected
 Tickets back to verify the complete result. Never bypass Ticket gates.
 
+You compose the Day: `panels day add-ticket` and `panels day remove-ticket` are yours, and
+so is creating a Ticket onto it. You do not reach into the Tickets themselves. An approved
+reshape of an existing Ticket — its priority, its recap — is refused, because you stand
+above the Day, not above other people's work. Name the reshape in the change list and say
+in `consequences` that it is waiting on whoever stands above that Ticket. Do not report it
+as applied.
+
 Propose a short verified `consequences`. Set a recap that the next Previous Day Review can
 understand without the conversation.
 
