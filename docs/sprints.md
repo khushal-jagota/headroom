@@ -107,41 +107,44 @@ there. It does more when the user asks it to, and the actions below are how. It 
 manager: it does not push Tickets along, and it does not resolve parked proposals as
 routine work.
 
-A supervisor acts within its own Outcome. It changes Item fields, child Ticket fields,
-scope, proposal review, and Item artifacts through one item-scoped service, and every
-write delegates to the same domain action that direct product routes use. Day membership
-and Ticket blocks between its children use the ordinary membership call, where its own
-identity carries the same authority. A write aimed at another Item, or at a Ticket that
-is not a current child, is refused.
+A supervisor has no routes of its own. It calls the routes Khushal calls, and the one
+rule admits it on its own current child Tickets and on its own Item, because that is what
+it stands above and what it is. A write aimed at another Item, or at a Ticket that is not
+a current child, is refused by the same sentence. See `authority.md`.
+
+That is wider than the eight wrapped operations it used to have. A supervisor now reaches
+every ordinary operation on its own child Tickets, including deciding a proposal it does
+not hold. The one thing it may not do is move a child Ticket to another Outcome: changing
+who stands above a Ticket is handing authority around rather than using it.
 
 A supervisor creates its own child Tickets with the ordinary Ticket creation route. A
 Ticket it creates is scoped like any other: the Brief parks for the user's approval
 unless the supervisor states a wider scope it was given.
 
-A supervisor also deletes a current child Ticket, through the ordinary deletion route.
-The Item is taken from the supervisor's own identity, so it cannot reach a Ticket
-elsewhere. That boundary is the only check. The deletion is permanent and nothing else
-guards it: a Ticket whose Worker is mid-turn is deleted too, and that Worker is killed
-with it.
+It deletes a current child Ticket through that same route. The deletion is permanent and
+nothing else guards it: a Ticket whose Worker is mid-turn is deleted too, and that Worker
+is killed with it.
 
 Config edits the canonical Outcome supervisor role skill. Supported backends read
 that managed source for future conversations. A save does not rewrite an existing
 conversation, its role record, or its history.
 
-A supervisor asking about its own Item gets an overview: the Item itself, and one line
-for each Ticket on it — what the Ticket is called, where it has got to, and which days
-it sits on. Finished Tickets stay in that list. The overview is what a supervisor reads
-to decide where to look, so it never carries a Ticket's written work.
+The Item workspace is the overview: the Item itself, its artifacts, and one line for each
+Ticket on it — what the Ticket is called, where it has got to, and which days it sits on.
+Finished Tickets stay in that list. It is what a supervisor reads to decide where to
+look, so it never carries a Ticket's written work. It also says whether a parked proposal
+is addressed to the reader, so Khushal and the supervisor each see their own answer from
+the one read.
 
-Ticket context is where that written work lives. It includes current Ticket facts, Day
-membership, the current Worker conversation, and the exact triggering Worker message when
-its sequence is supplied. The supervisor can read bounded pages from that current
-conversation.
+The written work lives on the Ticket, read the ordinary way. A Ticket's current Worker
+conversation is read where every conversation is read, in bounded pages, forwards from a
+position or backwards from the end.
 
-A targeted Worker message requires the exact current child conversation. Panels records
-the Outcome supervisor agent key as the sender. A missing, reset, stale, or unrelated
-conversation is refused. This message path cannot create a conversation and does not
-change the Ticket Stage, scope, status, or Day membership.
+A message to a Worker goes through Send Message, the one door for messaging any
+principal. It resolves the Ticket's current conversation as it lands, and a missing,
+reset, or stale conversation is refused. Panels records the sender. This path cannot
+create a conversation and does not change the Ticket Stage, scope, status, or Day
+membership.
 
 Nothing a supervisor does reaches the user on its own. Backend prose is runtime output;
 only an explicit Send Message reaches another principal. The Item row in the Workspace

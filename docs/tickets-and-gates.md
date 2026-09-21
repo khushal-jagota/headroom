@@ -215,12 +215,17 @@ Every ticket carries a **ceiling**, plus a holder for it:
 
 - **The ceiling** — the last thing a worker is allowed to do on this ticket on its own.
   The worker does that thing, proposes it, and waits.
-- **The holder** — the principal who can decide the proposal at that ceiling.
+- **The holder** — who the proposal at that ceiling is addressed to.
+
+The holder is an address. It says who a parked proposal is for, and that is what Review,
+the attention marks and the needs-approval notification read. It does not say who may
+decide: that is the one rule, in `authority.md`, and anyone standing above the Ticket can
+decide a proposal whoever holds it.
 
 The holder is a full principal kind and ID, not a display label or current conversation.
-Existing Tickets receive the owner principal when the holder column is introduced.
-A Ticket cannot hold its own ceiling: its Worker is the proposal author, never its own
-reviewer. Holder Tickets and Sprint Items must exist when the scope is written.
+A Ticket cannot hold its own ceiling: its Worker is the proposal author, so addressing a
+proposal to itself addresses it to nobody. Holder Tickets and Sprint Items must exist
+when the scope is written.
 
 Below the ceiling, a worker-owned Stage's answer settles the field and the ticket
 advances, and no proposal is recorded at all. At the ceiling it files a proposal, and the
@@ -254,14 +259,13 @@ Both halves can change later, and they change separately.
   Setting it never moves the holder: raising or lowering a ceiling must not move a Ticket
   into somebody else's queue.
 - **Who is asked** — `ticket set <id> ceiling-holder`. This is allowed while a proposal is
-  parked. Pointing a parked proposal at a different reviewer does not change what was
-  proposed, only who decides it, so it is the way a proposal sitting in the wrong queue
-  reaches the right one. Only the current holder or the user can do it, so no third agent
-  can pull a parked proposal out of a queue it was filed into.
+  parked. Re-addressing a parked proposal does not change what was proposed, so it is the
+  way a proposal sitting in the wrong queue reaches the right one. Anyone standing above
+  the Ticket can do it.
 
-Everywhere tooling takes a holder — creation, either change, and both approve commands —
-it takes one `--holder`, and reads the kind from what it is given: `me`, `chief`, a Sprint
-Item id, or a Ticket id.
+Everywhere tooling takes a holder — creation, either change, and approval — it takes one
+`--holder`, and reads the kind from what it is given: `me`, `chief`, a Sprint Item id, or
+a Ticket id. Approving without naming one keeps the ceiling where it is: you hold it.
 
 Every later stage behaves the same way, including the last two: an accepted
 **Implementation** advances to **Consequences**, and accepting Consequences advances
@@ -270,11 +274,11 @@ straight to **done**. (The threshold used by sprint-in-progress behavior is the
 
 ## The approval gate and Ticket leash
 
-The addressed holder or the owner can decide a parked proposal. Whenever either approves
-a step, they must name the next ceiling and holder. The system refuses an approval
-that omits either. Approving is a ceiling-setting moment like any other, so the approve
-row carries the same control the Ticket page does, and the approver can hand the Ticket
-onward rather than only keeping it.
+Anyone standing above the Ticket can decide a parked proposal, whoever it is addressed
+to. Whenever they approve a step, they must name the next ceiling and holder. The system
+refuses an approval that omits either. Approving is a ceiling-setting moment like any
+other, so the approve row carries the same control the Ticket page does, and the approver
+can hand the Ticket onward rather than only keeping it.
 
 The Ticket details disclosure shows the same permission as a readable leash:
 "Until [a stage] · then [who]", where who reads `me`, `Chief`, or the Ticket's Sprint Item
@@ -293,18 +297,17 @@ and the approval screen, so the two cannot disagree.
 While a proposal is pending, the Ticket page hides the leash because scope cannot change
 without silently changing the proposal's stable address.
 
-Review's single, oldest-first walk shows today's owner-addressed proposals. Non-owner
-holders inspect canonical Ticket state through their normal Chief, Sprint Item, and Ticket
-views; no proposal wake, retry, failure surfacing, or owner fallback remains.
-A parked proposal keeps its approval and revision controls. A Worker help request is an
-addressed conversation message. Its unread state feeds the shared attention projection,
-and the answer belongs in that conversation.
+Review's single, oldest-first walk shows today's owner-addressed proposals. Anyone else a
+proposal is addressed to inspects canonical Ticket state through their normal Chief,
+Sprint Item, and Ticket views; no proposal wake, retry, failure surfacing, or owner
+fallback remains. A parked proposal keeps its approval and revision controls. A Worker
+help request is an addressed conversation message. Its unread state feeds the shared
+attention projection, and the answer belongs in that conversation.
 
 Replying to the worker does not decide its proposal. The proposal stays pending and
-addressed to its holder until a decision or a replacement proposal arrives. A non-owner
-holder inspects the canonical Ticket through the normal Chief, Sprint Item, and Ticket
-views. Panels does not wake the holder, retry proposal delivery, surface a delivery
-failure, or fall back to the owner. Owner-held proposals remain on Review.
+addressed to its holder until a decision or a replacement proposal arrives. Panels does
+not wake the holder, retry proposal delivery, surface a delivery failure, or fall back to
+the owner. Owner-held proposals remain on Review.
 
 The Review screen can also send an owner-addressed ticket back instead of accepting it,
 whatever field is currently gated. The owner writes short guidance in the review card.
@@ -315,18 +318,19 @@ normal worker-step prompt carries the feedback, which is consumed only after tha
 is accepted. The ticket's stage never changes. Settled values remain. The gated field can
 therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
-submits the revision. A holder rejection keeps that holder. If the owner uses the
-override, the owner becomes the ceiling holder for the revised proposal.
+submits the revision. Rejecting re-addresses the revision only when the owner does it:
+the owner becomes the holder, so the revision comes back to him. Every other rejection
+leaves the address exactly as it was.
 
-There is one approval gate. Every parked proposal waits on `awaiting_approval` for its
-holder. The holder or owner approves it or rejects it with focused revision guidance,
-and either way the canonical proposal resolver does the work. Review contains
-owner-addressed proposals. Other holders use their scoped controls.
+There is one approval gate. Every parked proposal waits on `awaiting_approval` for the
+principal it is addressed to. Anyone above the Ticket approves it or rejects it with
+focused revision guidance, and either way the canonical proposal resolver does the work.
+Review contains owner-addressed proposals; anyone else reads theirs on the Ticket.
 Scope cannot change while a proposal waits, so its address stays stable.
 
 Owner-held proposals appear in Review and produce the owner's needs-approval notification.
-Other holders read proposals from canonical Ticket state through their normal Ticket and
-supervisor views. Filing a proposal does not send a separate alert.
+Anyone else reads proposals from canonical Ticket state through their normal Ticket and
+Outcome views. Filing a proposal does not send a separate alert.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
@@ -336,14 +340,13 @@ proposal, shared by every screen that shows one).
 ## Permanent deletion
 
 Dropping a ticket keeps its record. Permanent deletion is different: it is for a ticket
-created by mistake. The user deletes any ticket, and a Sprint Item supervisor deletes a
-current child ticket of its own item. Nobody else can. The ticket UI intentionally
-has no delete control; deletion remains a manual API or CLI operation, and the CLI
-requires `--yes`.
+created by mistake. Deleting follows the one rule like everything else: if you stand
+above a ticket, you may delete it. The ticket UI intentionally has no delete control;
+deletion remains a manual API or CLI operation, and the CLI requires `--yes`.
 
 The user's ordinary delete is refused while the Ticket's status says a worker step is
-out, and also while its conversation has a turn running. `--force` deletes it anyway. A
-supervisor can delete its own child Ticket without that activity guard. No actor can
+out, and also while its conversation has a turn running. `--force` deletes it anyway. An
+Outcome can delete its own child Ticket without that activity guard. No actor can
 delete a Ticket or Sprint Item that is the ceiling holder for another Ticket. Any delete
 that goes ahead over a running worker kills that worker's turn first, so nothing keeps
 talking into a conversation whose ticket is gone.

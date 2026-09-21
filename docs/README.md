@@ -24,17 +24,21 @@ direct user ──user-owned value───► proposal resolver
 The browser is the main human surface. The `panels` CLI exposes ordinary direct actions
 and Ticket Worker actions as separate command groups.
 
+Every operation has exactly one address, and one sentence decides who may call it: you
+may act on anything strictly below you. See `authority.md`.
+
 Ticket gated fields still have one door: a Worker files a proposal, and the proposal
 resolver alone can settle its value or advance its Stage. Three planning Worker types
 also receive narrow authority to write their agreed Day or Sprint result at Consequences.
 A direct user can complete the unset gate of the current user-owned Stage. The same
 canonical transition settles the value and advances one Stage. There is no arbitrary
-Stage setter. A Sprint Item supervisor has no private door: it writes through the same
-domain writers the direct surfaces use, limited to its own Item.
+Stage setter. A Sprint Item supervisor has no address of its own: it calls the routes
+every other principal calls, and the rule holds it to its own current child Tickets.
 
-At its ceiling a Ticket proposes and waits, and there is one approval gate — a
-parked proposal waits for the user. Review holds today's parked proposals and explicit
-Worker help requests. A Sprint Item conversation takes no part in that: nothing starts it
+At its ceiling a Ticket proposes and waits, and there is one approval gate — a parked
+proposal is addressed to somebody, and anyone above the Ticket can decide it. Review
+holds today's parked proposals and explicit Worker help requests. A Sprint Item
+conversation takes no part in that: nothing starts it
 except a message from the user, and it reads the current state of its Item and Tickets
 when they ask.
 
@@ -49,6 +53,8 @@ when they ask.
 
 **The core of the work**
 
+- **Who may act** (`authority.md`) — one address per operation, and the one sentence
+  that decides every call: you may act on anything strictly below you.
 - **Tickets & the gates** (`tickets-and-gates.md`) — what a ticket is, the stages
   it moves through, and the proposal resolver, scope, and approval gate that govern
   every advance. The correctness heart of the system.

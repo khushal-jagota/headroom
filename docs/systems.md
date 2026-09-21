@@ -73,10 +73,11 @@ PUT    /api/collections/{collection}/{container_id}/{member_id}
 DELETE /api/collections/{collection}/{container_id}/{member_id}
 ```
 
-Each collection keeps its own membership rules and its own authority rule, and both stay
-in the domain that owns them. The single entry point looks the collection up and calls
-that owner. Authority follows the caller, not the address: a Sprint Item supervisor uses
-the same call as everyone else and is held to its own current child Tickets.
+Each collection keeps its own membership rules, and they stay in the domain that owns
+them. Authority is not one of them: every collection asks the one rule, like every other
+operation. The single entry point looks the collection up and calls that owner. Authority
+follows the caller, not the address: a Sprint Item supervisor uses the same call as
+everyone else and is held to its own current child Tickets.
 
 Carrying an Outcome forward to another Sprint is not membership. It stays its own
 operation on the Sprint domain.
@@ -206,17 +207,17 @@ Tickets, schedules, and environments. `worker` files Ticket proposals, recaps, n
 and help requests. The Chief remains a conversation principal, not a Ticket write group.
 
 Every request resolves to one principal: the owner, Chief, a Sprint Item, or a Ticket.
-An unattributed browser request resolves to the owner. Direct-only operations reject
-Ticket and Sprint Item principals.
-The `planning-day`, `planning-midday-check`, and `planning-sprint` Workers are the narrow
-exception: the server resolves the claimed Ticket's stored Worker type before it admits
-the matching Day or Sprint write. Missing or mismatched claims fail closed. These local
-claims narrow authority; they are not authentication credentials.
+An unattributed browser request resolves to the owner. What that principal may then do is
+one sentence, asked at every door: you may act on anything strictly below you. The
+`planning-day`, `planning-midday-check`, and `planning-sprint` Workers are the one place
+position is declared rather than derived, because the plan they write stands in no chain.
+Missing or mismatched claims fail closed. These local claims narrow authority; they are
+not authentication credentials.
 
-Read **The command-line tool** (`cli.md`).
+Read **Who may act** (`authority.md`) and **The command-line tool** (`cli.md`).
 
-_Code paths:_ `src/planner/cli/`, `src/planner/core/authctx.py`, and the domain
-admission rules.
+_Code paths:_ `src/planner/cli/`, `src/planner/core/authctx.py`,
+`src/planner/core/authority/`.
 
 ### 9. Runtime and operations
 
@@ -252,8 +253,9 @@ _Code paths:_ `src/planner/environments/`, `src/planner/notifications/`,
 - **Managed skills versus packaged defaults.** `data/skills` is the live authority.
   Packaged skills seed missing entries. Codex and Claude provision all managed Panels
   skills. Hermes uses a separate allowlist.
-- **Human and agent authority.** Direct actions, proposals, planning writes, and Chief
-  intake use different admission paths.
+- **Authority versus your own record.** Standing above a thing is one question. Being
+  the thing — a Ticket proposing, an Outcome writing its own body — is another, and the
+  chain does not decide it.
 
 ## Deferred
 
