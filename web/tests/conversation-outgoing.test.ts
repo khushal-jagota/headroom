@@ -9,6 +9,7 @@ import {
   outgoingMessageNote,
   outgoingMessagesByPlace,
   outgoingMessagesTheRecordHasNot,
+  tellWhenAWaitRunsOut,
   whenTheNextWaitRunsOut
 } from "../src/lib/conversation/outgoing";
 import type { OutgoingMessage } from "../src/lib/conversation/outgoing";
@@ -217,6 +218,70 @@ describe("a send nobody answered", () => {
     expect(whenTheNextWaitRunsOut([])).toBeNull();
     expect(whenTheNextWaitRunsOut([waiting("told", sentAt, "answer_never_came_back")]))
       .toBeNull();
+  });
+
+  it("says no answer is coming when the wait runs out, without being asked again", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(sentAt);
+      const messages = [waiting("waited", sentAt)];
+      const told: (readonly OutgoingMessage[])[] = [];
+      const stopWaiting = tellWhenAWaitRunsOut(messages, (next) => told.push(next));
+
+      vi.advanceTimersByTime(SEND_DEADLINE_MILLISECONDS - 1);
+      expect(told).toEqual([]);
+
+      vi.advanceTimersByTime(1);
+      expect(told.map((next) => next.map((message) => message.knownFate)))
+        .toEqual([["answer_never_came_back"]]);
+
+      stopWaiting();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits on the earliest send and says nothing about the ones still in time", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(sentAt);
+      const messages = [
+        waiting("early", sentAt),
+        waiting("late", sentAt + SEND_DEADLINE_MILLISECONDS)
+      ];
+      const told: (readonly OutgoingMessage[])[] = [];
+      const stopWaiting = tellWhenAWaitRunsOut(messages, (next) => told.push(next));
+
+      vi.advanceTimersByTime(SEND_DEADLINE_MILLISECONDS);
+      expect(told).toHaveLength(1);
+      expect(told[0]!.map((message) => [message.messageId, message.knownFate])).toEqual([
+        ["early", "answer_never_came_back"],
+        ["late", "nothing_yet"]
+      ]);
+
+      stopWaiting();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says nothing once the reader has gone, or when nothing is waiting at all", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(sentAt);
+      const told: (readonly OutgoingMessage[])[] = [];
+
+      tellWhenAWaitRunsOut([waiting("abandoned", sentAt)], (next) => told.push(next))();
+      tellWhenAWaitRunsOut(
+        [waiting("already told", sentAt, "answer_never_came_back")],
+        (next) => told.push(next)
+      );
+      vi.advanceTimersByTime(SEND_DEADLINE_MILLISECONDS * 2);
+
+      expect(told).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("knows when the record is the only thing that can settle what this tab holds", () => {

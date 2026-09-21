@@ -43,7 +43,6 @@
   import { connectionStatus } from "../../lib/changeStream";
   import {
     afterTheRecordHasBeenRead,
-    afterWaitingLongEnoughForAnAnswer,
     anOutgoingMessageIsWaitingOnTheRecord,
     mintOutgoingMessage,
     moveRememberedOutgoingMessages,
@@ -57,7 +56,7 @@
     reserveOutgoingMessageFiles,
     reserveOutgoingMessageImages,
     reserveRecalledOutgoingMessages,
-    whenTheNextWaitRunsOut,
+    tellWhenAWaitRunsOut,
     type OutgoingMessage,
     type OutgoingMessageKnownFate
   } from "../../lib/conversation/outgoing";
@@ -801,29 +800,10 @@
     );
   }
 
-  /** A send whose answer never came must stop looking like one that is still on its way.
-   *
-   * The rule is the module's and the clock is the message's own send instant, so this is
-   * only a wake-up call. The instant handed over is the deadline itself rather than
-   * whatever the clock reads when the timer fires, because the timer was set for that
-   * moment: waiting is measured from when the person pressed send, not from when a browser
-   * got round to looking.
-   */
-  $effect(() => {
-    const runsOutAt = whenTheNextWaitRunsOut(sentMessages);
-    if (runsOutAt === null) return;
-    const wakeUp = window.setTimeout(
-      () => {
-        const told = afterWaitingLongEnoughForAnAnswer(
-          sentMessages,
-          Math.max(Date.now(), runsOutAt)
-        );
-        if (told !== sentMessages) void holdOnTo(told);
-      },
-      Math.max(0, runsOutAt - Date.now())
-    );
-    return () => window.clearTimeout(wakeUp);
-  });
+  // A send whose answer never came must stop looking like one that is still on its way.
+  // Both the rule and its wake-up belong to the module: this only says which list is
+  // waiting and what to do once the waiting is over.
+  $effect(() => tellWhenAWaitRunsOut(sentMessages, (told) => void holdOnTo(told)));
 
   onMount(() => {
     // The record is the only thing that can settle a send this tab never heard an answer

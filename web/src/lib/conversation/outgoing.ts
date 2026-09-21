@@ -270,6 +270,35 @@ export function whenTheNextWaitRunsOut(
   return deadlines.length === 0 ? null : Math.min(...deadlines);
 }
 
+/** Wake up when the earliest send still waiting runs out of time, and say so.
+ *
+ * The rule above is true or false at an instant. This is the only thing that makes a
+ * screen notice the instant arriving, and it is deliberately the whole of it: one wake-up
+ * for the earliest deadline, and the answer worked out at that deadline rather than at
+ * whatever the clock reads when the wake-up gets its turn. Waiting is measured from when
+ * the person pressed send, not from when a browser got round to looking.
+ *
+ * Hands back how to cancel it, for a reader that goes away or a list that changed.
+ */
+export function tellWhenAWaitRunsOut(
+  outgoing: readonly OutgoingMessage[],
+  tell: (told: readonly OutgoingMessage[]) => void
+): () => void {
+  const runsOutAt = whenTheNextWaitRunsOut(outgoing);
+  if (runsOutAt === null) return () => undefined;
+  const wakeUp = setTimeout(
+    () => {
+      const told = afterWaitingLongEnoughForAnAnswer(
+        outgoing,
+        Math.max(Date.now(), runsOutAt)
+      );
+      if (told !== outgoing) tell(told);
+    },
+    Math.max(0, runsOutAt - Date.now())
+  );
+  return () => clearTimeout(wakeUp);
+}
+
 /** Whether this tab holds a send the record has not answered for.
  *
  * Both of these are waiting on the record and neither can be settled here. One never heard
