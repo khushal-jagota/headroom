@@ -18,6 +18,7 @@ from planner.core import authority
 from planner.core.authority import require_above_or_self
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
+from planner.files.logic.listing import entries_as_json, fold_directory
 from planner.files.logic.paths import sprint_item_files_root
 
 # Where an Outcome's agent puts the artifacts it produces. A convention its callers share,
@@ -38,6 +39,23 @@ def list_files(
         for path in root.rglob("*")
         if path.is_file() and not path.is_symlink()
     ]
+
+
+def list_artifact_entries(
+    conn: sqlite3.Connection, principal: Principal, sprint_item_id: str, db_path: str
+) -> list[dict[str, object]]:
+    """What a reader would open in this Outcome's artifacts, folded a folder at a time.
+
+    `list_files` stays flat, because an agent looking for the file it wrote needs every
+    path. A person does not: a linked site of two dozen files is one thing to open. Both
+    read the same directory, and the paths here are the same paths that read a file back.
+    """
+    _require_outcome(conn, principal, sprint_item_id)
+    root = _item_root(db_path, sprint_item_id, create=False)
+    if root is None:
+        return []
+    artifacts = root / ARTIFACTS_DIRECTORY
+    return entries_as_json(fold_directory(artifacts, f"{ARTIFACTS_DIRECTORY}/"))
 
 
 def write_file(

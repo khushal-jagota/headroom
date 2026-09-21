@@ -65,7 +65,10 @@ Removing a commitment does not remove a Ticket's Outcome classification. Those T
 remain under that Outcome on Sprint tracking. Only Tickets without an Outcome appear
 under **No Outcome**. The Outcome workspace always holds its full brief, artifacts, and
 Tickets across Sprints. Its header shows open work and work that needs the user. Its
-artifact strip lists files newest first. Today and Other Tickets use the same status
+artifact strip lists what there is to open, newest first. A folder is one thing on it,
+not one thing per file: a folder that holds an `index.html` opens that page, and a folder
+without one opens where it stands and shows what is directly inside. The files an index
+loads, such as its stylesheet and its images, never appear on their own. Today and Other Tickets use the same status
 groups. Other Tickets starts collapsed. Ticket rows omit Sprint names and mark only open,
 unsprinted work as Backlog. The Ticket page does not show Sprint or Backlog placement.
 Commitment links and a Ticket's stored schedule can differ: they state different facts.
@@ -158,7 +161,10 @@ no second Ticket review or Worker-control route. Worker readiness remains the on
 automatic creator of a Worker step.
 
 Managed item artifacts live under `files/sprint-items/<item-id>/`. The server exposes
-them through `/files/sprint-items/<item-id>/<relative-path>`. Item deletion moves this
+them through `/files/sprint-items/<item-id>/<relative-path>`. Two readings of the same
+directory exist, and they are for different readers. The flat listing returns every file
+at every depth, which is what an agent needs to find the file it wrote. The workspace
+returns folded entries, which is what a person reads. Item deletion moves this
 directory to quarantine before its database transaction. A failed transaction restores
 the directory. A successful deletion removes the item, its agent row, and its files.
 

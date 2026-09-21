@@ -177,7 +177,9 @@ One screen per part of the system:
 
   A compact artifact strip is the first element under the header when lifecycle fields
   link to managed Ticket or Sprint Item files. It reads the pending proposal first, then
-  the lifecycle fields from latest to earliest. It removes duplicate links.
+  the lifecycle fields from latest to earliest. It removes duplicate links. The same strip
+  shows an Outcome's own files, where a folder is one chip. A folder with no index opens
+  where it stands and its files follow it along the strip.
 - **Sprint** — one tracking overview that presents Projects and their Sprint Items,
   plus a dedicated view for each Item and a separate documents page. The overview shows
   Item progress as `done/total`. One collapsed **No Outcome** row follows all Projects

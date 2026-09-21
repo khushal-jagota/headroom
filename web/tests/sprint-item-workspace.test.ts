@@ -93,7 +93,7 @@ function workspace(): SprintItemWorkspace {
         day_ids: [], sprint_id: null, sprint_name: null
       }
     ],
-    artifacts: [{ path: "proof.md", modified_at: 1 }],
+    artifacts: [{ name: "proof.md", opens: "artifacts/proof.md", modified_at: 1, children: [] }],
     conversation_history: []
   };
 }

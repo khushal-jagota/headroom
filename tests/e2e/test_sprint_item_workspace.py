@@ -159,6 +159,24 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
             timeout=10.0,
         )
         assert extra.status_code < 300, extra.text
+    # A linked site and a folder of write-ups: the two shapes the strip has to fold. The
+    # stylesheet is what the index loads, so it is not a thing to read on its own.
+    for folded_path, content in (
+        ("site/index.html", "<h1>Site</h1>"),
+        ("site/style.css", "body { color: red; }"),
+        ("notes/one.md", "# One"),
+        ("notes/two.md", "# Two"),
+    ):
+        folded = httpx.put(
+            f"{server.base}/files/sprint-items/{item['id']}/artifacts/{folded_path}",
+            headers={
+                "X-Plan-Actor": "sprint_item_supervisor",
+                "X-Plan-Sprint-Item-ID": str(item["id"]),
+            },
+            json={"content": content},
+            timeout=10.0,
+        )
+        assert folded.status_code < 300, folded.text
     api.direct_patch(
         server,
         f"/api/items/{item['id']}",
@@ -234,10 +252,21 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     off_today.get_by_label("needs your approval").wait_for(timeout=WAIT_MS)
     artifacts = page.locator("[data-artifact-strip]")
     artifacts.wait_for(timeout=WAIT_MS)
-    assert artifacts.locator("[data-artifact-chip]").count() == 7
-    assert artifacts.get_by_role("button", name="+2 more").is_visible()
-    artifacts.get_by_role("button", name="+2 more").click()
+    # Eleven files, nine things to open: the site is its index, and the stylesheet beside
+    # that index never appears on its own.
+    assert artifacts.locator("[data-artifact-chip]").count() == 8
+    assert artifacts.locator('[data-artifact-chip="artifacts/site/index.html"]').count() == 1
+    assert artifacts.locator('[data-artifact-chip="artifacts/site/style.css"]').count() == 0
+    assert artifacts.get_by_role("button", name="+4 more").is_visible()
+    artifacts.get_by_role("button", name="+4 more").click()
     assert artifacts.get_by_role("button", name="Show fewer").is_visible()
+    # A folder with no index opens where it stands rather than sending the reader away.
+    notes = artifacts.locator('[data-artifact-folder="notes"]')
+    assert notes.get_attribute("aria-expanded") == "false"
+    assert artifacts.locator('[data-artifact-chip="artifacts/notes/one.md"]').count() == 0
+    notes.click()
+    artifacts.locator('[data-artifact-chip="artifacts/notes/one.md"]').wait_for(timeout=WAIT_MS)
+    assert notes.get_attribute("aria-expanded") == "true"
 
     brief_link = page.get_by_role("link", name="Open proof")
     brief_link.focus()
