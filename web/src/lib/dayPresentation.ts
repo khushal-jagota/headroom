@@ -1,7 +1,7 @@
 import { conversationSignalPresentation } from "./conversationSignalPresentation";
 import type { DayTicket } from "./types";
 import type { FieldStageVisualState } from "./ui";
-import { primaryWorkAttention } from "./workAttentionPresentation";
+import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
 
 export type DayVisualTicket = {
   ticket: DayTicket;
@@ -56,6 +56,13 @@ export function dayVisualTicket(
       group === "awaiting_reply")
   ) {
     return { ticket, state: "current-awaiting-approval", ariaLabel: "To review", group };
+  }
+  // One rule answers whether a worker has this Ticket, and every screen calls it. Home
+  // has no group heading beside the dot, so the dot is the only thing that can carry
+  // the durable claim. Reading the live turn alone emptied Working the moment a worker
+  // paused to wait on a long job.
+  if (presentation.state === "upcoming" && agentHoldsTicket(ticket)) {
+    return { ticket, state: "current-running", ariaLabel: "Agent working", group };
   }
   return { ticket, state: presentation.state, ariaLabel: presentation.ariaLabel, group };
 }

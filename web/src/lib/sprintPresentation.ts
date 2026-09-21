@@ -1,6 +1,6 @@
 import type { FieldStageVisualState } from "./ui";
 import type { Priority, ProjectSummary, SprintOutcomeGroup } from "./types";
-import { primaryWorkAttention } from "./workAttentionPresentation";
+import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
 
 export type SprintTicket = {
   id: string;
@@ -109,13 +109,8 @@ export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicke
   }
   if (attention === "assigned") return { mark: "current-assigned", word: "yours" };
   if (attention === "awaiting_reply") return { mark: "needs-me", word: "messages" };
-  // The durable fact, not the live one. `agent` is what the wakeup system writes when it
-  // sends a worker its step, and it holds until the Ticket moves on. Whether a turn is
-  // live in process is a different question: a worker that ends its turn to wait on a
-  // long job is still the agent's. A live fact can add a Ticket to a group — `errored`
-  // and `awaiting_reply` above both do — but it must never be the only thing carrying a
-  // durable state, or the group empties the moment the process stops.
-  if (ticket.ticket_status === "agent") return { mark: "current-running", word: "working" };
+  // One rule answers whether a worker has this Ticket, and every screen calls it.
+  if (agentHoldsTicket(ticket)) return { mark: "current-running", word: "working" };
   if (ticket.waiting_to_closeout) return { mark: "current-waiting", word: "waiting on consequences" };
   return { mark: "upcoming", word: "to do" };
 }

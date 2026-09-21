@@ -1,6 +1,6 @@
 import { labelize, type FieldStageVisualState } from "./ui";
 import type { BoardCard, BoardSprintItem, Priority } from "./types";
-import { primaryWorkAttention } from "./workAttentionPresentation";
+import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
 
 const ATTENTION_GROUP_ORDER = [
   "awaiting_approval",
@@ -27,9 +27,10 @@ const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set([
 
 // Each of the three says whose the work is, in the word the code already uses for it:
 // `awaiting_approval` is a proposal whose ceiling the owner holds, and `assigned` is a
-// stage whose ownership mode is `user`, meaning his own to do. A proposal parked on an
-// agent is a different fact and keeps its own quiet heading, so no label here can mean
-// two things depending on the screen it is read on.
+// stage whose ownership mode is `user`, meaning his own to do — the whole of that rule
+// lives in `ticket_is_assigned` on the server. A proposal parked on an agent is a
+// different fact and keeps its own quiet heading, so no label here can mean two things
+// depending on the screen it is read on.
 const GROUP_LABELS: Readonly<Record<string, string>> = {
   awaiting_approval: "Needs your approval",
   assigned: "Yours",
@@ -75,6 +76,8 @@ function workspaceRemainderGroupKey(card: BoardCard): string {
   // The server says who holds a parked proposal. This reads that fact rather than the
   // status, which says a proposal is parked and not whose it is.
   if (card.awaiting_agent_approval) return "status_awaiting_approval";
+  // One rule answers whether a worker has this Ticket, and every screen calls it.
+  if (agentHoldsTicket(card)) return "agent";
   return String(card.ticket_status);
 }
 

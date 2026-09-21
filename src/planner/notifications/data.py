@@ -294,7 +294,6 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
             "assigned": ticket_assignment_from_values(
                 stage=str(row["stage"]),
                 worker_type=str(row["worker_type"]),
-                owner_holds_ceiling=owner_holds,
             ),
             "errored": facts.ticket_status is TicketStatus.errored or conversation[1],
         }

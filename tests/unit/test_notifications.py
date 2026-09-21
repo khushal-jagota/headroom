@@ -177,8 +177,12 @@ def test_the_loop_sends_one_edge_to_the_registered_device_and_records_it(
         canonical_origin="https://panels.example",
         adapter=RecordingAdapter(),
     )
-    assert loop.poll_once() == 2
-    assert [subscription for subscription, _ in sent] == [subscription_id] * 2
+    # One Ticket at a worker-owned Brief earns exactly one push. Every push about a
+    # Ticket carries that Ticket's id as its OS tag, so a second one would replace the
+    # first on the phone and the approval would never be read.
+    assert loop.poll_once() == 1
+    assert [subscription for subscription, _ in sent] == [subscription_id]
+    assert [intent.body for _, intent in sent] == ["Phone-worthy work needs your approval."]
     assert {intent.route for _, intent in sent} == {f"/#/workspace/{ticket.id}"}
     assert {intent.tag for _, intent in sent} == {f"panels-ticket-{ticket.id}"}
 
@@ -191,4 +195,4 @@ def test_the_loop_sends_one_edge_to_the_registered_device_and_records_it(
                 "SELECT notification_type, status, attempts FROM notification_deliveries "
                 "ORDER BY notification_type"
             )
-        ] == [("assigned", "delivered", 1), ("awaiting_approval", "delivered", 1)]
+        ] == [("awaiting_approval", "delivered", 1)]
