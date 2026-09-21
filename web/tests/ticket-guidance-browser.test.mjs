@@ -5,14 +5,16 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { scratchDirectory } from './support/scratch.mjs';
 
 // Frontend proof with HTTP fixtures: the real Ticket route writes one document,
 // and the real Review card reads that document. No live backend is involved.
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const stem = `.guidance-${process.pid}`;
-const host = join(root, 'tests', `${stem}.svelte`);
-const main = join(root, 'tests', `${stem}.ts`);
-const index = join(root, 'tests', `${stem}.html`);
+const stem = `guidance-${process.pid}`;
+const scratchRoot = await scratchDirectory();
+const host = join(scratchRoot, `${stem}.svelte`);
+const main = join(scratchRoot, `${stem}.ts`);
+const index = join(scratchRoot, `${stem}.html`);
 let server;
 try {
   await writeFile(host, `<script lang="ts">
@@ -241,7 +243,7 @@ with sync_playwright() as p:
     assert stage_table.locator('select, input, [contenteditable]').count() == 0
     browser.close()
 `;
-  const child = spawn(join(root, '..', '.venv', 'bin', 'python'), ['-c', script, `http://127.0.0.1:${address.port}/tests/${stem}.html`], { stdio: 'inherit' });
+  const child = spawn(join(root, '..', '.venv', 'bin', 'python'), ['-c', script, `http://127.0.0.1:${address.port}/.test-scratch/${stem}.html`], { stdio: 'inherit' });
   const code = await new Promise(resolve => child.on('exit', resolve));
   assert.equal(code, 0, 'Ticket guidance browser proof failed');
 } finally {

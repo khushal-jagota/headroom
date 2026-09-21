@@ -7,14 +7,16 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { build } from "vite";
+import { scratchDirectory } from "./support/scratch.mjs";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = join(webRoot, "..");
 const outputDirectory = await mkdtemp(join(tmpdir(), "panels-feedback-"));
 const suffix = process.pid;
-const hostPath = join(webRoot, "tests", `.feedback-host-${suffix}.svelte`);
-const mainPath = join(webRoot, "tests", `.feedback-main-${suffix}.ts`);
-const indexPath = join(webRoot, "tests", `.feedback-index-${suffix}.html`);
+const scratchRoot = await scratchDirectory();
+const hostPath = join(scratchRoot, `feedback-host-${suffix}.svelte`);
+const mainPath = join(scratchRoot, `feedback-main-${suffix}.ts`);
+const indexPath = join(scratchRoot, `feedback-index-${suffix}.html`);
 let serverProcess;
 
 try {

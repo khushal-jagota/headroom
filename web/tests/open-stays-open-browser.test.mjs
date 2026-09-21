@@ -12,31 +12,33 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { scratchDirectory } from "./support/scratch.mjs";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const stem = `.open-stays-open-${process.pid}`;
+const stem = "open-stays-open";
+const scratchRoot = await scratchDirectory();
 const written = [];
 let server;
 
 async function page(name, markup) {
-  const hostName = `${stem}-${name}`;
-  await writeFile(join(webRoot, "tests", `${hostName}.svelte`), markup);
+  const hostName = `${stem}-${name}-${process.pid}`;
+  await writeFile(join(scratchRoot, `${hostName}.svelte`), markup);
   await writeFile(
-    join(webRoot, "tests", `${hostName}.ts`),
+    join(scratchRoot, `${hostName}.ts`),
     `import { mount } from 'svelte'; import Host from './${hostName}.svelte';` +
       ` import '../../assets/tokens.css'; import '../../assets/app.css';` +
       ` mount(Host, { target: document.getElementById('app')! });`
   );
   await writeFile(
-    join(webRoot, "tests", `${hostName}.html`),
+    join(scratchRoot, `${hostName}.html`),
     `<html><body><div id="app"></div><script type="module" src="./${hostName}.ts"></script></body></html>`
   );
   written.push(
-    join(webRoot, "tests", `${hostName}.svelte`),
-    join(webRoot, "tests", `${hostName}.ts`),
-    join(webRoot, "tests", `${hostName}.html`)
+    join(scratchRoot, `${hostName}.svelte`),
+    join(scratchRoot, `${hostName}.ts`),
+    join(scratchRoot, `${hostName}.html`)
   );
-  return `tests/${hostName}.html`;
+  return `.test-scratch/${hostName}.html`;
 }
 
 try {
