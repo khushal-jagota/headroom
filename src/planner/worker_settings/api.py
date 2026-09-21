@@ -18,6 +18,7 @@ from planner.core.config import Config
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.runtime import conversation_start
+from planner.skill_staleness import stale_references
 from planner.tickets.api import (
     Clk,
     ConversationRecord,
@@ -198,6 +199,20 @@ async def list_workers(
             for summary in service.read_worker_management_index(conn, registry)
         ],
         "chief_of_staff": agents[0],
+    }
+
+
+@router.get("/skills/stale")
+async def get_stale_skill_references(conn: DbConn) -> JsonDict:
+    """Every reference in a skill row that this build cannot resolve.
+
+    Declared before ``/skills/{skill_name}``, which would otherwise match first and
+    read "stale" as the name of a skill.
+    """
+    references = stale_references(conn)
+    return {
+        "stale_references": [reference.as_dict() for reference in references],
+        "skill_names": sorted({reference.skill_name for reference in references}),
     }
 
 

@@ -276,6 +276,20 @@ The packaged `src/planner/skills` tree is only what a database with no skills in
 seeded from. After that it is not consulted, so a shipped skill and a stored one can
 differ, and the stored one is what runs.
 
+Because the packaged tree is not consulted again, a stored skill can go on teaching a
+command, a Stage or a skill that a later build removed, and nothing says so. `panels skill
+check` is what says so. It reads the build itself — the CLI command tree, the Stage ids the
+Worker types declare, and the retired skill names — and lists every stored skill naming
+something absent. It reports; it never rewrites a row. `GET /api/skills/stale` serves the
+same list.
+
+Correcting a stored skill is a migration, because the row is the owner's and a correction
+must not eat an edit. `skill_rows_name_what_exists` replaces only text that occurs verbatim
+in a version this repository shipped, which is the proof the text is the build's own, and
+moves a renamed command anywhere it appears. It raises when a correction it declared did
+not land, and only then: a row that is merely stale is reported by the check rather than
+refusing an upgrade.
+
 A Worker type owns its specialist skill. `PATCH /api/skills/{skill-name}` refuses one and
 points at the Worker, so each skill has exactly one editor. Native homes use symlinks to
 managed skills, never copied overlays. Codex and Claude select all Panels skills, and the

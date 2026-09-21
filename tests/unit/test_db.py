@@ -76,6 +76,25 @@ def _revision(conn: sqlite3.Connection) -> str:
     return str(conn.execute("SELECT version_num FROM alembic_version").fetchone()[0])
 
 
+def _head_revision() -> str:
+    """The revision this build finishes at, which moves as revisions are added."""
+    versions = db_module.MIGRATIONS_DIRECTORY / "versions"
+    down_revisions = {
+        line.split("=", 1)[1].strip().strip("\"'")
+        for path in versions.glob("*.py")
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.startswith("down_revision = ")
+    }
+    heads = {
+        line.split("=", 1)[1].strip().strip("\"'")
+        for path in versions.glob("*.py")
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.startswith("revision = ")
+    } - down_revisions
+    (head,) = heads
+    return head
+
+
 def _build_database_at_the_pre_collapse_head(path: Path) -> sqlite3.Connection:
     """A database as the collapsed chain left it, which is what the live database becomes.
 
@@ -122,7 +141,7 @@ def test_database_at_the_pre_collapse_head_is_adopted_with_its_rows_intact(
 
     create_schema(conn)
 
-    assert _revision(conn) == BASELINE_REVISION
+    assert _revision(conn) == _head_revision()
     assert _schema_objects(conn) == objects_before
     assert tuple(
         conn.execute(
@@ -186,6 +205,23 @@ def test_database_at_the_pre_collapse_head_without_that_schema_is_refused(
     conn.close()
 
 
+def test_a_database_this_build_already_carried_opens_again(tmp_path: Path) -> None:
+    """Opening twice must not refuse the second time.
+
+    The adoption guard once named the baseline as the only revision a database could
+    already stand on. The first revision added on top of the baseline then made every
+    start after the first refuse, because the database now held that revision instead.
+    """
+    conn = connect(str(tmp_path / "opened-twice.db"))
+    create_schema(conn)
+    first = _revision(conn)
+
+    create_schema(conn)
+
+    assert _revision(conn) == first == _head_revision()
+    conn.close()
+
+
 def test_processes_starting_at_once_agree_on_one_database(tmp_path: Path) -> None:
     """Nothing stops two Panels processes bringing the same database up together."""
     db_path = tmp_path / "contended.db"
@@ -213,7 +249,7 @@ def test_processes_starting_at_once_agree_on_one_database(tmp_path: Path) -> Non
 
     conn = connect(str(db_path))
     assert [str(row[0]) for row in conn.execute("SELECT version_num FROM alembic_version")] == [
-        BASELINE_REVISION
+        _head_revision()
     ]
     assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
     conn.close()
@@ -465,5 +501,3 @@ def test_a_migration_that_leaves_a_dangling_reference_is_rolled_back(
 
 
 # --- the schema the baseline describes ----------------------------------------------------
-
-

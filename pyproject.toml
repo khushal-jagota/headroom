@@ -53,6 +53,9 @@ select = ["E", "F", "W", "I", "UP", "B"]
 # Migrations hold SQL verbatim, and some column definitions run past 100 cols. Rewrapping
 # them would change text that is meant to stay exactly as it was applied.
 "src/planner/core/migrations/versions/*.py" = ["E501"]
+# The same reason, for the skill text one revision replaces. It is the owner's rows
+# quoted exactly as they stand, so rewrapping it would stop it matching them.
+"src/planner/core/migrations/skill_row_correction_data.py" = ["E501"]
 
 [tool.mypy]
 strict = true

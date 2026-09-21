@@ -932,6 +932,30 @@ def worker_type_skill(worker_type: str, description: str, as_json: bool) -> None
 # --- project ------------------------------------------------------------------
 
 
+@main.group("skill")
+def skill_group() -> None:
+    """Inspect the managed skills."""
+
+
+@skill_group.command("check")
+@json_option
+def skill_check(as_json: bool) -> None:
+    """Report every skill row naming a command, Stage or skill this build lacks."""
+    data = http.send("GET", "/api/skills/stale", as_json=as_json)
+    references = data["stale_references"]
+    if not references:
+        http.emit(data, as_json, "every skill row names only things this build has")
+        return
+    http.emit(
+        data,
+        as_json,
+        "\n".join(
+            f"{item['skill_name']}: {item['kind']} {item['reference']}" for item in references
+        )
+        + f"\n\n{len(data['skill_names'])} skills hold something this build does not have",
+    )
+
+
 @main.group("project")
 def project_group() -> None:
     """List, inspect, create, and update projects."""

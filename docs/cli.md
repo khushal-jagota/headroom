@@ -106,6 +106,8 @@ controls belong to the summary level only.
   `worker-type save` takes back.
 - **`worker-type save`** — declare a Worker type, or replace the one with that id, from a
   record on stdin. An optional `skill` block declares the specialist skill with it.
+- **`skill check`** — list every stored skill naming a command, Stage or skill this build
+  does not have. Reports only; it never edits a row.
 - **`worker-type skill <type> --description "..."`** — replace that Worker type's skill
   text, with the markdown body on stdin.
 - **`worker-type list`** — list the registered Worker type identifiers in registry

@@ -21,6 +21,7 @@ from typing import Any, Final
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, Engine, create_engine, event
 from sqlalchemy.engine import URL
 
@@ -327,13 +328,20 @@ def _schema_object_names(connection: Connection) -> set[str]:
     }
 
 
+def _revisions_this_build_carries(connection: Connection) -> frozenset[str]:
+    """Every revision id in this build's own migration directory."""
+    script = ScriptDirectory.from_config(_alembic_config(connection))
+    return frozenset(revision.revision for revision in script.walk_revisions())
+
+
 def _adopt_database_left_by_the_collapsed_chain(connection: Connection) -> None:
     """Give a database the old chain left behind the version marker this build reads.
 
-    A new database and a database already at the baseline both need nothing here — the
-    upgrade that follows builds the first and leaves the second alone. A database at the
-    head the chain finished at holds the baseline's schema and the row rewrites the chain
-    performed, so it is adopted at the baseline once that schema is confirmed.
+    A new database needs nothing here, and neither does a database standing on any
+    revision this build carries — the upgrade that follows builds the first and moves the
+    second to the head. A database at the head the old chain finished at holds the
+    baseline's schema and the row rewrites that chain performed, so it is adopted at the
+    baseline once that schema is confirmed.
 
     Every other state is refused. The revisions that would carry such a database forward
     are not in this build, so the only honest answer is to say which build has them.
@@ -357,13 +365,15 @@ def _adopt_database_left_by_the_collapsed_chain(connection: Connection) -> None:
     revisions = [
         str(row[0]) for row in connection.exec_driver_sql("SELECT version_num FROM alembic_version")
     ]
-    if revisions == [BASELINE_REVISION]:
+    # Any revision this build carries is left for the upgrade below. Naming the baseline
+    # alone would refuse every start after the first revision added on top of it.
+    if len(revisions) == 1 and revisions[0] in _revisions_this_build_carries(connection):
         return
     if revisions != [PRE_COLLAPSE_HEAD_REVISION]:
         held = ", ".join(revisions) if revisions else "nothing"
         raise RuntimeError(
-            f"this database is at revision {held}, and this build starts at "
-            f"{BASELINE_REVISION}, which it adopts only from {PRE_COLLAPSE_HEAD_REVISION}. "
+            f"this database is at revision {held}, which this build does not carry. It "
+            f"starts at {BASELINE_REVISION} and adopts only from {PRE_COLLAPSE_HEAD_REVISION}. "
             "Deploy the build from before the migration chain was collapsed, let it start "
             "once so it carries this database to "
             f"{PRE_COLLAPSE_HEAD_REVISION}, then deploy this build again."
