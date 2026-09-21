@@ -1,7 +1,7 @@
 """Let a notification type name a pending ask, and let the split start quiet.
 
 Revision ID: an_ask_is_its_own_notification
-Revises: skill_rows_name_what_exists
+Revises: skill_rows_teach_what_exists
 
 A permission ask and an unread message shared one notification type. Both were OR-ed
 into ``awaiting_reply``, and the attention record only raises an edge on a rising
@@ -29,7 +29,7 @@ from alembic import op
 from sqlalchemy.engine import Connection
 
 revision = "an_ask_is_its_own_notification"
-down_revision = "skill_rows_name_what_exists"
+down_revision = "skill_rows_teach_what_exists"
 branch_labels = None
 depends_on = None
 

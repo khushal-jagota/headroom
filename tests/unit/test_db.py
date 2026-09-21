@@ -563,8 +563,9 @@ def test_widening_the_notification_type_keeps_every_row_index_and_foreign_key(
         ).fetchone()[0]
         assert "awaiting_answer" not in sql
 
-    for revision in ("skill_rows_name_what_exists", "an_ask_is_its_own_notification"):
-        shutil.copy(shipped / f"{revision}.py", tree / "versions" / f"{revision}.py")
+    # Every shipped revision above the baseline, so this keeps working as the chain grows.
+    for revision in sorted(shipped.glob("*.py")):
+        shutil.copy(revision, tree / "versions" / revision.name)
     create_schema(conn)
 
     assert _revision(conn) == "an_ask_is_its_own_notification"
