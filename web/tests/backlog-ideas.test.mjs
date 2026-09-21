@@ -150,6 +150,20 @@ try {
     if (path === "/api/items/item_offboard/workspace") {
       return json({
         ...finalItem,
+        awaiting_reply: false,
+        awaiting_answer: false,
+        awaiting_approval: false,
+        awaiting_agent_approval: false,
+        assigned: false,
+        agent_state: "idle",
+        ticket_rollup: {
+          awaiting_reply: false,
+          awaiting_answer: false,
+          awaiting_approval: false,
+          awaiting_agent_approval: false,
+          assigned: false,
+          agent_state: "idle"
+        },
         kind: "normal",
         body: "The off-board brief remains readable.",
         committed_sprints: [],
