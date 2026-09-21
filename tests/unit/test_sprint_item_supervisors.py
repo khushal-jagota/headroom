@@ -160,7 +160,9 @@ def test_every_route_names_a_proposal_parked_on_the_item_the_same_way(
         assert row["awaiting_agent_approval"] is True
 
 
-def test_workspace_artifacts_include_each_file_modified_time(tmp_path: Path) -> None:
+def test_workspace_artifacts_fold_each_folder_and_carry_its_newest_time(
+    tmp_path: Path,
+) -> None:
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _create_item(client)
@@ -189,9 +191,33 @@ def test_workspace_artifacts_include_each_file_modified_time(tmp_path: Path) -> 
         workspace = client.get(f"/api/items/{item['id']}/workspace")
 
     assert workspace.status_code == 200, workspace.text
-    assert sorted(workspace.json()["artifacts"], key=lambda artifact: artifact["path"]) == [
-        {"path": "artifacts/new/proof.png", "modified_at": 20.0},
-        {"path": "artifacts/old/proof.md", "modified_at": 10.0},
+    assert workspace.json()["artifacts"] == [
+        {
+            "name": "new",
+            "opens": None,
+            "modified_at": 20.0,
+            "children": [
+                {
+                    "name": "proof.png",
+                    "opens": "artifacts/new/proof.png",
+                    "modified_at": 20.0,
+                    "children": [],
+                }
+            ],
+        },
+        {
+            "name": "old",
+            "opens": None,
+            "modified_at": 10.0,
+            "children": [
+                {
+                    "name": "proof.md",
+                    "opens": "artifacts/old/proof.md",
+                    "modified_at": 10.0,
+                    "children": [],
+                }
+            ],
+        },
     ]
 
 

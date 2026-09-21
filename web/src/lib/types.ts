@@ -409,9 +409,14 @@ export type SprintItemWorkspace = SprintItemSummary & {
   conversation_history: TicketConversationHistoryEntry[];
 };
 
+// A folder of files is one artifact. `opens` is the file a reader gets when they pick it:
+// the file itself, or the index of a folder that has one. A folder with no index opens
+// nothing of its own and carries what is directly inside it instead.
 export type SprintItemArtifact = {
-  path: string;
+  name: string;
+  opens: string | null;
   modified_at: number;
+  children: SprintItemArtifact[];
 };
 
 export type ReviewProposalItem = {

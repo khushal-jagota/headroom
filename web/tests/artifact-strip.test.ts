@@ -6,22 +6,9 @@ import {
 } from "../src/lib/artifactStrip";
 
 describe("shared artifact strip", () => {
-  it("sorts Item files newest first and disambiguates matching names by parent", () => {
-    const rows = sprintItemArtifactStripItems("si_one", [
-      { path: "old/proof.md", modified_at: 10 },
-      { path: "new/proof.png", modified_at: 20 },
-      { path: "notes.txt", modified_at: 15 }
-    ]);
-    expect(rows.map((row) => [row.path, row.label, row.kind])).toEqual([
-      ["new/proof.png", "new / proof", "png"],
-      ["notes.txt", "notes", "txt"],
-      ["old/proof.md", "old / proof", "md"]
-    ]);
-  });
-
   it("keeps an unsafe Item path quiet instead of creating a link", () => {
     const [row] = sprintItemArtifactStripItems("si_one", [
-      { path: "../escape.md", modified_at: 1 }
+      { name: "escape.md", opens: "../escape.md", modified_at: 1, children: [] }
     ]);
     expect(row?.href).toBeNull();
   });
