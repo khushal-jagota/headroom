@@ -218,6 +218,7 @@ async def tell_a_worker_it_lost_its_memory(
     connect_database: Callable[[], sqlite3.Connection],
     conversation_system: ConversationSystem,
     worker_type_registry: WorkerTypeRegistry,
+    planning_day_id_resolver: Callable[[], str],
     now: Callable[[], int],
 ) -> bool:
     """Say the one thing a Worker compacted part-way through a step cannot find out.
@@ -234,6 +235,12 @@ async def tell_a_worker_it_lost_its_memory(
         ticket = tickets_data.read_ticket(conn, ticket_id)
         conversation_id = ticket.conversation_id
         if conversation_id is None:
+            return False
+        if not worker_memory.ticket_is_on_the_planning_day(
+            conn, ticket_id, planning_day_id=planning_day_id_resolver()
+        ):
+            # A Ticket can leave the Day between the scan and here. Membership is asked
+            # again for the same reason a wake re-runs its readiness under the claim.
             return False
         if not worker_memory.conversation_holds_an_unanswered_memory_loss(conn, conversation_id):
             # Something answered the boundary between the scan and here. That is the
@@ -363,9 +370,12 @@ class WorkerStepReadinessLoop:
 
     def tell_every_worker_that_lost_its_memory(self) -> list[str]:
         """Send the notice to every Ticket compacted part-way through its step."""
+        planning_day_id = self._planning_day_id()
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
-            ticket_ids = worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn)
+            ticket_ids = worker_memory.ticket_ids_holding_an_unanswered_memory_loss(
+                conn, planning_day_id=planning_day_id
+            )
         finally:
             conn.close()
         return [
@@ -386,6 +396,7 @@ class WorkerStepReadinessLoop:
                 connect_database=lambda: connect(self._db_path, self._busy_timeout_ms),
                 conversation_system=self._conversation_system,
                 worker_type_registry=configured_worker_type_registry(),
+                planning_day_id_resolver=self._planning_day_id,
                 now=self._clock.now_unix,
             ),
             self._asyncio_loop,

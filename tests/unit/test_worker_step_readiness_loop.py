@@ -134,6 +134,13 @@ class _World:
                 ),
             )
 
+    def remove_from_today(self, ticket_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "DELETE FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
+                (TODAY_DAY_ID, ticket_id),
+            )
+
     def held_prompts(self, conversation_id: str) -> tuple[HeldPrompt, ...]:
         return asyncio.run(self.conversations.held_prompts(conversation_id))
 
@@ -546,6 +553,30 @@ def test_a_notice_still_queued_behind_a_busy_worker_is_not_sent_again(world: _Wo
         asyncio_loop.close()
 
     assert len(world.held_prompts("conv-busy")) == 1
+
+
+def test_a_ticket_that_left_the_day_gets_no_notice(world: _World) -> None:
+    ticket_id = world.ready_ticket(title="Off the Day", conversation_id="conv-off-day")
+    world.start_conversation("conv-off-day")
+    assert world.start_step(ticket_id) is True
+    world.conversations.complete_running_turn("conv-off-day")
+    world.remove_from_today(ticket_id)
+    world.record_compacted_conversation(
+        "conv-off-day", last_worker_step_sequence=4, compacted_through=9
+    )
+    assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
+
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
+    try:
+        assert readiness_loop.tell_every_worker_that_lost_its_memory() == []
+    finally:
+        readiness_loop.stop()
+        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
+        thread.join(5)
+        asyncio_loop.close()
+
+    # One write, the wake. A Ticket off the Day is not woken for any reason.
+    assert len(world.conversations.backend_prompt_writes("conv-off-day")) == 1
 
 
 def test_a_worker_resting_between_steps_is_left_for_its_next_wake(world: _World) -> None:

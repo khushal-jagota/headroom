@@ -42,6 +42,21 @@ def _add_prompt(
     )
 
 
+TODAY = "day_2026-09-21"
+
+
+def _place_on_the_day(conn: sqlite3.Connection, ticket_id: str) -> None:
+    conn.execute(
+        "INSERT INTO days (id, created_at, updated_at) VALUES (?, 0, 0) "
+        "ON CONFLICT(id) DO NOTHING",
+        (TODAY,),
+    )
+    conn.execute(
+        "INSERT INTO day_tickets (day_id, ticket_id, position) VALUES (?, ?, 0)",
+        (TODAY, ticket_id),
+    )
+
+
 def _add_ticket(
     conn: sqlite3.Connection, ticket_id: str, *, claim: str, conversation_id: str
 ) -> None:
@@ -112,8 +127,29 @@ def test_only_a_ticket_part_way_through_a_step_is_found_by_the_scan(
         _add_prompt(conn, conversation_id, sequence=3, sender_message_id="worker_step_message_a")
     _add_ticket(conn, "t_mid", claim="out", conversation_id="mid-step")
     _add_ticket(conn, "t_rest", claim="none", conversation_id="resting")
+    _place_on_the_day(conn, "t_mid")
+    _place_on_the_day(conn, "t_rest")
 
-    assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn) == ("t_mid",)
+    assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(
+        conn, planning_day_id=TODAY
+    ) == ("t_mid",)
+
+
+def test_a_ticket_that_is_not_on_the_planning_day_is_left_asleep(
+    conn: sqlite3.Connection,
+) -> None:
+    _make_conversation(conn, "off-day", compacted=7)
+    _add_prompt(conn, "off-day", sequence=3, sender_message_id="worker_step_message_a")
+    _add_ticket(conn, "t_off", claim="out", conversation_id="off-day")
+
+    assert (
+        worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn, planning_day_id=TODAY)
+        == ()
+    )
+    assert (
+        worker_memory.ticket_is_on_the_planning_day(conn, "t_off", planning_day_id=TODAY)
+        is False
+    )
 
 
 def test_every_message_id_the_rule_counts_on_starts_with_the_same_prefix() -> None:
