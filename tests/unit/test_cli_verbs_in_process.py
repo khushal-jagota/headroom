@@ -102,9 +102,13 @@ def cli_app(
             actor: str | None = None,
             stdin: str | None = None,
         ) -> JsonObject:
+            # The identity a launched Worker runs under, which is both variables
+            # together: worker_conversation_role_materials sets PLAN_ACTOR beside the
+            # Ticket id. The CLI sends what the environment says and claims nothing else.
             env = {"PLAN_SERVER_URL": server.base}
             if ticket_id is not None:
                 env["PLAN_TICKET_ID"] = ticket_id
+                env["PLAN_ACTOR"] = "worker"
             if actor is not None:
                 env["PLAN_ACTOR"] = actor
             result = CliRunner().invoke(cli_main, [*args, "--json"], input=stdin, env=env)

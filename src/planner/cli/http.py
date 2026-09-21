@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import Any, Literal, NoReturn
+from typing import Any, NoReturn
 
 import httpx
 
@@ -30,25 +30,23 @@ def _url(path: str) -> str:
     return _base_url().rstrip("/") + path
 
 
-RequestActor = Literal["ordinary", "worker", "chief"]
+def _headers() -> dict[str, str]:
+    """Say who this process is, and let the server decide what that may do.
 
-
-def _headers(request_actor: RequestActor) -> dict[str, str]:
-    ambient = os.environ.get("PLAN_ACTOR", "").strip()
+    One position per caller, read from the environment it was launched with. A command
+    used to pick between two of these, which is the two-doors shape inside the tool: the
+    same operation claimed a different identity depending on which name you typed.
+    Nothing is claimed here that the environment does not say.
+    """
+    actor = os.environ.get("PLAN_ACTOR", "").strip()
     ticket_id = os.environ.get("PLAN_TICKET_ID", "").strip()
     sprint_item_id = os.environ.get("PLAN_SPRINT_ITEM_ID", "").strip()
-    if request_actor == "worker":
-        resolved_actor = ambient or "worker"
-        headers = {"X-Plan-Actor": resolved_actor}
-    elif ambient:
-        resolved_actor = ambient
-        headers = {"X-Plan-Actor": ambient}
-    else:
-        resolved_actor = ""
-        headers = {}
-    if resolved_actor == "worker" and ticket_id:
+    if not actor:
+        return {}
+    headers = {"X-Plan-Actor": actor}
+    if actor == "worker" and ticket_id:
         headers["X-Plan-Ticket-ID"] = ticket_id
-    if resolved_actor == "sprint_item_supervisor" and sprint_item_id:
+    if actor == "sprint_item_supervisor" and sprint_item_id:
         headers["X-Plan-Sprint-Item-ID"] = sprint_item_id
     return headers
 
@@ -60,7 +58,6 @@ def send(
     as_json: bool,
     json_body: Any | None = None,
     params: dict[str, Any] | None = None,
-    request_actor: RequestActor = "worker",
 ) -> Any:
     """Execute one request and apply the failure half of the exit contract. Transport
     failure -> stderr + exit 2. Non-2xx (or a 2xx body that still carries an "error"
@@ -71,7 +68,7 @@ def send(
             _url(path),
             json=json_body,
             params=params,
-            headers=_headers(request_actor),
+            headers=_headers(),
             timeout=_TIMEOUT,
         )
     except httpx.TransportError as exc:
@@ -93,14 +90,13 @@ def send_text(
     *,
     as_json: bool,
     params: dict[str, Any] | None = None,
-    request_actor: RequestActor = "worker",
 ) -> str:
     try:
         resp = httpx.request(
             method,
             _url(path),
             params=params,
-            headers=_headers(request_actor),
+            headers=_headers(),
             timeout=_TIMEOUT,
         )
     except httpx.TransportError as exc:

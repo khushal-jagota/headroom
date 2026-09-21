@@ -287,7 +287,7 @@ def test_feedback_cli_lists_and_uses_notes(monkeypatch: pytest.MonkeyPatch) -> N
         (
             "GET",
             "/api/feedback",
-            {"as_json": False, "request_actor": "ordinary"},
+            {"as_json": False},
         ),
         (
             "POST",
@@ -298,7 +298,6 @@ def test_feedback_cli_lists_and_uses_notes(monkeypatch: pytest.MonkeyPatch) -> N
                     "feedback_ids": ["feedback_one"],
                     "ticket_id": "t_target",
                 },
-                "request_actor": "ordinary",
             },
         ),
     ]

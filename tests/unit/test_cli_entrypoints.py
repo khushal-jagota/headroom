@@ -48,7 +48,7 @@ def test_ticket_block_cli_uses_explicit_ticket_block_resource(
         (
             "PUT",
             "/api/collections/blockers/t_blocked/t_blocker",
-            {"as_json": False, "request_actor": "ordinary"},
+            {"as_json": False},
         )
     ]
 
@@ -76,7 +76,6 @@ def test_ticket_complete_uses_the_gate_completion_route(
             {
                 "as_json": False,
                 "json_body": {"body": "Done"},
-                "request_actor": "ordinary",
             },
         )
     ]
@@ -187,62 +186,6 @@ def test_ticket_approve_sends_the_explicit_next_holder(
         "next_ceiling": "needs_what_changes",
         "next_holder": {"kind": "sprint_item", "id": "si_parent"},
     }
-
-
-def test_supervisor_approve_defaults_the_next_holder_to_its_item(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[str, str, dict[str, Any]]] = []
-
-    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        calls.append((method, path, kwargs))
-        if path == "/api/tickets":
-            return {"id": "t_child", "stage": "needs_success_condition", "worker_type": "coding"}
-        if path == "/api/worker-types":
-            return {
-                "worker_types": [
-                    {
-                        "worker_type": "coding",
-                        "stages": [
-                            {
-                                "id": "needs_success_condition",
-                                "gating_field": "success_condition",
-                            }
-                        ],
-                    }
-                ]
-            }
-        return {"id": "t_child"}
-
-    monkeypatch.setattr(http, "send", fake_send)
-    result = CliRunner().invoke(
-        cli_main.main,
-        [
-            "sprint",
-            "item",
-            "supervisor",
-            "approve",
-            "si_parent",
-            "t_child",
-            "--ceiling",
-            "needs_what_changes",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    # One address for approving, whoever is asking. The Outcome resolves the gating field
-    # the same way `ticket approve` does, because the ordinary route names it in its path.
-    assert calls[-1] == (
-        "POST",
-        "/api/tickets/t_child/accept/success_condition",
-        {
-            "as_json": False,
-            "json_body": {
-                "next_ceiling": "needs_what_changes",
-                "next_holder": {"kind": "sprint_item", "id": "si_parent"},
-            },
-        },
-    )
 
 
 def test_ticket_list_passes_repeatable_filters_and_page_controls(

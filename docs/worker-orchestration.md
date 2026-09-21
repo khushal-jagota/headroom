@@ -133,19 +133,21 @@ recovery sweep at startup, no stranded-run cleanup, no correctness table to reco
 The owner sees a Ticket that is not moving and picks it up. This is a deliberate choice
 in favour of one true answer over a second bookkeeping system that can itself be wrong.
 
-Picking it up is a real action rather than a repair. `sprint item supervisor
-restart-worker` clears the dead conversation, gives the claim back, and starts the step
-again, so a Sprint Item supervisor can recover its own child Ticket without the user.
-Both halves happen together because either one alone leaves the Ticket stuck: a Ticket
-with no conversation still reads as claimed, and a Ticket with its claim back but still
-pointing at a dead conversation would talk into it.
+Picking it up is a real action rather than a repair. `ticket restart-worker` clears the
+dead conversation, gives the claim back, and starts the step again. Both halves happen
+together because either one alone leaves the Ticket stuck: a Ticket with no conversation
+still reads as claimed, and a Ticket with its claim back but still pointing at a dead
+conversation would talk into it.
+
+Anyone standing above the Ticket can do it, which is Khushal, the Chief, or the Ticket's
+own Outcome. Khushal could not before: no ordinary route restarted a Worker, and the
+only door was the Outcome's. This is a new capability on his surface, not a rename.
 
 Nothing there asks whether the old Worker was alive, because nothing can answer. A
 Worker that dies without ending its turn goes on looking like one that is running, so a
-check on that would refuse exactly the Tickets that need recovering. The supervisor
-reads the conversation and decides, and the rules around the action bound what that
-decision can reach: its own Item, a Worker-owned Stage, and a worker step that has
-already had five minutes.
+check on that would refuse exactly the Tickets that need recovering. Whoever restarts
+reads the conversation and decides, and two rules bound the action: a Worker-owned
+Stage, and a worker step that has already had five minutes.
 
 ## Sending a proposal back
 
@@ -229,9 +231,9 @@ _Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`,
 - **The command-line tool** (`cli.md`) is the surface the worker acts through.
 
 An errored worker-owned Ticket remains errored through reads and owner replies. A
-successful start supersedes the failed turn in derived agent state. A Sprint Item
-supervisor can use explicit restart, which clears the error before a new start.
+successful start supersedes the failed turn in derived agent state. Explicit restart
+clears the error before a new start.
 
 ---
 
-_Last verified: 2026-09-15._
+_Last verified: 2026-09-21._

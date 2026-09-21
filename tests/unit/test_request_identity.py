@@ -42,16 +42,24 @@ def test_request_identity_reads_ticket_header_and_honors_trusted_scope_override(
     assert trusted.principal == OWNER_PRINCIPAL
 
 
-def test_worker_cli_headers_name_the_ticket_principal(
+def test_cli_headers_say_what_the_environment_says_and_nothing_else(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("PLAN_ACTOR", raising=False)
-    monkeypatch.setenv("PLAN_TICKET_ID", "t_worker")
+    """One position per process, whichever command was typed.
 
-    assert http._headers("worker") == {
+    A command used to choose between claiming the worker identity and passing the
+    ambient one through, so the same process was a Ticket at one verb and Khushal at
+    the next. A Ticket id with no actor beside it is not a claim to be that Ticket.
+    """
+    monkeypatch.setenv("PLAN_ACTOR", "worker")
+    monkeypatch.setenv("PLAN_TICKET_ID", "t_worker")
+    assert http._headers() == {
         "X-Plan-Actor": "worker",
         "X-Plan-Ticket-ID": "t_worker",
     }
+
+    monkeypatch.delenv("PLAN_ACTOR")
+    assert http._headers() == {}
 
 
 # require_direct_write and require_planning_write used to be pinned here. Both are gone:
