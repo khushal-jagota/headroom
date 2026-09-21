@@ -24,6 +24,7 @@ from planner.core.authority.declarations import stands_above_for_worker_type
 from planner.core.authority.logic import (
     ChainFacts,
     is_self,
+    shares_the_chain,
     stands_above,
     stands_above_or_is_self,
 )
@@ -69,6 +70,23 @@ def _caller_declared_targets(conn: sqlite3.Connection, caller: Principal) -> tup
     return stands_above_for_worker_type(str(row["worker_type"]))
 
 
+def _caller_parent_outcome_id(conn: sqlite3.Connection, caller: Principal) -> str | None:
+    """The Outcome the caller sits under, if the caller is a Ticket that sits under one.
+
+    The same column and the same ``normal`` restriction as ``_target_parent_outcome_id``,
+    asked about the caller. Only the chain question reads it.
+    """
+    if caller.kind is not PrincipalKind.ticket:
+        return None
+    row = conn.execute(
+        "SELECT item.id AS id FROM tickets AS ticket "
+        "JOIN sprint_items AS item ON item.id = ticket.sprint_item_id "
+        "WHERE ticket.id = ? AND item.kind = 'normal'",
+        (caller.id,),
+    ).fetchone()
+    return None if row is None else str(row["id"])
+
+
 def _target_is_itself_a_principal(conn: sqlite3.Connection, target: Target) -> bool:
     """Whether the target is a thing that can act: a real Ticket, or a ``normal`` Outcome.
 
@@ -91,6 +109,7 @@ def chain_facts(conn: sqlite3.Connection, caller: Principal, target: Target) -> 
         target_parent_outcome_id=_target_parent_outcome_id(conn, target),
         caller_declared_targets=_caller_declared_targets(conn, caller),
         target_is_itself_a_principal=_target_is_itself_a_principal(conn, target),
+        caller_parent_outcome_id=_caller_parent_outcome_id(conn, caller),
     )
 
 
@@ -146,6 +165,56 @@ def require_above_or_self(conn: sqlite3.Connection, caller: Principal, target: T
         _refuse(caller, target)
 
 
+# --- creation: the three things a new Ticket arrives with -----------------------
+#
+# Creating a Ticket acts on nothing that exists, so nothing refuses it. Each canonical
+# value creation carries does act on something, and takes the ordinary question about it.
+
+
+def require_in_chain(conn: sqlite3.Connection, caller: Principal, target: Target) -> None:
+    """Admit a caller that is in the target's chain: above it, it, or below it.
+
+    The parent question at creation. A Ticket may put work under the Outcome it already
+    answers to, and under no other.
+    """
+    if not shares_the_chain(caller, target, chain_facts(conn, caller, target)):
+        _refuse(caller, target)
+
+
+def _facts_for_a_ticket_being_created(
+    conn: sqlite3.Connection, principal: Principal, *, parent_outcome_id: str | None
+) -> ChainFacts:
+    """The rule's facts about a Ticket that does not exist yet.
+
+    Nothing here is guessed. The Ticket's id is already allocated, its Outcome is the
+    parent the request named, and a Ticket being written is a principal by definition.
+    """
+    return ChainFacts(
+        target_parent_outcome_id=parent_outcome_id,
+        caller_declared_targets=_caller_declared_targets(conn, principal),
+        target_is_itself_a_principal=True,
+    )
+
+
+def require_above_a_ticket_being_created(
+    conn: sqlite3.Connection,
+    caller: Principal,
+    *,
+    ticket_id: str,
+    parent_outcome_id: str | None,
+) -> None:
+    """Admit a caller that will stand above the Ticket it is creating.
+
+    The ceiling and the holder are the two canonical values ``PATCH`` reserves for a
+    caller above the Ticket. Stating one at creation is that same act a moment earlier,
+    so it gets the same answer and not a softer one.
+    """
+    target = Target(TargetKind.ticket, ticket_id)
+    facts = _facts_for_a_ticket_being_created(conn, caller, parent_outcome_id=parent_outcome_id)
+    if not stands_above(caller, target, facts):
+        _refuse(caller, target)
+
+
 def refuse_outcome_re_parenting(caller: Principal, ticket_id: str) -> None:
     """The one stated exception to the rule, asked wherever a Ticket's Outcome is set.
 
@@ -174,6 +243,8 @@ __all__ = [
     "is_above_or_self",
     "refuse_outcome_re_parenting",
     "require_above",
+    "require_above_a_ticket_being_created",
     "require_above_or_self",
+    "require_in_chain",
     "require_self",
 ]

@@ -85,7 +85,6 @@ def test_canonical_proposal_writer_accepts_only_the_ticket_own_worker(
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         kickoff_note="Target",
-        stated_ceiling="needs_success_condition",
     )
     forbidden_principals = (
         Principal(PrincipalKind.sprint_item, item.id),

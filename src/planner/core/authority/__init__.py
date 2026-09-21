@@ -11,7 +11,9 @@ from planner.core.authority.contracts import (
 )
 from planner.core.authority.logic import (
     ChainFacts,
+    is_below,
     is_self,
+    shares_the_chain,
     stands_above,
     stands_above_or_is_self,
 )
@@ -21,7 +23,9 @@ from planner.core.authority.service import (
     is_above_or_self,
     refuse_outcome_re_parenting,
     require_above,
+    require_above_a_ticket_being_created,
     require_above_or_self,
+    require_in_chain,
     require_self,
 )
 
@@ -33,14 +37,18 @@ __all__ = [
     "chain_facts",
     "is_above",
     "is_above_or_self",
+    "is_below",
     "is_self",
     "outcome",
     "owner_only",
     "plan",
     "refuse_outcome_re_parenting",
     "require_above",
+    "require_above_a_ticket_being_created",
     "require_above_or_self",
+    "require_in_chain",
     "require_self",
+    "shares_the_chain",
     "stands_above",
     "stands_above_or_is_self",
     "ticket",
