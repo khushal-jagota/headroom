@@ -224,7 +224,9 @@ async def get_item_workspace(
         tickets=result["tickets"],
         sprint_items=(result,),
     )
-    result["artifacts"] = sprint_item_files.list_files(conn, ctx.principal, item_id, cfg.db_path)
+    result["artifacts"] = sprint_item_files.list_artifact_entries(
+        conn, ctx.principal, item_id, cfg.db_path
+    )
     return result
 
 

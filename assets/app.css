@@ -4606,6 +4606,38 @@ a.artifact-chip:hover,
   color: var(--text-faintest);
 }
 
+/* A folder opens where it stands. Shut, it counts what is inside; open, it points down at
+ * the chips that followed it out. Its own chips sit a shade back, so a run of them reads as
+ * the folder's contents rather than as more of the top level. */
+.artifact-chip--folder {
+  border: 0;
+  cursor: pointer;
+}
+
+.artifact-chip--folder:hover {
+  color: var(--text-strong);
+  background-image: var(--interaction-hover);
+}
+
+.artifact-chip--folder small::after {
+  content: " \203A";
+}
+
+.artifact-chip--folder[aria-expanded="true"] small::after {
+  content: " \2304";
+}
+
+/* A folder's own files sit on the recessed plane, so a run of them reads as what the
+ * folder holds rather than as more of the top level. */
+.artifact-chip--nested {
+  background: var(--surface-recessed);
+  color: var(--text-faint);
+}
+
+.artifact-chip--folder[aria-expanded="true"] {
+  background: var(--surface-recessed);
+}
+
 .artifact-strip-more {
   border: 0;
   cursor: pointer;

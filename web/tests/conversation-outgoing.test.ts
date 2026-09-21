@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  SEND_DEADLINE_MILLISECONDS,
   afterTheRecordHasBeenRead,
+  afterWaitingLongEnoughForAnAnswer,
+  anOutgoingMessageIsWaitingOnTheRecord,
   mintOutgoingMessage,
   outgoingMessageNote,
-  outgoingMessagesTheRecordHasNot
+  outgoingMessagesByPlace,
+  outgoingMessagesTheRecordHasNot,
+  tellWhenAWaitRunsOut,
+  whenTheNextWaitRunsOut
 } from "../src/lib/conversation/outgoing";
 import type { OutgoingMessage } from "../src/lib/conversation/outgoing";
 import type { ConversationEvent } from "../src/lib/conversation/wire";
@@ -163,5 +169,169 @@ describe("outgoing Conversation messages", () => {
     expect(outgoingMessageNote(settled[1]))
       .toBe("the server never said whether this arrived");
     expect(afterTheRecordHasBeenRead(settled)).toBe(settled);
+  });
+});
+
+describe("a send nobody answered", () => {
+  function waiting(
+    messageId: string,
+    sentAtUnixMilliseconds: number,
+    knownFate: OutgoingMessage["knownFate"] = "nothing_yet"
+  ): OutgoingMessage {
+    return {
+      messageId,
+      content: [{ piece: "text", text: messageId }],
+      senderLabel: "owner",
+      mode: "steer",
+      sentAtUnixMilliseconds,
+      knownFate
+    };
+  }
+
+  const deadlinePassed = sentAt + SEND_DEADLINE_MILLISECONDS;
+
+  it("says no answer is coming once the wait is over, and not before", () => {
+    const messages = [waiting("waited", sentAt), waiting("just-sent", sentAt + 1)];
+
+    expect(afterWaitingLongEnoughForAnAnswer(messages, deadlinePassed)
+      .map((message) => [message.messageId, message.knownFate]))
+      .toEqual([["waited", "answer_never_came_back"], ["just-sent", "nothing_yet"]]);
+    expect(afterWaitingLongEnoughForAnAnswer(messages, deadlinePassed - 1))
+      .toBe(messages);
+  });
+
+  it("leaves a message brought back from before the page alone, however old", () => {
+    const recalled = [waiting("recalled", 0, "sent_before_this_page")];
+
+    expect(afterWaitingLongEnoughForAnAnswer(recalled, deadlinePassed)).toBe(recalled);
+  });
+
+  it("leaves a message the system said it was holding alone", () => {
+    const held = [waiting("queued", sentAt, "waiting_for_the_agent")];
+
+    expect(afterWaitingLongEnoughForAnAnswer(held, deadlinePassed)).toBe(held);
+  });
+
+  it("reports when the earliest wait runs out, and nothing when none is waiting", () => {
+    expect(whenTheNextWaitRunsOut([waiting("late", sentAt + 50), waiting("early", sentAt)]))
+      .toBe(sentAt + SEND_DEADLINE_MILLISECONDS);
+    expect(whenTheNextWaitRunsOut([])).toBeNull();
+    expect(whenTheNextWaitRunsOut([waiting("told", sentAt, "answer_never_came_back")]))
+      .toBeNull();
+  });
+
+  it("says no answer is coming when the wait runs out, without being asked again", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(sentAt);
+      const messages = [waiting("waited", sentAt)];
+      const told: (readonly OutgoingMessage[])[] = [];
+      const stopWaiting = tellWhenAWaitRunsOut(messages, (next) => told.push(next));
+
+      vi.advanceTimersByTime(SEND_DEADLINE_MILLISECONDS - 1);
+      expect(told).toEqual([]);
+
+      vi.advanceTimersByTime(1);
+      expect(told.map((next) => next.map((message) => message.knownFate)))
+        .toEqual([["answer_never_came_back"]]);
+
+      stopWaiting();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits on the earliest send and says nothing about the ones still in time", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(sentAt);
+      const messages = [
+        waiting("early", sentAt),
+        waiting("late", sentAt + SEND_DEADLINE_MILLISECONDS)
+      ];
+      const told: (readonly OutgoingMessage[])[] = [];
+      const stopWaiting = tellWhenAWaitRunsOut(messages, (next) => told.push(next));
+
+      vi.advanceTimersByTime(SEND_DEADLINE_MILLISECONDS);
+      expect(told).toHaveLength(1);
+      expect(told[0]!.map((message) => [message.messageId, message.knownFate])).toEqual([
+        ["early", "answer_never_came_back"],
+        ["late", "nothing_yet"]
+      ]);
+
+      stopWaiting();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says nothing once the reader has gone, or when nothing is waiting at all", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(sentAt);
+      const told: (readonly OutgoingMessage[])[] = [];
+
+      tellWhenAWaitRunsOut([waiting("abandoned", sentAt)], (next) => told.push(next))();
+      tellWhenAWaitRunsOut(
+        [waiting("already told", sentAt, "answer_never_came_back")],
+        (next) => told.push(next)
+      );
+      vi.advanceTimersByTime(SEND_DEADLINE_MILLISECONDS * 2);
+
+      expect(told).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("knows when the record is the only thing that can settle what this tab holds", () => {
+    expect(anOutgoingMessageIsWaitingOnTheRecord([waiting("sending", sentAt)])).toBe(false);
+    expect(anOutgoingMessageIsWaitingOnTheRecord(
+      [waiting("uncertain", sentAt, "answer_never_came_back")]
+    )).toBe(true);
+    expect(anOutgoingMessageIsWaitingOnTheRecord(
+      [waiting("reloaded", sentAt, "sent_before_this_page")]
+    )).toBe(true);
+  });
+
+  it("draws an unanswered send above the composer instead of under every row", () => {
+    const placed = outgoingMessagesByPlace(
+      [
+        waiting("on-its-way", sentAt),
+        waiting("uncertain", sentAt, "answer_never_came_back"),
+        waiting("queued", sentAt, "waiting_for_the_agent"),
+        waiting("in-the-record-queue", sentAt)
+      ],
+      {
+        composerStackMessageIds: [],
+        serverHeldSenderMessageIds: new Set(["in-the-record-queue"])
+      }
+    );
+
+    expect(placed.thread.map((message) => message.messageId)).toEqual(["on-its-way"]);
+    expect(placed.composerStack.map((message) => message.messageId))
+      .toEqual(["uncertain", "queued", "in-the-record-queue"]);
+  });
+
+  it("keeps a copy this pane already put above the composer there", () => {
+    const placed = outgoingMessagesByPlace(
+      [waiting("promoted", sentAt)],
+      { composerStackMessageIds: ["promoted"], serverHeldSenderMessageIds: new Set() }
+    );
+
+    expect(placed.thread).toEqual([]);
+    expect(placed.composerStack.map((message) => message.messageId)).toEqual(["promoted"]);
+  });
+
+  it("carries the composer's picks so a send again runs on what was asked for", () => {
+    expect(mintOutgoingMessage({
+      content: [{ piece: "text", text: "picked" }],
+      senderLabel: "owner",
+      mode: "send_now",
+      sentAtUnixMilliseconds: sentAt,
+      pickedModel: "opus",
+      pickedReasoningEffort: "high"
+    })).toMatchObject({ pickedModel: "opus", pickedReasoningEffort: "high" });
+    expect(outgoing("nothing picked").pickedModel).toBeUndefined();
   });
 });

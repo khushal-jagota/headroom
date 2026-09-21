@@ -397,6 +397,31 @@ copy off the screen the ordinary way. Only a message the record does not have on
 it has been read says that nobody ever said whether it arrived — and it says that
 because it is true, not because the page has just started.
 
+A send waits three minutes for an answer. Past that nothing is coming, and the
+copy says so. Three minutes is long on purpose: the biggest message this system
+takes is around eighteen megabytes once its files and pictures are encoded, which
+is minutes of uploading on a poor connection before the server can answer at all.
+Waiting too long costs almost nothing, because a message the record turns out to
+have disappears from the screen as soon as the record is read again. Waiting too
+little would put a frightening sentence on a message that was about to turn out
+fine.
+
+A message nobody answered for does not stay in the thread. The thread draws these
+copies after every row the conversation has, so one left there would sit under
+every later turn for as long as the tab stayed open, looking like the newest thing
+said. It moves up to the composer, with the other messages that have not landed,
+and it says that no answer came. Two things can be done with it there, and both
+belong to the browser rather than the record: stop showing it, or send the same
+words again. Sending again is a new message with a new name, so if the first one
+did arrive after all there are two — that is the person's call to make, and
+nothing guesses it for them.
+
+None of that is a guess about whether the message arrived, and the question stays
+open until the record answers it. Most of the time the record already has the
+answer and this browser simply missed it, so a conversation holding a send nobody
+answered for reads the record again the moment the server is reachable. If the row
+is there, the copy goes, the ordinary way.
+
 Sending also decides where the thread sits. The message that was just sent
 settles near the top of the view with the rest of it kept for the answer, and
 then nothing moves for as long as the answer fits in that space. Once the turn
@@ -666,4 +691,4 @@ child process runs. A conversation with no report yet offers nothing.
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-09-15._
+_Last verified: 2026-09-21._

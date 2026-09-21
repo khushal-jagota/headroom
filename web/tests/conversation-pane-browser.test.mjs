@@ -166,6 +166,19 @@ try {
       queueReason: "steer_refused"
     }];
   };
+  (window as any).__showUnansweredSend = () => {
+    supportsSteer = true;
+    heldPromptRows = [{
+      key: "local:sent-into-the-dark",
+      heldPromptId: null,
+      senderMessageId: "sent-into-the-dark",
+      content: [{ piece: "text", text: "did this arrive" }],
+      senderLabel: "owner",
+      sentAtUnixMilliseconds: 10,
+      state: "unknown",
+      queueReason: null
+    }];
+  };
   (window as any).__setComposerDisabled = (disabled: boolean) => {
     composerDisabled = disabled;
   };
@@ -297,6 +310,12 @@ try {
         composerDisabled={composerDisabled}
         {composerCatalog}
         onSend={captureSend}
+        onStopDrawingHeldPrompt={(senderMessageId: string) => {
+          (window as any).__stoppedDrawing = senderMessageId;
+        }}
+        onSendHeldPromptAgain={(senderMessageId: string) => {
+          (window as any).__sentAgain = senderMessageId;
+        }}
       />
     </div>
   </section>
@@ -375,7 +394,14 @@ try {
 
   const browserScript = String.raw`
 from playwright.sync_api import sync_playwright
+import os
 import sys
+
+# Set this to keep a picture of what the assertions checked. The test proves the same
+# thing with or without it.
+screenshot_dir = os.environ.get("UNANSWERED_SEND_SCREENSHOT_DIR")
+if screenshot_dir:
+    os.makedirs(screenshot_dir, exist_ok=True)
 
 PANE = "[data-conversation-pane]"
 INPUT = "[data-conversation-input]"
@@ -734,6 +760,25 @@ with sync_playwright() as playwright:
     steer.wait_for()
     assert steer.inner_text() == "Steer"
     assert "Hermes" not in page.locator("[data-conversation-held-stack]").inner_text()
+
+    # A send the server never answered sits above the composer, never under the rows, and
+    # carries the two things this tab can do about it on its own.
+    page.evaluate("window.__showUnansweredSend()")
+    page.locator('[data-conversation-held-row="local:sent-into-the-dark"]').wait_for()
+    assert "no answer came" in page.locator("[data-conversation-held-stack]").inner_text()
+    assert page.locator('[data-conversation-outgoing="sent-into-the-dark"]').count() == 0
+    assert page.locator('[data-conversation-held-promote="send_now"]').count() == 0
+    assert page.locator('[data-conversation-held-promote="steer"]').count() == 0
+    send_again = page.locator('[data-conversation-held-send-again="sent-into-the-dark"]')
+    send_again.wait_for()
+    if screenshot_dir:
+        page.locator("[data-conversation-held-stack]").screenshot(
+            path=os.path.join(screenshot_dir, "unanswered-send-above-the-composer.png")
+        )
+    send_again.click()
+    page.wait_for_function("window.__sentAgain === 'sent-into-the-dark'")
+    page.locator('[data-conversation-held-stop-drawing="sent-into-the-dark"]').click()
+    page.wait_for_function("window.__stoppedDrawing === 'sent-into-the-dark'")
 
     # A completed owner turn uses the hidden ending for structure. The collapsed Focus
     # line shows the reply without a live working timer.

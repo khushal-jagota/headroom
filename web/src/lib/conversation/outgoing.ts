@@ -55,6 +55,13 @@ export type OutgoingMessage = {
   /** When the person pressed send, in unix milliseconds. */
   sentAtUnixMilliseconds: number;
   knownFate: OutgoingMessageKnownFate;
+  /** What the person picked in the composer for this message, when they picked anything.
+   *
+   *  Kept because a message can be sent again, and a send again that dropped these would
+   *  quietly run on whatever the conversation is running now instead of what was asked
+   *  for. Absent means nothing was picked, which is what an ordinary send says. */
+  pickedModel?: string | null;
+  pickedReasoningEffort?: string | null;
 };
 
 const outgoingImageReservations = new Map<string, number>();
@@ -159,6 +166,8 @@ export function mintOutgoingMessage(input: {
   senderLabel: string;
   mode: PromptDeliveryMode;
   sentAtUnixMilliseconds?: number;
+  pickedModel?: string | null;
+  pickedReasoningEffort?: string | null;
 }): OutgoingMessage {
   const sentAtUnixMilliseconds = input.sentAtUnixMilliseconds ?? Date.now();
   return {
@@ -167,7 +176,11 @@ export function mintOutgoingMessage(input: {
     senderLabel: input.senderLabel,
     mode: input.mode,
     sentAtUnixMilliseconds,
-    knownFate: "nothing_yet"
+    knownFate: "nothing_yet",
+    ...(input.pickedModel == null ? {} : { pickedModel: input.pickedModel }),
+    ...(input.pickedReasoningEffort == null
+      ? {}
+      : { pickedReasoningEffort: input.pickedReasoningEffort })
   };
 }
 
@@ -203,6 +216,133 @@ export function outgoingMessagesTheRecordHasNot(
   const held = senderMessageIdsInTheRecord(events);
   const remaining = outgoing.filter((message) => !held.has(message.messageId));
   return remaining.length === outgoing.length ? outgoing : remaining;
+}
+
+/** How long a send waits for an answer before nobody is coming with one.
+ *
+ * Three minutes, and deliberately long. The largest send this system takes is ten
+ * mebibytes of files and three of images, which base64 makes about eighteen megabytes on
+ * the wire — around two and a half minutes of uploading on a poor uplink before the server
+ * can answer at all. The slowest work behind a send after that is a cold backend starting,
+ * or a running turn confirming that it stopped, and those take seconds.
+ *
+ * Erring long costs almost nothing. A message the record turns out to have stops being
+ * drawn the moment the record is read again, so a wait that was merely slow puts itself
+ * right. Erring short costs the one thing this module refuses to do anywhere else: it puts
+ * a frightening sentence on a message that is about to turn out fine.
+ */
+export const SEND_DEADLINE_MILLISECONDS = 3 * 60 * 1000;
+
+function theWaitIsOver(message: OutgoingMessage, nowUnixMilliseconds: number): boolean {
+  return message.knownFate === "nothing_yet"
+    && nowUnixMilliseconds - message.sentAtUnixMilliseconds >= SEND_DEADLINE_MILLISECONDS;
+}
+
+/** The messages that have waited long enough to say that no answer is coming.
+ *
+ * This guesses nothing about whether the message arrived. It says only that nothing is
+ * going to answer the request, which by then is a fact about the wait rather than a claim
+ * about the message — and that is exactly what ``answer_never_came_back`` already means.
+ *
+ * ``sent_before_this_page`` is left alone, because its clock started before the page went
+ * away: it is past any deadline the instant it comes back, and the record is about to
+ * answer for it properly. The same list is handed back when nobody has waited long enough.
+ */
+export function afterWaitingLongEnoughForAnAnswer(
+  outgoing: readonly OutgoingMessage[],
+  nowUnixMilliseconds: number
+): readonly OutgoingMessage[] {
+  if (!outgoing.some((message) => theWaitIsOver(message, nowUnixMilliseconds))) return outgoing;
+  return outgoing.map((message) =>
+    theWaitIsOver(message, nowUnixMilliseconds)
+      ? { ...message, knownFate: "answer_never_came_back" as const }
+      : message
+  );
+}
+
+/** When the earliest send still waiting runs out of time, or null when none is waiting. */
+export function whenTheNextWaitRunsOut(
+  outgoing: readonly OutgoingMessage[]
+): number | null {
+  const deadlines = outgoing
+    .filter((message) => message.knownFate === "nothing_yet")
+    .map((message) => message.sentAtUnixMilliseconds + SEND_DEADLINE_MILLISECONDS);
+  return deadlines.length === 0 ? null : Math.min(...deadlines);
+}
+
+/** Wake up when the earliest send still waiting runs out of time, and say so.
+ *
+ * The rule above is true or false at an instant. This is the only thing that makes a
+ * screen notice the instant arriving, and it is deliberately the whole of it: one wake-up
+ * for the earliest deadline, and the answer worked out at that deadline rather than at
+ * whatever the clock reads when the wake-up gets its turn. Waiting is measured from when
+ * the person pressed send, not from when a browser got round to looking.
+ *
+ * Hands back how to cancel it, for a reader that goes away or a list that changed.
+ */
+export function tellWhenAWaitRunsOut(
+  outgoing: readonly OutgoingMessage[],
+  tell: (told: readonly OutgoingMessage[]) => void
+): () => void {
+  const runsOutAt = whenTheNextWaitRunsOut(outgoing);
+  if (runsOutAt === null) return () => undefined;
+  const wakeUp = setTimeout(
+    () => {
+      const told = afterWaitingLongEnoughForAnAnswer(
+        outgoing,
+        Math.max(Date.now(), runsOutAt)
+      );
+      if (told !== outgoing) tell(told);
+    },
+    Math.max(0, runsOutAt - Date.now())
+  );
+  return () => clearTimeout(wakeUp);
+}
+
+/** Whether this tab holds a send the record has not answered for.
+ *
+ * Both of these are waiting on the record and neither can be settled here. One never heard
+ * an answer, and one came back from before the page reloaded and has not been told yet. A
+ * conversation holding either has a reason to read the record again when it can.
+ */
+export function anOutgoingMessageIsWaitingOnTheRecord(
+  outgoing: readonly OutgoingMessage[]
+): boolean {
+  return outgoing.some((message) =>
+    message.knownFate === "answer_never_came_back"
+    || message.knownFate === "sent_before_this_page"
+  );
+}
+
+/** Where each message this browser is still drawing belongs.
+ *
+ * The thread draws these after every row the record has, so a copy left there is claiming
+ * to be the newest thing in the conversation. For a send on its way that is true, and it
+ * is the whole point: the message exists the moment Enter is pressed and it belongs in the
+ * thread from then on.
+ *
+ * It stops being true the moment nothing is coming. A send nobody answered for has no row
+ * on the way, so left in the thread it would sit under every later turn for as long as the
+ * tab lives, and reading the conversation would never clear it. It belongs with the other
+ * messages that have not landed, above the composer, where there is room to say what is
+ * known and to offer something to do about it.
+ */
+export function outgoingMessagesByPlace(
+  outgoing: readonly OutgoingMessage[],
+  where: {
+    composerStackMessageIds: readonly string[];
+    serverHeldSenderMessageIds: ReadonlySet<string>;
+  }
+): { thread: readonly OutgoingMessage[]; composerStack: readonly OutgoingMessage[] } {
+  const aboveTheComposer = (message: OutgoingMessage): boolean =>
+    where.composerStackMessageIds.includes(message.messageId)
+    || where.serverHeldSenderMessageIds.has(message.messageId)
+    || message.knownFate === "waiting_for_the_agent"
+    || message.knownFate === "answer_never_came_back";
+  return {
+    thread: outgoing.filter((message) => !aboveTheComposer(message)),
+    composerStack: outgoing.filter(aboveTheComposer)
+  };
 }
 
 // --- surviving a reload ---------------------------------------------------------------------
@@ -589,6 +729,12 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
   if (entry === null || typeof entry !== "object") return null;
   const held = entry as Record<string, unknown>;
   const { messageId, content, senderLabel, mode, sentAtUnixMilliseconds, knownFate } = held;
+  // A pick that was not stored, or was stored as something other than a name, reads as no
+  // pick. It never turns the message away: the words a person handed over must survive a
+  // stored value nobody can make sense of.
+  const pickedModel = typeof held.pickedModel === "string" ? held.pickedModel : null;
+  const pickedReasoningEffort =
+    typeof held.pickedReasoningEffort === "string" ? held.pickedReasoningEffort : null;
   if (typeof messageId !== "string" || messageId === "") return null;
   if (!Array.isArray(content) || content.length === 0) return null;
   const pieces = content.flatMap((piece) => {
@@ -607,7 +753,9 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
     senderLabel,
     mode: decodedMode as PromptDeliveryMode,
     sentAtUnixMilliseconds,
-    knownFate: knownFate as OutgoingMessageKnownFate
+    knownFate: knownFate as OutgoingMessageKnownFate,
+    ...(pickedModel === null ? {} : { pickedModel }),
+    ...(pickedReasoningEffort === null ? {} : { pickedReasoningEffort })
   };
 }
 

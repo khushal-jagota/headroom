@@ -2,7 +2,11 @@
   import { conversationFileHref } from "../../../lib/conversation/wire";
   import { base64DecodedByteCount } from "../../../lib/conversation/pendingFiles";
   import ConversationFileCard from "../ConversationFileCard.svelte";
-  import { heldPromptRowLabel, type HeldPromptRow } from "../../../lib/conversation/heldPrompts";
+  import {
+    heldPromptRowActions,
+    heldPromptRowLabel,
+    type HeldPromptRow
+  } from "../../../lib/conversation/heldPrompts";
 
   let {
     rows,
@@ -10,7 +14,9 @@
     supportsSteer = false,
     running = false,
     onDiscard,
-    onPromote
+    onPromote,
+    onStopDrawing,
+    onSendAgain
   }: {
     rows: readonly HeldPromptRow[];
     conversationId?: string | null;
@@ -18,6 +24,9 @@
     running?: boolean;
     onDiscard?: (heldPromptId: string) => Promise<void> | void;
     onPromote?: (heldPromptId: string, mode: "send_now" | "steer") => Promise<void> | void;
+    /** Stop drawing a copy only this browser has. There is no held prompt to discard. */
+    onStopDrawing?: (senderMessageId: string) => Promise<void> | void;
+    onSendAgain?: (senderMessageId: string) => Promise<void> | void;
   } = $props();
 
   let actionInFlight = $state<string | null>(null);
@@ -54,7 +63,9 @@
       aria-label="Messages waiting"
     >
       {#each rows as row (row.key)}
-        {@const actionable = row.heldPromptId !== null && actionInFlight === null}
+        {@const actions = heldPromptRowActions(row)}
+        {@const actionable = actions.length > 0 && actionInFlight === null}
+        {@const thisTabsOwn = row.state === "unknown" && row.senderMessageId !== null}
         {@const word = stateWord(row)}
         {@const reason = queueReason(row)}
         <li
@@ -67,28 +78,49 @@
             type="button"
             class="chat-qrow-x"
             data-conversation-held-discard={row.heldPromptId ?? undefined}
-            aria-label="Do not send this message"
-            title="Do not send this message"
+            data-conversation-held-stop-drawing={
+              actions.includes("stop_drawing") ? row.senderMessageId : undefined
+            }
+            aria-label={thisTabsOwn ? "Stop showing this message" : "Do not send this message"}
+            title={thisTabsOwn ? "Stop showing this message" : "Do not send this message"}
             disabled={!actionable}
-            onclick={() => row.heldPromptId === null
-              ? undefined
-              : void act(row.key, () => onDiscard?.(row.heldPromptId!))}
+            onclick={() => {
+              if (row.heldPromptId !== null) {
+                void act(row.key, () => onDiscard?.(row.heldPromptId!));
+              } else if (thisTabsOwn) {
+                void act(row.key, () => onStopDrawing?.(row.senderMessageId!));
+              }
+            }}
           >×</button>
           <span class="chat-qrow-txt">{heldPromptRowLabel(row)}</span>
           {#if word}<span class="chat-qrow-state">{word}</span>{/if}
           {#if reason}<span class="chat-qrow-state">{reason}</span>{/if}
-          <button
-            type="button"
-            class="chat-qrow-act"
-            data-conversation-held-promote="send_now"
-            data-held-prompt-id={row.heldPromptId ?? undefined}
-            title={running ? "Stop the running turn and run this next" : "Run this next"}
-            disabled={!actionable}
-            onclick={() => row.heldPromptId === null
-              ? undefined
-              : void act(row.key, () => onPromote?.(row.heldPromptId!, "send_now"))}
-          >Send now</button>
-          {#if supportsSteer}
+          {#if actions.includes("send_again")}
+            <button
+              type="button"
+              class="chat-qrow-act"
+              data-conversation-held-send-again={row.senderMessageId}
+              title="Send these words again. They may already have arrived once."
+              disabled={!actionable}
+              onclick={() => row.senderMessageId === null
+                ? undefined
+                : void act(row.key, () => onSendAgain?.(row.senderMessageId!))}
+            >Send again</button>
+          {/if}
+          {#if actions.includes("send_now")}
+            <button
+              type="button"
+              class="chat-qrow-act"
+              data-conversation-held-promote="send_now"
+              data-held-prompt-id={row.heldPromptId ?? undefined}
+              title={running ? "Stop the running turn and run this next" : "Run this next"}
+              disabled={!actionable}
+              onclick={() => row.heldPromptId === null
+                ? undefined
+                : void act(row.key, () => onPromote?.(row.heldPromptId!, "send_now"))}
+            >Send now</button>
+          {/if}
+          {#if supportsSteer && actions.includes("steer")}
             <button
               type="button"
               class="chat-qrow-act"
