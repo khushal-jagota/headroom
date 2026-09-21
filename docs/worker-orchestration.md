@@ -83,12 +83,32 @@ occurrences, and suppression.
 
 ## Sending the step
 
-The opening message is composed first as one ordered, inspectable list of Panels inputs:
-the Stage instruction, Ticket guidance when present, the settled Brief, and revision
-feedback for the current Stage when present. The worker sees each one because it is in
-the actual message. Worker skills and conversation history stay separate from this list.
-It is composed before anything else so that a failure here cannot leave a conversation
+The opening message is composed first as one ordered, inspectable list of Panels inputs.
+It carries only what a worker cannot get for itself: a notice when the worker's context
+was compacted, the Stage instruction, and revision feedback for the current Stage when
+there is some. The Stage instruction names the command that reads the Ticket, because
+the Ticket's Brief and guidance are a read the worker makes rather than a payload every
+message carries. Worker skills and conversation history stay separate from this list. It
+is composed before anything else so that a failure here cannot leave a conversation
 behind.
+
+## Telling a worker it lost its memory
+
+Panels compacts a worker that has been idle for fifty minutes, and a backend may compact
+one that fills its context. Either way the conversation the worker was reading gets
+shorter and nothing in it says so. The conversation record keeps the boundary, so Panels
+is the only side that can report it.
+
+A boundary counts as answered once Panels has sent a worker-step message after it. That
+is how the same boundary is never reported twice, and it needs no second record of its
+own. The boundary is read at two moments:
+
+- A step falls due. The wake leads with the notice, and the Stage instruction follows.
+- A step is already in flight — the Ticket's worker-step claim is out. The notice is sent
+  straight away, because a worker part-way through a step is not waiting for a wake, and
+  most compactions are never followed by another one.
+
+_Code path:_ `src/planner/runtime/worker_memory.py`.
 
 Then it is sent, through the one door there is. If the Ticket has a conversation the
 message goes into it. If it has none, the message is what brings one into being — and
@@ -166,7 +186,8 @@ authorization and current-parent route. It clears the proposal, appends the exac
 to a separate attributed revision-feedback record, and returns the Ticket to its resting
 status. A same-Stage user opener is cleared so the discussion can open again. The next
 normal worker-step prompt carries feedback for that Stage, and only a successful send
-consumes it. Ticket guidance remains independent. Reply bookkeeping credits the source
+consumes it. Ticket guidance is not sent with it, and the worker reads that off the
+Ticket. Reply bookkeeping credits the source
 turn after the commit and cannot undo the rejection.
 
 _Code path:_ `src/planner/tickets/actions.py`.

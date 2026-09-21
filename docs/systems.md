@@ -155,9 +155,11 @@ One guarded write takes the claim, and the Ticket then reads as `agent`. There i
 User-owned claims also record one opener fact for the current Stage entry. An accepted
 opening turn returns the status to `empty`, while readiness uses the fact to prevent a
 repeat. Panels then starts or reuses the Ticket conversation and sends one ordered list
-of Ticket inputs: Stage instruction, guidance, settled Brief, and current-Stage
-revision feedback where present. Started and queued both count as delivered. Refusal
-releases every claim and removes any tentative opener fact.
+of Ticket inputs. It carries only what the worker cannot get for itself: a notice when
+its context was compacted, the Stage instruction, and current-Stage revision feedback
+where present. The Stage instruction names the command that reads the Ticket, so the
+Brief and the guidance are a read rather than a payload. Started and queued both count
+as delivered. Refusal releases every claim and removes any tentative opener fact.
 
 Nothing watches a turn end. A Ticket moves only when someone acts on it. A process crash
 can therefore leave a Ticket marked `agent` with no live turn. Panels leaves that
