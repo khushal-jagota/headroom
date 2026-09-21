@@ -1,0 +1,1036 @@
+[
+  {
+    "fields": [
+      {
+        "id": "brief",
+        "label": "Brief"
+      },
+      {
+        "id": "success_condition",
+        "label": "Success Condition"
+      },
+      {
+        "id": "what_changes",
+        "label": "What Changes"
+      },
+      {
+        "id": "plan",
+        "label": "Plan"
+      },
+      {
+        "id": "implementation",
+        "label": "Implementation"
+      },
+      {
+        "id": "consequences",
+        "label": "Consequences"
+      }
+    ],
+    "label": "Coding",
+    "profile": {
+      "default_backend": "codex",
+      "default_model": "gpt-5.6-sol",
+      "default_reasoning_effort": "medium",
+      "specialist_skill": "panels-worker-coding",
+      "toolset_profile": "default"
+    },
+    "stages": [
+      {
+        "gating_field": "brief",
+        "id": "needs_brief",
+        "is_terminal": false,
+        "label": "Brief",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "success_condition",
+        "id": "needs_success_condition",
+        "is_terminal": false,
+        "label": "Success Condition",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "what_changes",
+        "id": "needs_what_changes",
+        "is_terminal": false,
+        "label": "What Changes",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "plan",
+        "id": "needs_plan",
+        "is_terminal": false,
+        "label": "Plan",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "implementation",
+        "id": "needs_implementation",
+        "is_terminal": false,
+        "label": "Implementation",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "consequences",
+        "id": "needs_consequences",
+        "is_terminal": false,
+        "label": "Consequences",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": null,
+        "id": "done",
+        "is_terminal": true,
+        "label": "Done",
+        "ownership_mode": null
+      }
+    ],
+    "worker_type": "coding"
+  },
+  {
+    "fields": [
+      {
+        "id": "brief",
+        "label": "Brief"
+      },
+      {
+        "id": "work_done",
+        "label": "Work Done"
+      },
+      {
+        "id": "consequences",
+        "label": "Consequences"
+      }
+    ],
+    "label": "General",
+    "profile": {
+      "default_backend": "codex",
+      "default_model": "gpt-5.6-sol",
+      "default_reasoning_effort": "medium",
+      "specialist_skill": "panels-worker-general",
+      "toolset_profile": "default"
+    },
+    "stages": [
+      {
+        "gating_field": "brief",
+        "id": "needs_brief",
+        "is_terminal": false,
+        "label": "Brief",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "work_done",
+        "id": "needs_work_done",
+        "is_terminal": false,
+        "label": "Work Done",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "consequences",
+        "id": "needs_consequences",
+        "is_terminal": false,
+        "label": "Consequences",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": null,
+        "id": "done",
+        "is_terminal": true,
+        "label": "Done",
+        "ownership_mode": null
+      }
+    ],
+    "worker_type": "general"
+  },
+  {
+    "fields": [
+      {
+        "id": "brief",
+        "label": "Brief"
+      },
+      {
+        "id": "problem_understanding",
+        "label": "Problem Understanding"
+      },
+      {
+        "id": "root_cause",
+        "label": "Root Cause"
+      },
+      {
+        "id": "proposed_fix",
+        "label": "Proposed Fix"
+      },
+      {
+        "id": "consequences",
+        "label": "Consequences"
+      }
+    ],
+    "label": "Debugging",
+    "profile": {
+      "default_backend": "codex",
+      "default_model": "gpt-5.6-sol",
+      "default_reasoning_effort": "high",
+      "specialist_skill": "panels-worker-debugging",
+      "toolset_profile": "default"
+    },
+    "stages": [
+      {
+        "gating_field": "brief",
+        "id": "needs_brief",
+        "is_terminal": false,
+        "label": "Brief",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "problem_understanding",
+        "id": "needs_problem_understanding",
+        "is_terminal": false,
+        "label": "Problem Understanding",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "root_cause",
+        "id": "needs_root_cause",
+        "is_terminal": false,
+        "label": "Root Cause",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "proposed_fix",
+        "id": "needs_proposed_fix",
+        "is_terminal": false,
+        "label": "Proposed Fix",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "consequences",
+        "id": "needs_consequences",
+        "is_terminal": false,
+        "label": "Consequences",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": null,
+        "id": "done",
+        "is_terminal": true,
+        "label": "Done",
+        "ownership_mode": null
+      }
+    ],
+    "worker_type": "debugging"
+  },
+  {
+    "fields": [
+      {
+        "id": "brief",
+        "label": "Brief"
+      },
+      {
+        "id": "purpose_and_boundaries",
+        "label": "Purpose and Boundaries"
+      },
+      {
+        "id": "stages",
+        "label": "Stages"
+      },
+      {
+        "id": "what_good_looks_like_at_each_stage",
+        "label": "What Good Looks Like at Each Stage"
+      },
+      {
+        "id": "model_and_effort",
+        "label": "Model and Effort"
+      },
+      {
+        "id": "drafting",
+        "label": "Drafting"
+      },
+      {
+        "id": "consequences",
+        "label": "Consequences"
+      }
+    ],
+    "label": "New Worker",
+    "profile": {
+      "default_backend": "codex",
+      "default_model": "gpt-5.6-sol",
+      "default_reasoning_effort": "medium",
+      "specialist_skill": "panels-worker-new-worker",
+      "toolset_profile": "default"
+    },
+    "stages": [
+      {
+        "gating_field": "brief",
+        "id": "needs_brief",
+        "is_terminal": false,
+        "label": "Brief",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "purpose_and_boundaries",
+        "id": "needs_purpose_and_boundaries",
+        "is_terminal": false,
+        "label": "Purpose and Boundaries",
+        "ownership_mode": "user"
+      },
+      {
+        "gating_field": "stages",
+        "id": "needs_stages",
+        "is_terminal": false,
+        "label": "Stages",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "what_good_looks_like_at_each_stage",
+        "id": "needs_what_good_looks_like_at_each_stage",
+        "is_terminal": false,
+        "label": "What Good Looks Like at Each Stage",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "model_and_effort",
+        "id": "needs_model_and_effort",
+        "is_terminal": false,
+        "label": "Model and Effort",
+        "ownership_mode": "user"
+      },
+      {
+        "gating_field": "drafting",
+        "id": "needs_drafting",
+        "is_terminal": false,
+        "label": "Drafting",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "consequences",
+        "id": "needs_consequences",
+        "is_terminal": false,
+        "label": "Consequences",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": null,
+        "id": "done",
+        "is_terminal": true,
+        "label": "Done",
+        "ownership_mode": null
+      }
+    ],
+    "worker_type": "new_worker"
+  },
+  {
+    "fields": [
+      {
+        "id": "brief",
+        "label": "Brief"
+      },
+      {
+        "id": "amendment",
+        "label": "Amendment"
+      },
+      {
+        "id": "drafting",
+        "label": "Drafting"
+      },
+      {
+        "id": "consequences",
+        "label": "Consequences"
+      }
+    ],
+    "label": "Amend Worker",
+    "profile": {
+      "default_backend": "codex",
+      "default_model": "gpt-5.6-sol",
+      "default_reasoning_effort": "medium",
+      "specialist_skill": "panels-worker-amend-worker",
+      "toolset_profile": "default"
+    },
+    "stages": [
+      {
+        "gating_field": "brief",
+        "id": "needs_brief",
+        "is_terminal": false,
+        "label": "Brief",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "amendment",
+        "id": "needs_amendment",
+        "is_terminal": false,
+        "label": "Amendment",
+        "ownership_mode": "user"
+      },
+      {
+        "gating_field": "drafting",
+        "id": "needs_drafting",
+        "is_terminal": false,
+        "label": "Drafting",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "consequences",
+        "id": "needs_consequences",
+        "is_terminal": false,
+        "label": "Consequences",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": null,
+        "id": "done",
+        "is_terminal": true,
+        "label": "Done",
+        "ownership_mode": null
+      }
+    ],
+    "worker_type": "amend_worker"
+  },
+  {
+    "fields": [
+      {
+        "id": "brief",
+        "label": "Brief"
+      },
+      {
+        "id": "understanding",
+        "label": "Understanding"
+      },
+      {
+        "id": "research_plan",
+        "label": "Research Plan"
+      },
+      {
+        "id": "findings",
+        "label": "Findings"
+      },
+      {
+        "id": "answer",
+        "label": "Answer"
+      },
+      {
+        "id": "proposed_follow_up",
+        "label": "Proposed Follow-up"
+      },
+      {
+        "id": "consequences",
+        "label": "Consequences"
+      }
+    ],
+    "label": "Exploration",
+    "profile": {
+      "default_backend": "codex",
+      "default_model": "gpt-5.6-sol",
+      "default_reasoning_effort": "medium",
+      "specialist_skill": "panels-worker-exploration",
+      "toolset_profile": "default"
+    },
+    "stages": [
+      {
+        "gating_field": "brief",
+        "id": "needs_brief",
+        "is_terminal": false,
+        "label": "Brief",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "understanding",
+        "id": "needs_understanding",
+        "is_terminal": false,
+        "label": "Understanding",
+        "ownership_mode": "user"
+      },
+      {
+        "gating_field": "research_plan",
+        "id": "needs_research_plan",
+        "is_terminal": false,
+        "label": "Research Plan",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "findings",
+        "id": "needs_findings",
+        "is_terminal": false,
+        "label": "Findings",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "answer",
+        "id": "needs_answer",
+        "is_terminal": false,
+        "label": "Answer",
+        "ownership_mode": "user"
+      },
+      {
+        "gating_field": "proposed_follow_up",
+        "id": "needs_proposed_follow_up",
+        "is_terminal": false,
+        "label": "Proposed Follow-up",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "consequences",
+        "id": "needs_consequences",
+        "is_terminal": false,
+        "label": "Consequences",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": null,
+        "id": "done",
+        "is_terminal": true,
+        "label": "Done",
+        "ownership_mode": null
+      }
+    ],
+    "worker_type": "exploration"
+  },
+  {
+    "fields": [
+      {
+        "id": "brief",
+        "label": "Brief"
+      },
+      {
+        "id": "rough_split_into_parts",
+        "label": "Rough Split into Parts"
+      },
+      {
+        "id": "question_tree",
+        "label": "Question Tree"
+      },
+      {
+        "id": "question_answers",
+        "label": "Question Answers"
+      },
+      {
+        "id": "proposed_tickets",
+        "label": "Proposed Tickets"
+      },
+      {
+        "id": "consequences",
+        "label": "Consequences"
+      }
+    ],
+    "label": "Initiative Planning",
+    "profile": {
+      "default_backend": "codex",
+      "default_model": "gpt-5.6-sol",
+      "default_reasoning_effort": "medium",
+      "specialist_skill": "panels-worker-initiative-planning",
+      "toolset_profile": "default"
+    },
+    "stages": [
+      {
+        "gating_field": "brief",
+        "id": "needs_brief",
+        "is_terminal": false,
+        "label": "Brief",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "rough_split_into_parts",
+        "id": "needs_rough_split_into_parts",
+        "is_terminal": false,
+        "label": "Rough Split into Parts",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "question_tree",
+        "id": "needs_question_tree",
+        "is_terminal": false,
+        "label": "Question Tree",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "question_answers",
+        "id": "needs_question_answers",
+        "is_terminal": false,
+        "label": "Question Answers",
+        "ownership_mode": "user"
+      },
+      {
+        "gating_field": "proposed_tickets",
+        "id": "needs_proposed_tickets",
+        "is_terminal": false,
+        "label": "Proposed Tickets",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "consequences",
+        "id": "needs_consequences",
+        "is_terminal": false,
+        "label": "Consequences",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": null,
+        "id": "done",
+        "is_terminal": true,
+        "label": "Done",
+        "ownership_mode": null
+      }
+    ],
+    "worker_type": "initiative_planning"
+  },
+  {
+    "fields": [
+      {
+        "id": "brief",
+        "label": "Brief"
+      },
+      {
+        "id": "review",
+        "label": "Review"
+      },
+      {
+        "id": "feedback",
+        "label": "Feedback"
+      },
+      {
+        "id": "followups",
+        "label": "Follow-ups"
+      },
+      {
+        "id": "consequences",
+        "label": "Consequences"
+      }
+    ],
+    "label": "Initiative Review",
+    "profile": {
+      "default_backend": "codex",
+      "default_model": "gpt-6-astra",
+      "default_reasoning_effort": "high",
+      "specialist_skill": "panels-worker-initiative-review",
+      "toolset_profile": "default"
+    },
+    "stages": [
+      {
+        "gating_field": "brief",
+        "id": "needs_brief",
+        "is_terminal": false,
+        "label": "Brief",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "review",
+        "id": "needs_review",
+        "is_terminal": false,
+        "label": "Review",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "feedback",
+        "id": "needs_feedback",
+        "is_terminal": false,
+        "label": "Feedback",
+        "ownership_mode": "user"
+      },
+      {
+        "gating_field": "followups",
+        "id": "needs_followups",
+        "is_terminal": false,
+        "label": "Follow-ups",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "consequences",
+        "id": "needs_consequences",
+        "is_terminal": false,
+        "label": "Consequences",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": null,
+        "id": "done",
+        "is_terminal": true,
+        "label": "Done",
+        "ownership_mode": null
+      }
+    ],
+    "worker_type": "initiative_review"
+  },
+  {
+    "fields": [
+      {
+        "id": "brief",
+        "label": "Brief"
+      },
+      {
+        "id": "best_guess_and_open_options",
+        "label": "Best Guess and Open Options"
+      },
+      {
+        "id": "wireframe",
+        "label": "Wireframe"
+      },
+      {
+        "id": "design",
+        "label": "Design"
+      },
+      {
+        "id": "consequences",
+        "label": "Consequences"
+      }
+    ],
+    "label": "Product Design",
+    "profile": {
+      "default_backend": "claude",
+      "default_model": "opus[1m]",
+      "default_reasoning_effort": "high",
+      "specialist_skill": "panels-worker-product-design",
+      "toolset_profile": "default"
+    },
+    "stages": [
+      {
+        "gating_field": "brief",
+        "id": "needs_brief",
+        "is_terminal": false,
+        "label": "Brief",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "best_guess_and_open_options",
+        "id": "needs_best_guess_and_open_options",
+        "is_terminal": false,
+        "label": "Best Guess and Open Options",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "wireframe",
+        "id": "needs_wireframe",
+        "is_terminal": false,
+        "label": "Wireframe",
+        "ownership_mode": "user"
+      },
+      {
+        "gating_field": "design",
+        "id": "needs_design",
+        "is_terminal": false,
+        "label": "Design",
+        "ownership_mode": "user"
+      },
+      {
+        "gating_field": "consequences",
+        "id": "needs_consequences",
+        "is_terminal": false,
+        "label": "Consequences",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": null,
+        "id": "done",
+        "is_terminal": true,
+        "label": "Done",
+        "ownership_mode": null
+      }
+    ],
+    "worker_type": "product_design"
+  },
+  {
+    "fields": [
+      {
+        "id": "review",
+        "label": "Previous Day Review"
+      },
+      {
+        "id": "todays_direction",
+        "label": "Today's Direction"
+      },
+      {
+        "id": "day_changes",
+        "label": "Day Changes"
+      },
+      {
+        "id": "consequences",
+        "label": "Consequences"
+      }
+    ],
+    "label": "Planning Day",
+    "profile": {
+      "default_backend": "claude",
+      "default_model": "opus[1m]",
+      "default_reasoning_effort": "medium",
+      "specialist_skill": "panels-worker-planning-day",
+      "toolset_profile": "default"
+    },
+    "stages": [
+      {
+        "gating_field": "review",
+        "id": "needs_review",
+        "is_terminal": false,
+        "label": "Previous Day Review",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "todays_direction",
+        "id": "needs_todays_direction",
+        "is_terminal": false,
+        "label": "Today's Direction",
+        "ownership_mode": "user"
+      },
+      {
+        "gating_field": "day_changes",
+        "id": "needs_day_changes",
+        "is_terminal": false,
+        "label": "Day Changes",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "consequences",
+        "id": "needs_consequences",
+        "is_terminal": false,
+        "label": "Consequences",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": null,
+        "id": "done",
+        "is_terminal": true,
+        "label": "Done",
+        "ownership_mode": null
+      }
+    ],
+    "worker_type": "planning-day"
+  },
+  {
+    "fields": [
+      {
+        "id": "brief",
+        "label": "Brief"
+      },
+      {
+        "id": "agreed_intervention",
+        "label": "Agreed Intervention"
+      },
+      {
+        "id": "consequences",
+        "label": "Consequences"
+      }
+    ],
+    "label": "Planning Midday Check",
+    "profile": {
+      "default_backend": "codex",
+      "default_model": "gpt-5.6-terra",
+      "default_reasoning_effort": "medium",
+      "specialist_skill": "panels-worker-planning-midday-check",
+      "toolset_profile": "default"
+    },
+    "stages": [
+      {
+        "gating_field": "brief",
+        "id": "needs_brief",
+        "is_terminal": false,
+        "label": "Brief",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "agreed_intervention",
+        "id": "needs_agreed_intervention",
+        "is_terminal": false,
+        "label": "Agreed Intervention",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "consequences",
+        "id": "needs_consequences",
+        "is_terminal": false,
+        "label": "Consequences",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": null,
+        "id": "done",
+        "is_terminal": true,
+        "label": "Done",
+        "ownership_mode": null
+      }
+    ],
+    "worker_type": "planning-midday-check"
+  },
+  {
+    "fields": [
+      {
+        "id": "brief",
+        "label": "Brief"
+      },
+      {
+        "id": "review",
+        "label": "Review"
+      },
+      {
+        "id": "next_sprint",
+        "label": "Next Sprint"
+      },
+      {
+        "id": "consequences",
+        "label": "Consequences"
+      }
+    ],
+    "label": "Planning Sprint",
+    "profile": {
+      "default_backend": "claude",
+      "default_model": "opus[1m]",
+      "default_reasoning_effort": "medium",
+      "specialist_skill": "panels-worker-planning-sprint",
+      "toolset_profile": "default"
+    },
+    "stages": [
+      {
+        "gating_field": "brief",
+        "id": "needs_brief",
+        "is_terminal": false,
+        "label": "Brief",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "review",
+        "id": "needs_review",
+        "is_terminal": false,
+        "label": "Review",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "next_sprint",
+        "id": "needs_next_sprint",
+        "is_terminal": false,
+        "label": "Next Sprint",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "consequences",
+        "id": "needs_consequences",
+        "is_terminal": false,
+        "label": "Consequences",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": null,
+        "id": "done",
+        "is_terminal": true,
+        "label": "Done",
+        "ownership_mode": null
+      }
+    ],
+    "worker_type": "planning-sprint"
+  },
+  {
+    "fields": [
+      {
+        "id": "brief",
+        "label": "Brief"
+      },
+      {
+        "id": "outcome",
+        "label": "Outcome"
+      },
+      {
+        "id": "consequences",
+        "label": "Consequences"
+      }
+    ],
+    "label": "Personal Task",
+    "profile": {
+      "default_backend": "codex",
+      "default_model": "gpt-5.6-luna",
+      "default_reasoning_effort": "medium",
+      "specialist_skill": "panels-worker-personal-task",
+      "toolset_profile": "default"
+    },
+    "stages": [
+      {
+        "gating_field": "brief",
+        "id": "needs_brief",
+        "is_terminal": false,
+        "label": "Brief",
+        "ownership_mode": "user"
+      },
+      {
+        "gating_field": "outcome",
+        "id": "needs_outcome",
+        "is_terminal": false,
+        "label": "Outcome",
+        "ownership_mode": "user"
+      },
+      {
+        "gating_field": "consequences",
+        "id": "needs_consequences",
+        "is_terminal": false,
+        "label": "Consequences",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": null,
+        "id": "done",
+        "is_terminal": true,
+        "label": "Done",
+        "ownership_mode": null
+      }
+    ],
+    "worker_type": "personal"
+  },
+  {
+    "fields": [
+      {
+        "id": "brief",
+        "label": "Brief"
+      },
+      {
+        "id": "research_plan",
+        "label": "Research Plan"
+      },
+      {
+        "id": "findings",
+        "label": "Findings"
+      },
+      {
+        "id": "consequences",
+        "label": "Consequences"
+      }
+    ],
+    "label": "Research",
+    "profile": {
+      "default_backend": "claude",
+      "default_model": "opus[1m]",
+      "default_reasoning_effort": "high",
+      "specialist_skill": "panels-worker-research",
+      "toolset_profile": "default"
+    },
+    "stages": [
+      {
+        "gating_field": "brief",
+        "id": "needs_brief",
+        "is_terminal": false,
+        "label": "Brief",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "research_plan",
+        "id": "needs_research_plan",
+        "is_terminal": false,
+        "label": "Research Plan",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "findings",
+        "id": "needs_findings",
+        "is_terminal": false,
+        "label": "Findings",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": "consequences",
+        "id": "needs_consequences",
+        "is_terminal": false,
+        "label": "Consequences",
+        "ownership_mode": "worker"
+      },
+      {
+        "gating_field": null,
+        "id": "done",
+        "is_terminal": true,
+        "label": "Done",
+        "ownership_mode": null
+      }
+    ],
+    "worker_type": "research"
+  }
+]

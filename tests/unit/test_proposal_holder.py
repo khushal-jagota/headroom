@@ -10,10 +10,8 @@ from sqlite3 import Connection
 from unittest.mock import AsyncMock
 
 import pytest
-from alembic import command
 
 from planner.conversation.contracts import ConversationTurnReference
-from planner.core import db as db_module
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
 from planner.core.contracts import (
@@ -424,33 +422,21 @@ def test_a_sprint_item_holder_cannot_be_deleted_while_a_ticket_uses_it(
         sprints_data._delete_item_rows(tmp_db, item.id)  # noqa: SLF001
 
 
-def test_migration_backfills_owner_and_startup_audits_holder_integrity(
+def test_the_holder_check_and_the_startup_audit_refuse_a_broken_holder(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "proposal-holder.db"
-    engine = db_module._migration_engine(str(db_path), 5000)  # noqa: SLF001
-    try:
-        with engine.begin() as connection:
-            command.upgrade(
-                db_module._alembic_config(connection),  # noqa: SLF001
-                "automatic_compaction_attempts",
-            )
-    finally:
-        engine.dispose()
-    before = connect(str(db_path))
-    before.execute(
+    conn = connect(str(db_path))
+    create_schema(conn)
+    conn.execute(
         "INSERT INTO tickets "
         "(id,title,worker_type,employee_backend,stage,ceiling,"
         "field_values,created_at,updated_at) "
-        # Seeded at an old revision, so it is spelled the way that era spelled it; the
-        # rename revision moves it on the way to head.
-        "VALUES ('t_old','Old','coding','codex','needs_kickoff','needs_kickoff','{}',1,1)"
+        "VALUES ('t_old','Old','coding','codex','needs_brief','needs_brief','{}',1,1)"
     )
-    before.close()
 
-    upgraded = connect(str(db_path))
-    create_schema(upgraded)
-    assert data.read_ticket(upgraded, "t_old").ceiling_holder == OWNER_PRINCIPAL
+    # A row that names no holder takes the owner, which is the column's default.
+    assert data.read_ticket(conn, "t_old").ceiling_holder == OWNER_PRINCIPAL
     invalid_holders = (
         "{}",
         '{"kind":"ticket"}',
@@ -462,19 +448,21 @@ def test_migration_backfills_owner_and_startup_audits_holder_integrity(
     )
     for invalid_holder in invalid_holders:
         with pytest.raises(sqlite3.IntegrityError):
-            upgraded.execute(
+            conn.execute(
                 "UPDATE tickets SET ceiling_holder = ? WHERE id = 't_old'",
                 (invalid_holder,),
             )
-    upgraded.execute("PRAGMA ignore_check_constraints=ON")
-    upgraded.execute(
+    # A holder that is well formed but names nobody passes the CHECK, so the startup
+    # audit is what catches it.
+    conn.execute("PRAGMA ignore_check_constraints=ON")
+    conn.execute(
         "UPDATE tickets SET ceiling_holder = ? WHERE id = 't_old'",
         ('{"id":"missing","kind":"ticket"}',),
     )
-    upgraded.execute("PRAGMA ignore_check_constraints=OFF")
+    conn.execute("PRAGMA ignore_check_constraints=OFF")
     with pytest.raises(RuntimeError, match="ceiling holder does not exist"):
-        data.audit_ticket_registry_integrity(upgraded)
-    upgraded.close()
+        data.audit_ticket_registry_integrity(conn)
+    conn.close()
 
 
 def test_setting_the_ceiling_leaves_the_holder_alone(tmp_db: Connection) -> None:

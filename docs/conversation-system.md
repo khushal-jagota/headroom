@@ -663,8 +663,8 @@ child process runs. A conversation with no report yet offers nothing.
 - Contract and floor defaults: `src/planner/conversation/contracts.py` (the
   docstrings are the documentation of record).
 - Core, notebook, storage: `src/planner/conversation/` (`system.py`,
-  `events.py`, `storage.py`); tables land in
-  `src/planner/core/migrations/versions/conversation_system_tables.py`.
+  `events.py`, `storage.py`); their tables are part of the baseline revision under
+  `src/planner/core/migrations/versions/`.
 - What a message is made of, and where the files it carries are kept:
   `src/planner/conversation/message_content.py` and `message_files.py`. The
   files sit under the same managed root as ticket files, resolved by the same

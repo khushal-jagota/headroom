@@ -237,21 +237,21 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
         "stages": [
             {
                 "id": "needs_brief",
-                "label": "Kickoff",
+                "label": "Brief",
                 "gating_field": "brief",
                 "is_terminal": False,
                 "ownership_mode": "worker",
             },
             {
                 "id": "needs_success_condition",
-                "label": "Success",
+                "label": "Success Condition",
                 "gating_field": "success_condition",
                 "is_terminal": False,
                 "ownership_mode": "worker",
             },
             {
                 "id": "needs_what_changes",
-                "label": "Approach",
+                "label": "What Changes",
                 "gating_field": "what_changes",
                 "is_terminal": False,
                 "ownership_mode": "worker",
@@ -272,7 +272,7 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
             },
             {
                 "id": "needs_consequences",
-                "label": "Closeout",
+                "label": "Consequences",
                 "gating_field": "consequences",
                 "is_terminal": False,
                 "ownership_mode": "worker",
@@ -294,12 +294,12 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
             "needs_consequences": "done",
         },
         "fields": [
-            {"id": "brief", "label": "Kickoff"},
-            {"id": "success_condition", "label": "Success"},
-            {"id": "what_changes", "label": "Approach"},
+            {"id": "brief", "label": "Brief"},
+            {"id": "success_condition", "label": "Success Condition"},
+            {"id": "what_changes", "label": "What Changes"},
             {"id": "plan", "label": "Plan"},
             {"id": "implementation", "label": "Implementation"},
-            {"id": "consequences", "label": "Closeout"},
+            {"id": "consequences", "label": "Consequences"},
         ],
         "ceiling_range": [
             "needs_brief",

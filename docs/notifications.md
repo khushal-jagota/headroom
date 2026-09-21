@@ -82,7 +82,7 @@ Disabling a device removes its subscription from Panels and asks the browser to
 unsubscribe. Changing a “What counts” switch affects later edges; it does not resurrect
 events that were suppressed earlier.
 
-Code paths: `src/planner/notifications/`, the notification database migrations,
+Code paths: `src/planner/notifications/`, the notification tables in the baseline revision,
 `static/service-worker.js`, and
 `web/src/routes/NotificationsRoute.svelte`.
 

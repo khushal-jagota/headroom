@@ -34,8 +34,12 @@ control state, conversations, notifications, schedules, and operational receipts
 Worker settings and managed skills are filesystem state beside the database. Domain
 writers group related database changes in one transaction.
 
-Schema changes are an ordered migration history. A database open applies missing
-migrations atomically and refuses an unsupported older schema instead of guessing.
+Schema changes are an ordered migration history. It starts at one baseline revision that
+builds the whole schema. A database open applies missing migrations atomically, adopts a
+database left at the head the baseline replaced, and refuses any other older schema
+instead of guessing. The rows a brand-new database needs — skills, Worker types, Chief
+settings, the shipped schedule and the shipped notification preference — are seeded by
+the domains that own them, and only into a table that is empty.
 
 Every connection created by the database door announces its commits. The signal carries
 no entity name or payload. The browser invalidates its cached reads, and Worker readiness
