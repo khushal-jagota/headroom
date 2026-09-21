@@ -126,12 +126,15 @@ a wrong restart costs is one turn's working context.
 Add `--backend` and `--model` to restart the Ticket on a different agent, and
 `--reasoning-effort` for a model that takes one. Use them when the backend is what failed,
 because a plain restart brings the Worker back on the same one. The named configuration is
-what the Ticket launches on from then on, not for one turn.
+what the Ticket launches on from then on, not for one turn. `employee-configuration` refuses
+with `already_running` while a conversation holds the Ticket, so `restart-worker` is the only
+door to change that configuration once a conversation exists.
 
 Three rules bound the action, and the server enforces all three. The Ticket must be a
 current child of your Item, because that is what puts it below you. Its Stage must be
-Worker-owned, because a user-owned conversation belongs to the user. The worker step must
-have had five minutes, so a Worker that is merely slow is left alone.
+Worker-owned, because a user-owned conversation belongs to the user. Its worker step must be
+out. These checks define whether the restart is meaningful. Panels does not add a delay or a
+bound for callers that restart repeatedly.
 
 The answer says whether a Worker started, and names the reason when none did. A common
 reason is that the Ticket is not on today's Day, which `panels day add-ticket` fixes. Read

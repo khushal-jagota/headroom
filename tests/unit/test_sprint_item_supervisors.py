@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -602,13 +603,36 @@ def test_restart_gives_the_claim_back_and_starts_a_new_conversation(
     app, db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _create_item(client)
-        ticket_id = _stranded_child(client, db_path, str(item["id"]))
+        ticket_id = _stranded_child(
+            client,
+            db_path,
+            str(item["id"]),
+            worker_step_claim_changed_at=int(time.time()) - 1,
+        )
+        configuration = {
+            "employee_backend": "claude",
+            "employee_launch_model": "claude-model",
+            "employee_launch_reasoning_effort": "medium",
+        }
+        direct_configuration = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=configuration,
+            headers=_supervisor_headers(str(item["id"])),
+        )
         response = client.post(
             f"/api/tickets/{ticket_id}/restart-worker",
-            json={},
+            json=configuration,
             headers=_supervisor_headers(str(item["id"])),
         )
 
+    assert direct_configuration.status_code == 409, direct_configuration.text
+    assert direct_configuration.json()["error"] == {
+        "code": "already_running",
+        "message": (
+            "Employee configuration is frozen while a conversation or a worker step holds it"
+        ),
+        "detail": {"ticket_id": ticket_id},
+    }
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["started"] is True
@@ -617,7 +641,7 @@ def test_restart_gives_the_claim_back_and_starts_a_new_conversation(
     assert body["ticket_status"] == "agent"
     assert body["conversation_id"] is not None
     assert body["conversation_id"] != "conv-dead-worker"
-    assert body["employee_configuration"]["employee_backend"] == "codex"
+    assert body["employee_configuration"] == configuration
 
 
 def test_restart_refuses_a_stage_the_worker_does_not_own(tmp_path: Path) -> None:

@@ -222,9 +222,11 @@ controls belong to the summary level only.
   `--reasoning-effort` for a model that takes one. A named configuration is what the
   Ticket launches on from then on, so a Worker that died on its backend does not come
   back on the same one. Leave the options out to restart on what the Ticket already has.
-  A worker step gets its first five minutes before it may be restarted, so a Worker that
-  is merely slow is left alone. Only a Worker-owned Stage can be restarted. A user-owned
-  conversation belongs to the user.
+  The Ticket's launch configuration is frozen while a conversation holds it, so
+  `employee-configuration` returns `already_running` in that state. Use `restart-worker`
+  with the launch options to change the backend, model, or reasoning effort before the next
+  Worker starts. The command requires a current child, a Worker-owned Stage, and a worker
+  step that is out. It does not add a delay or a bound for a caller that restarts repeatedly.
 - An Outcome's supervisor has no commands of its own. It types the same commands Khushal
   types — `sprint item set`, `ticket set`, `ticket approve`, `ticket reject`,
   `day add-ticket`, `ticket block`, `ticket create --sprint-item` — and its identity

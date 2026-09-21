@@ -176,8 +176,15 @@ only door was the Outcome's. This is a new capability on his surface, not a rena
 Nothing there asks whether the old Worker was alive, because nothing can answer. A
 Worker that dies without ending its turn goes on looking like one that is running, so a
 check on that would refuse exactly the Tickets that need recovering. Whoever restarts
-reads the conversation and decides, and two rules bound the action: a Worker-owned
-Stage, and a worker step that has already had five minutes.
+reads the conversation and decides. The action still requires the Ticket to be the
+current child, a Worker-owned Stage, and a worker step that is out. These checks define
+whether a restart is meaningful. The action does not add a delay or a bound for a caller
+that restarts repeatedly.
+
+The Ticket's launch configuration is frozen while its conversation holds it, so
+`employee-configuration` returns `already_running` in that state. `restart-worker` is the
+route that releases the old step and applies a new backend, model, or reasoning effort
+before the next Worker starts.
 
 ## Sending a proposal back
 

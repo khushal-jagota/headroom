@@ -20,16 +20,11 @@ from planner.tickets.contracts import StageOwnershipMode, Ticket, WorkerStepClai
 from planner.tickets.logic import machine
 from planner.worker_types.configuration import configured_worker_type_registry
 
-# A worker step gets this long to prove it is alive before anyone may restart it.
-WORKER_STEP_RESTART_FLOOR_SECONDS = 300
-
 
 def require_restartable(
     conn: sqlite3.Connection,
     principal: Principal,
     ticket_id: str,
-    *,
-    now: int,
 ) -> Ticket:
     """Return the Ticket, once every reason not to restart it has been ruled out.
 
@@ -57,19 +52,6 @@ def require_restartable(
             {"ticket_id": ticket_id, "stage": ticket.stage},
         )
     if ticket.worker_step_claim is WorkerStepClaim.out:
-        age = now - ticket.worker_step_claim_changed_at
-        if age < WORKER_STEP_RESTART_FLOOR_SECONDS:
-            # The one bound on a restart loop: each restart resets this clock, so a
-            # caller that keeps restarting has to wait out the floor every time.
-            raise PlannerError(
-                ErrorCode.validation,
-                "this worker step is too young to restart",
-                {
-                    "ticket_id": ticket_id,
-                    "age_seconds": age,
-                    "floor_seconds": WORKER_STEP_RESTART_FLOOR_SECONDS,
-                },
-            )
         return ticket
     if ticket.worker_step_claim is WorkerStepClaim.errored:
         return ticket
@@ -105,7 +87,7 @@ async def restart_worker(
     bad argument costs the Ticket nothing. It runs in the same transaction as the claim,
     after it, because the launch values unfreeze only once the claim is back.
     """
-    ticket = require_restartable(conn, principal, ticket_id, now=now)
+    ticket = require_restartable(conn, principal, ticket_id)
     killed_conversation_id = ticket.conversation_id
     killed_conversation_looked_running = (
         await conversations.is_running(killed_conversation_id)
