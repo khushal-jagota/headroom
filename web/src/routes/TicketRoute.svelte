@@ -298,10 +298,6 @@
     return mutateJson(`/api/tickets/${stableId}/accept/${field}`, { method: "POST", body });
   }
 
-  function userOwnsCurrentStage(detail: TicketDetail): boolean {
-    return lc?.stageOwnershipMode[detail.stage] === "user";
-  }
-
   function currentStageRunLabel(detail: TicketDetail): string | null {
     if (detail.blocked || detail.ticket_status === "blocked") return null;
     if (detail.awaiting_approval) return "awaiting approval";
@@ -536,7 +532,7 @@
                         ceiling={detail.ceiling}
                         sprintItem={ticketSprintItem}
                         emptyText={emptyTicketFieldText}
-                        editableCurrentValue={userOwnsCurrentStage(detail)}
+                        editableCurrentValue={detail.assigned}
                         runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                         runLabelAttention={stageState === "current-awaiting-approval"}
                         contextRow={name === "brief" && kickoffCardShowsContextRow
@@ -571,7 +567,7 @@
                   ceiling={detail.ceiling}
                   sprintItem={ticketSprintItem}
                   emptyText={emptyTicketFieldText}
-                  editableCurrentValue={userOwnsCurrentStage(detail)}
+                  editableCurrentValue={detail.assigned}
                   runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                   runLabelAttention={stageState === "current-awaiting-approval"}
                   contextRow={name === "brief" && kickoffCardShowsContextRow

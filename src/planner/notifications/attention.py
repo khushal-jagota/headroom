@@ -144,7 +144,6 @@ def capture_ticket_attention(conn: sqlite3.Connection, ticket_id: str, occurred_
         "assigned": ticket_assignment_from_values(
             stage=str(row["stage"]),
             worker_type=str(row["worker_type"]),
-            owner_holds_ceiling=owner_holds,
         ),
         "errored": facts.ticket_status is TicketStatus.errored or conversation.errored,
     }

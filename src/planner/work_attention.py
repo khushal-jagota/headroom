@@ -17,7 +17,6 @@ from planner.tickets.contracts import StageOwnershipMode, TicketStatus
 from planner.tickets.derivation import AgentState, TicketFacts
 from planner.tickets.logic import machine
 from planner.worker_types.configuration import configured_worker_type_registry
-from planner.worker_types.contracts import NEEDS_BRIEF_STAGE_ID
 
 
 # A parked proposal is split by who holds its ceiling, and the split is the projection's
@@ -124,7 +123,6 @@ def _ticket_attention(
     assigned = ticket_assignment_from_values(
         stage=str(row["stage"]),
         worker_type=str(row["worker_type"]),
-        owner_holds_ceiling=owner_holds_ceiling,
     )
     agent_state = derivation.agent_state(
         facts.ticket_status,
@@ -141,30 +139,25 @@ def _ticket_attention(
     }
 
 
-def ticket_is_assigned(
-    stage: str,
-    ownership: StageOwnershipMode | None,
-    owner_holds_ceiling: bool,
-) -> bool:
-    """Whether the current Ticket stage is Khushal's work."""
-    return ownership is StageOwnershipMode.user or (
-        stage == NEEDS_BRIEF_STAGE_ID and owner_holds_ceiling
-    )
+def ticket_is_assigned(ownership: StageOwnershipMode | None) -> bool:
+    """Whether the current Ticket stage is Khushal's work.
+
+    The Stage's ownership is the whole answer. The Brief does not enter it: thirteen of
+    the fourteen Worker types declare the Brief worker-owned, so a Brief clause here
+    named ordinary agent work as his. Neither does the ceiling holder, which says how far
+    a worker may run and not whose the Stage is.
+    """
+    return ownership is StageOwnershipMode.user
 
 
-def ticket_assignment_from_values(
-    *,
-    stage: str,
-    worker_type: str,
-    owner_holds_ceiling: bool,
-) -> bool:
+def ticket_assignment_from_values(*, stage: str, worker_type: str) -> bool:
     """Derive assignment from the Worker type's ownership declaration."""
     definition = configured_worker_type_registry().require(worker_type)
     ownership = machine.stage_ownership_mode(
         stage,
         worker_type_definition=definition,
     )
-    return ticket_is_assigned(stage, ownership, owner_holds_ceiling)
+    return ticket_is_assigned(ownership)
 
 
 def _roll_up(children: Iterable[WorkAttention]) -> WorkAttention:

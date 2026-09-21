@@ -223,13 +223,16 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     backlog_title.wait_for(timeout=WAIT_MS)
     backlog_placement.wait_for(state="attached", timeout=WAIT_MS)
     assert backlog_placement.text_content() == "Backlog"
-    assert backlog_row.get_attribute("data-ticket-state") == "current-assigned"
+    # A coding Brief belongs to the worker, and the worker holds this one, so the row
+    # says the agent has it. It read "yours" until the assignment rule stopped counting
+    # a worker-owned Brief as Khushal's.
+    assert backlog_row.get_attribute("data-ticket-state") == "current-running"
     assert backlog_row.get_attribute("href") == (
         f"#/workspace/item/{item['id']}/{backlog_ticket['id']}"
     )
     assert backlog_row.locator("xpath=ancestor::details[1]").get_attribute(
         "data-workspace-group"
-    ) == "current-assigned"
+    ) == "current-running"
     desktop_geometry = page.evaluate(
         """([rowSelector]) => {
             const row = document.querySelector(rowSelector);
