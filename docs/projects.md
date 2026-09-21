@@ -15,10 +15,6 @@ Existing and built-in Projects may be unassessed. Creating a new Project through
 ordinary API or CLI requires an explicit P0–P3. The ordinary API and CLI can reassess
 an existing Project to P0–P3. They cannot return it to the unassessed state.
 
-`Learning` remains recognized when importing the legacy markdown format. If an
-import names it and the project is missing, the importer creates it as part of the
-same transaction. It is not recreated when a fresh database is initialized.
-
 Each Project folder is explicit and does not depend on the Project name. Panels expands
 paths that start with `~` and stores an absolute path. The folder can be absent on disk.
 Panels does not create it. A clear operation returns the stored path to `null`.

@@ -84,5 +84,6 @@ bubble-less assistant, recessed composer).
 
 ## Framing
 
-The per-ticket agent is an **employee** taking on the task (not a "mind"). Its **scope** — how far it
-can go without your approval — is the grant/ceiling. Use employee / scope language in copy.
+The per-ticket agent is an **employee** taking on the task (not a "mind"). Its **ceiling** — the last
+thing it may do on its own before it proposes and waits — is the grant, and its **holder** is who that
+proposal is addressed to. Use employee / ceiling / holder language in copy.

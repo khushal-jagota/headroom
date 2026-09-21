@@ -71,18 +71,18 @@ A real calendar constraint belongs in the deadline. A genuine prerequisite belon
 the Ticket's blockers so Panels can hold the dependent work until the prerequisite is
 resolved. Do not use either as a second priority scale.
 
-## Scope stated at creation
+## The ceiling stated at creation
 
-By default a new Ticket parks its Brief for the user's approval. That default is right
-for ordinary intake: the user wants to sense-check what work exists before it starts.
+By default a new Ticket parks its Brief for its creator's approval. That default is right
+for ordinary intake: somebody wants to sense-check what work exists before it starts.
 
-State the scope instead when the user gave you the scope to grant. `--ceiling` says the
+State the ceiling instead when the user gave you the ceiling to grant. `--ceiling` says the
 last thing the new Worker may do: it does that thing, proposes it, and waits for the
 user. Stating a ceiling past the Brief settles the
 Brief and starts the Ticket at its next Stage, so work the user has already authorized
 begins instead of waiting for a second approval.
 
-State only the scope you were actually given. Widening a Ticket beyond what the user
+State only the ceiling you were actually given. Widening a Ticket beyond what the user
 authorized is not a creation detail.
 
 After creation, read the Ticket back as a whole. Its title, Worker type, Brief,

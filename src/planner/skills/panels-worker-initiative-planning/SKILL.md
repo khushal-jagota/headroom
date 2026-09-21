@@ -182,5 +182,5 @@ are correct.
   Ticket decisions.
 - Prefer one clear shared decision over copied context everywhere. The planning Ticket
   remains discoverable; each downstream Ticket receives only what changes its work.
-- Follow `panels-worker` for shared ownership, proposals, approval, Ticket Chat, scope,
-  and reconciliation mechanics. This skill defines only Initiative Planning work.
+- Follow `panels-worker` for shared ownership, proposals, approval, Ticket Chat, and the
+  ceiling. This skill defines only Initiative Planning work.

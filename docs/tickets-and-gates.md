@@ -73,8 +73,8 @@ The Ticket also keeps every conversation it has had. Reset clears only the activ
 pointer. The Ticket page shows only the active conversation, where new work can be sent.
 
 The conversation system owns the transcript. Panels keeps no second message or
-active-turn table. Pending worker context reaches the worker only when it is included
-in a message that was actually sent — never because a row was written somewhere.
+active-turn table. A worker sees only what a delivered prompt contained. There is no
+second store of context waiting to be picked up.
 
 ### Confirmed Worker failures
 
@@ -114,7 +114,7 @@ Blocking shows up in exactly one place: the dependent Ticket's status. When a Ti
 at rest with nothing running, it reads as **blocked** instead of **empty** if a live
 blocker remains. Only rest is called blocked, so a Ticket that is running a step or
 waiting for approval reads as that instead. Blocking still writes no Blocked Stage and
-changes nothing about the Ticket's real Stage, ownership, scope, proposal, or direct
+changes nothing about the Ticket's real Stage, ownership, ceiling, proposal, or direct
 user controls. It only keeps automatic work from starting, because the runtime starts
 resting Tickets and nothing else.
 
@@ -126,7 +126,7 @@ repair, because the answer is worked out each time it is asked for.
 
 A newly created dependent Ticket needs no first moment of rest before its blockers
 count. The create commits the Ticket and its blocks together, and every read works the
-answer out again. A Ticket whose stated scope accepts its Brief inside the create reads
+answer out again. A Ticket whose stated ceiling accepts its Brief inside the create reads
 as `blocked` at once. A Ticket whose Brief parks reads as `awaiting_approval` until that
 is settled, because a parked proposal outranks a blocker, and as `blocked` from then on.
 On the Workspace screen a blocked Ticket sits in the **Blocked** group, which starts
@@ -156,19 +156,19 @@ Every non-terminal Stage has one declared owner: **worker** or **user**. The imm
 Worker type definition is the sole authority. Terminal Tickets have no current owner.
 
 - **Worker-owned** Stages rest at `empty`, ready for Panels to start the next step —
-  or at `blocked` while a live blocker remains. The other readiness, proposal, and
-  scope conditions must still allow it.
+  or at `blocked` while a live blocker remains. The other readiness and proposal
+  conditions must still allow it.
 - **User-owned** Stages get one automatic opening turn when the Stage becomes ready, then
   rest at `empty`. A durable opener fact belongs to that Stage entry, and readiness
   checks it before dispatch. The user and worker carry the Stage forward in the same
-  Ticket conversation. A real proposal always parks for approval, regardless of scope.
-  The user can also write the unset current field through the ordinary value operation.
+  Ticket conversation. A real proposal always parks for approval, whatever the ceiling.
+  The user can also fill the unset current field through the gate completion operation.
   Panels stores that value and advances exactly one Stage. Leaving the Stage clears the
   opener fact.
 
-Ownership and scope answer different questions. Ownership says who drives the current
-Stage. Scope says how far a worker may advance autonomously and what it may do at the
-ceiling. The Worker type chooses the specialist skill used for that work.
+Ownership and the ceiling answer different questions. Ownership says who drives the
+current Stage. The ceiling says how far a worker may advance on its own; at the ceiling it
+proposes and waits, always. The Worker type chooses the specialist skill for that work.
 
 _Code paths:_ `src/planner/tickets/logic/machine.py`, `src/planner/tickets/data.py`,
 and `src/planner/tickets/api.py`.
@@ -189,8 +189,8 @@ no third way to change it while it waits. A reader who wants different text appr
 proposal with their own text in place of the author's, which is part of approving it, or
 rejects it and says what is wrong.
 
-Nothing keeps a withdrawn draft. A rejected proposal is gone, and dropping a Ticket
-discards whatever was parked on it.
+Nothing keeps a withdrawn draft. A rejected proposal is gone, and deleting a Ticket
+takes whatever was parked on it.
 
 Each Ticket has one **guidance** document for durable user corrections and constraints.
 It is separate from settled field values and is never approved as a proposal. Review
@@ -228,7 +228,7 @@ decide a proposal whoever holds it.
 The holder is a full principal kind and ID, not a display label or current conversation.
 A Ticket cannot hold its own ceiling: its Worker is the proposal author, so addressing a
 proposal to itself addresses it to nobody. Holder Tickets and Sprint Items must exist
-when the scope is written.
+when the ceiling is written.
 
 Below the ceiling, a worker-owned Stage's answer settles the field and the ticket
 advances, and no proposal is recorded at all. At the ceiling it files a proposal, and the
@@ -238,7 +238,7 @@ dispatch automatically after their opening turn. They rest at `empty` with their
 and their answer always parks.
 New tickets start leashed right at
 the **Brief**: the ceiling is `needs_brief` for every Worker type, so nothing advances past
-the human-approved intake until the human grants scope onward — review before agents
+the human-approved intake until the human raises the ceiling — review before agents
 start.
 
 A creator can state the ceiling instead, at creation, with `ticket create --ceiling`.
@@ -246,9 +246,9 @@ The same breath names who holds it, with `ticket create --holder`. A creator can
 holder, including the user, without holding anything itself — that is how a Ticket is
 opened for somebody else to review. Name nobody and the creator holds it, which is the
 ordinary case: a Sprint Item that opens a Ticket holds it.
-Whoever was given the authority to grant scope says so in the same breath as
+Whoever was given the authority to set the ceiling says so in the same breath as
 the Ticket, so work the user has already authorized does not sit waiting for a second
-approval. The Brief is then judged by the stated scope exactly as a later proposal is:
+approval. The Brief is then judged by the stated ceiling exactly as a later proposal is:
 it settles and the Ticket starts at the next Stage when the stated ceiling is past
 the Brief, and it parks for approval otherwise. State nothing and the default leash holds,
 which is the ordinary case for intake the human wants to sense-check.
@@ -297,8 +297,9 @@ are always the current one and the
 ones after it, never an earlier one, so you can't hand back ground the ticket has
 already covered. One shared source of the allowed stages feeds both the Ticket leash
 and the approval screen, so the two cannot disagree.
-While a proposal is pending, the Ticket page hides the leash because scope cannot change
-without silently changing the proposal's stable address.
+While a proposal is pending, the leash drops its ceiling select and keeps its holder one.
+The ceiling cannot change without silently changing what was proposed, and the proposal can
+still be re-addressed.
 
 Review's single, oldest-first walk shows today's owner-addressed proposals. Anyone else a
 proposal is addressed to inspects canonical Ticket state through their normal Chief,
@@ -329,7 +330,7 @@ There is one approval gate. Every parked proposal waits on `awaiting_approval` f
 principal it is addressed to. Anyone above the Ticket approves it or rejects it with
 focused revision guidance, and either way the canonical proposal resolver does the work.
 Review contains owner-addressed proposals; anyone else reads theirs on the Ticket.
-Scope cannot change while a proposal waits, so its address stays stable.
+The ceiling cannot change while a proposal waits, so what was proposed stays fixed.
 
 Owner-held proposals appear in Review and produce the owner's needs-approval notification.
 Anyone else reads proposals from canonical Ticket state through their normal Ticket and
@@ -342,7 +343,7 @@ proposal, shared by every screen that shows one).
 
 ## Permanent deletion
 
-Dropping a ticket keeps its record. Permanent deletion is different: it is for a ticket
+A finished ticket keeps its record. Permanent deletion is different: it is for a ticket
 created by mistake. Deleting follows the one rule like everything else: if you stand
 above a ticket, you may delete it. The ticket UI intentionally has no delete control;
 deletion remains a manual API or CLI operation, and the CLI requires `--yes`.
@@ -355,8 +356,8 @@ that goes ahead over a running worker kills that worker's turn first, so nothing
 talking into a conversation whose ticket is gone.
 
 One transaction removes the ticket
-from days, sprint views, Ticket blocks, Review, Workspace, and pending worker
-context. Other tickets and day ordering stay intact.
+from days, sprint views, Ticket blocks, Review, and Workspace. Other tickets and day
+ordering stay intact.
 
 Ticket blocks are removed in the same transaction. The delete response lists the
 surviving Tickets from those relationships.

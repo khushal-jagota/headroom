@@ -74,7 +74,7 @@ as applied.
 Propose a short verified `consequences`. Set a recap that the next Previous Day Review can
 understand without the conversation.
 
-### done and dropped
+### done
 
-Done means that the canonical Day matches the approved changes and direction. A missed or
-dropped session creates no backfill, guilt, streak, or rollover ceremony.
+Done means that the canonical Day matches the approved changes and direction. A day that
+was never planned creates no backfill, guilt, streak, or rollover ceremony.

@@ -263,11 +263,11 @@ Attachments and run changes cannot steer, so they enter the queue with a visible
 A confirmed steer refusal does the same. An uncertain steer remains terminal and never
 enters the queue, because a retry can deliver the same message twice.
 
-The unlinked development conversation page keeps a lower-level raw send route for testing
-conversation mechanics in isolation. It rejects every conversation associated with a
-Ticket, the Chief, or a Sprint Item supervisor. It therefore is not an employee
-conversation door and does not participate in principal addressing. Ticket, Chief, and
-Sprint Item composers never use it; they all use the addressed Send Message operation.
+A lower-level raw send route remains for testing conversation mechanics in isolation. It
+rejects every conversation associated with a Ticket, the Chief, or a Sprint Item
+supervisor. It therefore is not an employee conversation door and does not participate in
+principal addressing. No shipped screen uses it: Ticket, Chief, and Sprint Item composers
+all use the addressed Send Message operation.
 
 When the agent frees, everything waiting goes to it as one prompt rather than one
 turn each. The messages keep their order and each keeps its sender's name in front

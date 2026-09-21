@@ -64,7 +64,7 @@ date), `web/src/routes/DayRoute.svelte` (the daily hub), and
 ## Handoffs
 
 - **Tickets & the gates** (`tickets-and-gates.md`) — the tickets a day lists and the
-  scope that governs whether the day's work advances on its own.
+  ceiling that governs whether the day's work advances on its own.
 - **The conversation system** (`conversation-system.md`) — a Ticket's conversation is
   separate from the Day page.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — where a captured idea lands.

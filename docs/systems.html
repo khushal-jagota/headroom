@@ -124,7 +124,7 @@ direct user ─────► user-owned Ticket gate                    change 
         </details>
         <details>
           <summary><span class="number">05</span><span><b>Worker orchestration</b><span>Decide, claim once, and send the Stage instruction.</span></span></summary>
-          <div class="body"><p>One read-only decision checks today's Ticket, Stage, ownership, status, proposal, scope, Consequences lane, and conversation activity. One guarded status flip is the claim. The worker opener has one ordered list of Ticket inputs. Started and queued sends succeed. Nothing watches the turn end.</p><p class="paths"><code>src/planner/runtime/</code> · <code>src/planner/tickets/revision_feedback.py</code></p></div>
+          <div class="body"><p>One read-only decision checks today's Ticket, Stage, ownership, status, the Consequences lane, and conversation activity. One guarded status flip is the claim. The worker opener has one ordered list of Ticket inputs. Started and queued sends succeed. Nothing watches the turn end.</p><p class="paths"><code>src/planner/runtime/</code> · <code>src/planner/tickets/revision_feedback.py</code></p></div>
         </details>
         <details>
           <summary><span class="number">06</span><span><b>Conversation system</b><span>One durable notebook and one live agent per active conversation.</span></span></summary>
@@ -150,7 +150,7 @@ direct user ─────► user-owned Ticket gate                    change 
       <ul class="boundaries">
         <li><b>Proposal versus value</b>A Worker proposal is inert until the resolver accepts it.</li>
         <li><b>Signal versus state</b>The signal announces a commit. The record says what changed.</li>
-        <li><b>Status versus liveness</b>Ticket status is the last control decision. Conversation activity is current.</li>
+        <li><b>Status versus liveness</b>Ticket status is derived at every read. Conversation activity is current.</li>
         <li><b>Stored versus delivered context</b>The model sees context only after a prompt carries it.</li>
         <li><b>Conversation versus backend session</b>The caller owns the conversation id. The conversation system owns the backend handle.</li>
         <li><b>Managed versus packaged skills</b><code>data/skills</code> is live authority. Codex and Claude expose all managed Panels skills. Hermes uses an allowlist that currently omits the general specialist.</li>

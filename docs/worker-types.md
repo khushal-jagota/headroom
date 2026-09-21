@@ -98,8 +98,8 @@ user explicitly releases the conversation. Every Worker type chooses deliberatel
 each Stage; it does not inherit that choice from registry order or another definition.
 
 This makes the definition the one authority for both the data and behavior of that
-workflow. Ticket contracts still own universal Ticket facts such as status and scope,
-but they do not define a coding lifecycle.
+workflow. Ticket contracts still own universal Ticket facts such as the worker-step claim
+and the ceiling, but they do not define a coding lifecycle.
 
 _Code paths:_ `src/planner/worker_types/contracts.py` contains the immutable declaration
 types and behavior. `src/planner/worker_types/store.py` reads and writes the rows. The
@@ -444,9 +444,8 @@ waits for approval before the Ticket advances to Stages.
 
 The packaged skill tree seeds missing entries in the managed `data/skills` home. That
 managed home remains authoritative after seeding. Codex and Claude provisioning links
-all managed Panels skills without replacing unrelated user skills. Hermes uses the
-separate `PLANNER_SKILL_NAMES` allowlist. That allowlist currently omits
-`panels-worker-general`, although the `general` Worker type names it. The
+all managed Panels skills without replacing unrelated user skills. Hermes links every
+skill in the managed home too. The
 first real prompt in a new Ticket conversation tells the selected backend to use the
 installed `panels-worker` role; the role then finds this Ticket's specialist. A new
 specialist must therefore be known to Worker type configuration and available through
@@ -461,24 +460,21 @@ _Code paths:_ `src/planner/skills/panels-worker/SKILL.md`, the specialist skills
 
 One new Worker type needs one definition and one production registration path:
 
-1. Write the specialist `SKILL.md` under `src/planner/skills/<name>/`, with guidance for
-   each working Stage.
-2. Add one definition module under `src/planner/worker_types/`. Construct an immutable
-   `WorkerTypeDefinition` with its ordered Stages, fields, worker profile, starting
-   Employee backend/model/reasoning values. Give every non-terminal Stage a deliberate
-   ownership mode; `done` has none. Novel Stage and field ids are plain strings.
-3. In `src/planner/worker_types/configuration.py`, add the specialist skill to the known
-   skills catalog and add the definition to `_PRODUCTION_WORKER_TYPE_DEFINITIONS`. Do not
-   register it anywhere else.
-4. Add the skill directory name to `PLANNER_SKILL_NAMES` in
-   `src/planner/environments/hermes_home.py`, so startup provisions it into the
-   worker's Hermes home.
+1. Write the specialist skill text, with guidance for each working Stage.
+2. Store the whole record with one `panels worker-type save`, carrying its ordered Stages,
+   fields, worker profile and starting Employee backend/model/reasoning values, with the
+   `skill` block that declares the specialist skill in the same write. Give every
+   non-terminal Stage a deliberate ownership mode; `done` has none. Novel Stage and field
+   ids are plain strings.
+3. Read it back with `panels worker-type show <type>` and confirm it is listed by
+   `panels worker-type list`. The change is in force as soon as it is stored: there is no
+   restart and no release.
+4. Add the packaged `src/planner/skills/<name>/SKILL.md` to the repository, so a database
+   with no skills in it is seeded with the same text.
 5. Confirm that ordinary Ticket creation lists the new type. The base Worker discovers
    its specialist through `panels worker my-ticket`; it has no manual specialist list.
-6. Restart Panels and provision the production skill homes. Composition validates the
-   registry before the Worker type becomes live.
 
-The shared kickoff and completion ids are structural rules, not imported lifecycle
+The shared Brief and completion ids are structural rules, not imported lifecycle
 constants. The new definition still declares them directly: `needs_brief` gating
 `brief`, and terminal `done`.
 
@@ -490,18 +486,12 @@ current user-owned Stage. No definition carries separate reconciliation capabili
 
 ## Handoffs
 
-- **Tickets and gates** (`tickets-and-gates.md`) explains scope, proposals, resolution,
-  Stage ownership, scope, and approval.
+- **Tickets and gates** (`tickets-and-gates.md`) explains the ceiling, proposals,
+  resolution, Stage ownership, and approval.
 - **Worker orchestration** (`worker-orchestration.md`) explains how a Ticket's next
   worker step gets started and how the worker reaches its specialist.
 - **The frontend** (`frontend.md`) explains the screens driven by the served manifest.
 - **The command-line tool** (`cli.md`) explains ordinary and worker commands.
-
-## Deferred
-
-- **General Worker on Hermes.** The Hermes allowlist does not expose
-  `panels-worker-general`. Trigger: before a `general` Ticket uses Hermes, add its
-  specialist skill to `PLANNER_SKILL_NAMES`.
 
 ---
 

@@ -26,15 +26,18 @@ all of these hold right now:
 
 1. It is on today's planning day.
 2. Its Stage is not terminal and has a next blank to fill.
-3. The Stage's owner is not the user.
-4. It reads as `empty`. That one answer keeps blocked work, parked approvals, active
-   claims, and errors out of the runnable set. User-owned Stages are already excluded by
-   rule 3.
-5. Nothing is already parked on that blank waiting for approval.
-6. Scope permits work at the current ceiling.
-7. If the blank is Consequences, no other Ticket in the same project-and-Worker-type
+3. It reads as `empty`. That one answer keeps blocked work, parked approvals, active
+   claims, and errors out of the runnable set. A parked proposal is not asked about
+   separately: a Ticket with one reads as `awaiting_approval`, so rule 3 already refuses
+   it.
+4. If the Stage's owner is the user, its one opening turn has not run yet. The opener
+   fact belongs to that Stage entry, so a later entry gets its own turn.
+5. If the blank is Consequences, no other Ticket in the same project-and-Worker-type
    lane is at Consequences and not resting. One poll sends at most one Ticket into
    each free lane.
+
+The ceiling is not one of these questions. It decides what a finished step does with its
+answer, not whether the step may run.
 
 Then one more question that the record cannot answer: **is this Ticket's worker busy
 right now?** The conversation system is asked directly, and a busy worker is left alone
@@ -230,8 +233,8 @@ _Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`,
 
 - **Worker types** (`worker-types.md`) declares Stages, ownership, and the
   specialist skill.
-- **Tickets & the gates** (`tickets-and-gates.md`) owns proposals, scope, approval,
-  and Ticket status.
+- **Tickets & the gates** (`tickets-and-gates.md`) owns proposals, the ceiling,
+  approval, and Ticket status.
 - **The conversation system** (`conversation-system.md`) owns the pane the human types
   into, and the conversation the step is sent into.
 - **The front end** (`frontend.md`) owns the row marks these signals feed.

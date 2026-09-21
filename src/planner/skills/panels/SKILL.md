@@ -33,8 +33,8 @@ sprint and planning the next at the boundary). New Worker types are added here a
 
 Each Worker type defines its own ordered lifecycle and one canonical field for each
 non-terminal Stage. For example, coding uses **Brief → Success Condition → What Changes →
-Plan → Implementation → Consequences → Done**, while `planning-day` uses **Brief → Gather
-→ Planning → Consequences → Done**, `planning-midday-check` uses **Brief → Agreed
+Plan → Implementation → Consequences → Done**, while `planning-day` uses **Previous Day
+Review → Today's Direction → Day Changes → Consequences → Done**, `planning-midday-check` uses **Brief → Agreed
 Intervention → Consequences → Done**, and `planning-sprint` uses **Brief → Review → Next
 Sprint → Consequences → Done**.
 
@@ -69,8 +69,8 @@ Panels schedules ordinary planning Tickets and hands each one to its specialist 
 - A personal Checkpoint Ticket prompts reflection at 17:00 on sprint day four.
 - `planning-sprint` reviews the current sprint and plans the next at the boundary.
 
-The three planning Worker types use the Personal Project and each Sprint's Planning
-Item. Initiative Planning stays with its initiative.
+The three planning Worker types use the Personal Project and direct current-Sprint
+placement, with no Planning Item. Initiative Planning stays with its initiative.
 
 The 05:00 boundary determines which Day and sprint day are current. It does not run a
 separate rollover workflow. The Planning Sprint Ticket stays at 17:00 on the final day.
@@ -102,8 +102,9 @@ result before you increase its limit.
 
 ## Skills
 
-- **`panels-sprint-item-supervisor`** — supervising one Sprint Item with scoped actions
-  and safe messages to existing child Worker conversations.
+- **`panels-sprint-item-supervisor`** — supervising one Sprint Item through the ordinary
+  commands, which the one authority rule admits on its current child Tickets, plus
+  messages to their Worker conversations.
 - **`panels-ticket-creation`** — the shared model for creating a coherent Ticket.
 - **`panels-worker`** — working a single ticket: shaping it through its stages, executing it, and reviewing it.
 - **`panels-worker-planning-day`** — gathering evidence and planning the Day.

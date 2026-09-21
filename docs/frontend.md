@@ -158,7 +158,8 @@ One screen per part of the system:
   priority, effective project, Sprint Item, and Worker above a serif title. The Sprint
   Item appears only when the Ticket has one. Project and Sprint Item are static facts.
   The eyebrow states no Sprint and has no placement controls. The Ticket details
-  disclosure contains only the ceiling select. Direct blockers get
+  disclosure is the leash: a ceiling select and a holder select. A parked proposal drops
+  the ceiling half and keeps the holder one. Direct blockers get
   their own **Blocked by** line in the masthead, and the exact backend Worker failure
   reason remains visible when one exists. The inline-editable recap is always open on a
   recessed surface, without another label.
@@ -442,15 +443,15 @@ hand-rolling the same shapes per screen. Each does one job:
 - **ScreenHeader** — a screen's title row plus an optional meta pill.
 - **Button** — the one button (or link), in a primary, quiet, or pill look.
 - **Pill** — a small static tag with an optional key label (dates, counts, due, sprint).
-- **Chip** — the coloured status/project tags, including "blocked by".
+- **Chip** — the small project tag, and the plain tag with no variant.
 - **PriorityTile** — the shared always-coloured P0–P3 square. It appears in the
   Workspace Item's eyebrow, the editable Ticket and Review identity control,
   both Sprint priority positions, and once in each Backlog priority group heading.
   Priority never borrows the slate-blue attention accent or the status-mark colours.
 - **StageMark** — the single stage dot showing a field's progress.
-- **ApprovalBlock** — the owner approval surface: an editable proposal draft, the scope
-  picker, and the approve/accept action. Its
-  approval addresses the next ceiling proposal to the owner.
+- **ApprovalBlock** — the approval surface: an editable proposal draft, the ceiling
+  picker, the holder control, and the approve/accept action. Approving names the next
+  ceiling and its holder together; naming no holder keeps it with the approver.
 - **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
   the priority control on a Brief, the approval control, and the send-back box. It is named by a
   ticket id and a field and reads that ticket itself, so any screen can raise the same
@@ -503,14 +504,13 @@ hand-rolling the same shapes per screen. Each does one job:
   into the draft. Sending and transcript display still use ordinary text. Codex resolves
   that text at its adapter boundary. The browser does not store vendor identifiers or
   construct structured Codex input.
-- **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
 - **SegmentedControl** — a small set of toggle options (Backlog Project/priority).
 - **CeilingPicker** — the "approve until …" ceiling control.
 - **ErrorLine** — a single error message line.
 
-The Ticket page shows its leash only while scope is editable. A pending proposal hides
-the leash entirely, matching the server rule that the proposal's holder and scope remain
-stable until the proposal is decided.
+The Ticket page shows the leash from the moment a ceiling can move. A pending proposal
+drops its ceiling select and keeps its holder one, matching the server rule: the ceiling is
+frozen under a filed proposal, and the proposal can still be re-addressed.
 
 A ticket's stage labels and order are not baked into the frontend: they come from the
 server's per-Worker-type manifest through `web/src/lib/lifecycle.ts`, keyed by each

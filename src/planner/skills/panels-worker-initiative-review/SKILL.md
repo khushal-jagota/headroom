@@ -106,4 +106,4 @@ A good **Consequences** states the reviewed result, the target state, and the ve
 - Prefer direct evidence over inherited confidence.
 - Keep the artifact proportionate to the result and its risks.
 - Preserve the user's feedback as decisions, not as a loose transcript.
-- Follow `panels-worker` for ownership, proposals, scope, and reconciliation rules.
+- Follow `panels-worker` for ownership, proposals, and ceiling rules.

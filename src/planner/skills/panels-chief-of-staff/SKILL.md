@@ -49,7 +49,7 @@ verification.
 
 Record completed external work through ordinary Ticket operations. Search current Tickets first, and update an aligned Ticket instead of creating a duplicate.
 
-If no aligned Ticket exists, load and follow `panels-ticket-creation`. Create the Ticket with `panels ticket create`, then use ordinary field, recap, placement, scope, and Day operations. Use `panels ticket complete <ticket-id> <field>` for the unset gate of the current user-owned Stage, and `panels ticket set-value <ticket-id> <field>` to correct a settled earlier value. Panels does not support bulk field prefixes or arbitrary Stage jumps.
+If no aligned Ticket exists, load and follow `panels-ticket-creation`. Create the Ticket with `panels ticket create`, then use ordinary field, recap, placement, ceiling, and Day operations. Use `panels ticket complete <ticket-id> <field>` for the unset gate of the current user-owned Stage, and `panels ticket set-value <ticket-id> <field>` to correct a settled earlier value. Panels does not support bulk field prefixes or arbitrary Stage jumps.
 
 Preserve the user's report in Brief and recap text. If an existing Worker type no longer contains a live Ticket's Stage, use an explicit repository migration with that Worker change. Do not repair it through the product API.
 
@@ -164,8 +164,8 @@ Do not create extra tickets, items, projects, or statuses unless the user asked 
 
 A ticket worker owns one ticket's next gated step. You do not.
 
-Do not draft a Ticket's gated fields (for `coding`: `success`, `approach`, `plan`,
-`implementation`, `closeout`; other Worker types have their own) as if you are
+Do not draft a Ticket's gated fields (for `coding`: `success_condition`, `what_changes`, `plan`,
+`implementation`, `consequences`; other Worker types have their own) as if you are
 completing that Ticket worker step unless the user explicitly asks for a planning draft
 in chat. Even then, present it as a draft for the human or Ticket worker, not as a filed
 worker proposal.

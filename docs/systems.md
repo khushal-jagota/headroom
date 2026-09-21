@@ -98,17 +98,18 @@ _Code paths:_ `src/planner/days/`, `src/planner/sprints/`,
 ### 3. Tickets, gates, and Worker types
 
 A Ticket's Worker type declares its ordered Stages, gated fields, Stage
-ownership, specialist skill, and launch defaults. Eleven Worker types ship, including
+ownership, specialist skill, and launch defaults. Fourteen Worker types ship, including
 coding, planning, design, debugging, general, and user-owned personal work. The browser
 gets the same registry manifest that the server uses.
 
 Workers propose gated Ticket fields. The proposal resolver alone settles one of those
-values and advances the Stage. Scope controls how far worker-owned Stages can advance.
+values and advances the Stage. The ceiling says how far a worker may advance on its own.
 Ownership says whether the worker or user drives the current Stage. A user-owned Stage
 gets one automatic opening turn, then continues collaboratively in the same conversation.
 
-Ticket status is separate control state: `empty`, `blocked`, `agent`,
-`awaiting_approval`, or `errored`. One shared list projection derives whether work
+Ticket status is derived at every read from the worker-step claim, the parked proposal
+and live blockers: `empty`, `blocked`, `agent`, `awaiting_approval`, or `errored`. The
+claim is the only control fact stored. One shared list projection derives whether work
 awaits Khushal's reply, awaits his approval, awaits an agent's approval, is assigned to
 Khushal, and whether the agent is working, idle, or errored. A parked proposal is split
 by who holds the ceiling there, once, so no route decides whose approval "awaiting
@@ -141,8 +142,8 @@ _Code paths:_ `src/planner/scheduled_tickets/` and `src/planner/core/loops.py`.
 ### 5. Worker orchestration
 
 The readiness loop examines today's Tickets and applies one complete, read-only
-decision. A Ticket must be on today, non-terminal, and ready for its declared ownership,
-within scope, free of a parked proposal, and clear for its Consequences lane. The
+decision. A Ticket must be on today, non-terminal, resting, ready for its declared
+ownership, and clear for its Consequences lane. The
 conversation system supplies the one fact the record cannot: whether that Ticket's
 worker is already busy.
 
@@ -246,15 +247,16 @@ _Code paths:_ `src/planner/environments/`, `src/planner/notifications/`,
   proposal resolver accepts it.
 - **Signal versus state.** The change signal says only that a commit happened. Domain
   records remain canonical.
-- **Status versus liveness.** Ticket status records the last control decision. The
-  conversation system reports current activity.
+- **Status versus liveness.** Ticket status is derived from stored facts at every read,
+  and the claim is the one control fact written. The conversation system reports current
+  activity.
 - **Stored versus delivered context.** A Worker sees context only after that text is
   included in a delivered prompt.
 - **Conversation id versus backend session.** The caller owns the first. The
   conversation system owns the second.
 - **Managed skills versus packaged defaults.** `data/skills` is the live authority.
-  Packaged skills seed missing entries. Codex and Claude provision all managed Panels
-  skills. Hermes uses a separate allowlist.
+  Packaged skills seed a database that has none. Codex, Claude and Hermes all provision
+  every managed Panels skill.
 - **Authority versus your own record.** Standing above a thing is one question. Being
   the thing — a Ticket proposing, an Outcome writing its own body — is another, and the
   chain does not decide it.
@@ -265,9 +267,6 @@ _Code paths:_ `src/planner/environments/`, `src/planner/notifications/`,
   Trigger: restart loss becomes important enough to persist the queue.
 - **Missed schedule occurrences.** Exact-minute schedules do not backfill downtime.
   Trigger: the product adopts a recovery policy.
-- **General Worker on Hermes.** The Hermes skill allowlist omits
-  `panels-worker-general`, although the `general` Worker type uses it. Trigger: before a
-  general Ticket runs on Hermes, add the specialist to that provisioning authority.
 
 ---
 

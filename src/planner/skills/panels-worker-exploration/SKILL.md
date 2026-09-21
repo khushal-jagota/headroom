@@ -94,7 +94,7 @@ The Consequences stage is application and bookkeeping, not a hidden implementati
 - Keep the stages distinct: Understanding frames the problem, Research Plan chooses the evidence path, Findings produces the evidence, and Answer records the user's decision.
 - Preserve uncertainty when evidence does not resolve it; confidence must not outrun provenance.
 - Do not let a familiar implementation, a large source list, or a polished prototype substitute for mechanism-level understanding.
-- Follow `panels-worker` for shared ownership, proposal, approval, Chat, scope, and reconciliation mechanics; this skill only defines exploration-specific work.
+- Follow `panels-worker` for shared ownership, proposal, approval, Chat, and ceiling mechanics; this skill only defines exploration-specific work.
 
 ## How to think
 

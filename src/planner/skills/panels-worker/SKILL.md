@@ -12,22 +12,22 @@ single Stage in front of you.
 ## Your ticket and your specialist
 Which Stages a Ticket has, and what each needs, depend on its Worker type. Run
 `panels worker my-ticket` — it names your worker skill and reports the current
-Stage and scope. Invoke that skill.
+Stage and ceiling. Invoke that skill.
 
 ### Who owns the current Stage
 
 Every non-terminal Stage declares one ownership mode in its Worker type. A Ticket cannot
 override Stage ownership. Ownership says who drives the current Stage. It is separate
-from Ticket scope.
+from the Ticket's ceiling.
 
 - **Worker** — the Employee may be discovered and run automatically when every other
-  eligibility condition also allows it. Scope still decides whether a proposal is
-  accepted below the ceiling, parked for the user's approval through **Propose** at the
-  ceiling, or prevented by **Stop**.
+  eligibility condition also allows it. Below the ceiling your answer settles the field and
+  the Ticket advances, and no proposal is recorded. At the ceiling it parks for whoever
+  holds the ceiling.
 - **User** — the Ticket gets one automatic collaborative opening turn for the current
   Stage and is never started automatically again for that Stage entry. Ordinary Ticket
   Chat is the continuation path: the user's
-  message reaches this Ticket's durable Employee session and worker context. When clarity is reached, the worker can propose.
+  message reaches this Ticket's durable Employee session. When clarity is reached, the worker can propose.
 
 ### The CLI
 
@@ -35,12 +35,12 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 
 - **`panels worker my-ticket [part,part]`** — read your Ticket header and part
   manifest, or expand named saved fields, `proposal`, `recap`, and `guidance`. The header says who you are, the current
-  Stage and scope.
+  Stage and ceiling.
 - **`panels ticket show <id> [part,part]`** — read another Ticket's header and part
   manifest, or expand named saved fields, `proposal`, `recap`, and `guidance`.
 - **`panels worker propose <id>`**, piping the proposal text on stdin — answer your own Ticket's current gated field. No supervisor, holder Ticket, or other Worker can file it for you. The body arrives on stdin only, and it carries only what is being proposed. Below the ceiling the answer settles the field and the Ticket advances. At the ceiling it parks for approval.
 - **`panels worker recap <id>`**, piping the recap text on stdin — keep the running recap current. It is a separate write from proposing, so update it as you work.
-- **`panels worker request-help [ticket-id]`**, piping the help message on stdin — send one canonical addressed message when you cannot responsibly continue without important input. The current ceiling holder is the default recipient. Use exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--sprint-item <id>` only when another principal must answer. The message drives the shared unread-reply attention fact. Do not use this for ordinary discussion, proposals, approvals, permission prompts, Stop, or confirmed Worker errors.
+- **`panels worker request-help [ticket-id]`**, piping the help message on stdin — send one canonical addressed message when you cannot responsibly continue without important input. The current ceiling holder is the default recipient. Use exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--sprint-item <id>` only when another principal must answer. The message drives the shared unread-reply attention fact. Do not use this for ordinary discussion, proposals, approvals, permission prompts, or confirmed Worker errors.
 - **`panels worker note <id>`**, piping the guidance text on stdin — replace the Ticket’s durable guidance document. Add `--append` to preserve the existing guidance and add new text.
 - **`panels send-message --owner --message "…"`** — send one addressed chat message to
   the owner through this Ticket's current conversation. Use the same command with exactly
@@ -60,7 +60,7 @@ All four write commands take their text on stdin only; there is no file-path opt
 - **`panels ticket create --worker-type <id> --title "…"`** — create a Ticket when the
   current approved step spins off a new one. Before creating it, load and follow
   `panels-ticket-creation`; this Worker skill still owns the current Stage's authority
-  and approved scope.
+  and approved ceiling.
 
 
 ## How to complete this effectively

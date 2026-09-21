@@ -71,4 +71,4 @@ The reader did not do the research and did not read the research plan. Write the
 - If the evidence shows the question itself is wrong, say so and stop. Do not quietly answer a better question instead.
 - Unresolved is a valid finding. Confidence must not outrun the evidence.
 
-Follow `panels-worker` for shared ownership, proposal, approval, Chat, scope, and reconciliation mechanics. This skill only defines research-specific work.
+Follow `panels-worker` for shared ownership, proposal, approval, Chat, and ceiling mechanics. This skill only defines research-specific work.

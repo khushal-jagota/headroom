@@ -118,8 +118,9 @@ not hold. The one thing it may not do is move a child Ticket to another Outcome:
 who stands above a Ticket is handing authority around rather than using it.
 
 A supervisor creates its own child Tickets with the ordinary Ticket creation route. A
-Ticket it creates is scoped like any other: the Brief parks for the user's approval
-unless the supervisor states a wider scope it was given.
+Ticket it creates carries a ceiling like any other: this Sprint Item becomes the holder,
+so the Brief parks for the Item unless the supervisor states a higher ceiling it was
+given.
 
 It deletes a current child Ticket through that same route. The deletion is permanent and
 nothing else guards it: a Ticket whose Worker is mid-turn is deleted too, and that Worker
@@ -132,19 +133,17 @@ conversation, its role record, or its history.
 The Item workspace is the overview: the Item itself, its artifacts, and one line for each
 Ticket on it — what the Ticket is called, where it has got to, and which days it sits on.
 Finished Tickets stay in that list. It is what a supervisor reads to decide where to
-look, so it never carries a Ticket's written work. It also says whether a parked proposal
-is addressed to the reader, so Khushal and the supervisor each see their own answer from
-the one read.
+look, so it never carries a Ticket's written work. It names who holds each parked
+proposal, so any reader can see which ones are addressed to them.
 
 The written work lives on the Ticket, read the ordinary way. A Ticket's current Worker
 conversation is read where every conversation is read, in bounded pages, forwards from a
 position or backwards from the end.
 
 A message to a Worker goes through Send Message, the one door for messaging any
-principal. It resolves the Ticket's current conversation as it lands, and a missing,
-reset, or stale conversation is refused. Panels records the sender. This path cannot
-create a conversation and does not change the Ticket Stage, scope, status, or Day
-membership.
+principal. It resolves the Ticket's current conversation as it lands, and starts one when
+there is none. Panels records the sender. This path does not change the Ticket Stage,
+ceiling, status, or Day membership.
 
 Nothing a supervisor does reaches the user on its own. Backend prose is runtime output;
 only an explicit Send Message reaches another principal. The Item row in the Workspace

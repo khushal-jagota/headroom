@@ -60,7 +60,7 @@ surface a delivery failure, or fall back to the owner.
 - `ticket create --sprint-item <your item>` creates a child Ticket under your Item. Load
   and follow `panels-ticket-creation` first. A Ticket you create is scoped like any other:
   this Sprint Item becomes its ceiling holder. If creation includes a Brief proposal,
-  the proposal parks for this Item. Add `--ceiling` when the user gave you more scope to
+  the proposal parks for this Item. Add `--ceiling` when the user gave you a higher ceiling to
   grant.
 - `ticket delete <ticket> --yes` permanently deletes a current child Ticket of your Item.
   The Ticket, its fields, and its work history are gone. A Worker mid-turn is killed with
@@ -94,12 +94,11 @@ These actions own lifecycle facts. Do not simulate one with a message.
 
 ## Worker guidance
 
-Use `panels send-message --ticket <ticket>` only for guidance to a Worker with an
-existing current conversation. Read the Ticket first. The server resolves the Ticket's
-current conversation when the send lands and refuses a missing conversation or a Ticket
-that is no longer a current child. Do not cache or pass a conversation id.
+Use `panels send-message --ticket <ticket>` for guidance to a Worker. Read the Ticket
+first. The server resolves the Ticket's current conversation when the send lands, and
+starts one when there is none. Do not cache or pass a conversation id.
 
-A Worker message never changes the Ticket Stage, scope, status, or Day membership. Use the
+A Worker message never changes the Ticket Stage, ceiling, status, or Day membership. Use the
 named action when one of those facts must change. Do not use a Worker message to claim or
 start work. The readiness system owns Worker starts.
 

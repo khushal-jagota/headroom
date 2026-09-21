@@ -12,7 +12,7 @@ values, and the separate `proposal` part contains the one current draft:
 
 ```sh
 panels ticket show t_example
-panels ticket show t_example success,approach --json
+panels ticket show t_example success_condition,what_changes --json
 panels sprint show current primary_bet,kickoff
 panels sprint item show si_example body
 panels day show 2026-08-10 focus,watchout
@@ -64,8 +64,9 @@ Text and JSON responses report the number of matches and returned rows. They als
 omissions before and after the page, whether the response is complete, and the next
 offset. An empty match set and an empty page at a later offset are different results.
 
-These commands use separate summary reads. Browser collection routes keep their rich
-record shapes. Direct `show` commands also keep their full record shapes.
+These commands ask the one collection read for `detail=summary`. The same address answers
+`detail=full` for a rich record shape, which is what the browser asks for; the paging
+controls belong to the summary level only.
 
 ## The verbs
 
@@ -228,7 +229,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   carries its authority, so the server holds it to its own current child Tickets and its
   own Item. See `authority.md`.
 - **`ticket create --ceiling` / `--holder`** — state the new Ticket's ceiling and who
-  holds it, at creation. The creator that was given the scope states it, so authorized work
+  holds it, at creation. The creator that was given the ceiling states it, so authorized work
   does not sit waiting for a second approval. A stated ceiling past the Brief settles the
   Brief and starts the Ticket at the next Stage. `--holder` can name anyone, including
   the user, and the creator does not have to hold anything itself. Omit these options to
@@ -318,21 +319,21 @@ Earlier documentation listed verbs that belonged to the old dispatcher-and-claim
 machinery, or to old top-level homes. They no longer exist: **`run heartbeat` / `run
 close`**, **`queue pickup`**, and top-level **`propose` / `recap` / `note` / `item` /
 `idea` / `link` / `queue`**. A worker no longer holds a claim or a lease; Panels starts
-one worker step at a time and writes the Ticket's status itself (see
-`worker-orchestration.md`).
+one worker step at a time and takes the Ticket's worker-step claim itself, and the status
+is derived from it (see `worker-orchestration.md`).
 
 ## Handoffs
 
 - **Who may act** (`authority.md`) — the one sentence that decides whether any of these
   commands is admitted.
 - **Tickets & the gates** (`tickets-and-gates.md`) — the proposals, recaps, and notes
-  this tool files, and the scope the server enforces on them.
+  this tool files, and the ceiling the server enforces on them.
 - **Worker orchestration** (`worker-orchestration.md`) — how the worker that drives
   this tool gets started.
 - **Worker types** (`worker-types.md`) — the registry `worker my-ticket` reads the
   ticket's specialist skill from.
 
-Sprint writing has four parts: `primary_bet`, `brief`, `checkpoint`, and `review`.
+Sprint writing has four parts: `primary_bet`, `kickoff`, `checkpoint`, and `review`.
 The primary bet is the short summary shown above Sprint tracking; the others are complete
 Markdown documents. For example, `panels sprint set current review --body-file review.md`
 replaces the review document. Sprint creation accepts `--primary-bet`, `--kickoff`,

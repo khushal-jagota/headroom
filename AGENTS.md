@@ -7,7 +7,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 ## Stack and system map
 - Python ≥ 3.12 backend in `src/planner/`, with FastAPI wiring in `src/planner/core/server.py` and SQLite schema/migrations in `src/planner/core/db.py`.
 - Domain code is grouped by system: `tickets/`, `sprints/`, `days/`, and `projects/`. Contracts live in each domain's `contracts.py`; framework-free rules live in `logic/`; HTTP routes live in `api.py`.
-- `panels` is the CLI entry point (`planner.cli.main:main`); `python -m planner` delegates to it. Important command groups are `serve`, `project`, `day`, `ticket`, `sprint`, `sprint item`, `worker`, and `chief`.
+- `panels` is the CLI entry point (`planner.cli.main:main`); `python -m planner` delegates to it. Important command groups are `serve`, `project`, `day`, `ticket`, `sprint`, `sprint item`, `worker`, and `worker-type`. The Chief is a recipient of `send-message`, not a command group.
 - Worker orchestration lives in `runtime/`. `worker_step_readiness.py` is the whole readiness decision — read-only, no writes. `worker_step_readiness_loop.py` holds both the poll thread and `start_ready_worker_step`, the per-Ticket flow: occupancy check, one guarded write that takes the worker-step claim (the only state of control a Ticket stores — no claim stamp, no run row), start or reuse the Ticket's conversation, compose the opener, send. Started and queued are both success; only a refusal releases the claim. Nothing watches a turn end. `conversation_start.py` owns resolve/start/send/reset against the conversation contract.
 - Generic exact-time Ticket supply lives in `scheduled_tickets/`. Its sibling poll loop shares the server lifespan and single-machine lock, evaluates only the current local minute, and transactionally records a created, suppressed, or failed occurrence. It stops at ordinary Ticket creation and day placement; the change signal and readiness loop own the Worker handoff.
 - `core/change_signal.py` is the payload-free, best-effort "something was written" signal. Every connection from `core/db.connect` announces its own commits, so no domain action carries wake or invalidation calls. The one way past it is `core/db.commit_without_change_signal`, used where the writer has established that no screen is waiting for its rows: managed skill history, and the conversation rows only an open conversation shows, which the live tail hands over directly. While the polling-lock owner's readiness loop runs it is subscribed to the signal; SQLite and the periodic timer remain canonical. The browser hears the same signal over `GET /api/changes` (`core/sse.py`).
@@ -19,7 +19,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 ## Worker conversation boundary
 - **A database row, event, or browser update is not model context.** Only text that was actually sent into the worker's conversation is.
-- To change what a worker sees, deliver the text as a real prompt into the worker's conversation. Pending worker context must be included in that prompt and acknowledged only after the send reports it got through.
+- To change what a worker sees, deliver the text as a real prompt into the worker's conversation. There is no second input path: no row a worker is expected to pick up later.
 - If a design depends on the worker reading human guidance, prove the guidance reaches the actual prompt. Do not treat a database row, event-log row, or UI transcript line as delivery.
 
 ## Naming and restraint

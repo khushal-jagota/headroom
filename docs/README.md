@@ -37,7 +37,7 @@ every other principal calls, and the rule holds it to its own current child Tick
 
 At its ceiling a Ticket proposes and waits, and there is one approval gate — a parked
 proposal is addressed to somebody, and anyone above the Ticket can decide it. Review
-holds today's parked proposals and explicit Worker help requests. A Sprint Item
+holds today's owner-addressed parked proposals and explicit Worker help requests. A Sprint Item
 conversation takes no part in that: nothing starts it
 except a message from the user, and it reads the current state of its Item and Tickets
 when they ask.
@@ -56,7 +56,7 @@ when they ask.
 - **Who may act** (`authority.md`) — one address per operation, and the one sentence
   that decides every call: you may act on anything strictly below you.
 - **Tickets & the gates** (`tickets-and-gates.md`) — what a ticket is, the stages
-  it moves through, and the proposal resolver, scope, and approval gate that govern
+  it moves through, and the proposal resolver, the ceiling, and the approval gate that govern
   every advance. The correctness heart of the system.
 - **Worker types and settings** (`worker-types.md`) — the registry declares each workflow's
   immutable Stages, gates, fields, specialist identity, and starting worker setup. Managed

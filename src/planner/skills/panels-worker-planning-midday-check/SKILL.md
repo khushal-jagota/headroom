@@ -35,7 +35,7 @@ to whoever stands above that Ticket. Say so rather than reporting such a change 
 Verify first, then write `midday_reconciliation`: what happened, what was decided, and
 what changed or did not need changing. Keep it truthful and brief.
 
-### done and dropped
+### done
 
-Done means the approved Agreed Intervention and the reconciliation match reality. A
-missed or dropped check creates no invented record or catch-up ceremony.
+Done means the approved Agreed Intervention and the reconciliation match reality. A check
+that never ran creates no invented record or catch-up ceremony.
