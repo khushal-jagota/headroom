@@ -224,13 +224,14 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     assert desktop_geometry["titleWidth"] > 200, desktop_geometry
     assert abs(desktop_geometry["titleTop"] - desktop_geometry["placementTop"]) < 2
     # Remaining Tickets starts collapsed, and its rows carry the shared row grammar:
-    # the condition is the stage mark's label, not a separate word.
+    # the condition is the stage mark's label, not a separate word, and the word is the
+    # heading the row sits under, lowercased.
     remaining = page.locator('[data-workspace-section="remaining"]')
     assert remaining.get_attribute("open") is None
     remaining.locator("> summary").click()
     off_today = page.locator(f'[data-sprint-ticket-id="{review_ticket["id"]}"]')
     assert off_today.get_attribute("data-ticket-state") == "current-awaiting-approval"
-    off_today.get_by_label("to review").wait_for(timeout=WAIT_MS)
+    off_today.get_by_label("needs your approval").wait_for(timeout=WAIT_MS)
     artifacts = page.locator("[data-artifact-strip]")
     artifacts.wait_for(timeout=WAIT_MS)
     assert artifacts.locator("[data-artifact-chip]").count() == 7

@@ -39,7 +39,7 @@ def _card_ids(board: dict[str, object]) -> set[str]:
     return {
         str(card["id"])
         for column in columns
-        for card in column["cards"]  # type: ignore[index]
+        for card in column["cards"]
     }
 
 
@@ -165,7 +165,7 @@ def test_a_named_ticket_already_on_the_day_appears_once(tmp_db: Connection) -> N
 
     columns = board["columns"]
     assert isinstance(columns, list)
-    cards = [card for column in columns for card in column["cards"]]  # type: ignore[index]
+    cards = [card for column in columns for card in column["cards"]]
     assert [str(card["id"]) for card in cards] == [on_day]
 
 
