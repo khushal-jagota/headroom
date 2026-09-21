@@ -4,6 +4,7 @@ import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentat
 
 const ATTENTION_GROUP_ORDER = [
   "awaiting_approval",
+  "awaiting_answer",
   "assigned",
   "awaiting_reply"
 ] as const;
@@ -33,6 +34,7 @@ const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set([
 // depending on the screen it is read on.
 const GROUP_LABELS: Readonly<Record<string, string>> = {
   awaiting_approval: "Needs your approval",
+  awaiting_answer: "Needs your answer",
   assigned: "Yours",
   awaiting_reply: "Messages",
   status_awaiting_approval: "Awaiting an agent's approval",
@@ -46,7 +48,7 @@ export type WorkspaceTicketGroup = {
   cards: BoardCard[];
 };
 
-export type WorkspaceRowMark = "attention" | "working" | null;
+export type WorkspaceRowMark = "answer" | "attention" | "working" | null;
 
 export type WorkspaceRowMarkPresentation = {
   state: FieldStageVisualState;
@@ -95,6 +97,7 @@ export function workspaceCardGroupKey(card: BoardCard): string {
 }
 
 export function workspaceTicketRowMark(card: BoardCard): WorkspaceRowMark {
+  if (card.awaiting_answer) return "answer";
   if (card.awaiting_reply) return "attention";
   if (card.agent_state === "working") return "working";
   return null;
@@ -103,6 +106,9 @@ export function workspaceTicketRowMark(card: BoardCard): WorkspaceRowMark {
 export function workspaceRowMarkPresentation(
   mark: WorkspaceRowMark
 ): WorkspaceRowMarkPresentation {
+  if (mark === "answer") {
+    return { state: "needs-me", ariaLabel: "Needs an answer" };
+  }
   if (mark === "attention") {
     return { state: "current-awaiting-approval", ariaLabel: "Message" };
   }
@@ -113,6 +119,7 @@ export function workspaceRowMarkPresentation(
 }
 
 export function workspaceSprintItemRowMark(item: BoardSprintItem): WorkspaceRowMark {
+  if (item.awaiting_answer || item.ticket_rollup.awaiting_answer) return "answer";
   if (item.awaiting_reply || item.ticket_rollup.awaiting_reply) return "attention";
   if (item.agent_state === "working" || item.ticket_rollup.agent_state === "working") {
     return "working";

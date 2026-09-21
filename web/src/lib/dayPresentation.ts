@@ -22,6 +22,7 @@ function groupKeyFor(ticket: DayTicket): string {
   if (ticket.waiting_to_closeout) return "waiting_to_closeout";
   const attention = primaryWorkAttention({
     awaiting_reply: Boolean(ticket.awaiting_reply),
+    awaiting_answer: Boolean(ticket.awaiting_answer),
     awaiting_approval: Boolean(ticket.awaiting_approval),
     assigned: Boolean(ticket.assigned)
   });
@@ -39,6 +40,7 @@ export function dayVisualTicket(
   const presentation = conversationSignalPresentation(
     {
       awaiting_reply: Boolean(ticket.awaiting_reply),
+      awaiting_answer: Boolean(ticket.awaiting_answer),
       agent_state: ticket.agent_state ?? "idle"
     }
   );
@@ -106,8 +108,12 @@ export function dayActionTiles(visualTickets: readonly DayVisualTicket[]): DayAc
     done: 0
   };
 
+  // "Need you" is every ticket stopped on the owner: a worker waiting on an answer,
+  // which carries the `needs-me` dot, and an unread message, which carries its own.
   for (const visual of visualTickets) {
-    if (visual.state === "needs-me") counts["needs-me"] += 1;
+    if (visual.state === "needs-me" || visual.group === "awaiting_reply") {
+      counts["needs-me"] += 1;
+    }
     else if (visual.state === "current-running") counts.working += 1;
     else if (
       visual.state === "current-awaiting-approval" &&
@@ -135,5 +141,9 @@ export function dayActionTiles(visualTickets: readonly DayVisualTicket[]): DayAc
 }
 
 export function dayPageState(visualTickets: readonly DayVisualTicket[]): "populated" | "calm" {
-  return visualTickets.some((visual) => visual.state === "needs-me") ? "populated" : "calm";
+  return visualTickets.some(
+    (visual) => visual.state === "needs-me" || visual.group === "awaiting_reply"
+  )
+    ? "populated"
+    : "calm";
 }

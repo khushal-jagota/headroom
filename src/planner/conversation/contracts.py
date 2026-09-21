@@ -239,6 +239,7 @@ class PromptQueueReason(StrEnum):
     attachment = "attachment"
     run_change = "run_change"
     steer_refused = "steer_refused"
+    command_needs_its_own_turn = "command_needs_its_own_turn"
 
 
 class PromptDeliveryRefusalReason(StrEnum):
@@ -261,6 +262,10 @@ class PromptDeliveryRefusalReason(StrEnum):
     ``backend_cannot_steer`` names a steer aimed at a backend that cannot take text into
     a running turn.
 
+    ``command_cannot_join_running_turn`` names a catalog command steered at a backend that
+    runs every command as a turn of its own. The command is real and the backend takes it,
+    but only as the next turn, so it cannot join the one that is already running.
+
     Busyness is not on this list and never will be: a busy agent is a message the system
     can hold, and nothing the system can hold is refused.
     """
@@ -271,6 +276,7 @@ class PromptDeliveryRefusalReason(StrEnum):
     write_to_backend_failed = "write_to_backend_failed"
     no_running_turn_to_steer_into = "no_running_turn_to_steer_into"
     backend_cannot_steer = "backend_cannot_steer"
+    command_cannot_join_running_turn = "command_cannot_join_running_turn"
     running_turn_changed_before_steer = "running_turn_changed_before_steer"
     running_turn_cannot_accept_steer = "running_turn_cannot_accept_steer"
     message_cannot_be_steered = "message_cannot_be_steered"

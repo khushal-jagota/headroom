@@ -27,6 +27,7 @@ from planner.worker_types.configuration import configured_worker_type_registry
 # the endpoint the reader came through.
 class WorkAttention(TypedDict):
     awaiting_reply: bool
+    awaiting_answer: bool
     awaiting_approval: bool
     awaiting_agent_approval: bool
     assigned: bool
@@ -36,6 +37,7 @@ class WorkAttention(TypedDict):
 def _empty_attention() -> WorkAttention:
     return {
         "awaiting_reply": False,
+        "awaiting_answer": False,
         "awaiting_approval": False,
         "awaiting_agent_approval": False,
         "assigned": False,
@@ -47,10 +49,16 @@ async def _conversation_attention(
     conversation_system: ConversationSystem,
     conversation_record: ConversationStore,
     conversation_ids: set[str],
-) -> dict[str, tuple[bool, bool, bool]]:
+) -> dict[str, tuple[bool, bool, bool, bool]]:
+    """An unread message, a waiting ask, a running turn, and a turn that failed.
+
+    The message and the ask are two facts and stay two facts. Held as one, a screen
+    could only say one word for both, and the word it said was the wrong one whenever
+    the agent was waiting on an answer rather than on a reply.
+    """
     durable = await conversation_record.attention_facts(conversation_ids)
 
-    async def one(conversation_id: str) -> tuple[str, bool, bool, bool]:
+    async def one(conversation_id: str) -> tuple[str, bool, bool, bool, bool]:
         running, permission, question = await asyncio.gather(
             conversation_system.is_running(conversation_id),
             conversation_system.has_pending_permission_ask(conversation_id),
@@ -59,14 +67,21 @@ async def _conversation_attention(
         fact = durable.get(conversation_id, ConversationAttentionFacts(False, False))
         return (
             conversation_id,
-            fact.unread_message_to_owner or permission or question,
+            fact.unread_message_to_owner,
+            permission or question,
             running,
             fact.last_turn_failed,
         )
 
     return {
-        conversation_id: (awaiting_reply, running, last_turn_failed)
-        for conversation_id, awaiting_reply, running, last_turn_failed in await asyncio.gather(
+        conversation_id: (awaiting_reply, awaiting_answer, running, last_turn_failed)
+        for (
+            conversation_id,
+            awaiting_reply,
+            awaiting_answer,
+            running,
+            last_turn_failed,
+        ) in await asyncio.gather(
             *(one(conversation_id) for conversation_id in conversation_ids)
         )
     }
@@ -87,7 +102,7 @@ def _ticket_rows(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sq
 
 def _ticket_attention(
     row: sqlite3.Row,
-    conversation: tuple[bool, bool, bool] | None,
+    conversation: tuple[bool, bool, bool, bool] | None,
     *,
     facts: TicketFacts,
 ) -> WorkAttention:
@@ -99,7 +114,12 @@ def _ticket_attention(
     parked = facts.ticket_status is TicketStatus.awaiting_approval
     awaiting_approval = parked and owner_holds_ceiling
     awaiting_agent_approval = parked and not owner_holds_ceiling
-    awaiting_reply, running, last_turn_failed = conversation or (False, False, False)
+    awaiting_reply, awaiting_answer, running, last_turn_failed = conversation or (
+        False,
+        False,
+        False,
+        False,
+    )
     assigned = ticket_assignment_from_values(
         stage=str(row["stage"]),
         worker_type=str(row["worker_type"]),
@@ -111,6 +131,7 @@ def _ticket_attention(
     )
     return {
         "awaiting_reply": awaiting_reply,
+        "awaiting_answer": awaiting_answer,
         "awaiting_approval": awaiting_approval,
         "awaiting_agent_approval": awaiting_agent_approval,
         "assigned": assigned,
@@ -144,6 +165,7 @@ def _roll_up(children: Iterable[WorkAttention]) -> WorkAttention:
     states = {row["agent_state"] for row in rows}
     return {
         "awaiting_reply": any(row["awaiting_reply"] for row in rows),
+        "awaiting_answer": any(row["awaiting_answer"] for row in rows),
         "awaiting_approval": any(row["awaiting_approval"] for row in rows),
         "awaiting_agent_approval": any(row["awaiting_agent_approval"] for row in rows),
         "assigned": any(row["assigned"] for row in rows),
@@ -224,10 +246,16 @@ async def add_work_attention(
     for row in item_rows:
         item_id = str(row["id"])
         own_conversation = conversations.get(item_conversations.get(item_id, ""))
-        awaiting_reply, running, failed = own_conversation or (False, False, False)
+        awaiting_reply, awaiting_answer, running, failed = own_conversation or (
+            False,
+            False,
+            False,
+            False,
+        )
         row.update(
             {
                 "awaiting_reply": awaiting_reply,
+                "awaiting_answer": awaiting_answer,
                 "awaiting_approval": False,
                 "awaiting_agent_approval": False,
                 "assigned": False,

@@ -164,6 +164,20 @@ MODEL_THINKING_PULSE_INTERVAL_SECONDS = 0.25
 ROLE_TEXT_PROMPT_SEPARATOR = "\n\n"
 
 
+def _queue_reason_for_refused_steer(
+    refusal_reason: PromptDeliveryRefusalReason,
+) -> PromptQueueReason:
+    """Why a message that could not steer is now waiting.
+
+    A refused steer always goes back to the line. The reason it went back is what the
+    composer reads out, and a command that Codex takes only as its own turn is not the
+    same event as a turn that would not accept steering at all.
+    """
+    if refusal_reason is PromptDeliveryRefusalReason.command_cannot_join_running_turn:
+        return PromptQueueReason.command_needs_its_own_turn
+    return PromptQueueReason.steer_refused
+
+
 def completed_backend_text_event(content: MessageContent) -> None:
     """Classify backend prose as runtime output, never an addressed durable message."""
     del content
@@ -959,6 +973,30 @@ class SqliteProcessConversationSystem:
         except PromptWriteFailed:
             steer_outcome = BackendSteerUncertain()
 
+        if isinstance(steer_outcome, BackendSteerRefused) and (
+            steer_outcome.refusal_reason
+            is PromptDeliveryRefusalReason.command_cannot_join_running_turn
+        ):
+            # A command the backend takes only as its own turn. Promoting it was the
+            # right gesture at the wrong moment, so the message goes back to the line
+            # rather than being written down as undeliverable and thrown away.
+            async with state.lock:
+                self._settle_held_deliveries(state, (held,))
+            return await self._queue(
+                state,
+                held.content,
+                held.sender_label,
+                held.model_change,
+                held.reasoning_effort_change,
+                held.sender_message_id,
+                held.sent_at_unix_milliseconds,
+                held.sender,
+                held.recipient,
+                held.reply_requested,
+                held.owner_read_through_sequence,
+                queue_reason=PromptQueueReason.command_needs_its_own_turn,
+            )
+
         async with state.lock:
             fate = await self._record_steer_outcome(
                 state,
@@ -1603,7 +1641,7 @@ class SqliteProcessConversationSystem:
                 recipient,
                 reply_requested,
                 owner_read_through_sequence,
-                queue_reason=PromptQueueReason.steer_refused,
+                queue_reason=_queue_reason_for_refused_steer(steer_outcome.refusal_reason),
             )
 
         async with state.lock:

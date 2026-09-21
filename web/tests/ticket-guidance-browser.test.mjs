@@ -79,9 +79,11 @@ def respond(route):
         assert route.request.method == 'POST'
         body=route.request.post_data_json
         writes.append({'personal_outcome': body})
-        result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_consequences', 'ceiling':'needs_consequences', 'field_values':{'brief':'Context','outcome':body['body']}, 'pending_proposal':None, 'ticket_status':'empty'}
+        result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_consequences', 'ceiling':'needs_consequences', 'field_values':{'brief':'Context','outcome':body['body']}, 'pending_proposal':None, 'ticket_status':'empty', 'assigned':False}
     elif path == 'tickets/t_personal':
-        result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_outcome', 'ceiling':'needs_outcome', 'field_values':{'brief':'Context'}, 'pending_proposal':None, 'ticket_status':'empty'}
+        # assigned is what the route reads to decide the owner may edit this Stage.
+        # The server puts it on every Ticket payload, so this stand-in carries it too.
+        result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_outcome', 'ceiling':'needs_outcome', 'field_values':{'brief':'Context'}, 'pending_proposal':None, 'ticket_status':'empty', 'assigned':True}
     elif path == 'tickets/t_kickoff':
         result={**ticket, 'id': 't_kickoff', 'stage': 'needs_brief', 'ceiling': 'needs_brief', 'ceiling_holder': {'kind': 'chief', 'id': 'chief'}, 'sprint_item_id': None, 'resolved_priority_anchors': {**ticket['resolved_priority_anchors'], 'sprint_item': None}, 'pending_proposal': {'field': 'brief', 'body': 'Opened for somebody else', 'proposed_by': 'chief', 'created_at': 1}, 'field_values': {}}
     elif path == 'tickets/t_open':

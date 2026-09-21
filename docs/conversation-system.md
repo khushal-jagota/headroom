@@ -632,6 +632,14 @@ enabled skills, callable installed apps, and enabled installed plugins with the 
 callability comes from `app/installed`. This prevents an installed but unusable connector
 from appearing in the menu.
 
+Codex runs each of those commands through a call of its own, and every one of those
+calls starts a turn. So a Codex command cannot join a turn that is already running. A
+command steered into a running Codex turn is not sent as text: the adapter says it
+cannot take it, and the message goes back to the held line and runs as its own turn when
+the current one ends. The held row says it is waiting because a command runs as its own
+turn. Hermes and Claude take a steered command inside the running turn, and keep their
+behaviour.
+
 Codex refreshes the complete catalog after skill or app change notifications. Refreshes
 run beside the app-server reader and merge repeated notifications. Each source is read
 independently. A failed source contributes nothing to the new snapshot, while fresh

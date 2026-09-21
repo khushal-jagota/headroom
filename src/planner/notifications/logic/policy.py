@@ -11,6 +11,7 @@ from planner.notifications.contracts import (
 
 _REASONS = {
     "awaiting_reply": "has a message for you",
+    "awaiting_answer": "is waiting on your answer",
     "awaiting_approval": "needs your approval",
     "assigned": "is assigned to you",
     "errored": "has an error",

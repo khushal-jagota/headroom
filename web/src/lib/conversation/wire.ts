@@ -31,7 +31,8 @@ export type PromptQueueReason =
   | "requested"
   | "attachment"
   | "run_change"
-  | "steer_refused";
+  | "steer_refused"
+  | "command_needs_its_own_turn";
 
 export type ConversationTurnEnding = "completed" | "failed" | "interrupted";
 export type AutomaticCompactionResult = "not_compacted";
@@ -48,7 +49,8 @@ export type PromptDeliveryRefusalReason =
   | "running_turn_changed_before_steer"
   | "running_turn_cannot_accept_steer"
   | "message_cannot_be_steered"
-  | "backend_rejected_steer";
+  | "backend_rejected_steer"
+  | "command_cannot_join_running_turn";
 
 /** What one message is made of: written words, pictures, and files.
  *

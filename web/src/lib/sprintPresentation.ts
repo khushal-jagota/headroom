@@ -11,6 +11,7 @@ export type SprintTicket = {
   waiting_to_closeout?: boolean;
   has_pending_proposal?: boolean;
   awaiting_reply: boolean;
+  awaiting_answer?: boolean;
   awaiting_approval: boolean;
   assigned: boolean;
   agent_state: "working" | "idle" | "errored";
@@ -37,6 +38,7 @@ export type TicketConditionFacts = {
   ticket_status: string;
   waiting_to_closeout?: boolean;
   awaiting_reply: boolean;
+  awaiting_answer?: boolean;
   awaiting_approval: boolean;
   assigned: boolean;
   agent_state: "working" | "idle" | "errored";
@@ -107,8 +109,13 @@ export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicke
   if (attention === "awaiting_approval") {
     return { mark: "current-awaiting-approval", word: "needs your approval" };
   }
+  if (attention === "awaiting_answer") {
+    return { mark: "needs-me", word: "needs your answer" };
+  }
   if (attention === "assigned") return { mark: "current-assigned", word: "yours" };
-  if (attention === "awaiting_reply") return { mark: "needs-me", word: "messages" };
+  if (attention === "awaiting_reply") {
+    return { mark: "current-awaiting-approval", word: "messages" };
+  }
   // One rule answers whether a worker has this Ticket, and every screen calls it.
   if (agentHoldsTicket(ticket)) return { mark: "current-running", word: "working" };
   if (ticket.waiting_to_closeout) return { mark: "current-waiting", word: "waiting on consequences" };

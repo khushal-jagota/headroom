@@ -24,6 +24,7 @@ export type TicketFacts = {
   ticket_status: string;
   gating_field: string;
   awaiting_reply: boolean;
+  awaiting_answer: boolean;
   awaiting_approval: boolean;
   awaiting_agent_approval: boolean;
   assigned: boolean;
@@ -38,6 +39,7 @@ export function ticketFacts(overrides: Partial<TicketFacts> = {}): TicketFacts {
     ticket_status: "empty",
     gating_field: "brief",
     awaiting_reply: false,
+    awaiting_answer: false,
     awaiting_approval: false,
     awaiting_agent_approval: false,
     assigned: false,
@@ -112,6 +114,7 @@ function boardCard(facts: TicketFacts): BoardCard {
     sprint_item_title: null,
     sprint_item_priority: null,
     awaiting_reply: facts.awaiting_reply,
+    awaiting_answer: facts.awaiting_answer,
     awaiting_approval: facts.awaiting_approval,
     awaiting_agent_approval: facts.awaiting_agent_approval,
     assigned: facts.assigned,
@@ -130,6 +133,7 @@ function dayTicket(facts: TicketFacts): DayTicket {
     waiting_to_closeout: facts.waiting_to_closeout,
     gating_field: facts.gating_field,
     awaiting_reply: facts.awaiting_reply,
+    awaiting_answer: facts.awaiting_answer,
     awaiting_approval: facts.awaiting_approval,
     awaiting_agent_approval: facts.awaiting_agent_approval,
     assigned: facts.assigned,
@@ -158,6 +162,7 @@ function ticketDetail(facts: TicketFacts): TicketDetail {
     field_values: {},
     pending_proposal: null,
     awaiting_reply: facts.awaiting_reply,
+    awaiting_answer: facts.awaiting_answer,
     awaiting_approval: facts.awaiting_approval,
     awaiting_agent_approval: facts.awaiting_agent_approval,
     assigned: facts.assigned,
@@ -189,6 +194,7 @@ export function feedbackLabel(facts: TicketFacts): string {
     stage: facts.stage,
     ticket_status: facts.ticket_status,
     awaiting_reply: facts.awaiting_reply,
+    awaiting_answer: facts.awaiting_answer,
     awaiting_approval: facts.awaiting_approval,
     awaiting_agent_approval: facts.awaiting_agent_approval,
     assigned: facts.assigned,
@@ -203,6 +209,7 @@ export function feedbackMark(facts: TicketFacts): FieldStageVisualState {
     stage: facts.stage,
     ticket_status: facts.ticket_status,
     awaiting_reply: facts.awaiting_reply,
+    awaiting_answer: facts.awaiting_answer,
     awaiting_approval: facts.awaiting_approval,
     awaiting_agent_approval: facts.awaiting_agent_approval,
     assigned: facts.assigned,

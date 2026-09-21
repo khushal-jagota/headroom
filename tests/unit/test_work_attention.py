@@ -78,6 +78,7 @@ def test_ticket_attention_combines_ownership_proposal_and_conversation_facts(
     assert row == {
         "id": ticket.id,
         "awaiting_reply": True,
+        "awaiting_answer": False,
         "awaiting_approval": True,
         "awaiting_agent_approval": False,
         "assigned": False,
@@ -187,3 +188,57 @@ def test_only_a_user_owned_stage_is_the_owners_work(tmp_path: Path) -> None:
     assigned_by_id = {str(row["id"]): row["assigned"] for row in rows}
     assert assigned_by_id == {worker_owned.id: False, user_owned.id: True}
     conn.close()
+
+
+class _ConversationWaitingOnAnAnswer:
+    """A worker that has asked for permission and is waiting on it."""
+
+    async def is_running(self, conversation_id: str) -> bool:
+        return True
+
+    async def has_pending_permission_ask(self, conversation_id: str) -> bool:
+        return True
+
+    async def has_pending_user_input(self, conversation_id: str) -> bool:
+        return False
+
+
+def test_a_waiting_ask_is_not_reported_as_a_message(tmp_path: Path) -> None:
+    """The screens say what the worker is waiting for, and an ask is not a message.
+
+    Both facts were OR-ed into `awaiting_reply`, so every rail row, Sprint Item row and
+    roster row called a pending ask a message.
+    """
+    db_path = tmp_path / "answer.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    ticket = tickets_data.create_ticket(
+        conn,
+        worker_type="coding",
+        title="Waiting on an answer",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+    )
+    conn.execute(
+        "INSERT INTO conversations"
+        "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
+        "VALUES ('c_answer', 'codex', '/tmp/workspace', 'full', 0, 1)"
+    )
+    conn.execute(
+        "UPDATE tickets SET conversation_id = 'c_answer' WHERE id = ?", (ticket.id,)
+    )
+    row: JsonDict = {"id": ticket.id}
+
+    asyncio.run(
+        add_work_attention(
+            conn,
+            cast(ConversationSystem, _ConversationWaitingOnAnAnswer()),
+            ConversationStore(str(db_path)),
+            tickets=[row],
+        )
+    )
+
+    assert row["awaiting_answer"] is True
+    assert row["awaiting_reply"] is False
+    assert row["agent_state"] == "working"
