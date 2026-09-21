@@ -217,7 +217,32 @@ def _ok(response: Any) -> dict[str, Any]:
 # One row per guarded operation. Each body is valid enough to reach the guard: a body that
 # fails marshalling first would make the row measure nothing.
 
+def _create(**extra: Any) -> Call:
+    """A valid creation body, plus whatever the row is measuring."""
+    return Call(
+        "POST",
+        "/api/tickets",
+        {
+            "worker_type": "coding",
+            "title": "A created ticket",
+            "kickoff_note": "Start here.",
+            **extra,
+        },
+    )
+
+
 OPERATIONS: Final[tuple[Operation, ...]] = (
+    # --- making a Ticket, and the three things it can arrive with
+    ("POST   /tickets (bare)", lambda s: _create()),
+    ("POST   /tickets sprint_item_id", lambda s: _create(sprint_item_id=s.item_a)),
+    (
+        "POST   /tickets ceiling",
+        lambda s: _create(sprint_item_id=s.item_a, ceiling="needs_consequences"),
+    ),
+    (
+        "POST   /tickets ceiling_holder",
+        lambda s: _create(sprint_item_id=s.item_a, ceiling_holder=_OWNER_HOLDER),
+    ),
     # --- a Ticket, through its ordinary address
     (
         "GET    /tickets (detail=full)",
@@ -425,6 +450,11 @@ UNGUARDED_OPERATIONS: Final = frozenset(
         "GET    /tickets (detail=full)",
         # No guard, despite the name: the Ticket is named in the path, not by the caller.
         "GET    /tickets/{t}/worker-self",
+        # No guard, and this is the answer rather than an oversight: making a Ticket that
+        # names no Outcome and states no scope acts on nothing that already exists, so
+        # there is nobody to ask about. The three rows above it are where creation is
+        # decided.
+        "POST   /tickets (bare)",
     }
 )
 

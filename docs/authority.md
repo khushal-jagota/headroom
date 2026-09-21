@@ -65,8 +65,30 @@ Ticket, and Outcome membership. It includes the Ticket itself. A Ticket that cou
 its own Outcome could leave one, or leave every Outcome, and so choose who is allowed to
 act on it. Being a thing does not include choosing who stands above you.
 
-Creation and deletion get no special case. A created thing belongs to its creator's
-chain, and if you stand above a thing you may delete it.
+Deletion gets no special case: if you stand above a thing you may delete it.
+
+## Making a Ticket
+
+Making a Ticket acts on nothing that exists yet, so nobody is refused for making one. What
+the new Ticket arrives with is a different matter, and each part is asked about on its own.
+
+**Its Outcome.** A created thing belongs to its creator's chain. You can name an Outcome you
+stand above, an Outcome you are, or the one you are under. Putting work under the Outcome
+you already answer to adds nothing to your reach, because the supervisor that gains a child
+already stands above you. Naming any other Outcome is borrowing a position you do not hold,
+and that is refused. This is not the exception above: nothing is moved out of a chain,
+because the Ticket was in none.
+
+**Its ceiling, and who holds it.** These are the two values editing a Ticket reserves for a
+caller above it, so stating either one at creation takes the same answer. Khushal, the
+Chief, and the Outcome the Ticket will sit under can state them. A Worker that spins off a
+Ticket cannot, so the new Ticket gets its Worker type's ordinary ceiling and parks its first
+field instead of running to the end.
+
+A stated holder is an address for an approval, so it has to be one that can answer: the
+caller itself, or a principal that stands above the Ticket. That is asked wherever a holder
+is named — making a Ticket, editing its holder, and approving with a new one. A holder
+already stored on a Ticket is left alone.
 
 ## What this is not
 

@@ -23,11 +23,18 @@ from planner.core.authority.declarations import (
 )
 from planner.core.authority.logic import (
     ChainFacts,
+    is_below,
     is_self,
+    shares_the_chain,
     stands_above,
     stands_above_or_is_self,
 )
-from planner.core.authority.service import is_above, is_above_or_self, require_above
+from planner.core.authority.service import (
+    is_above,
+    is_above_or_self,
+    require_above,
+    require_in_chain,
+)
 from planner.core.clock import TestClock as _TestClock
 from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
@@ -174,3 +181,49 @@ def test_a_declaration_over_named_fields_does_not_reach_the_whole_object() -> No
     # A declaration that names nothing does reach the whole object, which is what
     # plan("sprint") and plan("day_tickets") mean.
     assert targets.plan("day_tickets").covers(targets.plan("day_tickets"))
+
+
+# --- the chain question creation asks -------------------------------------------
+
+
+def test_only_a_ticket_is_below_anything_and_only_its_own_outcome() -> None:
+    """The mirror of the rule. It is not authority, and it reaches exactly one thing."""
+    under_a = ChainFacts(target_is_itself_a_principal=True, caller_parent_outcome_id="si_a")
+
+    assert is_below(_TICKET_A, targets.outcome("si_a"), under_a) is True
+    assert is_below(_TICKET_A, targets.outcome("si_b"), under_a) is False
+    # Not a route to somebody else's Ticket, or to the plan, or to what Khushal owns.
+    assert is_below(_TICKET_A, targets.ticket("t_b"), under_a) is False
+    assert is_below(_TICKET_A, targets.plan("day"), under_a) is False
+    # An Outcome is below nothing, and neither is Khushal.
+    assert is_below(_OUTCOME_A, targets.outcome("si_a"), under_a) is False
+    assert is_below(OWNER_PRINCIPAL, targets.outcome("si_a"), under_a) is False
+
+
+def test_being_in_a_chain_does_not_make_you_above_it() -> None:
+    """A Ticket may put work under its own Outcome without gaining anything over it."""
+    under_a = ChainFacts(target_is_itself_a_principal=True, caller_parent_outcome_id="si_a")
+    own_outcome = targets.outcome("si_a")
+
+    assert shares_the_chain(_TICKET_A, own_outcome, under_a) is True
+    assert stands_above_or_is_self(_TICKET_A, own_outcome, under_a) is False
+
+
+def test_the_chain_lookup_reads_the_caller_s_own_outcome(db: Connection) -> None:
+    item_id = _item(db, "Owning outcome")
+    other_id = _item(db, "Another outcome")
+    caller = Principal(PrincipalKind.ticket, _ticket(db, item_id=item_id))
+
+    require_in_chain(db, caller, targets.outcome(item_id))
+    with pytest.raises(PlannerError) as raised:
+        require_in_chain(db, caller, targets.outcome(other_id))
+
+    assert raised.value.code is ErrorCode.agent_forbidden
+
+
+def test_a_ticket_under_no_outcome_is_in_nobody_s_chain(db: Connection) -> None:
+    item_id = _item(db, "Owning outcome")
+    caller = Principal(PrincipalKind.ticket, _ticket(db, item_id=None))
+
+    with pytest.raises(PlannerError):
+        require_in_chain(db, caller, targets.outcome(item_id))

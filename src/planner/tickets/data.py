@@ -856,6 +856,25 @@ def create_ticket(
     ceiling_holder = principal if stated_holder is None else stated_holder
     with _txn(conn):
         _validate_ceiling_holder(conn, ceiling_holder, ticket_id=ticket_id)
+        # The one rule, asked here where the write happens, exactly as edit_ticket asks
+        # it. Making a Ticket acts on nothing that exists, so nothing refuses that. The
+        # three things creation arrives with each act on something, and each is asked
+        # about separately: putting work under an Outcome, and stating the two canonical
+        # values PATCH reserves for a caller above the Ticket.
+        if sprint_item_id is not None:
+            authority.require_in_chain(conn, principal, authority.outcome(sprint_item_id))
+        if stated_ceiling is not None or stated_holder is not None:
+            authority.require_above_a_ticket_being_created(
+                conn, principal, ticket_id=ticket_id, parent_outcome_id=sprint_item_id
+            )
+        if stated_holder is not None:
+            authority.require_holder_can_be_asked(
+                conn,
+                principal,
+                stated_holder,
+                ticket_id=ticket_id,
+                parent_outcome_id=sprint_item_id,
+            )
         if sprint_item_id is not None and project_id is None:
             item = conn.execute(
                 "SELECT project_id FROM sprint_items WHERE id = ?",
@@ -1154,6 +1173,14 @@ def accept_proposal(
         authority.require_above(conn, principal, authority.ticket(ticket_id))
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
+        )
+        _validate_ceiling_holder(conn, next_holder, ticket_id=ticket_id)
+        authority.require_holder_can_be_asked(
+            conn,
+            principal,
+            next_holder,
+            ticket_id=ticket_id,
+            parent_outcome_id=ticket.sprint_item_id,
         )
         decision = resolution.decide_accept(
             ticket,
@@ -1471,6 +1498,13 @@ def edit_ticket(
             )
             if holder_decision.ceiling_holder != ticket.ceiling_holder:
                 _validate_ceiling_holder(conn, holder_decision.ceiling_holder, ticket_id=ticket.id)
+                authority.require_holder_can_be_asked(
+                    conn,
+                    principal,
+                    holder_decision.ceiling_holder,
+                    ticket_id=ticket.id,
+                    parent_outcome_id=sprint_item_id,
+                )
                 changes.append(
                     (
                         "ceiling_holder",
