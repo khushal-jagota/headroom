@@ -442,8 +442,9 @@ Boundaries, Panels sends one automatic opening turn into the Ticket's conversati
 conversation continues in that same conversation, and a Purpose and Boundaries proposal
 waits for approval before the Ticket advances to Stages.
 
-The packaged skill tree seeds missing entries in the managed `data/skills` home. That
-managed home remains authoritative after seeding. Codex and Claude provisioning links
+The packaged skill tree is what a database with no skills in it is seeded from. After
+that the database row is the authority, and the managed `data/skills` home is written from
+it on every open. Codex and Claude provisioning links
 all managed Panels skills without replacing unrelated user skills. Hermes links every
 skill in the managed home too. The
 first real prompt in a new Ticket conversation tells the selected backend to use the

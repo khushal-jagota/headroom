@@ -6,7 +6,8 @@ import { sprintTicketCondition, type TicketConditionFacts } from "./sprintPresen
 // The rail carries its own groups too, and collapses two of them in
 // `DEFAULT_COLLAPSED_GROUPS`. The two lists are not the same, because the two screens
 // are read for different reasons, so neither one follows the other. Awaiting kickoff is
-// this page's alone: the rail shows only the three attention groups, so it never has one.
+// this page's alone: the rail never splits `awaiting_approval` by the gating field, so no
+// rail key can be this one.
 //
 // The workspace rail groups by the shared attention projection and holds its own order in
 // `workspaceRail.ts`. The two screens split a Ticket up differently, but they call the

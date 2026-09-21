@@ -434,7 +434,6 @@ export type BackendModelEnablementResult = {
   enabled: boolean;
 };
 
-
 /** A piece as it is sent, which is the one shape that carries bytes.
  *
  * A picture goes out with its own bytes, base64, riding with the message it belongs to.
@@ -553,7 +552,6 @@ function postJson(body: unknown): RequestInit {
   };
 }
 
-
 export function readConversation(conversationId: string): Promise<ConversationView> {
   return request<ConversationView>(`/conversations/${encodeURIComponent(conversationId)}`);
 }
@@ -588,16 +586,6 @@ export async function readToolCallDetail(
     `/conversations/${encodeURIComponent(conversationId)}/events/${sequence}/detail`
   );
   return answer.detail;
-}
-
-export function sendPrompt(
-  conversationId: string,
-  body: SendPromptBody
-): Promise<PromptDeliveryFate> {
-  return request<PromptDeliveryFate>(
-    `/conversations/${encodeURIComponent(conversationId)}/send`,
-    postJson(body)
-  );
 }
 
 export async function interruptConversation(conversationId: string): Promise<void> {

@@ -161,6 +161,14 @@ MessageFiles = Annotated[ConversationMessageFiles, Depends(get_conversation_mess
 ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_record)]
 
 
+def _ticket_detail(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    now: int,
+) -> JsonDict:
+    return tickets_views.ticket_detail(conn, ticket_id, now)
+
+
 async def reject_while_the_conversation_is_running(
     conn: sqlite3.Connection,
     conversation_system: ConversationSystem,
@@ -516,7 +524,7 @@ async def read_tickets(
     if object_id is not None:
         require_full_for_one(level)
         reject_parameters("id", scope)
-        one = tickets_views.ticket_detail(conn, object_id, clk.now_unix())
+        one = _ticket_detail(conn, object_id, clk.now_unix())
         await add_work_attention(conn, conversations, conversation_record, tickets=(one,))
         return one
 
@@ -768,7 +776,7 @@ async def get_worker_self_ticket(
                     "owner_ticket_id": owner.id,
                 },
             )
-    detail = tickets_views.ticket_detail(conn, ticket.id, clk.now_unix())
+    detail = _ticket_detail(conn, ticket.id, clk.now_unix())
     detail["worker"] = (
         configured_worker_type_registry()
         .require(ticket.worker_type)
@@ -814,7 +822,7 @@ async def put_ticket_employee_configuration(
         employee_launch_reasoning_effort=body["employee_launch_reasoning_effort"],
     )
     ticket = write_resolved_employee_configuration(conn, ticket_id, resolved, now=clk.now_unix())
-    return tickets_views.ticket_detail(conn, ticket.id, clk.now_unix())
+    return _ticket_detail(conn, ticket.id, clk.now_unix())
 
 
 @router.post("/tickets/{ticket_id}/restart-worker")

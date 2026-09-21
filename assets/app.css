@@ -2759,11 +2759,6 @@ select {
   margin-top: var(--space-2);
 }
 
-/* The context block: a sans RECAP label, then the serif recap, then the collapsed
- * NOTES disclosure when the field carries notes. */
-/* Recap sits close above the Notes row; the stage-section gap carries the rest
- * of the rhythm (mockup: recap→notes 16, notes→ask 26). */
-
 .ticket-stage-section--review .approval--review {
   margin-top: var(--space-2);
 }
@@ -3769,10 +3764,6 @@ select {
   border-top: var(--border-hairline) solid var(--border-color);
 }
 
-/* On the ticket the spine is one list from the user-note row down: every stage row
- * carries a top seam, including the first (the user note, wrapped in
- * .ticket-user-note, which otherwise breaks the sibling adjacency above). */
-
 .disclosure--stage > .disclosure-summary {
   min-width: 0;
   flex-wrap: wrap;
@@ -4346,10 +4337,6 @@ select {
   outline-offset: 2px;
 }
 
-/* The Sprint Item fact is a link back to that Item on the Workspace, not a control
- * that changes the Ticket. It keeps the fact look and adds link behavior. */
-
-
 .ticket-identity-priority {
   padding-bottom: 0;
   border-bottom: 0;
@@ -4861,9 +4848,6 @@ a.artifact-chip:hover,
 .stage-fold-close:hover {
   color: var(--text-muted);
 }
-
-/* The blank spacer where the user-note row would carry a stage mark — it keeps the
- * row's alignment without drawing a mark. */
 
 /* Narrow (mockup @960). The breakpoint is a raw px — media features can't read custom
  * properties.
@@ -5556,9 +5540,6 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   padding: var(--space-2);
   font-size: var(--type-md);
 }
-
-
-/* Artifact rows share the Ticket row's rhythm. */
 
 
 .sprint-workspace-empty {

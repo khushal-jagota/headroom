@@ -142,12 +142,12 @@ _Code paths:_ `src/planner/scheduled_tickets/` and `src/planner/core/loops.py`.
 ### 5. Worker orchestration
 
 The readiness loop examines today's Tickets and applies one complete, read-only
-decision. A Ticket must be on today, non-terminal, resting, ready for its declared
-ownership, and clear for its Consequences lane. The
+decision. A Ticket must be on today, non-terminal, reading as `empty`, ready for its
+declared ownership, and clear for its Consequences lane. The
 conversation system supplies the one fact the record cannot: whether that Ticket's
 worker is already busy.
 
-One guarded status flip out of `empty` is the claim. There is no claim stamp or run row.
+One guarded write takes the claim, and the Ticket then reads as `agent`. There is no claim stamp or run row.
 User-owned claims also record one opener fact for the current Stage entry. An accepted
 opening turn returns the status to `empty`, while readiness uses the fact to prevent a
 repeat. Panels then starts or reuses the Ticket conversation and sends one ordered list

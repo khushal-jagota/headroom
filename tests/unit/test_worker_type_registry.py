@@ -144,6 +144,13 @@ def test_registry_validation_order_and_messages() -> None:
     )
     assert_error(
         replace(
+            base, stages=(base.stages[0], replace(base.stages[1], id="dropped"), *base.stages[2:])
+        ),
+        "dropped is not a stage",
+        {"worker_type": "coding", "stage": "dropped"},
+    )
+    assert_error(
+        replace(
             base,
             stages=(
                 *base.stages[:-1],

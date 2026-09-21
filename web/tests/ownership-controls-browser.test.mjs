@@ -124,6 +124,7 @@ with sync_playwright() as p:
     expect(table.locator('[data-stage="needs_approach"] [data-stage-owner]')).to_have_attribute("data-stage-owner", "worker")
     expect(table.locator('[data-stage="done"] [data-stage-owner]')).to_have_attribute("data-stage-owner", "")
     assert table.locator("select, input, [contenteditable]").count() == 0
+    assert page.locator("[data-suggested-next-ceiling]").count() == 0
 
     ceiling = page.locator("[data-scope-proof] [data-scope-ceiling]")
     expect(ceiling).to_have_value("needs_plan")

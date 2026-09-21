@@ -133,7 +133,10 @@ with sync_playwright() as p:
     assert leash.locator('[data-scope-ceiling]').count() == 1
     assert leash.locator('[data-scope-holder]').count() == 1
     assert leash.locator('button').count() == 0
+    assert page.locator('[data-copy], [data-ticket-takeover-toggle]').count() == 0
     assert placement_writes == []
+    assert 'Copy' not in page.locator('.ticket-operating').inner_text()
+    assert 'Take over' not in page.locator('.ticket-operating').inner_text()
     def assert_ticket_layout(width):
         page.set_viewport_size({'width': width, 'height': 900})
         page.wait_for_timeout(50)
